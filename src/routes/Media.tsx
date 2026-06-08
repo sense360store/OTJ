@@ -1,8 +1,8 @@
-import { useState } from 'react'
-import { media } from '../lib/data'
+import { useMemo, useState } from 'react'
+import { useMedia, useDrills } from '../lib/queries'
 import type { MediaItem, MediaType } from '../lib/data'
 import { Icon } from '../components/icons'
-import { MediaThumb, MEDIA_META, Modal } from '../components/ui'
+import { ErrorNote, Loading, MediaThumb, MEDIA_META, Modal } from '../components/ui'
 
 function MediaCard({ m, onOpen }: { m: MediaItem; onOpen: () => void }) {
   const used = m.usedIn ?? 0
@@ -42,6 +42,18 @@ export function Media() {
   const [q, setQ] = useState('')
   const [type, setType] = useState('')
   const [open, setOpen] = useState<MediaItem | null>(null)
+  const { data: mediaItems = [], isLoading, isError } = useMedia()
+  const { data: drills = [] } = useDrills()
+  // "Used in N drills" is derived, not stored: count drills referencing each item.
+  const media = useMemo(() => {
+    const usage: Record<string, number> = {}
+    drills.forEach((d) => {
+      if (d.mediaId) usage[d.mediaId] = (usage[d.mediaId] || 0) + 1
+    })
+    return mediaItems.map((m) => ({ ...m, usedIn: usage[m.id] ?? 0 }))
+  }, [mediaItems, drills])
+  if (isLoading) return <Loading />
+  if (isError) return <ErrorNote />
   const list = media.filter((m) => (!type || m.type === type) && (!q || m.name.toLowerCase().includes(q.toLowerCase())))
   const counts: Record<MediaType, number> = { video: 0, youtube: 0, image: 0, pdf: 0 }
   media.forEach((m) => counts[m.type]++)

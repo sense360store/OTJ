@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
-import { drills, CORNERS, SKILLS, AGES, LEVELS } from '../lib/data'
+import { useDrills } from '../lib/queries'
+import { CORNERS, SKILLS, AGES, LEVELS } from '../lib/data'
 import type { CornerKey } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Chip, DrillCard, Empty } from '../components/ui'
+import { Chip, DrillCard, Empty, ErrorNote, Loading } from '../components/ui'
 
 export function Library() {
   const nav = useNav()
@@ -18,6 +19,7 @@ export function Library() {
   const [age, setAge] = useState('')
   const [level, setLevel] = useState('')
   const [sort, setSort] = useState('recent')
+  const { data: drills = [], isLoading, isError } = useDrills()
 
   // Apply the corner preset from the URL once, then clear it.
   useEffect(() => {
@@ -40,9 +42,12 @@ export function Library() {
     if (sort === 'duration') r = [...r].sort((a, b) => a.duration - b.duration)
     if (sort === 'az') r = [...r].sort((a, b) => a.title.localeCompare(b.title))
     return r
-  }, [q, corner, skill, age, level, sort])
+  }, [drills, q, corner, skill, age, level, sort])
 
   const activeFilters = [corner, skill, age, level].filter(Boolean).length
+
+  if (isLoading) return <Loading />
+  if (isError) return <ErrorNote />
 
   return (
     <div>

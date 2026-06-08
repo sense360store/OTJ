@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
-import { drills, drillById, mediaById, PHASES } from '../lib/data'
+import { useDrill, useDrills, useMediaMap } from '../lib/queries'
+import { PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
-import { CornerTag, MediaThumb, MEDIA_META, Modal, Empty, PHASE_COLOR, Chip, DrillCard } from '../components/ui'
+import { CornerTag, MediaThumb, MEDIA_META, Modal, Empty, ErrorNote, Loading, PHASE_COLOR, Chip, DrillCard } from '../components/ui'
 
 function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
   return (
@@ -81,7 +82,11 @@ export function DrillDetail() {
   const { id } = useParams()
   const nav = useNav()
   const [addOpen, setAddOpen] = useState(false)
-  const drill = id ? drillById[id] : undefined
+  const { data: drill, isLoading, isError } = useDrill(id)
+  const { data: allDrills = [] } = useDrills()
+  const mediaById = useMediaMap()
+  if (isLoading) return <Loading />
+  if (isError) return <ErrorNote />
   if (!drill)
     return (
       <Empty icon={Icon.grid} title="Drill not found">
@@ -89,7 +94,7 @@ export function DrillDetail() {
       </Empty>
     )
   const media = drill.mediaId ? mediaById[drill.mediaId] : undefined
-  const related = drills
+  const related = allDrills
     .filter((d) => d.id !== drill.id && (d.corner === drill.corner || d.skill === drill.skill))
     .slice(0, 3)
   const MediaIcon = media ? MEDIA_META[media.type].icon : null

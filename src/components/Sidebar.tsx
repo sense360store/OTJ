@@ -2,7 +2,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { Crest } from './Crest'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
-import { drills } from '../lib/data'
+import { useDrills } from '../lib/queries'
 import { useAuth } from '../hooks/useAuth'
 import type { Role } from '../hooks/useAuth'
 import { screenFromPath } from '../lib/screen'
@@ -12,7 +12,6 @@ interface NavItem {
   label: string
   icon: IconComponent
   to: string
-  badge?: string
 }
 interface NavSection {
   group: string | null
@@ -24,7 +23,7 @@ const NAV: NavSection[] = [
   {
     group: 'Plan',
     items: [
-      { id: 'library', label: 'Drill Library', icon: Icon.grid, to: '/library', badge: String(drills.length) },
+      { id: 'library', label: 'Drill Library', icon: Icon.grid, to: '/library' },
       { id: 'sessions', label: 'Sessions', icon: Icon.calendar, to: '/sessions' },
       { id: 'planner', label: 'Session Planner', icon: Icon.layers, to: '/planner' },
     ],
@@ -61,8 +60,12 @@ export function Sidebar() {
   const { pathname } = useLocation()
   const screen = screenFromPath(pathname)
   const { profile, role, signOut } = useAuth()
+  const { data: drills } = useDrills()
   const allowed = ROLE_NAV[role ?? 'coach']
   const isActive = (id: string) => screen === id || (id === 'library' && screen === 'drill')
+  // The library badge is the live drill count, shown once the read resolves.
+  const badgeFor = (id: string): string | undefined =>
+    id === 'library' && drills ? String(drills.length) : undefined
 
   return (
     <aside className="sidebar">
@@ -95,7 +98,7 @@ export function Sidebar() {
                 >
                   <it.icon className="nav-ico" />
                   {it.label}
-                  {it.badge && <span className="nav-badge">{it.badge}</span>}
+                  {badgeFor(it.id) && <span className="nav-badge">{badgeFor(it.id)}</span>}
                 </button>
               ))}
             </div>

@@ -1,11 +1,12 @@
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
 import { useAuth } from '../hooks/useAuth'
-import { drills, templates, media, sessionMinutes, CORNERS } from '../lib/data'
+import { useDrills, useTemplates, useMedia } from '../lib/queries'
+import { sessionMinutes, CORNERS } from '../lib/data'
 import type { CornerKey, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
-import { DrillCard } from '../components/ui'
+import { DrillCard, ErrorNote, Loading } from '../components/ui'
 
 const CORNER_ICONS: Record<CornerKey, IconComponent> = {
   technical: Icon.target,
@@ -88,9 +89,16 @@ function StatCard({
 
 export function Home() {
   const nav = useNav()
-  const { sessions } = useSessions()
+  const { sessions, loading: sessionsLoading, error: sessionsError } = useSessions()
+  const { data: drills = [], isLoading: drillsLoading, isError: drillsError } = useDrills()
+  const { data: templates = [], isLoading: templatesLoading, isError: templatesError } = useTemplates()
+  const { data: media = [], isLoading: mediaLoading, isError: mediaError } = useMedia()
   const { profile } = useAuth()
   const firstName = profile?.full_name?.split(' ')[0] ?? 'Coach'
+
+  if (sessionsLoading || drillsLoading || templatesLoading || mediaLoading) return <Loading />
+  if (sessionsError || drillsError || templatesError || mediaError) return <ErrorNote />
+
   const next = sessions[0]
   const recent = drills.slice(0, 4)
   const cornerCounts: Record<string, number> = {}

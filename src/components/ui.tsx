@@ -6,8 +6,9 @@ import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
-import { CORNERS, cornerClass, mediaById } from '../lib/data'
+import { CORNERS, cornerClass } from '../lib/data'
 import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
+import { useMediaMap } from '../lib/queries'
 
 export function fmtMin(m: number): string {
   return m + ' min'
@@ -140,6 +141,7 @@ export function Chip({
 
 /* ---- drill card ------------------------------------------------ */
 export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: () => void; action?: ReactNode }) {
+  const mediaById = useMediaMap()
   const media = drill.mediaId ? mediaById[drill.mediaId] : undefined
   const c = CORNERS[drill.corner]
   return (
@@ -240,6 +242,23 @@ export function Empty({ icon: Ico, title, children }: { icon?: IconComponent; ti
       {Ico && <Ico />}
       <h3>{title}</h3>
       <p className="muted">{children}</p>
+    </div>
+  )
+}
+
+/* ---- loading and error ----------------------------------------- */
+export function Loading({ label = 'Loading…' }: { label?: string }) {
+  return (
+    <div className="muted" style={{ padding: '48px 0', textAlign: 'center', fontWeight: 600 }}>
+      {label}
+    </div>
+  )
+}
+
+export function ErrorNote({ children }: { children?: ReactNode }) {
+  return (
+    <div className="muted" style={{ padding: '48px 0', textAlign: 'center', fontWeight: 600 }}>
+      {children ?? 'Something went wrong loading this. Refresh to try again.'}
     </div>
   )
 }

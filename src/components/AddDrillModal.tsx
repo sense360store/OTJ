@@ -1,12 +1,14 @@
 import { useState } from 'react'
-import { Modal, MediaThumb } from './ui'
+import { Loading, Modal, MediaThumb } from './ui'
 import { Icon } from './icons'
-import { drills, mediaById } from '../lib/data'
+import { useDrills, useMediaMap } from '../lib/queries'
 import type { Activity, CornerKey } from '../lib/data'
 
 export function AddDrillModal({ onClose, onAdd }: { onClose: () => void; onAdd: (items: Activity[]) => void }) {
   const [q, setQ] = useState('')
   const [picked, setPicked] = useState<Record<string, boolean>>({})
+  const { data: drills = [], isLoading } = useDrills()
+  const mediaById = useMediaMap()
   const list = drills.filter((d) => !q || (d.title + d.skill + d.tags.join(' ')).toLowerCase().includes(q.toLowerCase()))
   const count = Object.values(picked).filter(Boolean).length
   const phaseFor = (corner: CornerKey): Activity['phase'] =>
@@ -39,8 +41,11 @@ export function AddDrillModal({ onClose, onAdd }: { onClose: () => void; onAdd: 
         <Icon.search />
         <input placeholder="Search drills…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        {list.map((d) => {
+      {isLoading ? (
+        <Loading />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {list.map((d) => {
           const media = d.mediaId ? mediaById[d.mediaId] : undefined
           const on = !!picked[d.id]
           return (
@@ -86,9 +91,10 @@ export function AddDrillModal({ onClose, onAdd }: { onClose: () => void; onAdd: 
                 {on && <Icon.check style={{ width: 14, height: 14 }} />}
               </span>
             </button>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
+      )}
     </Modal>
   )
 }

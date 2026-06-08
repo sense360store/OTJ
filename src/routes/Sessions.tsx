@@ -3,7 +3,7 @@ import { useSessions } from '../context/SessionsContext'
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { PHASE_COLOR } from '../components/ui'
+import { ErrorNote, Loading, PHASE_COLOR } from '../components/ui'
 
 type Nav = ReturnType<typeof useNav>
 
@@ -76,7 +76,9 @@ function SessionCard({ s, nav }: { s: Session; nav: Nav }) {
 
 export function Sessions() {
   const nav = useNav()
-  const { sessions } = useSessions()
+  const { sessions, loading, error } = useSessions()
+  if (loading) return <Loading />
+  if (error) return <ErrorNote />
   return (
     <div>
       <div className="page-head">
