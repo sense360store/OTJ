@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+*.local
+
+# Environment (never commit real keys)
+.env
+.env.*
+!.env.example
+
+# Supabase local stack
+supabase/.branches/
+supabase/.temp/
+supabase/.env
+
+# Claude Code local settings (per developer, not shared)
+.claude/settings.local.json
+
+# Editor and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log

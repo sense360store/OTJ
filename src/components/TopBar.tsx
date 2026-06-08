@@ -1,0 +1,42 @@
+import { useNavigate } from 'react-router-dom'
+import { Icon } from './icons'
+import { Crest } from './Crest'
+import { useTheme } from '../hooks/useTheme'
+
+export function TopBar() {
+  const navigate = useNavigate()
+  const { dark, setDark } = useTheme()
+  return (
+    <div className="topbar">
+      <div className="topbar-search">
+        <Icon.search />
+        <input placeholder="Search drills, skills, media…" onFocus={() => navigate('/library')} readOnly />
+      </div>
+      <div className="topbar-spacer"></div>
+      <button className="icon-btn" title="Notifications">
+        <Icon.bell />
+      </button>
+      <button className="icon-btn" onClick={() => setDark(!dark)} title="Toggle theme">
+        {dark ? <Icon.sun /> : <Icon.moon />}
+      </button>
+      <button className="btn btn-gold" onClick={() => navigate('/planner')}>
+        <Icon.plus />
+        New Session
+      </button>
+    </div>
+  )
+}
+
+export function MobileTop() {
+  const { dark, setDark } = useTheme()
+  return (
+    <div className="mobile-topbar">
+      <Crest />
+      <b>Training Hub</b>
+      <div style={{ flex: 1 }}></div>
+      <button className="icon-btn" onClick={() => setDark(!dark)}>
+        {dark ? <Icon.sun /> : <Icon.moon />}
+      </button>
+    </div>
+  )
+}

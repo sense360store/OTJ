@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ossett Training Hub — Build Spec</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --navy-900:#0a1f6b; --navy:#122a86; --royal:#1f43d6; --gold:#f4c020; --gold-soft:#fff4d1;
+  --ink:#101631; --ink-2:#2b3350; --slate:#616b82; --slate-2:#8a93a7;
+  --line:#e3e3de; --line-2:#efefe9; --bg:#f5f5f1; --card:#ffffff;
+  --tech:#1f43d6; --phys:#16a34a; --soc:#ef8e1b; --psy:#7c4dff;
+  --radius:16px; --radius-sm:11px;
+  --shadow-sm:0 1px 2px rgba(16,22,49,.05),0 1px 3px rgba(16,22,49,.04);
+  --shadow:0 2px 6px rgba(16,22,49,.06),0 8px 24px rgba(16,22,49,.06);
+  --sans:"Hanken Grotesk",ui-sans-serif,system-ui,sans-serif;
+  --display:"Archivo",var(--sans);
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.6;}
+h1,h2,h3,h4{font-family:var(--display);margin:0;letter-spacing:-0.02em;line-height:1.12;}
+a{color:var(--royal);text-decoration:none;}
+code{font-family:var(--mono);font-size:.86em;background:var(--line-2);padding:.12em .42em;border-radius:6px;color:var(--navy);}
+.mono{font-family:var(--mono);}
+
+/* layout */
+.wrap{max-width:1080px;margin:0 auto;padding:0 32px;}
+.shell{display:grid;grid-template-columns:232px 1fr;gap:0;max-width:1320px;margin:0 auto;}
+.toc{position:sticky;top:0;align-self:start;height:100vh;overflow:auto;padding:34px 22px 34px 32px;border-right:1px solid var(--line);}
+.toc .crest{display:flex;align-items:center;gap:10px;margin-bottom:26px;}
+.toc .crest .badge{width:38px;height:38px;border-radius:10px;background:var(--navy);color:var(--gold);display:grid;place-items:center;font-family:var(--display);font-weight:900;font-size:15px;flex:none;}
+.toc .crest b{font-family:var(--display);font-weight:800;font-size:15px;line-height:1.1;}
+.toc .crest span{display:block;color:var(--slate);font-size:11.5px;font-weight:600;}
+.toc a{display:block;color:var(--slate);font-size:13.5px;font-weight:600;padding:6px 10px;border-radius:8px;margin-bottom:1px;}
+.toc a:hover{background:var(--line-2);color:var(--ink);}
+.toc a.lead{color:var(--slate-2);font-size:10.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;margin:18px 0 4px;padding-left:10px;pointer-events:none;}
+.doc{padding:0 0 120px;min-width:0;}
+
+/* hero */
+.hero{background:var(--navy);color:#fff;padding:60px 0 54px;position:relative;overflow:hidden;}
+.hero:before{content:"";position:absolute;inset:0;background:radial-gradient(900px 360px at 88% -10%,rgba(244,192,32,.22),transparent 60%);}
+.hero .wrap{position:relative;}
+.kicker{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);margin-bottom:18px;}
+.kicker:before{content:"";width:22px;height:2px;background:var(--gold);}
+.hero h1{font-size:46px;font-weight:900;color:#fff;max-width:16ch;}
+.hero p{font-size:18px;color:#c9d2f5;max-width:62ch;margin:18px 0 0;}
+.hero .meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px;}
+.hero .meta span{font-size:12.5px;font-weight:700;color:#dfe5fb;border:1px solid rgba(255,255,255,.22);padding:7px 13px;border-radius:99px;}
+
+section{padding:54px 0 0;}
+.eyebrow{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--royal);margin-bottom:10px;}
+section h2{font-size:30px;font-weight:800;}
+section h2 + .lede{font-size:16.5px;color:var(--ink-2);max-width:66ch;margin:14px 0 0;}
+h3.sub{font-size:18px;font-weight:800;margin:34px 0 12px;color:var(--navy);}
+p{margin:14px 0;}
+.muted{color:var(--slate);}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);padding:22px 24px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+.stack{display:flex;flex-direction:column;gap:16px;}
+
+/* stack table */
+.tech-row{display:grid;grid-template-columns:150px 1fr;gap:18px;padding:16px 0;border-bottom:1px solid var(--line);}
+.tech-row:last-child{border-bottom:0;}
+.tech-row .layer{font-family:var(--display);font-weight:800;font-size:15px;color:var(--navy);}
+.tech-row .pick b{font-size:15px;font-weight:800;}
+.tech-row .pick p{margin:5px 0 0;font-size:14px;color:var(--slate);}
+.tag{display:inline-block;font-size:11.5px;font-weight:800;font-family:var(--mono);padding:3px 9px;border-radius:6px;background:var(--gold-soft);color:#8a6b00;margin-right:6px;}
+
+/* architecture diagram */
+.diagram{background:var(--navy-900);border-radius:var(--radius);padding:30px;color:#fff;}
+.tier{display:flex;align-items:center;gap:14px;}
+.tier + .tier{margin-top:0;}
+.tier .label{width:74px;font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);text-align:right;flex:none;}
+.tier .boxes{flex:1;display:flex;gap:10px;flex-wrap:wrap;}
+.box{flex:1;min-width:120px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:13px 14px;}
+.box b{display:block;font-family:var(--display);font-size:13.5px;font-weight:700;}
+.box span{font-size:11.5px;color:#aab4e0;}
+.box.gold{background:var(--gold);border-color:var(--gold);}
+.box.gold b{color:var(--navy-900);} .box.gold span{color:#5a4700;}
+.flowdown{display:flex;justify-content:center;color:rgba(255,255,255,.4);font-size:18px;margin:7px 0;}
+
+/* code */
+pre{background:#0d1130;color:#e6e9f7;border-radius:12px;padding:18px 20px;overflow:auto;font-family:var(--mono);font-size:12.8px;line-height:1.65;margin:14px 0;border:1px solid #20275a;}
+pre .c{color:#7886c4;} pre .k{color:#f4c020;} pre .s{color:#8fe0a8;} pre .t{color:#7fb4ff;}
+
+/* schema tables */
+.schema{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow-sm);background:var(--card);}
+.schema .head{background:var(--navy);color:#fff;padding:11px 18px;font-family:var(--display);font-weight:800;font-size:14.5px;display:flex;align-items:center;gap:9px;}
+.schema .head .pk{font-size:10.5px;font-family:var(--mono);background:var(--gold);color:var(--navy-900);padding:2px 7px;border-radius:5px;font-weight:800;}
+.schema table{width:100%;border-collapse:collapse;}
+.schema td{padding:9px 18px;font-size:13.5px;border-top:1px solid var(--line-2);vertical-align:top;}
+.schema td.col{font-family:var(--mono);font-size:12.5px;color:var(--navy);font-weight:600;white-space:nowrap;width:34%;}
+.schema td.typ{font-family:var(--mono);font-size:11.5px;color:var(--soc);width:26%;}
+.schema td.note{color:var(--slate);font-size:13px;}
+.fk{color:var(--royal);font-weight:700;}
+
+/* flow steps */
+.steps{counter-reset:s;display:flex;flex-direction:column;gap:0;}
+.step{display:grid;grid-template-columns:42px 1fr;gap:16px;padding:16px 0;border-bottom:1px dashed var(--line);}
+.step:last-child{border-bottom:0;}
+.step .n{counter-increment:s;width:32px;height:32px;border-radius:50%;background:var(--navy);color:var(--gold);font-family:var(--display);font-weight:800;display:grid;place-items:center;font-size:14px;}
+.step .n:before{content:counter(s);}
+.step b{font-size:15px;font-weight:800;}
+.step p{margin:4px 0 0;font-size:14px;color:var(--slate);}
+
+/* roles */
+.role{border-left:4px solid var(--line);padding:4px 0 4px 16px;}
+.role.coach{border-color:var(--tech);}
+.role.admin{border-color:var(--soc);}
+.role.parent{border-color:var(--phys);}
+.role h4{font-size:15.5px;font-weight:800;}
+.role .pill{font-size:11px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:5px;color:#fff;margin-left:8px;vertical-align:middle;}
+.role.coach .pill{background:var(--tech);}
+.role.admin .pill{background:var(--soc);}
+.role.parent .pill{background:var(--phys);}
+.role ul{margin:8px 0 0;padding-left:18px;color:var(--slate);font-size:13.5px;}
+.role li{margin:3px 0;}
+
+/* phases */
+.phase{display:grid;grid-template-columns:96px 1fr;gap:18px;padding:18px 0;border-top:1px solid var(--line);}
+.phase .when{font-family:var(--display);font-weight:800;font-size:14px;color:var(--navy);}
+.phase .when span{display:block;font-family:var(--sans);font-weight:600;font-size:12px;color:var(--slate-2);margin-top:2px;}
+.phase b{font-size:15.5px;}
+.phase p{margin:5px 0 0;font-size:13.5px;color:var(--slate);}
+
+ul.clean{list-style:none;padding:0;margin:14px 0;}
+ul.clean li{padding:9px 0 9px 28px;position:relative;font-size:14.5px;border-bottom:1px solid var(--line-2);}
+ul.clean li:last-child{border-bottom:0;}
+ul.clean li:before{content:"";position:absolute;left:4px;top:15px;width:8px;height:8px;border-radius:2px;background:var(--gold);transform:rotate(45deg);}
+ul.clean li b{font-weight:800;}
+
+.callout{background:var(--gold-soft);border:1px solid #f0d98a;border-radius:var(--radius);padding:18px 22px;margin:20px 0;}
+.callout b{color:#8a6b00;}
+.note-navy{background:#eef1fb;border:1px solid #d3dbf6;border-radius:var(--radius);padding:18px 22px;margin:20px 0;font-size:14.5px;}
+
+.hr{height:1px;background:var(--line);margin:0;border:0;}
+footer{padding:48px 0 60px;color:var(--slate);font-size:13px;}
+
+@media(max-width:920px){
+  .shell{grid-template-columns:1fr;}
+  .toc{display:none;}
+  .grid2,.grid3{grid-template-columns:1fr;}
+  .hero h1{font-size:34px;}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ============ TOC ============ -->
+  <nav class="toc">
+    <div class="crest">
+      <div class="badge">OTJ</div>
+      <div><b>Training Hub</b><span>Build Spec v1</span></div>
+    </div>
+    <a href="#overview">Overview</a>
+    <a href="#stack">Recommended stack</a>
+    <a href="#arch">Architecture</a>
+    <a class="lead">Frontend</a>
+    <a href="#fe-structure">Code structure</a>
+    <a href="#fe-data">Data &amp; state</a>
+    <a class="lead">Backend</a>
+    <a href="#api">API design</a>
+    <a href="#schema">Database schema</a>
+    <a href="#media">Media storage</a>
+    <a href="#live">Live session (realtime)</a>
+    <a class="lead">Accounts</a>
+    <a href="#auth">Login &amp; auth</a>
+    <a href="#roles">Roles &amp; permissions</a>
+    <a class="lead">Ship it</a>
+    <a href="#deploy">Hosting &amp; cost</a>
+    <a href="#roadmap">Build roadmap</a>
+  </nav>
+
+  <!-- ============ DOC ============ -->
+  <main class="doc">
+
+    <header class="hero">
+      <div class="wrap">
+        <div class="kicker">Technical Build Spec</div>
+        <h1>From clickable prototype to a real, logged-in product.</h1>
+        <p>The current Training Hub is a polished React front-end running entirely on mock data. This document lays out how to make it real: the stack, the front-end code structure, a backend with a proper database, media storage, live-session realtime, and a login system with coach / admin / parent roles.</p>
+        <div class="meta">
+          <span>React + Vite front-end</span>
+          <span>Supabase backend</span>
+          <span>Postgres + Row-Level Security</span>
+          <span>~£0–25 / month to run</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="wrap">
+
+      <!-- OVERVIEW -->
+      <section id="overview">
+        <div class="eyebrow">Where we are</div>
+        <h2>What exists today, and what's missing</h2>
+        <p class="lede">The prototype already proves out the whole product surface. Everything below the glass is faked — and that's exactly the gap this spec fills.</p>
+        <div class="grid2" style="margin-top:24px;">
+          <div class="card">
+            <h3 class="sub" style="margin-top:0;color:var(--phys);">✓ Already built (front-end)</h3>
+            <ul class="clean">
+              <li>Drill Library, filtering &amp; drill detail pages</li>
+              <li>Session Planner &amp; saved Sessions</li>
+              <li>Templates and Media Library screens</li>
+              <li>Live / run-session full-screen mode</li>
+              <li>Brand, dark mode, responsive + mobile nav</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3 class="sub" style="margin-top:0;color:var(--soc);">⚠ Faked / missing</h3>
+            <ul class="clean">
+              <li>All data lives in <code>data.js</code> — nothing persists</li>
+              <li>No accounts, no login, no "my sessions"</li>
+              <li>Media isn't really uploaded or stored</li>
+              <li>Nothing is shared between coaches</li>
+              <li>No server, no database, no API</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout">
+          <b>The core idea:</b> keep the React front-end almost exactly as it is. Replace the single <code>window.OTJ</code> mock object with a thin data layer that talks to a hosted backend. Add a login screen in front. That's the whole job — everything else is filling in those two boxes.
+        </div>
+      </section>
+
+      <!-- STACK -->
+      <section id="stack">
+        <div class="eyebrow">The tools</div>
+        <h2>Recommended stack</h2>
+        <p class="lede">Optimised for a volunteer-run grassroots club: cheap, low-maintenance, no dedicated ops, and a single managed service that covers database + auth + file storage + realtime.</p>
+        <div class="card" style="margin-top:22px;">
+          <div class="tech-row">
+            <div class="layer">Front-end</div>
+            <div class="pick">
+              <b>React + Vite + TypeScript</b>
+              <p>You already have the React components. Move them off the in-browser Babel setup into a Vite project for a real build, routing and types. <span class="tag">react-router</span><span class="tag">tanstack-query</span></p>
+            </div>
+          </div>
+          <div class="tech-row">
+            <div class="layer">Backend</div>
+            <div class="pick">
+              <b>Supabase</b>
+              <p>One managed platform giving you a Postgres database, auto-generated REST + realtime APIs, authentication, and file storage. Removes the need to write/host a server for v1. <span class="tag">postgres</span><span class="tag">auth</span><span class="tag">storage</span></p>
+            </div>
+          </div>
+          <div class="tech-row">
+            <div class="layer">Database</div>
+            <div class="pick">
+              <b>PostgreSQL</b>
+              <p>Relational data fits perfectly — drills, sessions and templates are all linked records. Row-Level Security enforces "who can see what" at the database itself.</p>
+            </div>
+          </div>
+          <div class="tech-row">
+            <div class="layer">Auth</div>
+            <div class="pick">
+              <b>Supabase Auth</b>
+              <p>Email + password and magic-link out of the box, JWT sessions, password reset, and roles via a <code>profiles</code> table. No auth code to write or secure yourself.</p>
+            </div>
+          </div>
+          <div class="tech-row">
+            <div class="layer">Hosting</div>
+            <div class="pick">
+              <b>Vercel / Netlify</b>
+              <p>Push the front-end to a static host with a free tier and automatic HTTPS. Backend is hosted by Supabase.</p>
+            </div>
+          </div>
+        </div>
+        <div class="note-navy">
+          <b>Why not a custom Node/Express server?</b> You can, and the API section below maps cleanly onto one if you outgrow Supabase. But for a club app with a few dozen coaches, a managed backend gets you to "real and secure" in days, not weeks — and there's no server to patch at 11pm.
+        </div>
+      </section>
+
+      <!-- ARCHITECTURE -->
+      <section id="arch">
+        <div class="eyebrow">The shape of it</div>
+        <h2>How the pieces fit together</h2>
+        <p class="lede">Three tiers. The browser holds the UI and a logged-in session; the managed backend holds data, files and the rules about who can touch them.</p>
+        <div class="diagram" style="margin-top:24px;">
+          <div class="tier">
+            <div class="label">Browser</div>
+            <div class="boxes">
+              <div class="box gold"><b>React App</b><span>screens, planner, live mode</span></div>
+              <div class="box gold"><b>Data layer</b><span>tanstack-query + supabase-js</span></div>
+              <div class="box gold"><b>Session</b><span>JWT stored locally</span></div>
+            </div>
+          </div>
+          <div class="flowdown">↕ &nbsp; HTTPS + WebSocket &nbsp; ↕</div>
+          <div class="tier">
+            <div class="label">Supabase</div>
+            <div class="boxes">
+              <div class="box"><b>Auth</b><span>login, JWT, roles</span></div>
+              <div class="box"><b>REST + Realtime API</b><span>auto-generated</span></div>
+              <div class="box"><b>Row-Level Security</b><span>per-row access rules</span></div>
+              <div class="box"><b>Storage</b><span>videos, images, PDFs</span></div>
+            </div>
+          </div>
+          <div class="flowdown">↕</div>
+          <div class="tier">
+            <div class="label">Data</div>
+            <div class="boxes">
+              <div class="box"><b>PostgreSQL</b><span>drills · sessions · templates · media · profiles · clubs</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="muted" style="font-size:13.5px;">The React app never talks to the database directly — every request carries the logged-in user's token, and Postgres' Row-Level Security decides what that user is allowed to read or write. There's no way to "forget" an auth check because the rule lives on the data, not in the UI.</p>
+      </section>
+
+      <hr class="hr" style="margin-top:54px;" />
+
+      <!-- FE STRUCTURE -->
+      <section id="fe-structure">
+        <div class="eyebrow">Front-end</div>
+        <h2>Code structure</h2>
+        <p class="lede">Lift the existing screens into a proper Vite project. The component split you already have (home / library / sessions / media / live) becomes your route map almost 1:1.</p>
+        <pre><span class="c">src/</span>
+├─ <span class="t">main.tsx</span>            <span class="c">// mount + router</span>
+├─ <span class="t">App.tsx</span>             <span class="c">// shell: sidebar, topbar, &lt;Outlet/&gt;</span>
+├─ <span class="k">lib/</span>
+│   ├─ supabase.ts       <span class="c">// the one configured client</span>
+│   └─ queries.ts        <span class="c">// every read/write, one file</span>
+├─ <span class="k">routes/</span>
+│   ├─ Login.tsx         <span class="c">// NEW — the front door</span>
+│   ├─ Home.tsx
+│   ├─ Library.tsx       <span class="c">// + DrillDetail.tsx</span>
+│   ├─ Sessions.tsx
+│   ├─ Planner.tsx
+│   ├─ Templates.tsx
+│   ├─ Media.tsx
+│   └─ LiveSession.tsx
+├─ <span class="k">components/</span>         <span class="c">// ui.jsx → Button, Badge, Card…</span>
+└─ <span class="k">hooks/</span>
+    └─ useAuth.ts         <span class="c">// current user + role</span></pre>
+        <h3 class="sub">The migration, concretely</h3>
+        <div class="steps">
+          <div class="step"><div class="n"></div><div><b>Scaffold a Vite + React + TS project</b><p>Drop your <code>styles.css</code> in as-is — the design tokens carry over untouched. The fonts and brand don't change at all.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Move each <code>screens-*.jsx</code> into <code>routes/</code></b><p>Wire them with react-router so the URL reflects the screen (today routing is hand-rolled in <code>app.jsx</code> state). Bookmarkable <code>/drill/d6</code> links come for free.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Replace <code>window.OTJ</code> reads with query hooks</b><p>Every <code>OTJ.drills</code> becomes <code>useDrills()</code>; every <code>upsertSession()</code> becomes a mutation. The components barely change — only where the data comes from.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Wrap everything in an auth guard</b><p>No session → render <code>&lt;Login/&gt;</code>. Session present → render the app. The role decides which nav items show.</p></div></div>
+        </div>
+      </section>
+
+      <!-- FE DATA -->
+      <section id="fe-data">
+        <div class="eyebrow">Front-end</div>
+        <h2>Data &amp; state</h2>
+        <p class="lede">Use TanStack Query as the single source of truth for server data — it handles caching, loading states, and refetching so you don't hand-roll any of it. Local UI state (which filter is open, dark mode) stays in React state as it is now.</p>
+        <pre><span class="c">// lib/queries.ts — reads and writes in one place</span>
+<span class="k">export</span> <span class="k">const</span> useDrills = (filters) =&gt;
+  useQuery({
+    queryKey: [<span class="s">'drills'</span>, filters],
+    queryFn: () =&gt; supabase
+      .from(<span class="s">'drills'</span>)
+      .select(<span class="s">'*, media:media_id(*)'</span>)   <span class="c">// joins the clip</span>
+      .match(filters)
+  });
+
+<span class="k">export</span> <span class="k">const</span> useSaveSession = () =&gt; {
+  <span class="k">const</span> qc = useQueryClient();
+  <span class="k">return</span> useMutation({
+    mutationFn: (s) =&gt; supabase.from(<span class="s">'sessions'</span>).upsert(s),
+    onSuccess: () =&gt; qc.invalidateQueries([<span class="s">'sessions'</span>])
+  });
+};</pre>
+        <div class="grid3" style="margin-top:8px;">
+          <div class="card"><b>Server data</b><p class="muted" style="font-size:13.5px;margin:6px 0 0;">Drills, sessions, media, templates → TanStack Query. Cached, auto-refetched.</p></div>
+          <div class="card"><b>Session / user</b><p class="muted" style="font-size:13.5px;margin:6px 0 0;">A small <code>useAuth()</code> context exposing the user + role app-wide.</p></div>
+          <div class="card"><b>UI state</b><p class="muted" style="font-size:13.5px;margin:6px 0 0;">Filters, modals, dark mode → plain <code>useState</code>, same as today.</p></div>
+        </div>
+      </section>
+
+      <hr class="hr" style="margin-top:54px;" />
+
+      <!-- API -->
+      <section id="api">
+        <div class="eyebrow">Backend</div>
+        <h2>API design</h2>
+        <p class="lede">With Supabase the REST API is generated from your tables, so this is really a list of operations rather than hand-written endpoints. If you build a custom server instead, these map directly to routes.</p>
+        <div class="grid2" style="margin-top:22px;">
+          <div class="card">
+            <h3 class="sub" style="margin-top:0;">Drills &amp; content</h3>
+            <ul class="clean">
+              <li><span class="mono" style="color:var(--phys);font-weight:700;">GET</span> &nbsp;<code>/drills</code> — list + filter by corner, age, skill</li>
+              <li><span class="mono" style="color:var(--phys);font-weight:700;">GET</span> &nbsp;<code>/drills/:id</code> — one drill + its media</li>
+              <li><span class="mono" style="color:var(--soc);font-weight:700;">POST</span> <code>/drills</code> — coach adds a drill</li>
+              <li><span class="mono" style="color:var(--royal);font-weight:700;">PATCH</span> <code>/drills/:id</code> — edit</li>
+              <li><span class="mono" style="color:var(--phys);font-weight:700;">GET</span> &nbsp;<code>/templates</code> — shared session templates</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3 class="sub" style="margin-top:0;">Sessions &amp; media</h3>
+            <ul class="clean">
+              <li><span class="mono" style="color:var(--phys);font-weight:700;">GET</span> &nbsp;<code>/sessions?coach=me</code> — my plan</li>
+              <li><span class="mono" style="color:var(--soc);font-weight:700;">POST</span> <code>/sessions</code> — save from planner</li>
+              <li><span class="mono" style="color:var(--soc);font-weight:700;">POST</span> <code>/media</code> — register an uploaded file</li>
+              <li><span class="mono" style="color:var(--phys);font-weight:700;">GET</span> &nbsp;<code>/media</code> — library, with usage counts</li>
+              <li><span class="mono" style="color:var(--royal);font-weight:700;">POST</span> <code>/storage</code> — get a signed upload URL</li>
+            </ul>
+          </div>
+        </div>
+        <p class="muted" style="font-size:13.5px;">Filtering, ordering and pagination are query params on the same endpoints — exactly the filters the Library screen already exposes (corner, age band, skill, level).</p>
+      </section>
+
+      <!-- SCHEMA -->
+      <section id="schema">
+        <div class="eyebrow">Backend</div>
+        <h2>Database schema</h2>
+        <p class="lede">Six core tables. This is your <code>data.js</code> shapes turned into real, related records — almost every field already exists in the mock data.</p>
+
+        <div class="stack" style="margin-top:24px;">
+
+          <div class="schema">
+            <div class="head">clubs <span class="pk">PK id</span></div>
+            <table>
+              <tr><td class="col">id</td><td class="typ">uuid</td><td class="note">The club tenant — supports multiple clubs later</td></tr>
+              <tr><td class="col">name</td><td class="typ">text</td><td class="note">"Ossett Town Juniors"</td></tr>
+              <tr><td class="col">crest_url, motto</td><td class="typ">text</td><td class="note">Branding shown in the sidebar</td></tr>
+            </table>
+          </div>
+
+          <div class="schema">
+            <div class="head">profiles <span class="pk">PK id → auth.users</span></div>
+            <table>
+              <tr><td class="col">id</td><td class="typ">uuid</td><td class="note">Same id as the Supabase auth user</td></tr>
+              <tr><td class="col">club_id</td><td class="typ">uuid</td><td class="note"><span class="fk">→ clubs.id</span></td></tr>
+              <tr><td class="col">full_name, avatar</td><td class="typ">text</td><td class="note">"Sarah Thompson" → the coach chip</td></tr>
+              <tr><td class="col">role</td><td class="typ">enum</td><td class="note"><code>coach</code> · <code>admin</code> · <code>parent</code> — drives permissions</td></tr>
+              <tr><td class="col">age_groups</td><td class="typ">text[]</td><td class="note">Teams this coach runs, e.g. {U8}</td></tr>
+            </table>
+          </div>
+
+          <div class="schema">
+            <div class="head">drills <span class="pk">PK id</span></div>
+            <table>
+              <tr><td class="col">id, title, summary</td><td class="typ">text</td><td class="note">Core drill identity</td></tr>
+              <tr><td class="col">corner</td><td class="typ">enum</td><td class="note">technical · physical · social · psychological</td></tr>
+              <tr><td class="col">skill, level</td><td class="typ">enum</td><td class="note">Dribbling… / Foundation·Developing·Advanced</td></tr>
+              <tr><td class="col">ages</td><td class="typ">text[]</td><td class="note">{U6,U7,U8}</td></tr>
+              <tr><td class="col">duration, players, area</td><td class="typ">text/int</td><td class="note">Setup metadata</td></tr>
+              <tr><td class="col">equipment, points, tags</td><td class="typ">text[]</td><td class="note">Coaching points &amp; kit list</td></tr>
+              <tr><td class="col">media_id</td><td class="typ">uuid</td><td class="note"><span class="fk">→ media.id</span> — the demo clip</td></tr>
+              <tr><td class="col">club_id, created_by</td><td class="typ">uuid</td><td class="note">Ownership for permissions</td></tr>
+            </table>
+          </div>
+
+          <div class="grid2">
+            <div class="schema">
+              <div class="head">media <span class="pk">PK id</span></div>
+              <table>
+                <tr><td class="col">name, type, kind</td><td class="typ">text</td><td class="note">video·youtube·image·pdf</td></tr>
+                <tr><td class="col">storage_path</td><td class="typ">text</td><td class="note">Key in Supabase Storage</td></tr>
+                <tr><td class="col">yt_url</td><td class="typ">text</td><td class="note">For YouTube links</td></tr>
+                <tr><td class="col">size, dims, length</td><td class="typ">text</td><td class="note">Display metadata</td></tr>
+                <tr><td class="col">club_id</td><td class="typ">uuid</td><td class="note"><span class="fk">→ clubs.id</span></td></tr>
+              </table>
+            </div>
+            <div class="schema">
+              <div class="head">templates <span class="pk">PK id</span></div>
+              <table>
+                <tr><td class="col">id, name, focus</td><td class="typ">text</td><td class="note">"Standard Training Night"</td></tr>
+                <tr><td class="col">activities</td><td class="typ">jsonb</td><td class="note">[{phase, drill_id, duration}]</td></tr>
+                <tr><td class="col">club_id, author</td><td class="typ">uuid</td><td class="note">Shared across the club</td></tr>
+              </table>
+            </div>
+          </div>
+
+          <div class="schema">
+            <div class="head">sessions <span class="pk">PK id</span></div>
+            <table>
+              <tr><td class="col">id, name, focus</td><td class="typ">text</td><td class="note">"Tuesday Training" / "Dribbling &amp; 1v1"</td></tr>
+              <tr><td class="col">date, time, venue</td><td class="typ">timestamptz/text</td><td class="note">When &amp; where</td></tr>
+              <tr><td class="col">age_group, status</td><td class="typ">text/enum</td><td class="note">upcoming · completed</td></tr>
+              <tr><td class="col">activities</td><td class="typ">jsonb</td><td class="note">The plan — [{phase, drill_id, duration}]</td></tr>
+              <tr><td class="col">coach_id</td><td class="typ">uuid</td><td class="note"><span class="fk">→ profiles.id</span> — whose session this is</td></tr>
+            </table>
+          </div>
+
+        </div>
+        <div class="note-navy">
+          <b>jsonb for activities?</b> A session's activity list is always read and written as a whole (the planner edits the entire ordered list at once), so storing it as a JSON column is simpler than a join table — while <code>drill_id</code> inside it still references real drills. If you later need to report "which drills get used most," promote it to a <code>session_activities</code> table.
+        </div>
+      </section>
+
+      <!-- MEDIA -->
+      <section id="media">
+        <div class="eyebrow">Backend</div>
+        <h2>Media storage</h2>
+        <p class="lede">The Media Library's "Upload media" button needs real file storage. Video, images and PDFs go to Supabase Storage; the database just keeps a pointer and metadata.</p>
+        <div class="steps">
+          <div class="step"><div class="n"></div><div><b>Coach picks a file</b><p>Front-end asks the backend for a short-lived signed upload URL — the file never passes through your own server.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Browser uploads straight to Storage</b><p>With a progress bar. Large match clips don't choke an API server because there isn't one in the path.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Register a <code>media</code> row</b><p>Save name, type, size, dimensions and the storage path. This is the record the Library and drill pages read.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Serve via signed URLs</b><p>Playback/preview uses time-limited signed links, so only logged-in club members can view files.</p></div></div>
+        </div>
+        <p class="muted" style="font-size:13.5px;">YouTube items store just the URL — no upload, no storage cost. Diagrams and PDFs follow the same path as video.</p>
+      </section>
+
+      <!-- LIVE -->
+      <section id="live">
+        <div class="eyebrow">Backend</div>
+        <h2>Live session — the realtime bit</h2>
+        <p class="lede">The full-screen run-session mode works solo today. The valuable upgrade: a coach running the session on the touchline and an assistant following along on another phone, in sync.</p>
+        <div class="grid2" style="margin-top:22px;">
+          <div class="card">
+            <h3 class="sub" style="margin-top:0;">v1 — solo (no backend needed)</h3>
+            <p class="muted" style="font-size:14px;">Timer and current-activity state live in the browser. Persist progress to <code>localStorage</code> so a refresh mid-session doesn't lose the place — the prototype pattern, kept.</p>
+          </div>
+          <div class="card">
+            <h3 class="sub" style="margin-top:0;">v2 — shared (Supabase Realtime)</h3>
+            <p class="muted" style="font-size:14px;">The session broadcasts "now on activity 3, 4:12 remaining" over a Realtime channel. Other devices subscribe and mirror it. Same WebSocket tech already in the stack — no extra service.</p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="hr" style="margin-top:54px;" />
+
+      <!-- AUTH -->
+      <section id="auth">
+        <div class="eyebrow">Accounts</div>
+        <h2>Login &amp; authentication</h2>
+        <p class="lede">A new <code>Login</code> screen becomes the front door. Supabase Auth handles the hard, security-sensitive parts; you build the screen and the guard.</p>
+        <h3 class="sub">The login flow</h3>
+        <div class="steps">
+          <div class="step"><div class="n"></div><div><b>Coach enters email + password</b><p>Or requests a magic link — a one-tap sign-in email, ideal for less technical volunteers. Both are built into Supabase Auth.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Backend verifies &amp; returns a JWT</b><p>A signed token proving who they are, stored by the client library. You never see or store the raw password.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>App loads their profile + role</b><p><code>useAuth()</code> reads the <code>profiles</code> row → name, club and role. The sidebar coach-chip and visible nav are driven by this.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Every request carries the token</b><p>The data layer attaches it automatically. Postgres Row-Level Security checks it on every read and write.</p></div></div>
+          <div class="step"><div class="n"></div><div><b>Session persists &amp; refreshes</b><p>Reopen the app → still logged in. Tokens auto-refresh. "Log out" clears it. Password reset is a built-in email flow.</p></div></div>
+        </div>
+        <pre><span class="c">// routes/Login.tsx — the entire auth call</span>
+<span class="k">const</span> { error } = <span class="k">await</span> supabase.auth
+  .signInWithPassword({ email, password });
+
+<span class="c">// App.tsx — the guard</span>
+<span class="k">const</span> { user, loading } = useAuth();
+<span class="k">if</span> (loading) <span class="k">return</span> &lt;Splash/&gt;;
+<span class="k">if</span> (!user)   <span class="k">return</span> &lt;Login/&gt;;
+<span class="k">return</span> &lt;AppShell/&gt;;   <span class="c">// the hub you already built</span></pre>
+        <div class="callout">
+          <b>Sign-up is invite-only.</b> A club app shouldn't let strangers self-register. The admin invites a coach by email; they set a password via the link. This keeps the drill library and member data inside the club.
+        </div>
+      </section>
+
+      <!-- ROLES -->
+      <section id="roles">
+        <div class="eyebrow">Accounts</div>
+        <h2>Roles &amp; permissions</h2>
+        <p class="lede">Three roles cover the club. The <code>role</code> on each profile drives both what the UI shows and — crucially — what the database lets them do, enforced by Row-Level Security so the rules can't be bypassed from the front-end.</p>
+        <div class="stack" style="margin-top:22px;">
+          <div class="role coach">
+            <h4>Coach <span class="pill">coach</span></h4>
+            <p class="muted" style="margin:4px 0 0;font-size:13.5px;">The everyday user — e.g. Sarah Thompson, U8s.</p>
+            <ul>
+              <li>Browse the full club drill library &amp; templates</li>
+              <li>Create, edit and run <b>their own</b> sessions</li>
+              <li>Add drills &amp; upload media to the shared library</li>
+              <li>Cannot edit another coach's sessions or manage accounts</li>
+            </ul>
+          </div>
+          <div class="role admin">
+            <h4>Admin / Dev Manager <span class="pill">admin</span></h4>
+            <p class="muted" style="margin:4px 0 0;font-size:13.5px;">Runs the club's coaching programme.</p>
+            <ul>
+              <li>Everything a coach can do, across <b>all</b> age groups</li>
+              <li>Invite &amp; remove coaches, set roles</li>
+              <li>Curate official templates and the drill library</li>
+              <li>Manage club branding &amp; settings</li>
+            </ul>
+          </div>
+          <div class="role parent">
+            <h4>Parent / Player <span class="pill">parent</span> <span class="muted" style="font-size:12px;font-weight:600;">— optional, later</span></h4>
+            <p class="muted" style="margin:4px 0 0;font-size:13.5px;">Read-only window into their child's team.</p>
+            <ul>
+              <li>See upcoming sessions: when, where, the focus</li>
+              <li>View "what we're working on" drills with video</li>
+              <li>No planning, no editing, no library management</li>
+            </ul>
+          </div>
+        </div>
+        <pre><span class="c">-- Row-Level Security: a coach only writes their own sessions</span>
+<span class="k">CREATE POLICY</span> <span class="s">"own sessions"</span> <span class="k">ON</span> sessions
+  <span class="k">FOR</span> ALL <span class="k">USING</span> ( coach_id = auth.uid() );
+
+<span class="c">-- everyone in the club can read the shared drill library</span>
+<span class="k">CREATE POLICY</span> <span class="s">"club drills"</span> <span class="k">ON</span> drills
+  <span class="k">FOR</span> SELECT <span class="k">USING</span> ( club_id = my_club() );</pre>
+      </section>
+
+      <hr class="hr" style="margin-top:54px;" />
+
+      <!-- DEPLOY -->
+      <section id="deploy">
+        <div class="eyebrow">Ship it</div>
+        <h2>Hosting &amp; running cost</h2>
+        <div class="grid2" style="margin-top:22px;">
+          <div class="card">
+            <h3 class="sub" style="margin-top:0;">How it's deployed</h3>
+            <ul class="clean">
+              <li><b>Front-end</b> → Vercel/Netlify, auto-deploys on git push, free HTTPS</li>
+              <li><b>Backend</b> → Supabase project, fully managed</li>
+              <li><b>Domain</b> → e.g. <span class="mono">hub.ossetttownjnr.com</span></li>
+              <li><b>Backups</b> → automatic daily Postgres backups</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3 class="sub" style="margin-top:0;">Realistic monthly cost</h3>
+            <ul class="clean">
+              <li><b>Free</b> to start — both tiers cover a small club comfortably</li>
+              <li><b>~£20–25/mo</b> once media storage grows (Supabase Pro)</li>
+              <li>No server to maintain, patch or pay for separately</li>
+              <li>Scales to many teams before cost becomes a factor</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ROADMAP -->
+      <section id="roadmap">
+        <div class="eyebrow">Ship it</div>
+        <h2>Build roadmap</h2>
+        <p class="lede">Ship something real fast, then layer on the collaborative features. Each phase is independently useful.</p>
+        <div style="margin-top:14px;">
+          <div class="phase">
+            <div class="when">Phase 1<span>~1 week</span></div>
+            <div><b>Real project + login</b><p>Vite migration, Supabase set up, the six tables, login screen + auth guard. The app runs on real (seeded) data behind a password.</p></div>
+          </div>
+          <div class="phase">
+            <div class="when">Phase 2<span>~1 week</span></div>
+            <div><b>Persisted planning</b><p>Drills, sessions and templates read/write to the database. The planner saves for real. Row-Level Security locks each coach to their own sessions.</p></div>
+          </div>
+          <div class="phase">
+            <div class="when">Phase 3<span>~3–4 days</span></div>
+            <div><b>Media uploads</b><p>Signed-URL uploads to Storage, the Media Library backed by real files, drills linked to real clips.</p></div>
+          </div>
+          <div class="phase">
+            <div class="when">Phase 4<span>~3–4 days</span></div>
+            <div><b>Admin &amp; invites</b><p>Invite-only sign-up, the admin role, coach management, official template curation.</p></div>
+          </div>
+          <div class="phase">
+            <div class="when">Phase 5<span>later</span></div>
+            <div><b>Realtime &amp; parents</b><p>Shared live-session sync, the read-only parent role, push reminders for upcoming sessions.</p></div>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:32px;">
+          <b>Bottom line:</b> the expensive, design-heavy work — the entire product UI — is done. What's left is well-trodden plumbing: a managed backend, a thin data layer, and a login screen. A capable developer gets to a logged-in, persistent v1 in roughly two weeks.
+        </div>
+      </section>
+
+      <footer>
+        Ossett Town Juniors — Training Hub · Technical Build Spec v1 · Prepared June 2026 · "Where football and friendships flourish"
+      </footer>
+
+    </div>
+  </main>
+</div>
+</body>
+</html>
