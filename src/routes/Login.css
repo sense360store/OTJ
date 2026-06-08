@@ -1,0 +1,104 @@
+/* Login screen. Uses the shared design tokens from styles.css. */
+.login-bg {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(120deg, var(--navy-900), var(--navy) 60%, #1b3aa8);
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 32px 30px;
+}
+.login-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.login-head .crest,
+.login-head .crest-fallback {
+  width: 56px;
+  height: 56px;
+  flex-basis: 56px;
+  border-radius: 14px;
+}
+.login-head .crest-fallback {
+  font-size: 18px;
+}
+.login-head h1 {
+  font-size: 22px;
+  font-weight: 800;
+}
+.login-head p {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--slate);
+}
+.login-error {
+  background: color-mix(in srgb, var(--m-pdf) 12%, transparent);
+  color: var(--m-pdf);
+  border: 1px solid color-mix(in srgb, var(--m-pdf) 30%, transparent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.login-note {
+  background: color-mix(in srgb, var(--c-physical) 12%, transparent);
+  color: var(--c-physical);
+  border: 1px solid color-mix(in srgb, var(--c-physical) 30%, transparent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--slate-2);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 16px 0;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.login-foot {
+  text-align: center;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--slate);
+}
+.login-link {
+  color: var(--royal);
+  font-weight: 700;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+.login-link:hover {
+  text-decoration: underline;
+}
+.login-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
