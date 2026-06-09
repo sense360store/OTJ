@@ -1,16 +1,14 @@
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
-import { templates, drillById } from '../lib/data'
+import { useTemplates, useDrillMap } from '../lib/queries'
 import type { Activity, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Modal, PHASE_COLOR } from '../components/ui'
+import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
 
 type Nav = ReturnType<typeof useNav>
 type Upsert = (s: Session) => void
-
-let T_SEQ = 200
 
 function TemplateCard({
   t,
@@ -26,7 +24,7 @@ function TemplateCard({
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
   const use = () => {
     const s: Session = {
-      id: 's' + T_SEQ++,
+      id: crypto.randomUUID(),
       name: t.name,
       date: '2026-06-16',
       time: '17:30',
@@ -82,6 +80,7 @@ function TemplateCard({
 function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => void }) {
   const [acts, setActs] = useState<Activity[]>(() => JSON.parse(JSON.stringify(tpl.activities)) as Activity[])
   const [adding, setAdding] = useState(false)
+  const drillById = useDrillMap()
   const mins = acts.reduce((a, x) => a + (x.duration || 0), 0)
   return (
     <Modal
@@ -152,6 +151,9 @@ export function Templates() {
   const { upsertSession } = useSessions()
   const [q, setQ] = useState('')
   const [manage, setManage] = useState<Template | null>(null)
+  const { data: templates = [], isLoading, isError } = useTemplates()
+  if (isLoading) return <Loading />
+  if (isError) return <ErrorNote />
   const list = templates.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
   return (
     <div>

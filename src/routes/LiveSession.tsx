@@ -4,8 +4,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
-import { useSessions } from '../context/SessionsContext'
-import { drillById, mediaById, sessionMinutes } from '../lib/data'
+import { useSession, useDrillMap, useMediaMap } from '../lib/queries'
+import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { fmtClock, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
@@ -36,6 +36,7 @@ function LiveComplete({
   onExit: () => void
   onRestart: () => void
 }) {
+  const drillById = useDrillMap()
   const noteList = Object.entries(notes).filter(([, v]) => v && v.trim())
   return (
     <div className="live theme-dark">
@@ -97,16 +98,11 @@ function LiveComplete({
   )
 }
 
-export function LiveSession() {
-  const { sessionId } = useParams()
-  const nav = useNav()
-  const { sessions } = useSessions()
-  const onExit = () => nav('sessions')
-
-  const session = sessions.find((s) => s.id === sessionId) ?? sessions[0]
-  const acts = session ? session.activities : []
+function LiveRunner({ session, onExit }: { session: Session; onExit: () => void }) {
+  const drillById = useDrillMap()
+  const mediaById = useMediaMap()
+  const acts = session.activities
   const load = (): LiveSaved | null => {
-    if (!session) return null
     try {
       return JSON.parse(localStorage.getItem(lsKey(session.id)) ?? 'null') as LiveSaved | null
     } catch {
@@ -138,11 +134,8 @@ export function LiveSession() {
   }, [running])
 
   useEffect(() => {
-    if (!session) return
     localStorage.setItem(lsKey(session.id), JSON.stringify({ idx, remaining, elapsed, done, notes, complete }))
   }, [session, idx, remaining, elapsed, done, notes, complete])
-
-  if (!session) return null
 
   const act = acts[idx]
   const drill = act?.drillId ? drillById[act.drillId] : null
@@ -393,4 +386,45 @@ export function LiveSession() {
       )}
     </div>
   )
+}
+
+// Quiet dark states for the full-screen live view, matching its theme.
+function LiveLoading() {
+  return (
+    <div className="live theme-dark">
+      <div className="live-body" style={{ justifyContent: 'center' }}>
+        <div className="muted" style={{ fontWeight: 600 }}>
+          Loading…
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LiveMessage({ title, sub, onExit }: { title: string; sub?: string; onExit: () => void }) {
+  return (
+    <div className="live theme-dark">
+      <div className="live-top">
+        <button className="icon-btn" onClick={onExit} title="Exit">
+          <Icon.x />
+        </button>
+        <div style={{ flex: 1 }}>
+          <div className="ltitle">{title}</div>
+          {sub && <div className="lsub">{sub}</div>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function LiveSession() {
+  const { sessionId } = useParams()
+  const nav = useNav()
+  const { data: session, isLoading, isError } = useSession(sessionId)
+  const onExit = () => nav('sessions')
+
+  if (isLoading) return <LiveLoading />
+  if (isError) return <LiveMessage title="Couldn't load this session" sub="Go back and try again." onExit={onExit} />
+  if (!session) return <LiveMessage title="Session not found" sub="It may have been removed." onExit={onExit} />
+  return <LiveRunner key={session.id} session={session} onExit={onExit} />
 }

@@ -1,18 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { DragEventHandler } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
-import { drillById, mediaById, PHASES } from '../lib/data'
+import { useDrillMap, useMediaMap, useSession } from '../lib/queries'
+import { PHASES } from '../lib/data'
 import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Empty, MediaThumb, PHASE_COLOR } from '../components/ui'
+import { Empty, ErrorNote, Loading, MediaThumb, PHASE_COLOR } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
 
-let DRAFT_SEQ = 100
 function blankSession(): Session {
   return {
-    id: 's' + DRAFT_SEQ++,
+    id: crypto.randomUUID(),
     name: 'New Session',
     date: '2026-06-16',
     time: '17:30',
@@ -48,6 +48,8 @@ function ActivityRow({
   dragHandlers: DragHandlers
   dragging: boolean
 }) {
+  const drillById = useDrillMap()
+  const mediaById = useMediaMap()
   const drill = act.drillId ? drillById[act.drillId] : null
   const media = drill && drill.mediaId ? mediaById[drill.mediaId] : null
   return (
@@ -118,12 +120,9 @@ function ActivityRow({
   )
 }
 
-export function Planner() {
+function PlannerEditor({ existing }: { existing: Session | null }) {
   const nav = useNav()
-  const { sessions, upsertSession } = useSessions()
-  const [searchParams] = useSearchParams()
-  const editId = searchParams.get('sessionId')
-  const existing = editId ? sessions.find((s) => s.id === editId) : null
+  const { upsertSession } = useSessions()
 
   const [session, setSession] = useState<Session>(() =>
     existing ? (JSON.parse(JSON.stringify(existing)) as Session) : blankSession(),
@@ -131,13 +130,6 @@ export function Planner() {
   const [addOpen, setAddOpen] = useState(false)
   const dragFrom = useRef<number | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
-
-  // Resync the editable draft when the URL selects a different session.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (existing) setSession(JSON.parse(JSON.stringify(existing)) as Session)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editId])
 
   const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
   const setField = (k: 'name' | 'date' | 'time' | 'ageGroup' | 'venue' | 'focus', v: string) =>
@@ -315,4 +307,16 @@ export function Planner() {
       )}
     </div>
   )
+}
+
+export function Planner() {
+  const [searchParams] = useSearchParams()
+  const editId = searchParams.get('sessionId')
+  // Editing reads the one session by id; a new session has none to read and so
+  // renders straight away. The key remounts the editor with fresh state
+  // whenever the URL selects a different session.
+  const { data: existing, isLoading, isError } = useSession(editId ?? undefined)
+  if (editId && isLoading) return <Loading />
+  if (editId && isError) return <ErrorNote />
+  return <PlannerEditor key={editId ?? 'new'} existing={existing ?? null} />
 }

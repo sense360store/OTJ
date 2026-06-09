@@ -1,33 +1,33 @@
-// Phase 1 sessions state. Seeded from the ported data module and mutated in
-// memory by the planner, exactly as the prototype's App did with useState plus
-// upsertSession. Phase 2 replaces this with a TanStack Query cache and a
-// Supabase upsert mutation scoped to the coach.
-import { createContext, useContext, useState } from 'react'
+// Sessions seam. The { sessions, upsertSession } shape is kept stable so the
+// planner and the sessions screens do not change their call sites, but the data
+// now comes from the Supabase-backed query and the write goes through the real
+// mutation. loading and error are exposed for the screens that read sessions.
+import { createContext, useContext } from 'react'
 import type { ReactNode } from 'react'
-import { sessions as seedSessions } from '../lib/data'
 import type { Session } from '../lib/data'
+import { useSessions as useSessionsQuery, useUpsertSession } from '../lib/queries'
 
 interface SessionsState {
   sessions: Session[]
   upsertSession: (s: Session) => void
+  loading: boolean
+  error: boolean
 }
 
 const SessionsContext = createContext<SessionsState | undefined>(undefined)
 
 export function SessionsProvider({ children }: { children: ReactNode }) {
-  const [sessions, setSessions] = useState<Session[]>(seedSessions)
-
+  const { data, isLoading, isError } = useSessionsQuery()
+  const mutation = useUpsertSession()
   const upsertSession = (s: Session) => {
-    setSessions((prev) => {
-      const i = prev.findIndex((x) => x.id === s.id)
-      if (i === -1) return [...prev, s]
-      const copy = [...prev]
-      copy[i] = s
-      return copy
-    })
+    mutation.mutate(s)
   }
 
-  return <SessionsContext.Provider value={{ sessions, upsertSession }}>{children}</SessionsContext.Provider>
+  return (
+    <SessionsContext.Provider value={{ sessions: data ?? [], upsertSession, loading: isLoading, error: isError }}>
+      {children}
+    </SessionsContext.Provider>
+  )
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
