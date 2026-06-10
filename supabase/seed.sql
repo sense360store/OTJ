@@ -28,6 +28,12 @@ values (
 )
 on conflict (id) do nothing;
 
+-- System roles, grants and filter taxonomies for the seeded club (0009).
+-- The migration's per club backfill ran before this file inserted the club,
+-- so seed them here, before the demo user, so the sign-up trigger can map
+-- the user's role_id from the role metadata.
+select public.seed_club_rbac('11111111-1111-1111-1111-111111111111');
+
 -- Demo auth user ------------------------------------------------------
 -- The handle_new_user trigger creates a profile row from this metadata; the
 -- explicit upsert below then sets the avatar and age groups.
@@ -78,6 +84,15 @@ on conflict (id) do update set
   avatar = excluded.avatar,
   role = excluded.role,
   age_groups = excluded.age_groups;
+
+-- The trigger mapped role_id from the role metadata; set it explicitly too
+-- so a re-run against an older database lands in the same state.
+update public.profiles
+set role_id = (
+  select id from public.roles
+  where club_id = '11111111-1111-1111-1111-111111111111' and name = 'Admin'
+)
+where id = '22222222-2222-2222-2222-222222222222';
 
 -- Media (10) ----------------------------------------------------------
 insert into public.media (id, club_id, name, type, kind, yt_url, size, dims, length, pages, created_by) values
