@@ -49,6 +49,18 @@ function RequireAdmin() {
   return <Outlet />
 }
 
+// The planner is a write surface, so the read-only parent role is redirected
+// to the sessions list, direct URLs included. The sessions insert RLS refuses
+// a parent's write anyway; this keeps the surface honest. Waits for the
+// profile so a coach hitting the URL directly is not bounced before their
+// role is known.
+function RequirePlanner() {
+  const { role, profileLoading } = useAuth()
+  if (profileLoading) return <Splash />
+  if (role === 'parent') return <Navigate to="/sessions" replace />
+  return <Outlet />
+}
+
 // Keep signed-in users out of the login screen.
 function LoginGate() {
   const { user, loading } = useAuth()
@@ -87,7 +99,9 @@ export function App() {
           {/* Session day stays inside the shell so the bottom nav remains
               reachable pitch-side; the full-screen viewer overlays it. */}
           <Route path="session-day/:sessionId" element={<SessionDay />} />
-          <Route path="planner" element={<Planner />} />
+          <Route element={<RequirePlanner />}>
+            <Route path="planner" element={<Planner />} />
+          </Route>
           <Route path="templates" element={<Templates />} />
           <Route path="media" element={<Media />} />
           <Route element={<RequireAdmin />}>

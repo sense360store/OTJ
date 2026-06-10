@@ -56,8 +56,8 @@ Deno.serve(async (req) => {
     return reply(403, { error: 'Only a club admin can send invites.' })
   }
 
-  // Validate the payload: email, full name, role limited to coach or admin,
-  // and an optional team that must belong to the caller's club.
+  // Validate the payload: email, full name, role limited to coach, admin or
+  // parent, and an optional team that must belong to the caller's club.
   let payload: Record<string, unknown>
   try {
     payload = await req.json()
@@ -70,7 +70,9 @@ Deno.serve(async (req) => {
   const teamId = payload.team_id == null || payload.team_id === '' ? null : payload.team_id
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return reply(400, { error: 'Enter a valid email address.' })
   if (!fullName) return reply(400, { error: 'Enter a full name.' })
-  if (role !== 'coach' && role !== 'admin') return reply(400, { error: 'Role must be coach or admin.' })
+  if (role !== 'coach' && role !== 'admin' && role !== 'parent') {
+    return reply(400, { error: 'Role must be coach, admin or parent.' })
+  }
   if (teamId !== null) {
     if (typeof teamId !== 'string') return reply(400, { error: 'Invalid team.' })
     const { data: team } = await admin.from('teams').select('id, club_id').eq('id', teamId).maybeSingle()
