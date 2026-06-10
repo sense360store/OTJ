@@ -265,6 +265,27 @@ function allowedUrl(raw: string, host: string): URL | null {
   }
 }
 
+// Distinct same-host links to session pages other than the page itself. A
+// programme overview links each of its weekly sessions; a real session page
+// links at most a couple of related ones. Counted only, never followed.
+function countSessionLinks(html: string, self: URL): number {
+  const selfPath = self.pathname.replace(/\/+$/, '').toLowerCase()
+  const paths = new Set<string>()
+  for (const m of html.matchAll(/<a[^>]+href\s*=\s*"([^"]+)"/gi)) {
+    let target: URL
+    try {
+      target = new URL(decodeEntities(m[1]), self)
+    } catch {
+      continue
+    }
+    if (target.hostname.toLowerCase() !== PAGE_HOST) continue
+    const path = target.pathname.replace(/\/+$/, '').toLowerCase()
+    if (!/\/sessions\/.+/.test(path) || path === selfPath) continue
+    paths.add(path)
+  }
+  return paths.size
+}
+
 async function fetchAsset(url: URL): Promise<{ bytes: Uint8Array; contentType: string } | null> {
   const res = await fetch(url, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -365,6 +386,19 @@ Deno.serve(async (req) => {
   const page = parsePage(html)
   if (!page.title) {
     return reply(422, { error: 'That page does not look like an England Football session page.' })
+  }
+
+  // A programme overview lists a programme's weekly sessions rather than
+  // being one; importing it would manufacture a junk template of anonymous
+  // drills. Detect it by its title, or by the absence of both a setup strip
+  // and an activity gallery on a page that links several session pages, and
+  // refuse before anything is written.
+  const lacksSetup = !page.space && !page.players && page.equipment.length === 0
+  const lacksGallery = page.activities.length === 0
+  if (/^session\s+programme/i.test(page.title) || (lacksSetup && lacksGallery && countSessionLinks(html, pageUrl) > 1)) {
+    return reply(422, {
+      error: 'That link is a programme overview. Import its weekly session pages individually; one-click programme import is coming.',
+    })
   }
 
   const warnings: string[] = []

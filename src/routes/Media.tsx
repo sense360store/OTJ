@@ -1,7 +1,18 @@
 import { useMemo, useRef, useState } from 'react'
-import { useMedia, useDrills, useSignedMediaUrl, useUploadMedia, useDeleteMedia, detectMediaType } from '../lib/queries'
-import type { MediaItem, MediaType } from '../lib/data'
-import { youtubeId } from '../lib/data'
+import {
+  useMedia,
+  useDrills,
+  useMediaSrc,
+  useUploadMedia,
+  useReplaceMedia,
+  useDeleteMedia,
+  useRemoveSampleMedia,
+  mediaTypeForFile,
+  oversizeMessage,
+} from '../lib/queries'
+import type { UploadInput } from '../lib/queries'
+import type { Drill, MediaItem, MediaType } from '../lib/data'
+import { isSampleMedia, youtubeId } from '../lib/data'
 import { useAuth } from '../hooks/useAuth'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, MediaAttribution, MediaThumb, MEDIA_META, Modal } from '../components/ui'
@@ -16,15 +27,23 @@ function MediaCard({
   onOpen,
   onPlay,
   onDelete,
+  onReplace,
 }: {
   m: MediaItem
   onOpen: () => void
   onPlay: (() => void) | null
   onDelete: (() => void) | null
+  onReplace: (() => void) | null
 }) {
   const used = m.usedIn ?? 0
+  // A sample has nothing to view or play: it is badged plainly, its View
+  // button goes, and Replace (owner or admin) attaches real content to it.
+  const sample = isSampleMedia(m)
   const thumb = (
-    <MediaThumb media={m} label={m.kind === 'pdf' ? 'session card' : m.kind === 'diagram' ? 'drill diagram' : 'pitch footage'} />
+    <MediaThumb
+      media={m}
+      label={sample ? 'sample' : m.kind === 'pdf' ? 'session card' : m.kind === 'diagram' ? 'drill diagram' : 'pitch footage'}
+    />
   )
   return (
     <div className="card" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -51,14 +70,32 @@ function MediaCard({
             {m.length ? ' · ' + m.length : ''}
           </div>
         </div>
-        <span className="pill" style={{ alignSelf: 'flex-start' }}>
-          {usedLabel(used)}
-        </span>
+        <div className="row wrap" style={{ gap: 6 }}>
+          {sample && (
+            <span className="pill" style={{ color: 'var(--slate-2)' }}>
+              Sample, no file attached
+            </span>
+          )}
+          <span className="pill">{usedLabel(used)}</span>
+        </div>
         <div className="row" style={{ gap: 8, marginTop: 'auto' }}>
-          <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={onOpen}>
-            <Icon.external />
-            View
-          </button>
+          {sample ? (
+            onReplace ? (
+              <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={onReplace}>
+                <Icon.upload />
+                Replace
+              </button>
+            ) : (
+              <span className="muted" style={{ flex: 1, alignSelf: 'center', fontSize: 12.5 }}>
+                Nothing to view
+              </span>
+            )
+          ) : (
+            <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={onOpen}>
+              <Icon.external />
+              View
+            </button>
+          )}
           {onDelete && (
             <button
               className="btn btn-ghost btn-sm icon-only"
@@ -80,7 +117,9 @@ function MediaCard({
 // thumb with a link out.
 function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void }) {
   const filePath = item.type === 'image' || item.type === 'pdf' ? item.storagePath : undefined
-  const { data: signedUrl, isLoading } = useSignedMediaUrl(filePath)
+  // A load error on an expired URL retries once on a fresh URL before the
+  // thumb fallback shows.
+  const { src: signedUrl, isLoading, onError, onLoad } = useMediaSrc(filePath)
   const openHref = item.type === 'youtube' ? item.yt ?? undefined : item.type === 'video' ? undefined : signedUrl ?? undefined
 
   return (
@@ -107,7 +146,13 @@ function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void })
           {item.type === 'video' || item.type === 'youtube' ? (
             <MediaPlayerSurface item={item} />
           ) : item.type === 'image' && signedUrl ? (
-            <img src={signedUrl} alt={item.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#0a0e1a' }} />
+            <img
+              src={signedUrl}
+              alt={item.name}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#0a0e1a' }}
+              onError={onError}
+              onLoad={onLoad}
+            />
           ) : item.storagePath && isLoading ? (
             <div className="thumb thumb-diagram" style={{ position: 'absolute', inset: 0 }}>
               <span className="thumb-label">loading…</span>
@@ -180,11 +225,71 @@ function DeleteModal({ item, onClose }: { item: MediaItem; onClose: () => void }
   )
 }
 
-function UploadModal({ onClose }: { onClose: () => void }) {
+// Admin one-click cleanup: deletes every sample row after a confirm that
+// names the drills about to lose their linked media.
+function RemoveSamplesModal({ samples, drills, onClose }: { samples: MediaItem[]; drills: Drill[]; onClose: () => void }) {
+  const removeSamples = useRemoveSampleMedia()
+  const sampleIds = new Set(samples.map((m) => m.id))
+  const affected = drills.filter((d) => d.mediaId && sampleIds.has(d.mediaId))
+  const remove = () => removeSamples.mutate({ ids: samples.map((m) => m.id) }, { onSuccess: onClose })
+  return (
+    <Modal
+      title="Remove all samples"
+      sub={`${samples.length} sample item${samples.length !== 1 ? 's' : ''}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={removeSamples.isPending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{ background: 'var(--m-pdf)' }}
+            onClick={remove}
+            disabled={removeSamples.isPending}
+          >
+            <Icon.trash />
+            {removeSamples.isPending ? 'Removing…' : 'Remove samples'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        This deletes every sample from the library. Samples have no stored files, so storage is untouched.{' '}
+        {affected.length === 0
+          ? 'No drills link a sample.'
+          : affected.length === 1
+            ? 'This drill loses its linked sample and falls back to no media:'
+            : `These ${affected.length} drills lose their linked samples and fall back to no media:`}
+      </p>
+      {affected.length > 0 && (
+        <ul style={{ margin: '10px 0 0 18px', fontSize: 14, lineHeight: 1.6 }}>
+          {affected.map((d) => (
+            <li key={d.id}>{d.title}</li>
+          ))}
+        </ul>
+      )}
+      {removeSamples.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 10 }}>
+          {removeSamples.error.message}
+        </p>
+      )}
+    </Modal>
+  )
+}
+
+// One modal for two flows: a plain upload creates a new row; with a replace
+// target it points that existing row (a sample) at the new file or link, so
+// drills that reference it keep working. Failures never close the modal: the
+// underlying error text shows beneath the form, which stays intact. Exported
+// for the Home quick actions, which open the same upload flow.
+export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose: () => void }) {
   const upload = useUploadMedia()
+  const replaceMedia = useReplaceMedia()
+  const isPending = replace ? replaceMedia.isPending : upload.isPending
   const [tab, setTab] = useState<'file' | 'youtube'>('file')
   const [file, setFile] = useState<File | null>(null)
-  const [name, setName] = useState('')
+  const [name, setName] = useState(replace?.name ?? '')
   const [yt, setYt] = useState('')
   const [drag, setDrag] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -193,9 +298,17 @@ function UploadModal({ onClose }: { onClose: () => void }) {
   const pickFile = (f: File | null) => {
     setError(null)
     if (!f) return
-    if (!detectMediaType(f.type)) {
+    // Type and size checked at pick time so the failure is immediate; the
+    // mutation re-checks both before any bytes move.
+    if (!mediaTypeForFile(f)) {
       setFile(null)
       setError('Unsupported file type. Upload an image, video or PDF.')
+      return
+    }
+    const tooBig = oversizeMessage(f)
+    if (tooBig) {
+      setFile(null)
+      setError(tooBig)
       return
     }
     setFile(f)
@@ -206,31 +319,39 @@ function UploadModal({ onClose }: { onClose: () => void }) {
 
   const submit = () => {
     setError(null)
+    const callbacks = { onSuccess: onClose, onError: (e: Error) => setError(e.message) }
+    let input: UploadInput
     if (tab === 'file') {
       if (!file) return
-      upload.mutate({ mode: 'file', file, name: name.trim() }, { onSuccess: onClose, onError: (e) => setError(e.message) })
+      input = { mode: 'file', file, name: name.trim() }
     } else {
       if (!youtubeId(yt)) {
         setError('Enter a valid YouTube link.')
         return
       }
-      upload.mutate({ mode: 'youtube', ytUrl: yt.trim(), name: name.trim() }, { onSuccess: onClose, onError: (e) => setError(e.message) })
+      input = { mode: 'youtube', ytUrl: yt.trim(), name: name.trim() }
     }
+    if (replace) replaceMedia.mutate({ id: replace.id, previousPath: replace.storagePath, input }, callbacks)
+    else upload.mutate(input, callbacks)
   }
 
   return (
     <Modal
-      title="Upload media"
-      sub="Add a video, image or PDF, or link a YouTube video."
+      title={replace ? 'Replace sample' : 'Upload media'}
+      sub={
+        replace
+          ? `Attach a real file or YouTube link to "${replace.name}". Drills that use it keep working.`
+          : 'Add a video, image or PDF, or link a YouTube video.'
+      }
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={upload.isPending}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={isPending}>
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={submit} disabled={!canSubmit || upload.isPending}>
+          <button className="btn btn-primary" onClick={submit} disabled={!canSubmit || isPending}>
             <Icon.upload />
-            {upload.isPending ? 'Uploading…' : tab === 'file' ? 'Upload' : 'Add link'}
+            {isPending ? (tab === 'file' ? 'Uploading…' : 'Saving…') : replace ? 'Replace' : tab === 'file' ? 'Upload' : 'Add link'}
           </button>
         </>
       }
@@ -309,7 +430,9 @@ export function Media() {
   const [open, setOpen] = useState<MediaItem | null>(null)
   const [playing, setPlaying] = useState<MediaItem | null>(null)
   const [del, setDel] = useState<MediaItem | null>(null)
+  const [replacing, setReplacing] = useState<MediaItem | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [removeSamplesOpen, setRemoveSamplesOpen] = useState(false)
   const { data: mediaItems = [], isLoading, isError } = useMedia()
   const { data: drills = [] } = useDrills()
   // "Used in N drills" is derived, not stored: count drills referencing each item.
@@ -325,9 +448,12 @@ export function Media() {
   const list = media.filter((m) => (!type || m.type === type) && (!q || m.name.toLowerCase().includes(q.toLowerCase())))
   const counts: Record<MediaType, number> = { video: 0, youtube: 0, image: 0, pdf: 0 }
   media.forEach((m) => counts[m.type]++)
-  // Delete is owner or admin only, mirroring the media RLS. The database is the
-  // real enforcement; this only decides whether to surface the action.
-  const canDelete = (m: MediaItem) => role === 'admin' || (!!m.createdBy && m.createdBy === user?.id)
+  const samples = media.filter(isSampleMedia)
+  // Replace and delete are owner or admin only, mirroring the media RLS; the
+  // role condition matters for a coach demoted to parent, who still matches
+  // created_by. The database is the real enforcement; this only decides
+  // whether to surface the actions.
+  const canManage = (m: MediaItem) => role === 'admin' || (coaching && !!m.createdBy && m.createdBy === user?.id)
   return (
     <div>
       <div className="page-head">
@@ -335,12 +461,20 @@ export function Media() {
           <h2>Media Library</h2>
           <div className="sub">All your videos, YouTube links, diagrams and PDFs in one place.</div>
         </div>
-        {coaching && (
-          <button className="btn btn-primary" onClick={() => setUploadOpen(true)}>
-            <Icon.upload />
-            Upload media
-          </button>
-        )}
+        <div className="row wrap" style={{ gap: 10 }}>
+          {role === 'admin' && samples.length > 0 && (
+            <button className="btn btn-ghost" onClick={() => setRemoveSamplesOpen(true)}>
+              <Icon.trash />
+              Remove all samples
+            </button>
+          )}
+          {coaching && (
+            <button className="btn btn-primary" onClick={() => setUploadOpen(true)}>
+              <Icon.upload />
+              Upload media
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="filter-row" style={{ marginBottom: 16 }}>
@@ -376,8 +510,9 @@ export function Media() {
             key={m.id}
             m={m}
             onOpen={() => setOpen(m)}
-            onPlay={m.type === 'video' || m.type === 'youtube' ? () => setPlaying(m) : null}
-            onDelete={canDelete(m) ? () => setDel(m) : null}
+            onPlay={!isSampleMedia(m) && (m.type === 'video' || m.type === 'youtube') ? () => setPlaying(m) : null}
+            onDelete={canManage(m) ? () => setDel(m) : null}
+            onReplace={canManage(m) ? () => setReplacing(m) : null}
           />
         ))}
       </div>
@@ -386,6 +521,10 @@ export function Media() {
       {playing && <MediaPlayerModal item={playing} onClose={() => setPlaying(null)} />}
       {del && <DeleteModal item={del} onClose={() => setDel(null)} />}
       {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
+      {replacing && <UploadModal replace={replacing} onClose={() => setReplacing(null)} />}
+      {removeSamplesOpen && (
+        <RemoveSamplesModal samples={samples} drills={drills} onClose={() => setRemoveSamplesOpen(false)} />
+      )}
     </div>
   )
 }

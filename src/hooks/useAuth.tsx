@@ -13,9 +13,13 @@ export interface Profile {
   club_id: string | null
   full_name: string | null
   avatar: string | null
+  // Storage path of the uploaded profile photo in the media bucket, under
+  // avatars/{user_id}/. Null falls back to initials.
+  avatar_url: string | null
   role: Role
   age_groups: string[]
   team_id: string | null
+  created_at: string
 }
 
 interface AuthState {
@@ -32,6 +36,9 @@ interface AuthState {
   // and needs to set a password before using the app.
   needsPassword: boolean
   clearNeedsPassword: () => void
+  // Re-reads the profile row after a self-service write (name, team, photo)
+  // so the shell reflects the change at once.
+  refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -42,6 +49,16 @@ const AuthContext = createContext<AuthState | undefined>(undefined)
 // consumes and strips the hash.
 const arrivedToSetPassword =
   typeof window !== 'undefined' && /[#&]type=(invite|recovery)/.test(window.location.hash)
+
+// One select shared by the initial load and refreshProfile.
+async function fetchProfile(uid: string): Promise<Profile | null> {
+  const { data } = await supabase
+    .from('profiles')
+    .select('id, club_id, full_name, avatar, avatar_url, role, age_groups, team_id, created_at')
+    .eq('id', uid)
+    .single()
+  return (data as Profile | null) ?? null
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null)
@@ -81,16 +98,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let active = true
     setProfileLoading(true)
-    supabase
-      .from('profiles')
-      .select('id, club_id, full_name, avatar, role, age_groups, team_id')
-      .eq('id', uid)
-      .single()
-      .then(({ data }) => {
-        if (!active) return
-        setProfile((data as Profile | null) ?? null)
-        setProfileLoading(false)
-      })
+    fetchProfile(uid).then((next) => {
+      if (!active) return
+      setProfile(next)
+      setProfileLoading(false)
+    })
     return () => {
       active = false
     }
@@ -105,6 +117,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profileLoading,
     needsPassword,
     clearNeedsPassword: () => setNeedsPassword(false),
+    refreshProfile: async () => {
+      const uid = session?.user?.id
+      if (!uid) return
+      setProfile(await fetchProfile(uid))
+    },
     signOut: async () => {
       await supabase.auth.signOut()
     },

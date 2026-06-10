@@ -265,7 +265,7 @@ export function Sessions() {
                 nav={nav}
                 ownerName={mine ? null : memberById[s.coachId]?.fullName || 'Another coach'}
                 teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
-                canManage={mine || role === 'admin'}
+                canManage={(coaching && mine) || role === 'admin'}
                 coaching={coaching}
                 onDelete={() => setDeleting(s)}
               />

@@ -6,9 +6,11 @@ import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { Crest } from '../components/Crest'
 import { Icon } from '../components/icons'
+import { useClubBranding } from '../hooks/useClubBranding'
 import './Login.css'
 
 export function Login() {
+  const { name, motto } = useClubBranding()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -65,7 +67,8 @@ export function Login() {
           <Crest />
           <div>
             <h1>Training Hub</h1>
-            <p>Ossett Town Juniors</p>
+            <p>{name ?? 'Ossett Town Juniors'}</p>
+            <em className="login-motto">"{motto ?? 'Where football and friendships flourish'}"</em>
           </div>
         </div>
 
