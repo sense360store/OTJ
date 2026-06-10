@@ -13,7 +13,7 @@ import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
-import { useActivityTitle, useDrillMap, useMediaMap, useSession, useTeamMap } from '../lib/queries'
+import { useActivityTitle, useDrillMap, useMediaMap, useProgrammeMap, useSession, useTeamMap } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -110,6 +110,10 @@ function SessionDayView({ session }: { session: Session }) {
   const mins = sessionMinutes(session)
   const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
   const subBits = [fmtDate(session.date), session.time, session.venue, teamName].filter(Boolean)
+  // A session created by applying a programme links back to its programme
+  // and week; a hand-planned session has neither.
+  const programmeById = useProgrammeMap()
+  const programme = session.programmeId ? programmeById[session.programmeId] : undefined
 
   return (
     <div>
@@ -126,6 +130,18 @@ function SessionDayView({ session }: { session: Session }) {
           {canDrive ? 'Start' : 'Watch'}
         </button>
       </div>
+
+      {programme && (
+        <button
+          className="pill"
+          style={{ minHeight: 32, cursor: 'pointer', marginBottom: 12 }}
+          onClick={() => nav('programme', { programmeId: programme.id })}
+        >
+          <Icon.list />
+          {programme.name}
+          {session.programmeWeek != null ? ` · Week ${session.programmeWeek}` : ''}
+        </button>
+      )}
 
       <div className="sd-tabs">
         <button className={'sd-tab' + (tab === 'setup' ? ' on' : '')} onClick={() => setTab('setup')}>

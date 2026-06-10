@@ -6,6 +6,7 @@ export interface NavParams {
   drillId?: string
   sessionId?: string
   corner?: string
+  programmeId?: string
 }
 
 export function useNav() {
@@ -29,6 +30,12 @@ export function useNav() {
         break
       case 'templates':
         navigate('/templates')
+        break
+      case 'programmes':
+        navigate('/programmes')
+        break
+      case 'programme':
+        navigate(`/programmes/${params.programmeId}`)
         break
       case 'media':
         navigate('/media')

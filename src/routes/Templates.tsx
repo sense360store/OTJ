@@ -1,58 +1,24 @@
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
-import { useSessions } from '../context/SessionsContext'
-import { useActivityTitle, useTemplates, useDrillMap } from '../lib/queries'
-import type { Activity, Session, Template } from '../lib/data'
+import { useStartFromTemplate } from '../hooks/useStartFromTemplate'
+import { useActivityTitle, useProgrammes, useTemplates, useDrillMap } from '../lib/queries'
+import type { Activity, Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 
-type Nav = ReturnType<typeof useNav>
-type Upsert = (s: Session) => void
-
-function TemplateCard({
-  t,
-  nav,
-  upsertSession,
-  onManage,
-}: {
-  t: Template
-  nav: Nav
-  upsertSession: Upsert
-  onManage: ((t: Template) => void) | null
-}) {
-  const { user, profile, role } = useAuth()
+function TemplateCard({ t, onManage }: { t: Template; onManage: ((t: Template) => void) | null }) {
+  const { role } = useAuth()
+  const startFromTemplate = useStartFromTemplate()
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
   // Using a template creates a session, which parents cannot do; for them the
   // card is read-only. The session built from a template belongs to the
   // signed-in coach and defaults to their team, the same as one built in the
   // planner. The template's intentions copy onto the new session.
   const coaching = role === 'coach' || role === 'admin'
-  const use = () => {
-    const s: Session = {
-      id: crypto.randomUUID(),
-      name: t.name,
-      date: '2026-06-16',
-      time: '17:30',
-      ageGroup: 'U8s',
-      venue: 'Springmill 3G',
-      focus: t.focus,
-      status: 'upcoming',
-      activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],
-      coachId: user?.id ?? '',
-      teamId: profile?.team_id ?? null,
-      intentions: [...t.intentions],
-      space: '',
-      sourceUrl: '',
-      sourceLabel: '',
-      liveActivityIndex: null,
-      liveActivityStartedAt: null,
-    }
-    upsertSession(s)
-    nav('planner', { sessionId: s.id })
-  }
+  const week = t.programmeWeek ?? t.week
   return (
     <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div>
@@ -65,10 +31,10 @@ function TemplateCard({
         </span>
       </div>
       <div className="row wrap" style={{ gap: 7 }}>
-        {t.week != null && (
+        {week != null && (
           <span className="pill">
             <Icon.calendar />
-            Week {t.week}
+            Week {week}
           </span>
         )}
         <span className="pill">
@@ -88,7 +54,7 @@ function TemplateCard({
       {(coaching || onManage) && (
         <div className="row" style={{ gap: 9 }}>
           {coaching && (
-            <button className="btn btn-primary" style={{ flex: 1 }} onClick={use}>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => startFromTemplate(t)}>
               <Icon.copy />
               Use template
             </button>
@@ -175,56 +141,27 @@ function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => v
   )
 }
 
-// Templates with a programme group under it, ordered by week (templates
-// without a week sort after those with one). Programmes themselves list
-// alphabetically; everything without a programme stays in the plain grid.
-function groupByProgramme(list: Template[]): { groups: { name: string; items: Template[] }[]; rest: Template[] } {
-  const byName = new Map<string, Template[]>()
-  const rest: Template[] = []
-  for (const t of list) {
-    if (!t.programme) {
-      rest.push(t)
-      continue
-    }
-    const items = byName.get(t.programme) ?? []
-    items.push(t)
-    byName.set(t.programme, items)
-  }
-  const groups = [...byName.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([name, items]) => ({
-      name,
-      items: [...items].sort(
-        (a, b) => (a.week ?? Infinity) - (b.week ?? Infinity) || a.name.localeCompare(b.name),
-      ),
-    }))
-  return { groups, rest }
-}
-
 export function Templates() {
   const nav = useNav()
   const { role } = useAuth()
-  const { upsertSession } = useSessions()
   const [q, setQ] = useState('')
   const [manage, setManage] = useState<Template | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const { data: templates = [], isLoading, isError } = useTemplates()
+  const { data: programmes = [] } = useProgrammes()
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
-  const list = templates.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
-  const { groups, rest } = groupByProgramme(list)
+  // Programme weeks live on the Programmes screen now; this grid keeps the
+  // standalone shells. The banner below replaces the old programme grouping
+  // and links across.
+  const standalone = templates.filter((t) => t.programmeId == null)
+  const list = standalone.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
+  const inProgrammes = templates.length - standalone.length
   // Curating templates is admin only per the permissions matrix; every coach
   // can still use one, and every coaching role can import from England
   // Football. Parents read only. The templates RLS enforces the writes.
   const curator = role === 'admin'
   const coaching = role === 'coach' || role === 'admin'
-  const grid = (items: Template[]) => (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
-      {items.map((t) => (
-        <TemplateCard key={t.id} t={t} nav={nav} upsertSession={upsertSession} onManage={curator ? setManage : null} />
-      ))}
-    </div>
-  )
   return (
     <div>
       <div className="page-head">
@@ -247,26 +184,32 @@ export function Templates() {
           )}
         </div>
       </div>
+      {programmes.length > 0 && (
+        <button
+          className="card row"
+          onClick={() => nav('programmes')}
+          style={{ width: '100%', textAlign: 'left', gap: 12, padding: '14px 16px', marginBottom: 18, cursor: 'pointer', minHeight: 44 }}
+        >
+          <Icon.list style={{ width: 20, height: 20, color: 'var(--royal)', flex: '0 0 20px' }} />
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ fontWeight: 800, fontSize: 14.5, display: 'block' }}>Programmes</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              {programmes.length} programme{programmes.length !== 1 ? 's' : ''} · {inProgrammes} week template
+              {inProgrammes !== 1 ? 's' : ''} now live under Plan
+            </span>
+          </span>
+          <Icon.chevR style={{ width: 18, height: 18, color: 'var(--slate-2)', flex: '0 0 18px' }} />
+        </button>
+      )}
       <div className="search-lg" style={{ maxWidth: 460, marginBottom: 20 }}>
         <Icon.search />
         <input placeholder="Search templates…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
-      {groups.map((g) => (
-        <div key={g.name} style={{ marginBottom: 26 }}>
-          <div className="section-title">
-            <Icon.book />
-            <h3>{g.name}</h3>
-          </div>
-          {grid(g.items)}
-        </div>
-      ))}
-      {groups.length > 0 && rest.length > 0 && (
-        <div className="section-title">
-          <Icon.layers />
-          <h3>Other templates</h3>
-        </div>
-      )}
-      {grid(rest)}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
+        {list.map((t) => (
+          <TemplateCard key={t.id} t={t} onManage={curator ? setManage : null} />
+        ))}
+      </div>
       {manage && <ManageTemplateModal tpl={manage} onClose={() => setManage(null)} />}
       {importOpen && <ImportFAModal onClose={() => setImportOpen(false)} />}
     </div>

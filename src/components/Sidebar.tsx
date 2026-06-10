@@ -26,6 +26,7 @@ const NAV: NavSection[] = [
       { id: 'library', label: 'Drill Library', icon: Icon.grid, to: '/library' },
       { id: 'sessions', label: 'Sessions', icon: Icon.calendar, to: '/sessions' },
       { id: 'planner', label: 'Session Planner', icon: Icon.layers, to: '/planner' },
+      { id: 'programmes', label: 'Programmes', icon: Icon.list, to: '/programmes' },
     ],
   },
   {
@@ -48,9 +49,9 @@ const NAV: NavSection[] = [
 // boundary. Admin is the only role that sees user management. Parent is
 // read-only: everything except the planner and the admin tools.
 const ROLE_NAV: Record<Role, Set<string>> = {
-  coach: new Set(['home', 'library', 'sessions', 'planner', 'templates', 'media']),
-  admin: new Set(['home', 'library', 'sessions', 'planner', 'templates', 'media', 'admin-users', 'admin-teams']),
-  parent: new Set(['home', 'library', 'sessions', 'templates', 'media']),
+  coach: new Set(['home', 'library', 'sessions', 'planner', 'programmes', 'templates', 'media']),
+  admin: new Set(['home', 'library', 'sessions', 'planner', 'programmes', 'templates', 'media', 'admin-users', 'admin-teams']),
+  parent: new Set(['home', 'library', 'sessions', 'programmes', 'templates', 'media']),
 }
 
 const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent' }
