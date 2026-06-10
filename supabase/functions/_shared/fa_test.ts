@@ -10,6 +10,7 @@ import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
   allowedUrl,
   ASSET_HOST,
+  countSessionLinks,
   MAX_PROGRAMME_WEEKS,
   normalisedHref,
   PAGE_HOST,
@@ -154,6 +155,17 @@ Deno.test('parseOverviewPage caps the week links', () => {
   assertEquals(overview.weekLinks.length, MAX_PROGRAMME_WEEKS)
   assertEquals(overview.weekLinks[0].week, 1)
   assertEquals(overview.weekLinks[MAX_PROGRAMME_WEEKS - 1].week, MAX_PROGRAMME_WEEKS)
+})
+
+// ---- fa-import's overview refusal counts session links, never follows -----
+
+Deno.test('countSessionLinks counts distinct same-host session pages, not itself', () => {
+  // The overview fixture links week one, week two (twice, deduped) and a
+  // related session on the page host; the off-host link and the self link
+  // do not count.
+  assertEquals(countSessionLinks(OVERVIEW_HTML, OVERVIEW_URL), 3)
+  // A real session page links no other session pages.
+  assertEquals(countSessionLinks(SESSION_HTML, new URL('https://learn.englandfootball.com/sessions/a-session')), 0)
 })
 
 // ---- Idempotence rests on the normalised source URL -----------------------

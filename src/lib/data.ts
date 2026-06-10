@@ -23,9 +23,19 @@ export interface Member {
   id: string
   fullName: string
   avatar: string | null
+  // Storage path of the uploaded profile photo, null for initials.
+  avatarUrl: string | null
   role: Role
   teamId: string | null
   joined: string
+}
+
+// The club row. crestUrl is a storage path in the media bucket or a full URL.
+export interface Club {
+  id: string
+  name: string
+  motto: string
+  crestUrl: string | null
 }
 
 export interface CornerInfo {
@@ -80,6 +90,8 @@ export interface Drill {
   format: string
   sourceUrl: string
   sourceLabel: string
+  // Drives the "what's new" recency on Home.
+  createdAt: string
 }
 
 export interface Activity {
@@ -107,6 +119,8 @@ export interface Template {
   programmeWeek: number | null
   sourceUrl: string
   sourceLabel: string
+  // Drives the "what's new" recency on Home.
+  createdAt: string
 }
 
 // A programme: an ordered set of weekly session templates, the FA six-week
@@ -202,4 +216,14 @@ export function youtubeId(url: string | undefined | null): string | null {
 export function youtubeThumb(url: string | undefined | null): string | null {
   const id = youtubeId(url)
   return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null
+}
+
+// ---- Samples -------------------------------------------------------------
+// A sample is a media row with nothing behind it: no stored file and no
+// playable YouTube link. The ten seeded demo rows ship this way (two of them
+// carry a bare youtu.be link with no video id, which plays nothing). Samples
+// are badged plainly, never offer a View or Play action, and can be replaced
+// with real content or removed.
+export function isSampleMedia(m: Pick<MediaItem, 'storagePath' | 'yt'>): boolean {
+  return !m.storagePath && !youtubeId(m.yt)
 }
