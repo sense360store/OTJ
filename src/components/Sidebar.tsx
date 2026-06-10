@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { Crest } from './Crest'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
+import { UserAvatar } from './UserAvatar'
 import { useDrills } from '../lib/queries'
 import { useAuth } from '../hooks/useAuth'
 import type { Role } from '../hooks/useAuth'
@@ -55,14 +56,6 @@ const ROLE_NAV: Record<Role, Set<string>> = {
 
 const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent' }
 
-function initials(name: string | null): string {
-  if (!name) return 'OTJ'
-  const parts = name.trim().split(/\s+/)
-  const first = parts[0]?.[0] ?? ''
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : ''
-  return (first + last).toUpperCase()
-}
-
 export function Sidebar() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
@@ -115,11 +108,31 @@ export function Sidebar() {
       </div>
       <div className="sb-foot">
         <div className="coach-chip">
-          <div className="avatar">{profile?.avatar || initials(profile?.full_name ?? null)}</div>
-          <div style={{ flex: 1 }}>
-            <b>{profile?.full_name ?? 'Coach'}</b>
-            <span className="role-badge">{role ? ROLE_LABEL[role] : 'Coach'}</span>
-          </div>
+          {/* The identity block opens the account screen; log out stays its
+              own button beside it. */}
+          <button
+            title="Account"
+            onClick={() => navigate('/account')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 11,
+              flex: 1,
+              minWidth: 0,
+              background: 'none',
+              border: 0,
+              padding: 0,
+              textAlign: 'left',
+              color: 'inherit',
+              font: 'inherit',
+            }}
+          >
+            <UserAvatar name={profile?.full_name} fallbackText={profile?.avatar} path={profile?.avatar_url} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <b>{profile?.full_name ?? 'Coach'}</b>
+              <span className="role-badge">{role ? ROLE_LABEL[role] : 'Coach'}</span>
+            </div>
+          </button>
           <button className="icon-btn" title="Log out" onClick={() => void signOut()}>
             <Icon.logout />
           </button>

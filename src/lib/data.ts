@@ -23,9 +23,19 @@ export interface Member {
   id: string
   fullName: string
   avatar: string | null
+  // Storage path of the uploaded profile photo, null for initials.
+  avatarUrl: string | null
   role: Role
   teamId: string | null
   joined: string
+}
+
+// The club row. crestUrl is a storage path in the media bucket or a full URL.
+export interface Club {
+  id: string
+  name: string
+  motto: string
+  crestUrl: string | null
 }
 
 export interface CornerInfo {

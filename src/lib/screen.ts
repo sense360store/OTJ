@@ -10,6 +10,7 @@ export type Screen =
   | 'media'
   | 'live'
   | 'login'
+  | 'account'
   | 'admin-users'
   | 'admin-teams'
 
@@ -23,6 +24,7 @@ export function screenFromPath(pathname: string): Screen {
   if (pathname.startsWith('/media')) return 'media'
   if (pathname.startsWith('/live')) return 'live'
   if (pathname.startsWith('/login')) return 'login'
+  if (pathname.startsWith('/account')) return 'account'
   if (pathname.startsWith('/admin/users')) return 'admin-users'
   if (pathname.startsWith('/admin/teams')) return 'admin-teams'
   return 'home'
