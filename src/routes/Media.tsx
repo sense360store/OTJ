@@ -180,7 +180,8 @@ function DeleteModal({ item, onClose }: { item: MediaItem; onClose: () => void }
   )
 }
 
-function UploadModal({ onClose }: { onClose: () => void }) {
+// Exported for the Home quick actions, which open the same upload flow.
+export function UploadModal({ onClose }: { onClose: () => void }) {
   const upload = useUploadMedia()
   const [tab, setTab] = useState<'file' | 'youtube'>('file')
   const [file, setFile] = useState<File | null>(null)
