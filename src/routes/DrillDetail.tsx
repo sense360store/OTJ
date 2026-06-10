@@ -10,6 +10,7 @@ import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { CornerTag, MediaThumb, MEDIA_META, Modal, Empty, ErrorNote, Loading, PHASE_COLOR, Chip, DrillCard } from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
+import { MediaPlayerModal } from '../components/MediaPlayerModal'
 
 function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
   return (
@@ -137,16 +138,17 @@ export function DrillDetail() {
   const [addOpen, setAddOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [playerOpen, setPlayerOpen] = useState(false)
   const { data: drill, isLoading, isError } = useDrill(id)
   const { data: allDrills = [] } = useDrills()
   const mediaById = useMediaMap()
   // Resolved before the early returns so the signed URL hook is called
-  // unconditionally. The bucket is private, so opening a drill's clip goes
-  // through the same signed URL path as the media library.
+  // unconditionally. The bucket is private, so opening an image or PDF goes
+  // through the same signed URL path as the media library. Both video types
+  // play inline in the player overlay instead of opening out.
   const media = drill?.mediaId ? mediaById[drill.mediaId] : undefined
-  const previewPath =
-    media && (media.type === 'image' || media.type === 'video' || media.type === 'pdf') ? media.storagePath : undefined
-  const { data: signedUrl } = useSignedMediaUrl(previewPath)
+  const openPath = media && (media.type === 'image' || media.type === 'pdf') ? media.storagePath : undefined
+  const { data: signedUrl } = useSignedMediaUrl(openPath)
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
   if (!drill)
@@ -159,7 +161,8 @@ export function DrillDetail() {
     .filter((d) => d.id !== drill.id && (d.corner === drill.corner || d.skill === drill.skill))
     .slice(0, 3)
   const MediaIcon = media ? MEDIA_META[media.type].icon : null
-  const openHref = media?.type === 'youtube' ? media.yt : (signedUrl ?? undefined)
+  const playable = media?.type === 'video' || media?.type === 'youtube'
+  const openHref = signedUrl ?? undefined
   // Edit and delete are owner or admin only, mirroring the drills RLS. Seeded
   // drills have no creator, so only an admin can manage them. The database is
   // the real enforcement; this only decides whether to surface the actions.
@@ -175,9 +178,20 @@ export function DrillDetail() {
       <div className="detail-grid">
         <div>
           <div className="detail-media">
-            <div className="player">
-              <MediaThumb media={media} label={media ? undefined : 'no media yet'} />
-            </div>
+            {playable && media ? (
+              <button
+                className="player"
+                onClick={() => setPlayerOpen(true)}
+                aria-label={'Play ' + media.name}
+                style={{ display: 'block', width: '100%', padding: 0, border: 0, background: 'none', cursor: 'pointer' }}
+              >
+                <MediaThumb media={media} />
+              </button>
+            ) : (
+              <div className="player">
+                <MediaThumb media={media} label={media ? undefined : 'no media yet'} />
+              </div>
+            )}
           </div>
           {media && MediaIcon && (
             <div className="row" style={{ marginTop: 10, justifyContent: 'space-between' }}>
@@ -189,7 +203,12 @@ export function DrillDetail() {
                   {media.name}
                 </span>
               </div>
-              {openHref ? (
+              {playable ? (
+                <button className="btn btn-ghost btn-sm" onClick={() => setPlayerOpen(true)}>
+                  <Icon.play />
+                  Play
+                </button>
+              ) : openHref ? (
                 <a className="btn btn-ghost btn-sm" href={openHref} target="_blank" rel="noreferrer">
                   <Icon.external />
                   Open
@@ -323,6 +342,7 @@ export function DrillDetail() {
       {addOpen && <AddToSessionModal drill={drill} onClose={() => setAddOpen(false)} />}
       {editOpen && <DrillFormModal drill={drill} onClose={() => setEditOpen(false)} />}
       {deleteOpen && <DeleteDrillModal drill={drill} onClose={() => setDeleteOpen(false)} />}
+      {playerOpen && media && <MediaPlayerModal item={media} onClose={() => setPlayerOpen(false)} />}
     </div>
   )
 }

@@ -102,7 +102,8 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
   const mediaById = useMediaMap()
   const actTitle = useActivityTitle()
   const teamById = useTeamMap()
-  const teamName = session.teamId ? teamById[session.teamId]?.name : undefined
+  // A session without a team is a club-wide event, shown as Club.
+  const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
   const acts = session.activities
   const load = (): LiveSaved | null => {
     try {
