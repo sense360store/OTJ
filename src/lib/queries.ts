@@ -639,8 +639,18 @@ export interface DrillInput {
   sourceUrl: string
 }
 
+// The attribution label always derives from the link at write time, so the
+// two cannot drift apart. An empty or unparsable link stores null for both.
+// Shared by every write that carries a source (drills here, sessions below).
+function toSourceFields(rawUrl: string): { source_url: string | null; source_label: string | null } {
+  const url = rawUrl.trim()
+  return {
+    source_url: url || null,
+    source_label: url ? sourceLabelForUrl(url) || null : null,
+  }
+}
+
 function toDrillWriteRow(input: DrillInput) {
-  const sourceUrl = input.sourceUrl.trim()
   return {
     title: input.title,
     summary: input.summary || null,
@@ -660,9 +670,7 @@ function toDrillWriteRow(input: DrillInput) {
     harder: input.harder,
     theme: input.theme || null,
     format: input.format || null,
-    // The label always derives from the link, so the two cannot drift apart.
-    source_url: sourceUrl || null,
-    source_label: sourceUrl ? sourceLabelForUrl(sourceUrl) || null : null,
+    ...toSourceFields(input.sourceUrl),
   }
 }
 
@@ -741,12 +749,10 @@ export function useUpsertSession() {
       const isUpdate = existed.current.get(input.id) ?? false
       const activities = input.activities.map(toActivityRow)
 
-      const sourceUrl = input.sourceUrl.trim()
       const faFields = {
         intentions: input.intentions,
         space: input.space || null,
-        source_url: sourceUrl || null,
-        source_label: sourceUrl ? sourceLabelForUrl(sourceUrl) || null : null,
+        ...toSourceFields(input.sourceUrl),
       }
 
       if (isUpdate) {
