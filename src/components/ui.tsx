@@ -197,9 +197,11 @@ export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: 
         </p>
         <div className="dc-meta">
           <span className="pill">{drill.skill}</span>
-          <span className="pill">
-            {drill.ages[0]}–{drill.ages[drill.ages.length - 1]}
-          </span>
+          {drill.ages.length > 0 && (
+            <span className="pill">
+              {drill.ages[0]}–{drill.ages[drill.ages.length - 1]}
+            </span>
+          )}
         </div>
         {action}
       </div>

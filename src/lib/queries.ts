@@ -143,6 +143,7 @@ function toDrill(r: DrillRow): Drill {
     summary: r.summary ?? '',
     points: r.points ?? [],
     tags: r.tags ?? [],
+    createdBy: r.created_by ?? undefined,
   }
 }
 
@@ -290,6 +291,23 @@ export function useDrillMap(): Record<string, Drill> {
 export function useMediaMap(): Record<string, MediaItem> {
   const { data } = useMedia()
   return useMemo(() => Object.fromEntries((data ?? []).map((m) => [m.id, m])), [data])
+}
+
+// Resolves an activity's display title. A drillId that no longer matches a
+// drill (deleted after the session or template was built) gets a quiet
+// placeholder, but only once the drills read has settled so a half-loaded
+// screen does not flash it.
+export function useActivityTitle(): (act: Activity, fallback?: string) => string {
+  const byId = useDrillMap()
+  const { isPending } = useDrills()
+  return (act, fallback = 'Custom activity') => {
+    if (act.drillId) {
+      const drill = byId[act.drillId]
+      if (drill) return drill.title
+      return isPending ? '…' : 'Removed drill'
+    }
+    return act.title || fallback
+  }
 }
 
 // ---- Media storage: signed URLs ----------------------------------------
@@ -472,6 +490,98 @@ export function useDeleteMedia() {
       qc.invalidateQueries({ queryKey: ['media'] })
       qc.invalidateQueries({ queryKey: ['drills'] })
     },
+  })
+}
+
+// ---- Drill writes ------------------------------------------------------
+// Create, edit and delete for the club drill library. Insert sets club_id and
+// created_by: the RLS insert check requires the club, and created_by drives
+// the owner or admin update and delete policies. Update sends neither, so a
+// drill never changes club or owner. The drills RLS is the real enforcement;
+// the screens only decide whether to surface the actions.
+
+export interface DrillInput {
+  title: string
+  summary: string
+  corner: CornerKey
+  skill: string
+  level: Level
+  ages: string[]
+  duration: number
+  players: string
+  area: string
+  equipment: string[]
+  points: string[]
+  tags: string[]
+  mediaId: string | null
+}
+
+function toDrillWriteRow(input: DrillInput) {
+  return {
+    title: input.title,
+    summary: input.summary || null,
+    corner: input.corner,
+    skill: input.skill || null,
+    level: input.level,
+    ages: input.ages,
+    duration: input.duration || null,
+    players: input.players || null,
+    area: input.area || null,
+    equipment: input.equipment,
+    points: input.points,
+    tags: input.tags,
+    media_id: input.mediaId,
+  }
+}
+
+export function useInsertDrill() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<Drill, Error, DrillInput>({
+    mutationFn: async (input) => {
+      if (!user || !profile?.club_id) {
+        throw new Error('You must be signed in to add a drill.')
+      }
+      const { data, error } = await supabase
+        .from('drills')
+        .insert({ ...toDrillWriteRow(input), club_id: profile.club_id, created_by: user.id })
+        .select(DRILL_COLS)
+        .single()
+      if (error) throw error
+      return toDrill(data as unknown as DrillRow)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+  })
+}
+
+export function useUpdateDrill() {
+  const qc = useQueryClient()
+  return useMutation<Drill, Error, { id: string; input: DrillInput }>({
+    mutationFn: async ({ id, input }) => {
+      const { data, error } = await supabase
+        .from('drills')
+        .update(toDrillWriteRow(input))
+        .eq('id', id)
+        .select(DRILL_COLS)
+        .single()
+      if (error) throw error
+      return toDrill(data as unknown as DrillRow)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+  })
+}
+
+// Sessions and templates that reference a deleted drill keep their activities
+// jsonb untouched; the planner, live view and template screens render a quiet
+// removed drill placeholder for the dangling id.
+export function useDeleteDrill() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('drills').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
   })
 }
 

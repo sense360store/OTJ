@@ -3,7 +3,7 @@ import type { DragEventHandler } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
-import { useDrillMap, useMediaMap, useSession } from '../lib/queries'
+import { useActivityTitle, useDrillMap, useMediaMap, useSession } from '../lib/queries'
 import { PHASES } from '../lib/data'
 import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -50,6 +50,9 @@ function ActivityRow({
 }) {
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
+  const actTitle = useActivityTitle()
+  // A drillId whose drill was deleted resolves to null; the row stays usable
+  // with a removed drill placeholder from actTitle.
   const drill = act.drillId ? drillById[act.drillId] : null
   const media = drill && drill.mediaId ? mediaById[drill.mediaId] : null
   return (
@@ -61,7 +64,7 @@ function ActivityRow({
         <MediaThumb media={media} showPlay={false} showBadge={false} label="" />
       </div>
       <div className="ac-body">
-        <h4>{drill ? drill.title : act.title || 'Custom activity'}</h4>
+        <h4>{actTitle(act)}</h4>
         <div className="ac-sub">
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>

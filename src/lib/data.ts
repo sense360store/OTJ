@@ -48,6 +48,7 @@ export interface Drill {
   summary: string
   points: string[]
   tags: string[]
+  createdBy?: string
 }
 
 export interface Activity {

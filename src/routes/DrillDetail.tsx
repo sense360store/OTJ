@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
+import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
+import { useDeleteDrill, useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
 import { PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { CornerTag, MediaThumb, MEDIA_META, Modal, Empty, ErrorNote, Loading, PHASE_COLOR, Chip, DrillCard } from '../components/ui'
+import { DrillFormModal } from '../components/DrillFormModal'
 
 function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
   return (
@@ -78,10 +80,59 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
   )
 }
 
+// Plain confirm before a delete. Sessions and templates that reference the
+// drill keep their timing and show a removed drill placeholder.
+function DeleteDrillModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
+  const nav = useNav()
+  const del = useDeleteDrill()
+  const remove = () => {
+    del.mutate(
+      { id: drill.id },
+      {
+        onSuccess: () => {
+          onClose()
+          nav('library')
+        },
+      },
+    )
+  }
+  return (
+    <Modal
+      title="Delete drill"
+      sub={drill.title}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
+            <Icon.trash />
+            {del.isPending ? 'Deleting…' : 'Delete'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        This removes the drill from the club library. Sessions and templates that include it keep their timings and show a
+        removed drill placeholder instead.
+      </p>
+      {del.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+          Could not delete. Try again.
+        </p>
+      )}
+    </Modal>
+  )
+}
+
 export function DrillDetail() {
   const { id } = useParams()
   const nav = useNav()
+  const { user, role } = useAuth()
   const [addOpen, setAddOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const { data: drill, isLoading, isError } = useDrill(id)
   const { data: allDrills = [] } = useDrills()
   const mediaById = useMediaMap()
@@ -105,6 +156,10 @@ export function DrillDetail() {
     .slice(0, 3)
   const MediaIcon = media ? MEDIA_META[media.type].icon : null
   const openHref = media?.type === 'youtube' ? media.yt : (signedUrl ?? undefined)
+  // Edit and delete are owner or admin only, mirroring the drills RLS. Seeded
+  // drills have no creator, so only an admin can manage them. The database is
+  // the real enforcement; this only decides whether to surface the actions.
+  const canManage = role === 'admin' || (!!drill.createdBy && drill.createdBy === user?.id)
 
   return (
     <div>
@@ -208,9 +263,11 @@ export function DrillDetail() {
 
           <div style={{ marginTop: 16 }}>
             <div className="row wrap" style={{ gap: 6 }}>
-              <span className="pill">
-                Ages {drill.ages[0]}–{drill.ages[drill.ages.length - 1]}
-              </span>
+              {drill.ages.length > 0 && (
+                <span className="pill">
+                  Ages {drill.ages[0]}–{drill.ages[drill.ages.length - 1]}
+                </span>
+              )}
               {drill.tags.map((t) => (
                 <span className="pill" key={t}>
                   #{t}
@@ -225,6 +282,22 @@ export function DrillDetail() {
               Add to session
             </button>
           </div>
+          {canManage && (
+            <div className="row" style={{ gap: 10, marginTop: 10 }}>
+              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setEditOpen(true)}>
+                <Icon.edit />
+                Edit drill
+              </button>
+              <button
+                className="btn btn-ghost btn-sm icon-only"
+                style={{ width: 42, padding: 0, alignSelf: 'stretch', height: 'auto' }}
+                aria-label="Delete drill"
+                onClick={() => setDeleteOpen(true)}
+              >
+                <Icon.trash />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -244,6 +317,8 @@ export function DrillDetail() {
       )}
 
       {addOpen && <AddToSessionModal drill={drill} onClose={() => setAddOpen(false)} />}
+      {editOpen && <DrillFormModal drill={drill} onClose={() => setEditOpen(false)} />}
+      {deleteOpen && <DeleteDrillModal drill={drill} onClose={() => setDeleteOpen(false)} />}
     </div>
   )
 }

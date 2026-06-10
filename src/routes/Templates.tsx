@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
-import { useTemplates, useDrillMap } from '../lib/queries'
+import { useActivityTitle, useTemplates, useDrillMap } from '../lib/queries'
 import type { Activity, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
@@ -81,6 +81,7 @@ function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => v
   const [acts, setActs] = useState<Activity[]>(() => JSON.parse(JSON.stringify(tpl.activities)) as Activity[])
   const [adding, setAdding] = useState(false)
   const drillById = useDrillMap()
+  const actTitle = useActivityTitle()
   const mins = acts.reduce((a, x) => a + (x.duration || 0), 0)
   return (
     <Modal
@@ -119,7 +120,7 @@ function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => v
               </span>
               <span className="tag-dot" style={{ background: PHASE_COLOR[a.phase], width: 10, height: 10 }}></span>
               <div className="ac-body">
-                <h4>{d ? d.title : a.title}</h4>
+                <h4>{actTitle(a)}</h4>
                 <div className="ac-sub">
                   <span>{a.phase}</span>
                   {d && <span>{d.skill}</span>}
