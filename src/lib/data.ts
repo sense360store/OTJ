@@ -90,6 +90,8 @@ export interface Drill {
   format: string
   sourceUrl: string
   sourceLabel: string
+  // Drives the "what's new" recency on Home.
+  createdAt: string
 }
 
 export interface Activity {
@@ -112,6 +114,8 @@ export interface Template {
   week: number | null
   sourceUrl: string
   sourceLabel: string
+  // Drives the "what's new" recency on Home.
+  createdAt: string
 }
 
 export interface Session {

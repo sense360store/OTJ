@@ -205,6 +205,7 @@ function toDrill(r: DrillRow): Drill {
     format: r.format ?? '',
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    createdAt: r.created_at,
   }
 }
 
@@ -238,6 +239,7 @@ function toTemplate(r: TemplateRow): Template {
     week: r.week,
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    createdAt: r.created_at,
   }
 }
 
