@@ -19,6 +19,7 @@ import { Media } from './routes/Media'
 import { LiveSession } from './routes/LiveSession'
 import { SessionDay } from './routes/SessionDay'
 import { Account } from './routes/Account'
+import { AdminClub } from './routes/AdminClub'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
 
@@ -108,6 +109,7 @@ export function App() {
           {/* Account self-service is open to every role, parents included. */}
           <Route path="account" element={<Account />} />
           <Route element={<RequireAdmin />}>
+            <Route path="admin/club" element={<AdminClub />} />
             <Route path="admin/users" element={<AdminUsers />} />
             <Route path="admin/teams" element={<AdminTeams />} />
           </Route>

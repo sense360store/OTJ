@@ -6,6 +6,7 @@ import { UserAvatar } from './UserAvatar'
 import { useDrills } from '../lib/queries'
 import { useAuth } from '../hooks/useAuth'
 import type { Role } from '../hooks/useAuth'
+import { useClubBranding } from '../hooks/useClubBranding'
 import { screenFromPath } from '../lib/screen'
 
 interface NavItem {
@@ -39,6 +40,7 @@ const NAV: NavSection[] = [
   {
     group: 'Admin',
     items: [
+      { id: 'admin-club', label: 'Club', icon: Icon.star, to: '/admin/club' },
       { id: 'admin-users', label: 'Users', icon: Icon.users, to: '/admin/users' },
       { id: 'admin-teams', label: 'Teams', icon: Icon.flag, to: '/admin/teams' },
     ],
@@ -50,7 +52,17 @@ const NAV: NavSection[] = [
 // read-only: everything except the planner and the admin tools.
 const ROLE_NAV: Record<Role, Set<string>> = {
   coach: new Set(['home', 'library', 'sessions', 'planner', 'templates', 'media']),
-  admin: new Set(['home', 'library', 'sessions', 'planner', 'templates', 'media', 'admin-users', 'admin-teams']),
+  admin: new Set([
+    'home',
+    'library',
+    'sessions',
+    'planner',
+    'templates',
+    'media',
+    'admin-club',
+    'admin-users',
+    'admin-teams',
+  ]),
   parent: new Set(['home', 'library', 'sessions', 'templates', 'media']),
 }
 
@@ -61,6 +73,7 @@ export function Sidebar() {
   const { pathname } = useLocation()
   const screen = screenFromPath(pathname)
   const { profile, role, signOut } = useAuth()
+  const { name, motto } = useClubBranding()
   const { data: drills } = useDrills()
   const allowed = ROLE_NAV[role ?? 'coach']
   const isActive = (id: string) => screen === id || (id === 'library' && screen === 'drill')
@@ -73,12 +86,12 @@ export function Sidebar() {
       <div className="sb-brand">
         <Crest />
         <div>
-          <h1>Ossett Town Juniors</h1>
+          <h1>{name ?? 'Ossett Town Juniors'}</h1>
           <p>Training Hub</p>
         </div>
       </div>
       <div className="sb-tag">
-        <em>"Where football and friendships flourish"</em>
+        <em>"{motto ?? 'Where football and friendships flourish'}"</em>
         <span className="sb-accred">
           <Icon.star style={{ width: 12, height: 12 }} />
           FA 2-Star Accredited

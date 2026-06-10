@@ -7,10 +7,12 @@ import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { Crest } from '../components/Crest'
+import { useClubBranding } from '../hooks/useClubBranding'
 import './Login.css'
 
 export function SetPassword() {
   const { clearNeedsPassword } = useAuth()
+  const { name } = useClubBranding()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -40,7 +42,7 @@ export function SetPassword() {
           <Crest />
           <div>
             <h1>Set your password</h1>
-            <p>Ossett Town Juniors</p>
+            <p>{name ?? 'Ossett Town Juniors'}</p>
           </div>
         </div>
 
