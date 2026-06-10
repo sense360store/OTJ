@@ -1082,6 +1082,73 @@ export function useRemoveAvatar() {
   })
 }
 
+// ---- Club settings (admin) --------------------------------------------------
+// Writes go through the clubs_update_admin policy; the screens only decide
+// whether to surface the form. The crest is a storage object in the media
+// bucket under club/, stored on the row as its path and signed for rendering
+// like any other private object. A crest_url holding a full URL (a seeded or
+// external value) is left alone by the cleanup, which only removes bucket
+// objects.
+
+export function useUpdateClub() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name?: string; motto?: string }>({
+    mutationFn: async ({ id, name, motto }) => {
+      const patch: Record<string, unknown> = {}
+      if (name !== undefined) patch.name = name
+      if (motto !== undefined) patch.motto = motto || null
+      const { error } = await supabase.from('clubs').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
+  })
+}
+
+// PNG, JPG and SVG only: the crest renders small in the shell, so these
+// cover it and keep the object lightweight.
+export const CREST_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml']
+
+function isStoragePath(value: string | null): value is string {
+  return !!value && !/^https?:\/\//i.test(value)
+}
+
+export function useUploadCrest() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { club: Club; file: File }>({
+    mutationFn: async ({ club, file }) => {
+      if (!CREST_TYPES.includes(file.type)) throw new Error('Use a PNG, JPG or SVG file.')
+      const path = `club/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+      const { error: uploadError } = await supabase.storage
+        .from('media')
+        .upload(path, file, { contentType: file.type || undefined })
+      if (uploadError) throw uploadError
+      const { error } = await supabase.from('clubs').update({ crest_url: path }).eq('id', club.id)
+      // If the row update fails after the object uploaded, remove the object
+      // so no orphan is left behind in Storage.
+      if (error) {
+        await supabase.storage.from('media').remove([path])
+        throw error
+      }
+      // The replaced crest object is unreferenced now; removal is best effort.
+      if (isStoragePath(club.crestUrl)) void supabase.storage.from('media').remove([club.crestUrl])
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
+  })
+}
+
+// Back to the bundled crest: clears crest_url and removes the uploaded object.
+export function useClearCrest() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { club: Club }>({
+    mutationFn: async ({ club }) => {
+      const { error } = await supabase.from('clubs').update({ crest_url: null }).eq('id', club.id)
+      if (error) throw error
+      if (isStoragePath(club.crestUrl)) void supabase.storage.from('media').remove([club.crestUrl])
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
+  })
+}
+
 // ---- Invites -------------------------------------------------------------
 // The invite goes through the invite-user Edge Function, which holds the
 // service role key server side and re-checks that the caller is an admin.

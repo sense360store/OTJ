@@ -42,6 +42,13 @@
   font-size: 14px;
   color: var(--slate);
 }
+.login-motto {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--slate-2);
+}
 .login-error {
   background: color-mix(in srgb, var(--m-pdf) 12%, transparent);
   color: var(--m-pdf);
