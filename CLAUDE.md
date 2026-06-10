@@ -124,7 +124,7 @@ Work one phase per branch, one pull request per phase. Each phase is independent
 2. **Persisted planning.** Replace every `window.OTJ` read with a TanStack Query hook and every `upsertSession` with a Supabase mutation. RLS locks each coach to their own sessions.
 3. **Media uploads.** Signed-URL uploads to Supabase Storage, the Media Library backed by real files, drills linked to real clips.
 4. **Admin and invites.** Invite-only sign-up, the admin role, coach management, official template curation.
-5. **Realtime and parents.** Shared live-session sync over Supabase Realtime, the read-only parent role, session reminders.
+5. **Realtime and parents.** Shared live-session sync over Supabase Realtime, the read-only parent role, add to calendar (.ics download). Email and push reminders are possible future work.
 
 ### Phase 1 detail
 - Scaffold per Bootstrap above.
@@ -155,20 +155,23 @@ Everything else (UI port, query hooks, planner logic, media UI, styling) can run
 
 Core design rules from Phase 4 onward. Every feature, screen, query and mutation states its role behaviour.
 
-- The roles are admin and coach, with parent reserved in the schema for later. Admin is root and is the only role that sees or touches user management. Coach sees and uses everything else, club-wide. Postgres RLS is always the enforcement; the UI only decides what to surface. Any change to role behaviour is a gated migration.
-- Visibility is club-wide, ownership is personal, teams are a filter. Read access to club content is never restricted by team. Edit and delete follow ownership (own, or admin). Team is an attribute used for filtering and defaults, never for access control. Whose sessions you are looking at is a view filter that defaults to your own.
+- The roles are admin, coach and parent. Admin is root and is the only role that sees or touches user management. Coach sees and uses everything else, club-wide. Parent is read-only: parents see club content and watch live sessions, and they change nothing; the planner redirects them away and every create, edit, upload, import and drive affordance is absent for them. Postgres RLS is always the enforcement; the UI only decides what to surface. Any change to role behaviour is a gated migration.
+- Visibility is club-wide, ownership is personal, teams are a filter. Read access to club content is never restricted by team. Edit and delete follow ownership (own, or admin). Team is an attribute used for filtering and defaults, never for access control. Whose sessions you are looking at is a view filter that defaults to your own (parents, owning nothing, always see the whole club).
 - The club's teams are Titans, Trojans, Gladiators, Spartans and Argonauts, held as first-class data in the `teams` table.
 
-| Capability | Coach | Admin |
-|---|---|---|
-| View drills, media, templates, sessions | yes, club-wide | yes, club-wide |
-| Create drills and media | yes | yes |
-| Edit or delete a drill or media item | own only | any in club |
-| Create sessions | yes, own | yes, own |
-| Edit or delete a session | own only | any in club |
-| Curate templates | no | yes |
-| Manage teams | no | yes |
-| User management, invites, role changes | no | yes |
+| Capability | Coach | Admin | Parent |
+|---|---|---|---|
+| View drills, media, templates, sessions | yes, club-wide | yes, club-wide | yes, club-wide |
+| Watch a live session | yes | yes | yes |
+| Drive a live session | own only | any in club | no |
+| Create drills and media | yes | yes | no |
+| Import from England Football | yes | yes | no |
+| Edit or delete a drill or media item | own only | any in club | no |
+| Create sessions | yes, own | yes, own | no |
+| Edit or delete a session | own only | any in club | no |
+| Curate templates | no | yes | no |
+| Manage teams | no | yes | no |
+| User management, invites, role changes | no | yes | no |
 
 ---
 

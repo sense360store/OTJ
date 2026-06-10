@@ -301,6 +301,9 @@ function UploadModal({ onClose }: { onClose: () => void }) {
 
 export function Media() {
   const { user, role } = useAuth()
+  // Uploading is for coaching roles; parents browse read-only. The media
+  // insert RLS is the real enforcement.
+  const coaching = role === 'coach' || role === 'admin'
   const [q, setQ] = useState('')
   const [type, setType] = useState('')
   const [open, setOpen] = useState<MediaItem | null>(null)
@@ -332,10 +335,12 @@ export function Media() {
           <h2>Media Library</h2>
           <div className="sub">All your videos, YouTube links, diagrams and PDFs in one place.</div>
         </div>
-        <button className="btn btn-primary" onClick={() => setUploadOpen(true)}>
-          <Icon.upload />
-          Upload media
-        </button>
+        {coaching && (
+          <button className="btn btn-primary" onClick={() => setUploadOpen(true)}>
+            <Icon.upload />
+            Upload media
+          </button>
+        )}
       </div>
 
       <div className="filter-row" style={{ marginBottom: 16 }}>

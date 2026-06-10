@@ -217,6 +217,8 @@ export function DrillDetail() {
   // drills have no creator, so only an admin can manage them. The database is
   // the real enforcement; this only decides whether to surface the actions.
   const canManage = role === 'admin' || (!!drill.createdBy && drill.createdBy === user?.id)
+  // Adding to a session writes a session, which parents cannot do.
+  const coaching = role === 'coach' || role === 'admin'
 
   return (
     <div>
@@ -340,12 +342,14 @@ export function DrillDetail() {
             </div>
           </div>
 
-          <div className="row" style={{ gap: 10, marginTop: 22 }}>
-            <button className="btn btn-primary btn-block" onClick={() => setAddOpen(true)}>
-              <Icon.plus />
-              Add to session
-            </button>
-          </div>
+          {coaching && (
+            <div className="row" style={{ gap: 10, marginTop: 22 }}>
+              <button className="btn btn-primary btn-block" onClick={() => setAddOpen(true)}>
+                <Icon.plus />
+                Add to session
+              </button>
+            </div>
+          )}
           {canManage && (
             <div className="row" style={{ gap: 10, marginTop: 10 }}>
               <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setEditOpen(true)}>

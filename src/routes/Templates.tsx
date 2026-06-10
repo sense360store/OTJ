@@ -23,11 +23,13 @@ function TemplateCard({
   upsertSession: Upsert
   onManage: ((t: Template) => void) | null
 }) {
-  const { user, profile } = useAuth()
+  const { user, profile, role } = useAuth()
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
-  // The session built from a template belongs to the signed-in coach and
-  // defaults to their team, the same as one built in the planner. The
-  // template's intentions copy onto the new session.
+  // Using a template creates a session, which parents cannot do; for them the
+  // card is read-only. The session built from a template belongs to the
+  // signed-in coach and defaults to their team, the same as one built in the
+  // planner. The template's intentions copy onto the new session.
+  const coaching = role === 'coach' || role === 'admin'
   const use = () => {
     const s: Session = {
       id: crypto.randomUUID(),
@@ -83,18 +85,22 @@ function TemplateCard({
           <div key={i} style={{ flex: a.duration, background: PHASE_COLOR[a.phase] }} title={a.phase}></div>
         ))}
       </div>
-      <div className="row" style={{ gap: 9 }}>
-        <button className="btn btn-primary" style={{ flex: 1 }} onClick={use}>
-          <Icon.copy />
-          Use template
-        </button>
-        {onManage && (
-          <button className="btn btn-ghost btn-sm" onClick={() => onManage(t)}>
-            <Icon.book />
-            Drills
-          </button>
-        )}
-      </div>
+      {(coaching || onManage) && (
+        <div className="row" style={{ gap: 9 }}>
+          {coaching && (
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={use}>
+              <Icon.copy />
+              Use template
+            </button>
+          )}
+          {onManage && (
+            <button className="btn btn-ghost btn-sm" onClick={() => onManage(t)}>
+              <Icon.book />
+              Drills
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -208,9 +214,10 @@ export function Templates() {
   const list = templates.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
   const { groups, rest } = groupByProgramme(list)
   // Curating templates is admin only per the permissions matrix; every coach
-  // can still use one, and every coach can import from England Football. The
-  // templates RLS enforces the writes.
+  // can still use one, and every coaching role can import from England
+  // Football. Parents read only. The templates RLS enforces the writes.
   const curator = role === 'admin'
+  const coaching = role === 'coach' || role === 'admin'
   const grid = (items: Template[]) => (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
       {items.map((t) => (
@@ -226,10 +233,12 @@ export function Templates() {
           <div className="sub">Reusable session shells — build a new plan in one click.</div>
         </div>
         <div className="row wrap">
-          <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
-            <Icon.download />
-            Import from England Football
-          </button>
+          {coaching && (
+            <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
+              <Icon.download />
+              Import from England Football
+            </button>
+          )}
           {curator && (
             <button className="btn btn-primary" onClick={() => nav('planner')}>
               <Icon.plus />
