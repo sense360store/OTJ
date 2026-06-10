@@ -28,6 +28,8 @@ export interface MediaItem {
   length?: string
   pages?: number
   yt?: string
+  storagePath?: string
+  createdBy?: string
   usedIn?: number
 }
 
@@ -108,4 +110,24 @@ export const LEVELS: Level[] = ['Foundation', 'Developing', 'Advanced']
 
 export function sessionMinutes(s: { activities: Activity[] }): number {
   return s.activities.reduce((a, x) => a + (x.duration || 0), 0)
+}
+
+// ---- YouTube helpers ---------------------------------------------------
+// Pure helpers, shared by the media card, the upload modal and the drill
+// detail. They derive the video id from any of the common YouTube URL shapes
+// and build the public thumbnail, which needs no signed URL.
+
+export function youtubeId(url: string | undefined | null): string | null {
+  if (!url) return null
+  const patterns = [/youtu\.be\/([\w-]{11})/, /[?&]v=([\w-]{11})/, /\/embed\/([\w-]{11})/, /\/shorts\/([\w-]{11})/]
+  for (const re of patterns) {
+    const m = url.match(re)
+    if (m) return m[1]
+  }
+  return null
+}
+
+export function youtubeThumb(url: string | undefined | null): string | null {
+  const id = youtubeId(url)
+  return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null
 }

@@ -26,6 +26,7 @@ import type {
   SessionStatus,
   Template,
 } from './data'
+import { youtubeId } from './data'
 
 // ---- Database row shapes (snake_case) ----------------------------------
 // Separate from the component-facing camelCase types. Nullable columns are
@@ -156,6 +157,8 @@ function toMedia(r: MediaRow): MediaItem {
     length: r.length ?? undefined,
     pages: r.pages ?? undefined,
     yt: r.yt_url ?? undefined,
+    storagePath: r.storage_path ?? undefined,
+    createdBy: r.created_by ?? undefined,
   }
 }
 
@@ -287,6 +290,189 @@ export function useDrillMap(): Record<string, Drill> {
 export function useMediaMap(): Record<string, MediaItem> {
   const { data } = useMedia()
   return useMemo(() => Object.fromEntries((data ?? []).map((m) => [m.id, m])), [data])
+}
+
+// ---- Media storage: signed URLs ----------------------------------------
+// The media bucket is private, so every preview, open or download link is a
+// short-lived signed URL. Creation is centralised here and keyed by
+// storage_path, so a path used by both a media card and a drill that links it
+// mints one URL, shared from the cache. The URL lasts an hour; staleTime sits
+// comfortably below that so a cached URL never expires mid-use.
+const SIGNED_URL_TTL = 60 * 60 // one hour, in seconds
+const SIGNED_URL_STALE = 50 * 60 * 1000 // 50 minutes, in milliseconds
+
+export function useSignedMediaUrl(storagePath: string | null | undefined) {
+  return useQuery({
+    queryKey: ['media-url', storagePath],
+    enabled: !!storagePath,
+    staleTime: SIGNED_URL_STALE,
+    gcTime: SIGNED_URL_TTL * 1000,
+    queryFn: async (): Promise<string | null> => {
+      const { data, error } = await supabase.storage.from('media').createSignedUrl(storagePath!, SIGNED_URL_TTL)
+      if (error) throw error
+      return data?.signedUrl ?? null
+    },
+  })
+}
+
+// ---- Media uploads -----------------------------------------------------
+// Detection, client-side metadata and the upload mutation. The bucket and its
+// policies already exist; this only puts objects in and registers rows.
+
+export function detectMediaType(mime: string): MediaType | null {
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  if (mime === 'application/pdf') return 'pdf'
+  return null
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let i = 0
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024
+    i++
+  }
+  return `${value >= 10 ? Math.round(value) : value.toFixed(1)} ${units[i]}`
+}
+
+// A storage key safe filename: keep word characters, dots and hyphens, collapse
+// the rest. The {club_id}/{uuid}- prefix guarantees uniqueness regardless.
+function sanitiseFilename(name: string): string {
+  const cleaned = name
+    .normalize('NFKD')
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .toLowerCase()
+  return cleaned || 'file'
+}
+
+function readImageDims(file: File): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(`${img.naturalWidth} × ${img.naturalHeight}`)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      resolve(undefined)
+    }
+    img.src = url
+  })
+}
+
+function readVideoLength(file: File): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url)
+      const total = Math.round(video.duration)
+      if (!isFinite(total) || total <= 0) return resolve(undefined)
+      const m = Math.floor(total / 60)
+      const s = total % 60
+      resolve(`${m}:${String(s).padStart(2, '0')}`)
+    }
+    video.onerror = () => {
+      URL.revokeObjectURL(url)
+      resolve(undefined)
+    }
+    video.src = url
+  })
+}
+
+export type UploadInput = { mode: 'file'; file: File; name: string } | { mode: 'youtube'; ytUrl: string; name: string }
+
+export function useUploadMedia() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+
+  return useMutation<void, Error, UploadInput>({
+    mutationFn: async (input) => {
+      if (!user || !profile?.club_id) {
+        throw new Error('You must be signed in to upload media.')
+      }
+      const clubId = profile.club_id
+
+      // YouTube: no file, just a row with the link.
+      if (input.mode === 'youtube') {
+        if (!youtubeId(input.ytUrl)) {
+          throw new Error('Enter a valid YouTube link.')
+        }
+        const { error } = await supabase.from('media').insert({
+          club_id: clubId,
+          created_by: user.id,
+          name: input.name,
+          type: 'youtube',
+          yt_url: input.ytUrl,
+        })
+        if (error) throw error
+        return
+      }
+
+      // File: detect, upload to Storage, then register the row.
+      const file = input.file
+      const type = detectMediaType(file.type)
+      if (!type) {
+        throw new Error('Unsupported file type. Upload an image, video or PDF.')
+      }
+      const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+      const { error: uploadError } = await supabase.storage
+        .from('media')
+        .upload(path, file, { contentType: file.type || undefined })
+      if (uploadError) throw uploadError
+
+      const size = formatBytes(file.size)
+      const dims = type === 'image' ? await readImageDims(file) : undefined
+      const length = type === 'video' ? await readVideoLength(file) : undefined
+
+      const { error: insertError } = await supabase.from('media').insert({
+        club_id: clubId,
+        created_by: user.id,
+        name: input.name,
+        type,
+        storage_path: path,
+        size,
+        dims: dims ?? null,
+        length: length ?? null,
+      })
+      // If the row insert fails after the object uploaded, remove the object so
+      // no orphan is left behind in Storage.
+      if (insertError) {
+        await supabase.storage.from('media').remove([path])
+        throw insertError
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['media'] }),
+  })
+}
+
+// ---- Media delete ------------------------------------------------------
+// Owner or admin only; the media RLS delete policy is the real enforcement.
+// The storage object goes first, then the row. Drills that link the row fall
+// back to no media through the on delete set null foreign key.
+export function useDeleteMedia() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; storagePath?: string | null }>({
+    mutationFn: async ({ id, storagePath }) => {
+      if (storagePath) {
+        const { error } = await supabase.storage.from('media').remove([storagePath])
+        if (error) throw error
+      }
+      const { error } = await supabase.from('media').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+    },
+  })
 }
 
 // ---- Session write -----------------------------------------------------

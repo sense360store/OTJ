@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
-import { useDrill, useDrills, useMediaMap } from '../lib/queries'
+import { useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
 import { PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -85,6 +85,13 @@ export function DrillDetail() {
   const { data: drill, isLoading, isError } = useDrill(id)
   const { data: allDrills = [] } = useDrills()
   const mediaById = useMediaMap()
+  // Resolved before the early returns so the signed URL hook is called
+  // unconditionally. The bucket is private, so opening a drill's clip goes
+  // through the same signed URL path as the media library.
+  const media = drill?.mediaId ? mediaById[drill.mediaId] : undefined
+  const previewPath =
+    media && (media.type === 'image' || media.type === 'video' || media.type === 'pdf') ? media.storagePath : undefined
+  const { data: signedUrl } = useSignedMediaUrl(previewPath)
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
   if (!drill)
@@ -93,11 +100,11 @@ export function DrillDetail() {
         It may have been removed.
       </Empty>
     )
-  const media = drill.mediaId ? mediaById[drill.mediaId] : undefined
   const related = allDrills
     .filter((d) => d.id !== drill.id && (d.corner === drill.corner || d.skill === drill.skill))
     .slice(0, 3)
   const MediaIcon = media ? MEDIA_META[media.type].icon : null
+  const openHref = media?.type === 'youtube' ? media.yt : (signedUrl ?? undefined)
 
   return (
     <div>
@@ -123,10 +130,17 @@ export function DrillDetail() {
                   {media.name}
                 </span>
               </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => nav('media')}>
-                <Icon.external />
-                Open
-              </button>
+              {openHref ? (
+                <a className="btn btn-ghost btn-sm" href={openHref} target="_blank" rel="noreferrer">
+                  <Icon.external />
+                  Open
+                </a>
+              ) : (
+                <button className="btn btn-ghost btn-sm" onClick={() => nav('media')}>
+                  <Icon.external />
+                  Open
+                </button>
+              )}
             </div>
           )}
 

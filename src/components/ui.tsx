@@ -6,9 +6,17 @@ import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
-import { CORNERS, cornerClass } from '../lib/data'
+import { CORNERS, cornerClass, youtubeThumb } from '../lib/data'
 import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
-import { useMediaMap } from '../lib/queries'
+import { useMediaMap, useSignedMediaUrl } from '../lib/queries'
+
+const REAL_MEDIA_STYLE = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+} as const
 
 export function fmtMin(m: number): string {
   return m + ' min'
@@ -55,6 +63,11 @@ export function MediaThumb({
   showBadge?: boolean
   label?: string
 }) {
+  // The bucket is private, so an image or video preview needs a signed URL.
+  // Keyed by storage_path, the hook shares one URL across every card and drill
+  // that references the same object. YouTube thumbnails are public and need none.
+  const previewPath = media && (media.type === 'image' || media.type === 'video') ? media.storagePath : undefined
+  const { data: signedUrl } = useSignedMediaUrl(previewPath)
   if (!media) {
     return (
       <div className="thumb thumb-diagram">
@@ -65,8 +78,15 @@ export function MediaThumb({
   }
   const meta = MEDIA_META[media.type]
   const Ico = meta.icon
-  const kindClass =
-    media.kind === 'pitch'
+  const ytThumb = media.type === 'youtube' ? youtubeThumb(media.yt) : null
+  const imgSrc = media.type === 'image' ? signedUrl : ytThumb
+  const videoSrc = media.type === 'video' ? signedUrl : null
+  const hasReal = !!imgSrc || !!videoSrc
+  // With a real preview behind it, drop the patterned placeholder background so
+  // the file shows through. Otherwise keep the per-kind placeholder art.
+  const kindClass = hasReal
+    ? 'thumb-real'
+    : media.kind === 'pitch'
       ? 'thumb-pitch'
       : media.kind === 'pdf'
         ? 'thumb-pdf'
@@ -75,13 +95,15 @@ export function MediaThumb({
           : 'thumb-diagram'
   const isVideo = media.type === 'video' || media.type === 'youtube'
   return (
-    <div className={'thumb ' + kindClass}>
+    <div className={'thumb ' + kindClass} style={hasReal ? { background: '#0a0e1a' } : undefined}>
+      {imgSrc && <img src={imgSrc} alt={media.name} loading="lazy" style={REAL_MEDIA_STYLE} />}
+      {videoSrc && <video src={videoSrc} preload="metadata" muted playsInline style={REAL_MEDIA_STYLE} />}
       {isVideo && showPlay !== false && (
         <div className="play-btn">
           <Icon.play />
         </div>
       )}
-      {!isVideo && media.kind === 'pdf' && (
+      {!isVideo && media.kind === 'pdf' && !hasReal && (
         <Icon.fileText style={{ width: 34, height: 34, color: 'var(--m-pdf)', opacity: 0.6 }} />
       )}
       {showBadge && (

@@ -1,10 +1,24 @@
-import { useMemo, useState } from 'react'
-import { useMedia, useDrills } from '../lib/queries'
+import { useMemo, useRef, useState } from 'react'
+import { useMedia, useDrills, useSignedMediaUrl, useUploadMedia, useDeleteMedia, detectMediaType } from '../lib/queries'
 import type { MediaItem, MediaType } from '../lib/data'
+import { youtubeId } from '../lib/data'
+import { useAuth } from '../hooks/useAuth'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, MediaThumb, MEDIA_META, Modal } from '../components/ui'
 
-function MediaCard({ m, onOpen }: { m: MediaItem; onOpen: () => void }) {
+function usedLabel(used: number): string {
+  return used > 0 ? `Used in ${used} drill${used !== 1 ? 's' : ''}` : 'Not in use'
+}
+
+function MediaCard({
+  m,
+  onOpen,
+  onDelete,
+}: {
+  m: MediaItem
+  onOpen: () => void
+  onDelete: (() => void) | null
+}) {
   const used = m.usedIn ?? 0
   return (
     <div className="card" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -22,26 +36,258 @@ function MediaCard({ m, onOpen }: { m: MediaItem; onOpen: () => void }) {
           </div>
         </div>
         <span className="pill" style={{ alignSelf: 'flex-start' }}>
-          {used > 0 ? `Used in ${used} drill${used !== 1 ? 's' : ''}` : 'Not in use'}
+          {usedLabel(used)}
         </span>
         <div className="row" style={{ gap: 8, marginTop: 'auto' }}>
           <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={onOpen}>
             <Icon.external />
             View
           </button>
-          <button className="btn btn-ghost btn-sm icon-only" style={{ width: 38, padding: 0 }}>
-            <Icon.trash />
-          </button>
+          {onDelete && (
+            <button
+              className="btn btn-ghost btn-sm icon-only"
+              style={{ width: 38, padding: 0 }}
+              aria-label="Delete media"
+              onClick={onDelete}
+            >
+              <Icon.trash />
+            </button>
+          )}
         </div>
       </div>
     </div>
   )
 }
 
+// The open or preview modal. Real files render from a signed URL: images and
+// videos inline, PDFs and YouTube as a thumb with a link out.
+function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void }) {
+  const filePath = item.type === 'image' || item.type === 'video' || item.type === 'pdf' ? item.storagePath : undefined
+  const { data: signedUrl, isLoading } = useSignedMediaUrl(filePath)
+  const openHref = item.type === 'youtube' ? item.yt ?? undefined : signedUrl ?? undefined
+
+  return (
+    <Modal
+      title={item.name}
+      sub={MEDIA_META[item.type].label}
+      onClose={onClose}
+      footer={
+        <>
+          {openHref && (
+            <a className="btn btn-ghost" href={openHref} target="_blank" rel="noreferrer">
+              <Icon.external />
+              {item.type === 'pdf' ? 'Open in new tab' : item.type === 'youtube' ? 'Open on YouTube' : 'Open'}
+            </a>
+          )}
+          <button className="btn btn-primary" onClick={onClose}>
+            Close
+          </button>
+        </>
+      }
+    >
+      <div className="detail-media">
+        <div className="player">
+          {item.type === 'image' && signedUrl ? (
+            <img src={signedUrl} alt={item.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#0a0e1a' }} />
+          ) : item.type === 'video' && signedUrl ? (
+            <video src={signedUrl} controls playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#0a0e1a' }} />
+          ) : item.storagePath && isLoading ? (
+            <div className="thumb thumb-diagram" style={{ position: 'absolute', inset: 0 }}>
+              <span className="thumb-label">loading…</span>
+            </div>
+          ) : (
+            <MediaThumb media={item} showPlay={false} />
+          )}
+        </div>
+      </div>
+      <div className="row wrap" style={{ gap: 8, marginTop: 14 }}>
+        {item.size && <span className="pill">{item.size}</span>}
+        {item.dims && <span className="pill">{item.dims}</span>}
+        {item.length && (
+          <span className="pill">
+            <Icon.clock />
+            {item.length}
+          </span>
+        )}
+        {item.pages && (
+          <span className="pill">
+            <Icon.fileText />
+            {item.pages} pages
+          </span>
+        )}
+        {item.type === 'youtube' && item.yt && <span className="pill">YouTube link</span>}
+        <span className="pill">{usedLabel(item.usedIn ?? 0)}</span>
+      </div>
+    </Modal>
+  )
+}
+
+function DeleteModal({ item, onClose }: { item: MediaItem; onClose: () => void }) {
+  const del = useDeleteMedia()
+  const used = item.usedIn ?? 0
+  const remove = () => {
+    del.mutate(
+      { id: item.id, storagePath: item.storagePath },
+      { onSuccess: onClose },
+    )
+  }
+  return (
+    <Modal
+      title="Delete media"
+      sub={item.name}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{ background: 'var(--m-pdf)' }}
+            onClick={remove}
+            disabled={del.isPending}
+          >
+            <Icon.trash />
+            {del.isPending ? 'Deleting…' : 'Delete'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        This removes the file from storage and the library. {usedLabel(used)}
+        {used > 0 ? '. Those drills fall back to no media.' : '.'}
+      </p>
+      {del.isError && <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>Could not delete. Try again.</p>}
+    </Modal>
+  )
+}
+
+function UploadModal({ onClose }: { onClose: () => void }) {
+  const upload = useUploadMedia()
+  const [tab, setTab] = useState<'file' | 'youtube'>('file')
+  const [file, setFile] = useState<File | null>(null)
+  const [name, setName] = useState('')
+  const [yt, setYt] = useState('')
+  const [drag, setDrag] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const pickFile = (f: File | null) => {
+    setError(null)
+    if (!f) return
+    if (!detectMediaType(f.type)) {
+      setFile(null)
+      setError('Unsupported file type. Upload an image, video or PDF.')
+      return
+    }
+    setFile(f)
+    if (!name) setName(f.name)
+  }
+
+  const canSubmit = tab === 'file' ? !!file && !!name.trim() : !!youtubeId(yt) && !!name.trim()
+
+  const submit = () => {
+    setError(null)
+    if (tab === 'file') {
+      if (!file) return
+      upload.mutate({ mode: 'file', file, name: name.trim() }, { onSuccess: onClose, onError: (e) => setError(e.message) })
+    } else {
+      if (!youtubeId(yt)) {
+        setError('Enter a valid YouTube link.')
+        return
+      }
+      upload.mutate({ mode: 'youtube', ytUrl: yt.trim(), name: name.trim() }, { onSuccess: onClose, onError: (e) => setError(e.message) })
+    }
+  }
+
+  return (
+    <Modal
+      title="Upload media"
+      sub="Add a video, image or PDF, or link a YouTube video."
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={upload.isPending}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={submit} disabled={!canSubmit || upload.isPending}>
+            <Icon.upload />
+            {upload.isPending ? 'Uploading…' : tab === 'file' ? 'Upload' : 'Add link'}
+          </button>
+        </>
+      }
+    >
+      <div className="row" style={{ gap: 8, marginBottom: 14 }}>
+        <button className={'chip' + (tab === 'file' ? ' on' : '')} onClick={() => { setTab('file'); setError(null) }}>
+          <Icon.upload />
+          File
+        </button>
+        <button className={'chip' + (tab === 'youtube' ? ' on' : '')} onClick={() => { setTab('youtube'); setError(null) }}>
+          <Icon.youtube />
+          YouTube
+        </button>
+      </div>
+
+      {tab === 'file' ? (
+        <div
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDrag(false)
+            pickFile(e.dataTransfer.files?.[0] ?? null)
+          }}
+          style={{
+            border: '1.5px dashed ' + (drag ? 'var(--royal)' : 'var(--line)'),
+            borderRadius: 12,
+            padding: '28px 16px',
+            textAlign: 'center',
+            cursor: 'pointer',
+            background: drag ? 'var(--bg-2)' : 'transparent',
+          }}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*,video/*,application/pdf"
+            style={{ display: 'none' }}
+            onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+          />
+          <Icon.upload style={{ width: 26, height: 26, color: 'var(--slate-2)' }} />
+          <div style={{ fontWeight: 700, fontSize: 14.5, marginTop: 8 }}>
+            {file ? file.name : 'Drop a file or click to choose'}
+          </div>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>Images, videos and PDFs</div>
+        </div>
+      ) : (
+        <div className="field">
+          <label>YouTube link</label>
+          <input
+            placeholder="https://www.youtube.com/watch?v=…"
+            value={yt}
+            onChange={(e) => { setYt(e.target.value); setError(null) }}
+          />
+        </div>
+      )}
+
+      <div className="field" style={{ marginTop: 14 }}>
+        <label>Display name</label>
+        <input placeholder="Name shown in the library" value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+
+      {error && <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 4 }}>{error}</p>}
+    </Modal>
+  )
+}
+
 export function Media() {
+  const { user, role } = useAuth()
   const [q, setQ] = useState('')
   const [type, setType] = useState('')
   const [open, setOpen] = useState<MediaItem | null>(null)
+  const [del, setDel] = useState<MediaItem | null>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
   const { data: mediaItems = [], isLoading, isError } = useMedia()
   const { data: drills = [] } = useDrills()
   // "Used in N drills" is derived, not stored: count drills referencing each item.
@@ -57,6 +303,9 @@ export function Media() {
   const list = media.filter((m) => (!type || m.type === type) && (!q || m.name.toLowerCase().includes(q.toLowerCase())))
   const counts: Record<MediaType, number> = { video: 0, youtube: 0, image: 0, pdf: 0 }
   media.forEach((m) => counts[m.type]++)
+  // Delete is owner or admin only, mirroring the media RLS. The database is the
+  // real enforcement; this only decides whether to surface the action.
+  const canDelete = (m: MediaItem) => role === 'admin' || (!!m.createdBy && m.createdBy === user?.id)
   return (
     <div>
       <div className="page-head">
@@ -64,7 +313,7 @@ export function Media() {
           <h2>Media Library</h2>
           <div className="sub">All your videos, YouTube links, diagrams and PDFs in one place.</div>
         </div>
-        <button className="btn btn-primary">
+        <button className="btn btn-primary" onClick={() => setUploadOpen(true)}>
           <Icon.upload />
           Upload media
         </button>
@@ -99,45 +348,13 @@ export function Media() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(248px,1fr))', gap: 18 }}>
         {list.map((m) => (
-          <MediaCard key={m.id} m={m} onOpen={() => setOpen(m)} />
+          <MediaCard key={m.id} m={m} onOpen={() => setOpen(m)} onDelete={canDelete(m) ? () => setDel(m) : null} />
         ))}
       </div>
 
-      {open && (
-        <Modal
-          title={open.name}
-          sub={MEDIA_META[open.type].label}
-          onClose={() => setOpen(null)}
-          footer={
-            <button className="btn btn-primary" onClick={() => setOpen(null)}>
-              Close
-            </button>
-          }
-        >
-          <div className="detail-media">
-            <div className="player">
-              <MediaThumb media={open} />
-            </div>
-          </div>
-          <div className="row wrap" style={{ gap: 8, marginTop: 14 }}>
-            {open.size && <span className="pill">{open.size}</span>}
-            {open.dims && <span className="pill">{open.dims}</span>}
-            {open.length && (
-              <span className="pill">
-                <Icon.clock />
-                {open.length}
-              </span>
-            )}
-            {open.pages && (
-              <span className="pill">
-                <Icon.fileText />
-                {open.pages} pages
-              </span>
-            )}
-            <span className="pill">{(open.usedIn ?? 0) > 0 ? `Used in ${open.usedIn} drill(s)` : 'Not in use'}</span>
-          </div>
-        </Modal>
-      )}
+      {open && <MediaModal item={open} onClose={() => setOpen(null)} />}
+      {del && <DeleteModal item={del} onClose={() => setDel(null)} />}
+      {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
     </div>
   )
 }
