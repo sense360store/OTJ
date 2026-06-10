@@ -14,17 +14,22 @@
 -- templates.week columns stay for one phase as the backfill source and
 -- are not written by new code.
 --
--- Numbering: 0008 is Phase 7's avatar column (merged on its branch
--- chain, not yet on main) and 0009 and 0010 stay reserved for the
--- phase 8 and phase 9 migrations, so this phase starts at 0011 as the
--- phase plan set out.
+-- Numbering: 0008 (avatars) and 0009 (parent owner writes) are on
+-- main; 0010 stays reserved for Phase 8's RBAC, so this phase starts
+-- at 0011 as the phase plan set out.
 --
 -- RLS: club members read programmes. Writes ride the templates
 -- capabilities, no new capabilities: insert mirrors the templates
 -- create condition, and update or delete is owner or the templates
--- managing role. Phase 8's RBAC (has_perm) is not live in this schema,
--- so both are expressed with the coaching-roles condition spelled out,
--- admin being the templates manager.
+-- managing role, with the owner arm closed to demoted parents the way
+-- 0009 closed it elsewhere. Phase 8's RBAC (has_perm) is not live in
+-- this schema, so the conditions are expressed with the coaching-roles
+-- form spelled out, admin being the templates manager. If 0010_rbac is
+-- applied before this file, swap the four conditions to the has_perm
+-- form first (insert via has_perm('templates.create'); update and
+-- delete as owner holding it, or has_perm('templates.manage')); if
+-- this file is applied first, Phase 8's policy translation pass covers
+-- programmes with every other table.
 -- =====================================================================
 
 -- The programme entity. weeks is the planned length (the FA model is
@@ -94,10 +99,14 @@ create policy "programmes_select_club" on public.programmes
 create policy "programmes_insert_club" on public.programmes
   for insert with check ( club_id = public.my_club() and public.my_role() in ('coach','admin') );
 
--- Editing and deleting is owner, or the templates managing role (admin).
+-- Editing and deleting is owner, or the templates managing role (admin),
+-- with the writing roles spelled out on the owner arm so a coach demoted
+-- to parent loses write on programmes they created, matching 0009.
 -- Backfilled rows have no owner, so only an admin curates them.
 create policy "programmes_update_owner_or_admin" on public.programmes
-  for update using ( club_id = public.my_club() and (created_by = auth.uid() or public.my_role() = 'admin') )
+  for update using ( club_id = public.my_club() and public.my_role() in ('coach','admin')
+    and (created_by = auth.uid() or public.my_role() = 'admin') )
   with check ( club_id = public.my_club() );
 create policy "programmes_delete_owner_or_admin" on public.programmes
-  for delete using ( club_id = public.my_club() and (created_by = auth.uid() or public.my_role() = 'admin') );
+  for delete using ( club_id = public.my_club() and public.my_role() in ('coach','admin')
+    and (created_by = auth.uid() or public.my_role() = 'admin') );

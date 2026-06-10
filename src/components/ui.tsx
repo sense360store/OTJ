@@ -9,7 +9,7 @@ import type { IconComponent } from './icons'
 import { CORNERS, cornerClass, youtubeThumb } from '../lib/data'
 import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
 import { sourceLabelForUrl } from '../lib/fa'
-import { useMediaMap, useSignedMediaUrl } from '../lib/queries'
+import { useMediaMap, useMediaSrc } from '../lib/queries'
 
 const REAL_MEDIA_STYLE = {
   position: 'absolute',
@@ -72,9 +72,11 @@ export function MediaThumb({
 }) {
   // The bucket is private, so an image or video preview needs a signed URL.
   // Keyed by storage_path, the hook shares one URL across every card and drill
-  // that references the same object. YouTube thumbnails are public and need none.
+  // that references the same object, and a load error (an expired URL) retries
+  // once on a fresh URL before falling back to the placeholder art. YouTube
+  // thumbnails are public and need none of this.
   const previewPath = media && (media.type === 'image' || media.type === 'video') ? media.storagePath : undefined
-  const { data: signedUrl } = useSignedMediaUrl(previewPath)
+  const { src: signedUrl, onError, onLoad } = useMediaSrc(previewPath)
   if (!media) {
     return (
       <div className="thumb thumb-diagram">
@@ -103,8 +105,27 @@ export function MediaThumb({
   const isVideo = media.type === 'video' || media.type === 'youtube'
   return (
     <div className={'thumb ' + kindClass} style={hasReal ? { background: '#0a0e1a' } : undefined}>
-      {imgSrc && <img src={imgSrc} alt={media.name} loading="lazy" style={REAL_MEDIA_STYLE} />}
-      {videoSrc && <video src={videoSrc} preload="metadata" muted playsInline style={REAL_MEDIA_STYLE} />}
+      {imgSrc && (
+        <img
+          src={imgSrc}
+          alt={media.name}
+          loading="lazy"
+          style={REAL_MEDIA_STYLE}
+          onError={media.type === 'image' ? onError : undefined}
+          onLoad={media.type === 'image' ? onLoad : undefined}
+        />
+      )}
+      {videoSrc && (
+        <video
+          src={videoSrc}
+          preload="metadata"
+          muted
+          playsInline
+          style={REAL_MEDIA_STYLE}
+          onError={onError}
+          onLoadedMetadata={onLoad}
+        />
+      )}
       {isVideo && showPlay !== false && (
         <div className="play-btn">
           <Icon.play />

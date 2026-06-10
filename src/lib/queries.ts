@@ -10,12 +10,13 @@
 // RLS scopes every read to the signed-in coach's club automatically. There is
 // deliberately no client-side club filter, so a scoping regression cannot be
 // masked by belt-and-braces filtering.
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
 import { useAuth } from '../hooks/useAuth'
 import type {
   Activity,
+  Club,
   CornerKey,
   Drill,
   Level,
@@ -137,9 +138,17 @@ interface ProfileRow {
   id: string
   full_name: string | null
   avatar: string | null
+  avatar_url: string | null
   role: Role
   team_id: string | null
   created_at: string
+}
+
+interface ClubRow {
+  id: string
+  name: string
+  motto: string | null
+  crest_url: string | null
 }
 
 // ---- Column lists ------------------------------------------------------
@@ -153,7 +162,8 @@ const TEMPLATE_COLS =
 const SESSION_COLS =
   'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, live_activity_index, live_activity_started_at'
 const TEAM_COLS = 'id, club_id, name, created_at'
-const PROFILE_COLS = 'id, full_name, avatar, role, team_id, created_at'
+const PROFILE_COLS = 'id, full_name, avatar, avatar_url, role, team_id, created_at'
+const CLUB_COLS = 'id, name, motto, crest_url'
 
 // ---- Mappers -----------------------------------------------------------
 
@@ -195,6 +205,7 @@ function toDrill(r: DrillRow): Drill {
     format: r.format ?? '',
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    createdAt: r.created_at,
   }
 }
 
@@ -228,6 +239,7 @@ function toTemplate(r: TemplateRow): Template {
     week: r.week,
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    createdAt: r.created_at,
   }
 }
 
@@ -262,10 +274,15 @@ function toMember(r: ProfileRow): Member {
     id: r.id,
     fullName: r.full_name ?? '',
     avatar: r.avatar,
+    avatarUrl: r.avatar_url,
     role: r.role,
     teamId: r.team_id,
     joined: r.created_at,
   }
+}
+
+function toClub(r: ClubRow): Club {
+  return { id: r.id, name: r.name, motto: r.motto ?? '', crestUrl: r.crest_url }
 }
 
 // ---- Reads -------------------------------------------------------------
@@ -389,6 +406,23 @@ export function useProfiles() {
   })
 }
 
+// The signed-in member's club row. RLS returns only their own club, so the
+// read takes the first row rather than naming an id. Disabled until the
+// session exists; the login screen reads the cached branding instead.
+export function useClub() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['club'],
+    enabled: !!user,
+    queryFn: async (): Promise<Club | null> => {
+      const { data, error } = await supabase.from('clubs').select(CLUB_COLS).limit(1)
+      if (error) throw error
+      const row = (data as ClubRow[])[0]
+      return row ? toClub(row) : null
+    },
+  })
+}
+
 // Lookup maps built from the cached list reads. The planner, templates, live
 // view and drill cards resolve a drill or a media item by id through these,
 // the same shape the prototype's drillById and mediaById maps provided.
@@ -434,7 +468,9 @@ export function useActivityTitle(): (act: Activity, fallback?: string) => string
 // short-lived signed URL. Creation is centralised here and keyed by
 // storage_path, so a path used by both a media card and a drill that links it
 // mints one URL, shared from the cache. The URL lasts an hour; staleTime sits
-// comfortably below that so a cached URL never expires mid-use.
+// comfortably below that so a cached URL never expires mid-use, and a window
+// focus refetches any stale URL, so a tab reopened the next day heals itself
+// before anything tries to render.
 const SIGNED_URL_TTL = 60 * 60 // one hour, in seconds
 const SIGNED_URL_STALE = 50 * 60 * 1000 // 50 minutes, in milliseconds
 
@@ -444,12 +480,50 @@ export function useSignedMediaUrl(storagePath: string | null | undefined) {
     enabled: !!storagePath,
     staleTime: SIGNED_URL_STALE,
     gcTime: SIGNED_URL_TTL * 1000,
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<string | null> => {
       const { data, error } = await supabase.storage.from('media').createSignedUrl(storagePath!, SIGNED_URL_TTL)
       if (error) throw error
       return data?.signedUrl ?? null
     },
   })
+}
+
+// A signed URL wired for recovery at the point of use. An expired URL makes
+// the <img> or <video> fail with a 400 or 403 the element cannot report, so
+// on the first load error for a path the URL's query is invalidated and the
+// element gets one fresh URL to retry with; if that fails too, src goes null
+// and the caller shows its fallback. A successful load re-arms the retry, and
+// any newly minted URL (a focus refetch, say) is worth one attempt. Used by
+// every render path: thumbnails, the drill detail, the player overlay and
+// the diagram viewer.
+export function useMediaSrc(storagePath: string | null | undefined) {
+  const qc = useQueryClient()
+  const { data, isLoading, isError } = useSignedMediaUrl(storagePath)
+  // One retry per path between successful loads, tracked in a ref only the
+  // event handlers touch. URLs that failed even after the retry land in
+  // state, which render reads to swap in the fallback; a newly minted URL is
+  // never in that set, so it always gets one attempt.
+  const retriedPaths = useRef(new Set<string>())
+  const [failedUrls, setFailedUrls] = useState<ReadonlySet<string>>(() => new Set())
+
+  const onError = useCallback(() => {
+    if (!storagePath) return
+    if (!retriedPaths.current.has(storagePath)) {
+      retriedPaths.current.add(storagePath)
+      void qc.invalidateQueries({ queryKey: ['media-url', storagePath] })
+      return
+    }
+    if (data) setFailedUrls((prev) => (prev.has(data) ? prev : new Set(prev).add(data)))
+  }, [qc, storagePath, data])
+
+  const onLoad = useCallback(() => {
+    if (storagePath) retriedPaths.current.delete(storagePath)
+  }, [storagePath])
+
+  const src = data && !failedUrls.has(data) ? data : null
+  const broken = isError || (!!data && failedUrls.has(data))
+  return { src, isLoading, broken, onError, onLoad }
 }
 
 // ---- Media uploads -----------------------------------------------------
@@ -461,6 +535,51 @@ export function detectMediaType(mime: string): MediaType | null {
   if (mime.startsWith('video/')) return 'video'
   if (mime === 'application/pdf') return 'pdf'
   return null
+}
+
+// Some pickers (Android in particular) hand over files with an empty or
+// generic MIME type, and an object stored with the wrong type will not
+// render: an <img> refuses an SVG unless it is served as image/svg+xml.
+// Uploads therefore always pass an explicit contentType, falling back to the
+// extension when the browser offers nothing useful.
+const EXTENSION_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  heic: 'image/heic',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  ogv: 'video/ogg',
+  pdf: 'application/pdf',
+}
+
+export function contentTypeForFile(file: File): string | null {
+  if (file.type && file.type !== 'application/octet-stream') return file.type
+  const ext = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]
+  return (ext && EXTENSION_MIME[ext]) || null
+}
+
+export function mediaTypeForFile(file: File): MediaType | null {
+  const mime = contentTypeForFile(file)
+  return mime ? detectMediaType(mime) : null
+}
+
+// The media bucket rides on the project's global upload limit, 50 MB (the
+// same value config.toml sets locally). Checked before any bytes move, so an
+// oversized pick fails at once with a plain message instead of a storage
+// error at the end of a long upload.
+export const MEDIA_MAX_BYTES = 50 * 1024 * 1024
+
+export function oversizeMessage(file: File): string | null {
+  if (file.size <= MEDIA_MAX_BYTES) return null
+  return `That file is ${formatBytes(file.size)} and the upload limit is 50 MB. Compress the file or trim the clip and try again.`
 }
 
 function formatBytes(bytes: number): string {
@@ -551,21 +670,24 @@ export function useUploadMedia() {
           type: 'youtube',
           yt_url: input.ytUrl,
         })
-        if (error) throw error
+        if (error) throw new Error(`Could not save the link: ${error.message}`)
         return
       }
 
-      // File: detect, upload to Storage, then register the row.
+      // File: detect, guard the size, upload to Storage, then register the
+      // row. Every failure surfaces the underlying error text verbatim; the
+      // upload modal shows it and stays open.
       const file = input.file
-      const type = detectMediaType(file.type)
-      if (!type) {
+      const contentType = contentTypeForFile(file)
+      const type = contentType ? detectMediaType(contentType) : null
+      if (!contentType || !type) {
         throw new Error('Unsupported file type. Upload an image, video or PDF.')
       }
+      const tooBig = oversizeMessage(file)
+      if (tooBig) throw new Error(tooBig)
       const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
-      const { error: uploadError } = await supabase.storage
-        .from('media')
-        .upload(path, file, { contentType: file.type || undefined })
-      if (uploadError) throw uploadError
+      const { error: uploadError } = await supabase.storage.from('media').upload(path, file, { contentType })
+      if (uploadError) throw new Error(`The upload failed: ${uploadError.message}`)
 
       const size = formatBytes(file.size)
       const dims = type === 'image' ? await readImageDims(file) : undefined
@@ -585,10 +707,117 @@ export function useUploadMedia() {
       // no orphan is left behind in Storage.
       if (insertError) {
         await supabase.storage.from('media').remove([path])
-        throw insertError
+        throw new Error(`The file uploaded but could not be saved to the library: ${insertError.message}`)
       }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['media'] }),
+  })
+}
+
+// ---- Media replace -------------------------------------------------------
+// Points an existing media row (a seeded sample, typically) at real content,
+// keeping its id so every drill that links it keeps working. A file goes to a
+// fresh storage object and the row swaps over to it; a YouTube link clears
+// the file fields instead. Owner or admin only; the media update RLS is the
+// real enforcement, and a write it blocks updates no rows, which is reported
+// rather than swallowed.
+export function useReplaceMedia() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+
+  return useMutation<void, Error, { id: string; previousPath?: string | null; input: UploadInput }>({
+    mutationFn: async ({ id, previousPath, input }) => {
+      if (!profile?.club_id) {
+        throw new Error('You must be signed in to replace media.')
+      }
+      const clubId = profile.club_id
+
+      const applyUpdate = async (patch: Record<string, unknown>) => {
+        const { data, error } = await supabase.from('media').update(patch).eq('id', id).select('id')
+        if (error) throw new Error(`Could not update the media record: ${error.message}`)
+        if (!data?.length) throw new Error('You do not have permission to replace this item.')
+      }
+
+      if (input.mode === 'youtube') {
+        if (!youtubeId(input.ytUrl)) {
+          throw new Error('Enter a valid YouTube link.')
+        }
+        await applyUpdate({
+          name: input.name,
+          type: 'youtube',
+          yt_url: input.ytUrl,
+          storage_path: null,
+          size: null,
+          dims: null,
+          length: null,
+          pages: null,
+        })
+      } else {
+        const file = input.file
+        const contentType = contentTypeForFile(file)
+        const type = contentType ? detectMediaType(contentType) : null
+        if (!contentType || !type) {
+          throw new Error('Unsupported file type. Upload an image, video or PDF.')
+        }
+        const tooBig = oversizeMessage(file)
+        if (tooBig) throw new Error(tooBig)
+
+        const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+        const { error: uploadError } = await supabase.storage.from('media').upload(path, file, { contentType })
+        if (uploadError) throw new Error(`The upload failed: ${uploadError.message}`)
+
+        const size = formatBytes(file.size)
+        const dims = type === 'image' ? await readImageDims(file) : undefined
+        const length = type === 'video' ? await readVideoLength(file) : undefined
+
+        try {
+          await applyUpdate({
+            name: input.name,
+            type,
+            storage_path: path,
+            yt_url: null,
+            size,
+            dims: dims ?? null,
+            length: length ?? null,
+            pages: null,
+          })
+        } catch (e) {
+          // The object uploaded but the row did not take it; remove the orphan.
+          await supabase.storage.from('media').remove([path])
+          throw e
+        }
+      }
+
+      // Samples have no object behind them, but if the replaced row did,
+      // clear it out so storage holds no unreachable file. Best effort.
+      if (previousPath) {
+        await supabase.storage.from('media').remove([previousPath])
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media'] })
+    },
+  })
+}
+
+// ---- Remove the seeded samples -------------------------------------------
+// Deletes every sample row (no stored file, no playable link) in one go.
+// Surfaced to admins only; the media delete RLS (owner or admin) is the real
+// enforcement. Samples have no storage objects, so this is a pure row delete;
+// drills that referenced one fall back to no media through the on delete set
+// null foreign key.
+export function useRemoveSampleMedia() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { ids: string[] }>({
+    mutationFn: async ({ ids }) => {
+      if (ids.length === 0) return
+      const { error } = await supabase.from('media').delete().in('id', ids)
+      if (error) throw new Error(`Could not remove the samples: ${error.message}`)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+    },
   })
 }
 
@@ -970,6 +1199,150 @@ export function useUpdateProfile() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+  })
+}
+
+// ---- Account self-service -------------------------------------------------
+// The signed-in member edits their own profile row through the
+// profiles_update_self policy. Role and club are never sent from here, so
+// they cannot change; that stays with admins on the Users screen. The auth
+// context's profile is refreshed so the shell reflects the change at once.
+
+export function useUpdateMyProfile() {
+  const qc = useQueryClient()
+  const { user, refreshProfile } = useAuth()
+  return useMutation<void, Error, { fullName?: string; teamId?: string | null }>({
+    mutationFn: async (input) => {
+      if (!user) throw new Error('You must be signed in.')
+      const patch: Record<string, unknown> = {}
+      if (input.fullName !== undefined) patch.full_name = input.fullName
+      if (input.teamId !== undefined) patch.team_id = input.teamId
+      const { error } = await supabase.from('profiles').update(patch).eq('id', user.id)
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      await refreshProfile()
+    },
+  })
+}
+
+// The profile photo is a storage object, not a media library item, so no
+// media row is registered. The object lives in the media bucket under
+// avatars/{user_id}/ and profiles.avatar_url stores the storage path; the
+// avatar renders it through the same signed URL hook as media previews.
+export function useUploadAvatar() {
+  const qc = useQueryClient()
+  const { user, profile, refreshProfile } = useAuth()
+  return useMutation<void, Error, { file: File }>({
+    mutationFn: async ({ file }) => {
+      if (!user) throw new Error('You must be signed in.')
+      if (detectMediaType(file.type) !== 'image') throw new Error('Choose an image file.')
+      const path = `avatars/${user.id}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+      const { error: uploadError } = await supabase.storage
+        .from('media')
+        .upload(path, file, { contentType: file.type || undefined })
+      if (uploadError) throw uploadError
+      const previous = profile?.avatar_url
+      const { error } = await supabase.from('profiles').update({ avatar_url: path }).eq('id', user.id)
+      // If the row update fails after the object uploaded, remove the object
+      // so no orphan is left behind in Storage.
+      if (error) {
+        await supabase.storage.from('media').remove([path])
+        throw error
+      }
+      // The replaced photo is unreferenced now; removal is best effort.
+      if (previous) void supabase.storage.from('media').remove([previous])
+    },
+    onSuccess: async () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      await refreshProfile()
+    },
+  })
+}
+
+export function useRemoveAvatar() {
+  const qc = useQueryClient()
+  const { user, profile, refreshProfile } = useAuth()
+  return useMutation<void, Error, void>({
+    mutationFn: async () => {
+      if (!user) throw new Error('You must be signed in.')
+      const previous = profile?.avatar_url
+      const { error } = await supabase.from('profiles').update({ avatar_url: null }).eq('id', user.id)
+      if (error) throw error
+      if (previous) void supabase.storage.from('media').remove([previous])
+    },
+    onSuccess: async () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      await refreshProfile()
+    },
+  })
+}
+
+// ---- Club settings (admin) --------------------------------------------------
+// Writes go through the clubs_update_admin policy; the screens only decide
+// whether to surface the form. The crest is a storage object in the media
+// bucket under club/, stored on the row as its path and signed for rendering
+// like any other private object. A crest_url holding a full URL (a seeded or
+// external value) is left alone by the cleanup, which only removes bucket
+// objects.
+
+export function useUpdateClub() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name?: string; motto?: string }>({
+    mutationFn: async ({ id, name, motto }) => {
+      const patch: Record<string, unknown> = {}
+      if (name !== undefined) patch.name = name
+      if (motto !== undefined) patch.motto = motto || null
+      const { error } = await supabase.from('clubs').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
+  })
+}
+
+// PNG, JPG and SVG only: the crest renders small in the shell, so these
+// cover it and keep the object lightweight.
+export const CREST_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml']
+
+function isStoragePath(value: string | null): value is string {
+  return !!value && !/^https?:\/\//i.test(value)
+}
+
+export function useUploadCrest() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { club: Club; file: File }>({
+    mutationFn: async ({ club, file }) => {
+      if (!CREST_TYPES.includes(file.type)) throw new Error('Use a PNG, JPG or SVG file.')
+      const path = `club/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+      const { error: uploadError } = await supabase.storage
+        .from('media')
+        .upload(path, file, { contentType: file.type || undefined })
+      if (uploadError) throw uploadError
+      const { error } = await supabase.from('clubs').update({ crest_url: path }).eq('id', club.id)
+      // If the row update fails after the object uploaded, remove the object
+      // so no orphan is left behind in Storage.
+      if (error) {
+        await supabase.storage.from('media').remove([path])
+        throw error
+      }
+      // The replaced crest object is unreferenced now; removal is best effort.
+      if (isStoragePath(club.crestUrl)) void supabase.storage.from('media').remove([club.crestUrl])
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
+  })
+}
+
+// Back to the bundled crest: clears crest_url and removes the uploaded object.
+export function useClearCrest() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { club: Club }>({
+    mutationFn: async ({ club }) => {
+      const { error } = await supabase.from('clubs').update({ crest_url: null }).eq('id', club.id)
+      if (error) throw error
+      if (isStoragePath(club.crestUrl)) void supabase.storage.from('media').remove([club.crestUrl])
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
   })
 }
 

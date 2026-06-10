@@ -18,7 +18,8 @@
 //     and asset downloads must come from cdn.englandfootball.com over
 //     https. Anything else is rejected or skipped.
 //   * One page per call. No link following, no crawling, no caps lifted
-//     by the caller.
+//     by the caller. A programme overview is refused here and belongs
+//     to fa-import-programme.
 //
 // Parsing is deliberately defensive: a missing piece becomes an empty
 // field and a warning in the response, never a failure. Deploy with
@@ -28,6 +29,7 @@
 import {
   allowedUrl,
   corsHeaders,
+  countSessionLinks,
   fetchFaPage,
   importParsedSession,
   PAGE_HOST,
@@ -66,6 +68,19 @@ Deno.serve(async (req) => {
   const page = parseSessionPage(html)
   if (!page.title) {
     return reply(422, { error: 'That page does not look like an England Football session page.' })
+  }
+
+  // A programme overview lists a programme's weekly sessions rather than
+  // being one; importing it would manufacture a junk template of anonymous
+  // drills. Detect it by its title, or by the absence of both a setup strip
+  // and an activity gallery on a page that links several session pages, and
+  // refuse before anything is written.
+  const lacksSetup = !page.space && !page.players && page.equipment.length === 0
+  const lacksGallery = page.activities.length === 0
+  if (/^session\s+programme/i.test(page.title) || (lacksSetup && lacksGallery && countSessionLinks(html, pageUrl) > 1)) {
+    return reply(422, {
+      error: 'That link is a programme overview. Use Import a programme, or import its weekly session pages individually.',
+    })
   }
 
   // The single-page import keeps writing the legacy programme and week
