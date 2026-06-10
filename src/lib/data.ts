@@ -176,3 +176,13 @@ export function youtubeThumb(url: string | undefined | null): string | null {
   const id = youtubeId(url)
   return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null
 }
+
+// ---- Samples -------------------------------------------------------------
+// A sample is a media row with nothing behind it: no stored file and no
+// playable YouTube link. The ten seeded demo rows ship this way (two of them
+// carry a bare youtu.be link with no video id, which plays nothing). Samples
+// are badged plainly, never offer a View or Play action, and can be replaced
+// with real content or removed.
+export function isSampleMedia(m: Pick<MediaItem, 'storagePath' | 'yt'>): boolean {
+  return !m.storagePath && !youtubeId(m.yt)
+}

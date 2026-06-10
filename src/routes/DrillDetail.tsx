@@ -4,7 +4,7 @@ import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useDeleteDrill, useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
-import { PHASES } from '../lib/data'
+import { isSampleMedia, PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -211,7 +211,10 @@ export function DrillDetail() {
     .filter((d) => d.id !== drill.id && (d.corner === drill.corner || d.skill === drill.skill))
     .slice(0, 3)
   const MediaIcon = media ? MEDIA_META[media.type].icon : null
-  const playable = media?.type === 'video' || media?.type === 'youtube'
+  // A sample (a seeded row with no file or playable link behind it) offers no
+  // Play or Open here; it is labelled for what it is instead.
+  const sample = !!media && isSampleMedia(media)
+  const playable = !sample && (media?.type === 'video' || media?.type === 'youtube')
   const openHref = signedUrl ?? undefined
   // Edit and delete are owner or admin only, mirroring the drills RLS. Seeded
   // drills have no creator, so only an admin can manage them. The database is
@@ -241,7 +244,7 @@ export function DrillDetail() {
               </button>
             ) : (
               <div className="player">
-                <MediaThumb media={media} label={media ? undefined : 'no media yet'} />
+                <MediaThumb media={media} label={media ? (sample ? 'sample' : undefined) : 'no media yet'} />
               </div>
             )}
           </div>
@@ -256,7 +259,11 @@ export function DrillDetail() {
                   {media.name}
                 </span>
               </div>
-              {playable ? (
+              {sample ? (
+                <span className="pill" style={{ color: 'var(--slate-2)' }}>
+                  Sample, no file attached
+                </span>
+              ) : playable ? (
                 <button className="btn btn-ghost btn-sm" onClick={() => setPlayerOpen(true)}>
                   <Icon.play />
                   Play
@@ -267,7 +274,7 @@ export function DrillDetail() {
                   Open
                 </a>
               ) : (
-                <button className="btn btn-ghost btn-sm" onClick={() => nav('media')}>
+                <button className="btn btn-ghost btn-sm" disabled>
                   <Icon.external />
                   Open
                 </button>
