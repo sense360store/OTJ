@@ -11,13 +11,9 @@ import { useDeleteSession, useMemberMap, useTeamMap, useTeams } from '../lib/que
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Chip, Empty, ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { Chip, Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR } from '../components/ui'
 
 type Nav = ReturnType<typeof useNav>
-
-function dateLabel(d: string) {
-  return new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-}
 
 function DeleteSessionModal({ s, onClose }: { s: Session; onClose: () => void }) {
   const del = useDeleteSession()
@@ -77,7 +73,7 @@ function SessionCard({
               style={{ color: 'var(--royal)', background: 'color-mix(in srgb, var(--royal) 10%, transparent)' }}
             >
               <Icon.calendar />
-              {dateLabel(s.date)}
+              {fmtDate(s.date)}
             </span>
             <span className="pill">
               <Icon.clock />

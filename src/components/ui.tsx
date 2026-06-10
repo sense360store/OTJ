@@ -29,6 +29,12 @@ export function fmtClock(sec: number): string {
   return m + ':' + String(s).padStart(2, '0')
 }
 
+// The session date as the cards and pitch-side views show it: Mon 16 Jun.
+export function fmtDate(d: string): string {
+  if (!d) return ''
+  return new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+}
+
 /* ---- Corner tag ------------------------------------------------ */
 export function CornerTag({ corner, small }: { corner: CornerKey; small?: boolean }) {
   const c = CORNERS[corner]

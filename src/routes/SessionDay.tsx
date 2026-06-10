@@ -16,7 +16,7 @@ import { useActivityTitle, useDrillMap, useMediaMap, useSession, useTeamMap } fr
 import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Empty, ErrorNote, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
+import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
 import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
 import './SessionDay.css'
@@ -42,11 +42,6 @@ function loadChecked(sessionId: string): string[] {
   } catch {
     return []
   }
-}
-
-function dateLabel(d: string) {
-  if (!d) return ''
-  return new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 }
 
 function SessionDayView({ session }: { session: Session }) {
@@ -109,7 +104,7 @@ function SessionDayView({ session }: { session: Session }) {
 
   const mins = sessionMinutes(session)
   const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
-  const subBits = [dateLabel(session.date), session.time, session.venue, teamName].filter(Boolean)
+  const subBits = [fmtDate(session.date), session.time, session.venue, teamName].filter(Boolean)
 
   return (
     <div>
