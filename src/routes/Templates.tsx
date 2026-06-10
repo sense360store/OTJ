@@ -39,6 +39,10 @@ function TemplateCard({
       activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],
       coachId: user?.id ?? '',
       teamId: profile?.team_id ?? null,
+      intentions: [],
+      space: '',
+      sourceUrl: '',
+      sourceLabel: '',
     }
     upsertSession(s)
     nav('planner', { sessionId: s.id })

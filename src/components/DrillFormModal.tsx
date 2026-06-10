@@ -153,6 +153,12 @@ function fromDrill(drill?: Drill): DrillInput {
     points: drill?.points ?? [],
     tags: drill?.tags ?? [],
     mediaId: drill?.mediaId ?? null,
+    setupNotes: drill?.setupNotes ?? '',
+    easier: drill?.easier ?? [],
+    harder: drill?.harder ?? [],
+    theme: drill?.theme ?? '',
+    format: drill?.format ?? '',
+    sourceUrl: drill?.sourceUrl ?? '',
   }
 }
 
