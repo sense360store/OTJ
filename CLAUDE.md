@@ -206,7 +206,7 @@ Source of truth is `src/styles.css` (`:root` for light, `.theme-dark` for dark).
 
 ## Data model
 
-Six tables: `clubs`, `profiles`, `media`, `drills`, `templates`, `sessions`. Defined in `supabase/migrations/0001_init.sql`. Notes:
+Seven tables: `clubs`, `profiles`, `teams`, `media`, `drills`, `templates`, `sessions`. The first six live in `supabase/migrations/0001_init.sql`; `teams` plus the nullable `team_id` columns on `sessions` and `profiles` arrive in `0002_teams_roles.sql`, with the five club teams seeded by `supabase/seed_teams.sql`. Notes:
 
 - `activities` on `sessions` and `templates` is a `jsonb` array of `{ phase, drill_id, duration }`, read and written as a whole by the planner. `drill_id` inside it references a real `drills.id`.
 - Session total minutes is the sum of `activity.duration`, computed in the UI (the prototype's `sessionMinutes`).

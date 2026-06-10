@@ -25,7 +25,11 @@ function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: str
 
 function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
   const nav = useNav()
-  const { sessions, upsertSession } = useSessions()
+  const { user, role } = useAuth()
+  const { sessions: allSessions, upsertSession } = useSessions()
+  // The sessions read is club-wide, but adding a drill writes the session, so
+  // only sessions the signed-in user can edit are offered (own, or admin).
+  const sessions = allSessions.filter((s) => role === 'admin' || s.coachId === user?.id)
   const [phase, setPhase] = useState<Phase>('Skill')
   const [target, setTarget] = useState(sessions[0]?.id || '')
   const add = () => {

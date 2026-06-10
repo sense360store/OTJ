@@ -35,13 +35,21 @@ const NAV: NavSection[] = [
       { id: 'media', label: 'Media Library', icon: Icon.film, to: '/media' },
     ],
   },
+  {
+    group: 'Admin',
+    items: [
+      { id: 'admin-users', label: 'Users', icon: Icon.users, to: '/admin/users' },
+      { id: 'admin-teams', label: 'Teams', icon: Icon.flag, to: '/admin/teams' },
+    ],
+  },
 ]
 
-// The role drives which nav items show. Coach and admin see everything in
-// Phase 1; parent is read-only and loses the planning and template tools.
+// The role drives which nav items show; the routes and RLS enforce the same
+// boundary. Admin is the only role that sees user management. Parent is
+// read-only, reserved for later, and loses the planning and template tools.
 const ROLE_NAV: Record<Role, Set<string>> = {
   coach: new Set(['home', 'library', 'sessions', 'planner', 'templates', 'media']),
-  admin: new Set(['home', 'library', 'sessions', 'planner', 'templates', 'media']),
+  admin: new Set(['home', 'library', 'sessions', 'planner', 'templates', 'media', 'admin-users', 'admin-teams']),
   parent: new Set(['home', 'library', 'sessions', 'media']),
 }
 
