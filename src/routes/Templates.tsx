@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useActivityTitle, usePerm, useTemplates, useDrillMap } from '../lib/queries'
+import { useActivityTitle, useDeleteTemplate, usePerm, useTemplates, useUpdateTemplate, useDrillMap } from '../lib/queries'
+import type { TemplateMetaInput } from '../lib/queries'
 import type { Activity, Session, Template } from '../lib/data'
 import { useRoleScope } from '../lib/roleFilters'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, LockedTagChips, Modal, PHASE_COLOR } from '../components/ui'
+import { ErrorNote, ListInput, Loading, LockedTagChips, Modal, PHASE_COLOR } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 
@@ -97,8 +98,8 @@ function TemplateCard({
           )}
           {onManage && (
             <button className="btn btn-ghost btn-sm" onClick={() => onManage(t)}>
-              <Icon.book />
-              Drills
+              <Icon.edit />
+              Edit
             </button>
           )}
         </div>
@@ -107,25 +108,129 @@ function TemplateCard({
   )
 }
 
-function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => void }) {
+// The full template editor for templates.manage holders: the descriptive
+// fields, the drill list, and deletion. Saves write the row through the
+// templates_update_manage policy; sessions built from the template are
+// copies, so neither editing nor deleting touches them.
+function EditTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => void }) {
+  const update = useUpdateTemplate()
+  const del = useDeleteTemplate()
+  const [meta, setMeta] = useState<TemplateMetaInput>({
+    name: tpl.name,
+    focus: tpl.focus,
+    programme: tpl.programme,
+    week: tpl.week,
+    intentions: [...tpl.intentions],
+  })
   const [acts, setActs] = useState<Activity[]>(() => JSON.parse(JSON.stringify(tpl.activities)) as Activity[])
   const [adding, setAdding] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const drillById = useDrillMap()
   const actTitle = useActivityTitle()
   const mins = acts.reduce((a, x) => a + (x.duration || 0), 0)
+  const set = <K extends keyof TemplateMetaInput>(k: K, v: TemplateMetaInput[K]) => setMeta((m) => ({ ...m, [k]: v }))
+  const save = () =>
+    update.mutate({ id: tpl.id, meta: { ...meta, name: meta.name.trim() }, activities: acts }, { onSuccess: onClose })
+  const remove = () => del.mutate({ id: tpl.id }, { onSuccess: onClose })
+
+  if (confirmingDelete) {
+    return (
+      <Modal
+        title="Delete template"
+        sub={tpl.name}
+        onClose={() => setConfirmingDelete(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setConfirmingDelete(false)} disabled={del.isPending}>
+              Keep template
+            </button>
+            <button
+              className="btn btn-primary"
+              style={{ background: 'var(--m-pdf)' }}
+              onClick={remove}
+              disabled={del.isPending}
+            >
+              <Icon.trash />
+              {del.isPending ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        }
+      >
+        <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+          This removes the template from the club. Sessions that were built from it are copies and keep working; the
+          drills it lists stay in the library.
+        </p>
+        {del.isError && (
+          <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+            Could not delete. Try again.
+          </p>
+        )}
+      </Modal>
+    )
+  }
+
   return (
     <Modal
-      title={tpl.name}
-      sub="Manage drills in this template"
+      title="Edit template"
+      sub={tpl.name}
       onClose={onClose}
       footer={
-        <button className="btn btn-primary" onClick={onClose}>
-          <Icon.check />
-          Done
-        </button>
+        <>
+          <button
+            className="btn btn-ghost"
+            style={{ marginRight: 'auto', color: 'var(--m-pdf)' }}
+            onClick={() => setConfirmingDelete(true)}
+            disabled={update.isPending}
+          >
+            <Icon.trash />
+            Delete
+          </button>
+          <button className="btn btn-ghost" onClick={onClose} disabled={update.isPending}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={save} disabled={!meta.name.trim() || update.isPending}>
+            <Icon.check />
+            {update.isPending ? 'Saving…' : 'Save template'}
+          </button>
+        </>
       }
     >
-      <div className="spread" style={{ marginBottom: 14 }}>
+      <div className="row" style={{ gap: 10 }}>
+        <div className="field" style={{ flex: 2 }}>
+          <label>Name</label>
+          <input value={meta.name} onChange={(e) => set('name', e.target.value)} />
+        </div>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Focus</label>
+          <input value={meta.focus} onChange={(e) => set('focus', e.target.value)} />
+        </div>
+      </div>
+      <div className="row" style={{ gap: 10 }}>
+        <div className="field" style={{ flex: 2 }}>
+          <label>Programme (optional)</label>
+          <input
+            placeholder="Groups templates into a programme"
+            value={meta.programme}
+            onChange={(e) => set('programme', e.target.value)}
+          />
+        </div>
+        <div className="field" style={{ width: 110 }}>
+          <label>Week</label>
+          <input
+            type="number"
+            min="1"
+            max="52"
+            value={meta.week ?? ''}
+            onChange={(e) => set('week', e.target.value === '' ? null : parseInt(e.target.value) || null)}
+          />
+        </div>
+      </div>
+      <div className="field">
+        <label>Intentions</label>
+        <ListInput value={meta.intentions} onChange={(v) => set('intentions', v)} placeholder="Type an intention and press enter" />
+      </div>
+
+      <div className="spread" style={{ margin: '6px 0 14px' }}>
         <div className="row" style={{ gap: 8 }}>
           <span className="role-badge" style={{ fontSize: 12 }}>
             {acts.length} activities
@@ -164,6 +269,11 @@ function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => v
           )
         })}
       </div>
+      {update.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 10 }}>
+          Could not save. Try again.
+        </p>
+      )}
       {adding && (
         <AddDrillModal
           onClose={() => setAdding(false)}
@@ -277,7 +387,7 @@ export function Templates() {
         </div>
       )}
       {grid(rest)}
-      {manage && <ManageTemplateModal tpl={manage} onClose={() => setManage(null)} />}
+      {manage && <EditTemplateModal tpl={manage} onClose={() => setManage(null)} />}
       {importOpen && <ImportFAModal onClose={() => setImportOpen(false)} />}
     </div>
   )

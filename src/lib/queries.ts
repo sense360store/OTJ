@@ -1302,6 +1302,93 @@ export function useInviteUser() {
   })
 }
 
+// ---- Template lifecycle ------------------------------------------------------
+// Templates carry no owner, so editing and deleting ride on templates.manage
+// (the 0010 policies). Sessions built from a template are copies; deleting or
+// editing the template never touches them.
+
+export interface TemplateMetaInput {
+  name: string
+  focus: string
+  programme: string
+  week: number | null
+  intentions: string[]
+}
+
+export function useUpdateTemplate() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; meta: TemplateMetaInput; activities?: Activity[] }>({
+    mutationFn: async ({ id, meta, activities }) => {
+      const patch: Record<string, unknown> = {
+        name: meta.name,
+        focus: meta.focus || null,
+        programme: meta.programme || null,
+        week: meta.week,
+        intentions: meta.intentions,
+      }
+      if (activities) patch.activities = activities.map(toActivityRow)
+      const { error } = await supabase.from('templates').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+  })
+}
+
+export function useDeleteTemplate() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('templates').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+  })
+}
+
+// ---- Bulk deletes --------------------------------------------------------------
+// One statement per batch; the screens only offer ticks on items the user can
+// manage, and the RLS delete policies are the real enforcement underneath.
+
+export function useDeleteDrillsBulk() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { ids: string[] }>({
+    mutationFn: async ({ ids }) => {
+      if (ids.length === 0) return
+      const { error } = await supabase.from('drills').delete().in('id', ids)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+  })
+}
+
+// Storage objects go first, then the rows; drills referencing the removed
+// items fall back to no media through the on delete set null foreign key.
+export function useDeleteMediaBulk() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { items: { id: string; storagePath?: string | null }[] }>({
+    mutationFn: async ({ items }) => {
+      if (items.length === 0) return
+      const paths = items.map((m) => m.storagePath).filter((p): p is string => !!p)
+      if (paths.length > 0) {
+        const { error } = await supabase.storage.from('media').remove(paths)
+        if (error) throw error
+      }
+      const { error } = await supabase
+        .from('media')
+        .delete()
+        .in(
+          'id',
+          items.map((m) => m.id),
+        )
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+    },
+  })
+}
+
 // ---- Member removal --------------------------------------------------------
 // Removal goes through the remove-user Edge Function: it holds the service
 // role key, re-checks the caller holds users.manage, refuses removing the

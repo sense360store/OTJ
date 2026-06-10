@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteDrill, useDrill, useDrills, useMediaMap, usePerm, useSignedMediaUrl } from '../lib/queries'
+import { useDeleteDrill, useDrill, useDrills, useMediaMap, usePerm, useSignedMediaUrl, useTemplates } from '../lib/queries'
 import { PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -138,11 +138,16 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
   )
 }
 
-// Plain confirm before a delete. Sessions and templates that reference the
-// drill keep their timing and show a removed drill placeholder.
+// The confirm states the consequences with real counts: sessions and
+// templates that reference the drill keep their timings and show a removed
+// drill placeholder.
 function DeleteDrillModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
   const nav = useNav()
   const del = useDeleteDrill()
+  const { sessions } = useSessions()
+  const { data: templates = [] } = useTemplates()
+  const sessionRefs = sessions.filter((s) => s.activities.some((a) => a.drillId === drill.id)).length
+  const templateRefs = templates.filter((t) => t.activities.some((a) => a.drillId === drill.id)).length
   const remove = () => {
     del.mutate(
       { id: drill.id },
@@ -172,8 +177,12 @@ function DeleteDrillModal({ drill, onClose }: { drill: Drill; onClose: () => voi
       }
     >
       <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-        This removes the drill from the club library. Sessions and templates that include it keep their timings and show a
-        removed drill placeholder instead.
+        This removes the drill from the club library.{' '}
+        {sessionRefs > 0 || templateRefs > 0
+          ? `${sessionRefs} session${sessionRefs !== 1 ? 's' : ''} and ${templateRefs} template${
+              templateRefs !== 1 ? 's' : ''
+            } include it; they keep their timings and show a removed drill placeholder instead.`
+          : 'No sessions or templates include it.'}
       </p>
       {del.isError && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>

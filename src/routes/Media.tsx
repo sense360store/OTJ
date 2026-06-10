@@ -5,6 +5,7 @@ import {
   useSignedMediaUrl,
   useUploadMedia,
   useDeleteMedia,
+  useDeleteMediaBulk,
   usePerm,
   detectMediaType,
 } from '../lib/queries'
@@ -145,6 +146,66 @@ function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void })
         {item.type === 'youtube' && item.yt && <span className="pill">YouTube link</span>}
         <span className="pill">{usedLabel(item.usedIn ?? 0)}</span>
       </div>
+    </Modal>
+  )
+}
+
+// The single confirm for a bulk delete: the count and the used-in
+// consequences in one sentence each, then one button.
+function BulkDeleteMediaModal({
+  items,
+  onClose,
+  onDone,
+}: {
+  items: MediaItem[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const del = useDeleteMediaBulk()
+  const usedTotal = items.reduce((a, m) => a + (m.usedIn ?? 0), 0)
+  const remove = () =>
+    del.mutate({ items: items.map((m) => ({ id: m.id, storagePath: m.storagePath })) }, { onSuccess: onDone })
+  return (
+    <Modal
+      title={`Delete ${items.length} media item${items.length !== 1 ? 's' : ''}`}
+      sub="One confirm for the whole selection"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{ background: 'var(--m-pdf)' }}
+            onClick={remove}
+            disabled={del.isPending}
+          >
+            <Icon.trash />
+            {del.isPending ? 'Deleting…' : `Delete ${items.length}`}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        This removes the files from storage and the library.{' '}
+        {usedTotal > 0
+          ? `${usedTotal} drill link${usedTotal !== 1 ? 's' : ''} point at the selection; those drills fall back to no media.`
+          : 'No drills use the selection.'}
+      </p>
+      <div className="row wrap" style={{ gap: 6 }}>
+        {items.slice(0, 8).map((m) => (
+          <span key={m.id} className="pill">
+            {m.name}
+          </span>
+        ))}
+        {items.length > 8 && <span className="pill">and {items.length - 8} more</span>}
+      </div>
+      {del.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 8 }}>
+          Could not delete. Try again.
+        </p>
+      )}
     </Modal>
   )
 }
@@ -321,6 +382,10 @@ export function Media() {
   const [playing, setPlaying] = useState<MediaItem | null>(null)
   const [del, setDel] = useState<MediaItem | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
+  // Select mode: tick manageable items and delete the lot with one confirm.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkOpen, setBulkOpen] = useState(false)
   const { data: mediaItems = [], isLoading, isError } = useMedia()
   const { data: drills = [] } = useDrills()
   // A role with filter tags sees the media library locked to items used by
@@ -343,6 +408,21 @@ export function Media() {
   // manager, mirroring the media RLS. The database is the real enforcement;
   // this only decides whether to surface the action.
   const canDelete = (m: MediaItem) => canManageAny || (canUpload && !!m.createdBy && m.createdBy === user?.id)
+  const canBulk = canManageAny || canUpload
+  const toggleSelected = (m: MediaItem) => {
+    if (!canDelete(m)) return
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(m.id)) next.delete(m.id)
+      else next.add(m.id)
+      return next
+    })
+  }
+  const exitSelect = () => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }
+  const selectedItems = media.filter((m) => selected.has(m.id))
   return (
     <div>
       <div className="page-head">
@@ -350,13 +430,43 @@ export function Media() {
           <h2>Media Library</h2>
           <div className="sub">All your videos, YouTube links, diagrams and PDFs in one place.</div>
         </div>
-        {canUpload && (
-          <button className="btn btn-primary" onClick={() => setUploadOpen(true)}>
-            <Icon.upload />
-            Upload media
-          </button>
-        )}
+        <div className="row wrap">
+          {canBulk && !selectMode && (
+            <button className="btn btn-ghost" onClick={() => setSelectMode(true)}>
+              <Icon.checkCircle />
+              Select
+            </button>
+          )}
+          {canUpload && (
+            <button className="btn btn-primary" onClick={() => setUploadOpen(true)}>
+              <Icon.upload />
+              Upload media
+            </button>
+          )}
+        </div>
       </div>
+
+      {selectMode && (
+        <div className="card row wrap" style={{ padding: '10px 14px', marginBottom: 14, gap: 10, alignItems: 'center' }}>
+          <b style={{ fontSize: 14 }}>{selected.size} selected</b>
+          <span className="muted" style={{ fontSize: 12.5, flex: 1 }}>
+            Tick the items to delete. Items you cannot manage are not tickable.
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={exitSelect}>
+            <Icon.x />
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary btn-sm"
+            style={{ background: 'var(--m-pdf)' }}
+            disabled={selected.size === 0}
+            onClick={() => setBulkOpen(true)}
+          >
+            <Icon.trash />
+            Delete selected
+          </button>
+        </div>
+      )}
 
       {scope.locked && (
         <div style={{ marginBottom: 8 }}>
@@ -391,21 +501,69 @@ export function Media() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(248px,1fr))', gap: 18 }}>
-        {list.map((m) => (
-          <MediaCard
-            key={m.id}
-            m={m}
-            onOpen={() => setOpen(m)}
-            onPlay={m.type === 'video' || m.type === 'youtube' ? () => setPlaying(m) : null}
-            onDelete={canDelete(m) ? () => setDel(m) : null}
-          />
-        ))}
+        {list.map((m) =>
+          selectMode ? (
+            <div
+              key={m.id}
+              style={{
+                position: 'relative',
+                borderRadius: 'var(--r-lg, 22px)',
+                outline: selected.has(m.id) ? '2.5px solid var(--royal)' : 'none',
+                opacity: canDelete(m) ? 1 : 0.55,
+              }}
+            >
+              <MediaCard m={m} onOpen={() => {}} onPlay={null} onDelete={null} />
+              {/* The cover button makes the whole card one tick target and
+                  keeps the view and play actions out of the way. */}
+              <button
+                aria-label={(selected.has(m.id) ? 'Unselect ' : 'Select ') + m.name}
+                title={canDelete(m) ? undefined : 'You cannot delete this item.'}
+                onClick={() => toggleSelected(m)}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  zIndex: 2,
+                  background: 'none',
+                  border: 0,
+                  cursor: canDelete(m) ? 'pointer' : 'not-allowed',
+                }}
+              />
+              <span style={{ position: 'absolute', top: 10, left: 10, zIndex: 3, pointerEvents: 'none' }}>
+                <input
+                  type="checkbox"
+                  readOnly
+                  checked={selected.has(m.id)}
+                  disabled={!canDelete(m)}
+                  style={{ width: 20, height: 20, accentColor: 'var(--royal)' }}
+                />
+              </span>
+            </div>
+          ) : (
+            <MediaCard
+              key={m.id}
+              m={m}
+              onOpen={() => setOpen(m)}
+              onPlay={m.type === 'video' || m.type === 'youtube' ? () => setPlaying(m) : null}
+              onDelete={canDelete(m) ? () => setDel(m) : null}
+            />
+          ),
+        )}
       </div>
 
       {open && <MediaModal item={open} onClose={() => setOpen(null)} />}
       {playing && <MediaPlayerModal item={playing} onClose={() => setPlaying(null)} />}
       {del && <DeleteModal item={del} onClose={() => setDel(null)} />}
       {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
+      {bulkOpen && (
+        <BulkDeleteMediaModal
+          items={selectedItems}
+          onClose={() => setBulkOpen(false)}
+          onDone={() => {
+            setBulkOpen(false)
+            exitSelect()
+          }}
+        />
+      )}
     </div>
   )
 }
