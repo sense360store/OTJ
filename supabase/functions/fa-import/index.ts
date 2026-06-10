@@ -208,10 +208,13 @@ function parsePage(html: string): ParsedPage {
   const harder = listAfter(html, 'Make it harder')
 
   // Coaching points: the paragraphs of the highlighted information section.
+  // A missing closing tag yields no points rather than swallowing the rest
+  // of the page.
   const points: string[] = []
   const pointsAt = html.indexOf('course-important-information')
   if (pointsAt !== -1) {
-    const section = html.slice(pointsAt, html.indexOf('</section>', pointsAt))
+    const pointsEnd = html.indexOf('</section>', pointsAt)
+    const section = pointsEnd === -1 ? '' : html.slice(pointsAt, pointsEnd)
     for (const m of section.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)) {
       const text = textOf(m[1])
       if (text) points.push(text)
