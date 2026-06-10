@@ -16,6 +16,7 @@ import { supabase } from './supabase'
 import { useAuth } from '../hooks/useAuth'
 import type {
   Activity,
+  Club,
   CornerKey,
   Drill,
   Level,
@@ -137,9 +138,17 @@ interface ProfileRow {
   id: string
   full_name: string | null
   avatar: string | null
+  avatar_url: string | null
   role: Role
   team_id: string | null
   created_at: string
+}
+
+interface ClubRow {
+  id: string
+  name: string
+  motto: string | null
+  crest_url: string | null
 }
 
 // ---- Column lists ------------------------------------------------------
@@ -153,7 +162,8 @@ const TEMPLATE_COLS =
 const SESSION_COLS =
   'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, live_activity_index, live_activity_started_at'
 const TEAM_COLS = 'id, club_id, name, created_at'
-const PROFILE_COLS = 'id, full_name, avatar, role, team_id, created_at'
+const PROFILE_COLS = 'id, full_name, avatar, avatar_url, role, team_id, created_at'
+const CLUB_COLS = 'id, name, motto, crest_url'
 
 // ---- Mappers -----------------------------------------------------------
 
@@ -262,10 +272,15 @@ function toMember(r: ProfileRow): Member {
     id: r.id,
     fullName: r.full_name ?? '',
     avatar: r.avatar,
+    avatarUrl: r.avatar_url,
     role: r.role,
     teamId: r.team_id,
     joined: r.created_at,
   }
+}
+
+function toClub(r: ClubRow): Club {
+  return { id: r.id, name: r.name, motto: r.motto ?? '', crestUrl: r.crest_url }
 }
 
 // ---- Reads -------------------------------------------------------------
@@ -385,6 +400,23 @@ export function useProfiles() {
         .order('created_at', { ascending: true })
       if (error) throw error
       return (data as unknown as ProfileRow[]).map(toMember)
+    },
+  })
+}
+
+// The signed-in member's club row. RLS returns only their own club, so the
+// read takes the first row rather than naming an id. Disabled until the
+// session exists; the login screen reads the cached branding instead.
+export function useClub() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['club'],
+    enabled: !!user,
+    queryFn: async (): Promise<Club | null> => {
+      const { data, error } = await supabase.from('clubs').select(CLUB_COLS).limit(1)
+      if (error) throw error
+      const row = (data as ClubRow[])[0]
+      return row ? toClub(row) : null
     },
   })
 }
@@ -970,6 +1002,83 @@ export function useUpdateProfile() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+  })
+}
+
+// ---- Account self-service -------------------------------------------------
+// The signed-in member edits their own profile row through the
+// profiles_update_self policy. Role and club are never sent from here, so
+// they cannot change; that stays with admins on the Users screen. The auth
+// context's profile is refreshed so the shell reflects the change at once.
+
+export function useUpdateMyProfile() {
+  const qc = useQueryClient()
+  const { user, refreshProfile } = useAuth()
+  return useMutation<void, Error, { fullName?: string; teamId?: string | null }>({
+    mutationFn: async (input) => {
+      if (!user) throw new Error('You must be signed in.')
+      const patch: Record<string, unknown> = {}
+      if (input.fullName !== undefined) patch.full_name = input.fullName
+      if (input.teamId !== undefined) patch.team_id = input.teamId
+      const { error } = await supabase.from('profiles').update(patch).eq('id', user.id)
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      await refreshProfile()
+    },
+  })
+}
+
+// The profile photo is a storage object, not a media library item, so no
+// media row is registered. The object lives in the media bucket under
+// avatars/{user_id}/ and profiles.avatar_url stores the storage path; the
+// avatar renders it through the same signed URL hook as media previews.
+export function useUploadAvatar() {
+  const qc = useQueryClient()
+  const { user, profile, refreshProfile } = useAuth()
+  return useMutation<void, Error, { file: File }>({
+    mutationFn: async ({ file }) => {
+      if (!user) throw new Error('You must be signed in.')
+      if (detectMediaType(file.type) !== 'image') throw new Error('Choose an image file.')
+      const path = `avatars/${user.id}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+      const { error: uploadError } = await supabase.storage
+        .from('media')
+        .upload(path, file, { contentType: file.type || undefined })
+      if (uploadError) throw uploadError
+      const previous = profile?.avatar_url
+      const { error } = await supabase.from('profiles').update({ avatar_url: path }).eq('id', user.id)
+      // If the row update fails after the object uploaded, remove the object
+      // so no orphan is left behind in Storage.
+      if (error) {
+        await supabase.storage.from('media').remove([path])
+        throw error
+      }
+      // The replaced photo is unreferenced now; removal is best effort.
+      if (previous) void supabase.storage.from('media').remove([previous])
+    },
+    onSuccess: async () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      await refreshProfile()
+    },
+  })
+}
+
+export function useRemoveAvatar() {
+  const qc = useQueryClient()
+  const { user, profile, refreshProfile } = useAuth()
+  return useMutation<void, Error, void>({
+    mutationFn: async () => {
+      if (!user) throw new Error('You must be signed in.')
+      const previous = profile?.avatar_url
+      const { error } = await supabase.from('profiles').update({ avatar_url: null }).eq('id', user.id)
+      if (error) throw error
+      if (previous) void supabase.storage.from('media').remove([previous])
+    },
+    onSuccess: async () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      await refreshProfile()
+    },
   })
 }
 
