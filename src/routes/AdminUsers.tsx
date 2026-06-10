@@ -8,6 +8,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useInviteUser, useProfiles, useTeams, useUpdateProfile } from '../lib/queries'
 import type { Member, Role, Team } from '../lib/data'
 import { Icon } from '../components/icons'
+import { UserAvatar } from '../components/UserAvatar'
 import { ErrorNote, Loading } from '../components/ui'
 
 const ROLE_OPTIONS: { value: Role; label: string }[] = [
@@ -18,13 +19,6 @@ const ROLE_OPTIONS: { value: Role; label: string }[] = [
 
 function joinedLabel(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/)
-  const first = parts[0]?.[0] ?? ''
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : ''
-  return (first + last).toUpperCase() || 'OTJ'
 }
 
 function InviteCard({ teams }: { teams: Team[] }) {
@@ -134,7 +128,7 @@ function MemberRow({
       className="row wrap"
       style={{ gap: 12, padding: '12px 0', borderTop: '1px solid var(--line)', alignItems: 'center' }}
     >
-      <div className="avatar">{m.avatar || initials(m.fullName)}</div>
+      <UserAvatar name={m.fullName} fallbackText={m.avatar} path={m.avatarUrl} />
       <div style={{ flex: 2, minWidth: 160 }}>
         <b style={{ fontSize: 14.5 }}>
           {m.fullName || 'Unnamed'}

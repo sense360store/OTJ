@@ -726,9 +726,11 @@ export function LiveSession() {
   if (isLoading || profileLoading) return <LiveLoading />
   if (isError) return <LiveMessage title="Couldn't load this session" sub="Go back and try again." onExit={onExit} />
   if (!session) return <LiveMessage title="Session not found" sub="It may have been removed." onExit={onExit} />
-  // Driving follows the sessions update policy: the owner, or an admin. The
-  // RLS is the real enforcement; this only decides which view to render.
-  const canDrive = session.coachId === user?.id || role === 'admin'
+  // Driving follows the sessions update policy: the owner while they hold a
+  // coaching role, or an admin. A coach demoted to parent watches their old
+  // sessions like anyone else. The RLS is the real enforcement; this only
+  // decides which view to render.
+  const canDrive = role === 'admin' || (role === 'coach' && session.coachId === user?.id)
   if (canDrive) return <LiveRunner key={session.id} session={session} onExit={onExit} />
   return <LiveWatcher key={session.id} session={session} onExit={onExit} />
 }

@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { Icon } from './icons'
 import { Crest } from './Crest'
+import { UserAvatar } from './UserAvatar'
 import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
 
@@ -34,7 +35,9 @@ export function TopBar() {
 }
 
 export function MobileTop() {
+  const navigate = useNavigate()
   const { dark, setDark } = useTheme()
+  const { profile } = useAuth()
   return (
     <div className="mobile-topbar">
       <Crest />
@@ -42,6 +45,14 @@ export function MobileTop() {
       <div style={{ flex: 1 }}></div>
       <button className="icon-btn" onClick={() => setDark(!dark)}>
         {dark ? <Icon.sun /> : <Icon.moon />}
+      </button>
+      {/* The mobile counterpart of the sidebar identity block. */}
+      <button
+        aria-label="Account"
+        onClick={() => navigate('/account')}
+        style={{ background: 'none', border: 0, padding: 0, display: 'grid', placeItems: 'center' }}
+      >
+        <UserAvatar name={profile?.full_name} fallbackText={profile?.avatar} path={profile?.avatar_url} size={34} />
       </button>
     </div>
   )
