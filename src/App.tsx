@@ -1,6 +1,6 @@
 // App shell and routing. The auth guard decides Login versus the shell, and
 // the shell hosts the sidebar, top bar, bottom nav and the routed content.
-// REVIEW: contains the auth guard.
+// REVIEW: contains the auth guard and the admin route guard.
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import { SessionsProvider } from './context/SessionsContext'
@@ -8,6 +8,7 @@ import { Sidebar } from './components/Sidebar'
 import { TopBar, MobileTop } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
 import { Login } from './routes/Login'
+import { SetPassword } from './routes/SetPassword'
 import { Home } from './routes/Home'
 import { Library } from './routes/Library'
 import { DrillDetail } from './routes/DrillDetail'
@@ -16,21 +17,35 @@ import { Planner } from './routes/Planner'
 import { Templates } from './routes/Templates'
 import { Media } from './routes/Media'
 import { LiveSession } from './routes/LiveSession'
+import { AdminUsers } from './routes/AdminUsers'
+import { AdminTeams } from './routes/AdminTeams'
 
 function Splash() {
   return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--slate)' }}>Loading…</div>
 }
 
-// No session redirects to Login; a session renders the protected tree.
+// No session redirects to Login; a session renders the protected tree. A user
+// arriving from an invite or recovery link sets a password first.
 function RequireAuth() {
-  const { user, loading } = useAuth()
+  const { user, loading, needsPassword } = useAuth()
   if (loading) return <Splash />
   if (!user) return <Navigate to="/login" replace />
+  if (needsPassword) return <SetPassword />
   return (
     <SessionsProvider>
       <Outlet />
     </SessionsProvider>
   )
+}
+
+// Admin only routes. The role drives what the router serves, and the RLS and
+// the Edge Function enforce the same boundary server side; a coach navigating
+// to /admin/users directly is redirected home.
+function RequireAdmin() {
+  const { role, profileLoading } = useAuth()
+  if (profileLoading) return <Splash />
+  if (role !== 'admin') return <Navigate to="/" replace />
+  return <Outlet />
 }
 
 // Keep signed-in users out of the login screen.
@@ -71,6 +86,10 @@ export function App() {
           <Route path="planner" element={<Planner />} />
           <Route path="templates" element={<Templates />} />
           <Route path="media" element={<Media />} />
+          <Route element={<RequireAdmin />}>
+            <Route path="admin/users" element={<AdminUsers />} />
+            <Route path="admin/teams" element={<AdminTeams />} />
+          </Route>
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

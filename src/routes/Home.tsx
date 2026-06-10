@@ -93,13 +93,16 @@ export function Home() {
   const { data: drills = [], isLoading: drillsLoading, isError: drillsError } = useDrills()
   const { data: templates = [], isLoading: templatesLoading, isError: templatesError } = useTemplates()
   const { data: media = [], isLoading: mediaLoading, isError: mediaError } = useMedia()
-  const { profile } = useAuth()
+  const { user, profile } = useAuth()
   const firstName = profile?.full_name?.split(' ')[0] ?? 'Coach'
 
   if (sessionsLoading || drillsLoading || templatesLoading || mediaLoading) return <Loading />
   if (sessionsError || drillsError || templatesError || mediaError) return <ErrorNote />
 
-  const next = sessions[0]
+  // The sessions read is club-wide; the home dashboard is personal, so the
+  // hero and the count stick to the signed-in coach's own sessions.
+  const mySessions = sessions.filter((s) => s.coachId === user?.id)
+  const next = mySessions[0]
   const recent = drills.slice(0, 4)
   const cornerCounts: Record<string, number> = {}
   drills.forEach((d) => {
@@ -139,7 +142,7 @@ export function Home() {
         <div className="stat-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
           <StatCard label="Drills" val={drills.length} foot="In the library" icon={Icon.grid} onClick={() => nav('library')} />
           <StatCard label="Templates" val={templates.length} foot="Ready to use" icon={Icon.book} onClick={() => nav('templates')} />
-          <StatCard label="Sessions" val={sessions.length} foot="Planned ahead" icon={Icon.calendar} onClick={() => nav('sessions')} />
+          <StatCard label="Sessions" val={mySessions.length} foot="Planned by you" icon={Icon.calendar} onClick={() => nav('sessions')} />
           <StatCard label="Media" val={media.length} foot="Clips · PDFs · images" icon={Icon.film} onClick={() => nav('media')} />
         </div>
       </div>

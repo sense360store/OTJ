@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
-import { useActivityTitle, useSession, useDrillMap, useMediaMap } from '../lib/queries'
+import { useActivityTitle, useSession, useDrillMap, useMediaMap, useTeamMap } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -101,6 +101,8 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
   const actTitle = useActivityTitle()
+  const teamById = useTeamMap()
+  const teamName = session.teamId ? teamById[session.teamId]?.name : undefined
   const acts = session.activities
   const load = (): LiveSaved | null => {
     try {
@@ -200,6 +202,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
           </div>
           <div className="lsub">
             Activity {idx + 1} of {acts.length} · {session.focus}
+            {teamName ? ' · ' + teamName : ''}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
