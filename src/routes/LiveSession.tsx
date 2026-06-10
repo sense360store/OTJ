@@ -98,6 +98,7 @@ function LiveComplete({
 }
 
 function LiveRunner({ session, onExit }: { session: Session; onExit: () => void }) {
+  const nav = useNav()
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
   const actTitle = useActivityTitle()
@@ -206,6 +207,14 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
             {teamName ? ' · ' + teamName : ''}
           </div>
         </div>
+        <button
+          className="icon-btn"
+          onClick={() => nav('sessionDay', { sessionId: session.id })}
+          title="Session day"
+          aria-label="Session day"
+        >
+          <Icon.cone />
+        </button>
         <div style={{ textAlign: 'right' }}>
           <div className="ltitle mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {fmtClock(elapsed)}

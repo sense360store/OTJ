@@ -36,6 +36,9 @@ export function useNav() {
       case 'live':
         navigate(`/live/${params.sessionId}`)
         break
+      case 'sessionDay':
+        navigate(`/session-day/${params.sessionId}`)
+        break
       default:
         navigate('/')
     }
