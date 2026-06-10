@@ -96,12 +96,35 @@ export interface Template {
   focus: string
   activities: Activity[]
   // FA session model fields. intentions copy onto a session built from the
-  // template; programme and week group six-week programme sets.
+  // template; programme and week are the legacy grouping labels, kept for
+  // one phase as the backfill source and no longer written by new code.
   intentions: string[]
   programme: string
   week: number | null
+  // Entity-backed programme membership: which programme this template is a
+  // week of, and which week. Both null for a standalone template.
+  programmeId: string | null
+  programmeWeek: number | null
   sourceUrl: string
   sourceLabel: string
+}
+
+// A programme: an ordered set of weekly session templates, the FA six-week
+// format being the model. weeks is the planned length; the week templates
+// hang off Template.programmeId and programmeWeek. pdfMediaId attaches the
+// offline copy from the media library, and source carries attribution for
+// imported programmes.
+export interface Programme {
+  id: string
+  name: string
+  focus: string
+  summary: string
+  intentions: string[]
+  weeks: number
+  pdfMediaId: string | null
+  sourceUrl: string
+  sourceLabel: string
+  createdBy?: string
 }
 
 export interface Session {

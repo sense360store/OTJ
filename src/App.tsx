@@ -15,6 +15,8 @@ import { DrillDetail } from './routes/DrillDetail'
 import { Sessions } from './routes/Sessions'
 import { Planner } from './routes/Planner'
 import { Templates } from './routes/Templates'
+import { Programmes } from './routes/Programmes'
+import { ProgrammeDetail } from './routes/ProgrammeDetail'
 import { Media } from './routes/Media'
 import { LiveSession } from './routes/LiveSession'
 import { SessionDay } from './routes/SessionDay'
@@ -103,6 +105,11 @@ export function App() {
             <Route path="planner" element={<Planner />} />
           </Route>
           <Route path="templates" element={<Templates />} />
+          {/* Programmes are a read surface for every role; the create, import
+              and edit affordances are role-gated in the screens and the
+              programmes RLS enforces the writes. */}
+          <Route path="programmes" element={<Programmes />} />
+          <Route path="programmes/:id" element={<ProgrammeDetail />} />
           <Route path="media" element={<Media />} />
           <Route element={<RequireAdmin />}>
             <Route path="admin/users" element={<AdminUsers />} />
