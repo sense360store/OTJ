@@ -370,7 +370,7 @@ export function Home() {
           <NextSessionHero
             s={next}
             isOwn={isMine(next)}
-            canManage={isMine(next) || role === 'admin'}
+            canManage={(coaching && isMine(next)) || role === 'admin'}
             teamName={teamName(next)}
             todayStr={todayStr}
             nav={nav}
