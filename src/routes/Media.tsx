@@ -180,7 +180,8 @@ function DeleteModal({ item, onClose }: { item: MediaItem; onClose: () => void }
   )
 }
 
-function UploadModal({ onClose }: { onClose: () => void }) {
+// Exported for the Home quick actions, which open the same upload flow.
+export function UploadModal({ onClose }: { onClose: () => void }) {
   const upload = useUploadMedia()
   const [tab, setTab] = useState<'file' | 'youtube'>('file')
   const [file, setFile] = useState<File | null>(null)
@@ -325,9 +326,11 @@ export function Media() {
   const list = media.filter((m) => (!type || m.type === type) && (!q || m.name.toLowerCase().includes(q.toLowerCase())))
   const counts: Record<MediaType, number> = { video: 0, youtube: 0, image: 0, pdf: 0 }
   media.forEach((m) => counts[m.type]++)
-  // Delete is owner or admin only, mirroring the media RLS. The database is the
-  // real enforcement; this only decides whether to surface the action.
-  const canDelete = (m: MediaItem) => role === 'admin' || (!!m.createdBy && m.createdBy === user?.id)
+  // Delete is owner or admin only, mirroring the media RLS; the role condition
+  // matters for a coach demoted to parent, who still matches created_by. The
+  // database is the real enforcement; this only decides whether to surface
+  // the action.
+  const canDelete = (m: MediaItem) => role === 'admin' || (coaching && !!m.createdBy && m.createdBy === user?.id)
   return (
     <div>
       <div className="page-head">

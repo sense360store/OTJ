@@ -45,9 +45,13 @@ export function Library() {
   const themeOptions = useMemo(() => withExistingValues(FA_THEMES, drills.map((d) => d.theme)), [drills])
   const formatOptions = useMemo(() => withExistingValues(FA_FORMATS, drills.map((d) => d.format)), [drills])
 
-  const results = useMemo(() => {
-    let r = drills.filter((d) => {
-      if (corner && d.corner !== corner) return false
+  // One pass applies every refinement except the corner, which yields both
+  // the visible results and the corner distribution. The distribution stays
+  // filter-aware but ignores the corner filter itself, so the strip remains a
+  // way to pick a corner. It moved here from Home, where the dashboard
+  // retired the corner block.
+  const { results, cornerCounts } = useMemo(() => {
+    const refined = drills.filter((d) => {
       if (skill && d.skill !== skill) return false
       if (theme && d.theme !== theme) return false
       if (format && d.format !== format) return false
@@ -59,10 +63,16 @@ export function Library() {
       }
       return true
     })
+    const counts: Record<CornerKey, number> = { technical: 0, physical: 0, social: 0, psychological: 0 }
+    refined.forEach((d) => {
+      counts[d.corner]++
+    })
+    let r = corner ? refined.filter((d) => d.corner === corner) : refined
     if (sort === 'duration') r = [...r].sort((a, b) => a.duration - b.duration)
     if (sort === 'az') r = [...r].sort((a, b) => a.title.localeCompare(b.title))
-    return r
+    return { results: r, cornerCounts: counts }
   }, [drills, q, corner, skill, theme, format, age, level, sort])
+  const cornerTotal = Object.values(cornerCounts).reduce((a, b) => a + b, 0)
 
   const activeFilters = [corner, skill, theme, format, age, level].filter(Boolean).length
 
@@ -177,8 +187,60 @@ export function Library() {
         </div>
       </div>
 
-      <div className="muted" style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 14 }}>
-        {results.length} drill{results.length !== 1 ? 's' : ''}
+      {/* Results count plus the corner distribution strip. Tapping a corner
+          toggles the same filter as the chips above. */}
+      <div className="row wrap" style={{ gap: 12, marginBottom: 14, alignItems: 'center' }}>
+        <div className="muted" style={{ fontSize: 13.5, fontWeight: 600 }}>
+          {results.length} drill{results.length !== 1 ? 's' : ''}
+        </div>
+        {cornerTotal > 0 && (
+          <>
+            <div
+              aria-hidden="true"
+              style={{
+                display: 'flex',
+                gap: 2,
+                height: 8,
+                borderRadius: 4,
+                overflow: 'hidden',
+                flex: 1,
+                minWidth: 140,
+                maxWidth: 380,
+              }}
+            >
+              {Object.values(CORNERS).map((c) =>
+                cornerCounts[c.key] > 0 ? (
+                  <div
+                    key={c.key}
+                    title={`${c.label}: ${cornerCounts[c.key]}`}
+                    style={{
+                      flex: cornerCounts[c.key],
+                      background: c.color,
+                      opacity: corner && corner !== c.key ? 0.25 : 1,
+                      transition: 'opacity .15s',
+                    }}
+                  />
+                ) : null,
+              )}
+            </div>
+            <div className="row wrap" style={{ gap: 6 }}>
+              {Object.values(CORNERS).map((c) => (
+                <button
+                  key={c.key}
+                  className="pill"
+                  title={c.label}
+                  onClick={() => setCorner(corner === c.key ? null : c.key)}
+                  style={{ cursor: 'pointer', border: 0, opacity: corner && corner !== c.key ? 0.45 : 1 }}
+                >
+                  <span
+                    style={{ width: 8, height: 8, borderRadius: '50%', background: c.color, display: 'inline-block' }}
+                  ></span>
+                  {c.short} {cornerCounts[c.key]}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {results.length === 0 ? (
