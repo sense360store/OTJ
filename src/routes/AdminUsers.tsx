@@ -13,6 +13,7 @@ import { ErrorNote, Loading } from '../components/ui'
 const ROLE_OPTIONS: { value: Role; label: string }[] = [
   { value: 'coach', label: 'Coach' },
   { value: 'admin', label: 'Admin' },
+  { value: 'parent', label: 'Parent' },
 ]
 
 function joinedLabel(iso: string): string {
@@ -30,7 +31,7 @@ function InviteCard({ teams }: { teams: Team[] }) {
   const invite = useInviteUser()
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
-  const [role, setRole] = useState<'coach' | 'admin'>('coach')
+  const [role, setRole] = useState<Role>('coach')
   const [teamId, setTeamId] = useState('')
   const [note, setNote] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
 
@@ -73,7 +74,7 @@ function InviteCard({ teams }: { teams: Team[] }) {
         </div>
         <div className="field" style={{ flex: 1, minWidth: 110, marginBottom: 0 }}>
           <label>Role</label>
-          <select value={role} onChange={(e) => setRole(e.target.value as 'coach' | 'admin')}>
+          <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
             {ROLE_OPTIONS.map((r) => (
               <option key={r.value} value={r.value}>
                 {r.label}
@@ -161,7 +162,6 @@ function MemberRow({
               {r.label}
             </option>
           ))}
-          {m.role === 'parent' && <option value="parent">Parent</option>}
         </select>
       </div>
       <div className="field" style={{ width: 150, marginBottom: 0 }}>
@@ -205,7 +205,7 @@ export function AdminUsers() {
       <div className="page-head">
         <div>
           <h2>Users</h2>
-          <div className="sub">Invite coaches and manage roles and teams. Admin only.</div>
+          <div className="sub">Invite coaches and parents and manage roles and teams. Admin only.</div>
         </div>
       </div>
 

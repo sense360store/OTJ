@@ -2,10 +2,14 @@ import { useNavigate } from 'react-router-dom'
 import { Icon } from './icons'
 import { Crest } from './Crest'
 import { useTheme } from '../hooks/useTheme'
+import { useAuth } from '../hooks/useAuth'
 
 export function TopBar() {
   const navigate = useNavigate()
   const { dark, setDark } = useTheme()
+  const { role } = useAuth()
+  // Parents are read-only; the planner shortcut is a coaching affordance.
+  const coaching = role === 'coach' || role === 'admin'
   return (
     <div className="topbar">
       <div className="topbar-search">
@@ -19,10 +23,12 @@ export function TopBar() {
       <button className="icon-btn" onClick={() => setDark(!dark)} title="Toggle theme">
         {dark ? <Icon.sun /> : <Icon.moon />}
       </button>
-      <button className="btn btn-gold" onClick={() => navigate('/planner')}>
-        <Icon.plus />
-        New Session
-      </button>
+      {coaching && (
+        <button className="btn btn-gold" onClick={() => navigate('/planner')}>
+          <Icon.plus />
+          New Session
+        </button>
+      )}
     </div>
   )
 }

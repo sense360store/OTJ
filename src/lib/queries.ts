@@ -981,7 +981,7 @@ export function useUpdateProfile() {
 export interface InviteInput {
   email: string
   fullName: string
-  role: 'coach' | 'admin'
+  role: 'coach' | 'admin' | 'parent'
   teamId: string | null
 }
 

@@ -54,6 +54,7 @@ function SessionCard({
   ownerName,
   teamName,
   canManage,
+  coaching,
   onDelete,
 }: {
   s: Session
@@ -61,6 +62,9 @@ function SessionCard({
   ownerName: string | null
   teamName: string | null
   canManage: boolean
+  // Parents do not get the planner link at all (the route redirects them);
+  // the session day view is their detail.
+  coaching: boolean
   onDelete: () => void
 }) {
   const mins = sessionMinutes(s)
@@ -141,11 +145,13 @@ function SessionCard({
             <Icon.edit />
             Edit plan
           </button>
-        ) : (
+        ) : coaching ? (
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
             <Icon.eye />
             View plan
           </button>
+        ) : (
+          <span style={{ flex: 1 }}></span>
         )}
         <button
           className="btn btn-ghost btn-sm icon-only"
@@ -174,6 +180,9 @@ function SessionCard({
 export function Sessions() {
   const nav = useNav()
   const { user, role } = useAuth()
+  // Parents watch and follow; they cannot plan, so the create affordance and
+  // the planner links stay hidden for them.
+  const coaching = role === 'coach' || role === 'admin'
   const { sessions, loading, error } = useSessions()
   const { data: teams = [] } = useTeams()
   const teamById = useTeamMap()
@@ -185,11 +194,14 @@ export function Sessions() {
   if (loading) return <Loading />
   if (error) return <ErrorNote />
 
+  // Parents own no sessions, so the ownership filter disappears for them and
+  // they always see the whole club.
+  const effView = coaching ? view : 'all'
   // The filter's club value selects sessions saved without a team, a valid
   // state for club-wide events. Team ids are UUIDs, so the sentinel is safe.
   const list = sessions.filter(
     (s) =>
-      (view === 'mine' ? s.coachId === user?.id : true) &&
+      (effView === 'mine' ? s.coachId === user?.id : true) &&
       (!teamId || (teamId === 'club' ? !s.teamId : s.teamId === teamId)),
   )
 
@@ -198,21 +210,29 @@ export function Sessions() {
       <div className="page-head">
         <div>
           <h2>Sessions</h2>
-          <div className="sub">Training nights across the club. You see your own by default.</div>
+          <div className="sub">
+            {coaching ? 'Training nights across the club. You see your own by default.' : 'Training nights across the club.'}
+          </div>
         </div>
-        <button className="btn btn-primary" onClick={() => nav('planner')}>
-          <Icon.plus />
-          New session
-        </button>
+        {coaching && (
+          <button className="btn btn-primary" onClick={() => nav('planner')}>
+            <Icon.plus />
+            New session
+          </button>
+        )}
       </div>
 
       <div className="filter-row" style={{ marginBottom: 18 }}>
-        <Chip on={view === 'mine'} onClick={() => setView('mine')}>
-          My sessions
-        </Chip>
-        <Chip on={view === 'all'} onClick={() => setView('all')}>
-          All sessions
-        </Chip>
+        {coaching && (
+          <>
+            <Chip on={view === 'mine'} onClick={() => setView('mine')}>
+              My sessions
+            </Chip>
+            <Chip on={view === 'all'} onClick={() => setView('all')}>
+              All sessions
+            </Chip>
+          </>
+        )}
         <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
           <option value="">All teams</option>
           <option value="club">Club</option>
@@ -226,9 +246,13 @@ export function Sessions() {
 
       {list.length === 0 ? (
         <Empty icon={Icon.calendar} title="No sessions here yet">
-          {view === 'mine' && !teamId
+          {effView === 'mine' && !teamId
             ? 'Plan your first session and it will appear here.'
-            : 'Nothing matches this filter. Try All sessions or another team.'}
+            : coaching
+              ? 'Nothing matches this filter. Try All sessions or another team.'
+              : teamId
+                ? 'Nothing matches this filter. Try another team.'
+                : 'Nothing on the club calendar yet.'}
         </Empty>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: 18 }}>
@@ -242,6 +266,7 @@ export function Sessions() {
                 ownerName={mine ? null : memberById[s.coachId]?.fullName || 'Another coach'}
                 teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
                 canManage={mine || role === 'admin'}
+                coaching={coaching}
                 onDelete={() => setDeleting(s)}
               />
             )
