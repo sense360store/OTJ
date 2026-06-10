@@ -489,6 +489,8 @@ function readImageDims(file: File): Promise<string | undefined> {
     const img = new Image()
     img.onload = () => {
       URL.revokeObjectURL(url)
+      // An SVG without fixed dimensions reports zero; record nothing.
+      if (!img.naturalWidth || !img.naturalHeight) return resolve(undefined)
       resolve(`${img.naturalWidth} × ${img.naturalHeight}`)
     }
     img.onerror = () => {
@@ -905,6 +907,63 @@ export interface InviteInput {
   fullName: string
   role: 'coach' | 'admin'
   teamId: string | null
+}
+
+// ---- Import from England Football ---------------------------------------
+// The fetch happens in the fa-import Edge Function because the browser
+// cannot reach the FA site cross origin. The function acts as the signed in
+// caller through RLS (no service role) and enforces the domain allowlist;
+// see CLAUDE.md, Third-party content. functions.invoke sends the signed in
+// user's access token automatically.
+
+export interface ImportFAResult {
+  templateId: string | null
+  templateName: string
+  drills: number
+  media: number
+  warnings: string[]
+}
+
+interface ImportFABody {
+  template_id?: string
+  template_name?: string
+  created?: { drills?: number; media?: number }
+  warnings?: string[]
+}
+
+export function useImportFA() {
+  const qc = useQueryClient()
+  return useMutation<ImportFAResult, Error, { url: string }>({
+    mutationFn: async ({ url }) => {
+      const { data, error } = await supabase.functions.invoke('fa-import', { body: { url } })
+      if (error) {
+        let message = 'Could not import that page. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as ImportFABody
+      return {
+        templateId: body.template_id ?? null,
+        templateName: body.template_name ?? '',
+        drills: body.created?.drills ?? 0,
+        media: body.created?.media ?? 0,
+        warnings: body.warnings ?? [],
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
+    },
+  })
 }
 
 export function useInviteUser() {

@@ -4,7 +4,7 @@ import type { MediaItem, MediaType } from '../lib/data'
 import { youtubeId } from '../lib/data'
 import { useAuth } from '../hooks/useAuth'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, MediaThumb, MEDIA_META, Modal } from '../components/ui'
+import { ErrorNote, Loading, MediaAttribution, MediaThumb, MEDIA_META, Modal } from '../components/ui'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
 
 function usedLabel(used: number): string {
@@ -117,6 +117,7 @@ function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void })
           )}
         </div>
       </div>
+      <MediaAttribution media={item} style={{ display: 'block', marginTop: 8 }} />
       <div className="row wrap" style={{ gap: 8, marginTop: 14 }}>
         {item.size && <span className="pill">{item.size}</span>}
         {item.dims && <span className="pill">{item.dims}</span>}
@@ -267,7 +268,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           <input
             ref={inputRef}
             type="file"
-            accept="image/*,video/*,application/pdf"
+            accept="image/*,image/svg+xml,.svg,video/*,application/pdf"
             style={{ display: 'none' }}
             onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
           />
@@ -275,7 +276,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           <div style={{ fontWeight: 700, fontSize: 14.5, marginTop: 8 }}>
             {file ? file.name : 'Drop a file or click to choose'}
           </div>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>Images, videos and PDFs</div>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>Images (SVG included), videos and PDFs</div>
         </div>
       ) : (
         <div className="field">
