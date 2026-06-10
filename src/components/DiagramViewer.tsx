@@ -6,7 +6,7 @@
 // summary, with the attribution line when the media carries a source_label.
 import { useEffect, useRef, useState } from 'react'
 import type { MediaItem } from '../lib/data'
-import { useSignedMediaUrl } from '../lib/queries'
+import { useMediaSrc } from '../lib/queries'
 import { Icon } from './icons'
 import './DiagramViewer.css'
 
@@ -17,12 +17,14 @@ export interface DiagramSlide {
 }
 
 function Slide({ slide }: { slide: DiagramSlide }) {
-  const { data: url, isLoading } = useSignedMediaUrl(slide.media.storagePath)
+  // A load error on an expired URL retries once on a fresh URL before the
+  // could not load state shows.
+  const { src: url, isLoading, onError, onLoad } = useMediaSrc(slide.media.storagePath)
   return (
     <div className="dv-slide">
       <div className="dv-imgwrap">
         {url ? (
-          <img src={url} alt={slide.media.name} />
+          <img src={url} alt={slide.media.name} onError={onError} onLoad={onLoad} />
         ) : (
           <div className="dv-loading">{isLoading ? 'Loading…' : 'Could not load this diagram'}</div>
         )}

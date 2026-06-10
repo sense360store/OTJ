@@ -321,6 +321,28 @@ export function normalisedHref(url: URL): string {
   return url.origin + url.pathname.replace(/\/+$/, '')
 }
 
+// Distinct same-host links to session pages other than the page itself. A
+// programme overview links each of its weekly sessions; a real session page
+// links at most a couple of related ones. fa-import refuses an overview
+// pasted as a session through this. Counted only, never followed.
+export function countSessionLinks(html: string, self: URL): number {
+  const selfPath = self.pathname.replace(/\/+$/, '').toLowerCase()
+  const paths = new Set<string>()
+  for (const m of html.matchAll(/<a[^>]+href\s*=\s*"([^"]+)"/gi)) {
+    let target: URL
+    try {
+      target = new URL(decodeEntities(m[1]), self)
+    } catch {
+      continue
+    }
+    if (target.hostname.toLowerCase() !== PAGE_HOST) continue
+    const path = target.pathname.replace(/\/+$/, '').toLowerCase()
+    if (!/\/sessions\/.+/.test(path) || path === selfPath) continue
+    paths.add(path)
+  }
+  return paths.size
+}
+
 export function parseOverviewPage(html: string, pageUrl: URL): ParsedOverview {
   const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)
   const title = ogContent(html, 'title') || (h1 ? textOf(h1[1]) : '')

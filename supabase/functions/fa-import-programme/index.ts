@@ -145,6 +145,20 @@ Deno.serve(async (req) => {
     return reply(422, { error: 'That page does not look like an England Football programme page.' })
   }
 
+  // The mirror of fa-import's overview refusal: a single session page pasted
+  // here would manufacture a junk programme named after one session. A
+  // session page carries a setup strip or an activity gallery; an overview
+  // titled "Session programme" is never refused.
+  if (!/^session\s+programme/i.test(overview.title)) {
+    const asSession = parseSessionPage(html)
+    const hasSetup = !!(asSession.space || asSession.players || asSession.equipment.length > 0)
+    if (hasSetup || asSession.activities.length > 0) {
+      return reply(422, {
+        error: 'That link looks like a single session page. Use Import from England Football for one session, or paste the programme overview link.',
+      })
+    }
+  }
+
   // Partial parses warn, never abort the run.
   const warnings: string[] = []
   if (overview.intentions.length === 0) warnings.push('No session intentions were found on the overview.')
