@@ -171,8 +171,12 @@ export function Sessions() {
   if (loading) return <Loading />
   if (error) return <ErrorNote />
 
+  // The filter's club value selects sessions saved without a team, a valid
+  // state for club-wide events. Team ids are UUIDs, so the sentinel is safe.
   const list = sessions.filter(
-    (s) => (view === 'mine' ? s.coachId === user?.id : true) && (!teamId || s.teamId === teamId),
+    (s) =>
+      (view === 'mine' ? s.coachId === user?.id : true) &&
+      (!teamId || (teamId === 'club' ? !s.teamId : s.teamId === teamId)),
   )
 
   return (
@@ -197,6 +201,7 @@ export function Sessions() {
         </Chip>
         <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
           <option value="">All teams</option>
+          <option value="club">Club</option>
           {teams.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
@@ -221,7 +226,7 @@ export function Sessions() {
                 s={s}
                 nav={nav}
                 ownerName={mine ? null : memberById[s.coachId]?.fullName || 'Another coach'}
-                teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : null}
+                teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
                 canManage={mine || role === 'admin'}
                 onDelete={() => setDeleting(s)}
               />

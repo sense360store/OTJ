@@ -323,7 +323,7 @@ function PlannerEditor({
               <div className="field" style={{ flex: 1 }}>
                 <label>Team</label>
                 <select value={session.teamId ?? ''} disabled={readOnly} onChange={(e) => setTeam(e.target.value)}>
-                  <option value="">No team</option>
+                  <option value="">Club (no team)</option>
                   {teams.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}

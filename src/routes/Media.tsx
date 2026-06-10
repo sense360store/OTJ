@@ -5,6 +5,7 @@ import { youtubeId } from '../lib/data'
 import { useAuth } from '../hooks/useAuth'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, MediaThumb, MEDIA_META, Modal } from '../components/ui'
+import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
 
 function usedLabel(used: number): string {
   return used > 0 ? `Used in ${used} drill${used !== 1 ? 's' : ''}` : 'Not in use'
@@ -13,16 +14,31 @@ function usedLabel(used: number): string {
 function MediaCard({
   m,
   onOpen,
+  onPlay,
   onDelete,
 }: {
   m: MediaItem
   onOpen: () => void
+  onPlay: (() => void) | null
   onDelete: (() => void) | null
 }) {
   const used = m.usedIn ?? 0
+  const thumb = (
+    <MediaThumb media={m} label={m.kind === 'pdf' ? 'session card' : m.kind === 'diagram' ? 'drill diagram' : 'pitch footage'} />
+  )
   return (
     <div className="card" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <MediaThumb media={m} label={m.kind === 'pdf' ? 'session card' : m.kind === 'diagram' ? 'drill diagram' : 'pitch footage'} />
+      {onPlay ? (
+        <button
+          onClick={onPlay}
+          aria-label={'Play ' + m.name}
+          style={{ display: 'block', width: '100%', padding: 0, border: 0, background: 'none', cursor: 'pointer' }}
+        >
+          {thumb}
+        </button>
+      ) : (
+        thumb
+      )}
       <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 9, flex: 1 }}>
         <div>
           <div style={{ fontWeight: 700, fontSize: 14.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -59,12 +75,13 @@ function MediaCard({
   )
 }
 
-// The open or preview modal. Real files render from a signed URL: images and
-// videos inline, PDFs and YouTube as a thumb with a link out.
+// The open or preview modal. Images render inline from a signed URL, both
+// video types play inline through the shared player surface, and PDFs stay a
+// thumb with a link out.
 function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void }) {
-  const filePath = item.type === 'image' || item.type === 'video' || item.type === 'pdf' ? item.storagePath : undefined
+  const filePath = item.type === 'image' || item.type === 'pdf' ? item.storagePath : undefined
   const { data: signedUrl, isLoading } = useSignedMediaUrl(filePath)
-  const openHref = item.type === 'youtube' ? item.yt ?? undefined : signedUrl ?? undefined
+  const openHref = item.type === 'youtube' ? item.yt ?? undefined : item.type === 'video' ? undefined : signedUrl ?? undefined
 
   return (
     <Modal
@@ -87,10 +104,10 @@ function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void })
     >
       <div className="detail-media">
         <div className="player">
-          {item.type === 'image' && signedUrl ? (
+          {item.type === 'video' || item.type === 'youtube' ? (
+            <MediaPlayerSurface item={item} />
+          ) : item.type === 'image' && signedUrl ? (
             <img src={signedUrl} alt={item.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#0a0e1a' }} />
-          ) : item.type === 'video' && signedUrl ? (
-            <video src={signedUrl} controls playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#0a0e1a' }} />
           ) : item.storagePath && isLoading ? (
             <div className="thumb thumb-diagram" style={{ position: 'absolute', inset: 0 }}>
               <span className="thumb-label">loading…</span>
@@ -286,6 +303,7 @@ export function Media() {
   const [q, setQ] = useState('')
   const [type, setType] = useState('')
   const [open, setOpen] = useState<MediaItem | null>(null)
+  const [playing, setPlaying] = useState<MediaItem | null>(null)
   const [del, setDel] = useState<MediaItem | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
   const { data: mediaItems = [], isLoading, isError } = useMedia()
@@ -348,11 +366,18 @@ export function Media() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(248px,1fr))', gap: 18 }}>
         {list.map((m) => (
-          <MediaCard key={m.id} m={m} onOpen={() => setOpen(m)} onDelete={canDelete(m) ? () => setDel(m) : null} />
+          <MediaCard
+            key={m.id}
+            m={m}
+            onOpen={() => setOpen(m)}
+            onPlay={m.type === 'video' || m.type === 'youtube' ? () => setPlaying(m) : null}
+            onDelete={canDelete(m) ? () => setDel(m) : null}
+          />
         ))}
       </div>
 
       {open && <MediaModal item={open} onClose={() => setOpen(null)} />}
+      {playing && <MediaPlayerModal item={playing} onClose={() => setPlaying(null)} />}
       {del && <DeleteModal item={del} onClose={() => setDel(null)} />}
       {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
     </div>
