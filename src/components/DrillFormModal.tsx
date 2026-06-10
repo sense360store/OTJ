@@ -1,85 +1,17 @@
 // Create and edit a drill. One modal serves both: pass a drill to prefill and
-// update, omit it to insert. The fields mirror what the seeded drills carry.
-// The list inputs (equipment, points, tags) are plain chip editors; ages
-// toggle against the fixed age taxonomy. The media picker lists the club's
-// media with thumbnails and allows none.
+// update, omit it to insert. The fields mirror what the seeded drills carry
+// plus the FA session model fields (setup notes, STEP adaptations, theme,
+// format, source link). The list inputs are plain chip editors; ages toggle
+// against the fixed age taxonomy. The media picker lists the club's media
+// with thumbnails and allows none.
 import { useState } from 'react'
-import type { KeyboardEvent } from 'react'
 import { Icon } from './icons'
-import { Chip, Loading, MediaThumb, MEDIA_META, Modal } from './ui'
+import { Chip, ListInput, Loading, MediaThumb, MEDIA_META, Modal } from './ui'
 import { useInsertDrill, useMedia, useUpdateDrill } from '../lib/queries'
 import type { DrillInput } from '../lib/queries'
-import { AGES, CORNERS, LEVELS, SKILLS } from '../lib/data'
+import { AGES, CORNERS, LEVELS } from '../lib/data'
 import type { CornerKey, Drill, Level } from '../lib/data'
-
-// Comma or enter adds a chip; points are sentences, so they split on enter
-// only and render as a numbered list.
-function ListInput({
-  value,
-  onChange,
-  placeholder,
-  numbered,
-}: {
-  value: string[]
-  onChange: (v: string[]) => void
-  placeholder: string
-  numbered?: boolean
-}) {
-  const [draft, setDraft] = useState('')
-  const commit = (text: string) => {
-    const parts = numbered ? [text] : text.split(',')
-    const items = parts.map((s) => s.trim()).filter((s) => s && !value.includes(s))
-    if (items.length) onChange([...value, ...items])
-    setDraft('')
-  }
-  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' || (!numbered && e.key === ',')) {
-      e.preventDefault()
-      commit(draft)
-    }
-  }
-  const remove = (i: number) => onChange(value.filter((_, j) => j !== i))
-  return (
-    <div>
-      {value.length > 0 &&
-        (numbered ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-            {value.map((v, i) => (
-              <div key={i} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
-                <span className="cp-num">{i + 1}</span>
-                <span style={{ flex: 1, fontSize: 14, lineHeight: 1.45 }}>{v}</span>
-                <button className="icon-btn" style={{ width: 26, height: 26 }} aria-label="Remove" onClick={() => remove(i)}>
-                  <Icon.x style={{ width: 13, height: 13 }} />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="row wrap" style={{ gap: 6, marginBottom: 8 }}>
-            {value.map((v, i) => (
-              <span key={i} className="pill">
-                {v}
-                <button
-                  aria-label={'Remove ' + v}
-                  onClick={() => remove(i)}
-                  style={{ display: 'inline-flex', border: 0, background: 'none', cursor: 'pointer', color: 'inherit', padding: 0 }}
-                >
-                  <Icon.x style={{ width: 12, height: 12 }} />
-                </button>
-              </span>
-            ))}
-          </div>
-        ))}
-      <input
-        value={draft}
-        placeholder={placeholder}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={onKey}
-        onBlur={() => draft.trim() && commit(draft)}
-      />
-    </div>
-  )
-}
+import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
 
 // The club's media with thumbnails. One tile per item plus a none tile; the
 // selection sets mediaId or clears it.
@@ -143,7 +75,7 @@ function fromDrill(drill?: Drill): DrillInput {
     title: drill?.title ?? '',
     summary: drill?.summary ?? '',
     corner: drill?.corner ?? 'technical',
-    skill: drill?.skill || SKILLS[0],
+    skill: drill?.skill || 'Passing',
     level: drill?.level ?? 'Foundation',
     ages: drill?.ages ?? [],
     duration: drill?.duration || 10,
@@ -171,8 +103,11 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
   const set = <K extends keyof DrillInput>(k: K, v: DrillInput[K]) => setForm((f) => ({ ...f, [k]: v }))
   const toggleAge = (a: string) =>
     set('ages', form.ages.includes(a) ? form.ages.filter((x) => x !== a) : AGES.filter((x) => [...form.ages, a].includes(x)))
-  // A drill edited from before the skill taxonomy stays selectable.
-  const skills = form.skill && !SKILLS.includes(form.skill) ? [form.skill, ...SKILLS] : SKILLS
+  // The selects offer the FA taxonomy; a stored value outside it (a drill
+  // from before the FA alignment, or free text) stays selectable.
+  const skills = withExistingValues(FA_PLAYER_SKILLS, [form.skill])
+  const themes = withExistingValues(FA_THEMES, [form.theme])
+  const formats = withExistingValues(FA_FORMATS, [form.format])
 
   const submit = () => {
     setError(null)
@@ -245,6 +180,30 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
           </select>
         </div>
       </div>
+      <div className="row" style={{ gap: 10 }}>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Theme</label>
+          <select value={form.theme} onChange={(e) => set('theme', e.target.value)}>
+            <option value="">None</option>
+            {themes.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Format</label>
+          <select value={form.format} onChange={(e) => set('format', e.target.value)}>
+            <option value="">None</option>
+            {formats.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
       <div className="field">
         <label>Ages</label>
         <div className="row wrap" style={{ gap: 8 }}>
@@ -276,6 +235,15 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
         </div>
       </div>
       <div className="field">
+        <label>Setup notes</label>
+        <textarea
+          value={form.setupNotes}
+          rows={2}
+          placeholder="How to lay the area out before players arrive"
+          onChange={(e) => set('setupNotes', e.target.value)}
+        />
+      </div>
+      <div className="field">
         <label>Equipment</label>
         <ListInput value={form.equipment} onChange={(v) => set('equipment', v)} placeholder="Type and press enter to add" />
       </div>
@@ -284,8 +252,35 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
         <ListInput value={form.points} onChange={(v) => set('points', v)} placeholder="Type a point and press enter" numbered />
       </div>
       <div className="field">
+        <label>Make it easier</label>
+        <ListInput
+          value={form.easier}
+          onChange={(v) => set('easier', v)}
+          placeholder="Type an adaptation and press enter"
+          numbered
+        />
+      </div>
+      <div className="field">
+        <label>Make it harder</label>
+        <ListInput
+          value={form.harder}
+          onChange={(v) => set('harder', v)}
+          placeholder="Type an adaptation and press enter"
+          numbered
+        />
+      </div>
+      <div className="field">
         <label>Tags</label>
         <ListInput value={form.tags} onChange={(v) => set('tags', v)} placeholder="Type and press enter to add" />
+      </div>
+      <div className="field">
+        <label>Source link</label>
+        <input
+          type="url"
+          value={form.sourceUrl}
+          placeholder="https://… where this drill came from, shown with attribution"
+          onChange={(e) => set('sourceUrl', e.target.value)}
+        />
       </div>
       <div className="field" style={{ marginBottom: 0 }}>
         <label>Media</label>

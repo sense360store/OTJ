@@ -8,7 +8,7 @@ import { useActivityTitle, useSession, useDrillMap, useMediaMap, useTeamMap } fr
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { fmtClock, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
+import { fmtClock, MediaAttribution, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
 
 function lsKey(id: string) {
   return 'otj_live_' + id
@@ -385,6 +385,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
               <MediaThumb media={media} />
             </div>
           </div>
+          <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />
         </Modal>
       )}
     </div>
