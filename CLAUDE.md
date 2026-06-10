@@ -142,10 +142,10 @@ Work one phase per branch, one pull request per phase. Each phase is independent
 The same discipline applied on the Sense360 repos applies here. The following touch the security boundary and must be opened as a pull request and stopped for human review. Do not auto-merge them, even in auto mode:
 
 - The login and auth flow (`routes/Login.tsx`, `hooks/useAuth.ts`, the auth guard in `App.tsx`).
-- Anything under `supabase/migrations/`, especially RLS policies, the `my_club()` and `my_role()` helpers, and the `handle_new_user` trigger.
+- Anything under `supabase/migrations/`, especially RLS policies, the `my_club()`, `my_role()` and `has_perm()` helpers, and the `handle_new_user` trigger.
 - The Storage bucket policies.
 - Anything that reads or writes secrets or `.env`, or changes which keys reach the client.
-- Invite and role-assignment logic (Phase 4).
+- Invite, role and removal logic: the invite-user and remove-user Edge Functions, the roles screen and the users screen, and `src/lib/permissions.ts` (the capability catalogue mirrors the 0010 check constraint).
 
 Everything else (UI port, query hooks, planner logic, media UI, styling) can run in normal sessions, with a pull request reviewed before merge.
 
@@ -153,25 +153,34 @@ Everything else (UI port, query hooks, planner logic, media UI, styling) can run
 
 ## Roles, teams and permissions
 
-Core design rules from Phase 4 onward. Every feature, screen, query and mutation states its role behaviour.
+Core design rules, rebuilt in Phase 8: roles are data and permissions are capability ticks. Postgres RLS is always the enforcement, through the `has_perm(text)` lookup; the UI only decides what to surface, through `usePerm(capability)`. No permission check anywhere names a role.
 
-- The roles are admin, coach and parent. Admin is root and is the only role that sees or touches user management. Coach sees and uses everything else, club-wide. Parent is read-only: parents see club content and watch live sessions, and they change nothing; the planner redirects them away and every create, edit, upload, import and drive affordance is absent for them. Postgres RLS is always the enforcement; the UI only decides what to surface. Any change to role behaviour is a gated migration.
-- Visibility is club-wide, ownership is personal, teams are a filter. Read access to club content is never restricted by team. Edit and delete follow ownership (own, or admin). Team is an attribute used for filtering and defaults, never for access control. Whose sessions you are looking at is a view filter that defaults to your own (parents, owning nothing, always see the whole club).
+- A fixed capability catalogue is the single vocabulary of the system. It lives in `src/lib/permissions.ts` and in the check constraint in `0010_rbac.sql`; the two must match exactly, and adding or removing a capability is a gated migration. The fifteen capabilities and what each unlocks:
+
+| Capability | Unlocks |
+|---|---|
+| `drills.create` | Add drills; edit and delete drills they own |
+| `drills.manage_any` | Edit and delete any drill in the club |
+| `media.create` | Upload media and add YouTube links; manage media they own |
+| `media.manage_any` | Delete any media item in the club |
+| `templates.create` | Save new session templates |
+| `templates.manage` | Edit and delete club templates (templates carry no owner) |
+| `sessions.create` | Plan sessions; edit, delete and drive sessions they own |
+| `sessions.manage_any` | Edit, delete and drive any session in the club |
+| `live.drive_any` | The drive affordance for any live session. Not yet named in the sessions update policy, so pair it with `sessions.manage_any` for the writes to land |
+| `import.fa` | Import from England Football (the stored rows still ride on the create capabilities) |
+| `teams.manage` | Add, rename and remove teams |
+| `filters.manage` | Edit the managed filter taxonomies |
+| `roles.manage` | Create roles, tick capabilities, set role filter tags |
+| `users.manage` | Invites, role changes, member removal |
+| `club.manage` | Club name, motto and crest |
+
+- Roles are rows, per club. Admin, Coach and Parent are seeded as system roles for every club: Admin holds all fifteen (its `roles.manage` and `users.manage` ticks are locked on by trigger), Coach holds the four create capabilities plus `import.fa`, Parent holds none, because reading club content and watching live sessions need no capability at all. System roles cannot be renamed or deleted. Admins create any number of custom roles and tick capabilities per role at `/admin/roles`. The last member whose role holds `users.manage` cannot be demoted or removed, in the UI and in the remove-user function.
+- Ownership is personal and conditional: owners manage the items they created while they hold the matching create capability, and `manage_any` extends edit and delete to items they do not own. A member moved to a role without the create capability loses writes on content they own (the `0009_parent_owner_writes` guard, carried into capability terms).
+- Role filter tags: a role can carry filter tags (kind plus value from the managed filter options). A tagged role's Drill Library, Templates, Media and Sessions views lock to matching content, shown as fixed chips its members cannot remove; the matching model is documented in `src/lib/roleFilters.ts`. This is enforced curation at the application layer; the club boundary in RLS remains the only hard security boundary.
+- Filter taxonomies (themes, player skills, coach skills, formats, age bands) are managed rows in `filter_options`, edited at `/admin/filters` and seeded from the FA lists in `src/lib/fa.ts`, which is the seed source rather than the runtime source. Retiring a value drops it out of pickers and filter rows while existing content keeps its stored text. Corners and levels are structural and stay fixed in code.
+- Visibility is club-wide, ownership is personal, teams are a filter. Read access to club content is never restricted by team. Team is an attribute used for filtering and defaults, never for access control. Whose sessions you are looking at is a view filter that defaults to your own (members owning nothing always see the whole club).
 - The club's teams are Titans, Trojans, Gladiators, Spartans and Argonauts, held as first-class data in the `teams` table.
-
-| Capability | Coach | Admin | Parent |
-|---|---|---|---|
-| View drills, media, templates, sessions | yes, club-wide | yes, club-wide | yes, club-wide |
-| Watch a live session | yes | yes | yes |
-| Drive a live session | own only | any in club | no |
-| Create drills and media | yes | yes | no |
-| Import from England Football | yes | yes | no |
-| Edit or delete a drill or media item | own only | any in club | no |
-| Create sessions | yes, own | yes, own | no |
-| Edit or delete a session | own only | any in club | no |
-| Curate templates | no | yes | no |
-| Manage teams | no | yes | no |
-| User management, invites, role changes | no | yes | no |
 
 ---
 
@@ -222,7 +231,7 @@ Source of truth is `src/styles.css` (`:root` for light, `.theme-dark` for dark).
 
 ## Data model
 
-Seven tables: `clubs`, `profiles`, `teams`, `media`, `drills`, `templates`, `sessions`. The first six live in `supabase/migrations/0001_init.sql`; `teams` plus the nullable `team_id` columns on `sessions` and `profiles` arrive in `0002_teams_roles.sql`, with the five club teams seeded by `supabase/seed_teams.sql`. The FA session model columns (setup notes, STEP adaptations, theme and format on `drills`; intentions and space on `sessions`; intentions, programme and week on `templates`; source attribution on all four) arrive in `0005_fa_alignment.sql`, with the FA option lists centralised in `src/lib/fa.ts`. The shared live session state (`live_activity_index` and `live_activity_started_at` on `sessions`, both null when not live, plus adding `sessions` to the realtime publication) arrives in `0006_live_state.sql`; the live view's driver writes it once per activity change and watchers compute the running clock locally from the timestamp. The parent role's write lockout (the four insert policies recreated with the writing roles spelled out) arrives in `0007_parent_role.sql`, completed by `0009_parent_owner_writes.sql`, which adds the same role condition to the owner arms of the update and delete policies so a coach demoted to parent loses write on content they created. The profile photo path (`avatar_url` on `profiles`) arrives in `0008_avatars.sql`; the photo object lives in the `media` bucket under `avatars/{user_id}/` with no media row, renders through the same signed URL hook as media previews, and falls back to initials. Notes:
+Eleven tables: `clubs`, `profiles`, `teams`, `media`, `drills`, `templates`, `sessions`, and from Phase 8 `roles`, `role_permissions`, `role_filters` and `filter_options`. The first six live in `supabase/migrations/0001_init.sql`; `teams` plus the nullable `team_id` columns on `sessions` and `profiles` arrive in `0002_teams_roles.sql`, with the five club teams seeded by `supabase/seed_teams.sql`. The FA session model columns (setup notes, STEP adaptations, theme and format on `drills`; intentions and space on `sessions`; intentions, programme and week on `templates`; source attribution on all four) arrive in `0005_fa_alignment.sql`, with the FA option lists centralised in `src/lib/fa.ts`. The shared live session state (`live_activity_index` and `live_activity_started_at` on `sessions`, both null when not live, plus adding `sessions` to the realtime publication) arrives in `0006_live_state.sql`; the live view's driver writes it once per activity change and watchers compute the running clock locally from the timestamp. The parent role's write lockout (the four insert policies recreated with the writing roles spelled out) arrives in `0007_parent_role.sql`, completed by `0009_parent_owner_writes.sql`, which adds the same role condition to the owner arms of the update and delete policies so a coach demoted to parent loses write on content they created. The profile photo path (`avatar_url` on `profiles`) arrives in `0008_avatars.sql`; the photo object lives in the `media` bucket under `avatars/{user_id}/` with no media row, renders through the same signed URL hook as media previews, and falls back to initials. The role system (`roles` per club with three seeded system roles, `role_permissions` ticks over the fifteen capability catalogue, `role_filters` tags, `filter_options` taxonomies, `profiles.role_id` with a backfill from the enum, the `has_perm` helper, every role-literal policy rewritten, the `handle_new_user` role_id metadata path, and the two protection triggers for privilege columns and the locked Admin ticks) arrives in `0010_rbac.sql`, with `seed_club_rbac(uuid)` carrying the per club seeding for migrations and the local seed alike; the legacy `role` enum column stays for one phase, decides nothing, and is a later cleanup. Notes:
 
 - `activities` on `sessions` and `templates` is a `jsonb` array of `{ phase, drill_id, duration }`, read and written as a whole by the planner. `drill_id` inside it references a real `drills.id`.
 - Session total minutes is the sum of `activity.duration`, computed in the UI (the prototype's `sessionMinutes`).

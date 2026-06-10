@@ -1,23 +1,93 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
-import { useDrills, useFilterValues, usePerm } from '../lib/queries'
+import { useAuth } from '../hooks/useAuth'
+import { useSessions } from '../context/SessionsContext'
+import { useDeleteDrillsBulk, useDrills, useFilterValues, usePerm, useTemplates } from '../lib/queries'
 import { CORNERS, AGES, LEVELS } from '../lib/data'
+import type { Drill } from '../lib/data'
 import type { CornerKey } from '../lib/data'
 import { withExistingValues } from '../lib/fa'
 import { useRoleScope } from '../lib/roleFilters'
 import { Icon } from '../components/icons'
-import { Chip, DrillCard, Empty, ErrorNote, Loading, LockedTagChips } from '../components/ui'
+import { Chip, DrillCard, Empty, ErrorNote, Loading, LockedTagChips, Modal } from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 
+// The single confirm for a bulk delete: the count and the used-in
+// consequences in one sentence each, then one button.
+function BulkDeleteDrillsModal({
+  drills,
+  onClose,
+  onDone,
+}: {
+  drills: Drill[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const del = useDeleteDrillsBulk()
+  const { sessions } = useSessions()
+  const { data: templates = [] } = useTemplates()
+  const ids = new Set(drills.map((d) => d.id))
+  const sessionRefs = sessions.filter((s) => s.activities.some((a) => a.drillId && ids.has(a.drillId))).length
+  const templateRefs = templates.filter((t) => t.activities.some((a) => a.drillId && ids.has(a.drillId))).length
+  const remove = () => del.mutate({ ids: [...ids] }, { onSuccess: onDone })
+  return (
+    <Modal
+      title={`Delete ${drills.length} drill${drills.length !== 1 ? 's' : ''}`}
+      sub="One confirm for the whole selection"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{ background: 'var(--m-pdf)' }}
+            onClick={remove}
+            disabled={del.isPending}
+          >
+            <Icon.trash />
+            {del.isPending ? 'Deleting…' : `Delete ${drills.length}`}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        This removes {drills.length === 1 ? 'this drill' : 'these drills'} from the club library.{' '}
+        {sessionRefs > 0 || templateRefs > 0
+          ? `${sessionRefs} session${sessionRefs !== 1 ? 's' : ''} and ${templateRefs} template${
+              templateRefs !== 1 ? 's' : ''
+            } reference the selection; they keep their timings and show a removed drill placeholder instead.`
+          : 'No sessions or templates reference the selection.'}
+      </p>
+      <div className="row wrap" style={{ gap: 6 }}>
+        {drills.slice(0, 8).map((d) => (
+          <span key={d.id} className="pill">
+            {d.title}
+          </span>
+        ))}
+        {drills.length > 8 && <span className="pill">and {drills.length - 8} more</span>}
+      </div>
+      {del.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 8 }}>
+          Could not delete. Try again.
+        </p>
+      )}
+    </Modal>
+  )
+}
+
 export function Library() {
   const nav = useNav()
+  const { user } = useAuth()
   // Each affordance asks for its own capability; the RLS behind each write
   // is the real enforcement.
   const canAdd = usePerm('drills.create')
   const canImport = usePerm('import.fa')
   const canPlan = usePerm('sessions.create')
+  const canManageAny = usePerm('drills.manage_any')
   const [searchParams, setSearchParams] = useSearchParams()
   const presetCorner = searchParams.get('corner')
   const initialCorner = presetCorner && presetCorner in CORNERS ? (presetCorner as CornerKey) : null
@@ -32,6 +102,10 @@ export function Library() {
   const [sort, setSort] = useState('recent')
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  // Select mode: tick manageable drills and delete the lot with one confirm.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkOpen, setBulkOpen] = useState(false)
   const { data: allDrills = [], isLoading, isError } = useDrills()
   // A role with filter tags sees the library locked to matching drills, the
   // tags shown as fixed chips below.
@@ -85,8 +159,28 @@ export function Library() {
 
   const activeFilters = [corner, skill, theme, format, age, level].filter(Boolean).length
 
+  // Tickable means deletable: own drills while holding drills.create, or any
+  // drill with drills.manage_any. The bulk delete RLS enforces the same.
+  const manageable = (d: Drill) => canManageAny || (canAdd && !!d.createdBy && d.createdBy === user?.id)
+  const canBulk = canManageAny || canAdd
+  const toggleSelected = (d: Drill) => {
+    if (!manageable(d)) return
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(d.id)) next.delete(d.id)
+      else next.add(d.id)
+      return next
+    })
+  }
+  const exitSelect = () => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }
+
   if (isLoading || !scope.ready) return <Loading />
   if (isError) return <ErrorNote />
+
+  const selectedDrills = drills.filter((d) => selected.has(d.id))
 
   return (
     <div>
@@ -95,8 +189,14 @@ export function Library() {
           <h2>Drill Library</h2>
           <div className="sub">Every drill and skill, tagged to the FA four-corner model.</div>
         </div>
-        {(canImport || canPlan || canAdd) && (
+        {(canImport || canPlan || canAdd || canBulk) && (
           <div className="row wrap">
+            {canBulk && !selectMode && (
+              <button className="btn btn-ghost" onClick={() => setSelectMode(true)}>
+                <Icon.checkCircle />
+                Select
+              </button>
+            )}
             {canImport && (
               <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
                 <Icon.download />
@@ -118,6 +218,33 @@ export function Library() {
           </div>
         )}
       </div>
+
+      {selectMode && (
+        <div
+          className="card row wrap"
+          style={{ padding: '10px 14px', marginBottom: 14, gap: 10, alignItems: 'center' }}
+        >
+          <b style={{ fontSize: 14 }}>
+            {selected.size} selected
+          </b>
+          <span className="muted" style={{ fontSize: 12.5, flex: 1 }}>
+            Tick the drills to delete. Drills you cannot manage are not tickable.
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={exitSelect}>
+            <Icon.x />
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary btn-sm"
+            style={{ background: 'var(--m-pdf)' }}
+            disabled={selected.size === 0}
+            onClick={() => setBulkOpen(true)}
+          >
+            <Icon.trash />
+            Delete selected
+          </button>
+        </div>
+      )}
 
       <div className="filterbar">
         {scope.locked && <LockedTagChips tags={scope.tags} />}
@@ -265,14 +392,50 @@ export function Library() {
         </Empty>
       ) : (
         <div className="grid-drills">
-          {results.map((d) => (
-            <DrillCard key={d.id} drill={d} onClick={() => nav('drill', { drillId: d.id })} />
-          ))}
+          {results.map((d) =>
+            selectMode ? (
+              <div
+                key={d.id}
+                style={{
+                  position: 'relative',
+                  borderRadius: 'var(--r-lg, 22px)',
+                  outline: selected.has(d.id) ? '2.5px solid var(--royal)' : 'none',
+                  opacity: manageable(d) ? 1 : 0.55,
+                }}
+              >
+                <DrillCard drill={d} onClick={() => toggleSelected(d)} />
+                <span
+                  title={manageable(d) ? undefined : 'You cannot delete this drill.'}
+                  style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, pointerEvents: 'none' }}
+                >
+                  <input
+                    type="checkbox"
+                    readOnly
+                    checked={selected.has(d.id)}
+                    disabled={!manageable(d)}
+                    style={{ width: 20, height: 20, accentColor: 'var(--royal)' }}
+                  />
+                </span>
+              </div>
+            ) : (
+              <DrillCard key={d.id} drill={d} onClick={() => nav('drill', { drillId: d.id })} />
+            ),
+          )}
         </div>
       )}
 
       {addOpen && <DrillFormModal onClose={() => setAddOpen(false)} />}
       {importOpen && <ImportFAModal onClose={() => setImportOpen(false)} />}
+      {bulkOpen && (
+        <BulkDeleteDrillsModal
+          drills={selectedDrills}
+          onClose={() => setBulkOpen(false)}
+          onDone={() => {
+            setBulkOpen(false)
+            exitSelect()
+          }}
+        />
+      )}
     </div>
   )
 }
