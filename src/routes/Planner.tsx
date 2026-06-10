@@ -31,6 +31,8 @@ function blankSession(coachId: string, teamId: string | null): Session {
     space: '',
     sourceUrl: '',
     sourceLabel: '',
+    programmeId: null,
+    programmeWeek: null,
     liveActivityIndex: null,
     liveActivityStartedAt: null,
   }

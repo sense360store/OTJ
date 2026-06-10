@@ -140,6 +140,8 @@ interface SessionRow {
   space: string | null
   source_url: string | null
   source_label: string | null
+  programme_id: string | null
+  programme_week: number | null
   live_activity_index: number | null
   live_activity_started_at: string | null
 }
@@ -171,7 +173,7 @@ const TEMPLATE_COLS =
 const PROGRAMME_COLS =
   'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at'
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, live_activity_index, live_activity_started_at'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at'
 const TEAM_COLS = 'id, club_id, name, created_at'
 const PROFILE_COLS = 'id, full_name, avatar, role, team_id, created_at'
 
@@ -285,6 +287,8 @@ function toSession(r: SessionRow): Session {
     space: r.space ?? '',
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    programmeId: r.programme_id,
+    programmeWeek: r.programme_week,
     liveActivityIndex: r.live_activity_index ?? null,
     liveActivityStartedAt: r.live_activity_started_at ?? null,
   }
@@ -471,6 +475,11 @@ export function useMediaMap(): Record<string, MediaItem> {
 export function useTeamMap(): Record<string, Team> {
   const { data } = useTeams()
   return useMemo(() => Object.fromEntries((data ?? []).map((t) => [t.id, t])), [data])
+}
+
+export function useProgrammeMap(): Record<string, Programme> {
+  const { data } = useProgrammes()
+  return useMemo(() => Object.fromEntries((data ?? []).map((p) => [p.id, p])), [data])
 }
 
 export function useMemberMap(): Record<string, Member> {
@@ -861,6 +870,24 @@ export function useUpdateProgramme() {
   })
 }
 
+// Owner or admin only; the programmes delete RLS is the real enforcement.
+// Deleting a programme leaves its templates and sessions intact: the foreign
+// keys null out in Postgres, so those caches refetch too.
+export function useDeleteProgramme() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('programmes').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['programmes'] })
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+}
+
 // Points an existing template at a programme week, or clears the link with
 // nulls. This is a templates update, which the RLS reserves for the curating
 // role (admin); the builder only surfaces it there. Coaches add weeks with
@@ -933,6 +960,10 @@ export function useUpsertSession() {
         intentions: input.intentions,
         space: input.space || null,
         ...toSourceFields(input.sourceUrl),
+        // The programme link travels with the session on insert and update,
+        // so applying a programme tags the rows and a planner edit keeps them.
+        programme_id: input.programmeId,
+        programme_week: input.programmeWeek,
       }
 
       if (isUpdate) {
