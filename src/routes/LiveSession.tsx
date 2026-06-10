@@ -1,12 +1,24 @@
 // Run a session on the touchline. Full-screen overlay that forces dark mode
-// for contrast. Timer and position persist to localStorage so a refresh keeps
-// the place. Realtime sync across devices is Phase 5.
+// for contrast. The owning coach (or an admin) drives: their timer and
+// position persist to localStorage so a refresh keeps the place, and every
+// activity change writes the shared live state onto the session row. Everyone
+// else in the club who opens the same URL watches that row over Supabase
+// Realtime, with the clock computed locally from live_activity_started_at.
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
-import { useActivityTitle, useSession, useDrillMap, useMediaMap, useTeamMap } from '../lib/queries'
+import { useAuth } from '../hooks/useAuth'
+import {
+  useActivityTitle,
+  useSession,
+  useDrillMap,
+  useMediaMap,
+  useTeamMap,
+  useLiveSessionSync,
+  useSetLiveActivity,
+} from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
-import type { Session } from '../lib/data'
+import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { fmtClock, MediaAttribution, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
 
@@ -21,6 +33,88 @@ interface LiveSaved {
   done?: number[]
   notes?: Record<number, string>
   complete?: boolean
+}
+
+// The activity heading: phase tag, title and the drill's meta line. Shared by
+// the driver and watcher stages so the two views match.
+function StageHeading({ act, drill }: { act: Activity; drill: Drill | null }) {
+  const actTitle = useActivityTitle()
+  return (
+    <div style={{ textAlign: 'center' }}>
+      <span
+        className="tag"
+        style={{
+          background: 'color-mix(in srgb,' + PHASE_COLOR[act.phase] + ' 20%, transparent)',
+          color: PHASE_COLOR[act.phase],
+          fontSize: 13,
+        }}
+      >
+        <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>
+        {act.phase}
+      </span>
+      <h2 style={{ fontSize: 'clamp(26px,6vw,38px)', marginTop: 12 }}>{actTitle(act, 'Activity')}</h2>
+      {drill && (
+        <div className="muted" style={{ fontSize: 15, marginTop: 4 }}>
+          {drill.skill} · {drill.players} · {drill.area}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// The tappable media strip plus its viewer modal, shared by both views.
+function LiveMediaPeek({ media, drill }: { media: MediaItem; drill: Drill }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        style={{
+          border: '1px solid var(--line)',
+          background: 'var(--card)',
+          borderRadius: 14,
+          padding: 10,
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          cursor: 'pointer',
+          textAlign: 'left',
+        }}
+      >
+        <div style={{ width: 92, height: 58, borderRadius: 9, overflow: 'hidden', flex: '0 0 92px' }}>
+          <MediaThumb media={media} showPlay={false} showBadge={false} label="" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>{MEDIA_META[media.type].label} · tap to view</div>
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            {media.name}
+          </div>
+        </div>
+        <span style={{ color: 'var(--gold)' }}>
+          <Icon.play />
+        </span>
+      </button>
+      {open && (
+        <Modal
+          title={drill.title}
+          sub={MEDIA_META[media.type].label}
+          onClose={() => setOpen(false)}
+          footer={
+            <button className="btn btn-primary" onClick={() => setOpen(false)}>
+              Close
+            </button>
+          }
+        >
+          <div className="detail-media">
+            <div className="player">
+              <MediaThumb media={media} />
+            </div>
+          </div>
+          <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />
+        </Modal>
+      )}
+    </>
+  )
 }
 
 function LiveComplete({
@@ -103,6 +197,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
   const mediaById = useMediaMap()
   const actTitle = useActivityTitle()
   const teamById = useTeamMap()
+  const setLive = useSetLiveActivity()
   // A session without a team is a club-wide event, shown as Club.
   const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
   const acts = session.activities
@@ -114,16 +209,30 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
     }
   }
   const saved = load()
+  // The device's saved place wins; a driver on a fresh device rejoins at the
+  // live activity when the session is already running. Clamped because the
+  // plan can have changed since either was recorded.
+  const startIdx = Math.max(0, Math.min(saved?.idx ?? session.liveActivityIndex ?? 0, acts.length - 1))
 
-  const [idx, setIdx] = useState(saved?.idx ?? 0)
-  const [remaining, setRemaining] = useState(saved?.remaining ?? (acts[saved?.idx ?? 0]?.duration ?? 0) * 60)
+  const [idx, setIdx] = useState(startIdx)
+  const [remaining, setRemaining] = useState(saved?.remaining ?? (acts[startIdx]?.duration ?? 0) * 60)
   const [running, setRunning] = useState(false)
   const [elapsed, setElapsed] = useState(saved?.elapsed ?? 0)
   const [done, setDone] = useState<number[]>(saved?.done ?? [])
   const [notes, setNotes] = useState<Record<number, string>>(saved?.notes ?? {})
   const [complete, setComplete] = useState(saved?.complete ?? false)
-  const [mediaOpen, setMediaOpen] = useState(false)
   const tick = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Going live: opening the runner starts the shared state, but only when the
+  // loaded row says the session is not already live, so a driver rejoining
+  // (or an admin opening a session the owner is mid-way through) does not
+  // reset it. Watchers never reach this component.
+  useEffect(() => {
+    if (!complete && acts.length > 0 && session.liveActivityIndex == null) {
+      setLive.mutate({ id: session.id, index: idx })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (running) {
@@ -153,12 +262,16 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
     setIdx(i)
     setRemaining((acts[i].duration || 0) * 60)
     setRunning(false)
+    // Watchers follow the row; the local pause, play and reset stay local.
+    setLive.mutate({ id: session.id, index: i })
   }
   const markDoneNext = () => {
     setDone((d) => (d.includes(idx) ? d : [...d, idx]))
     if (idx >= acts.length - 1) {
       setComplete(true)
       setRunning(false)
+      // Ending clears the live state and marks the session completed.
+      setLive.mutate({ id: session.id, index: null })
     } else {
       goTo(idx + 1)
     }
@@ -172,6 +285,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
     setNotes({})
     setComplete(false)
     setRunning(false)
+    setLive.mutate({ id: session.id, index: 0 })
   }
 
   if (complete)
@@ -231,26 +345,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
 
       <div className="live-body">
         <div className="live-stage">
-          {/* phase + title */}
-          <div style={{ textAlign: 'center' }}>
-            <span
-              className="tag"
-              style={{
-                background: 'color-mix(in srgb,' + PHASE_COLOR[act.phase] + ' 20%, transparent)',
-                color: PHASE_COLOR[act.phase],
-                fontSize: 13,
-              }}
-            >
-              <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>
-              {act.phase}
-            </span>
-            <h2 style={{ fontSize: 'clamp(26px,6vw,38px)', marginTop: 12 }}>{actTitle(act, 'Activity')}</h2>
-            {drill && (
-              <div className="muted" style={{ fontSize: 15, marginTop: 4 }}>
-                {drill.skill} · {drill.players} · {drill.area}
-              </div>
-            )}
-          </div>
+          <StageHeading act={act} drill={drill} />
 
           {/* timer */}
           <div className="timer-ring">
@@ -281,35 +376,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
           </div>
 
           {/* media */}
-          {media && (
-            <button
-              onClick={() => setMediaOpen(true)}
-              style={{
-                border: '1px solid var(--line)',
-                background: 'var(--card)',
-                borderRadius: 14,
-                padding: 10,
-                display: 'flex',
-                gap: 12,
-                alignItems: 'center',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              <div style={{ width: 92, height: 58, borderRadius: 9, overflow: 'hidden', flex: '0 0 92px' }}>
-                <MediaThumb media={media} showPlay={false} showBadge={false} label="" />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{MEDIA_META[media.type].label} · tap to view</div>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  {media.name}
-                </div>
-              </div>
-              <span style={{ color: 'var(--gold)' }}>
-                <Icon.play />
-              </span>
-            </button>
-          )}
+          {media && drill && <LiveMediaPeek media={media} drill={drill} />}
 
           {/* coaching points */}
           {drill && (
@@ -377,26 +444,241 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
           {idx >= acts.length - 1 ? 'Finish session' : 'Mark done & next'}
         </button>
       </div>
+    </div>
+  )
+}
 
-      {mediaOpen && media && drill && (
-        <Modal
-          title={drill.title}
-          sub={MEDIA_META[media.type].label}
-          onClose={() => setMediaOpen(false)}
-          footer={
-            <button className="btn btn-primary" onClick={() => setMediaOpen(false)}>
-              Close
+// Seconds since the live activity began, clamped so a small clock skew
+// between the driver's device and this one never shows a negative time.
+function elapsedSince(startedAt: string | null): number {
+  if (!startedAt) return 0
+  const t = Date.parse(startedAt)
+  if (isNaN(t)) return 0
+  return Math.max(0, Math.floor((Date.now() - t) / 1000))
+}
+
+// Read-only live view for everyone who is not driving. State comes from the
+// session row (kept fresh by useLiveSessionSync); the clock is computed
+// locally from live_activity_started_at, so no stream of updates is needed.
+function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void }) {
+  const nav = useNav()
+  const drillById = useDrillMap()
+  const mediaById = useMediaMap()
+  const actTitle = useActivityTitle()
+  const teamById = useTeamMap()
+  const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
+  const acts = session.activities
+  const live = session.liveActivityIndex
+
+  // A one second tick keeps the computed clock moving while live.
+  const [, setNow] = useState(0)
+  useEffect(() => {
+    if (live == null) return
+    const t = setInterval(() => setNow((x) => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [live])
+
+  const watchingPill = (
+    <span className="pill" style={{ flex: '0 0 auto' }}>
+      <Icon.eye />
+      Watching
+    </span>
+  )
+
+  // Ended (or already completed when opened): a quiet complete state.
+  if (live == null && session.status === 'completed')
+    return (
+      <div className="live theme-dark">
+        <div className="live-body" style={{ justifyContent: 'center' }}>
+          <div className="live-stage" style={{ textAlign: 'center', alignItems: 'center' }}>
+            <span
+              style={{
+                width: 88,
+                height: 88,
+                borderRadius: '50%',
+                background: 'color-mix(in srgb, var(--c-physical) 22%, transparent)',
+                color: 'var(--c-physical)',
+                display: 'grid',
+                placeItems: 'center',
+              }}
+            >
+              <Icon.checkCircle style={{ width: 46, height: 46 }} />
+            </span>
+            <h2 style={{ fontSize: 34 }}>Session complete</h2>
+            <div className="muted" style={{ fontSize: 16 }}>
+              {session.name} · {acts.length} activities
+            </div>
+            <button className="btn btn-gold btn-lg" style={{ marginTop: 8 }} onClick={onExit}>
+              <Icon.check />
+              Done
             </button>
-          }
-        >
-          <div className="detail-media">
-            <div className="player">
-              <MediaThumb media={media} />
+          </div>
+        </div>
+      </div>
+    )
+
+  // Not started: show the plan with a quiet waiting state.
+  if (live == null)
+    return (
+      <div className="live theme-dark">
+        <div className="live-top">
+          <button className="icon-btn" onClick={onExit} title="Exit">
+            <Icon.x />
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="ltitle" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {session.name}
+            </div>
+            <div className="lsub">
+              Not started yet · {session.focus}
+              {teamName ? ' · ' + teamName : ''}
             </div>
           </div>
-          <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />
-        </Modal>
-      )}
+          {watchingPill}
+        </div>
+        <div className="live-body">
+          <div className="live-stage">
+            {acts.length === 0 ? (
+              <div className="muted" style={{ textAlign: 'center', fontWeight: 600 }}>
+                No activities in this session yet.
+              </div>
+            ) : (
+              <div className="live-card" style={{ padding: '16px 18px' }}>
+                <div className="eyebrow" style={{ marginBottom: 10 }}>
+                  The plan · {sessionMinutes(session)} min
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {acts.map((a, i) => (
+                    <div key={i} className="row" style={{ gap: 10 }}>
+                      <span className="cp-num">{i + 1}</span>
+                      <span style={{ flex: 1, fontWeight: 700, fontSize: 14.5 }}>{actTitle(a)}</span>
+                      <span className="tag-dot" style={{ background: PHASE_COLOR[a.phase] }}></span>
+                      <span className="muted" style={{ fontSize: 13, fontWeight: 700 }}>
+                        {a.duration} min
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="muted" style={{ textAlign: 'center', fontSize: 13.5, fontWeight: 600 }}>
+              This page follows the session live once the coach starts it.
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+
+  // Live. The plan can have been shortened while live, so clamp the index.
+  const idx = Math.min(live, acts.length - 1)
+  const act = acts[idx]
+  if (!act)
+    return (
+      <div className="live theme-dark">
+        <div className="live-top">
+          <button className="icon-btn" onClick={onExit} title="Exit">
+            <Icon.x />
+          </button>
+          <div style={{ flex: 1 }}>
+            <div className="ltitle">{session.name}</div>
+            <div className="lsub">No activities in this session yet</div>
+          </div>
+          {watchingPill}
+        </div>
+      </div>
+    )
+
+  const drill = act.drillId ? drillById[act.drillId] : null
+  const media = drill && drill.mediaId ? mediaById[drill.mediaId] : null
+  const actSecs = (act.duration || 0) * 60
+  const remaining = Math.max(0, actSecs - elapsedSince(session.liveActivityStartedAt))
+  const frac = actSecs ? 1 - remaining / actSecs : 0
+
+  return (
+    <div className="live theme-dark">
+      <div className="live-top">
+        <button className="icon-btn" onClick={onExit} title="Exit">
+          <Icon.x />
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="ltitle" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {session.name}
+          </div>
+          <div className="lsub">
+            Activity {idx + 1} of {acts.length} · {session.focus}
+            {teamName ? ' · ' + teamName : ''}
+          </div>
+        </div>
+        <button
+          className="icon-btn"
+          onClick={() => nav('sessionDay', { sessionId: session.id })}
+          title="Session day"
+          aria-label="Session day"
+        >
+          <Icon.cone />
+        </button>
+        {watchingPill}
+      </div>
+
+      <div className="live-progress">
+        {acts.map((_, i) => (
+          <div key={i} className={'live-seg' + (i < idx ? ' done' : i === idx ? ' cur' : '')}></div>
+        ))}
+      </div>
+
+      <div className="live-body">
+        <div className="live-stage">
+          <StageHeading act={act} drill={drill} />
+
+          {/* clock, computed from when the driver started this activity */}
+          <div className="timer-ring">
+            <div className={'timer-num' + (remaining <= 30 && remaining > 0 ? ' warn' : '')}>{fmtClock(remaining)}</div>
+            <div style={{ width: '70%', maxWidth: 300, height: 6, borderRadius: 4, background: 'var(--line)', overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: '100%',
+                  width: frac * 100 + '%',
+                  background: remaining <= 30 ? 'var(--m-pdf)' : 'var(--gold)',
+                  transition: 'width 1s linear',
+                }}
+              ></div>
+            </div>
+          </div>
+
+          {/* media */}
+          {media && drill && <LiveMediaPeek media={media} drill={drill} />}
+
+          {/* coaching points */}
+          {drill && (
+            <div className="live-card" style={{ padding: '16px 18px' }}>
+              <div className="eyebrow" style={{ marginBottom: 10 }}>
+                Coaching points
+              </div>
+              <div className="coach-points">
+                {drill.points.map((p, i) => (
+                  <div className="cp" key={i}>
+                    <span className="cp-num">{i + 1}</span>
+                    <span style={{ fontSize: 14.5, lineHeight: 1.4 }}>{p}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* up next */}
+          {idx < acts.length - 1 &&
+            (() => {
+              const n = acts[idx + 1]
+              return (
+                <div className="row" style={{ justifyContent: 'center', gap: 8, color: 'var(--slate)', fontSize: 13.5, fontWeight: 600 }}>
+                  <span className="muted">Up next:</span>
+                  <span style={{ color: 'var(--ink)' }}>{actTitle(n)}</span>
+                  <span className="muted">· {n.duration} min</span>
+                </div>
+              )
+            })()}
+        </div>
+      </div>
     </div>
   )
 }
@@ -433,11 +715,20 @@ function LiveMessage({ title, sub, onExit }: { title: string; sub?: string; onEx
 export function LiveSession() {
   const { sessionId } = useParams()
   const nav = useNav()
+  const { user, role, profileLoading } = useAuth()
   const { data: session, isLoading, isError } = useSession(sessionId)
+  // One realtime channel per session id, cleaned up on unmount. The driver
+  // subscribes too, harmlessly; its own writes come back as cache freshness.
+  useLiveSessionSync(sessionId)
   const onExit = () => nav('sessions')
 
-  if (isLoading) return <LiveLoading />
+  // Wait for the role too, so a watcher is never flashed the driver controls.
+  if (isLoading || profileLoading) return <LiveLoading />
   if (isError) return <LiveMessage title="Couldn't load this session" sub="Go back and try again." onExit={onExit} />
   if (!session) return <LiveMessage title="Session not found" sub="It may have been removed." onExit={onExit} />
-  return <LiveRunner key={session.id} session={session} onExit={onExit} />
+  // Driving follows the sessions update policy: the owner, or an admin. The
+  // RLS is the real enforcement; this only decides which view to render.
+  const canDrive = session.coachId === user?.id || role === 'admin'
+  if (canDrive) return <LiveRunner key={session.id} session={session} onExit={onExit} />
+  return <LiveWatcher key={session.id} session={session} onExit={onExit} />
 }

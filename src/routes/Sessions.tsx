@@ -12,6 +12,7 @@ import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { downloadSessionIcs } from '../lib/ics'
 
 type Nav = ReturnType<typeof useNav>
 
@@ -127,31 +128,42 @@ function SessionCard({
           <Icon.cone />
           Session day
         </button>
+        {/* Driving is owner or admin; everyone else opens the same live view
+            as a watcher, so the label says what will happen. */}
         <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => nav('live', { sessionId: s.id })}>
-          <Icon.play />
-          Start
+          {canManage ? <Icon.play /> : <Icon.eye />}
+          {canManage ? 'Start' : 'Watch'}
         </button>
       </div>
       <div className="row" style={{ gap: 9 }}>
         {canManage ? (
-          <>
-            <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
-              <Icon.edit />
-              Edit plan
-            </button>
-            <button
-              className="btn btn-ghost btn-sm icon-only"
-              style={{ width: 38, padding: 0, alignSelf: 'stretch', height: 'auto' }}
-              aria-label="Delete session"
-              onClick={onDelete}
-            >
-              <Icon.trash />
-            </button>
-          </>
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
+            <Icon.edit />
+            Edit plan
+          </button>
         ) : (
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
             <Icon.eye />
             View plan
+          </button>
+        )}
+        <button
+          className="btn btn-ghost btn-sm icon-only"
+          style={{ width: 38, padding: 0, alignSelf: 'stretch', height: 'auto' }}
+          aria-label="Add to calendar"
+          title="Add to calendar"
+          onClick={() => downloadSessionIcs(s)}
+        >
+          <Icon.calendar />
+        </button>
+        {canManage && (
+          <button
+            className="btn btn-ghost btn-sm icon-only"
+            style={{ width: 38, padding: 0, alignSelf: 'stretch', height: 'auto' }}
+            aria-label="Delete session"
+            onClick={onDelete}
+          >
+            <Icon.trash />
           </button>
         )}
       </div>

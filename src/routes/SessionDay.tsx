@@ -12,6 +12,7 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
+import { useAuth } from '../hooks/useAuth'
 import { useActivityTitle, useDrillMap, useMediaMap, useSession, useTeamMap } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
@@ -46,10 +47,14 @@ function loadChecked(sessionId: string): string[] {
 
 function SessionDayView({ session }: { session: Session }) {
   const nav = useNav()
+  const { user, role } = useAuth()
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
   const teamById = useTeamMap()
   const actTitle = useActivityTitle()
+  // The same link opens the live view for everyone; the label says whether
+  // this user will drive it (owner, or admin) or watch it.
+  const canDrive = session.coachId === user?.id || role === 'admin'
   const [tab, setTab] = useState<Tab>('setup')
   const [viewerAt, setViewerAt] = useState<number | null>(null)
   const [checked, setChecked] = useState<string[]>(() => loadChecked(session.id))
@@ -117,8 +122,8 @@ function SessionDayView({ session }: { session: Session }) {
           <div className="sd-sub">{subBits.join(' · ')}</div>
         </div>
         <button className="btn btn-gold" style={{ height: 44 }} onClick={() => nav('live', { sessionId: session.id })}>
-          <Icon.play />
-          Start
+          {canDrive ? <Icon.play /> : <Icon.eye />}
+          {canDrive ? 'Start' : 'Watch'}
         </button>
       </div>
 

@@ -10,6 +10,7 @@ import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, ListInput, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
+import { downloadSessionIcs } from '../lib/ics'
 
 // A new session belongs to the signed-in coach and defaults to their team
 // when one is set. Team is a filter and a default, never access control.
@@ -30,6 +31,8 @@ function blankSession(coachId: string, teamId: string | null): Session {
     space: '',
     sourceUrl: '',
     sourceLabel: '',
+    liveActivityIndex: null,
+    liveActivityStartedAt: null,
   }
 }
 
@@ -225,7 +228,7 @@ function PlannerEditor({
           <h2>{readOnly ? 'View session' : existing ? 'Edit session' : 'Plan a session'}</h2>
           <div className="sub">
             {readOnly
-              ? `${owner?.fullName || 'Another coach'}'s session. You can view and run it, but only the owner or an admin can change it.`
+              ? `${owner?.fullName || 'Another coach'}'s session. You can view it and watch it live, but only the owner or an admin can change or drive it.`
               : 'Drag to reorder · pull drills from the library or start from a template.'}
           </div>
         </div>
@@ -416,13 +419,19 @@ function PlannerEditor({
 
           <div className="card side-card" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
             <button className="btn btn-gold btn-block" disabled={!session.activities.length} onClick={start}>
-              <Icon.play />
-              Start session
+              {readOnly ? <Icon.eye /> : <Icon.play />}
+              {readOnly ? 'Watch live' : 'Start session'}
             </button>
             {existing && (
               <button className="btn btn-primary btn-block" onClick={() => nav('sessionDay', { sessionId: session.id })}>
                 <Icon.cone />
                 Session day
+              </button>
+            )}
+            {existing && (
+              <button className="btn btn-ghost btn-block" onClick={() => downloadSessionIcs(session)}>
+                <Icon.calendar />
+                Add to calendar
               </button>
             )}
             {!readOnly && (
