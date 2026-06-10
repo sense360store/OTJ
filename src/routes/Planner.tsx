@@ -419,6 +419,12 @@ function PlannerEditor({
               <Icon.play />
               Start session
             </button>
+            {existing && (
+              <button className="btn btn-primary btn-block" onClick={() => nav('sessionDay', { sessionId: session.id })}>
+                <Icon.cone />
+                Session day
+              </button>
+            )}
             {!readOnly && (
               <>
                 <button className="btn btn-primary btn-block" onClick={save}>

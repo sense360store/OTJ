@@ -1,0 +1,185 @@
+/* Session day, the pitch-side pre-session view. Mobile-first: every control
+   is at least 44px tall, nothing depends on hover, and the layout works at
+   360px wide. Desktop renders the same view comfortably wide. Tokens come
+   from styles.css; the diagram viewer styles live in DiagramViewer.css. */
+
+.sd-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.sd-head h2 {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+.sd-sub {
+  color: var(--slate);
+  font-size: 13.5px;
+  margin-top: 4px;
+}
+
+.sd-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 18px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  padding: 8px 0;
+}
+.sd-tab {
+  flex: 1;
+  min-height: 46px;
+  border-radius: 13px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--slate);
+  font-weight: 800;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.sd-tab svg {
+  width: 16px;
+  height: 16px;
+}
+.sd-tab.on {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+
+.sd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+}
+
+.sd-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 14px 15px;
+}
+.sd-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sd-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--gold-soft);
+  color: var(--gold-600);
+  font-weight: 800;
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+}
+.sd-card-head h4 {
+  font-size: 15.5px;
+  font-weight: 800;
+  flex: 1;
+  min-width: 0;
+}
+.sd-notes {
+  font-size: 14.5px;
+  line-height: 1.55;
+  margin-top: 10px;
+}
+.sd-thumb {
+  margin-top: 12px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* Kit checklist: whole-row tap targets that persist per device. */
+.sd-kit-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--card);
+  cursor: pointer;
+  text-align: left;
+}
+.sd-check {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  flex: 0 0 28px;
+}
+.sd-check svg {
+  width: 16px;
+  height: 16px;
+}
+.sd-kit-item.on .sd-check {
+  background: var(--c-physical);
+  border-color: var(--c-physical);
+}
+.sd-kit-name {
+  font-weight: 800;
+  font-size: 14.5px;
+}
+.sd-kit-item.on .sd-kit-name {
+  color: var(--slate);
+  text-decoration: line-through;
+}
+.sd-kit-drills {
+  font-size: 12px;
+  color: var(--slate);
+  margin-top: 2px;
+}
+
+/* Plan rows link each activity to its drill. */
+.sd-plan-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 13px 14px;
+  cursor: pointer;
+  color: inherit;
+}
+.sd-plan-row:disabled {
+  cursor: default;
+}
+.sd-plan-points {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sd-plan-points li {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--slate);
+}
