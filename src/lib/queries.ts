@@ -38,7 +38,7 @@ import { sourceLabelForUrl } from './fa'
 // Separate from the component-facing camelCase types. Nullable columns are
 // reflected here; the mappers coerce them to the non-null component contract.
 
-interface DrillRow {
+export interface DrillRow {
   id: string
   club_id: string
   title: string
@@ -84,7 +84,7 @@ interface MediaRow {
 }
 
 // The activities jsonb element. drill_id on the wire maps to drillId in the UI.
-interface ActivityRow {
+export interface ActivityRow {
   phase: Phase
   duration: number
   drill_id?: string | null
@@ -123,7 +123,7 @@ interface ProgrammeRow {
   created_at: string
 }
 
-interface SessionRow {
+export interface SessionRow {
   id: string
   club_id: string
   coach_id: string
@@ -189,21 +189,21 @@ const CLUB_COLS = 'id, name, motto, crest_url'
 
 // ---- Mappers -----------------------------------------------------------
 
-function toActivity(a: ActivityRow): Activity {
+export function toActivity(a: ActivityRow): Activity {
   const out: Activity = { phase: a.phase, duration: a.duration }
   if (a.drill_id != null) out.drillId = a.drill_id
   if (a.title != null) out.title = a.title
   return out
 }
 
-function toActivityRow(a: Activity): ActivityRow {
+export function toActivityRow(a: Activity): ActivityRow {
   const out: ActivityRow = { phase: a.phase, duration: a.duration }
   if (a.drillId != null) out.drill_id = a.drillId
   if (a.title != null) out.title = a.title
   return out
 }
 
-function toDrill(r: DrillRow): Drill {
+export function toDrill(r: DrillRow): Drill {
   return {
     id: r.id,
     title: r.title,
@@ -282,7 +282,7 @@ function toProgramme(r: ProgrammeRow): Programme {
   }
 }
 
-function toSession(r: SessionRow): Session {
+export function toSession(r: SessionRow): Session {
   return {
     id: r.id,
     name: r.name,
