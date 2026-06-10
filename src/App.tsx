@@ -17,6 +17,7 @@ import { Planner } from './routes/Planner'
 import { Templates } from './routes/Templates'
 import { Media } from './routes/Media'
 import { LiveSession } from './routes/LiveSession'
+import { SessionDay } from './routes/SessionDay'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
 
@@ -83,6 +84,9 @@ export function App() {
           <Route path="library" element={<Library />} />
           <Route path="drill/:id" element={<DrillDetail />} />
           <Route path="sessions" element={<Sessions />} />
+          {/* Session day stays inside the shell so the bottom nav remains
+              reachable pitch-side; the full-screen viewer overlays it. */}
+          <Route path="session-day/:sessionId" element={<SessionDay />} />
           <Route path="planner" element={<Planner />} />
           <Route path="templates" element={<Templates />} />
           <Route path="media" element={<Media />} />

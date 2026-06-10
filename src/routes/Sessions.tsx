@@ -127,10 +127,16 @@ function SessionCard({
       </div>
 
       <div className="row" style={{ gap: 9 }}>
+        <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => nav('sessionDay', { sessionId: s.id })}>
+          <Icon.cone />
+          Session day
+        </button>
         <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => nav('live', { sessionId: s.id })}>
           <Icon.play />
           Start
         </button>
+      </div>
+      <div className="row" style={{ gap: 9 }}>
         {canManage ? (
           <>
             <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
