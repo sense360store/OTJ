@@ -28,7 +28,7 @@ values (
 )
 on conflict (id) do nothing;
 
--- System roles, grants and filter taxonomies for the seeded club (0009).
+-- System roles, grants and filter taxonomies for the seeded club (0010).
 -- The migration's per club backfill ran before this file inserted the club,
 -- so seed them here, before the demo user, so the sign-up trigger can map
 -- the user's role_id from the role metadata.

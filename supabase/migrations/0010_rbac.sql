@@ -1,6 +1,6 @@
 -- =====================================================================
 -- OTJ Training Hub - roles as data, capability lookups, managed filters
--- Migration 0009_rbac
+-- Migration 0010_rbac
 --
 -- REVIEW REQUIRED. This is the largest security change since the original
 -- schema. It rewrites every policy that names a role literal, so every
@@ -16,10 +16,15 @@
 --     deleted (the roles policies exclude them), and the Admin role keeps
 --     roles.manage and users.manage (a trigger refuses removing them).
 --   * Permissions are role_permissions rows. has_perm(p) is the single
---     lookup every rewritten policy uses. Ownership clauses stay as they
---     were: owners always manage their own items, manage_any extends that
---     to items the user does not own. Templates carry no owner column, so
---     template writes ride on templates.manage alone, as before.
+--     lookup every rewritten policy uses. Ownership keeps the guard
+--     0009_parent_owner_writes added: the owner arms require the matching
+--     create capability, so ownership counts only while the member can
+--     still create that kind of content, and a member demoted to Parent
+--     loses writes on content they own. manage_any extends writes to
+--     items the user does not own. The three system roles behave
+--     identically before and after this migration. Templates carry no
+--     owner column, so template writes ride on templates.manage alone,
+--     as before.
 --   * live.drive_any is in the catalogue for the live view affordance.
 --     It appears in no policy in this phase: driving writes the session
 --     row, and that update stays owner or sessions.manage_any, exactly
@@ -321,7 +326,9 @@ $$;
 -- 5. Policy rewrites: every role name literal becomes a has_perm lookup
 -- ---------------------------------------------------------------------
 -- Row shapes (club scoping, ownership clauses, with check conditions) are
--- unchanged from 0001, 0002 and 0007; only the role test changes.
+-- unchanged from 0001, 0002, 0007 and 0009_parent_owner_writes; only the
+-- role test changes. The owner arms carry 0009's demoted parent guard in
+-- capability terms: owner holding the matching create capability.
 
 -- clubs: update was my_role() = 'admin'
 drop policy "clubs_update_admin" on public.clubs;
@@ -336,17 +343,19 @@ create policy "profiles_all_users_manage" on public.profiles
   with check ( club_id = public.my_club() and public.has_perm('users.manage') );
 
 -- drills: insert was role in (coach, admin); update and delete were owner
--- or admin
+-- holding a writing role, or admin
 drop policy "drills_insert_club" on public.drills;
 create policy "drills_insert_create" on public.drills
   for insert with check ( club_id = public.my_club() and public.has_perm('drills.create') );
 drop policy "drills_update_owner_or_admin" on public.drills;
 create policy "drills_update_owner_or_manage" on public.drills
-  for update using ( club_id = public.my_club() and (created_by = auth.uid() or public.has_perm('drills.manage_any')) )
+  for update using ( club_id = public.my_club()
+    and ((created_by = auth.uid() and public.has_perm('drills.create')) or public.has_perm('drills.manage_any')) )
   with check ( club_id = public.my_club() );
 drop policy "drills_delete_owner_or_admin" on public.drills;
 create policy "drills_delete_owner_or_manage" on public.drills
-  for delete using ( club_id = public.my_club() and (created_by = auth.uid() or public.has_perm('drills.manage_any')) );
+  for delete using ( club_id = public.my_club()
+    and ((created_by = auth.uid() and public.has_perm('drills.create')) or public.has_perm('drills.manage_any')) );
 
 -- media: same pattern as drills
 drop policy "media_insert_club" on public.media;
@@ -354,11 +363,13 @@ create policy "media_insert_create" on public.media
   for insert with check ( club_id = public.my_club() and public.has_perm('media.create') );
 drop policy "media_update_owner_or_admin" on public.media;
 create policy "media_update_owner_or_manage" on public.media
-  for update using ( club_id = public.my_club() and (created_by = auth.uid() or public.has_perm('media.manage_any')) )
+  for update using ( club_id = public.my_club()
+    and ((created_by = auth.uid() and public.has_perm('media.create')) or public.has_perm('media.manage_any')) )
   with check ( club_id = public.my_club() );
 drop policy "media_delete_owner_or_admin" on public.media;
 create policy "media_delete_owner_or_manage" on public.media
-  for delete using ( club_id = public.my_club() and (created_by = auth.uid() or public.has_perm('media.manage_any')) );
+  for delete using ( club_id = public.my_club()
+    and ((created_by = auth.uid() and public.has_perm('media.create')) or public.has_perm('media.manage_any')) );
 
 -- templates: insert was role in (coach, admin); update and delete were
 -- admin only. Templates carry no owner column, so manage stays the only
@@ -375,18 +386,21 @@ create policy "templates_delete_manage" on public.templates
   for delete using ( club_id = public.my_club() and public.has_perm('templates.manage') );
 
 -- sessions: insert keeps the own coach_id requirement; update and delete
--- keep the ownership clause. Driving a live session writes through the
--- update policy, so manage_any covers driving any club session.
+-- keep the ownership clause with the create capability guard. Driving a
+-- live session writes through the update policy, so manage_any covers
+-- driving any club session.
 drop policy "sessions_insert_own" on public.sessions;
 create policy "sessions_insert_own" on public.sessions
   for insert with check ( coach_id = auth.uid() and club_id = public.my_club() and public.has_perm('sessions.create') );
 drop policy "sessions_update_own_or_admin" on public.sessions;
 create policy "sessions_update_own_or_manage" on public.sessions
-  for update using ( coach_id = auth.uid() or (club_id = public.my_club() and public.has_perm('sessions.manage_any')) )
+  for update using ( (coach_id = auth.uid() and public.has_perm('sessions.create'))
+    or (club_id = public.my_club() and public.has_perm('sessions.manage_any')) )
   with check ( club_id = public.my_club() );
 drop policy "sessions_delete_own_or_admin" on public.sessions;
 create policy "sessions_delete_own_or_manage" on public.sessions
-  for delete using ( coach_id = auth.uid() or (club_id = public.my_club() and public.has_perm('sessions.manage_any')) );
+  for delete using ( (coach_id = auth.uid() and public.has_perm('sessions.create'))
+    or (club_id = public.my_club() and public.has_perm('sessions.manage_any')) );
 
 -- teams: manage was my_role() = 'admin'
 drop policy "teams_admin_manage" on public.teams;

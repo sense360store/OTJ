@@ -1,12 +1,14 @@
 // The fixed capability catalogue: the single vocabulary of the permission
 // system. This list and the check constraint in
-// supabase/migrations/0009_rbac.sql must match exactly; adding or removing a
+// supabase/migrations/0010_rbac.sql must match exactly; adding or removing a
 // capability is a migration, never a runtime change.
 //
-// manage_any means edit and delete items the user does not own; owners always
-// manage their own. Templates carry no owner, so templates.manage is the only
-// write path beyond creating one. Postgres RLS enforces every capability
-// through has_perm(); the UI only decides what to surface.
+// manage_any means edit and delete items the user does not own. Owners manage
+// their own items while they hold the matching create capability (the
+// 0009_parent_owner_writes guard: a member demoted to a read-only role loses
+// writes on content they own). Templates carry no owner, so templates.manage
+// is the only write path beyond creating one. Postgres RLS enforces every
+// capability through has_perm(); the UI only decides what to surface.
 
 export const CAPABILITIES = [
   {
