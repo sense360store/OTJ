@@ -96,12 +96,35 @@ export interface Template {
   focus: string
   activities: Activity[]
   // FA session model fields. intentions copy onto a session built from the
-  // template; programme and week group six-week programme sets.
+  // template; programme and week are the legacy grouping labels, kept for
+  // one phase as the backfill source and no longer written by new code.
   intentions: string[]
   programme: string
   week: number | null
+  // Entity-backed programme membership: which programme this template is a
+  // week of, and which week. Both null for a standalone template.
+  programmeId: string | null
+  programmeWeek: number | null
   sourceUrl: string
   sourceLabel: string
+}
+
+// A programme: an ordered set of weekly session templates, the FA six-week
+// format being the model. weeks is the planned length; the week templates
+// hang off Template.programmeId and programmeWeek. pdfMediaId attaches the
+// offline copy from the media library, and source carries attribution for
+// imported programmes.
+export interface Programme {
+  id: string
+  name: string
+  focus: string
+  summary: string
+  intentions: string[]
+  weeks: number
+  pdfMediaId: string | null
+  sourceUrl: string
+  sourceLabel: string
+  createdBy?: string
 }
 
 export interface Session {
@@ -124,6 +147,10 @@ export interface Session {
   space: string
   sourceUrl: string
   sourceLabel: string
+  // Where this session came from when a programme was applied to a team:
+  // the programme and its week. Both null for a session planned by hand.
+  programmeId: string | null
+  programmeWeek: number | null
   // Shared live state, written only by the live view's driver mutation. Both
   // null when the session is not live. The index points into activities and
   // the timestamp is when that activity began; watchers compute the running

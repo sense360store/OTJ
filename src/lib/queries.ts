@@ -23,6 +23,7 @@ import type {
   MediaType,
   Member,
   Phase,
+  Programme,
   Role,
   Session,
   SessionStatus,
@@ -100,8 +101,25 @@ interface TemplateRow {
   intentions: string[] | null
   programme: string | null
   week: number | null
+  programme_id: string | null
+  programme_week: number | null
   source_url: string | null
   source_label: string | null
+}
+
+interface ProgrammeRow {
+  id: string
+  club_id: string
+  name: string
+  focus: string | null
+  summary: string | null
+  intentions: string[] | null
+  weeks: number
+  pdf_media_id: string | null
+  source_url: string | null
+  source_label: string | null
+  created_by: string | null
+  created_at: string
 }
 
 interface SessionRow {
@@ -122,6 +140,8 @@ interface SessionRow {
   space: string | null
   source_url: string | null
   source_label: string | null
+  programme_id: string | null
+  programme_week: number | null
   live_activity_index: number | null
   live_activity_started_at: string | null
 }
@@ -149,9 +169,11 @@ const DRILL_COLS =
 const MEDIA_COLS =
   'id, club_id, name, type, kind, storage_path, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label'
 const TEMPLATE_COLS =
-  'id, club_id, name, focus, author, activities, created_at, intentions, programme, week, source_url, source_label'
+  'id, club_id, name, focus, author, activities, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label'
+const PROGRAMME_COLS =
+  'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at'
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, live_activity_index, live_activity_started_at'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at'
 const TEAM_COLS = 'id, club_id, name, created_at'
 const PROFILE_COLS = 'id, full_name, avatar, role, team_id, created_at'
 
@@ -226,8 +248,25 @@ function toTemplate(r: TemplateRow): Template {
     intentions: r.intentions ?? [],
     programme: r.programme ?? '',
     week: r.week,
+    programmeId: r.programme_id,
+    programmeWeek: r.programme_week,
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+  }
+}
+
+function toProgramme(r: ProgrammeRow): Programme {
+  return {
+    id: r.id,
+    name: r.name,
+    focus: r.focus ?? '',
+    summary: r.summary ?? '',
+    intentions: r.intentions ?? [],
+    weeks: r.weeks,
+    pdfMediaId: r.pdf_media_id,
+    sourceUrl: r.source_url ?? '',
+    sourceLabel: r.source_label ?? '',
+    createdBy: r.created_by ?? undefined,
   }
 }
 
@@ -248,6 +287,8 @@ function toSession(r: SessionRow): Session {
     space: r.space ?? '',
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    programmeId: r.programme_id,
+    programmeWeek: r.programme_week,
     liveActivityIndex: r.live_activity_index ?? null,
     liveActivityStartedAt: r.live_activity_started_at ?? null,
   }
@@ -323,6 +364,35 @@ export function useTemplates() {
         .order('id', { ascending: true })
       if (error) throw error
       return (data as unknown as TemplateRow[]).map(toTemplate)
+    },
+  })
+}
+
+// The club's programmes. RLS scopes the read to the caller's club; ordering
+// matches the other content lists.
+export function useProgrammes() {
+  return useQuery({
+    queryKey: ['programmes'],
+    queryFn: async (): Promise<Programme[]> => {
+      const { data, error } = await supabase
+        .from('programmes')
+        .select(PROGRAMME_COLS)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+      if (error) throw error
+      return (data as unknown as ProgrammeRow[]).map(toProgramme)
+    },
+  })
+}
+
+export function useProgramme(id: string | undefined) {
+  return useQuery({
+    queryKey: ['programmes', id],
+    enabled: !!id,
+    queryFn: async (): Promise<Programme | null> => {
+      const { data, error } = await supabase.from('programmes').select(PROGRAMME_COLS).eq('id', id!).maybeSingle()
+      if (error) throw error
+      return data ? toProgramme(data as unknown as ProgrammeRow) : null
     },
   })
 }
@@ -405,6 +475,11 @@ export function useMediaMap(): Record<string, MediaItem> {
 export function useTeamMap(): Record<string, Team> {
   const { data } = useTeams()
   return useMemo(() => Object.fromEntries((data ?? []).map((t) => [t.id, t])), [data])
+}
+
+export function useProgrammeMap(): Record<string, Programme> {
+  const { data } = useProgrammes()
+  return useMemo(() => Object.fromEntries((data ?? []).map((p) => [p.id, p])), [data])
 }
 
 export function useMemberMap(): Record<string, Member> {
@@ -729,6 +804,134 @@ export function useDeleteDrill() {
   })
 }
 
+// ---- Programme writes ----------------------------------------------------
+// Create and edit for programmes, plus the two ways a template becomes a
+// programme week. The programmes RLS is the real enforcement: insert needs a
+// coaching role, update and delete follow owner or admin. Insert sets club_id
+// and created_by; update sends neither, so a programme never changes club or
+// owner.
+
+export interface ProgrammeInput {
+  name: string
+  focus: string
+  summary: string
+  intentions: string[]
+  weeks: number
+  pdfMediaId: string | null
+  sourceUrl: string
+}
+
+function toProgrammeWriteRow(input: ProgrammeInput) {
+  return {
+    name: input.name,
+    focus: input.focus || null,
+    summary: input.summary || null,
+    intentions: input.intentions,
+    weeks: input.weeks,
+    pdf_media_id: input.pdfMediaId,
+    ...toSourceFields(input.sourceUrl),
+  }
+}
+
+export function useInsertProgramme() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<Programme, Error, ProgrammeInput>({
+    mutationFn: async (input) => {
+      if (!user || !profile?.club_id) {
+        throw new Error('You must be signed in to create a programme.')
+      }
+      const { data, error } = await supabase
+        .from('programmes')
+        .insert({ ...toProgrammeWriteRow(input), club_id: profile.club_id, created_by: user.id })
+        .select(PROGRAMME_COLS)
+        .single()
+      if (error) throw error
+      return toProgramme(data as unknown as ProgrammeRow)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['programmes'] }),
+  })
+}
+
+export function useUpdateProgramme() {
+  const qc = useQueryClient()
+  return useMutation<Programme, Error, { id: string; input: ProgrammeInput }>({
+    mutationFn: async ({ id, input }) => {
+      const { data, error } = await supabase
+        .from('programmes')
+        .update(toProgrammeWriteRow(input))
+        .eq('id', id)
+        .select(PROGRAMME_COLS)
+        .single()
+      if (error) throw error
+      return toProgramme(data as unknown as ProgrammeRow)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['programmes'] }),
+  })
+}
+
+// Owner or admin only; the programmes delete RLS is the real enforcement.
+// Deleting a programme leaves its templates and sessions intact: the foreign
+// keys null out in Postgres, so those caches refetch too.
+export function useDeleteProgramme() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('programmes').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['programmes'] })
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+}
+
+// Points an existing template at a programme week, or clears the link with
+// nulls. This is a templates update, which the RLS reserves for the curating
+// role (admin); the builder only surfaces it there. Coaches add weeks with
+// the copy below.
+export function useAssignTemplateWeek() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { templateId: string; programmeId: string | null; week: number | null }>({
+    mutationFn: async ({ templateId, programmeId, week }) => {
+      const { error } = await supabase
+        .from('templates')
+        .update({ programme_id: programmeId, programme_week: week })
+        .eq('id', templateId)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+  })
+}
+
+// Copies a template into a programme week as a fresh insert, leaving the
+// original untouched. Open to every coaching role through the templates
+// insert policy. The legacy programme and week label columns are not written.
+export function useCopyTemplateToWeek() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { template: Template; programmeId: string; week: number }>({
+    mutationFn: async ({ template, programmeId, week }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase.from('templates').insert({
+        club_id: profile.club_id,
+        name: template.name,
+        focus: template.focus || null,
+        author: template.author || null,
+        activities: template.activities.map(toActivityRow),
+        intentions: template.intentions,
+        programme_id: programmeId,
+        programme_week: week,
+        ...toSourceFields(template.sourceUrl),
+      })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+  })
+}
+
 // ---- Session write -----------------------------------------------------
 // One mutation behind the upsertSession(s) seam. A session already in the
 // sessions cache is updated; a new one is inserted. On insert, coach_id and
@@ -757,6 +960,10 @@ export function useUpsertSession() {
         intentions: input.intentions,
         space: input.space || null,
         ...toSourceFields(input.sourceUrl),
+        // The programme link travels with the session on insert and update,
+        // so applying a programme tags the rows and a planner edit keeps them.
+        programme_id: input.programmeId,
+        programme_week: input.programmeWeek,
       }
 
       if (isUpdate) {
@@ -1035,6 +1242,86 @@ export function useImportFA() {
       }
     },
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
+    },
+  })
+}
+
+// Import a whole FA programme from its overview page. The fa-import-programme
+// Edge Function performs the single sanctioned one-level follow (the
+// overview's own week links, same host, capped) as the signed in caller
+// through RLS, ties the weeks to one programme row and attaches the
+// programme PDF when present. See CLAUDE.md, Third-party content.
+
+export interface ImportProgrammeWeek {
+  week: number
+  status: 'imported' | 'skipped' | 'failed'
+  templateName: string
+  drills: number
+  media: number
+  warnings: string[]
+  error: string
+}
+
+export interface ImportProgrammeResult {
+  programmeId: string | null
+  programmeName: string
+  weeks: ImportProgrammeWeek[]
+  warnings: string[]
+}
+
+interface ImportProgrammeBody {
+  programme_id?: string
+  programme_name?: string
+  weeks?: {
+    week?: number
+    status?: string
+    template_name?: string
+    created?: { drills?: number; media?: number }
+    warnings?: string[]
+    error?: string
+  }[]
+  warnings?: string[]
+}
+
+export function useImportFAProgramme() {
+  const qc = useQueryClient()
+  return useMutation<ImportProgrammeResult, Error, { url: string }>({
+    mutationFn: async ({ url }) => {
+      const { data, error } = await supabase.functions.invoke('fa-import-programme', { body: { url } })
+      if (error) {
+        let message = 'Could not import that programme. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as ImportProgrammeBody
+      return {
+        programmeId: body.programme_id ?? null,
+        programmeName: body.programme_name ?? '',
+        weeks: (body.weeks ?? []).map((w) => ({
+          week: w.week ?? 0,
+          status: w.status === 'imported' || w.status === 'skipped' ? w.status : 'failed',
+          templateName: w.template_name ?? '',
+          drills: w.created?.drills ?? 0,
+          media: w.created?.media ?? 0,
+          warnings: w.warnings ?? [],
+          error: w.error ?? '',
+        })),
+        warnings: body.warnings ?? [],
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['programmes'] })
       qc.invalidateQueries({ queryKey: ['templates'] })
       qc.invalidateQueries({ queryKey: ['drills'] })
       qc.invalidateQueries({ queryKey: ['media'] })

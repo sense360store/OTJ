@@ -187,7 +187,7 @@ Core design rules from Phase 4 onward. Every feature, screen, query and mutation
 
 The club is an FA-affiliated charity club and holds permission to use England Football Learning content (learn.englandfootball.com) for its non-commercial coaching purposes, on the terms that FA images are used unmodified, never recreated or redrawn, and the use is not for profit. The platform operates within those terms:
 
-- FA content enters the platform only when a signed-in coach imports a specific resource by URL. The platform never crawls catalogues or bulk-imports, and never follows links beyond the single pasted page.
+- FA content enters the platform only when a signed-in coach imports a specific resource by URL. The platform never crawls catalogues or bulk-imports, and never follows links beyond the single pasted page, with one sanctioned exception: a programme overview's own week links may be followed, one level, same host, capped, as part of importing that one user-chosen resource.
 - Imported images are stored unmodified, with the source URL and "England Football Learning" attribution recorded and displayed wherever the image renders large.
 - Nothing is sold or made public. The app is invite-only club membership.
 - Where an FA-derived drill needs a diagram, the FA's own image is used, not a recreation.
