@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
+import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useTemplates, useDrillMap } from '../lib/queries'
+import { useActivityTitle, useTemplates, useDrillMap } from '../lib/queries'
 import type { Activity, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
@@ -19,9 +20,12 @@ function TemplateCard({
   t: Template
   nav: Nav
   upsertSession: Upsert
-  onManage: (t: Template) => void
+  onManage: ((t: Template) => void) | null
 }) {
+  const { user, profile } = useAuth()
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
+  // The session built from a template belongs to the signed-in coach and
+  // defaults to their team, the same as one built in the planner.
   const use = () => {
     const s: Session = {
       id: crypto.randomUUID(),
@@ -33,6 +37,8 @@ function TemplateCard({
       focus: t.focus,
       status: 'upcoming',
       activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],
+      coachId: user?.id ?? '',
+      teamId: profile?.team_id ?? null,
     }
     upsertSession(s)
     nav('planner', { sessionId: s.id })
@@ -68,10 +74,12 @@ function TemplateCard({
           <Icon.copy />
           Use template
         </button>
-        <button className="btn btn-ghost btn-sm" onClick={() => onManage(t)}>
-          <Icon.book />
-          Drills
-        </button>
+        {onManage && (
+          <button className="btn btn-ghost btn-sm" onClick={() => onManage(t)}>
+            <Icon.book />
+            Drills
+          </button>
+        )}
       </div>
     </div>
   )
@@ -81,6 +89,7 @@ function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => v
   const [acts, setActs] = useState<Activity[]>(() => JSON.parse(JSON.stringify(tpl.activities)) as Activity[])
   const [adding, setAdding] = useState(false)
   const drillById = useDrillMap()
+  const actTitle = useActivityTitle()
   const mins = acts.reduce((a, x) => a + (x.duration || 0), 0)
   return (
     <Modal
@@ -119,7 +128,7 @@ function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => v
               </span>
               <span className="tag-dot" style={{ background: PHASE_COLOR[a.phase], width: 10, height: 10 }}></span>
               <div className="ac-body">
-                <h4>{d ? d.title : a.title}</h4>
+                <h4>{actTitle(a)}</h4>
                 <div className="ac-sub">
                   <span>{a.phase}</span>
                   {d && <span>{d.skill}</span>}
@@ -148,6 +157,7 @@ function ManageTemplateModal({ tpl, onClose }: { tpl: Template; onClose: () => v
 
 export function Templates() {
   const nav = useNav()
+  const { role } = useAuth()
   const { upsertSession } = useSessions()
   const [q, setQ] = useState('')
   const [manage, setManage] = useState<Template | null>(null)
@@ -155,6 +165,9 @@ export function Templates() {
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
   const list = templates.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
+  // Curating templates is admin only per the permissions matrix; every coach
+  // can still use one. The templates RLS enforces the writes.
+  const curator = role === 'admin'
   return (
     <div>
       <div className="page-head">
@@ -162,10 +175,12 @@ export function Templates() {
           <h2>Session Templates</h2>
           <div className="sub">Reusable session shells — build a new plan in one click.</div>
         </div>
-        <button className="btn btn-primary" onClick={() => nav('planner')}>
-          <Icon.plus />
-          New template
-        </button>
+        {curator && (
+          <button className="btn btn-primary" onClick={() => nav('planner')}>
+            <Icon.plus />
+            New template
+          </button>
+        )}
       </div>
       <div className="search-lg" style={{ maxWidth: 460, marginBottom: 20 }}>
         <Icon.search />
@@ -173,7 +188,7 @@ export function Templates() {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
         {list.map((t) => (
-          <TemplateCard key={t.id} t={t} nav={nav} upsertSession={upsertSession} onManage={setManage} />
+          <TemplateCard key={t.id} t={t} nav={nav} upsertSession={upsertSession} onManage={curator ? setManage : null} />
         ))}
       </div>
       {manage && <ManageTemplateModal tpl={manage} onClose={() => setManage(null)} />}

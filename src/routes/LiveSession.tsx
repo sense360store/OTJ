@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
-import { useSession, useDrillMap, useMediaMap } from '../lib/queries'
+import { useActivityTitle, useSession, useDrillMap, useMediaMap, useTeamMap } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -36,7 +36,7 @@ function LiveComplete({
   onExit: () => void
   onRestart: () => void
 }) {
-  const drillById = useDrillMap()
+  const actTitle = useActivityTitle()
   const noteList = Object.entries(notes).filter(([, v]) => v && v.trim())
   return (
     <div className="live theme-dark">
@@ -68,10 +68,9 @@ function LiveComplete({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {noteList.map(([i, v]) => {
                   const a = session.activities[Number(i)]
-                  const d = a?.drillId ? drillById[a.drillId] : null
                   return (
                     <div key={i}>
-                      <div style={{ fontWeight: 700, fontSize: 13.5 }}>{d ? d.title : a?.title}</div>
+                      <div style={{ fontWeight: 700, fontSize: 13.5 }}>{a ? actTitle(a) : ''}</div>
                       <div className="muted" style={{ fontSize: 14, marginTop: 2 }}>
                         {v}
                       </div>
@@ -101,6 +100,9 @@ function LiveComplete({
 function LiveRunner({ session, onExit }: { session: Session; onExit: () => void }) {
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
+  const actTitle = useActivityTitle()
+  const teamById = useTeamMap()
+  const teamName = session.teamId ? teamById[session.teamId]?.name : undefined
   const acts = session.activities
   const load = (): LiveSaved | null => {
     try {
@@ -200,6 +202,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
           </div>
           <div className="lsub">
             Activity {idx + 1} of {acts.length} · {session.focus}
+            {teamName ? ' · ' + teamName : ''}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
@@ -231,7 +234,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
               <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>
               {act.phase}
             </span>
-            <h2 style={{ fontSize: 'clamp(26px,6vw,38px)', marginTop: 12 }}>{drill ? drill.title : act.title || 'Activity'}</h2>
+            <h2 style={{ fontSize: 'clamp(26px,6vw,38px)', marginTop: 12 }}>{actTitle(act, 'Activity')}</h2>
             {drill && (
               <div className="muted" style={{ fontSize: 15, marginTop: 4 }}>
                 {drill.skill} · {drill.players} · {drill.area}
@@ -344,11 +347,10 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
           {idx < acts.length - 1 &&
             (() => {
               const n = acts[idx + 1]
-              const nd = n.drillId ? drillById[n.drillId] : null
               return (
                 <div className="row" style={{ justifyContent: 'center', gap: 8, color: 'var(--slate)', fontSize: 13.5, fontWeight: 600 }}>
                   <span className="muted">Up next:</span>
-                  <span style={{ color: 'var(--ink)' }}>{nd ? nd.title : n.title}</span>
+                  <span style={{ color: 'var(--ink)' }}>{actTitle(n)}</span>
                   <span className="muted">· {n.duration} min</span>
                 </div>
               )

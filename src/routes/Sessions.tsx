@@ -1,9 +1,17 @@
+// The club calendar of sessions. Visibility is club-wide: every coach sees
+// every club session. Whose sessions you are looking at is a view filter that
+// defaults to your own, and team narrows further. Edit and delete follow
+// ownership (own, or admin); other coaches' sessions render read-only with
+// the owner's name. The sessions RLS enforces the same rules on write.
+import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
+import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
+import { useDeleteSession, useMemberMap, useTeamMap, useTeams } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, PHASE_COLOR } from '../components/ui'
+import { Chip, Empty, ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
 
 type Nav = ReturnType<typeof useNav>
 
@@ -11,7 +19,53 @@ function dateLabel(d: string) {
   return new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 }
 
-function SessionCard({ s, nav }: { s: Session; nav: Nav }) {
+function DeleteSessionModal({ s, onClose }: { s: Session; onClose: () => void }) {
+  const del = useDeleteSession()
+  const remove = () => del.mutate({ id: s.id }, { onSuccess: onClose })
+  return (
+    <Modal
+      title="Delete session"
+      sub={s.name}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
+            <Icon.trash />
+            {del.isPending ? 'Deleting…' : 'Delete'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        This removes the session and its plan from the club calendar. The drills themselves stay in the library.
+      </p>
+      {del.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+          Could not delete. Try again.
+        </p>
+      )}
+    </Modal>
+  )
+}
+
+function SessionCard({
+  s,
+  nav,
+  ownerName,
+  teamName,
+  canManage,
+  onDelete,
+}: {
+  s: Session
+  nav: Nav
+  ownerName: string | null
+  teamName: string | null
+  canManage: boolean
+  onDelete: () => void
+}) {
   const mins = sessionMinutes(s)
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -43,6 +97,12 @@ function SessionCard({ s, nav }: { s: Session; nav: Nav }) {
           <Icon.pin />
           {s.venue}
         </span>
+        {teamName && (
+          <span className="pill">
+            <Icon.flag />
+            {teamName}
+          </span>
+        )}
         <span className="pill">
           <Icon.list />
           {s.activities.length} activities
@@ -51,6 +111,12 @@ function SessionCard({ s, nav }: { s: Session; nav: Nav }) {
           <Icon.clock />
           {mins} min
         </span>
+        {ownerName && (
+          <span className="pill">
+            <Icon.user />
+            {ownerName}
+          </span>
+        )}
       </div>
 
       {/* mini timeline */}
@@ -65,10 +131,27 @@ function SessionCard({ s, nav }: { s: Session; nav: Nav }) {
           <Icon.play />
           Start
         </button>
-        <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
-          <Icon.edit />
-          Edit plan
-        </button>
+        {canManage ? (
+          <>
+            <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
+              <Icon.edit />
+              Edit plan
+            </button>
+            <button
+              className="btn btn-ghost btn-sm icon-only"
+              style={{ width: 38, padding: 0, alignSelf: 'stretch', height: 'auto' }}
+              aria-label="Delete session"
+              onClick={onDelete}
+            >
+              <Icon.trash />
+            </button>
+          </>
+        ) : (
+          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
+            <Icon.eye />
+            View plan
+          </button>
+        )}
       </div>
     </div>
   )
@@ -76,26 +159,78 @@ function SessionCard({ s, nav }: { s: Session; nav: Nav }) {
 
 export function Sessions() {
   const nav = useNav()
+  const { user, role } = useAuth()
   const { sessions, loading, error } = useSessions()
+  const { data: teams = [] } = useTeams()
+  const teamById = useTeamMap()
+  const memberById = useMemberMap()
+  const [view, setView] = useState<'mine' | 'all'>('mine')
+  const [teamId, setTeamId] = useState('')
+  const [deleting, setDeleting] = useState<Session | null>(null)
+
   if (loading) return <Loading />
   if (error) return <ErrorNote />
+
+  const list = sessions.filter(
+    (s) => (view === 'mine' ? s.coachId === user?.id : true) && (!teamId || s.teamId === teamId),
+  )
+
   return (
     <div>
       <div className="page-head">
         <div>
           <h2>Sessions</h2>
-          <div className="sub">Your planned training nights — start one live or tweak the plan.</div>
+          <div className="sub">Training nights across the club. You see your own by default.</div>
         </div>
         <button className="btn btn-primary" onClick={() => nav('planner')}>
           <Icon.plus />
           New session
         </button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: 18 }}>
-        {sessions.map((s) => (
-          <SessionCard key={s.id} s={s} nav={nav} />
-        ))}
+
+      <div className="filter-row" style={{ marginBottom: 18 }}>
+        <Chip on={view === 'mine'} onClick={() => setView('mine')}>
+          My sessions
+        </Chip>
+        <Chip on={view === 'all'} onClick={() => setView('all')}>
+          All sessions
+        </Chip>
+        <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
+          <option value="">All teams</option>
+          {teams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
       </div>
+
+      {list.length === 0 ? (
+        <Empty icon={Icon.calendar} title="No sessions here yet">
+          {view === 'mine' && !teamId
+            ? 'Plan your first session and it will appear here.'
+            : 'Nothing matches this filter. Try All sessions or another team.'}
+        </Empty>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: 18 }}>
+          {list.map((s) => {
+            const mine = s.coachId === user?.id
+            return (
+              <SessionCard
+                key={s.id}
+                s={s}
+                nav={nav}
+                ownerName={mine ? null : memberById[s.coachId]?.fullName || 'Another coach'}
+                teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : null}
+                canManage={mine || role === 'admin'}
+                onDelete={() => setDeleting(s)}
+              />
+            )
+          })}
+        </div>
+      )}
+
+      {deleting && <DeleteSessionModal s={deleting} onClose={() => setDeleting(null)} />}
     </div>
   )
 }

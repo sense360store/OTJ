@@ -10,6 +10,23 @@ export type Phase = 'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'
 export type Level = 'Foundation' | 'Developing' | 'Advanced'
 export type MediaType = 'video' | 'youtube' | 'image' | 'pdf'
 export type SessionStatus = 'upcoming' | 'completed'
+export type Role = 'coach' | 'admin' | 'parent'
+
+// A club team. Teams are a filter and a default, never access control.
+export interface Team {
+  id: string
+  name: string
+}
+
+// A club member as the Users screen and the owner labels see one.
+export interface Member {
+  id: string
+  fullName: string
+  avatar: string | null
+  role: Role
+  teamId: string | null
+  joined: string
+}
 
 export interface CornerInfo {
   key: CornerKey
@@ -48,6 +65,7 @@ export interface Drill {
   summary: string
   points: string[]
   tags: string[]
+  createdBy?: string
 }
 
 export interface Activity {
@@ -75,6 +93,10 @@ export interface Session {
   focus: string
   status: SessionStatus
   activities: Activity[]
+  // Visibility is club-wide; coachId carries ownership for the edit and
+  // delete affordances and the My sessions filter. teamId is a filter.
+  coachId: string
+  teamId: string | null
 }
 
 // ---- Taxonomy ----------------------------------------------------------

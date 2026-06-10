@@ -2,15 +2,18 @@ import { useRef, useState } from 'react'
 import type { DragEventHandler } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
+import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDrillMap, useMediaMap, useSession } from '../lib/queries'
+import { useActivityTitle, useDrillMap, useMediaMap, useMemberMap, useSession, useTeams } from '../lib/queries'
 import { PHASES } from '../lib/data'
 import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, MediaThumb, PHASE_COLOR } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
 
-function blankSession(): Session {
+// A new session belongs to the signed-in coach and defaults to their team
+// when one is set. Team is a filter and a default, never access control.
+function blankSession(coachId: string, teamId: string | null): Session {
   return {
     id: crypto.randomUUID(),
     name: 'New Session',
@@ -21,6 +24,8 @@ function blankSession(): Session {
     focus: 'All-round',
     status: 'upcoming',
     activities: [],
+    coachId,
+    teamId,
   }
 }
 
@@ -39,6 +44,7 @@ function ActivityRow({
   onPhase,
   dragHandlers,
   dragging,
+  readOnly,
 }: {
   act: Activity
   idx: number
@@ -47,21 +53,32 @@ function ActivityRow({
   onPhase: (i: number, v: Phase) => void
   dragHandlers: DragHandlers
   dragging: boolean
+  readOnly: boolean
 }) {
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
+  const actTitle = useActivityTitle()
+  // A drillId whose drill was deleted resolves to null; the row stays usable
+  // with a removed drill placeholder from actTitle.
   const drill = act.drillId ? drillById[act.drillId] : null
   const media = drill && drill.mediaId ? mediaById[drill.mediaId] : null
   return (
-    <div className="act-card" style={dragging ? { opacity: 0.4 } : undefined} draggable {...dragHandlers}>
-      <span className="act-grip">
-        <Icon.grip />
-      </span>
+    <div
+      className="act-card"
+      style={dragging ? { opacity: 0.4 } : undefined}
+      draggable={!readOnly}
+      {...(readOnly ? {} : dragHandlers)}
+    >
+      {!readOnly && (
+        <span className="act-grip">
+          <Icon.grip />
+        </span>
+      )}
       <div className="act-thumb" style={{ overflow: 'hidden' }}>
         <MediaThumb media={media} showPlay={false} showBadge={false} label="" />
       </div>
       <div className="ac-body">
-        <h4>{drill ? drill.title : act.title || 'Custom activity'}</h4>
+        <h4>{actTitle(act)}</h4>
         <div className="ac-sub">
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>
@@ -72,6 +89,7 @@ function ActivityRow({
       </div>
       <select
         value={act.phase}
+        disabled={readOnly}
         onChange={(e) => onPhase(idx, e.target.value as Phase)}
         style={{
           height: 34,
@@ -96,6 +114,7 @@ function ActivityRow({
           value={act.duration}
           min="1"
           max="90"
+          disabled={readOnly}
           onChange={(e) => onDur(idx, parseInt(e.target.value) || 0)}
           style={{
             width: 52,
@@ -113,27 +132,47 @@ function ActivityRow({
           min
         </span>
       </div>
-      <button className="act-x" onClick={() => onRemove(idx)}>
-        <Icon.trash />
-      </button>
+      {!readOnly && (
+        <button className="act-x" onClick={() => onRemove(idx)}>
+          <Icon.trash />
+        </button>
+      )}
     </div>
   )
 }
 
-function PlannerEditor({ existing }: { existing: Session | null }) {
+function PlannerEditor({
+  existing,
+  newDefaults,
+}: {
+  existing: Session | null
+  newDefaults?: { coachId: string; teamId: string | null }
+}) {
   const nav = useNav()
+  const { user, role } = useAuth()
   const { upsertSession } = useSessions()
+  const { data: teams = [] } = useTeams()
+  const memberById = useMemberMap()
 
   const [session, setSession] = useState<Session>(() =>
-    existing ? (JSON.parse(JSON.stringify(existing)) as Session) : blankSession(),
+    existing
+      ? (JSON.parse(JSON.stringify(existing)) as Session)
+      : blankSession(newDefaults?.coachId ?? '', newDefaults?.teamId ?? null),
   )
   const [addOpen, setAddOpen] = useState(false)
   const dragFrom = useRef<number | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
 
+  // Visibility is club-wide, so any coach can open any club session here.
+  // Editing follows ownership (own, or admin); everyone else gets a read-only
+  // view of the plan. The sessions RLS enforces the same rule on write.
+  const readOnly = !!existing && existing.coachId !== user?.id && role !== 'admin'
+  const owner = existing ? memberById[existing.coachId] : undefined
+
   const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
   const setField = (k: 'name' | 'date' | 'time' | 'ageGroup' | 'venue' | 'focus', v: string) =>
     setSession((s) => ({ ...s, [k]: v }))
+  const setTeam = (v: string) => setSession((s) => ({ ...s, teamId: v || null }))
   const removeAct = (i: number) => setSession((s) => ({ ...s, activities: s.activities.filter((_, j) => j !== i) }))
   const setDur = (i: number, v: number) =>
     setSession((s) => {
@@ -166,7 +205,7 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
     nav('sessions')
   }
   const start = () => {
-    upsertSession(session)
+    if (!readOnly) upsertSession(session)
     nav('live', { sessionId: session.id })
   }
 
@@ -178,8 +217,12 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
             <Icon.chevL />
             Sessions
           </button>
-          <h2>{existing ? 'Edit session' : 'Plan a session'}</h2>
-          <div className="sub">Drag to reorder · pull drills from the library or start from a template.</div>
+          <h2>{readOnly ? 'View session' : existing ? 'Edit session' : 'Plan a session'}</h2>
+          <div className="sub">
+            {readOnly
+              ? `${owner?.fullName || 'Another coach'}'s session. You can view and run it, but only the owner or an admin can change it.`
+              : 'Drag to reorder · pull drills from the library or start from a template.'}
+          </div>
         </div>
       </div>
 
@@ -188,7 +231,7 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
           {session.activities.length === 0 ? (
             <div className="card" style={{ padding: 0 }}>
               <Empty icon={Icon.layers} title="Empty session">
-                Add drills from the library or load a template to get started.
+                {readOnly ? 'No activities in this session yet.' : 'Add drills from the library or load a template to get started.'}
               </Empty>
             </div>
           ) : (
@@ -202,6 +245,7 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
                   onDur={setDur}
                   onPhase={setPhase}
                   dragging={dragIdx === i}
+                  readOnly={readOnly}
                   dragHandlers={{
                     onDragStart: () => {
                       dragFrom.current = i
@@ -218,20 +262,22 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
               ))}
             </div>
           )}
-          <div className="row" style={{ gap: 10, marginTop: 4 }}>
-            <button className="add-slot" style={{ marginBottom: 0 }} onClick={() => setAddOpen(true)}>
-              <Icon.plus />
-              Add from library
-            </button>
-            <button
-              className="add-slot"
-              style={{ marginBottom: 0 }}
-              onClick={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
-            >
-              <Icon.edit />
-              Add custom
-            </button>
-          </div>
+          {!readOnly && (
+            <div className="row" style={{ gap: 10, marginTop: 4 }}>
+              <button className="add-slot" style={{ marginBottom: 0 }} onClick={() => setAddOpen(true)}>
+                <Icon.plus />
+                Add from library
+              </button>
+              <button
+                className="add-slot"
+                style={{ marginBottom: 0 }}
+                onClick={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
+              >
+                <Icon.edit />
+                Add custom
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="planner-side">
@@ -247,22 +293,22 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
             </div>
             <div className="field">
               <label>Session name</label>
-              <input value={session.name} onChange={(e) => setField('name', e.target.value)} />
+              <input value={session.name} disabled={readOnly} onChange={(e) => setField('name', e.target.value)} />
             </div>
             <div className="row" style={{ gap: 10 }}>
               <div className="field" style={{ flex: 1 }}>
                 <label>Date</label>
-                <input type="date" value={session.date} onChange={(e) => setField('date', e.target.value)} />
+                <input type="date" value={session.date} disabled={readOnly} onChange={(e) => setField('date', e.target.value)} />
               </div>
               <div className="field" style={{ width: 110 }}>
                 <label>Time</label>
-                <input type="time" value={session.time} onChange={(e) => setField('time', e.target.value)} />
+                <input type="time" value={session.time} disabled={readOnly} onChange={(e) => setField('time', e.target.value)} />
               </div>
             </div>
             <div className="row" style={{ gap: 10 }}>
               <div className="field" style={{ flex: 1 }}>
                 <label>Age group</label>
-                <select value={session.ageGroup} onChange={(e) => setField('ageGroup', e.target.value)}>
+                <select value={session.ageGroup} disabled={readOnly} onChange={(e) => setField('ageGroup', e.target.value)}>
                   {['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s'].map((a) => (
                     <option key={a}>{a}</option>
                   ))}
@@ -270,12 +316,25 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
               </div>
               <div className="field" style={{ flex: 1 }}>
                 <label>Venue</label>
-                <input value={session.venue} onChange={(e) => setField('venue', e.target.value)} />
+                <input value={session.venue} disabled={readOnly} onChange={(e) => setField('venue', e.target.value)} />
               </div>
             </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label>Focus</label>
-              <input value={session.focus} onChange={(e) => setField('focus', e.target.value)} />
+            <div className="row" style={{ gap: 10 }}>
+              <div className="field" style={{ flex: 1 }}>
+                <label>Team</label>
+                <select value={session.teamId ?? ''} disabled={readOnly} onChange={(e) => setTeam(e.target.value)}>
+                  <option value="">No team</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field" style={{ flex: 1 }}>
+                <label>Focus</label>
+                <input value={session.focus} disabled={readOnly} onChange={(e) => setField('focus', e.target.value)} />
+              </div>
             </div>
           </div>
 
@@ -284,14 +343,18 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
               <Icon.play />
               Start session
             </button>
-            <button className="btn btn-primary btn-block" onClick={save}>
-              <Icon.check />
-              Save session
-            </button>
-            <button className="btn btn-ghost btn-block" onClick={() => nav('templates')}>
-              <Icon.book />
-              Load a template
-            </button>
+            {!readOnly && (
+              <>
+                <button className="btn btn-primary btn-block" onClick={save}>
+                  <Icon.check />
+                  Save session
+                </button>
+                <button className="btn btn-ghost btn-block" onClick={() => nav('templates')}>
+                  <Icon.book />
+                  Load a template
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -311,12 +374,21 @@ function PlannerEditor({ existing }: { existing: Session | null }) {
 
 export function Planner() {
   const [searchParams] = useSearchParams()
+  const { user, profile } = useAuth()
   const editId = searchParams.get('sessionId')
   // Editing reads the one session by id; a new session has none to read and so
   // renders straight away. The key remounts the editor with fresh state
-  // whenever the URL selects a different session.
+  // whenever the URL selects a different session, and for a new session also
+  // when the profile arrives, so the coach's default team applies.
   const { data: existing, isLoading, isError } = useSession(editId ?? undefined)
   if (editId && isLoading) return <Loading />
   if (editId && isError) return <ErrorNote />
-  return <PlannerEditor key={editId ?? 'new'} existing={existing ?? null} />
+  if (editId && existing) return <PlannerEditor key={editId} existing={existing} />
+  return (
+    <PlannerEditor
+      key={'new-' + (profile?.id ?? 'loading')}
+      existing={null}
+      newDefaults={{ coachId: user?.id ?? '', teamId: profile?.team_id ?? null }}
+    />
+  )
 }

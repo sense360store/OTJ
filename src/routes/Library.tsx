@@ -6,6 +6,7 @@ import { CORNERS, SKILLS, AGES, LEVELS } from '../lib/data'
 import type { CornerKey } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Chip, DrillCard, Empty, ErrorNote, Loading } from '../components/ui'
+import { DrillFormModal } from '../components/DrillFormModal'
 
 export function Library() {
   const nav = useNav()
@@ -19,6 +20,7 @@ export function Library() {
   const [age, setAge] = useState('')
   const [level, setLevel] = useState('')
   const [sort, setSort] = useState('recent')
+  const [addOpen, setAddOpen] = useState(false)
   const { data: drills = [], isLoading, isError } = useDrills()
 
   // Apply the corner preset from the URL once, then clear it.
@@ -56,10 +58,16 @@ export function Library() {
           <h2>Drill Library</h2>
           <div className="sub">Every drill and skill, tagged to the FA four-corner model.</div>
         </div>
-        <button className="btn btn-primary" onClick={() => nav('planner')}>
-          <Icon.plus />
-          Build a session
-        </button>
+        <div className="row">
+          <button className="btn btn-ghost" onClick={() => nav('planner')}>
+            <Icon.layers />
+            Build a session
+          </button>
+          <button className="btn btn-primary" onClick={() => setAddOpen(true)}>
+            <Icon.plus />
+            Add drill
+          </button>
+        </div>
       </div>
 
       <div className="filterbar">
@@ -142,6 +150,8 @@ export function Library() {
           ))}
         </div>
       )}
+
+      {addOpen && <DrillFormModal onClose={() => setAddOpen(false)} />}
     </div>
   )
 }

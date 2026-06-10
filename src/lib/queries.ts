@@ -21,9 +21,12 @@ import type {
   Level,
   MediaItem,
   MediaType,
+  Member,
   Phase,
+  Role,
   Session,
   SessionStatus,
+  Team,
   Template,
 } from './data'
 import { youtubeId } from './data'
@@ -90,6 +93,7 @@ interface SessionRow {
   id: string
   club_id: string
   coach_id: string
+  team_id: string | null
   name: string
   focus: string | null
   date: string | null
@@ -101,6 +105,22 @@ interface SessionRow {
   created_at: string
 }
 
+interface TeamRow {
+  id: string
+  club_id: string
+  name: string
+  created_at: string
+}
+
+interface ProfileRow {
+  id: string
+  full_name: string | null
+  avatar: string | null
+  role: Role
+  team_id: string | null
+  created_at: string
+}
+
 // ---- Column lists ------------------------------------------------------
 // Explicit so each read is checkable against the schema at a glance.
 const DRILL_COLS =
@@ -109,7 +129,9 @@ const MEDIA_COLS =
   'id, club_id, name, type, kind, storage_path, yt_url, size, dims, length, pages, created_by, created_at'
 const TEMPLATE_COLS = 'id, club_id, name, focus, author, activities, created_at'
 const SESSION_COLS =
-  'id, club_id, coach_id, name, focus, date, start_time, venue, age_group, status, activities, created_at'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at'
+const TEAM_COLS = 'id, club_id, name, created_at'
+const PROFILE_COLS = 'id, full_name, avatar, role, team_id, created_at'
 
 // ---- Mappers -----------------------------------------------------------
 
@@ -143,6 +165,7 @@ function toDrill(r: DrillRow): Drill {
     summary: r.summary ?? '',
     points: r.points ?? [],
     tags: r.tags ?? [],
+    createdBy: r.created_by ?? undefined,
   }
 }
 
@@ -183,6 +206,23 @@ function toSession(r: SessionRow): Session {
     focus: r.focus ?? '',
     status: r.status,
     activities: (r.activities ?? []).map(toActivity),
+    coachId: r.coach_id,
+    teamId: r.team_id,
+  }
+}
+
+function toTeam(r: TeamRow): Team {
+  return { id: r.id, name: r.name }
+}
+
+function toMember(r: ProfileRow): Member {
+  return {
+    id: r.id,
+    fullName: r.full_name ?? '',
+    avatar: r.avatar,
+    role: r.role,
+    teamId: r.team_id,
+    joined: r.created_at,
   }
 }
 
@@ -279,6 +319,34 @@ export function useSession(id: string | undefined) {
   })
 }
 
+// The club's teams. RLS lets every club member read them; only admins write.
+export function useTeams() {
+  return useQuery({
+    queryKey: ['teams'],
+    queryFn: async (): Promise<Team[]> => {
+      const { data, error } = await supabase.from('teams').select(TEAM_COLS).order('name', { ascending: true })
+      if (error) throw error
+      return (data as unknown as TeamRow[]).map(toTeam)
+    },
+  })
+}
+
+// Club members. The existing profiles RLS already lets club members read club
+// profiles; the Users screen and the session owner labels read through this.
+export function useProfiles() {
+  return useQuery({
+    queryKey: ['profiles'],
+    queryFn: async (): Promise<Member[]> => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select(PROFILE_COLS)
+        .order('created_at', { ascending: true })
+      if (error) throw error
+      return (data as unknown as ProfileRow[]).map(toMember)
+    },
+  })
+}
+
 // Lookup maps built from the cached list reads. The planner, templates, live
 // view and drill cards resolve a drill or a media item by id through these,
 // the same shape the prototype's drillById and mediaById maps provided.
@@ -290,6 +358,33 @@ export function useDrillMap(): Record<string, Drill> {
 export function useMediaMap(): Record<string, MediaItem> {
   const { data } = useMedia()
   return useMemo(() => Object.fromEntries((data ?? []).map((m) => [m.id, m])), [data])
+}
+
+export function useTeamMap(): Record<string, Team> {
+  const { data } = useTeams()
+  return useMemo(() => Object.fromEntries((data ?? []).map((t) => [t.id, t])), [data])
+}
+
+export function useMemberMap(): Record<string, Member> {
+  const { data } = useProfiles()
+  return useMemo(() => Object.fromEntries((data ?? []).map((m) => [m.id, m])), [data])
+}
+
+// Resolves an activity's display title. A drillId that no longer matches a
+// drill (deleted after the session or template was built) gets a quiet
+// placeholder, but only once the drills read has settled so a half-loaded
+// screen does not flash it.
+export function useActivityTitle(): (act: Activity, fallback?: string) => string {
+  const byId = useDrillMap()
+  const { isPending } = useDrills()
+  return (act, fallback = 'Custom activity') => {
+    if (act.drillId) {
+      const drill = byId[act.drillId]
+      if (drill) return drill.title
+      return isPending ? '…' : 'Removed drill'
+    }
+    return act.title || fallback
+  }
 }
 
 // ---- Media storage: signed URLs ----------------------------------------
@@ -475,6 +570,98 @@ export function useDeleteMedia() {
   })
 }
 
+// ---- Drill writes ------------------------------------------------------
+// Create, edit and delete for the club drill library. Insert sets club_id and
+// created_by: the RLS insert check requires the club, and created_by drives
+// the owner or admin update and delete policies. Update sends neither, so a
+// drill never changes club or owner. The drills RLS is the real enforcement;
+// the screens only decide whether to surface the actions.
+
+export interface DrillInput {
+  title: string
+  summary: string
+  corner: CornerKey
+  skill: string
+  level: Level
+  ages: string[]
+  duration: number
+  players: string
+  area: string
+  equipment: string[]
+  points: string[]
+  tags: string[]
+  mediaId: string | null
+}
+
+function toDrillWriteRow(input: DrillInput) {
+  return {
+    title: input.title,
+    summary: input.summary || null,
+    corner: input.corner,
+    skill: input.skill || null,
+    level: input.level,
+    ages: input.ages,
+    duration: input.duration || null,
+    players: input.players || null,
+    area: input.area || null,
+    equipment: input.equipment,
+    points: input.points,
+    tags: input.tags,
+    media_id: input.mediaId,
+  }
+}
+
+export function useInsertDrill() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<Drill, Error, DrillInput>({
+    mutationFn: async (input) => {
+      if (!user || !profile?.club_id) {
+        throw new Error('You must be signed in to add a drill.')
+      }
+      const { data, error } = await supabase
+        .from('drills')
+        .insert({ ...toDrillWriteRow(input), club_id: profile.club_id, created_by: user.id })
+        .select(DRILL_COLS)
+        .single()
+      if (error) throw error
+      return toDrill(data as unknown as DrillRow)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+  })
+}
+
+export function useUpdateDrill() {
+  const qc = useQueryClient()
+  return useMutation<Drill, Error, { id: string; input: DrillInput }>({
+    mutationFn: async ({ id, input }) => {
+      const { data, error } = await supabase
+        .from('drills')
+        .update(toDrillWriteRow(input))
+        .eq('id', id)
+        .select(DRILL_COLS)
+        .single()
+      if (error) throw error
+      return toDrill(data as unknown as DrillRow)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+  })
+}
+
+// Sessions and templates that reference a deleted drill keep their activities
+// jsonb untouched; the planner, live view and template screens render a quiet
+// removed drill placeholder for the dangling id.
+export function useDeleteDrill() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('drills').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+  })
+}
+
 // ---- Session write -----------------------------------------------------
 // One mutation behind the upsertSession(s) seam. A session already in the
 // sessions cache is updated; a new one is inserted. On insert, coach_id and
@@ -510,6 +697,7 @@ export function useUpsertSession() {
             venue: input.venue,
             age_group: input.ageGroup,
             status: input.status,
+            team_id: input.teamId,
             activities,
           })
           .eq('id', input.id)
@@ -535,6 +723,7 @@ export function useUpsertSession() {
           venue: input.venue,
           age_group: input.ageGroup,
           status: input.status,
+          team_id: input.teamId,
           activities,
         })
         .select(SESSION_COLS)
@@ -568,5 +757,118 @@ export function useUpsertSession() {
       existed.current.delete(input.id)
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
+  })
+}
+
+// Owner or admin only; the sessions delete RLS is the real enforcement.
+export function useDeleteSession() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('sessions').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+  })
+}
+
+// ---- Teams and members (admin) ------------------------------------------
+// The teams RLS allows club members to read and admins to write. The
+// profiles_admin_all policy already permits role and team changes by an
+// admin; no policy change was needed for these.
+
+export function useInsertTeam() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { name: string }>({
+    mutationFn: async ({ name }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase.from('teams').insert({ club_id: profile.club_id, name })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  })
+}
+
+export function useRenameTeam() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name: string }>({
+    mutationFn: async ({ id, name }) => {
+      const { error } = await supabase.from('teams').update({ name }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  })
+}
+
+// Removing a team nulls team_id on sessions and profiles through the foreign
+// keys, so those caches refetch too.
+export function useDeleteTeam() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('teams').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['teams'] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+    },
+  })
+}
+
+export function useUpdateProfile() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; role?: Role; teamId?: string | null }>({
+    mutationFn: async ({ id, role, teamId }) => {
+      const patch: Record<string, unknown> = {}
+      if (role !== undefined) patch.role = role
+      if (teamId !== undefined) patch.team_id = teamId
+      const { error } = await supabase.from('profiles').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+  })
+}
+
+// ---- Invites -------------------------------------------------------------
+// The invite goes through the invite-user Edge Function, which holds the
+// service role key server side and re-checks that the caller is an admin.
+// functions.invoke sends the signed in user's access token automatically.
+
+export interface InviteInput {
+  email: string
+  fullName: string
+  role: 'coach' | 'admin'
+  teamId: string | null
+}
+
+export function useInviteUser() {
+  const qc = useQueryClient()
+  return useMutation<{ warning?: string }, Error, InviteInput>({
+    mutationFn: async (input) => {
+      const { data, error } = await supabase.functions.invoke('invite-user', {
+        body: { email: input.email, full_name: input.fullName, role: input.role, team_id: input.teamId },
+      })
+      if (error) {
+        // The function replies with a plain { error } body; surface it.
+        let message = 'Could not send the invite. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      return (data ?? {}) as { warning?: string }
+    },
+    // The invite creates the auth user at once, so the new profile row is
+    // already in the list.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
   })
 }
