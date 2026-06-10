@@ -281,8 +281,9 @@ function RemoveSamplesModal({ samples, drills, onClose }: { samples: MediaItem[]
 // One modal for two flows: a plain upload creates a new row; with a replace
 // target it points that existing row (a sample) at the new file or link, so
 // drills that reference it keep working. Failures never close the modal: the
-// underlying error text shows beneath the form, which stays intact.
-function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose: () => void }) {
+// underlying error text shows beneath the form, which stays intact. Exported
+// for the Home quick actions, which open the same upload flow.
+export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose: () => void }) {
   const upload = useUploadMedia()
   const replaceMedia = useReplaceMedia()
   const isPending = replace ? replaceMedia.isPending : upload.isPending
@@ -448,10 +449,11 @@ export function Media() {
   const counts: Record<MediaType, number> = { video: 0, youtube: 0, image: 0, pdf: 0 }
   media.forEach((m) => counts[m.type]++)
   const samples = media.filter(isSampleMedia)
-  // Replace and delete are owner or admin only, mirroring the media RLS. The
-  // database is the real enforcement; this only decides whether to surface
-  // the actions.
-  const canManage = (m: MediaItem) => role === 'admin' || (!!m.createdBy && m.createdBy === user?.id)
+  // Replace and delete are owner or admin only, mirroring the media RLS; the
+  // role condition matters for a coach demoted to parent, who still matches
+  // created_by. The database is the real enforcement; this only decides
+  // whether to surface the actions.
+  const canManage = (m: MediaItem) => role === 'admin' || (coaching && !!m.createdBy && m.createdBy === user?.id)
   return (
     <div>
       <div className="page-head">

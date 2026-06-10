@@ -216,12 +216,14 @@ export function DrillDetail() {
   const sample = !!media && isSampleMedia(media)
   const playable = !sample && (media?.type === 'video' || media?.type === 'youtube')
   const openHref = signedUrl ?? undefined
-  // Edit and delete are owner or admin only, mirroring the drills RLS. Seeded
-  // drills have no creator, so only an admin can manage them. The database is
-  // the real enforcement; this only decides whether to surface the actions.
-  const canManage = role === 'admin' || (!!drill.createdBy && drill.createdBy === user?.id)
   // Adding to a session writes a session, which parents cannot do.
   const coaching = role === 'coach' || role === 'admin'
+  // Edit and delete are owner or admin only, mirroring the drills RLS. The
+  // role condition matters for a coach demoted to parent, who still matches
+  // created_by on old drills. Seeded drills have no creator, so only an admin
+  // can manage them. The database is the real enforcement; this only decides
+  // whether to surface the actions.
+  const canManage = role === 'admin' || (coaching && !!drill.createdBy && drill.createdBy === user?.id)
 
   return (
     <div>

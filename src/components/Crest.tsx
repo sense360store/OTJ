@@ -1,16 +1,22 @@
-// The club crest, served from the local public asset, with an "OTJ" text
-// fallback if the image fails to load.
+// The club crest. Renders the club's own crest when one is set (live from
+// the club row when signed in, the last cached identity on the logged-out
+// screens), falling back to the bundled asset, and to the "OTJ" text mark if
+// even that fails to load.
 import { useState } from 'react'
+import { useClubBranding } from '../hooks/useClubBranding'
 
 export function Crest({ className = 'crest' }: { className?: string }) {
-  const [err, setErr] = useState(false)
-  if (err) return <div className="crest-fallback">OTJ</div>
+  const { name, crestSrc } = useClubBranding()
+  const [brokenCustom, setBrokenCustom] = useState<string | null>(null)
+  const [brokenBundled, setBrokenBundled] = useState(false)
+  const custom = crestSrc && brokenCustom !== crestSrc ? crestSrc : null
+  if (!custom && brokenBundled) return <div className="crest-fallback">OTJ</div>
   return (
     <img
-      src="/crest.png"
-      alt="Ossett Town Juniors crest"
+      src={custom ?? '/crest.png'}
+      alt={(name ?? 'Ossett Town Juniors') + ' crest'}
       className={className}
-      onError={() => setErr(true)}
+      onError={() => (custom ? setBrokenCustom(custom) : setBrokenBundled(true))}
     />
   )
 }
