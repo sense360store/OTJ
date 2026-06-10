@@ -93,8 +93,11 @@ export function Home() {
   const { data: drills = [], isLoading: drillsLoading, isError: drillsError } = useDrills()
   const { data: templates = [], isLoading: templatesLoading, isError: templatesError } = useTemplates()
   const { data: media = [], isLoading: mediaLoading, isError: mediaError } = useMedia()
-  const { user, profile } = useAuth()
+  const { user, profile, role } = useAuth()
   const firstName = profile?.full_name?.split(' ')[0] ?? 'Coach'
+  // Parents are read-only, so the create affordances stay hidden for them.
+  // The check is positive so nothing flashes in while the profile loads.
+  const coaching = role === 'coach' || role === 'admin'
 
   if (sessionsLoading || drillsLoading || templatesLoading || mediaLoading) return <Loading />
   if (sessionsError || drillsError || templatesError || mediaError) return <ErrorNote />
@@ -120,17 +123,23 @@ export function Home() {
         <div>
           <div className="eyebrow">{today}</div>
           <h2 style={{ marginTop: 4 }}>Welcome back, {firstName}</h2>
-          <div className="sub">Plan a session, browse the drill library, or jump straight onto the pitch.</div>
+          <div className="sub">
+            {coaching
+              ? 'Plan a session, browse the drill library, or jump straight onto the pitch.'
+              : 'Browse the drill library and follow what the club is working on.'}
+          </div>
         </div>
         <div className="row">
           <button className="btn btn-ghost" onClick={() => nav('library')}>
             <Icon.search />
             Browse drills
           </button>
-          <button className="btn btn-primary" onClick={() => nav('planner')}>
-            <Icon.plus />
-            New session
-          </button>
+          {coaching && (
+            <button className="btn btn-primary" onClick={() => nav('planner')}>
+              <Icon.plus />
+              New session
+            </button>
+          )}
         </div>
       </div>
 
@@ -142,7 +151,13 @@ export function Home() {
         <div className="stat-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
           <StatCard label="Drills" val={drills.length} foot="In the library" icon={Icon.grid} onClick={() => nav('library')} />
           <StatCard label="Templates" val={templates.length} foot="Ready to use" icon={Icon.book} onClick={() => nav('templates')} />
-          <StatCard label="Sessions" val={mySessions.length} foot="Planned by you" icon={Icon.calendar} onClick={() => nav('sessions')} />
+          <StatCard
+            label="Sessions"
+            val={coaching ? mySessions.length : sessions.length}
+            foot={coaching ? 'Planned by you' : 'On the club calendar'}
+            icon={Icon.calendar}
+            onClick={() => nav('sessions')}
+          />
           <StatCard label="Media" val={media.length} foot="Clips · PDFs · images" icon={Icon.film} onClick={() => nav('media')} />
         </div>
       </div>
