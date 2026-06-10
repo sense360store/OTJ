@@ -142,18 +142,8 @@ export const cornerClass: Record<CornerKey, string> = {
 }
 
 export const PHASES: Phase[] = ['Warm-Up', 'Skill', 'Game', 'Cool-Down']
-export const SKILLS: string[] = [
-  'Dribbling',
-  'Passing',
-  'Shooting',
-  'Ball Mastery',
-  '1v1',
-  'Turning',
-  'Defending',
-  'Goalkeeping',
-  'Movement',
-  'Fun Game',
-]
+// Skill options moved to the FA player skills in src/lib/fa.ts; stored skill
+// values stay free text and existing values keep appearing in selects.
 export const AGES: string[] = ['U6', 'U7', 'U8', 'U9', 'U10', 'U11', 'U12']
 export const LEVELS: Level[] = ['Foundation', 'Developing', 'Advanced']
 

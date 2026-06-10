@@ -8,7 +8,7 @@ import { useActivityTitle, useDrillMap, useMediaMap, useMemberMap, useSession, u
 import { PHASES } from '../lib/data'
 import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Empty, ErrorNote, Loading, MediaThumb, PHASE_COLOR } from '../components/ui'
+import { Empty, ErrorNote, ListInput, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
 
 // A new session belongs to the signed-in coach and defaults to their team
@@ -174,8 +174,9 @@ function PlannerEditor({
   const owner = existing ? memberById[existing.coachId] : undefined
 
   const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
-  const setField = (k: 'name' | 'date' | 'time' | 'ageGroup' | 'venue' | 'focus', v: string) =>
+  const setField = (k: 'name' | 'date' | 'time' | 'ageGroup' | 'venue' | 'focus' | 'space' | 'sourceUrl', v: string) =>
     setSession((s) => ({ ...s, [k]: v }))
+  const setIntentions = (v: string[]) => setSession((s) => ({ ...s, intentions: v }))
   const setTeam = (v: string) => setSession((s) => ({ ...s, teamId: v || null }))
   const removeAct = (i: number) => setSession((s) => ({ ...s, activities: s.activities.filter((_, j) => j !== i) }))
   const setDur = (i: number, v: number) =>
@@ -232,6 +233,34 @@ function PlannerEditor({
 
       <div className="planner">
         <div className="timeline-wrap">
+          {session.intentions.length > 0 && (
+            <div className="card" style={{ padding: '16px 18px', marginBottom: 14 }}>
+              <div className="eyebrow" style={{ marginBottom: 8 }}>
+                Session intentions
+              </div>
+              <div className="muted" style={{ fontSize: 13.5, marginBottom: 6 }}>
+                This session will help players:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {session.intentions.map((x, i) => (
+                  <li key={i} style={{ fontSize: 14.5, lineHeight: 1.5 }}>
+                    {x}
+                  </li>
+                ))}
+              </ul>
+              {(session.space || session.sourceUrl) && (
+                <div className="row wrap" style={{ gap: 7, marginTop: 12 }}>
+                  {session.space && (
+                    <span className="pill">
+                      <Icon.ruler />
+                      {session.space}
+                    </span>
+                  )}
+                  <SourceLink url={session.sourceUrl} label={session.sourceLabel} />
+                </div>
+              )}
+            </div>
+          )}
           {session.activities.length === 0 ? (
             <div className="card" style={{ padding: 0 }}>
               <Empty icon={Icon.layers} title="Empty session">
@@ -340,6 +369,49 @@ function PlannerEditor({
                 <input value={session.focus} disabled={readOnly} onChange={(e) => setField('focus', e.target.value)} />
               </div>
             </div>
+            <div className="field">
+              <label>Space</label>
+              <input
+                value={session.space}
+                placeholder="e.g. Third of a pitch"
+                disabled={readOnly}
+                onChange={(e) => setField('space', e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label>Session intentions</label>
+              {readOnly ? (
+                session.intentions.length ? (
+                  <div className="row wrap" style={{ gap: 6 }}>
+                    {session.intentions.map((x, i) => (
+                      <span key={i} className="pill">
+                        {x}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    None set
+                  </span>
+                )
+              ) : (
+                <ListInput
+                  value={session.intentions}
+                  onChange={setIntentions}
+                  placeholder="Type an intention and press enter"
+                />
+              )}
+            </div>
+            <div className="field">
+              <label>Source link</label>
+              <input
+                type="url"
+                value={session.sourceUrl}
+                placeholder="https://… where this session came from"
+                disabled={readOnly}
+                onChange={(e) => setField('sourceUrl', e.target.value)}
+              />
+            </div>
           </div>
 
           <div className="card side-card" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
@@ -347,6 +419,12 @@ function PlannerEditor({
               <Icon.play />
               Start session
             </button>
+            {existing && (
+              <button className="btn btn-primary btn-block" onClick={() => nav('sessionDay', { sessionId: session.id })}>
+                <Icon.cone />
+                Session day
+              </button>
+            )}
             {!readOnly && (
               <>
                 <button className="btn btn-primary btn-block" onClick={save}>

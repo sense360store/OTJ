@@ -8,7 +8,7 @@ import { useActivityTitle, useSession, useDrillMap, useMediaMap, useTeamMap } fr
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { fmtClock, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
+import { fmtClock, MediaAttribution, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
 
 function lsKey(id: string) {
   return 'otj_live_' + id
@@ -98,6 +98,7 @@ function LiveComplete({
 }
 
 function LiveRunner({ session, onExit }: { session: Session; onExit: () => void }) {
+  const nav = useNav()
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
   const actTitle = useActivityTitle()
@@ -206,6 +207,14 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
             {teamName ? ' · ' + teamName : ''}
           </div>
         </div>
+        <button
+          className="icon-btn"
+          onClick={() => nav('sessionDay', { sessionId: session.id })}
+          title="Session day"
+          aria-label="Session day"
+        >
+          <Icon.cone />
+        </button>
         <div style={{ textAlign: 'right' }}>
           <div className="ltitle mono" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {fmtClock(elapsed)}
@@ -385,6 +394,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
               <MediaThumb media={media} />
             </div>
           </div>
+          <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />
         </Modal>
       )}
     </div>

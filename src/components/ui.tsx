@@ -2,12 +2,13 @@
 // primitives with the small constants and helpers they share, so the fast
 // refresh component-only rule is relaxed here.
 /* eslint-disable react-refresh/only-export-components */
-import { useEffect } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useState } from 'react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
 import { CORNERS, cornerClass, youtubeThumb } from '../lib/data'
 import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
+import { sourceLabelForUrl } from '../lib/fa'
 import { useMediaMap, useSignedMediaUrl } from '../lib/queries'
 
 const REAL_MEDIA_STYLE = {
@@ -26,6 +27,12 @@ export function fmtClock(sec: number): string {
   const m = Math.floor(sec / 60)
   const s = sec % 60
   return m + ':' + String(s).padStart(2, '0')
+}
+
+// The session date as the cards and pitch-side views show it: Mon 16 Jun.
+export function fmtDate(d: string): string {
+  if (!d) return ''
+  return new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 }
 
 /* ---- Corner tag ------------------------------------------------ */
@@ -158,6 +165,114 @@ export function Chip({
       {Ico && <Ico />}
       {children}
     </button>
+  )
+}
+
+/* ---- chip and numbered list editor ------------------------------ */
+// Comma or enter adds an item; points and adaptations are sentences, so with
+// numbered they split on enter only and render as a numbered list. Shared by
+// the drill form (equipment, points, tags, easier, harder) and the planner
+// (session intentions).
+export function ListInput({
+  value,
+  onChange,
+  placeholder,
+  numbered,
+}: {
+  value: string[]
+  onChange: (v: string[]) => void
+  placeholder: string
+  numbered?: boolean
+}) {
+  const [draft, setDraft] = useState('')
+  const commit = (text: string) => {
+    const parts = numbered ? [text] : text.split(',')
+    const items = parts.map((s) => s.trim()).filter((s) => s && !value.includes(s))
+    if (items.length) onChange([...value, ...items])
+    setDraft('')
+  }
+  const onKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || (!numbered && e.key === ',')) {
+      e.preventDefault()
+      commit(draft)
+    }
+  }
+  const remove = (i: number) => onChange(value.filter((_, j) => j !== i))
+  return (
+    <div>
+      {value.length > 0 &&
+        (numbered ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+            {value.map((v, i) => (
+              <div key={i} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+                <span className="cp-num">{i + 1}</span>
+                <span style={{ flex: 1, fontSize: 14, lineHeight: 1.45 }}>{v}</span>
+                <button className="icon-btn" style={{ width: 26, height: 26 }} aria-label="Remove" onClick={() => remove(i)}>
+                  <Icon.x style={{ width: 13, height: 13 }} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="row wrap" style={{ gap: 6, marginBottom: 8 }}>
+            {value.map((v, i) => (
+              <span key={i} className="pill">
+                {v}
+                <button
+                  aria-label={'Remove ' + v}
+                  onClick={() => remove(i)}
+                  style={{ display: 'inline-flex', border: 0, background: 'none', cursor: 'pointer', color: 'inherit', padding: 0 }}
+                >
+                  <Icon.x style={{ width: 12, height: 12 }} />
+                </button>
+              </span>
+            ))}
+          </div>
+        ))}
+      <input
+        value={draft}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={onKey}
+        onBlur={() => draft.trim() && commit(draft)}
+      />
+    </div>
+  )
+}
+
+/* ---- source attribution ----------------------------------------- */
+// A clearly labelled source link for content with a source_url. The label is
+// the stored one, or derives from the URL ("England Football Learning" for
+// learn.englandfootball.com, the domain otherwise).
+export function SourceLink({ url, label }: { url?: string | null; label?: string | null }) {
+  if (!url) return null
+  const text = label || sourceLabelForUrl(url) || url
+  return (
+    <a className="pill" href={url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+      <Icon.external />
+      Source: {text}
+    </a>
+  )
+}
+
+// The small attribution line shown wherever an attributed image renders
+// large (drill detail, the media preview, the full-screen viewer). See
+// CLAUDE.md, Third-party content.
+export function MediaAttribution({ media, style }: { media?: MediaItem | null; style?: CSSProperties }) {
+  if (!media?.sourceLabel) return null
+  const line = `Image: ${media.sourceLabel}`
+  const base: CSSProperties = { fontSize: 12, fontWeight: 600, ...style }
+  if (media.sourceUrl) {
+    return (
+      <a className="muted" href={media.sourceUrl} target="_blank" rel="noreferrer" style={base}>
+        {line}
+      </a>
+    )
+  }
+  return (
+    <div className="muted" style={base}>
+      {line}
+    </div>
   )
 }
 

@@ -8,7 +8,20 @@ import { PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
-import { CornerTag, MediaThumb, MEDIA_META, Modal, Empty, ErrorNote, Loading, PHASE_COLOR, Chip, DrillCard } from '../components/ui'
+import {
+  CornerTag,
+  MediaThumb,
+  MediaAttribution,
+  MEDIA_META,
+  Modal,
+  Empty,
+  ErrorNote,
+  Loading,
+  PHASE_COLOR,
+  Chip,
+  DrillCard,
+  SourceLink,
+} from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { MediaPlayerModal } from '../components/MediaPlayerModal'
 
@@ -20,6 +33,43 @@ function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: str
         {k}
       </div>
       <div className="v">{v}</div>
+    </div>
+  )
+}
+
+// The small uppercase label used for the side blocks (equipment, setup notes).
+function SideLabel({ icon: Ico, children }: { icon: IconComponent; children: string }) {
+  return (
+    <div
+      style={{
+        fontSize: 11.5,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        letterSpacing: '.05em',
+        color: 'var(--slate-2)',
+        display: 'flex',
+        gap: 6,
+        alignItems: 'center',
+        marginBottom: 8,
+      }}
+    >
+      <Ico style={{ width: 13, height: 13 }} />
+      {children}
+    </div>
+  )
+}
+
+// Numbered sentence list, the same shape as coaching points; used for the
+// make it easier and make it harder STEP adaptations.
+function NumberedList({ items, size = 15 }: { items: string[]; size?: number }) {
+  return (
+    <div className="coach-points">
+      {items.map((p, i) => (
+        <div className="cp" key={i}>
+          <span className="cp-num">{i + 1}</span>
+          <span style={{ fontSize: size, lineHeight: 1.45 }}>{p}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -193,6 +243,7 @@ export function DrillDetail() {
               </div>
             )}
           </div>
+          <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />
           {media && MediaIcon && (
             <div className="row" style={{ marginTop: 10, justifyContent: 'space-between' }}>
               <div className="row" style={{ gap: 8 }}>
@@ -221,30 +272,29 @@ export function DrillDetail() {
               )}
             </div>
           )}
-
-          <hr className="divider" />
-          <h3 style={{ fontSize: 18, marginBottom: 10 }}>Coaching points</h3>
-          <div className="coach-points">
-            {drill.points.map((p, i) => (
-              <div className="cp" key={i}>
-                <span className="cp-num">{i + 1}</span>
-                <span style={{ fontSize: 15, lineHeight: 1.45 }}>{p}</span>
-              </div>
-            ))}
-          </div>
         </div>
 
         <div>
           <div className="row wrap" style={{ gap: 8, marginBottom: 12 }}>
             <CornerTag corner={drill.corner} />
             <span className="pill">{drill.level}</span>
+            {drill.theme && <span className="pill">{drill.theme}</span>}
+            {drill.format && <span className="pill">{drill.format}</span>}
           </div>
           <h2 style={{ fontSize: 28, lineHeight: 1.1 }}>{drill.title}</h2>
           <p className="muted" style={{ fontSize: 15.5, lineHeight: 1.55, marginTop: 10 }}>
             {drill.summary}
           </p>
+          {drill.sourceUrl && (
+            <div style={{ marginTop: 10 }}>
+              <SourceLink url={drill.sourceUrl} label={drill.sourceLabel} />
+            </div>
+          )}
 
-          <div className="setup-grid" style={{ marginTop: 18 }}>
+          <div className="eyebrow" style={{ marginTop: 20 }}>
+            Setup
+          </div>
+          <div className="setup-grid" style={{ marginTop: 10 }}>
             <SetupCell icon={Icon.clock} k="Duration" v={drill.duration + ' min'} />
             <SetupCell icon={Icon.users} k="Players" v={drill.players} />
             <SetupCell icon={Icon.ruler} k="Area" v={drill.area} />
@@ -252,23 +302,7 @@ export function DrillDetail() {
           </div>
 
           <div style={{ marginTop: 18 }}>
-            <div
-              className="k"
-              style={{
-                fontSize: 11.5,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '.05em',
-                color: 'var(--slate-2)',
-                display: 'flex',
-                gap: 6,
-                alignItems: 'center',
-                marginBottom: 8,
-              }}
-            >
-              <Icon.cone style={{ width: 13, height: 13 }} />
-              Equipment
-            </div>
+            <SideLabel icon={Icon.cone}>Equipment</SideLabel>
             <div className="row wrap" style={{ gap: 7 }}>
               {drill.equipment.length ? (
                 drill.equipment.map((e) => (
@@ -283,6 +317,13 @@ export function DrillDetail() {
               )}
             </div>
           </div>
+
+          {drill.setupNotes && (
+            <div style={{ marginTop: 16 }}>
+              <SideLabel icon={Icon.note}>Setup notes</SideLabel>
+              <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>{drill.setupNotes}</p>
+            </div>
+          )}
 
           <div style={{ marginTop: 16 }}>
             <div className="row wrap" style={{ gap: 6 }}>
@@ -323,6 +364,45 @@ export function DrillDetail() {
           )}
         </div>
       </div>
+
+      {drill.easier.length > 0 && (
+        <>
+          <hr className="divider" />
+          <div className="section-title">
+            <Icon.chevDown />
+            <h3>Make it easier</h3>
+          </div>
+          <div style={{ maxWidth: 760 }}>
+            <NumberedList items={drill.easier} />
+          </div>
+        </>
+      )}
+
+      {drill.harder.length > 0 && (
+        <>
+          <hr className="divider" />
+          <div className="section-title">
+            <Icon.bolt />
+            <h3>Make it harder</h3>
+          </div>
+          <div style={{ maxWidth: 760 }}>
+            <NumberedList items={drill.harder} />
+          </div>
+        </>
+      )}
+
+      {drill.points.length > 0 && (
+        <>
+          <hr className="divider" />
+          <div className="section-title">
+            <Icon.whistle />
+            <h3>Coaching points</h3>
+          </div>
+          <div style={{ maxWidth: 760 }}>
+            <NumberedList items={drill.points} />
+          </div>
+        </>
+      )}
 
       {related.length > 0 && (
         <>

@@ -489,6 +489,8 @@ function readImageDims(file: File): Promise<string | undefined> {
     const img = new Image()
     img.onload = () => {
       URL.revokeObjectURL(url)
+      // An SVG without fixed dimensions reports zero; record nothing.
+      if (!img.naturalWidth || !img.naturalHeight) return resolve(undefined)
       resolve(`${img.naturalWidth} × ${img.naturalHeight}`)
     }
     img.onerror = () => {
@@ -637,8 +639,18 @@ export interface DrillInput {
   sourceUrl: string
 }
 
+// The attribution label always derives from the link at write time, so the
+// two cannot drift apart. An empty or unparsable link stores null for both.
+// Shared by every write that carries a source (drills here, sessions below).
+function toSourceFields(rawUrl: string): { source_url: string | null; source_label: string | null } {
+  const url = rawUrl.trim()
+  return {
+    source_url: url || null,
+    source_label: url ? sourceLabelForUrl(url) || null : null,
+  }
+}
+
 function toDrillWriteRow(input: DrillInput) {
-  const sourceUrl = input.sourceUrl.trim()
   return {
     title: input.title,
     summary: input.summary || null,
@@ -658,9 +670,7 @@ function toDrillWriteRow(input: DrillInput) {
     harder: input.harder,
     theme: input.theme || null,
     format: input.format || null,
-    // The label always derives from the link, so the two cannot drift apart.
-    source_url: sourceUrl || null,
-    source_label: sourceUrl ? sourceLabelForUrl(sourceUrl) || null : null,
+    ...toSourceFields(input.sourceUrl),
   }
 }
 
@@ -739,12 +749,10 @@ export function useUpsertSession() {
       const isUpdate = existed.current.get(input.id) ?? false
       const activities = input.activities.map(toActivityRow)
 
-      const sourceUrl = input.sourceUrl.trim()
       const faFields = {
         intentions: input.intentions,
         space: input.space || null,
-        source_url: sourceUrl || null,
-        source_label: sourceUrl ? sourceLabelForUrl(sourceUrl) || null : null,
+        ...toSourceFields(input.sourceUrl),
       }
 
       if (isUpdate) {
@@ -905,6 +913,63 @@ export interface InviteInput {
   fullName: string
   role: 'coach' | 'admin'
   teamId: string | null
+}
+
+// ---- Import from England Football ---------------------------------------
+// The fetch happens in the fa-import Edge Function because the browser
+// cannot reach the FA site cross origin. The function acts as the signed in
+// caller through RLS (no service role) and enforces the domain allowlist;
+// see CLAUDE.md, Third-party content. functions.invoke sends the signed in
+// user's access token automatically.
+
+export interface ImportFAResult {
+  templateId: string | null
+  templateName: string
+  drills: number
+  media: number
+  warnings: string[]
+}
+
+interface ImportFABody {
+  template_id?: string
+  template_name?: string
+  created?: { drills?: number; media?: number }
+  warnings?: string[]
+}
+
+export function useImportFA() {
+  const qc = useQueryClient()
+  return useMutation<ImportFAResult, Error, { url: string }>({
+    mutationFn: async ({ url }) => {
+      const { data, error } = await supabase.functions.invoke('fa-import', { body: { url } })
+      if (error) {
+        let message = 'Could not import that page. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as ImportFABody
+      return {
+        templateId: body.template_id ?? null,
+        templateName: body.template_name ?? '',
+        drills: body.created?.drills ?? 0,
+        media: body.created?.media ?? 0,
+        warnings: body.warnings ?? [],
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
+    },
+  })
 }
 
 export function useInviteUser() {
