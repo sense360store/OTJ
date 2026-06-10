@@ -9,10 +9,12 @@ import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import {
+  useAccessLoading,
   useActivityTitle,
   useSession,
   useDrillMap,
   useMediaMap,
+  usePerm,
   useTeamMap,
   useLiveSessionSync,
   useSetLiveActivity,
@@ -715,22 +717,29 @@ function LiveMessage({ title, sub, onExit }: { title: string; sub?: string; onEx
 export function LiveSession() {
   const { sessionId } = useParams()
   const nav = useNav()
-  const { user, role, profileLoading } = useAuth()
+  const { user } = useAuth()
+  const accessLoading = useAccessLoading()
+  const canPlan = usePerm('sessions.create')
+  const canManageAny = usePerm('sessions.manage_any')
+  const canDriveAny = usePerm('live.drive_any')
   const { data: session, isLoading, isError } = useSession(sessionId)
   // One realtime channel per session id, cleaned up on unmount. The driver
   // subscribes too, harmlessly; its own writes come back as cache freshness.
   useLiveSessionSync(sessionId)
   const onExit = () => nav('sessions')
 
-  // Wait for the role too, so a watcher is never flashed the driver controls.
-  if (isLoading || profileLoading) return <LiveLoading />
+  // Wait for the capabilities too, so a watcher is never flashed the driver
+  // controls.
+  if (isLoading || accessLoading) return <LiveLoading />
   if (isError) return <LiveMessage title="Couldn't load this session" sub="Go back and try again." onExit={onExit} />
   if (!session) return <LiveMessage title="Session not found" sub="It may have been removed." onExit={onExit} />
-  // Driving follows the sessions update policy: the owner while they hold a
-  // coaching role, or an admin. A coach demoted to parent watches their old
-  // sessions like anyone else. The RLS is the real enforcement; this only
-  // decides which view to render.
-  const canDrive = role === 'admin' || (role === 'coach' && session.coachId === user?.id)
+  // Driving mirrors the sessions update policy: the owner while they can
+  // plan, or a session manager. live.drive_any also shows the driver view;
+  // note that the update policy does not yet name it, so a role holding only
+  // live.drive_any needs sessions.manage_any too for its writes to land (see
+  // 0010_rbac). The RLS is the real enforcement; this only decides which
+  // view to render.
+  const canDrive = canManageAny || canDriveAny || (canPlan && session.coachId === user?.id)
   if (canDrive) return <LiveRunner key={session.id} session={session} onExit={onExit} />
   return <LiveWatcher key={session.id} session={session} onExit={onExit} />
 }

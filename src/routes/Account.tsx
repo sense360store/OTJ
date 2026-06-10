@@ -8,13 +8,10 @@ import { useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { useClub, useRemoveAvatar, useTeams, useUpdateMyProfile, useUploadAvatar } from '../lib/queries'
-import type { Role } from '../lib/data'
+import { useClub, useMyAccess, useRemoveAvatar, useTeams, useUpdateMyProfile, useUploadAvatar } from '../lib/queries'
 import { Icon } from '../components/icons'
 import { UserAvatar } from '../components/UserAvatar'
 import { Loading } from '../components/ui'
-
-const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent' }
 
 function joinedLabel(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
@@ -319,8 +316,11 @@ function FactRow({ label, value }: { label: string; value: ReactNode }) {
 }
 
 export function Account() {
-  const { profile, role, profileLoading } = useAuth()
+  const { profile, profileLoading } = useAuth()
   const { data: club } = useClub()
+  // The role name comes from the role row, so custom roles show their own
+  // name here.
+  const { data: access } = useMyAccess()
 
   if (profileLoading) return <Loading />
 
@@ -346,7 +346,7 @@ export function Account() {
 
       <SectionCard title="Membership" sub="Set by your club admins; shown here for reference.">
         <div style={{ marginBottom: 10 }}>
-          <FactRow label="Role" value={role ? ROLE_LABEL[role] : '—'} />
+          <FactRow label="Role" value={access?.roleName ?? '—'} />
           <FactRow label="Club" value={club?.name ?? 'Ossett Town Juniors'} />
           <FactRow label="Joined" value={profile?.created_at ? joinedLabel(profile.created_at) : '—'} />
         </div>

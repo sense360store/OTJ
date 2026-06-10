@@ -14,6 +14,8 @@ export type Screen =
   | 'admin-club'
   | 'admin-users'
   | 'admin-teams'
+  | 'admin-roles'
+  | 'admin-filters'
 
 export function screenFromPath(pathname: string): Screen {
   if (pathname === '/') return 'home'
@@ -29,5 +31,7 @@ export function screenFromPath(pathname: string): Screen {
   if (pathname.startsWith('/admin/club')) return 'admin-club'
   if (pathname.startsWith('/admin/users')) return 'admin-users'
   if (pathname.startsWith('/admin/teams')) return 'admin-teams'
+  if (pathname.startsWith('/admin/roles')) return 'admin-roles'
+  if (pathname.startsWith('/admin/filters')) return 'admin-filters'
   return 'home'
 }

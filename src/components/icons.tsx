@@ -101,6 +101,7 @@ export const Icon = {
   video: S([R(3, 6, 12, 12, 2.5), 'M15 10l6-3v10l-6-3']),
   fileText: S(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z', 'M14 3v5h5', 'M9 13h6', 'M9 17h4']),
   youtube: S([R(3, 6, 18, 12, 4), { t: 'polygon', p: { points: '11 9 15 12 11 15 11 9', fill: 'currentColor', stroke: 'none' } }]),
+  lock: S([R(4.5, 10.5, 15, 10, 2.5), 'M8 10.5V7.5a4 4 0 0 1 8 0v3']),
   logout: S(['M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3', 'M15 8l4 4-4 4', 'M19 12H9']),
   edit: S(['M4 20h4L18.5 9.5a2 2 0 0 0-2.8-2.8L5 17.2Z', 'M14 6.5l3 3']),
   trash: S(['M4 7h16', 'M9 7V4.5h6V7', 'M6 7l1 13h10l1-13']),

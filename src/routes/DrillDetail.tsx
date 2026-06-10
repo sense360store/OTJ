@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteDrill, useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
+import { useDeleteDrill, useDrill, useDrills, useMediaMap, usePerm, useSignedMediaUrl } from '../lib/queries'
 import { PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -76,11 +76,14 @@ function NumberedList({ items, size = 15 }: { items: string[]; size?: number }) 
 
 function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
   const { sessions: allSessions, upsertSession } = useSessions()
-  // The sessions read is club-wide, but adding a drill writes the session, so
-  // only sessions the signed-in user can edit are offered (own, or admin).
-  const sessions = allSessions.filter((s) => role === 'admin' || s.coachId === user?.id)
+  const canPlan = usePerm('sessions.create')
+  const canManageAny = usePerm('sessions.manage_any')
+  // The sessions read is club-wide, but adding a drill writes the session,
+  // so only sessions the signed-in user can edit are offered: their own
+  // while they can plan, or any when they manage any.
+  const sessions = allSessions.filter((s) => canManageAny || (canPlan && s.coachId === user?.id))
   const [phase, setPhase] = useState<Phase>('Skill')
   const [target, setTarget] = useState(sessions[0]?.id || '')
   const add = () => {
@@ -184,7 +187,11 @@ function DeleteDrillModal({ drill, onClose }: { drill: Drill; onClose: () => voi
 export function DrillDetail() {
   const { id } = useParams()
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
+  const canCreateDrills = usePerm('drills.create')
+  const canManageAnyDrill = usePerm('drills.manage_any')
+  const canPlan = usePerm('sessions.create')
+  const canManageAnySession = usePerm('sessions.manage_any')
   const [addOpen, setAddOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -213,14 +220,14 @@ export function DrillDetail() {
   const MediaIcon = media ? MEDIA_META[media.type].icon : null
   const playable = media?.type === 'video' || media?.type === 'youtube'
   const openHref = signedUrl ?? undefined
-  // Adding to a session writes a session, which parents cannot do.
-  const coaching = role === 'coach' || role === 'admin'
-  // Edit and delete are owner or admin only, mirroring the drills RLS. The
-  // role condition matters for a coach demoted to parent, who still matches
-  // created_by on old drills. Seeded drills have no creator, so only an admin
-  // can manage them. The database is the real enforcement; this only decides
-  // whether to surface the actions.
-  const canManage = role === 'admin' || (coaching && !!drill.createdBy && drill.createdBy === user?.id)
+  // Adding to a session writes a session, so the affordance follows the
+  // session capabilities.
+  const coaching = canPlan || canManageAnySession
+  // Edit and delete mirror the drills RLS: the owner while they hold
+  // drills.create, or a drill manager. Seeded drills have no creator, so
+  // only a manager can manage them. The database is the real enforcement;
+  // this only decides whether to surface the actions.
+  const canManage = canManageAnyDrill || (canCreateDrills && !!drill.createdBy && drill.createdBy === user?.id)
 
   return (
     <div>

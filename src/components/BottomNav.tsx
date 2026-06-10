@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
-import { useAuth } from '../hooks/useAuth'
+import { usePerm } from '../lib/queries'
 import { screenFromPath } from '../lib/screen'
 
 interface BottomItem {
@@ -19,9 +19,9 @@ const COACH_ITEMS: BottomItem[] = [
   { id: 'media', label: 'Media', icon: Icon.film, to: '/media' },
 ]
 
-// Parents are read-only and lose the planner; templates take its slot so the
-// whole parent surface stays reachable on a phone.
-const PARENT_ITEMS: BottomItem[] = [
+// Read-only roles cannot plan, so the planner slot goes to templates and the
+// whole read-only surface stays reachable on a phone.
+const READ_ONLY_ITEMS: BottomItem[] = [
   { id: 'home', label: 'Home', icon: Icon.home, to: '/' },
   { id: 'library', label: 'Drills', icon: Icon.grid, to: '/library' },
   { id: 'templates', label: 'Templates', icon: Icon.book, to: '/templates' },
@@ -32,9 +32,9 @@ const PARENT_ITEMS: BottomItem[] = [
 export function BottomNav() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
-  const { role } = useAuth()
+  const canPlan = usePerm('sessions.create')
   const screen = screenFromPath(pathname)
-  const items = role === 'parent' ? PARENT_ITEMS : COACH_ITEMS
+  const items = canPlan ? COACH_ITEMS : READ_ONLY_ITEMS
   return (
     <nav className="bottom-nav">
       {items.map((it) => {

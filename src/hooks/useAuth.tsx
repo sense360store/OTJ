@@ -17,6 +17,9 @@ export interface Profile {
   // avatars/{user_id}/. Null falls back to initials.
   avatar_url: string | null
   role: Role
+  // The roles row driving every permission since 0010. The legacy role
+  // enum above stays readable for one phase but decides nothing.
+  role_id: string | null
   age_groups: string[]
   team_id: string | null
   created_at: string
@@ -54,7 +57,7 @@ const arrivedToSetPassword =
 async function fetchProfile(uid: string): Promise<Profile | null> {
   const { data } = await supabase
     .from('profiles')
-    .select('id, club_id, full_name, avatar, avatar_url, role, age_groups, team_id, created_at')
+    .select('id, club_id, full_name, avatar, avatar_url, role, role_id, age_groups, team_id, created_at')
     .eq('id', uid)
     .single()
   return (data as Profile | null) ?? null

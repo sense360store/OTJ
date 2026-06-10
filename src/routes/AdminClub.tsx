@@ -1,11 +1,11 @@
-// Admin only: the club's identity. Name and motto write the club row through
-// the clubs_update_admin policy; the crest uploads to the media bucket under
-// club/ and stores its path on clubs.crest_url. The sidebar, the login screen
-// and every other crest usage read the row live and fall back to the bundled
-// asset. REVIEW: role gated admin surface.
+// Club management: the club's identity, for club.manage holders. Name and
+// motto write the club row through the clubs_update_manage policy; the crest
+// uploads to the media bucket under club/ and stores its path on
+// clubs.crest_url. The sidebar, the login screen and every other crest usage
+// read the row live and fall back to the bundled asset. REVIEW: capability
+// gated admin surface.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useAuth } from '../hooks/useAuth'
-import { CREST_TYPES, useClearCrest, useClub, useUpdateClub, useUploadCrest } from '../lib/queries'
+import { CREST_TYPES, useClearCrest, useClub, usePerm, useUpdateClub, useUploadCrest } from '../lib/queries'
 import { useClubBranding } from '../hooks/useClubBranding'
 import type { Club } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -204,13 +204,13 @@ function CrestCard({ club }: { club: Club }) {
 }
 
 export function AdminClub() {
-  const { role } = useAuth()
+  const canManage = usePerm('club.manage')
   const { data: club, isLoading, isError } = useClub()
   if (isLoading) return <Loading />
   if (isError || !club) return <ErrorNote />
-  // The route guard already keeps coaches out; this is belt and braces for
+  // The route guard already keeps others out; this is belt and braces for
   // the brief render before a redirect.
-  if (role !== 'admin') return null
+  if (!canManage) return null
 
   return (
     <div style={{ maxWidth: 680 }}>

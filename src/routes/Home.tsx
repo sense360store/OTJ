@@ -10,7 +10,8 @@ import { useNavigate } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
 import { useAuth } from '../hooks/useAuth'
-import { useDrillMap, useDrills, useMediaMap, useMemberMap, useTeamMap, useTemplates } from '../lib/queries'
+import { useDrillMap, useDrills, useMediaMap, useMemberMap, usePerm, useTeamMap, useTemplates } from '../lib/queries'
+import { useRoleScope } from '../lib/roleFilters'
 import { sessionMinutes } from '../lib/data'
 import type { Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -129,11 +130,13 @@ function NextSessionHero({
 // real links instead of zeros; a parent gets the schedule framing.
 function EmptyHero({
   coaching,
+  canImport,
   fresh,
   nav,
   onImport,
 }: {
   coaching: boolean
+  canImport: boolean
   fresh: boolean
   nav: Nav
   onImport: () => void
@@ -170,10 +173,12 @@ function EmptyHero({
               <Icon.grid />
               Browse the drill library
             </button>
-            <button className="btn btn-ghost btn-lg" style={GHOST_ON_NAVY} onClick={onImport}>
-              <Icon.download />
-              Import an FA session
-            </button>
+            {canImport && (
+              <button className="btn btn-ghost btn-lg" style={GHOST_ON_NAVY} onClick={onImport}>
+                <Icon.download />
+                Import an FA session
+              </button>
+            )}
           </>
         )}
       </div>
@@ -284,9 +289,20 @@ export function Home() {
   const { sessions, loading: sessionsLoading, error: sessionsError } = useSessions()
   const { data: drills = [], isLoading: drillsLoading, isError: drillsError } = useDrills()
   const { data: templates = [], isLoading: templatesLoading, isError: templatesError } = useTemplates()
-  const { user, profile, role } = useAuth()
+  const { user, profile } = useAuth()
   const teamById = useTeamMap()
   const memberById = useMemberMap()
+  // Each affordance asks for its own capability; the checks are positive so
+  // nothing flashes in while the access read loads.
+  const canPlan = usePerm('sessions.create')
+  const canManageAny = usePerm('sessions.manage_any')
+  const canAddDrill = usePerm('drills.create')
+  const canImport = usePerm('import.fa')
+  const canUpload = usePerm('media.create')
+  const canInvite = usePerm('users.manage')
+  // A role with filter tags sees the dashboard through the same lens as the
+  // four scoped views.
+  const scope = useRoleScope()
   // The This week list honours the Sessions screen's default: yours first,
   // one tap to the whole club.
   const [weekView, setWeekView] = useState<'mine' | 'all'>('mine')
@@ -295,11 +311,10 @@ export function Home() {
   const [uploadOpen, setUploadOpen] = useState(false)
 
   const firstName = profile?.full_name?.split(' ')[0]
-  // Parents are read-only; the planning and creating affordances stay hidden
-  // for them. The check is positive so nothing flashes in while loading.
-  const coaching = role === 'coach' || role === 'admin'
+  // The schedule-first framing follows owning sessions, which is planning.
+  const coaching = canPlan
 
-  if (sessionsLoading || drillsLoading || templatesLoading) return <Loading />
+  if (sessionsLoading || drillsLoading || templatesLoading || !scope.ready) return <Loading />
   if (sessionsError || drillsError || templatesError) return <ErrorNote />
 
   const now = new Date()
@@ -311,10 +326,12 @@ export function Home() {
 
   const isMine = (s: Session) => s.coachId === user?.id
   // The sessions read is club-wide and ordered by date and time; upcoming
-  // keeps today's sessions all day so the hero holds while one runs.
-  const upcoming = sessions.filter((s) => s.status === 'upcoming' && s.date >= todayStr)
+  // keeps today's sessions all day so the hero holds while one runs. A
+  // tagged role sees it all through its locked scope.
+  const scopedSessions = scope.sessions(sessions)
+  const upcoming = scopedSessions.filter((s) => s.status === 'upcoming' && s.date >= todayStr)
   const next = coaching ? upcoming.find(isMine) : upcoming[0]
-  const liveNow = sessions.find((s) => s.liveActivityIndex != null)
+  const liveNow = scopedSessions.find((s) => s.liveActivityIndex != null)
   // A brand-new coach has no sessions at all, upcoming or past.
   const fresh = coaching && !sessions.some(isMine)
 
@@ -327,22 +344,20 @@ export function Home() {
 
   // The latest drills and templates together, newest first.
   const whatsNew = [
-    ...drills.map((d) => ({ kind: 'drill' as const, when: d.createdAt, drill: d })),
-    ...templates.map((t) => ({ kind: 'template' as const, when: t.createdAt, template: t })),
+    ...scope.drills(drills).map((d) => ({ kind: 'drill' as const, when: d.createdAt, drill: d })),
+    ...scope.templates(templates).map((t) => ({ kind: 'template' as const, when: t.createdAt, template: t })),
   ]
     .sort((a, b) => (a.when < b.when ? 1 : -1))
     .slice(0, 6)
 
   const actions: QuickAction[] = []
-  if (coaching) {
-    actions.push({ label: 'Plan session', icon: Icon.layers, on: () => nav('planner') })
-    actions.push({ label: 'Add drill', icon: Icon.plus, on: () => setAddOpen(true) })
+  if (canPlan) actions.push({ label: 'Plan session', icon: Icon.layers, on: () => nav('planner') })
+  if (canAddDrill) actions.push({ label: 'Add drill', icon: Icon.plus, on: () => setAddOpen(true) })
+  if (canImport)
     actions.push({ label: 'Import from England Football', icon: Icon.download, on: () => setImportOpen(true) })
-    actions.push({ label: 'Upload media', icon: Icon.upload, on: () => setUploadOpen(true) })
-    if (role === 'admin') {
-      actions.push({ label: 'Invite', icon: Icon.users, on: () => navigate('/admin/users') })
-    }
-  } else if (liveNow) {
+  if (canUpload) actions.push({ label: 'Upload media', icon: Icon.upload, on: () => setUploadOpen(true) })
+  if (canInvite) actions.push({ label: 'Invite', icon: Icon.users, on: () => navigate('/admin/users') })
+  if (actions.length === 0 && liveNow) {
     actions.push({
       label: 'Watch live',
       icon: Icon.play,
@@ -370,13 +385,19 @@ export function Home() {
           <NextSessionHero
             s={next}
             isOwn={isMine(next)}
-            canManage={(coaching && isMine(next)) || role === 'admin'}
+            canManage={(canPlan && isMine(next)) || canManageAny}
             teamName={teamName(next)}
             todayStr={todayStr}
             nav={nav}
           />
         ) : (
-          <EmptyHero coaching={coaching} fresh={fresh} nav={nav} onImport={() => setImportOpen(true)} />
+          <EmptyHero
+            coaching={coaching}
+            canImport={canImport}
+            fresh={fresh}
+            nav={nav}
+            onImport={() => setImportOpen(true)}
+          />
         )}
 
         <div className="card week-card">

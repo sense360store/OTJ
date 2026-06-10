@@ -13,7 +13,7 @@ import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
-import { useActivityTitle, useDrillMap, useMediaMap, useSession, useTeamMap } from '../lib/queries'
+import { useActivityTitle, useDrillMap, useMediaMap, usePerm, useSession, useTeamMap } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -47,14 +47,17 @@ function loadChecked(sessionId: string): string[] {
 
 function SessionDayView({ session }: { session: Session }) {
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
+  const canPlan = usePerm('sessions.create')
+  const canManageAny = usePerm('sessions.manage_any')
+  const canDriveAny = usePerm('live.drive_any')
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
   const teamById = useTeamMap()
   const actTitle = useActivityTitle()
   // The same link opens the live view for everyone; the label says whether
-  // this user will drive it (owner, or admin) or watch it.
-  const canDrive = session.coachId === user?.id || role === 'admin'
+  // this user will drive it or watch it, mirroring the live view's gate.
+  const canDrive = canManageAny || canDriveAny || (canPlan && session.coachId === user?.id)
   const [tab, setTab] = useState<Tab>('setup')
   const [viewerAt, setViewerAt] = useState<number | null>(null)
   const [checked, setChecked] = useState<string[]>(() => loadChecked(session.id))

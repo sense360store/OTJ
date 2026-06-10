@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useActivityTitle, useTemplates, useDrillMap } from '../lib/queries'
+import { useActivityTitle, usePerm, useTemplates, useDrillMap } from '../lib/queries'
 import type { Activity, Session, Template } from '../lib/data'
+import { useRoleScope } from '../lib/roleFilters'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { ErrorNote, Loading, LockedTagChips, Modal, PHASE_COLOR } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 
@@ -23,13 +24,14 @@ function TemplateCard({
   upsertSession: Upsert
   onManage: ((t: Template) => void) | null
 }) {
-  const { user, profile, role } = useAuth()
+  const { user, profile } = useAuth()
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
-  // Using a template creates a session, which parents cannot do; for them the
-  // card is read-only. The session built from a template belongs to the
-  // signed-in coach and defaults to their team, the same as one built in the
-  // planner. The template's intentions copy onto the new session.
-  const coaching = role === 'coach' || role === 'admin'
+  // Using a template creates a session, so the affordance follows
+  // sessions.create; read-only roles get a read-only card. The session built
+  // from a template belongs to the signed-in coach and defaults to their
+  // team, the same as one built in the planner. The template's intentions
+  // copy onto the new session.
+  const coaching = usePerm('sessions.create')
   const use = () => {
     const s: Session = {
       id: crypto.randomUUID(),
@@ -203,21 +205,24 @@ function groupByProgramme(list: Template[]): { groups: { name: string; items: Te
 
 export function Templates() {
   const nav = useNav()
-  const { role } = useAuth()
   const { upsertSession } = useSessions()
   const [q, setQ] = useState('')
   const [manage, setManage] = useState<Template | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const { data: templates = [], isLoading, isError } = useTemplates()
-  if (isLoading) return <Loading />
+  // A role with filter tags sees templates locked to those referencing
+  // matching drills, the tags shown as fixed chips below.
+  const scope = useRoleScope()
+  // Curating is the templates.manage capability, importing is import.fa, and
+  // creating one is templates.create. The templates RLS enforces the writes;
+  // these only decide what to surface.
+  const curator = usePerm('templates.manage')
+  const canImport = usePerm('import.fa')
+  const canCreate = usePerm('templates.create')
+  if (isLoading || !scope.ready) return <Loading />
   if (isError) return <ErrorNote />
-  const list = templates.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
+  const list = scope.templates(templates).filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
   const { groups, rest } = groupByProgramme(list)
-  // Curating templates is admin only per the permissions matrix; every coach
-  // can still use one, and every coaching role can import from England
-  // Football. Parents read only. The templates RLS enforces the writes.
-  const curator = role === 'admin'
-  const coaching = role === 'coach' || role === 'admin'
   const grid = (items: Template[]) => (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
       {items.map((t) => (
@@ -233,13 +238,13 @@ export function Templates() {
           <div className="sub">Reusable session shells — build a new plan in one click.</div>
         </div>
         <div className="row wrap">
-          {coaching && (
+          {canImport && (
             <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
               <Icon.download />
               Import from England Football
             </button>
           )}
-          {curator && (
+          {canCreate && (
             <button className="btn btn-primary" onClick={() => nav('planner')}>
               <Icon.plus />
               New template
@@ -247,6 +252,11 @@ export function Templates() {
           )}
         </div>
       </div>
+      {scope.locked && (
+        <div style={{ marginBottom: 8 }}>
+          <LockedTagChips tags={scope.tags} />
+        </div>
+      )}
       <div className="search-lg" style={{ maxWidth: 460, marginBottom: 20 }}>
         <Icon.search />
         <input placeholder="Search templates…" value={q} onChange={(e) => setQ(e.target.value)} />

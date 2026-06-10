@@ -3,9 +3,9 @@ import { Crest } from './Crest'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
 import { UserAvatar } from './UserAvatar'
-import { useDrills } from '../lib/queries'
+import { useDrills, useMyAccess } from '../lib/queries'
+import type { Capability } from '../lib/permissions'
 import { useAuth } from '../hooks/useAuth'
-import type { Role } from '../hooks/useAuth'
 import { useClubBranding } from '../hooks/useClubBranding'
 import { screenFromPath } from '../lib/screen'
 
@@ -14,12 +14,17 @@ interface NavItem {
   label: string
   icon: IconComponent
   to: string
+  // Any of these capabilities shows the item; undefined shows it to everyone.
+  caps?: Capability[]
 }
 interface NavSection {
   group: string | null
   items: NavItem[]
 }
 
+// Capabilities drive which nav items show; the route guards and RLS enforce
+// the same boundary. The Admin group appears for anyone holding any admin
+// area capability, each screen guarded by its own.
 const NAV: NavSection[] = [
   { group: null, items: [{ id: 'home', label: 'Home', icon: Icon.home, to: '/' }] },
   {
@@ -27,7 +32,13 @@ const NAV: NavSection[] = [
     items: [
       { id: 'library', label: 'Drill Library', icon: Icon.grid, to: '/library' },
       { id: 'sessions', label: 'Sessions', icon: Icon.calendar, to: '/sessions' },
-      { id: 'planner', label: 'Session Planner', icon: Icon.layers, to: '/planner' },
+      {
+        id: 'planner',
+        label: 'Session Planner',
+        icon: Icon.layers,
+        to: '/planner',
+        caps: ['sessions.create', 'sessions.manage_any'],
+      },
     ],
   },
   {
@@ -40,42 +51,24 @@ const NAV: NavSection[] = [
   {
     group: 'Admin',
     items: [
-      { id: 'admin-club', label: 'Club', icon: Icon.star, to: '/admin/club' },
-      { id: 'admin-users', label: 'Users', icon: Icon.users, to: '/admin/users' },
-      { id: 'admin-teams', label: 'Teams', icon: Icon.flag, to: '/admin/teams' },
+      { id: 'admin-club', label: 'Club', icon: Icon.star, to: '/admin/club', caps: ['club.manage'] },
+      { id: 'admin-users', label: 'Users', icon: Icon.users, to: '/admin/users', caps: ['users.manage'] },
+      { id: 'admin-teams', label: 'Teams', icon: Icon.flag, to: '/admin/teams', caps: ['teams.manage'] },
+      { id: 'admin-roles', label: 'Roles', icon: Icon.lock, to: '/admin/roles', caps: ['roles.manage'] },
+      { id: 'admin-filters', label: 'Filters', icon: Icon.filter, to: '/admin/filters', caps: ['filters.manage'] },
     ],
   },
 ]
-
-// The role drives which nav items show; the routes and RLS enforce the same
-// boundary. Admin is the only role that sees user management. Parent is
-// read-only: everything except the planner and the admin tools.
-const ROLE_NAV: Record<Role, Set<string>> = {
-  coach: new Set(['home', 'library', 'sessions', 'planner', 'templates', 'media']),
-  admin: new Set([
-    'home',
-    'library',
-    'sessions',
-    'planner',
-    'templates',
-    'media',
-    'admin-club',
-    'admin-users',
-    'admin-teams',
-  ]),
-  parent: new Set(['home', 'library', 'sessions', 'templates', 'media']),
-}
-
-const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent' }
 
 export function Sidebar() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const screen = screenFromPath(pathname)
-  const { profile, role, signOut } = useAuth()
+  const { profile, signOut } = useAuth()
   const { name, motto } = useClubBranding()
   const { data: drills } = useDrills()
-  const allowed = ROLE_NAV[role ?? 'coach']
+  const { data: access } = useMyAccess()
+  const allowed = (it: NavItem) => !it.caps || it.caps.some((c) => access?.perms.has(c))
   const isActive = (id: string) => screen === id || (id === 'library' && screen === 'drill')
   // The library badge is the live drill count, shown once the read resolves.
   const badgeFor = (id: string): string | undefined =>
@@ -99,7 +92,7 @@ export function Sidebar() {
       </div>
       <div className="sb-scroll">
         {NAV.map((sec, i) => {
-          const items = sec.items.filter((it) => allowed.has(it.id))
+          const items = sec.items.filter(allowed)
           if (items.length === 0) return null
           return (
             <div key={i}>
@@ -142,8 +135,10 @@ export function Sidebar() {
           >
             <UserAvatar name={profile?.full_name} fallbackText={profile?.avatar} path={profile?.avatar_url} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <b>{profile?.full_name ?? 'Coach'}</b>
-              <span className="role-badge">{role ? ROLE_LABEL[role] : 'Coach'}</span>
+              <b>{profile?.full_name ?? 'Member'}</b>
+              {/* The role name comes from the role row, so custom roles show
+                  their own name. */}
+              <span className="role-badge">{access?.roleName ?? 'Member'}</span>
             </div>
           </button>
           <button className="icon-btn" title="Log out" onClick={() => void signOut()}>

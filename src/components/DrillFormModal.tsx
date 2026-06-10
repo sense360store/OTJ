@@ -7,11 +7,11 @@
 import { useState } from 'react'
 import { Icon } from './icons'
 import { Chip, ListInput, Loading, MediaThumb, MEDIA_META, Modal } from './ui'
-import { useInsertDrill, useMedia, useUpdateDrill } from '../lib/queries'
+import { useFilterValues, useInsertDrill, useMedia, useUpdateDrill } from '../lib/queries'
 import type { DrillInput } from '../lib/queries'
 import { AGES, CORNERS, LEVELS } from '../lib/data'
 import type { CornerKey, Drill, Level } from '../lib/data'
-import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
+import { withExistingValues } from '../lib/fa'
 
 // The club's media with thumbnails. One tile per item plus a none tile; the
 // selection sets mediaId or clears it.
@@ -103,11 +103,15 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
   const set = <K extends keyof DrillInput>(k: K, v: DrillInput[K]) => setForm((f) => ({ ...f, [k]: v }))
   const toggleAge = (a: string) =>
     set('ages', form.ages.includes(a) ? form.ages.filter((x) => x !== a) : AGES.filter((x) => [...form.ages, a].includes(x)))
-  // The selects offer the FA taxonomy; a stored value outside it (a drill
-  // from before the FA alignment, or free text) stays selectable.
-  const skills = withExistingValues(FA_PLAYER_SKILLS, [form.skill])
-  const themes = withExistingValues(FA_THEMES, [form.theme])
-  const formats = withExistingValues(FA_FORMATS, [form.format])
+  // The selects offer the managed taxonomies (active values from the Filters
+  // screen); a stored value outside them (free text, or a retired value)
+  // stays selectable on this drill.
+  const managedSkills = useFilterValues('player_skill')
+  const managedThemes = useFilterValues('theme')
+  const managedFormats = useFilterValues('format')
+  const skills = withExistingValues(managedSkills, [form.skill])
+  const themes = withExistingValues(managedThemes, [form.theme])
+  const formats = withExistingValues(managedFormats, [form.format])
 
   const submit = () => {
     setError(null)
