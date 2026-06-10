@@ -147,6 +147,10 @@ export interface Session {
   space: string
   sourceUrl: string
   sourceLabel: string
+  // Where this session came from when a programme was applied to a team:
+  // the programme and its week. Both null for a session planned by hand.
+  programmeId: string | null
+  programmeWeek: number | null
   // Shared live state, written only by the live view's driver mutation. Both
   // null when the session is not live. The index points into activities and
   // the timestamp is when that activity began; watchers compute the running

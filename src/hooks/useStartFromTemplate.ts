@@ -29,6 +29,8 @@ export function useStartFromTemplate() {
       space: '',
       sourceUrl: '',
       sourceLabel: '',
+      programmeId: null,
+      programmeWeek: null,
       liveActivityIndex: null,
       liveActivityStartedAt: null,
     }

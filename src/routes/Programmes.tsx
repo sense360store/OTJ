@@ -7,14 +7,35 @@
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
+import { useSessions } from '../context/SessionsContext'
 import { useProgrammes, useTemplates } from '../lib/queries'
-import type { Programme } from '../lib/data'
+import type { Programme, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading } from '../components/ui'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
 import { ImportProgrammeModal } from '../components/ImportProgrammeModal'
 
-function ProgrammeCard({ p, templateCount, onOpen }: { p: Programme; templateCount: number; onOpen: () => void }) {
+// The progress hint: nothing until the programme is applied, then completed
+// weeks for the one team, or the team count when applied more widely.
+function progressHint(p: Programme, linked: Session[]): string | null {
+  if (linked.length === 0) return null
+  const teams = new Set(linked.map((s) => s.teamId ?? ''))
+  if (teams.size > 1) return `Applied to ${teams.size} teams`
+  const completed = new Set(linked.filter((s) => s.status === 'completed').map((s) => s.programmeWeek)).size
+  return `${completed} of ${p.weeks} weeks completed`
+}
+
+function ProgrammeCard({
+  p,
+  templateCount,
+  hint,
+  onOpen,
+}: {
+  p: Programme
+  templateCount: number
+  hint: string | null
+  onOpen: () => void
+}) {
   return (
     <button
       className="card"
@@ -66,6 +87,12 @@ function ProgrammeCard({ p, templateCount, onOpen }: { p: Programme; templateCou
             {p.sourceLabel}
           </span>
         )}
+        {hint && (
+          <span className="pill" style={{ color: 'var(--c-physical)' }}>
+            <Icon.checkCircle />
+            {hint}
+          </span>
+        )}
       </div>
     </button>
   )
@@ -78,10 +105,12 @@ export function Programmes() {
   const [building, setBuilding] = useState(false)
   const { data: programmes = [], isLoading, isError } = useProgrammes()
   const { data: templates = [] } = useTemplates()
+  const { sessions } = useSessions()
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
   const coaching = role === 'coach' || role === 'admin'
   const templateCount = (id: string) => templates.filter((t) => t.programmeId === id).length
+  const linkedTo = (id: string) => sessions.filter((s) => s.programmeId === id)
   return (
     <div>
       <div className="page-head">
@@ -111,7 +140,13 @@ export function Programmes() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
           {programmes.map((p) => (
-            <ProgrammeCard key={p.id} p={p} templateCount={templateCount(p.id)} onOpen={() => nav('programme', { programmeId: p.id })} />
+            <ProgrammeCard
+              key={p.id}
+              p={p}
+              templateCount={templateCount(p.id)}
+              hint={progressHint(p, linkedTo(p.id))}
+              onOpen={() => nav('programme', { programmeId: p.id })}
+            />
           ))}
         </div>
       )}
