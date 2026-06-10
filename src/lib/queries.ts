@@ -10,7 +10,7 @@
 // RLS scopes every read to the signed-in coach's club automatically. There is
 // deliberately no client-side club filter, so a scoping regression cannot be
 // masked by belt-and-braces filtering.
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
 import { useAuth } from '../hooks/useAuth'
@@ -122,6 +122,8 @@ interface SessionRow {
   space: string | null
   source_url: string | null
   source_label: string | null
+  live_activity_index: number | null
+  live_activity_started_at: string | null
 }
 
 interface TeamRow {
@@ -149,7 +151,7 @@ const MEDIA_COLS =
 const TEMPLATE_COLS =
   'id, club_id, name, focus, author, activities, created_at, intentions, programme, week, source_url, source_label'
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, live_activity_index, live_activity_started_at'
 const TEAM_COLS = 'id, club_id, name, created_at'
 const PROFILE_COLS = 'id, full_name, avatar, role, team_id, created_at'
 
@@ -246,6 +248,8 @@ function toSession(r: SessionRow): Session {
     space: r.space ?? '',
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    liveActivityIndex: r.live_activity_index ?? null,
+    liveActivityStartedAt: r.live_activity_started_at ?? null,
   }
 }
 
@@ -841,6 +845,72 @@ export function useDeleteSession() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   })
+}
+
+// ---- Live session state --------------------------------------------------
+// The live view's driver writes shared state onto the session row: start sets
+// index 0 and a timestamp, next and previous set the new index and reset the
+// timestamp, end (index null) clears both and marks the session completed.
+// The sessions update RLS (owner, or admin) is the real enforcement of who
+// can drive; watchers never call this.
+
+export function useSetLiveActivity() {
+  const qc = useQueryClient()
+  return useMutation<Session, Error, { id: string; index: number | null }>({
+    mutationFn: async ({ id, index }) => {
+      const patch =
+        index == null
+          ? { live_activity_index: null, live_activity_started_at: null, status: 'completed' as SessionStatus }
+          : { live_activity_index: index, live_activity_started_at: new Date().toISOString() }
+      const { data, error } = await supabase.from('sessions').update(patch).eq('id', id).select(SESSION_COLS).single()
+      if (error) throw error
+      return toSession(data as unknown as SessionRow)
+    },
+    onSuccess: (s) => {
+      qc.setQueryData(['sessions', s.id], s)
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+}
+
+// Keeps one session's cache entry in sync with the database row over Supabase
+// Realtime, so watchers follow the driver. One channel per session id, removed
+// on unmount. The update payload always carries the small live columns, so
+// they patch the cache instantly; the invalidation then refetches the full row
+// through RLS, which also covers any column the payload may omit.
+export function useLiveSessionSync(sessionId: string | undefined) {
+  const qc = useQueryClient()
+  useEffect(() => {
+    if (!sessionId) return
+    const channel = supabase
+      .channel(`live-session-${sessionId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` },
+        (payload) => {
+          const row = payload.new as Partial<SessionRow>
+          qc.setQueryData<Session | null>(['sessions', sessionId], (old) =>
+            old
+              ? {
+                  ...old,
+                  status: row.status ?? old.status,
+                  liveActivityIndex: row.live_activity_index ?? null,
+                  liveActivityStartedAt: row.live_activity_started_at ?? null,
+                }
+              : old,
+          )
+          qc.invalidateQueries({ queryKey: ['sessions'] })
+        },
+      )
+      .subscribe((status) => {
+        // Cover the gap between the initial read and the subscription being
+        // established: a change in that window has no event, so refetch once.
+        if (status === 'SUBSCRIBED') qc.invalidateQueries({ queryKey: ['sessions', sessionId] })
+      })
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [sessionId, qc])
 }
 
 // ---- Teams and members (admin) ------------------------------------------

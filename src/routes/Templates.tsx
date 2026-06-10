@@ -45,6 +45,8 @@ function TemplateCard({
       space: '',
       sourceUrl: '',
       sourceLabel: '',
+      liveActivityIndex: null,
+      liveActivityStartedAt: null,
     }
     upsertSession(s)
     nav('planner', { sessionId: s.id })
