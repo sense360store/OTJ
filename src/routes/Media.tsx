@@ -1,10 +1,19 @@
 import { useMemo, useRef, useState } from 'react'
-import { useMedia, useDrills, useSignedMediaUrl, useUploadMedia, useDeleteMedia, detectMediaType } from '../lib/queries'
+import {
+  useMedia,
+  useDrills,
+  useSignedMediaUrl,
+  useUploadMedia,
+  useDeleteMedia,
+  usePerm,
+  detectMediaType,
+} from '../lib/queries'
 import type { MediaItem, MediaType } from '../lib/data'
 import { youtubeId } from '../lib/data'
 import { useAuth } from '../hooks/useAuth'
+import { useRoleScope } from '../lib/roleFilters'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, MediaAttribution, MediaThumb, MEDIA_META, Modal } from '../components/ui'
+import { ErrorNote, Loading, LockedTagChips, MediaAttribution, MediaThumb, MEDIA_META, Modal } from '../components/ui'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
 
 function usedLabel(used: number): string {
@@ -301,10 +310,11 @@ export function UploadModal({ onClose }: { onClose: () => void }) {
 }
 
 export function Media() {
-  const { user, role } = useAuth()
-  // Uploading is for coaching roles; parents browse read-only. The media
-  // insert RLS is the real enforcement.
-  const coaching = role === 'coach' || role === 'admin'
+  const { user } = useAuth()
+  // Each affordance asks for its own capability; the media RLS is the real
+  // enforcement.
+  const canUpload = usePerm('media.create')
+  const canManageAny = usePerm('media.manage_any')
   const [q, setQ] = useState('')
   const [type, setType] = useState('')
   const [open, setOpen] = useState<MediaItem | null>(null)
@@ -313,24 +323,26 @@ export function Media() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const { data: mediaItems = [], isLoading, isError } = useMedia()
   const { data: drills = [] } = useDrills()
+  // A role with filter tags sees the media library locked to items used by
+  // matching drills, the tags shown as fixed chips below.
+  const scope = useRoleScope()
   // "Used in N drills" is derived, not stored: count drills referencing each item.
   const media = useMemo(() => {
     const usage: Record<string, number> = {}
     drills.forEach((d) => {
       if (d.mediaId) usage[d.mediaId] = (usage[d.mediaId] || 0) + 1
     })
-    return mediaItems.map((m) => ({ ...m, usedIn: usage[m.id] ?? 0 }))
-  }, [mediaItems, drills])
-  if (isLoading) return <Loading />
+    return scope.media(mediaItems).map((m) => ({ ...m, usedIn: usage[m.id] ?? 0 }))
+  }, [mediaItems, drills, scope])
+  if (isLoading || !scope.ready) return <Loading />
   if (isError) return <ErrorNote />
   const list = media.filter((m) => (!type || m.type === type) && (!q || m.name.toLowerCase().includes(q.toLowerCase())))
   const counts: Record<MediaType, number> = { video: 0, youtube: 0, image: 0, pdf: 0 }
   media.forEach((m) => counts[m.type]++)
-  // Delete is owner or admin only, mirroring the media RLS; the role condition
-  // matters for a coach demoted to parent, who still matches created_by. The
-  // database is the real enforcement; this only decides whether to surface
-  // the action.
-  const canDelete = (m: MediaItem) => role === 'admin' || (coaching && !!m.createdBy && m.createdBy === user?.id)
+  // Delete is the owner while they can still create media, or a media
+  // manager, mirroring the media RLS. The database is the real enforcement;
+  // this only decides whether to surface the action.
+  const canDelete = (m: MediaItem) => canManageAny || (canUpload && !!m.createdBy && m.createdBy === user?.id)
   return (
     <div>
       <div className="page-head">
@@ -338,7 +350,7 @@ export function Media() {
           <h2>Media Library</h2>
           <div className="sub">All your videos, YouTube links, diagrams and PDFs in one place.</div>
         </div>
-        {coaching && (
+        {canUpload && (
           <button className="btn btn-primary" onClick={() => setUploadOpen(true)}>
             <Icon.upload />
             Upload media
@@ -346,6 +358,11 @@ export function Media() {
         )}
       </div>
 
+      {scope.locked && (
+        <div style={{ marginBottom: 8 }}>
+          <LockedTagChips tags={scope.tags} />
+        </div>
+      )}
       <div className="filter-row" style={{ marginBottom: 16 }}>
         <div className="search-lg">
           <Icon.search />

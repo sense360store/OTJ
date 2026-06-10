@@ -1,22 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
-import { useAuth } from '../hooks/useAuth'
-import { useDrills } from '../lib/queries'
+import { useDrills, useFilterValues, usePerm } from '../lib/queries'
 import { CORNERS, AGES, LEVELS } from '../lib/data'
 import type { CornerKey } from '../lib/data'
-import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
+import { withExistingValues } from '../lib/fa'
+import { useRoleScope } from '../lib/roleFilters'
 import { Icon } from '../components/icons'
-import { Chip, DrillCard, Empty, ErrorNote, Loading } from '../components/ui'
+import { Chip, DrillCard, Empty, ErrorNote, Loading, LockedTagChips } from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 
 export function Library() {
   const nav = useNav()
-  const { role } = useAuth()
-  // Adding, importing and session building are for coaching roles; parents
-  // browse read-only. The drills insert RLS is the real enforcement.
-  const coaching = role === 'coach' || role === 'admin'
+  // Each affordance asks for its own capability; the RLS behind each write
+  // is the real enforcement.
+  const canAdd = usePerm('drills.create')
+  const canImport = usePerm('import.fa')
+  const canPlan = usePerm('sessions.create')
   const [searchParams, setSearchParams] = useSearchParams()
   const presetCorner = searchParams.get('corner')
   const initialCorner = presetCorner && presetCorner in CORNERS ? (presetCorner as CornerKey) : null
@@ -31,7 +32,11 @@ export function Library() {
   const [sort, setSort] = useState('recent')
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  const { data: drills = [], isLoading, isError } = useDrills()
+  const { data: allDrills = [], isLoading, isError } = useDrills()
+  // A role with filter tags sees the library locked to matching drills, the
+  // tags shown as fixed chips below.
+  const scope = useRoleScope()
+  const drills = useMemo(() => scope.drills(allDrills), [scope, allDrills])
 
   // Apply the corner preset from the URL once, then clear it.
   useEffect(() => {
@@ -39,11 +44,15 @@ export function Library() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // The filter options are the FA taxonomy plus any values already stored on
-  // drills, so existing values keep appearing.
-  const skillOptions = useMemo(() => withExistingValues(FA_PLAYER_SKILLS, drills.map((d) => d.skill)), [drills])
-  const themeOptions = useMemo(() => withExistingValues(FA_THEMES, drills.map((d) => d.theme)), [drills])
-  const formatOptions = useMemo(() => withExistingValues(FA_FORMATS, drills.map((d) => d.format)), [drills])
+  // The filter selects offer the managed taxonomies (active values from the
+  // Filters screen) plus any values already stored on drills, so existing
+  // values keep appearing while retired ones drop out.
+  const managedSkills = useFilterValues('player_skill')
+  const managedThemes = useFilterValues('theme')
+  const managedFormats = useFilterValues('format')
+  const skillOptions = useMemo(() => withExistingValues(managedSkills, drills.map((d) => d.skill)), [managedSkills, drills])
+  const themeOptions = useMemo(() => withExistingValues(managedThemes, drills.map((d) => d.theme)), [managedThemes, drills])
+  const formatOptions = useMemo(() => withExistingValues(managedFormats, drills.map((d) => d.format)), [managedFormats, drills])
 
   // One pass applies every refinement except the corner, which yields both
   // the visible results and the corner distribution. The distribution stays
@@ -76,7 +85,7 @@ export function Library() {
 
   const activeFilters = [corner, skill, theme, format, age, level].filter(Boolean).length
 
-  if (isLoading) return <Loading />
+  if (isLoading || !scope.ready) return <Loading />
   if (isError) return <ErrorNote />
 
   return (
@@ -86,25 +95,32 @@ export function Library() {
           <h2>Drill Library</h2>
           <div className="sub">Every drill and skill, tagged to the FA four-corner model.</div>
         </div>
-        {coaching && (
+        {(canImport || canPlan || canAdd) && (
           <div className="row wrap">
-            <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
-              <Icon.download />
-              Import from England Football
-            </button>
-            <button className="btn btn-ghost" onClick={() => nav('planner')}>
-              <Icon.layers />
-              Build a session
-            </button>
-            <button className="btn btn-primary" onClick={() => setAddOpen(true)}>
-              <Icon.plus />
-              Add drill
-            </button>
+            {canImport && (
+              <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
+                <Icon.download />
+                Import from England Football
+              </button>
+            )}
+            {canPlan && (
+              <button className="btn btn-ghost" onClick={() => nav('planner')}>
+                <Icon.layers />
+                Build a session
+              </button>
+            )}
+            {canAdd && (
+              <button className="btn btn-primary" onClick={() => setAddOpen(true)}>
+                <Icon.plus />
+                Add drill
+              </button>
+            )}
           </div>
         )}
       </div>
 
       <div className="filterbar">
+        {scope.locked && <LockedTagChips tags={scope.tags} />}
         <div className="filter-row">
           <div className="search-lg">
             <Icon.search />

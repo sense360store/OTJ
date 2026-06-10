@@ -1,8 +1,10 @@
 // App shell and routing. The auth guard decides Login versus the shell, and
 // the shell hosts the sidebar, top bar, bottom nav and the routed content.
-// REVIEW: contains the auth guard and the admin route guard.
+// REVIEW: contains the auth guard and the capability route guards.
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
+import { useAccessLoading, usePerm } from './lib/queries'
+import type { Capability } from './lib/permissions'
 import { SessionsProvider } from './context/SessionsContext'
 import { Sidebar } from './components/Sidebar'
 import { TopBar, MobileTop } from './components/TopBar'
@@ -22,6 +24,8 @@ import { Account } from './routes/Account'
 import { AdminClub } from './routes/AdminClub'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
+import { AdminRoles } from './routes/AdminRoles'
+import { AdminFilters } from './routes/AdminFilters'
 
 function Splash() {
   return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--slate)' }}>Loading…</div>
@@ -41,25 +45,29 @@ function RequireAuth() {
   )
 }
 
-// Admin only routes. The role drives what the router serves, and the RLS and
-// the Edge Function enforce the same boundary server side; a coach navigating
-// to /admin/users directly is redirected home.
-function RequireAdmin() {
-  const { role, profileLoading } = useAuth()
-  if (profileLoading) return <Splash />
-  if (role !== 'admin') return <Navigate to="/" replace />
+// Each admin screen is guarded by its own capability; the nav shows the
+// Admin group to anyone holding at least one of them. The RLS policies
+// behind usePerm enforce the same boundary server side; a member navigating
+// directly to a screen they cannot use is redirected home. Waits for the
+// capability read so a direct URL hit is not bounced before it is known.
+function RequireCap({ cap }: { cap: Capability }) {
+  const loading = useAccessLoading()
+  const allowed = usePerm(cap)
+  if (loading) return <Splash />
+  if (!allowed) return <Navigate to="/" replace />
   return <Outlet />
 }
 
-// The planner is a write surface, so the read-only parent role is redirected
-// to the sessions list, direct URLs included. The sessions insert RLS refuses
-// a parent's write anyway; this keeps the surface honest. Waits for the
-// profile so a coach hitting the URL directly is not bounced before their
-// role is known.
+// The planner is a write surface: members who can plan their own sessions or
+// manage any session get in; read-only roles are redirected to the sessions
+// list, direct URLs included. The sessions RLS refuses their writes anyway;
+// this keeps the surface honest.
 function RequirePlanner() {
-  const { role, profileLoading } = useAuth()
-  if (profileLoading) return <Splash />
-  if (role === 'parent') return <Navigate to="/sessions" replace />
+  const loading = useAccessLoading()
+  const canCreate = usePerm('sessions.create')
+  const canManageAny = usePerm('sessions.manage_any')
+  if (loading) return <Splash />
+  if (!canCreate && !canManageAny) return <Navigate to="/sessions" replace />
   return <Outlet />
 }
 
@@ -108,10 +116,20 @@ export function App() {
           <Route path="media" element={<Media />} />
           {/* Account self-service is open to every role, parents included. */}
           <Route path="account" element={<Account />} />
-          <Route element={<RequireAdmin />}>
+          <Route element={<RequireCap cap="club.manage" />}>
             <Route path="admin/club" element={<AdminClub />} />
+          </Route>
+          <Route element={<RequireCap cap="users.manage" />}>
             <Route path="admin/users" element={<AdminUsers />} />
+          </Route>
+          <Route element={<RequireCap cap="teams.manage" />}>
             <Route path="admin/teams" element={<AdminTeams />} />
+          </Route>
+          <Route element={<RequireCap cap="roles.manage" />}>
+            <Route path="admin/roles" element={<AdminRoles />} />
+          </Route>
+          <Route element={<RequireCap cap="filters.manage" />}>
+            <Route path="admin/filters" element={<AdminFilters />} />
           </Route>
         </Route>
       </Route>

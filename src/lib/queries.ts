@@ -17,21 +17,32 @@ import { useAuth } from '../hooks/useAuth'
 import type {
   Activity,
   Club,
+  ClubRole,
   CornerKey,
   Drill,
+  FilterKind,
+  FilterOption,
   Level,
   MediaItem,
   MediaType,
   Member,
   Phase,
-  Role,
+  RoleFilterTag,
   Session,
   SessionStatus,
   Team,
   Template,
 } from './data'
 import { youtubeId } from './data'
-import { sourceLabelForUrl } from './fa'
+import {
+  FA_AGE_BANDS,
+  FA_COACH_SKILLS,
+  FA_FORMATS,
+  FA_PLAYER_SKILLS,
+  FA_THEMES,
+  sourceLabelForUrl,
+} from './fa'
+import type { Capability } from './permissions'
 
 // ---- Database row shapes (snake_case) ----------------------------------
 // Separate from the component-facing camelCase types. Nullable columns are
@@ -139,9 +150,36 @@ interface ProfileRow {
   full_name: string | null
   avatar: string | null
   avatar_url: string | null
-  role: Role
+  role_id: string | null
   team_id: string | null
   created_at: string
+}
+
+interface RoleRow {
+  id: string
+  club_id: string
+  name: string
+  is_system: boolean
+}
+
+interface RolePermissionRow {
+  role_id: string
+  permission: string
+}
+
+interface RoleFilterRow {
+  role_id: string
+  kind: FilterKind
+  value: string
+}
+
+interface FilterOptionRow {
+  id: string
+  club_id: string
+  kind: FilterKind
+  value: string
+  sort: number
+  active: boolean
 }
 
 interface ClubRow {
@@ -162,8 +200,10 @@ const TEMPLATE_COLS =
 const SESSION_COLS =
   'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, live_activity_index, live_activity_started_at'
 const TEAM_COLS = 'id, club_id, name, created_at'
-const PROFILE_COLS = 'id, full_name, avatar, avatar_url, role, team_id, created_at'
+const PROFILE_COLS = 'id, full_name, avatar, avatar_url, role_id, team_id, created_at'
 const CLUB_COLS = 'id, name, motto, crest_url'
+const ROLE_COLS = 'id, club_id, name, is_system'
+const FILTER_OPTION_COLS = 'id, club_id, kind, value, sort, active'
 
 // ---- Mappers -----------------------------------------------------------
 
@@ -275,10 +315,18 @@ function toMember(r: ProfileRow): Member {
     fullName: r.full_name ?? '',
     avatar: r.avatar,
     avatarUrl: r.avatar_url,
-    role: r.role,
+    roleId: r.role_id,
     teamId: r.team_id,
     joined: r.created_at,
   }
+}
+
+function toClubRole(r: RoleRow): ClubRole {
+  return { id: r.id, name: r.name, isSystem: r.is_system }
+}
+
+function toFilterOption(r: FilterOptionRow): FilterOption {
+  return { id: r.id, kind: r.kind, value: r.value, sort: r.sort, active: r.active }
 }
 
 function toClub(r: ClubRow): Club {
@@ -995,15 +1043,19 @@ export function useDeleteTeam() {
 
 export function useUpdateProfile() {
   const qc = useQueryClient()
-  return useMutation<void, Error, { id: string; role?: Role; teamId?: string | null }>({
-    mutationFn: async ({ id, role, teamId }) => {
+  return useMutation<void, Error, { id: string; roleId?: string; teamId?: string | null }>({
+    mutationFn: async ({ id, roleId, teamId }) => {
       const patch: Record<string, unknown> = {}
-      if (role !== undefined) patch.role = role
+      if (roleId !== undefined) patch.role_id = roleId
       if (teamId !== undefined) patch.team_id = teamId
       const { error } = await supabase.from('profiles').update(patch).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      // An admin can change their own role from the Users screen.
+      qc.invalidateQueries({ queryKey: ['my-access'] })
+    },
   })
 }
 
@@ -1153,13 +1205,14 @@ export function useClearCrest() {
 
 // ---- Invites -------------------------------------------------------------
 // The invite goes through the invite-user Edge Function, which holds the
-// service role key server side and re-checks that the caller is an admin.
-// functions.invoke sends the signed in user's access token automatically.
+// service role key server side and re-checks that the caller holds
+// users.manage. functions.invoke sends the signed in user's access token
+// automatically.
 
 export interface InviteInput {
   email: string
   fullName: string
-  role: 'coach' | 'admin' | 'parent'
+  roleId: string
   teamId: string | null
 }
 
@@ -1225,7 +1278,7 @@ export function useInviteUser() {
   return useMutation<{ warning?: string }, Error, InviteInput>({
     mutationFn: async (input) => {
       const { data, error } = await supabase.functions.invoke('invite-user', {
-        body: { email: input.email, full_name: input.fullName, role: input.role, team_id: input.teamId },
+        body: { email: input.email, full_name: input.fullName, role_id: input.roleId, team_id: input.teamId },
       })
       if (error) {
         // The function replies with a plain { error } body; surface it.
@@ -1246,5 +1299,349 @@ export function useInviteUser() {
     // The invite creates the auth user at once, so the new profile row is
     // already in the list.
     onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+  })
+}
+
+// ---- Member removal --------------------------------------------------------
+// Removal goes through the remove-user Edge Function: it holds the service
+// role key, re-checks the caller holds users.manage, refuses removing the
+// last users.manage holder, and honours the session choice. The function is
+// the enforcement; the screen only words the confirm.
+
+export interface RemoveUserResult {
+  sessions: 'reassigned' | 'deleted'
+  sessionCount: number
+}
+
+export function useRemoveUser() {
+  const qc = useQueryClient()
+  return useMutation<RemoveUserResult, Error, { userId: string; reassignSessions: boolean }>({
+    mutationFn: async ({ userId, reassignSessions }) => {
+      const { data, error } = await supabase.functions.invoke('remove-user', {
+        body: { user_id: userId, reassign_sessions: reassignSessions },
+      })
+      if (error) {
+        // The function replies with a plain { error } body; surface it.
+        let message = 'Could not remove the member. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as { sessions?: string; session_count?: number }
+      return {
+        sessions: body.sessions === 'reassigned' ? 'reassigned' : 'deleted',
+        sessionCount: body.session_count ?? 0,
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+}
+
+// ---- Roles, capabilities and managed filters (Phase 8) ----------------------
+// Roles are rows and capabilities are role_permissions rows behind has_perm()
+// in the database. The reads here are club-wide (RLS scopes them to the
+// caller's club); the caller's own access is one cached query the whole UI
+// shares through usePerm. The UI only decides what to surface; every
+// capability is enforced by the rewritten policies in 0010_rbac.
+
+export function useRoles() {
+  return useQuery({
+    queryKey: ['roles'],
+    queryFn: async (): Promise<ClubRole[]> => {
+      const { data, error } = await supabase
+        .from('roles')
+        .select(ROLE_COLS)
+        .order('is_system', { ascending: false })
+        .order('name', { ascending: true })
+      if (error) throw error
+      return (data as unknown as RoleRow[]).map(toClubRole)
+    },
+  })
+}
+
+export function useRoleMap(): Record<string, ClubRole> {
+  const { data } = useRoles()
+  return useMemo(() => Object.fromEntries((data ?? []).map((r) => [r.id, r])), [data])
+}
+
+// Every role's ticks in one read, keyed by role id. The roles screen grid
+// and the Users screen's last manager guard both read from this.
+export function useRolePermissions() {
+  return useQuery({
+    queryKey: ['role-perms'],
+    queryFn: async (): Promise<Record<string, Capability[]>> => {
+      const { data, error } = await supabase.from('role_permissions').select('role_id, permission')
+      if (error) throw error
+      const out: Record<string, Capability[]> = {}
+      for (const row of (data ?? []) as RolePermissionRow[]) {
+        ;(out[row.role_id] ??= []).push(row.permission as Capability)
+      }
+      return out
+    },
+  })
+}
+
+// Every role's filter tags, keyed by role id.
+export function useRoleFilterTags() {
+  return useQuery({
+    queryKey: ['role-filters'],
+    queryFn: async (): Promise<Record<string, RoleFilterTag[]>> => {
+      const { data, error } = await supabase
+        .from('role_filters')
+        .select('role_id, kind, value')
+        .order('kind', { ascending: true })
+        .order('value', { ascending: true })
+      if (error) throw error
+      const out: Record<string, RoleFilterTag[]> = {}
+      for (const row of (data ?? []) as RoleFilterRow[]) {
+        ;(out[row.role_id] ??= []).push({ kind: row.kind, value: row.value })
+      }
+      return out
+    },
+  })
+}
+
+export function useFilterOptions() {
+  return useQuery({
+    queryKey: ['filter-options'],
+    queryFn: async (): Promise<FilterOption[]> => {
+      const { data, error } = await supabase
+        .from('filter_options')
+        .select(FILTER_OPTION_COLS)
+        .order('kind', { ascending: true })
+        .order('sort', { ascending: true })
+        .order('value', { ascending: true })
+      if (error) throw error
+      return (data as unknown as FilterOptionRow[]).map(toFilterOption)
+    },
+  })
+}
+
+// The active values of one kind, for pickers and filter rows. Retired values
+// drop out here while stored content keeps its text. The FA lists remain only
+// as the fallback for a database from before the managed taxonomies.
+const FA_FALLBACK: Record<FilterKind, string[]> = {
+  theme: FA_THEMES,
+  player_skill: FA_PLAYER_SKILLS,
+  coach_skill: FA_COACH_SKILLS,
+  format: FA_FORMATS,
+  age_band: FA_AGE_BANDS,
+}
+
+export function useFilterValues(kind: FilterKind): string[] {
+  const { data } = useFilterOptions()
+  return useMemo(() => {
+    const all = (data ?? []).filter((o) => o.kind === kind)
+    if (all.length === 0) return FA_FALLBACK[kind]
+    return all.filter((o) => o.active).map((o) => o.value)
+  }, [data, kind])
+}
+
+// ---- The caller's own access ------------------------------------------------
+// Role name, capability set and filter tags in one cached read. usePerm is
+// the single check every affordance in the app uses; role name strings
+// appear nowhere in the UI's permission logic.
+
+export interface MyAccess {
+  roleName: string | null
+  perms: Set<Capability>
+  tags: RoleFilterTag[]
+}
+
+const NO_ACCESS: MyAccess = { roleName: null, perms: new Set(), tags: [] }
+
+export function useMyAccess() {
+  const { profile, profileLoading } = useAuth()
+  const roleId = profile?.role_id ?? null
+  return useQuery({
+    queryKey: ['my-access', roleId],
+    enabled: !profileLoading,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async (): Promise<MyAccess> => {
+      // No role means no capabilities; reading club content needs none.
+      if (!roleId) return NO_ACCESS
+      const [roleRes, permRes, tagRes] = await Promise.all([
+        supabase.from('roles').select('id, name').eq('id', roleId).maybeSingle(),
+        supabase.from('role_permissions').select('role_id, permission').eq('role_id', roleId),
+        supabase.from('role_filters').select('role_id, kind, value').eq('role_id', roleId),
+      ])
+      if (roleRes.error) throw roleRes.error
+      if (permRes.error) throw permRes.error
+      if (tagRes.error) throw tagRes.error
+      return {
+        roleName: (roleRes.data as { name: string } | null)?.name ?? null,
+        perms: new Set(((permRes.data ?? []) as RolePermissionRow[]).map((p) => p.permission as Capability)),
+        tags: ((tagRes.data ?? []) as RoleFilterRow[]).map((t) => ({ kind: t.kind, value: t.value })),
+      }
+    },
+  })
+}
+
+export function usePerm(cap: Capability): boolean {
+  const { data } = useMyAccess()
+  return data?.perms.has(cap) ?? false
+}
+
+// True until the signed-in member's capabilities are known. Route guards
+// wait on this so a direct URL hit is not bounced before the answer.
+export function useAccessLoading(): boolean {
+  const { profileLoading } = useAuth()
+  const { isPending } = useMyAccess()
+  return profileLoading || isPending
+}
+
+// ---- Role and filter administration -----------------------------------------
+// All writes ride on the 0010 policies: roles.manage for roles, ticks and
+// tags, filters.manage for the taxonomies, users.manage for moving members.
+
+export function useCreateRole() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { name: string }>({
+    mutationFn: async ({ name }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase.from('roles').insert({ club_id: profile.club_id, name })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['roles'] }),
+  })
+}
+
+export function useRenameRole() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name: string }>({
+    mutationFn: async ({ id, name }) => {
+      const { error } = await supabase.from('roles').update({ name }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      qc.invalidateQueries({ queryKey: ['my-access'] })
+    },
+  })
+}
+
+// Deleting a role that members still hold moves those members to the chosen
+// replacement first. The move needs users.manage (the profiles policy) on
+// top of roles.manage; the screen words that.
+export function useDeleteRole() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; reassignTo?: string }>({
+    mutationFn: async ({ id, reassignTo }) => {
+      if (reassignTo) {
+        const { error } = await supabase.from('profiles').update({ role_id: reassignTo }).eq('role_id', id)
+        if (error) throw error
+      }
+      const { error } = await supabase.from('roles').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      qc.invalidateQueries({ queryKey: ['role-perms'] })
+      qc.invalidateQueries({ queryKey: ['role-filters'] })
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      qc.invalidateQueries({ queryKey: ['my-access'] })
+    },
+  })
+}
+
+// One tick on or off. The protect_admin_grants trigger refuses unticking the
+// Admin role's roles.manage and users.manage; the grid disables those.
+export function useSetRolePermission() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { roleId: string; permission: Capability; on: boolean }>({
+    mutationFn: async ({ roleId, permission, on }) => {
+      if (on) {
+        const { error } = await supabase.from('role_permissions').insert({ role_id: roleId, permission })
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('role_permissions')
+          .delete()
+          .eq('role_id', roleId)
+          .eq('permission', permission)
+        if (error) throw error
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['role-perms'] })
+      qc.invalidateQueries({ queryKey: ['my-access'] })
+    },
+  })
+}
+
+export function useAddRoleFilterTag() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { roleId: string; kind: FilterKind; value: string }>({
+    mutationFn: async ({ roleId, kind, value }) => {
+      const { error } = await supabase.from('role_filters').insert({ role_id: roleId, kind, value })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['role-filters'] })
+      qc.invalidateQueries({ queryKey: ['my-access'] })
+    },
+  })
+}
+
+export function useRemoveRoleFilterTag() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { roleId: string; kind: FilterKind; value: string }>({
+    mutationFn: async ({ roleId, kind, value }) => {
+      const { error } = await supabase
+        .from('role_filters')
+        .delete()
+        .eq('role_id', roleId)
+        .eq('kind', kind)
+        .eq('value', value)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['role-filters'] })
+      qc.invalidateQueries({ queryKey: ['my-access'] })
+    },
+  })
+}
+
+export function useAddFilterOption() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { kind: FilterKind; value: string; sort: number }>({
+    mutationFn: async ({ kind, value, sort }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase
+        .from('filter_options')
+        .insert({ club_id: profile.club_id, kind, value, sort })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['filter-options'] }),
+  })
+}
+
+// Rename, retire or restore, and reorder all ride on the one update. A
+// retired value keeps its row (and any stored content keeps its text); it
+// just drops out of pickers and filter rows.
+export function useUpdateFilterOption() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; value?: string; sort?: number; active?: boolean }>({
+    mutationFn: async ({ id, value, sort, active }) => {
+      const patch: Record<string, unknown> = {}
+      if (value !== undefined) patch.value = value
+      if (sort !== undefined) patch.sort = sort
+      if (active !== undefined) patch.active = active
+      const { error } = await supabase.from('filter_options').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['filter-options'] }),
   })
 }

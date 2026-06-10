@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react'
 import type { DragEventHandler } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useActivityTitle, useDrillMap, useMediaMap, useMemberMap, useSession, useTeams } from '../lib/queries'
+import { useActivityTitle, useDrillMap, useMediaMap, useMemberMap, usePerm, useSession, useTeams } from '../lib/queries'
 import { PHASES } from '../lib/data'
 import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -156,7 +156,9 @@ function PlannerEditor({
   newDefaults?: { coachId: string; teamId: string | null }
 }) {
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
+  const canCreate = usePerm('sessions.create')
+  const canManageAny = usePerm('sessions.manage_any')
   const { upsertSession } = useSessions()
   const { data: teams = [] } = useTeams()
   const memberById = useMemberMap()
@@ -170,10 +172,10 @@ function PlannerEditor({
   const dragFrom = useRef<number | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
 
-  // Visibility is club-wide, so any coach can open any club session here.
-  // Editing follows ownership (own, or admin); everyone else gets a read-only
-  // view of the plan. The sessions RLS enforces the same rule on write.
-  const readOnly = !!existing && existing.coachId !== user?.id && role !== 'admin'
+  // Visibility is club-wide, so any planning member can open any club
+  // session here. Editing mirrors the sessions RLS: the owner while they can
+  // plan, or a session manager; everyone else gets a read-only view.
+  const readOnly = !!existing && !((existing.coachId === user?.id && canCreate) || canManageAny)
   const owner = existing ? memberById[existing.coachId] : undefined
 
   const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
@@ -466,6 +468,7 @@ function PlannerEditor({
 export function Planner() {
   const [searchParams] = useSearchParams()
   const { user, profile } = useAuth()
+  const canCreate = usePerm('sessions.create')
   const editId = searchParams.get('sessionId')
   // Editing reads the one session by id; a new session has none to read and so
   // renders straight away. The key remounts the editor with fresh state
@@ -475,6 +478,10 @@ export function Planner() {
   if (editId && isLoading) return <Loading />
   if (editId && isError) return <ErrorNote />
   if (editId && existing) return <PlannerEditor key={editId} existing={existing} />
+  // A member who manages others' sessions but cannot create their own (the
+  // route guard lets them in for editing) has nothing to do on a blank
+  // planner; the insert RLS would refuse the save.
+  if (!canCreate) return <Navigate to="/sessions" replace />
   return (
     <PlannerEditor
       key={'new-' + (profile?.id ?? 'loading')}

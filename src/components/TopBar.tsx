@@ -4,13 +4,13 @@ import { Crest } from './Crest'
 import { UserAvatar } from './UserAvatar'
 import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
+import { usePerm } from '../lib/queries'
 
 export function TopBar() {
   const navigate = useNavigate()
   const { dark, setDark } = useTheme()
-  const { role } = useAuth()
-  // Parents are read-only; the planner shortcut is a coaching affordance.
-  const coaching = role === 'coach' || role === 'admin'
+  // The planner shortcut is for members who can plan sessions.
+  const coaching = usePerm('sessions.create')
   return (
     <div className="topbar">
       <div className="topbar-search">

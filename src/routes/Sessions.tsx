@@ -7,11 +7,12 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteSession, useMemberMap, useTeamMap, useTeams } from '../lib/queries'
+import { useDeleteSession, useMemberMap, usePerm, useTeamMap, useTeams } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
+import { useRoleScope } from '../lib/roleFilters'
 import { Icon } from '../components/icons'
-import { Chip, Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { Chip, Empty, ErrorNote, fmtDate, Loading, LockedTagChips, Modal, PHASE_COLOR } from '../components/ui'
 import { downloadSessionIcs } from '../lib/ics'
 
 type Nav = ReturnType<typeof useNav>
@@ -179,27 +180,32 @@ function SessionCard({
 
 export function Sessions() {
   const nav = useNav()
-  const { user, role } = useAuth()
-  // Parents watch and follow; they cannot plan, so the create affordance and
-  // the planner links stay hidden for them.
-  const coaching = role === 'coach' || role === 'admin'
+  const { user } = useAuth()
+  // Planning needs sessions.create; the read-only roles watch and follow, so
+  // the create affordance and the planner links stay hidden for them.
+  const canPlan = usePerm('sessions.create')
+  const canManageAny = usePerm('sessions.manage_any')
+  const coaching = canPlan || canManageAny
   const { sessions, loading, error } = useSessions()
   const { data: teams = [] } = useTeams()
   const teamById = useTeamMap()
   const memberById = useMemberMap()
+  // A role with filter tags sees the calendar locked to matching sessions,
+  // the tags shown as fixed chips below.
+  const scope = useRoleScope()
   const [view, setView] = useState<'mine' | 'all'>('mine')
   const [teamId, setTeamId] = useState('')
   const [deleting, setDeleting] = useState<Session | null>(null)
 
-  if (loading) return <Loading />
+  if (loading || !scope.ready) return <Loading />
   if (error) return <ErrorNote />
 
-  // Parents own no sessions, so the ownership filter disappears for them and
-  // they always see the whole club.
-  const effView = coaching ? view : 'all'
+  // Members who own no sessions skip the ownership filter and always see the
+  // whole club.
+  const effView = canPlan ? view : 'all'
   // The filter's club value selects sessions saved without a team, a valid
   // state for club-wide events. Team ids are UUIDs, so the sentinel is safe.
-  const list = sessions.filter(
+  const list = scope.sessions(sessions).filter(
     (s) =>
       (effView === 'mine' ? s.coachId === user?.id : true) &&
       (!teamId || (teamId === 'club' ? !s.teamId : s.teamId === teamId)),
@@ -214,7 +220,7 @@ export function Sessions() {
             {coaching ? 'Training nights across the club. You see your own by default.' : 'Training nights across the club.'}
           </div>
         </div>
-        {coaching && (
+        {canPlan && (
           <button className="btn btn-primary" onClick={() => nav('planner')}>
             <Icon.plus />
             New session
@@ -222,8 +228,13 @@ export function Sessions() {
         )}
       </div>
 
+      {scope.locked && (
+        <div style={{ marginBottom: 8 }}>
+          <LockedTagChips tags={scope.tags} />
+        </div>
+      )}
       <div className="filter-row" style={{ marginBottom: 18 }}>
-        {coaching && (
+        {canPlan && (
           <>
             <Chip on={view === 'mine'} onClick={() => setView('mine')}>
               My sessions
@@ -265,7 +276,7 @@ export function Sessions() {
                 nav={nav}
                 ownerName={mine ? null : memberById[s.coachId]?.fullName || 'Another coach'}
                 teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
-                canManage={(coaching && mine) || role === 'admin'}
+                canManage={(canPlan && mine) || canManageAny}
                 coaching={coaching}
                 onDelete={() => setDeleting(s)}
               />

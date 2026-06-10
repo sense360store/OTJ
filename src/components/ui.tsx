@@ -6,8 +6,8 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
-import { CORNERS, cornerClass, youtubeThumb } from '../lib/data'
-import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
+import { CORNERS, cornerClass, FILTER_KINDS, youtubeThumb } from '../lib/data'
+import type { CornerKey, Drill, MediaItem, MediaType, Phase, RoleFilterTag } from '../lib/data'
 import { sourceLabelForUrl } from '../lib/fa'
 import { useMediaMap, useSignedMediaUrl } from '../lib/queries'
 
@@ -165,6 +165,32 @@ export function Chip({
       {Ico && <Ico />}
       {children}
     </button>
+  )
+}
+
+/* ---- locked role filter chips ------------------------------------ */
+// The fixed chips a tagged role sees on its scoped views (library,
+// templates, media, sessions). Not removable: the lock is the point.
+// Curation at the application layer (see lib/roleFilters.ts); the club
+// boundary in RLS remains the only hard security boundary.
+export function LockedTagChips({ tags }: { tags: RoleFilterTag[] }) {
+  if (tags.length === 0) return null
+  const kindLabel = (k: RoleFilterTag['kind']) => FILTER_KINDS.find((f) => f.kind === k)?.one ?? k
+  return (
+    <div className="filter-row">
+      <span className="filter-label">Your view</span>
+      {tags.map((t) => (
+        <span
+          key={t.kind + ':' + t.value}
+          className="chip on"
+          style={{ cursor: 'default' }}
+          title="Set by your role; only matching content shows."
+        >
+          <Icon.lock style={{ width: 13, height: 13 }} />
+          {kindLabel(t.kind)}: {t.value}
+        </span>
+      ))}
+    </div>
   )
 }
 

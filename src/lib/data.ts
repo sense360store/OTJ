@@ -18,16 +18,54 @@ export interface Team {
   name: string
 }
 
-// A club member as the Users screen and the owner labels see one.
+// A club member as the Users screen and the owner labels see one. roleId
+// points at a roles row; the role name resolves through the roles read.
 export interface Member {
   id: string
   fullName: string
   avatar: string | null
   // Storage path of the uploaded profile photo, null for initials.
   avatarUrl: string | null
-  role: Role
+  roleId: string | null
   teamId: string | null
   joined: string
+}
+
+// A role row: per club, three seeded system roles plus any custom ones.
+// Capabilities and filter tags hang off it through their own reads.
+export interface ClubRole {
+  id: string
+  name: string
+  isSystem: boolean
+}
+
+// The managed filter taxonomies (admin edited, seeded from the FA lists).
+// Corners and levels are structural and stay fixed in code.
+export type FilterKind = 'theme' | 'player_skill' | 'coach_skill' | 'format' | 'age_band'
+
+export const FILTER_KINDS: { kind: FilterKind; label: string; one: string }[] = [
+  { kind: 'theme', label: 'Themes', one: 'Theme' },
+  { kind: 'player_skill', label: 'Player skills', one: 'Player skill' },
+  { kind: 'coach_skill', label: 'Coach skills', one: 'Coach skill' },
+  { kind: 'format', label: 'Formats', one: 'Format' },
+  { kind: 'age_band', label: 'Age bands', one: 'Age band' },
+]
+
+export interface FilterOption {
+  id: string
+  kind: FilterKind
+  value: string
+  sort: number
+  active: boolean
+}
+
+// A filter tag carried by a role: the tagged role's library, templates,
+// media and sessions views lock to matching content. Enforced curation at
+// the application layer; the club boundary in RLS remains the only hard
+// security boundary.
+export interface RoleFilterTag {
+  kind: FilterKind
+  value: string
 }
 
 // The club row. crestUrl is a storage path in the media bucket or a full URL.
