@@ -10,7 +10,7 @@
 // RLS scopes every read to the signed-in coach's club automatically. There is
 // deliberately no client-side club filter, so a scoping regression cannot be
 // masked by belt-and-braces filtering.
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
 import { useAuth } from '../hooks/useAuth'
@@ -468,7 +468,9 @@ export function useActivityTitle(): (act: Activity, fallback?: string) => string
 // short-lived signed URL. Creation is centralised here and keyed by
 // storage_path, so a path used by both a media card and a drill that links it
 // mints one URL, shared from the cache. The URL lasts an hour; staleTime sits
-// comfortably below that so a cached URL never expires mid-use.
+// comfortably below that so a cached URL never expires mid-use, and a window
+// focus refetches any stale URL, so a tab reopened the next day heals itself
+// before anything tries to render.
 const SIGNED_URL_TTL = 60 * 60 // one hour, in seconds
 const SIGNED_URL_STALE = 50 * 60 * 1000 // 50 minutes, in milliseconds
 
@@ -478,12 +480,50 @@ export function useSignedMediaUrl(storagePath: string | null | undefined) {
     enabled: !!storagePath,
     staleTime: SIGNED_URL_STALE,
     gcTime: SIGNED_URL_TTL * 1000,
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<string | null> => {
       const { data, error } = await supabase.storage.from('media').createSignedUrl(storagePath!, SIGNED_URL_TTL)
       if (error) throw error
       return data?.signedUrl ?? null
     },
   })
+}
+
+// A signed URL wired for recovery at the point of use. An expired URL makes
+// the <img> or <video> fail with a 400 or 403 the element cannot report, so
+// on the first load error for a path the URL's query is invalidated and the
+// element gets one fresh URL to retry with; if that fails too, src goes null
+// and the caller shows its fallback. A successful load re-arms the retry, and
+// any newly minted URL (a focus refetch, say) is worth one attempt. Used by
+// every render path: thumbnails, the drill detail, the player overlay and
+// the diagram viewer.
+export function useMediaSrc(storagePath: string | null | undefined) {
+  const qc = useQueryClient()
+  const { data, isLoading, isError } = useSignedMediaUrl(storagePath)
+  // One retry per path between successful loads, tracked in a ref only the
+  // event handlers touch. URLs that failed even after the retry land in
+  // state, which render reads to swap in the fallback; a newly minted URL is
+  // never in that set, so it always gets one attempt.
+  const retriedPaths = useRef(new Set<string>())
+  const [failedUrls, setFailedUrls] = useState<ReadonlySet<string>>(() => new Set())
+
+  const onError = useCallback(() => {
+    if (!storagePath) return
+    if (!retriedPaths.current.has(storagePath)) {
+      retriedPaths.current.add(storagePath)
+      void qc.invalidateQueries({ queryKey: ['media-url', storagePath] })
+      return
+    }
+    if (data) setFailedUrls((prev) => (prev.has(data) ? prev : new Set(prev).add(data)))
+  }, [qc, storagePath, data])
+
+  const onLoad = useCallback(() => {
+    if (storagePath) retriedPaths.current.delete(storagePath)
+  }, [storagePath])
+
+  const src = data && !failedUrls.has(data) ? data : null
+  const broken = isError || (!!data && failedUrls.has(data))
+  return { src, isLoading, broken, onError, onLoad }
 }
 
 // ---- Media uploads -----------------------------------------------------
@@ -495,6 +535,51 @@ export function detectMediaType(mime: string): MediaType | null {
   if (mime.startsWith('video/')) return 'video'
   if (mime === 'application/pdf') return 'pdf'
   return null
+}
+
+// Some pickers (Android in particular) hand over files with an empty or
+// generic MIME type, and an object stored with the wrong type will not
+// render: an <img> refuses an SVG unless it is served as image/svg+xml.
+// Uploads therefore always pass an explicit contentType, falling back to the
+// extension when the browser offers nothing useful.
+const EXTENSION_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  heic: 'image/heic',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  ogv: 'video/ogg',
+  pdf: 'application/pdf',
+}
+
+export function contentTypeForFile(file: File): string | null {
+  if (file.type && file.type !== 'application/octet-stream') return file.type
+  const ext = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]
+  return (ext && EXTENSION_MIME[ext]) || null
+}
+
+export function mediaTypeForFile(file: File): MediaType | null {
+  const mime = contentTypeForFile(file)
+  return mime ? detectMediaType(mime) : null
+}
+
+// The media bucket rides on the project's global upload limit, 50 MB (the
+// same value config.toml sets locally). Checked before any bytes move, so an
+// oversized pick fails at once with a plain message instead of a storage
+// error at the end of a long upload.
+export const MEDIA_MAX_BYTES = 50 * 1024 * 1024
+
+export function oversizeMessage(file: File): string | null {
+  if (file.size <= MEDIA_MAX_BYTES) return null
+  return `That file is ${formatBytes(file.size)} and the upload limit is 50 MB. Compress the file or trim the clip and try again.`
 }
 
 function formatBytes(bytes: number): string {
@@ -585,21 +670,24 @@ export function useUploadMedia() {
           type: 'youtube',
           yt_url: input.ytUrl,
         })
-        if (error) throw error
+        if (error) throw new Error(`Could not save the link: ${error.message}`)
         return
       }
 
-      // File: detect, upload to Storage, then register the row.
+      // File: detect, guard the size, upload to Storage, then register the
+      // row. Every failure surfaces the underlying error text verbatim; the
+      // upload modal shows it and stays open.
       const file = input.file
-      const type = detectMediaType(file.type)
-      if (!type) {
+      const contentType = contentTypeForFile(file)
+      const type = contentType ? detectMediaType(contentType) : null
+      if (!contentType || !type) {
         throw new Error('Unsupported file type. Upload an image, video or PDF.')
       }
+      const tooBig = oversizeMessage(file)
+      if (tooBig) throw new Error(tooBig)
       const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
-      const { error: uploadError } = await supabase.storage
-        .from('media')
-        .upload(path, file, { contentType: file.type || undefined })
-      if (uploadError) throw uploadError
+      const { error: uploadError } = await supabase.storage.from('media').upload(path, file, { contentType })
+      if (uploadError) throw new Error(`The upload failed: ${uploadError.message}`)
 
       const size = formatBytes(file.size)
       const dims = type === 'image' ? await readImageDims(file) : undefined
@@ -619,10 +707,117 @@ export function useUploadMedia() {
       // no orphan is left behind in Storage.
       if (insertError) {
         await supabase.storage.from('media').remove([path])
-        throw insertError
+        throw new Error(`The file uploaded but could not be saved to the library: ${insertError.message}`)
       }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['media'] }),
+  })
+}
+
+// ---- Media replace -------------------------------------------------------
+// Points an existing media row (a seeded sample, typically) at real content,
+// keeping its id so every drill that links it keeps working. A file goes to a
+// fresh storage object and the row swaps over to it; a YouTube link clears
+// the file fields instead. Owner or admin only; the media update RLS is the
+// real enforcement, and a write it blocks updates no rows, which is reported
+// rather than swallowed.
+export function useReplaceMedia() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+
+  return useMutation<void, Error, { id: string; previousPath?: string | null; input: UploadInput }>({
+    mutationFn: async ({ id, previousPath, input }) => {
+      if (!profile?.club_id) {
+        throw new Error('You must be signed in to replace media.')
+      }
+      const clubId = profile.club_id
+
+      const applyUpdate = async (patch: Record<string, unknown>) => {
+        const { data, error } = await supabase.from('media').update(patch).eq('id', id).select('id')
+        if (error) throw new Error(`Could not update the media record: ${error.message}`)
+        if (!data?.length) throw new Error('You do not have permission to replace this item.')
+      }
+
+      if (input.mode === 'youtube') {
+        if (!youtubeId(input.ytUrl)) {
+          throw new Error('Enter a valid YouTube link.')
+        }
+        await applyUpdate({
+          name: input.name,
+          type: 'youtube',
+          yt_url: input.ytUrl,
+          storage_path: null,
+          size: null,
+          dims: null,
+          length: null,
+          pages: null,
+        })
+      } else {
+        const file = input.file
+        const contentType = contentTypeForFile(file)
+        const type = contentType ? detectMediaType(contentType) : null
+        if (!contentType || !type) {
+          throw new Error('Unsupported file type. Upload an image, video or PDF.')
+        }
+        const tooBig = oversizeMessage(file)
+        if (tooBig) throw new Error(tooBig)
+
+        const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+        const { error: uploadError } = await supabase.storage.from('media').upload(path, file, { contentType })
+        if (uploadError) throw new Error(`The upload failed: ${uploadError.message}`)
+
+        const size = formatBytes(file.size)
+        const dims = type === 'image' ? await readImageDims(file) : undefined
+        const length = type === 'video' ? await readVideoLength(file) : undefined
+
+        try {
+          await applyUpdate({
+            name: input.name,
+            type,
+            storage_path: path,
+            yt_url: null,
+            size,
+            dims: dims ?? null,
+            length: length ?? null,
+            pages: null,
+          })
+        } catch (e) {
+          // The object uploaded but the row did not take it; remove the orphan.
+          await supabase.storage.from('media').remove([path])
+          throw e
+        }
+      }
+
+      // Samples have no object behind them, but if the replaced row did,
+      // clear it out so storage holds no unreachable file. Best effort.
+      if (previousPath) {
+        await supabase.storage.from('media').remove([previousPath])
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media'] })
+    },
+  })
+}
+
+// ---- Remove the seeded samples -------------------------------------------
+// Deletes every sample row (no stored file, no playable link) in one go.
+// Surfaced to admins only; the media delete RLS (owner or admin) is the real
+// enforcement. Samples have no storage objects, so this is a pure row delete;
+// drills that referenced one fall back to no media through the on delete set
+// null foreign key.
+export function useRemoveSampleMedia() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { ids: string[] }>({
+    mutationFn: async ({ ids }) => {
+      if (ids.length === 0) return
+      const { error } = await supabase.from('media').delete().in('id', ids)
+      if (error) throw new Error(`Could not remove the samples: ${error.message}`)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+    },
   })
 }
 
