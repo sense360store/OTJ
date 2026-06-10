@@ -30,6 +30,7 @@ import type {
   Template,
 } from './data'
 import { youtubeId } from './data'
+import { sourceLabelForUrl } from './fa'
 
 // ---- Database row shapes (snake_case) ----------------------------------
 // Separate from the component-facing camelCase types. Nullable columns are
@@ -53,6 +54,13 @@ interface DrillRow {
   media_id: string | null
   created_by: string | null
   created_at: string
+  setup_notes: string | null
+  easier: string[] | null
+  harder: string[] | null
+  theme: string | null
+  format: string | null
+  source_url: string | null
+  source_label: string | null
 }
 
 interface MediaRow {
@@ -69,6 +77,8 @@ interface MediaRow {
   pages: number | null
   created_by: string | null
   created_at: string
+  source_url: string | null
+  source_label: string | null
 }
 
 // The activities jsonb element. drill_id on the wire maps to drillId in the UI.
@@ -87,6 +97,11 @@ interface TemplateRow {
   author: string | null
   activities: ActivityRow[] | null
   created_at: string
+  intentions: string[] | null
+  programme: string | null
+  week: number | null
+  source_url: string | null
+  source_label: string | null
 }
 
 interface SessionRow {
@@ -103,6 +118,10 @@ interface SessionRow {
   status: SessionStatus
   activities: ActivityRow[] | null
   created_at: string
+  intentions: string[] | null
+  space: string | null
+  source_url: string | null
+  source_label: string | null
 }
 
 interface TeamRow {
@@ -124,12 +143,13 @@ interface ProfileRow {
 // ---- Column lists ------------------------------------------------------
 // Explicit so each read is checkable against the schema at a glance.
 const DRILL_COLS =
-  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at'
+  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at, setup_notes, easier, harder, theme, format, source_url, source_label'
 const MEDIA_COLS =
-  'id, club_id, name, type, kind, storage_path, yt_url, size, dims, length, pages, created_by, created_at'
-const TEMPLATE_COLS = 'id, club_id, name, focus, author, activities, created_at'
+  'id, club_id, name, type, kind, storage_path, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label'
+const TEMPLATE_COLS =
+  'id, club_id, name, focus, author, activities, created_at, intentions, programme, week, source_url, source_label'
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label'
 const TEAM_COLS = 'id, club_id, name, created_at'
 const PROFILE_COLS = 'id, full_name, avatar, role, team_id, created_at'
 
@@ -166,6 +186,13 @@ function toDrill(r: DrillRow): Drill {
     points: r.points ?? [],
     tags: r.tags ?? [],
     createdBy: r.created_by ?? undefined,
+    setupNotes: r.setup_notes ?? '',
+    easier: r.easier ?? [],
+    harder: r.harder ?? [],
+    theme: r.theme ?? '',
+    format: r.format ?? '',
+    sourceUrl: r.source_url ?? '',
+    sourceLabel: r.source_label ?? '',
   }
 }
 
@@ -182,6 +209,8 @@ function toMedia(r: MediaRow): MediaItem {
     yt: r.yt_url ?? undefined,
     storagePath: r.storage_path ?? undefined,
     createdBy: r.created_by ?? undefined,
+    sourceUrl: r.source_url ?? undefined,
+    sourceLabel: r.source_label ?? undefined,
   }
 }
 
@@ -192,6 +221,11 @@ function toTemplate(r: TemplateRow): Template {
     author: r.author ?? '',
     focus: r.focus ?? '',
     activities: (r.activities ?? []).map(toActivity),
+    intentions: r.intentions ?? [],
+    programme: r.programme ?? '',
+    week: r.week,
+    sourceUrl: r.source_url ?? '',
+    sourceLabel: r.source_label ?? '',
   }
 }
 
@@ -208,6 +242,10 @@ function toSession(r: SessionRow): Session {
     activities: (r.activities ?? []).map(toActivity),
     coachId: r.coach_id,
     teamId: r.team_id,
+    intentions: r.intentions ?? [],
+    space: r.space ?? '',
+    sourceUrl: r.source_url ?? '',
+    sourceLabel: r.source_label ?? '',
   }
 }
 
@@ -591,9 +629,16 @@ export interface DrillInput {
   points: string[]
   tags: string[]
   mediaId: string | null
+  setupNotes: string
+  easier: string[]
+  harder: string[]
+  theme: string
+  format: string
+  sourceUrl: string
 }
 
 function toDrillWriteRow(input: DrillInput) {
+  const sourceUrl = input.sourceUrl.trim()
   return {
     title: input.title,
     summary: input.summary || null,
@@ -608,6 +653,14 @@ function toDrillWriteRow(input: DrillInput) {
     points: input.points,
     tags: input.tags,
     media_id: input.mediaId,
+    setup_notes: input.setupNotes || null,
+    easier: input.easier,
+    harder: input.harder,
+    theme: input.theme || null,
+    format: input.format || null,
+    // The label always derives from the link, so the two cannot drift apart.
+    source_url: sourceUrl || null,
+    source_label: sourceUrl ? sourceLabelForUrl(sourceUrl) || null : null,
   }
 }
 
@@ -686,6 +739,14 @@ export function useUpsertSession() {
       const isUpdate = existed.current.get(input.id) ?? false
       const activities = input.activities.map(toActivityRow)
 
+      const sourceUrl = input.sourceUrl.trim()
+      const faFields = {
+        intentions: input.intentions,
+        space: input.space || null,
+        source_url: sourceUrl || null,
+        source_label: sourceUrl ? sourceLabelForUrl(sourceUrl) || null : null,
+      }
+
       if (isUpdate) {
         const { data, error } = await supabase
           .from('sessions')
@@ -699,6 +760,7 @@ export function useUpsertSession() {
             status: input.status,
             team_id: input.teamId,
             activities,
+            ...faFields,
           })
           .eq('id', input.id)
           .select(SESSION_COLS)
@@ -725,6 +787,7 @@ export function useUpsertSession() {
           status: input.status,
           team_id: input.teamId,
           activities,
+          ...faFields,
         })
         .select(SESSION_COLS)
         .single()

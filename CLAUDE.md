@@ -180,6 +180,19 @@ Core design rules from Phase 4 onward. Every feature, screen, query and mutation
 
 ---
 
+## Third-party content
+
+The club is an FA-affiliated charity club and holds permission to use England Football Learning content (learn.englandfootball.com) for its non-commercial coaching purposes, on the terms that FA images are used unmodified, never recreated or redrawn, and the use is not for profit. The platform operates within those terms:
+
+- FA content enters the platform only when a signed-in coach imports a specific resource by URL. The platform never crawls catalogues or bulk-imports, and never follows links beyond the single pasted page.
+- Imported images are stored unmodified, with the source URL and "England Football Learning" attribution recorded and displayed wherever the image renders large.
+- Nothing is sold or made public. The app is invite-only club membership.
+- Where an FA-derived drill needs a diagram, the FA's own image is used, not a recreation.
+
+For non-FA third-party content the default remains link and attribute, do not copy.
+
+---
+
 ## Conventions
 
 - Copy style: direct, factual, understated. No hype, no marketing tone, no emojis. This applies to user-facing strings, docs, and commit messages.
@@ -206,7 +219,7 @@ Source of truth is `src/styles.css` (`:root` for light, `.theme-dark` for dark).
 
 ## Data model
 
-Seven tables: `clubs`, `profiles`, `teams`, `media`, `drills`, `templates`, `sessions`. The first six live in `supabase/migrations/0001_init.sql`; `teams` plus the nullable `team_id` columns on `sessions` and `profiles` arrive in `0002_teams_roles.sql`, with the five club teams seeded by `supabase/seed_teams.sql`. Notes:
+Seven tables: `clubs`, `profiles`, `teams`, `media`, `drills`, `templates`, `sessions`. The first six live in `supabase/migrations/0001_init.sql`; `teams` plus the nullable `team_id` columns on `sessions` and `profiles` arrive in `0002_teams_roles.sql`, with the five club teams seeded by `supabase/seed_teams.sql`. The FA session model columns (setup notes, STEP adaptations, theme and format on `drills`; intentions and space on `sessions`; intentions, programme and week on `templates`; source attribution on all four) arrive in `0005_fa_alignment.sql`, with the FA option lists centralised in `src/lib/fa.ts`. Notes:
 
 - `activities` on `sessions` and `templates` is a `jsonb` array of `{ phase, drill_id, duration }`, read and written as a whole by the planner. `drill_id` inside it references a real `drills.id`.
 - Session total minutes is the sum of `activity.duration`, computed in the UI (the prototype's `sessionMinutes`).

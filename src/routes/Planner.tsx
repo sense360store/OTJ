@@ -26,6 +26,10 @@ function blankSession(coachId: string, teamId: string | null): Session {
     activities: [],
     coachId,
     teamId,
+    intentions: [],
+    space: '',
+    sourceUrl: '',
+    sourceLabel: '',
   }
 }
 

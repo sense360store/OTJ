@@ -48,6 +48,10 @@ export interface MediaItem {
   storagePath?: string
   createdBy?: string
   usedIn?: number
+  // Attribution for third-party content (CLAUDE.md, Third-party content).
+  // Shown as a small line wherever the image renders large.
+  sourceUrl?: string
+  sourceLabel?: string
 }
 
 export interface Drill {
@@ -66,6 +70,16 @@ export interface Drill {
   points: string[]
   tags: string[]
   createdBy?: string
+  // FA session model fields. setupNotes describes the layout, easier and
+  // harder hold STEP adaptations, theme and format are FA taxonomy text
+  // (suggestions in src/lib/fa.ts), source carries attribution.
+  setupNotes: string
+  easier: string[]
+  harder: string[]
+  theme: string
+  format: string
+  sourceUrl: string
+  sourceLabel: string
 }
 
 export interface Activity {
@@ -81,6 +95,13 @@ export interface Template {
   author: string
   focus: string
   activities: Activity[]
+  // FA session model fields. intentions copy onto a session built from the
+  // template; programme and week group six-week programme sets.
+  intentions: string[]
+  programme: string
+  week: number | null
+  sourceUrl: string
+  sourceLabel: string
 }
 
 export interface Session {
@@ -97,6 +118,12 @@ export interface Session {
   // delete affordances and the My sessions filter. teamId is a filter.
   coachId: string
   teamId: string | null
+  // FA session model fields: intentions render at the top FA style, space is
+  // the setup area, source carries attribution.
+  intentions: string[]
+  space: string
+  sourceUrl: string
+  sourceLabel: string
 }
 
 // ---- Taxonomy ----------------------------------------------------------
