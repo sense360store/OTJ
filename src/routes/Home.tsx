@@ -10,8 +10,8 @@ import { useNavigate } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
 import { useAuth } from '../hooks/useAuth'
-import { useDrillMap, useDrills, useMediaMap, useMemberMap, useTeamMap, useTemplates } from '../lib/queries'
-import { sessionMinutes } from '../lib/data'
+import { useDrillMap, useDrills, useMediaMap, useMemberMap, useMyCapabilities, useTeamMap, useTemplates } from '../lib/queries'
+import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
 import type { Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -284,7 +284,8 @@ export function Home() {
   const { sessions, loading: sessionsLoading, error: sessionsError } = useSessions()
   const { data: drills = [], isLoading: drillsLoading, isError: drillsError } = useDrills()
   const { data: templates = [], isLoading: templatesLoading, isError: templatesError } = useTemplates()
-  const { user, profile, role } = useAuth()
+  const { user, profile } = useAuth()
+  const { caps } = useMyCapabilities()
   const teamById = useTeamMap()
   const memberById = useMemberMap()
   // The This week list honours the Sessions screen's default: yours first,
@@ -295,9 +296,10 @@ export function Home() {
   const [uploadOpen, setUploadOpen] = useState(false)
 
   const firstName = profile?.full_name?.split(' ')[0]
-  // Parents are read-only; the planning and creating affordances stay hidden
-  // for them. The check is positive so nothing flashes in while loading.
-  const coaching = role === 'coach' || role === 'admin'
+  // The affordances follow the capability set, granting on any held role;
+  // members without sessions.create (parents) get the schedule framing. The
+  // checks are positive so nothing flashes in while loading.
+  const canPlan = caps.has('sessions.create')
 
   if (sessionsLoading || drillsLoading || templatesLoading) return <Loading />
   if (sessionsError || drillsError || templatesError) return <ErrorNote />
@@ -313,14 +315,14 @@ export function Home() {
   // The sessions read is club-wide and ordered by date and time; upcoming
   // keeps today's sessions all day so the hero holds while one runs.
   const upcoming = sessions.filter((s) => s.status === 'upcoming' && s.date >= todayStr)
-  const next = coaching ? upcoming.find(isMine) : upcoming[0]
+  const next = canPlan ? upcoming.find(isMine) : upcoming[0]
   const liveNow = sessions.find((s) => s.liveActivityIndex != null)
   // A brand-new coach has no sessions at all, upcoming or past.
-  const fresh = coaching && !sessions.some(isMine)
+  const fresh = canPlan && !sessions.some(isMine)
 
   const weekEnd = addDaysIso(todayStr, 7)
   const weekAll = upcoming.filter((s) => s.date < weekEnd)
-  const effWeekView = coaching ? weekView : 'all'
+  const effWeekView = canPlan ? weekView : 'all'
   const week = effWeekView === 'mine' ? weekAll.filter(isMine) : weekAll
 
   const teamName = (s: Session) => (s.teamId ? (teamById[s.teamId]?.name ?? 'Team') : 'Club')
@@ -333,16 +335,18 @@ export function Home() {
     .sort((a, b) => (a.when < b.when ? 1 : -1))
     .slice(0, 6)
 
+  // Each quick action follows the capability that backs it.
   const actions: QuickAction[] = []
-  if (coaching) {
-    actions.push({ label: 'Plan session', icon: Icon.layers, on: () => nav('planner') })
-    actions.push({ label: 'Add drill', icon: Icon.plus, on: () => setAddOpen(true) })
+  if (canPlan) actions.push({ label: 'Plan session', icon: Icon.layers, on: () => nav('planner') })
+  if (caps.has('drills.create')) actions.push({ label: 'Add drill', icon: Icon.plus, on: () => setAddOpen(true) })
+  if (hasAllCaps(caps, FA_IMPORT_CAPS)) {
     actions.push({ label: 'Import from England Football', icon: Icon.download, on: () => setImportOpen(true) })
-    actions.push({ label: 'Upload media', icon: Icon.upload, on: () => setUploadOpen(true) })
-    if (role === 'admin') {
-      actions.push({ label: 'Invite', icon: Icon.users, on: () => navigate('/admin/users') })
-    }
-  } else if (liveNow) {
+  }
+  if (caps.has('media.create')) actions.push({ label: 'Upload media', icon: Icon.upload, on: () => setUploadOpen(true) })
+  if (caps.has('users.manage')) {
+    actions.push({ label: 'Invite', icon: Icon.users, on: () => navigate('/admin/users') })
+  }
+  if (actions.length === 0 && liveNow) {
     actions.push({
       label: 'Watch live',
       icon: Icon.play,
@@ -358,7 +362,7 @@ export function Home() {
           <div className="eyebrow">{todayLine}</div>
           <h2 style={{ marginTop: 4 }}>Welcome back{firstName ? `, ${firstName}` : ''}</h2>
           <div className="sub">
-            {coaching
+            {canPlan
               ? 'Your schedule first, then everything you need for the next session.'
               : "The club schedule and the latest from the club's coaches."}
           </div>
@@ -370,13 +374,13 @@ export function Home() {
           <NextSessionHero
             s={next}
             isOwn={isMine(next)}
-            canManage={(coaching && isMine(next)) || role === 'admin'}
+            canManage={caps.has('sessions.manage') || (canPlan && isMine(next))}
             teamName={teamName(next)}
             todayStr={todayStr}
             nav={nav}
           />
         ) : (
-          <EmptyHero coaching={coaching} fresh={fresh} nav={nav} onImport={() => setImportOpen(true)} />
+          <EmptyHero coaching={canPlan} fresh={fresh} nav={nav} onImport={() => setImportOpen(true)} />
         )}
 
         <div className="card week-card">
@@ -386,7 +390,7 @@ export function Home() {
               <Icon.calendar />
               {week.length} session{week.length !== 1 ? 's' : ''}
             </span>
-            {coaching && (
+            {canPlan && (
               <>
                 <Chip on={weekView === 'mine'} onClick={() => setWeekView('mine')}>
                   Mine
@@ -450,7 +454,7 @@ export function Home() {
       </div>
       {whatsNew.length === 0 ? (
         <Empty icon={Icon.sparkle} title="Nothing here yet">
-          {coaching
+          {canPlan
             ? 'Add a drill or import an FA session and the newest content lands here.'
             : 'The latest drills and session templates land here as coaches add them.'}
         </Empty>

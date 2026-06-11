@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
-import { useDrills } from '../lib/queries'
-import { CORNERS, AGES, LEVELS } from '../lib/data'
+import { useDrills, useMyCapabilities } from '../lib/queries'
+import { AGES, CORNERS, FA_IMPORT_CAPS, hasAllCaps, LEVELS } from '../lib/data'
 import type { CornerKey, Drill } from '../lib/data'
 import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
 import { Icon } from '../components/icons'
@@ -14,15 +14,20 @@ import { ImportFAModal } from '../components/ImportFAModal'
 
 export function Library() {
   const nav = useNav()
-  const { role, user } = useAuth()
-  // Adding, importing and session building are for coaching roles; parents
-  // browse read-only. The drills insert RLS is the real enforcement.
-  const coaching = role === 'coach' || role === 'admin'
-  // Edit and delete on a card mirror the drills RLS: a manager (admin) on any
-  // drill, an owning coach on their own. Seeded drills have no creator, so only
-  // an admin manages them. The database is the real enforcement; this only
-  // decides whether to surface the actions.
-  const canManage = (d: Drill) => role === 'admin' || (coaching && !!d.createdBy && d.createdBy === user?.id)
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
+  // The affordances follow the capability set, granting on any held role.
+  // The FA import writes a template plus its drills and media, so it needs
+  // every capability the call would use. The RLS is the real enforcement.
+  const canCreate = caps.has('drills.create')
+  const canPlan = caps.has('sessions.create')
+  const canImport = hasAllCaps(caps, FA_IMPORT_CAPS)
+  // Edit and delete on a card mirror the drills RLS arms: drills.manage on
+  // any drill, an owner holding drills.create on their own. Seeded drills
+  // have no creator, so only a manage holder touches them. The database is
+  // the real enforcement; this only decides whether to surface the actions.
+  const canManage = (d: Drill) =>
+    caps.has('drills.manage') || (canCreate && !!d.createdBy && d.createdBy === user?.id)
   const [searchParams, setSearchParams] = useSearchParams()
   const presetCorner = searchParams.get('corner')
   const initialCorner = presetCorner && presetCorner in CORNERS ? (presetCorner as CornerKey) : null
@@ -94,20 +99,26 @@ export function Library() {
           <h2>Drill Library</h2>
           <div className="sub">Every drill and skill, tagged to the FA four-corner model.</div>
         </div>
-        {coaching && (
+        {(canImport || canPlan || canCreate) && (
           <div className="row wrap">
-            <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
-              <Icon.download />
-              Import from England Football
-            </button>
-            <button className="btn btn-ghost" onClick={() => nav('planner')}>
-              <Icon.layers />
-              Build a session
-            </button>
-            <button className="btn btn-primary" onClick={() => setAddOpen(true)}>
-              <Icon.plus />
-              Add drill
-            </button>
+            {canImport && (
+              <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
+                <Icon.download />
+                Import from England Football
+              </button>
+            )}
+            {canPlan && (
+              <button className="btn btn-ghost" onClick={() => nav('planner')}>
+                <Icon.layers />
+                Build a session
+              </button>
+            )}
+            {canCreate && (
+              <button className="btn btn-primary" onClick={() => setAddOpen(true)}>
+                <Icon.plus />
+                Add drill
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -1,14 +1,14 @@
 // The club's programmes: ordered sets of weekly session templates, the FA
 // six-week format being the model, built by importing an FA overview or by
-// hand from the club's own templates. Visibility is club-wide; creating is
-// for coaching roles and editing follows ownership (owner, or admin), all
-// enforced by the programmes RLS. Parents read only: no create, import or
-// edit affordances.
+// hand from the club's own templates. Visibility is club-wide; creating
+// follows programmes.create and editing follows the owner or manager arms,
+// all enforced by the programmes RLS. Members without the capabilities read
+// only: no create, import or edit affordances.
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
-import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useProgrammes, useTemplates } from '../lib/queries'
+import { useMyCapabilities, useProgrammes, useTemplates } from '../lib/queries'
+import { FA_PROGRAMME_IMPORT_CAPS, hasAllCaps } from '../lib/data'
 import type { Programme, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading } from '../components/ui'
@@ -100,7 +100,7 @@ function ProgrammeCard({
 
 export function Programmes() {
   const nav = useNav()
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   const [importOpen, setImportOpen] = useState(false)
   const [building, setBuilding] = useState(false)
   const { data: programmes = [], isLoading, isError } = useProgrammes()
@@ -108,7 +108,10 @@ export function Programmes() {
   const { sessions } = useSessions()
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
-  const coaching = role === 'coach' || role === 'admin'
+  // The programme import writes the programme row plus a template, drills
+  // and media per week, so it needs every capability the call would use.
+  const canCreate = caps.has('programmes.create')
+  const canImport = hasAllCaps(caps, FA_PROGRAMME_IMPORT_CAPS)
   const templateCount = (id: string) => templates.filter((t) => t.programmeId === id).length
   const linkedTo = (id: string) => sessions.filter((s) => s.programmeId === id)
   return (
@@ -118,22 +121,26 @@ export function Programmes() {
           <h2>Programmes</h2>
           <div className="sub">Six-week blocks of linked sessions, imported from England Football or built by hand.</div>
         </div>
-        {coaching && (
+        {(canImport || canCreate) && (
           <div className="row wrap">
-            <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
-              <Icon.download />
-              Import a programme
-            </button>
-            <button className="btn btn-primary" onClick={() => setBuilding(true)}>
-              <Icon.plus />
-              New programme
-            </button>
+            {canImport && (
+              <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
+                <Icon.download />
+                Import a programme
+              </button>
+            )}
+            {canCreate && (
+              <button className="btn btn-primary" onClick={() => setBuilding(true)}>
+                <Icon.plus />
+                New programme
+              </button>
+            )}
           </div>
         )}
       </div>
       {programmes.length === 0 ? (
         <Empty icon={Icon.list} title="No programmes yet">
-          {coaching
+          {canCreate
             ? 'Import an England Football programme from its overview link, or build one from your templates.'
             : 'Nothing here yet. Programmes appear once a coach imports or builds one.'}
         </Empty>

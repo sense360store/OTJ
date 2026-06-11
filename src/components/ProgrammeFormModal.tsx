@@ -4,12 +4,13 @@
 // update, omit them to create.
 //
 // Assigning a template to a week offers two routes. Add a copy inserts a
-// duplicate owned by the programme, open to every coaching role through the
-// templates insert policy. Attach the original repoints the existing
-// template, which is a templates update and therefore curation: the RLS
-// reserves it for admins, so only admins see it, and only admins can move or
-// remove a week that is already saved. The programmes RLS (owner, or admin)
-// governs the programme row itself; the screens only decide what to surface.
+// duplicate owned by the programme, open to anyone holding templates.create
+// through the templates insert policy. Attach the original repoints the
+// existing template, which is a templates update and therefore curation: it
+// follows templates.manage, so only its holders see it, and only they can
+// move or remove a week that is already saved. The programmes RLS (owner or
+// manager) governs the programme row itself; the screens only decide what to
+// surface.
 import { useState } from 'react'
 import { Icon } from './icons'
 import { ListInput, Loading, MediaThumb, Modal } from './ui'
@@ -18,11 +19,11 @@ import {
   useCopyTemplateToWeek,
   useInsertProgramme,
   useMedia,
+  useMyCapabilities,
   useTemplates,
   useUpdateProgramme,
 } from '../lib/queries'
 import type { ProgrammeInput } from '../lib/queries'
-import { useAuth } from '../hooks/useAuth'
 import { sessionMinutes } from '../lib/data'
 import type { Programme, Template } from '../lib/data'
 
@@ -109,9 +110,10 @@ function PdfPicker({ value, onChange }: { value: string | null; onChange: (id: s
   )
 }
 
-// Pick a template for a week. Attach the original is curation (admin, and
-// only for templates not already in a programme); a copy is open to every
-// coaching role and leaves the original untouched.
+// Pick a template for a week. Attach the original is curation
+// (templates.manage, and only for templates not already in a programme); a
+// copy is open to every templates.create holder and leaves the original
+// untouched.
 function TemplatePicker({
   onPick,
   onClose,
@@ -121,10 +123,10 @@ function TemplatePicker({
   onClose: () => void
   usedIds: Set<string>
 }) {
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   const { data: templates = [], isLoading } = useTemplates()
   const [q, setQ] = useState('')
-  const admin = role === 'admin'
+  const admin = caps.has('templates.manage')
   if (isLoading) return <Loading label="Loading templates…" />
   const list = templates.filter(
     (t) => !usedIds.has(t.id) && (!q || t.name.toLowerCase().includes(q.toLowerCase())),
@@ -184,8 +186,8 @@ export function ProgrammeFormModal({
   onClose: () => void
   onSaved?: (id: string) => void
 }) {
-  const { role } = useAuth()
-  const admin = role === 'admin'
+  const { caps } = useMyCapabilities()
+  const admin = caps.has('templates.manage')
   const insert = useInsertProgramme()
   const update = useUpdateProgramme()
   const assign = useAssignTemplateWeek()
@@ -208,7 +210,8 @@ export function ProgrammeFormModal({
   const set = <K extends keyof ProgrammeInput>(k: K, v: ProgrammeInput[K]) => setForm((f) => ({ ...f, [k]: v }))
 
   // A saved week only moves or clears through a templates update, so those
-  // controls are admin only; everything still unsaved rearranges freely.
+  // controls follow templates.manage; everything still unsaved rearranges
+  // freely.
   const canTouch = (slot: WeekSlot | null) => !slot || slot.mode !== 'existing' || admin
 
   const setWeeks = (n: number) => {

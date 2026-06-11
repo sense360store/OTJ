@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useMemberMap, useTeamMap, useTeams } from '../lib/queries'
+import { useMemberMap, useMyCapabilities, useTeamMap, useTeams } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -148,10 +148,11 @@ function SessionCard({
 
 export function Sessions() {
   const nav = useNav()
-  const { user, role } = useAuth()
-  // Parents watch and follow; they cannot plan, so the create affordance and
-  // the planner links stay hidden for them.
-  const coaching = role === 'coach' || role === 'admin'
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
+  // Members without sessions.create (parents) watch and follow; the create
+  // affordance and the planner links stay hidden for them.
+  const canPlan = caps.has('sessions.create')
   const { sessions, loading, error } = useSessions()
   const { data: teams = [] } = useTeams()
   const teamById = useTeamMap()
@@ -163,9 +164,9 @@ export function Sessions() {
   if (loading) return <Loading />
   if (error) return <ErrorNote />
 
-  // Parents own no sessions, so the ownership filter disappears for them and
-  // they always see the whole club.
-  const effView = coaching ? view : 'all'
+  // Members who cannot plan own no sessions, so the ownership filter
+  // disappears for them and they always see the whole club.
+  const effView = canPlan ? view : 'all'
   // The filter's club value selects sessions saved without a team, a valid
   // state for club-wide events. Team ids are UUIDs, so the sentinel is safe.
   const list = sessions.filter(
@@ -180,10 +181,10 @@ export function Sessions() {
         <div>
           <h2>Sessions</h2>
           <div className="sub">
-            {coaching ? 'Training nights across the club. You see your own by default.' : 'Training nights across the club.'}
+            {canPlan ? 'Training nights across the club. You see your own by default.' : 'Training nights across the club.'}
           </div>
         </div>
-        {coaching && (
+        {canPlan && (
           <button className="btn btn-primary" onClick={() => nav('planner')}>
             <Icon.plus />
             New session
@@ -192,7 +193,7 @@ export function Sessions() {
       </div>
 
       <div className="filter-row" style={{ marginBottom: 18 }}>
-        {coaching && (
+        {canPlan && (
           <>
             <Chip on={view === 'mine'} onClick={() => setView('mine')}>
               My sessions
@@ -217,7 +218,7 @@ export function Sessions() {
         <Empty icon={Icon.calendar} title="No sessions here yet">
           {effView === 'mine' && !teamId
             ? 'Plan your first session and it will appear here.'
-            : coaching
+            : canPlan
               ? 'Nothing matches this filter. Try All sessions or another team.'
               : teamId
                 ? 'Nothing matches this filter. Try another team.'
@@ -234,8 +235,8 @@ export function Sessions() {
                 nav={nav}
                 ownerName={mine ? null : memberById[s.coachId]?.fullName || (s.coachId ? 'Another coach' : 'Club session')}
                 teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
-                canManage={(coaching && mine) || role === 'admin'}
-                coaching={coaching}
+                canManage={caps.has('sessions.manage') || (canPlan && mine)}
+                coaching={canPlan}
                 onDelete={() => setDeleting(s)}
               />
             )

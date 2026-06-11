@@ -33,12 +33,13 @@ import type {
   Programme,
   Role,
   RoleCapability,
+  RoleInfo,
   Session,
   SessionStatus,
   Team,
   Template,
 } from './data'
-import { youtubeId } from './data'
+import { nextPrimaryTeamId, primaryRoleKey, sortRoles, youtubeId } from './data'
 import { sourceLabelForUrl } from './fa'
 
 // ---- Database row shapes (snake_case) ----------------------------------
@@ -106,6 +107,7 @@ interface TemplateRow {
   focus: string | null
   author: string | null
   activities: ActivityRow[] | null
+  created_by: string | null
   created_at: string
   intentions: string[] | null
   programme: string | null
@@ -163,6 +165,20 @@ interface TeamRow {
   created_at: string
 }
 
+interface RoleRow {
+  id: string
+  club_id: string
+  key: string
+  label: string
+  system: boolean
+}
+
+// The roles fields the profiles read embeds through member_roles. PostgREST
+// returns the to-one side as an object, null if the join found nothing.
+interface MemberRoleJoinRow {
+  roles: { id: string; key: string; label: string; system: boolean } | null
+}
+
 interface ProfileRow {
   id: string
   full_name: string | null
@@ -170,7 +186,10 @@ interface ProfileRow {
   avatar_url: string | null
   role: Role
   team_id: string | null
+  all_teams: boolean
   created_at: string
+  member_roles: MemberRoleJoinRow[]
+  member_teams: { team_id: string }[]
 }
 
 interface ClubRow {
@@ -187,13 +206,17 @@ const DRILL_COLS =
 const MEDIA_COLS =
   'id, club_id, name, type, kind, storage_path, embed_url, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label'
 const TEMPLATE_COLS =
-  'id, club_id, name, focus, author, activities, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label'
+  'id, club_id, name, focus, author, activities, created_by, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label'
 const PROGRAMME_COLS =
   'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at'
 const SESSION_COLS =
   'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at'
 const TEAM_COLS = 'id, club_id, name, created_at'
-const PROFILE_COLS = 'id, full_name, avatar, avatar_url, role, team_id, created_at'
+// The role and team assignment sets ride the profiles read as embeds, so the
+// Users screen and the owner labels share one query.
+const PROFILE_COLS =
+  'id, full_name, avatar, avatar_url, role, team_id, all_teams, created_at, member_roles(roles(id, key, label, system)), member_teams(team_id)'
+const ROLE_COLS = 'id, club_id, key, label, system'
 const CLUB_COLS = 'id, name, motto, crest_url'
 
 // ---- Mappers -----------------------------------------------------------
@@ -265,6 +288,7 @@ function toTemplate(r: TemplateRow): Template {
     name: r.name,
     author: r.author ?? '',
     focus: r.focus ?? '',
+    createdBy: r.created_by ?? undefined,
     activities: (r.activities ?? []).map(toActivity),
     intentions: r.intentions ?? [],
     programme: r.programme ?? '',
@@ -322,6 +346,10 @@ function toTeam(r: TeamRow): Team {
   return { id: r.id, name: r.name }
 }
 
+function toRole(r: RoleRow): RoleInfo {
+  return { id: r.id, key: r.key, label: r.label, system: r.system }
+}
+
 function toMember(r: ProfileRow): Member {
   return {
     id: r.id,
@@ -331,6 +359,9 @@ function toMember(r: ProfileRow): Member {
     role: r.role,
     teamId: r.team_id,
     joined: r.created_at,
+    roles: sortRoles((r.member_roles ?? []).flatMap((mr) => (mr.roles ? [mr.roles] : []))),
+    teamIds: (r.member_teams ?? []).map((mt) => mt.team_id),
+    allTeams: r.all_teams,
   }
 }
 
@@ -468,6 +499,20 @@ export function useTeams() {
       const { data, error } = await supabase.from('teams').select(TEAM_COLS).order('name', { ascending: true })
       if (error) throw error
       return (data as unknown as TeamRow[]).map(toTeam)
+    },
+  })
+}
+
+// The club's roles, system and custom, in privilege order. Every club member
+// may read them (the role badges); only users.manage writes them.
+export function useRoles() {
+  return useQuery({
+    queryKey: ['roles'],
+    retry: false,
+    queryFn: async (): Promise<RoleInfo[]> => {
+      const { data, error } = await supabase.from('roles').select(ROLE_COLS).order('created_at', { ascending: true })
+      if (error) throw error
+      return sortRoles((data as unknown as RoleRow[]).map(toRole))
     },
   })
 }
@@ -1063,11 +1108,11 @@ export function useDeleteDrill() {
 }
 
 // ---- Template writes -----------------------------------------------------
-// Create, edit and delete for session templates. Creating is open to every
-// coaching role through the templates insert policy; editing and deleting
-// are curation, which the templates RLS reserves for admins. Insert sets
-// club_id and records the creator's display name as author, matching the
-// imported templates; update sends neither.
+// Create, edit and delete for session templates. Creating follows
+// templates.create; editing and deleting follow the owner or manager arms of
+// the templates RLS. Insert sets club_id and created_by (the owner arm needs
+// it) and records the creator's display name as author, matching the
+// imported templates; update sends none of them.
 
 export interface TemplateInput {
   name: string
@@ -1089,7 +1134,7 @@ function toTemplateWriteRow(input: TemplateInput) {
 
 export function useInsertTemplate() {
   const qc = useQueryClient()
-  const { profile } = useAuth()
+  const { user, profile } = useAuth()
   return useMutation<Template, Error, TemplateInput>({
     mutationFn: async (input) => {
       if (!profile?.club_id) {
@@ -1097,7 +1142,12 @@ export function useInsertTemplate() {
       }
       const { data, error } = await supabase
         .from('templates')
-        .insert({ ...toTemplateWriteRow(input), club_id: profile.club_id, author: profile.full_name || null })
+        .insert({
+          ...toTemplateWriteRow(input),
+          club_id: profile.club_id,
+          created_by: user?.id ?? null,
+          author: profile.full_name || null,
+        })
         .select(TEMPLATE_COLS)
         .single()
       if (error) throw error
@@ -1457,10 +1507,10 @@ export function useLiveSessionSync(sessionId: string | undefined) {
   }, [sessionId, qc])
 }
 
-// ---- Teams and members (admin) ------------------------------------------
-// The teams RLS allows club members to read and admins to write. The
-// profiles_admin_all policy already permits role and team changes by an
-// admin; no policy change was needed for these.
+// ---- Teams (teams.manage) -------------------------------------------------
+// The teams RLS allows club members to read and teams.manage holders to
+// write. Member assignment to teams is user administration and lives in the
+// member section below.
 
 export function useInsertTeam() {
   const qc = useQueryClient()
@@ -1503,17 +1553,126 @@ export function useDeleteTeam() {
   })
 }
 
-export function useUpdateProfile() {
+// ---- Member role and team assignment (users.manage) -----------------------
+// RBAC v2 made assignments sets: member_roles and member_teams rows, diffed
+// against the desired set and applied as inserts and deletes (the tables
+// carry no update policy by design). Both writes are gated server side on
+// users.manage and scoped to the club; a permission refusal or the last
+// admin trigger surfaces as the mutation error, verbatim. The denormalised
+// display primaries on profiles (role, team_id) are kept coherent here, the
+// same way the invite-user function keeps them on invite.
+
+export function useSetMemberRoles() {
   const qc = useQueryClient()
-  return useMutation<void, Error, { id: string; role?: Role; teamId?: string | null }>({
-    mutationFn: async ({ id, role, teamId }) => {
-      const patch: Record<string, unknown> = {}
-      if (role !== undefined) patch.role = role
-      if (teamId !== undefined) patch.team_id = teamId
-      const { error } = await supabase.from('profiles').update(patch).eq('id', id)
+  const { user, refreshProfile } = useAuth()
+  return useMutation<void, Error, { memberId: string; roleIds: string[] }>({
+    mutationFn: async ({ memberId, roleIds }) => {
+      const { data: currentRows, error: readError } = await supabase
+        .from('member_roles')
+        .select('role_id')
+        .eq('member_id', memberId)
+      if (readError) throw readError
+      const current = new Set((currentRows ?? []).map((r: { role_id: string }) => r.role_id))
+      const desired = new Set(roleIds)
+      const adds = roleIds.filter((id) => !current.has(id))
+      const removes = [...current].filter((id) => !desired.has(id))
+
+      // Inserts before deletes, so a failure part way leaves the member with
+      // extra roles rather than none. The last admin trigger fires on the
+      // delete; its message is the error the UI shows.
+      if (adds.length > 0) {
+        const { error } = await supabase
+          .from('member_roles')
+          .insert(adds.map((roleId) => ({ member_id: memberId, role_id: roleId })))
+        if (error) throw error
+      }
+      if (removes.length > 0) {
+        const { error } = await supabase
+          .from('member_roles')
+          .delete()
+          .eq('member_id', memberId)
+          .in('role_id', removes)
+        if (error) throw error
+      }
+
+      // Keep the display primary coherent: the highest precedence system role
+      // now held. Read the keys back rather than trusting the caller's list.
+      const { data: roleRows, error: rolesError } = await supabase
+        .from('roles')
+        .select('key, system')
+        .in('id', roleIds)
+      if (rolesError) throw rolesError
+      const primary = primaryRoleKey((roleRows ?? []) as { key: string; system: boolean }[])
+      const { error: primaryError } = await supabase.from('profiles').update({ role: primary }).eq('id', memberId)
+      if (primaryError) throw primaryError
+    },
+    onSettled: async (_data, _err, { memberId }) => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      qc.invalidateQueries({ queryKey: ['my_capabilities'] })
+      // An admin editing their own roles changes their own shell at once.
+      if (memberId === user?.id) await refreshProfile()
+    },
+  })
+}
+
+export function useSetMemberTeams() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { memberId: string; teamIds: string[] }>({
+    mutationFn: async ({ memberId, teamIds }) => {
+      const { data: currentRows, error: readError } = await supabase
+        .from('member_teams')
+        .select('team_id')
+        .eq('member_id', memberId)
+      if (readError) throw readError
+      const current = new Set((currentRows ?? []).map((r: { team_id: string }) => r.team_id))
+      const desired = new Set(teamIds)
+      const adds = teamIds.filter((id) => !current.has(id))
+      const removes = [...current].filter((id) => !desired.has(id))
+
+      if (adds.length > 0) {
+        const { error } = await supabase
+          .from('member_teams')
+          .insert(adds.map((teamId) => ({ member_id: memberId, team_id: teamId })))
+        if (error) throw error
+      }
+      if (removes.length > 0) {
+        const { error } = await supabase
+          .from('member_teams')
+          .delete()
+          .eq('member_id', memberId)
+          .in('team_id', removes)
+        if (error) throw error
+      }
+
+      // Keep the display primary team valid: unchanged while still selected,
+      // otherwise the first selected team or none.
+      const { data: profileRow, error: profileError } = await supabase
+        .from('profiles')
+        .select('team_id')
+        .eq('id', memberId)
+        .maybeSingle()
+      if (profileError) throw profileError
+      const currentPrimary = (profileRow as { team_id: string | null } | null)?.team_id ?? null
+      const nextPrimary = nextPrimaryTeamId(currentPrimary, teamIds)
+      if (nextPrimary !== currentPrimary) {
+        const { error } = await supabase.from('profiles').update({ team_id: nextPrimary }).eq('id', memberId)
+        if (error) throw error
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+  })
+}
+
+// The durable every team flag. While it is on the specific member_teams rows
+// stay as the remembered selection but nothing reads them.
+export function useSetMemberAllTeams() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { memberId: string; allTeams: boolean }>({
+    mutationFn: async ({ memberId, allTeams }) => {
+      const { error } = await supabase.from('profiles').update({ all_teams: allTeams }).eq('id', memberId)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
   })
 }
 
@@ -1665,13 +1824,16 @@ export function useClearCrest() {
 // The invite goes through the invite-user Edge Function, which holds the
 // service role key server side and re-checks that the caller holds the
 // users.manage capability. functions.invoke sends the signed in user's
-// access token automatically.
+// access token automatically. The function speaks the multi role model:
+// roles is an array of role ids validated against the club's roles table,
+// and the teams are either a set of ids or the all teams flag.
 
 export interface InviteInput {
   email: string
   fullName: string
-  role: 'coach' | 'admin' | 'parent'
-  teamId: string | null
+  roleIds: string[]
+  teamIds: string[]
+  allTeams: boolean
 }
 
 // ---- Import from England Football ---------------------------------------
@@ -1824,7 +1986,13 @@ export function useInviteUser() {
   return useMutation<{ warning?: string }, Error, InviteInput>({
     mutationFn: async (input) => {
       const { data, error } = await supabase.functions.invoke('invite-user', {
-        body: { email: input.email, full_name: input.fullName, role: input.role, team_id: input.teamId },
+        body: {
+          email: input.email,
+          full_name: input.fullName,
+          roles: input.roleIds,
+          team_ids: input.teamIds,
+          all_teams: input.allTeams,
+        },
       })
       if (error) {
         // The function replies with a plain { error } body; surface it.
@@ -1852,11 +2020,12 @@ export function useInviteUser() {
 }
 
 // ---- Capabilities and user administration ---------------------------------
-// 0012_rbac moved access from role names to capabilities: role_capabilities
-// maps each role to named permissions, the policies consult it through
-// has_perm() on every request, and the capabilities catalogue describes each
-// key for the tick grid. Everything here only decides what the UI surfaces;
-// Postgres RLS and the Edge Functions are the real boundary.
+// 0012_rbac moved access from role names to capabilities, and 0015_rbac_roles
+// made roles data: role_capabilities is keyed by role_id, a member holds one
+// or more roles through member_roles, and has_perm() grants on any held
+// role. The hooks here mirror that exactly. Everything here only decides
+// what the UI surfaces; Postgres RLS and the Edge Functions are the real
+// boundary.
 
 // The catalogue, seeded by the migration and read only to clients. The grid
 // renders from it so the catalogue and the grid share one source.
@@ -1872,9 +2041,9 @@ export function useCapabilities() {
   })
 }
 
-// The whole role to capability mapping. Every club member may read it; only
-// users.manage may write it. retry is off so the route guard below settles
-// fast when the table does not exist yet (0012 not applied).
+// The whole role to capability mapping, keyed by role_id. Every club member
+// may read it; only users.manage may write it. retry is off so the grid
+// settles fast rather than retrying a structural failure.
 export function useRoleCapabilities() {
   return useQuery({
     queryKey: ['role_capabilities'],
@@ -1882,32 +2051,53 @@ export function useRoleCapabilities() {
     queryFn: async (): Promise<RoleCapability[]> => {
       const { data, error } = await supabase
         .from('role_capabilities')
-        .select('role, capability')
-        .order('role')
+        .select('role_id, capability')
+        .order('role_id')
         .order('capability')
       if (error) throw error
-      return (data ?? []) as RoleCapability[]
+      return ((data ?? []) as { role_id: string; capability: string }[]).map((rc) => ({
+        roleId: rc.role_id,
+        capability: rc.capability,
+      }))
     },
   })
 }
 
-// The signed in member's capability set, for gating what the UI surfaces
-// (the Users screen, its nav item, admin only affordances). Until 0012 is
-// applied the mapping read fails; the fallback mirrors the old admin role
-// check so the Users screen stays reachable through the transition. The
-// server enforces the real boundary either way.
+// The signed in member's capability set: the union across every role they
+// hold, exactly as has_perm() grants. Reads the member's own member_roles
+// rows, then the capabilities those roles map to. On a genuine load error
+// this fails closed to the empty set; the server enforces the real boundary
+// either way, so a wrongly empty set can hide affordances but never grant.
 export function useMyCapabilities(): { caps: Set<string>; isPending: boolean } {
-  const { role, profileLoading } = useAuth()
-  const { data, isPending, isError } = useRoleCapabilities()
+  const { user } = useAuth()
+  const { data, isPending } = useQuery({
+    queryKey: ['my_capabilities', user?.id],
+    enabled: !!user,
+    retry: false,
+    queryFn: async (): Promise<string[]> => {
+      const { data: roleRows, error: rolesError } = await supabase
+        .from('member_roles')
+        .select('role_id')
+        .eq('member_id', user!.id)
+      if (rolesError) throw rolesError
+      const roleIds = (roleRows ?? []).map((r: { role_id: string }) => r.role_id)
+      if (roleIds.length === 0) return []
+      const { data: capRows, error: capsError } = await supabase
+        .from('role_capabilities')
+        .select('capability')
+        .in('role_id', roleIds)
+      if (capsError) throw capsError
+      return [...new Set((capRows ?? []).map((rc: { capability: string }) => rc.capability))]
+    },
+  })
   return useMemo(() => {
-    if (profileLoading || isPending) return { caps: new Set<string>(), isPending: true }
-    if (isError || !data) return { caps: new Set<string>(role === 'admin' ? ['users.manage'] : []), isPending: false }
-    return { caps: new Set(data.filter((rc) => rc.role === role).map((rc) => rc.capability)), isPending: false }
-  }, [role, profileLoading, data, isPending, isError])
+    if (user && isPending) return { caps: new Set<string>(), isPending: true }
+    return { caps: new Set(data ?? []), isPending: false }
+  }, [user, data, isPending])
 }
 
-// Saves a tick grid edit. Changes apply to every member of the role at once:
-// the policies consult the mapping per request, so there is nothing to
+// Saves a tick grid edit. Changes apply to every member holding the role at
+// once: the policies consult the mapping per request, so there is nothing to
 // redeploy. Inserts and deletes are separate statements; if one fails part
 // way the refetch shows exactly what saved and the grid can be corrected.
 export function useSaveRoleCapabilities() {
@@ -1917,17 +2107,77 @@ export function useSaveRoleCapabilities() {
       if (adds.length > 0) {
         const { error } = await supabase
           .from('role_capabilities')
-          .insert(adds.map((a) => ({ role: a.role, capability: a.capability })))
+          .insert(adds.map((a) => ({ role_id: a.roleId, capability: a.capability })))
         if (error) throw error
       }
-      const byRole = new Map<Role, string[]>()
-      for (const r of removes) byRole.set(r.role, [...(byRole.get(r.role) ?? []), r.capability])
-      for (const [role, capabilities] of byRole) {
-        const { error } = await supabase.from('role_capabilities').delete().eq('role', role).in('capability', capabilities)
+      const byRole = new Map<string, string[]>()
+      for (const r of removes) byRole.set(r.roleId, [...(byRole.get(r.roleId) ?? []), r.capability])
+      for (const [roleId, capabilities] of byRole) {
+        const { error } = await supabase
+          .from('role_capabilities')
+          .delete()
+          .eq('role_id', roleId)
+          .in('capability', capabilities)
         if (error) throw error
       }
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['role_capabilities'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['role_capabilities'] })
+      qc.invalidateQueries({ queryKey: ['my_capabilities'] })
+    },
+  })
+}
+
+// ---- Custom roles ----------------------------------------------------------
+// Admins create, rename and delete custom roles through the roles manager.
+// The insert policy pins system to false and a trigger protects the system
+// rows, so the worst a UI bug can do is surface a refusal. Deleting a custom
+// role cascades its assignments and capability rows away; the UI confirms
+// first and says how many members hold it.
+
+export function useCreateRole() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { key: string; label: string }>({
+    mutationFn: async ({ key, label }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase.from('roles').insert({ club_id: profile.club_id, key, label })
+      if (error) {
+        if (error.code === '23505') throw new Error('A role with that name already exists.')
+        throw error
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['roles'] }),
+  })
+}
+
+export function useRenameRole() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; label: string }>({
+    mutationFn: async ({ id, label }) => {
+      const { error } = await supabase.from('roles').update({ label }).eq('id', id)
+      if (error) throw error
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+    },
+  })
+}
+
+export function useDeleteRole() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('roles').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['roles'] })
+      qc.invalidateQueries({ queryKey: ['role_capabilities'] })
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      qc.invalidateQueries({ queryKey: ['my_capabilities'] })
+    },
   })
 }
 
