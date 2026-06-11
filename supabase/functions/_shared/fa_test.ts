@@ -18,6 +18,7 @@ import {
   PAGE_HOST,
   parseOverviewPage,
   parseSessionPage,
+  themeFromTitle,
   weekFromText,
   weekNumber,
   weeksAreReliable,
@@ -99,6 +100,16 @@ Deno.test('parseSessionPage extracts the session model fields', () => {
   assertEquals(page.pdfUrl, 'https://cdn.englandfootball.com/EFLearning/plans/week-six.pdf')
   assertEquals(page.programme, 'Moving with the ball and turning to attack')
   assertEquals(page.week, 6)
+})
+
+// ---- Theme from the session title: the text before the word "session" -----
+
+Deno.test('themeFromTitle reads the theme the FA names before the word session', () => {
+  assertEquals(themeFromTitle('Goalkeeping session: the basics'), 'Goalkeeping')
+  assertEquals(themeFromTitle('Marking and intercepting session: defend as friends'), 'Marking and intercepting')
+  assertEquals(themeFromTitle('Pressing session'), 'Pressing')
+  // No "session" in the title means no reliable theme, left for the coach.
+  assertEquals(themeFromTitle('Moving with the ball: dribbling and turning - week six'), '')
 })
 
 // ---- The overview parser: week links, allowlist, dedupe, cap --------------
