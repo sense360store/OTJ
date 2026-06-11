@@ -13,7 +13,7 @@ import {
   ASSET_HOST,
   contentRegion,
   countSessionLinks,
-  findVideoEmbed,
+  findVideoEmbeds,
   MAX_PROGRAMME_WEEKS,
   normalisedHref,
   PAGE_HOST,
@@ -113,16 +113,17 @@ Deno.test('themeFromTitle reads the theme the FA names before the word session',
   assertEquals(themeFromTitle('Moving with the ball: dribbling and turning - week six'), '')
 })
 
-// ---- Video session pages: the FA delivers some sessions as a Vimeo embed ---
+// ---- Video session pages: the FA delivers some sessions as Vimeo embeds ----
 // The goalkeeping basics page carries no diagrams, setup strip or coaching
-// points, only the FA large video player. parseSessionPage must read the
-// player.vimeo.com embed so the import makes a video drill, not an empty
-// template.
+// points, only FA large video players. parseSessionPage must read every
+// player.vimeo.com embed so the import makes one video drill per video, not
+// an empty template and not only the first video.
 
-Deno.test('parseSessionPage reads the FA video embed and the empty drill shape', () => {
+Deno.test('parseSessionPage reads the FA video embeds and the empty drill shape', () => {
   const page = parseSessionPage(fixture('session-2022-goalkeeping-the-basics.html'))
   assertEquals(page.title, 'Goalkeeping session: the basics')
-  assertEquals(page.videoEmbedUrl, 'https://player.vimeo.com/video/129532422')
+  assertEquals(page.videoEmbeds.length, 3)
+  assertEquals(page.videoEmbeds[0].embedUrl, 'https://player.vimeo.com/video/129532422')
   // No diagrams, no setup strip, no coaching points: the empty drill shape
   // that, without a video, the importer now refuses instead of landing empty.
   assertEquals(page.activities.length, 0)
@@ -130,6 +131,18 @@ Deno.test('parseSessionPage reads the FA video embed and the empty drill shape',
   assertEquals(page.space, '')
   assertEquals(page.equipment.length, 0)
   assertEquals(page.points.length, 0)
+})
+
+Deno.test('the goalkeeping fixture yields three video embeds, one drill each, not one', () => {
+  // importVideoSession creates one media row and one drill per entry here, so
+  // three embeds in page order with their section headings means the coach
+  // gets all three parts, named apart.
+  const embeds = findVideoEmbeds(fixture('session-2022-goalkeeping-the-basics.html'))
+  assertEquals(embeds, [
+    { embedUrl: 'https://player.vimeo.com/video/129532422', heading: 'Warm up' },
+    { embedUrl: 'https://player.vimeo.com/video/129532424', heading: 'Shot-stopping 1' },
+    { embedUrl: 'https://player.vimeo.com/video/129532425', heading: 'Shot-stopping 2' },
+  ])
 })
 
 Deno.test('the goalkeeping video page is not mistaken for a programme overview', () => {
@@ -147,21 +160,22 @@ Deno.test('a normal session page with diagrams is not treated as a video session
   assert(page.activities.length > 0)
 })
 
-Deno.test('findVideoEmbed ignores a page with no allowlisted player', () => {
-  assertEquals(findVideoEmbed('<html><body><iframe src="https://youtube.com/embed/x"></iframe></body></html>'), '')
+Deno.test('findVideoEmbeds ignores a page with no allowlisted player', () => {
+  assertEquals(findVideoEmbeds('<html><body><iframe src="https://youtube.com/embed/x"></iframe></body></html>'), [])
   // A video-wrap with an unknown player type is not stored.
   assertEquals(
-    findVideoEmbed(
+    findVideoEmbeds(
       '<main><div class="efl-large-video-player__video-wrap" data-video-type="dailymotion" data-video-id="123"></div></main>',
     ),
-    '',
+    [],
   )
-  // The allowlisted Vimeo player resolves to its player URL.
+  // The allowlisted Vimeo player resolves to its player URL; a bare wrap
+  // outside a player section carries no heading.
   assertEquals(
-    findVideoEmbed(
+    findVideoEmbeds(
       '<main><div class="efl-large-video-player__video-wrap" data-video-type="vimeo" data-video-id="42"></div></main>',
     ),
-    'https://player.vimeo.com/video/42',
+    [{ embedUrl: 'https://player.vimeo.com/video/42', heading: '' }],
   )
 })
 
