@@ -20,6 +20,7 @@ import type { Programme, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR, SourceLink } from '../components/ui'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
+import { TemplateFormModal } from '../components/TemplateFormModal'
 import { ApplyProgrammeModal } from '../components/ApplyProgrammeModal'
 
 type NavFn = ReturnType<typeof useNav>
@@ -31,6 +32,7 @@ function WeekRow({
   coaching,
   manyTeams,
   nav,
+  onEditTemplate,
 }: {
   week: number
   template: Template | null
@@ -38,6 +40,9 @@ function WeekRow({
   coaching: boolean
   manyTeams: boolean
   nav: NavFn
+  // Editing a week's template is a templates update, which the RLS reserves
+  // for admins; null hides the affordance for everyone else.
+  onEditTemplate: ((t: Template) => void) | null
 }) {
   const startFromTemplate = useStartFromTemplate()
   const teamById = useTeamMap()
@@ -59,6 +64,17 @@ function WeekRow({
           <span className="muted" style={{ fontSize: 13.5, alignSelf: 'center' }}>
             No template assigned yet.
           </span>
+        )}
+        {template && onEditTemplate && (
+          <button
+            className="icon-btn"
+            style={{ width: 34, height: 34, flex: '0 0 auto' }}
+            aria-label={`Edit week ${week} template`}
+            title="Edit template"
+            onClick={() => onEditTemplate(template)}
+          >
+            <Icon.edit style={{ width: 15, height: 15 }} />
+          </button>
         )}
       </div>
       {template && template.activities.length > 0 && (
@@ -172,11 +188,14 @@ function ProgrammeView({ p }: { p: Programme }) {
   const [editing, setEditing] = useState(false)
   const [applying, setApplying] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null)
 
   const coaching = role === 'coach' || role === 'admin'
   // Backfilled programmes have no owner, so only an admin curates them. The
-  // programmes RLS enforces the same rule; this only surfaces the buttons.
-  const canManage = role === 'admin' || (!!p.createdBy && p.createdBy === user?.id)
+  // owner arm carries the coaching role condition the programmes RLS has, so
+  // a coach demoted to parent loses the buttons with the access. The RLS
+  // enforces the same rule; this only surfaces the buttons.
+  const canManage = role === 'admin' || (coaching && !!p.createdBy && p.createdBy === user?.id)
 
   const weekTemplates: Record<number, Template> = {}
   for (const t of templates) {
@@ -275,11 +294,13 @@ function ProgrammeView({ p }: { p: Programme }) {
             coaching={coaching}
             manyTeams={manyTeams}
             nav={nav}
+            onEditTemplate={role === 'admin' ? setEditingTemplate : null}
           />
         ))}
       </div>
 
       {editing && <ProgrammeFormModal programme={p} weekTemplates={weekTemplates} onClose={() => setEditing(false)} />}
+      {editingTemplate && <TemplateFormModal template={editingTemplate} onClose={() => setEditingTemplate(null)} />}
       {applying && <ApplyProgrammeModal programme={p} weekTemplates={weekTemplates} onClose={() => setApplying(false)} />}
       {deleting && (
         <DeleteProgrammeModal

@@ -7,46 +7,15 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteSession, useMemberMap, useTeamMap, useTeams } from '../lib/queries'
+import { useMemberMap, useTeamMap, useTeams } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Chip, Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { Chip, Empty, ErrorNote, fmtDate, Loading, PHASE_COLOR } from '../components/ui'
+import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { downloadSessionIcs } from '../lib/ics'
 
 type Nav = ReturnType<typeof useNav>
-
-function DeleteSessionModal({ s, onClose }: { s: Session; onClose: () => void }) {
-  const del = useDeleteSession()
-  const remove = () => del.mutate({ id: s.id }, { onSuccess: onClose })
-  return (
-    <Modal
-      title="Delete session"
-      sub={s.name}
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
-            <Icon.trash />
-            {del.isPending ? 'Deleting…' : 'Delete'}
-          </button>
-        </>
-      }
-    >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-        This removes the session and its plan from the club calendar. The drills themselves stay in the library.
-      </p>
-      {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
-          Could not delete. Try again.
-        </p>
-      )}
-    </Modal>
-  )
-}
 
 function SessionCard({
   s,

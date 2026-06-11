@@ -10,6 +10,7 @@ import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, ListInput, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
+import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { downloadSessionIcs } from '../lib/ics'
 
 // A new session belongs to the signed-in coach and defaults to their team
@@ -169,6 +170,7 @@ function PlannerEditor({
       : blankSession(newDefaults?.coachId ?? '', newDefaults?.teamId ?? null),
   )
   const [addOpen, setAddOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const dragFrom = useRef<number | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
 
@@ -448,6 +450,14 @@ function PlannerEditor({
                 </button>
               </>
             )}
+            {/* Delete is owner or admin, the same rule the sessions delete RLS
+                enforces; a new unsaved session has nothing to delete yet. */}
+            {existing && !readOnly && (
+              <button className="btn btn-ghost btn-block" onClick={() => setDeleteOpen(true)}>
+                <Icon.trash />
+                Delete session
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -460,6 +470,9 @@ function PlannerEditor({
             setAddOpen(false)
           }}
         />
+      )}
+      {deleteOpen && existing && (
+        <DeleteSessionModal s={existing} onClose={() => setDeleteOpen(false)} onDeleted={() => nav('sessions')} />
       )}
     </div>
   )

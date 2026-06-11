@@ -18,6 +18,7 @@ import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
+import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
 import './SessionDay.css'
@@ -55,8 +56,13 @@ function SessionDayView({ session }: { session: Session }) {
   // The same link opens the live view for everyone; the label says whether
   // this user will drive it (owner, or admin) or watch it.
   const canDrive = session.coachId === user?.id || role === 'admin'
+  // Edit and delete follow the sessions write RLS: owner with a coaching
+  // role, or admin. The role condition matters for a coach demoted to parent,
+  // who still matches coach_id on old sessions.
+  const canManage = role === 'admin' || (role === 'coach' && session.coachId === user?.id)
   const [tab, setTab] = useState<Tab>('setup')
   const [viewerAt, setViewerAt] = useState<number | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [checked, setChecked] = useState<string[]>(() => loadChecked(session.id))
 
   // Activities resolved once: drill, diagram media (images only; videos and
@@ -130,6 +136,23 @@ function SessionDayView({ session }: { session: Session }) {
           {canDrive ? 'Start' : 'Watch'}
         </button>
       </div>
+
+      {canManage && (
+        <div className="row" style={{ gap: 9, marginBottom: 12 }}>
+          <button className="btn btn-ghost btn-sm" onClick={() => nav('planner', { sessionId: session.id })}>
+            <Icon.edit />
+            Edit plan
+          </button>
+          <button
+            className="btn btn-ghost btn-sm icon-only"
+            style={{ width: 38, padding: 0 }}
+            aria-label="Delete session"
+            onClick={() => setDeleting(true)}
+          >
+            <Icon.trash />
+          </button>
+        </div>
+      )}
 
       {programme && (
         <button
@@ -311,6 +334,7 @@ function SessionDayView({ session }: { session: Session }) {
       {viewerAt !== null && slides.length > 0 && (
         <DiagramViewer slides={slides} startIndex={viewerAt} onClose={() => setViewerAt(null)} />
       )}
+      {deleting && <DeleteSessionModal s={session} onClose={() => setDeleting(false)} onDeleted={() => nav('sessions')} />}
     </div>
   )
 }

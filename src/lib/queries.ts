@@ -10,6 +10,11 @@
 // RLS scopes every read to the signed-in coach's club automatically. There is
 // deliberately no client-side club filter, so a scoping regression cannot be
 // masked by belt-and-braces filtering.
+//
+// Content mutations invalidate their queries on settled, not only on success,
+// so a write that fails part way (a multi-step save that stopped midway, a
+// delete the server refused) still refreshes the affected lists rather than
+// leaving a stale view.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
@@ -785,7 +790,7 @@ export function useUploadMedia() {
         throw new Error(`The file uploaded but could not be saved to the library: ${insertError.message}`)
       }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['media'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['media'] }),
   })
 }
 
@@ -869,9 +874,25 @@ export function useReplaceMedia() {
         await supabase.storage.from('media').remove([previousPath])
       }
     },
-    onSuccess: () => {
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['media'] })
     },
+  })
+}
+
+// ---- Media rename --------------------------------------------------------
+// Renames a media item in place; every drill that links it keeps working.
+// Owner or admin only; the media update RLS is the real enforcement, and a
+// write it blocks updates no rows, which is reported rather than swallowed.
+export function useRenameMedia() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name: string }>({
+    mutationFn: async ({ id, name }) => {
+      const { data, error } = await supabase.from('media').update({ name }).eq('id', id).select('id')
+      if (error) throw new Error(`Could not rename: ${error.message}`)
+      if (!data?.length) throw new Error('You do not have permission to rename this item.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['media'] }),
   })
 }
 
@@ -889,7 +910,7 @@ export function useRemoveSampleMedia() {
       const { error } = await supabase.from('media').delete().in('id', ids)
       if (error) throw new Error(`Could not remove the samples: ${error.message}`)
     },
-    onSuccess: () => {
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['media'] })
       qc.invalidateQueries({ queryKey: ['drills'] })
     },
@@ -898,20 +919,21 @@ export function useRemoveSampleMedia() {
 
 // ---- Media delete ------------------------------------------------------
 // Owner or admin only; the media RLS delete policy is the real enforcement.
-// The storage object goes first, then the row. Drills that link the row fall
-// back to no media through the on delete set null foreign key.
+// The row goes first, so the RLS rules before the object is touched: a
+// blocked delete (no error, zero rows) removes nothing and is reported. Once
+// the row is gone the object is unreachable, so its removal is best effort.
+// Drills that link the row fall back to no media through the on delete set
+// null foreign key.
 export function useDeleteMedia() {
   const qc = useQueryClient()
   return useMutation<void, Error, { id: string; storagePath?: string | null }>({
     mutationFn: async ({ id, storagePath }) => {
-      if (storagePath) {
-        const { error } = await supabase.storage.from('media').remove([storagePath])
-        if (error) throw error
-      }
-      const { error } = await supabase.from('media').delete().eq('id', id)
+      const { data, error } = await supabase.from('media').delete().eq('id', id).select('id')
       if (error) throw error
+      if (!data?.length) throw new Error('You do not have permission to delete this item.')
+      if (storagePath) await supabase.storage.from('media').remove([storagePath])
     },
-    onSuccess: () => {
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['media'] })
       qc.invalidateQueries({ queryKey: ['drills'] })
     },
@@ -998,7 +1020,7 @@ export function useInsertDrill() {
       if (error) throw error
       return toDrill(data as unknown as DrillRow)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['drills'] }),
   })
 }
 
@@ -1015,7 +1037,7 @@ export function useUpdateDrill() {
       if (error) throw error
       return toDrill(data as unknown as DrillRow)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['drills'] }),
   })
 }
 
@@ -1029,7 +1051,83 @@ export function useDeleteDrill() {
       const { error } = await supabase.from('drills').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+  })
+}
+
+// ---- Template writes -----------------------------------------------------
+// Create, edit and delete for session templates. Creating is open to every
+// coaching role through the templates insert policy; editing and deleting
+// are curation, which the templates RLS reserves for admins. Insert sets
+// club_id and records the creator's display name as author, matching the
+// imported templates; update sends neither.
+
+export interface TemplateInput {
+  name: string
+  focus: string
+  intentions: string[]
+  activities: Activity[]
+  sourceUrl: string
+}
+
+function toTemplateWriteRow(input: TemplateInput) {
+  return {
+    name: input.name,
+    focus: input.focus || null,
+    intentions: input.intentions,
+    activities: input.activities.map(toActivityRow),
+    ...toSourceFields(input.sourceUrl),
+  }
+}
+
+export function useInsertTemplate() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<Template, Error, TemplateInput>({
+    mutationFn: async (input) => {
+      if (!profile?.club_id) {
+        throw new Error('You must be signed in to create a template.')
+      }
+      const { data, error } = await supabase
+        .from('templates')
+        .insert({ ...toTemplateWriteRow(input), club_id: profile.club_id, author: profile.full_name || null })
+        .select(TEMPLATE_COLS)
+        .single()
+      if (error) throw error
+      return toTemplate(data as unknown as TemplateRow)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+  })
+}
+
+export function useUpdateTemplate() {
+  const qc = useQueryClient()
+  return useMutation<Template, Error, { id: string; input: TemplateInput }>({
+    mutationFn: async ({ id, input }) => {
+      const { data, error } = await supabase
+        .from('templates')
+        .update(toTemplateWriteRow(input))
+        .eq('id', id)
+        .select(TEMPLATE_COLS)
+        .single()
+      if (error) throw error
+      return toTemplate(data as unknown as TemplateRow)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+  })
+}
+
+// Sessions built from a template copy its activities, so deleting the
+// template leaves them untouched. A template serving as a programme week
+// leaves that week empty, which the programme page shows as unassigned.
+export function useDeleteTemplate() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('templates').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['templates'] }),
   })
 }
 
@@ -1078,7 +1176,7 @@ export function useInsertProgramme() {
       if (error) throw error
       return toProgramme(data as unknown as ProgrammeRow)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['programmes'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['programmes'] }),
   })
 }
 
@@ -1095,7 +1193,7 @@ export function useUpdateProgramme() {
       if (error) throw error
       return toProgramme(data as unknown as ProgrammeRow)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['programmes'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['programmes'] }),
   })
 }
 
@@ -1109,7 +1207,7 @@ export function useDeleteProgramme() {
       const { error } = await supabase.from('programmes').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => {
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['programmes'] })
       qc.invalidateQueries({ queryKey: ['templates'] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
@@ -1131,7 +1229,7 @@ export function useAssignTemplateWeek() {
         .eq('id', templateId)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['templates'] }),
   })
 }
 
@@ -1157,7 +1255,7 @@ export function useCopyTemplateToWeek() {
       })
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['templates'] }),
   })
 }
 
@@ -1279,7 +1377,7 @@ export function useDeleteSession() {
       const { error } = await supabase.from('sessions').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   })
 }
 
