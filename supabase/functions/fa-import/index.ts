@@ -8,9 +8,11 @@
 // CLAUDE.md, Third-party content, for the standing policy this code
 // implements.
 //
-// The parsing and import core lives in ../_shared/fa.ts, shared with
-// fa-import-programme so the session-import behaviour stays
-// single-sourced. This function's external behaviour is unchanged:
+// The whole request body lives in ../_shared/fa.ts (detectFaPage plus
+// runSessionImport), shared with fa-import-smart so the session import
+// is one code path wherever it is reached from. The UI now calls
+// fa-import-smart; this endpoint stays deployed and behaving as it
+// always has for anything still calling it directly.
 //   * The Supabase client is built from the caller's JWT and the anon
 //     key, so every read and write goes through RLS as that user. The
 //     service role key is not used in this function at all.
@@ -18,8 +20,7 @@
 //     and asset downloads must come from cdn.englandfootball.com over
 //     https. Anything else is rejected or skipped.
 //   * One page per call. No link following, no crawling, no caps lifted
-//     by the caller. A programme overview is refused here and belongs
-//     to fa-import-programme.
+//     by the caller. A programme overview is refused here.
 //
 // Parsing is deliberately defensive: a missing piece becomes an empty
 // field and a warning in the response, never a failure. Deploy with
@@ -29,13 +30,12 @@
 import {
   allowedUrl,
   corsHeaders,
-  countSessionLinks,
+  detectFaPage,
   fetchFaPage,
-  importParsedSession,
   PAGE_HOST,
-  parseSessionPage,
   reply,
   resolveCaller,
+  runSessionImport,
 } from '../_shared/fa.ts'
 
 Deno.serve(async (req) => {
@@ -65,45 +65,5 @@ Deno.serve(async (req) => {
     return reply(422, { error: 'Could not fetch that page from England Football Learning.' })
   }
 
-  const page = parseSessionPage(html)
-  if (!page.title) {
-    return reply(422, { error: 'That page does not look like an England Football session page.' })
-  }
-
-  // A programme overview lists a programme's weekly sessions rather than
-  // being one; importing it would manufacture a junk template of anonymous
-  // drills. Detect it by its title, or by the absence of both a setup strip
-  // and an activity gallery on a page that links several session pages, and
-  // refuse before anything is written.
-  const lacksSetup = !page.space && !page.players && page.equipment.length === 0
-  const lacksGallery = page.activities.length === 0
-  if (/^session\s+programme/i.test(page.title) || (lacksSetup && lacksGallery && countSessionLinks(html, pageUrl) > 1)) {
-    return reply(422, {
-      error: 'That link is a programme overview. Use Import a programme, or import its weekly session pages individually.',
-    })
-  }
-
-  // The single-page import keeps writing the legacy programme and week
-  // labels it has always written; the entity-backed links are set by the
-  // programme import only.
-  const result = await importParsedSession(caller, page, pageUrl.href, {
-    programme: page.programme || null,
-    week: page.week,
-  })
-
-  if (!result.templateId) {
-    return reply(500, {
-      error: 'Imported the drills but could not create the template. Check the drill library.',
-      created: result.created,
-      warnings: result.warnings,
-    })
-  }
-
-  return reply(200, {
-    ok: true,
-    template_id: result.templateId,
-    template_name: page.title,
-    created: result.created,
-    warnings: result.warnings,
-  })
+  return await runSessionImport(caller, detectFaPage(html, pageUrl), pageUrl)
 })

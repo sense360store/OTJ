@@ -13,7 +13,7 @@ import type { Programme, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading } from '../components/ui'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
-import { ImportProgrammeModal } from '../components/ImportProgrammeModal'
+import { ImportFAModal } from '../components/ImportFAModal'
 
 // The progress hint: nothing until the programme is applied, then completed
 // weeks for the one team, or the team count when applied more widely.
@@ -122,7 +122,7 @@ export function Programmes() {
           <div className="row wrap">
             <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
               <Icon.download />
-              Import a programme
+              Import from England Football
             </button>
             <button className="btn btn-primary" onClick={() => setBuilding(true)}>
               <Icon.plus />
@@ -150,7 +150,7 @@ export function Programmes() {
           ))}
         </div>
       )}
-      {importOpen && <ImportProgrammeModal onClose={() => setImportOpen(false)} />}
+      {importOpen && <ImportFAModal onClose={() => setImportOpen(false)} />}
       {building && (
         <ProgrammeFormModal onClose={() => setBuilding(false)} onSaved={(id) => nav('programme', { programmeId: id })} />
       )}

@@ -13,6 +13,7 @@ import {
   ASSET_HOST,
   contentRegion,
   countSessionLinks,
+  detectFaPage,
   MAX_PROGRAMME_WEEKS,
   normalisedHref,
   PAGE_HOST,
@@ -259,6 +260,67 @@ Deno.test('weekFromText reads both word orders and ignores hyphenated lengths', 
   assertEquals(weekFromText('festival week'), null)
   assertEquals(weekFromText('every week counts'), null)
   assertEquals(weekFromText('no weeks here at all'), null)
+})
+
+// ---- One detection drives the smart importer and both mirror guards -------
+
+Deno.test('detectFaPage reads both real overviews as programmes', () => {
+  const u25 = new URL(
+    'https://learn.englandfootball.com/sessions/resources/2025/Session-programme-marking-and-intercepting-to-defend',
+  )
+  // Overviews embed each week's activity gallery, so the programme arms must
+  // win over the gallery marker.
+  const d25 = detectFaPage(fixture('overview-2025-marking-and-intercepting-to-defend.html'), u25)
+  assertEquals(d25.kind, 'programme')
+  const u24 = new URL('https://learn.englandfootball.com/sessions/resources/2024/Session-programme-press-tackle-and-cover')
+  assertEquals(detectFaPage(fixture('overview-2024-press-tackle-and-cover.html'), u24).kind, 'programme')
+})
+
+Deno.test('detectFaPage reads real session pages as sessions', () => {
+  // The acceptance page: a plain single session with a setup strip and an
+  // activity gallery.
+  const festival = detectFaPage(
+    fixture('session-2026-receiving-and-finishing-festival-week.html'),
+    new URL('https://learn.englandfootball.com/sessions/resources/2026/Receiving-and-finishing-session-festival-week'),
+  )
+  assertEquals(festival.kind, 'session')
+  assertEquals(festival.session.title, 'Receiving and finishing session: festival week')
+  assert(festival.session.activities.length > 0)
+  // The hard case: a two week session page that is titled "sessions", names
+  // weeks in its headings and links its six-week programme overview. The
+  // one overview link is unnumbered, so the weekly-container arm stays
+  // quiet and the setup strip decides.
+  const dynamic = detectFaPage(
+    fixture('session-2026-marking-and-intercepting-dynamic-defending.html'),
+    new URL('https://learn.englandfootball.com/sessions/resources/2026/Marking-and-intercepting-sessions-dynamic-defending'),
+  )
+  assertEquals(dynamic.kind, 'session')
+  assertEquals(dynamic.session.title, 'Marking and intercepting sessions: dynamic defending')
+})
+
+Deno.test('detectFaPage reads a fully numbered weekly container as a programme without the title prefix', () => {
+  const html = `
+    <html><head><meta property="og:title" content="Defending blocks" /></head><body><main>
+    <a href="/sessions/block-1">Week one: press</a>
+    <a href="/sessions/block-2">Week two: cover</a>
+    <a href="/sessions/block-3">Week three: recover</a>
+    </main></body></html>`
+  assertEquals(detectFaPage(html, OVERVIEW_URL).kind, 'programme')
+})
+
+Deno.test('detectFaPage reads neither shape as unknown', () => {
+  // A dead or junk page.
+  assertEquals(detectFaPage('<html><body><p>Nothing here.</p></body></html>', OVERVIEW_URL).kind, 'unknown')
+  // A page with a few unnumbered cross references and no setup or gallery
+  // (a listing or an article): the document-order fallback alone must not
+  // make it a programme, nor a session.
+  const listing = `
+    <html><head><meta property="og:title" content="Coaching articles" /></head><body><main>
+    <a href="/sessions/first-block">First block</a>
+    <a href="/sessions/second-block">Second block</a>
+    <a href="/sessions/third-block">Third block</a>
+    </main></body></html>`
+  assertEquals(detectFaPage(listing, OVERVIEW_URL).kind, 'unknown')
 })
 
 // ---- fa-import's overview refusal counts session links, never follows -----
