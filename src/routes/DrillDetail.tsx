@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteDrill, useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
+import { useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
 import { isSampleMedia, PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -23,6 +23,7 @@ import {
   SourceLink,
 } from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
+import { DeleteDrillModal } from '../components/DeleteDrillModal'
 import { MediaPlayerModal } from '../components/MediaPlayerModal'
 
 function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
@@ -131,52 +132,6 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
       <div className="muted" style={{ fontSize: 13.5 }}>
         Adds <b style={{ color: 'var(--ink)' }}>{drill.duration} min</b> to the session.
       </div>
-    </Modal>
-  )
-}
-
-// Plain confirm before a delete. Sessions and templates that reference the
-// drill keep their timing and show a removed drill placeholder.
-function DeleteDrillModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
-  const nav = useNav()
-  const del = useDeleteDrill()
-  const remove = () => {
-    del.mutate(
-      { id: drill.id },
-      {
-        onSuccess: () => {
-          onClose()
-          nav('library')
-        },
-      },
-    )
-  }
-  return (
-    <Modal
-      title="Delete drill"
-      sub={drill.title}
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
-            <Icon.trash />
-            {del.isPending ? 'Deleting…' : 'Delete'}
-          </button>
-        </>
-      }
-    >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-        This removes the drill from the club library. Sessions and templates that include it keep their timings and show a
-        removed drill placeholder instead.
-      </p>
-      {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
-          Could not delete. Try again.
-        </p>
-      )}
     </Modal>
   )
 }
@@ -434,7 +389,9 @@ export function DrillDetail() {
 
       {addOpen && <AddToSessionModal drill={drill} onClose={() => setAddOpen(false)} />}
       {editOpen && <DrillFormModal drill={drill} onClose={() => setEditOpen(false)} />}
-      {deleteOpen && <DeleteDrillModal drill={drill} onClose={() => setDeleteOpen(false)} />}
+      {deleteOpen && (
+        <DeleteDrillModal drill={drill} onClose={() => setDeleteOpen(false)} afterDelete={() => nav('library')} />
+      )}
       {playerOpen && media && <MediaPlayerModal item={media} onClose={() => setPlayerOpen(false)} />}
     </div>
   )
