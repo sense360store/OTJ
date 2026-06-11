@@ -30,6 +30,22 @@ export interface Member {
   joined: string
 }
 
+// A capability from the catalogue: a named permission such as
+// drills.create. Policies check capabilities through has_perm(), and the
+// Users screen's tick grid renders the catalogue and edits which roles
+// hold which capabilities.
+export interface Capability {
+  key: string
+  label: string
+  description: string
+}
+
+// One tick in the role to capability mapping.
+export interface RoleCapability {
+  role: Role
+  capability: string
+}
+
 // The club row. crestUrl is a storage path in the media bucket or a full URL.
 export interface Club {
   id: string

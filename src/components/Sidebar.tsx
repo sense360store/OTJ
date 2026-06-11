@@ -3,7 +3,7 @@ import { Crest } from './Crest'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
 import { UserAvatar } from './UserAvatar'
-import { useDrills } from '../lib/queries'
+import { useDrills, useMyCapabilities } from '../lib/queries'
 import { useAuth } from '../hooks/useAuth'
 import type { Role } from '../hooks/useAuth'
 import { useClubBranding } from '../hooks/useClubBranding'
@@ -48,9 +48,10 @@ const NAV: NavSection[] = [
   },
 ]
 
-// The role drives which nav items show; the routes and RLS enforce the same
-// boundary. Admin is the only role that sees user management. Parent is
-// read-only: everything except the planner and the admin tools.
+// The role drives which nav items show, except Users, which follows the
+// users.manage capability below; the routes and RLS enforce the same
+// boundary. Parent is read-only: everything except the planner and the
+// admin tools.
 const ROLE_NAV: Record<Role, Set<string>> = {
   coach: new Set(['home', 'library', 'sessions', 'planner', 'programmes', 'templates', 'media']),
   admin: new Set([
@@ -62,7 +63,6 @@ const ROLE_NAV: Record<Role, Set<string>> = {
     'templates',
     'media',
     'admin-club',
-    'admin-users',
     'admin-teams',
   ]),
   parent: new Set(['home', 'library', 'sessions', 'programmes', 'templates', 'media']),
@@ -77,7 +77,10 @@ export function Sidebar() {
   const { profile, role, signOut } = useAuth()
   const { name, motto } = useClubBranding()
   const { data: drills } = useDrills()
+  const { caps } = useMyCapabilities()
   const allowed = ROLE_NAV[role ?? 'coach']
+  // The Users item is capability driven so it tracks the tick grid.
+  const showItem = (id: string) => (id === 'admin-users' ? caps.has('users.manage') : allowed.has(id))
   const isActive = (id: string) => screen === id || (id === 'library' && screen === 'drill')
   // The library badge is the live drill count, shown once the read resolves.
   const badgeFor = (id: string): string | undefined =>
@@ -101,7 +104,7 @@ export function Sidebar() {
       </div>
       <div className="sb-scroll">
         {NAV.map((sec, i) => {
-          const items = sec.items.filter((it) => allowed.has(it.id))
+          const items = sec.items.filter((it) => showItem(it.id))
           if (items.length === 0) return null
           return (
             <div key={i}>

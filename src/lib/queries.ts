@@ -16,6 +16,7 @@ import { supabase } from './supabase'
 import { useAuth } from '../hooks/useAuth'
 import type {
   Activity,
+  Capability,
   Club,
   CornerKey,
   Drill,
@@ -26,6 +27,7 @@ import type {
   Phase,
   Programme,
   Role,
+  RoleCapability,
   Session,
   SessionStatus,
   Team,
@@ -126,7 +128,8 @@ interface ProgrammeRow {
 export interface SessionRow {
   id: string
   club_id: string
-  coach_id: string
+  // Null once the owning coach was removed; the session stays club owned.
+  coach_id: string | null
   team_id: string | null
   name: string
   focus: string | null
@@ -293,7 +296,9 @@ export function toSession(r: SessionRow): Session {
     focus: r.focus ?? '',
     status: r.status,
     activities: (r.activities ?? []).map(toActivity),
-    coachId: r.coach_id,
+    // '' when the owning coach was removed: it matches no user id, so the
+    // ownership affordances treat the session as someone else's (club owned).
+    coachId: r.coach_id ?? '',
     teamId: r.team_id,
     intentions: r.intentions ?? [],
     space: r.space ?? '',
@@ -1118,9 +1123,9 @@ export function useDeleteProgramme() {
 }
 
 // Points an existing template at a programme week, or clears the link with
-// nulls. This is a templates update, which the RLS reserves for the curating
-// role (admin); the builder only surfaces it there. Coaches add weeks with
-// the copy below.
+// nulls. This is a templates update, which the RLS allows to the template's
+// owner or a templates.manage holder (admin); the builder only surfaces it
+// for admins. Coaches add weeks with the copy below.
 export function useAssignTemplateWeek() {
   const qc = useQueryClient()
   return useMutation<void, Error, { templateId: string; programmeId: string | null; week: number | null }>({
@@ -1136,16 +1141,19 @@ export function useAssignTemplateWeek() {
 }
 
 // Copies a template into a programme week as a fresh insert, leaving the
-// original untouched. Open to every coaching role through the templates
-// insert policy. The legacy programme and week label columns are not written.
+// original untouched. Open to every holder of templates.create through the
+// templates insert policy; created_by records the copier as the owner so
+// they can edit or delete their copy. The legacy programme and week label
+// columns are not written.
 export function useCopyTemplateToWeek() {
   const qc = useQueryClient()
-  const { profile } = useAuth()
+  const { user, profile } = useAuth()
   return useMutation<void, Error, { template: Template; programmeId: string; week: number }>({
     mutationFn: async ({ template, programmeId, week }) => {
-      if (!profile?.club_id) throw new Error('You must be signed in.')
+      if (!user || !profile?.club_id) throw new Error('You must be signed in.')
       const { error } = await supabase.from('templates').insert({
         club_id: profile.club_id,
+        created_by: user.id,
         name: template.name,
         focus: template.focus || null,
         author: template.author || null,
@@ -1555,8 +1563,9 @@ export function useClearCrest() {
 
 // ---- Invites -------------------------------------------------------------
 // The invite goes through the invite-user Edge Function, which holds the
-// service role key server side and re-checks that the caller is an admin.
-// functions.invoke sends the signed in user's access token automatically.
+// service role key server side and re-checks that the caller holds the
+// users.manage capability. functions.invoke sends the signed in user's
+// access token automatically.
 
 export interface InviteInput {
   email: string
@@ -1734,7 +1743,155 @@ export function useInviteUser() {
       return (data ?? {}) as { warning?: string }
     },
     // The invite creates the auth user at once, so the new profile row is
-    // already in the list.
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+    // already in the list, in the invited state until they first sign in.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      qc.invalidateQueries({ queryKey: ['member_states'] })
+    },
+  })
+}
+
+// ---- Capabilities and user administration ---------------------------------
+// 0012_rbac moved access from role names to capabilities: role_capabilities
+// maps each role to named permissions, the policies consult it through
+// has_perm() on every request, and the capabilities catalogue describes each
+// key for the tick grid. Everything here only decides what the UI surfaces;
+// Postgres RLS and the Edge Functions are the real boundary.
+
+// The catalogue, seeded by the migration and read only to clients. The grid
+// renders from it so the catalogue and the grid share one source.
+export function useCapabilities() {
+  return useQuery({
+    queryKey: ['capabilities'],
+    retry: false,
+    queryFn: async (): Promise<Capability[]> => {
+      const { data, error } = await supabase.from('capabilities').select('key, label, description').order('key')
+      if (error) throw error
+      return (data ?? []) as Capability[]
+    },
+  })
+}
+
+// The whole role to capability mapping. Every club member may read it; only
+// users.manage may write it. retry is off so the route guard below settles
+// fast when the table does not exist yet (0012 not applied).
+export function useRoleCapabilities() {
+  return useQuery({
+    queryKey: ['role_capabilities'],
+    retry: false,
+    queryFn: async (): Promise<RoleCapability[]> => {
+      const { data, error } = await supabase
+        .from('role_capabilities')
+        .select('role, capability')
+        .order('role')
+        .order('capability')
+      if (error) throw error
+      return (data ?? []) as RoleCapability[]
+    },
+  })
+}
+
+// The signed in member's capability set, for gating what the UI surfaces
+// (the Users screen, its nav item, admin only affordances). Until 0012 is
+// applied the mapping read fails; the fallback mirrors the old admin role
+// check so the Users screen stays reachable through the transition. The
+// server enforces the real boundary either way.
+export function useMyCapabilities(): { caps: Set<string>; isPending: boolean } {
+  const { role, profileLoading } = useAuth()
+  const { data, isPending, isError } = useRoleCapabilities()
+  return useMemo(() => {
+    if (profileLoading || isPending) return { caps: new Set<string>(), isPending: true }
+    if (isError || !data) return { caps: new Set<string>(role === 'admin' ? ['users.manage'] : []), isPending: false }
+    return { caps: new Set(data.filter((rc) => rc.role === role).map((rc) => rc.capability)), isPending: false }
+  }, [role, profileLoading, data, isPending, isError])
+}
+
+// Saves a tick grid edit. Changes apply to every member of the role at once:
+// the policies consult the mapping per request, so there is nothing to
+// redeploy. Inserts and deletes are separate statements; if one fails part
+// way the refetch shows exactly what saved and the grid can be corrected.
+export function useSaveRoleCapabilities() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { adds: RoleCapability[]; removes: RoleCapability[] }>({
+    mutationFn: async ({ adds, removes }) => {
+      if (adds.length > 0) {
+        const { error } = await supabase
+          .from('role_capabilities')
+          .insert(adds.map((a) => ({ role: a.role, capability: a.capability })))
+        if (error) throw error
+      }
+      const byRole = new Map<Role, string[]>()
+      for (const r of removes) byRole.set(r.role, [...(byRole.get(r.role) ?? []), r.capability])
+      for (const [role, capabilities] of byRole) {
+        const { error } = await supabase.from('role_capabilities').delete().eq('role', role).in('capability', capabilities)
+        if (error) throw error
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['role_capabilities'] }),
+  })
+}
+
+// Invited or active, per member id, through the member_states() function
+// (users.manage only, so it is fetched only when the caller holds it). The
+// function arrives with 0012; on any error the Users screen simply shows no
+// state chips.
+interface MemberStateRow {
+  member_id: string
+  state: string
+}
+
+export function useMemberStates() {
+  const { caps } = useMyCapabilities()
+  return useQuery({
+    queryKey: ['member_states'],
+    enabled: caps.has('users.manage'),
+    retry: false,
+    queryFn: async (): Promise<Record<string, 'invited' | 'active'>> => {
+      const { data, error } = await supabase.rpc('member_states')
+      if (error) throw error
+      const out: Record<string, 'invited' | 'active'> = {}
+      for (const row of (data ?? []) as MemberStateRow[]) {
+        if (row.state === 'invited' || row.state === 'active') out[row.member_id] = row.state
+      }
+      return out
+    },
+  })
+}
+
+// Removal goes through the remove-user Edge Function, which holds the
+// service role key server side and re-checks the caller holds users.manage.
+// The function refuses self removal and removing the club's only admin. The
+// member's content stays with the club (owner references null out), so the
+// content caches refetch alongside the member list.
+export function useRemoveUser() {
+  const qc = useQueryClient()
+  return useMutation<{ message?: string }, Error, { userId: string }>({
+    mutationFn: async ({ userId }) => {
+      const { data, error } = await supabase.functions.invoke('remove-user', { body: { user_id: userId } })
+      if (error) {
+        // The function replies with a plain { error } body; surface it.
+        let message = 'Could not remove the member. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      return (data ?? {}) as { message?: string }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      qc.invalidateQueries({ queryKey: ['member_states'] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      qc.invalidateQueries({ queryKey: ['programmes'] })
+    },
   })
 }
