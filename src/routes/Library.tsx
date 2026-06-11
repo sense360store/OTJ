@@ -1,21 +1,30 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
+import { useAuth } from '../hooks/useAuth'
 import { useDrills, useMyCapabilities } from '../lib/queries'
 import { CORNERS, AGES, LEVELS } from '../lib/data'
-import type { CornerKey } from '../lib/data'
+import type { CornerKey, Drill } from '../lib/data'
 import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
 import { Icon } from '../components/icons'
 import { Chip, DrillCard, Empty, ErrorNote, Loading } from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
+import { DeleteDrillModal } from '../components/DeleteDrillModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 
 export function Library() {
   const nav = useNav()
+  const { user } = useAuth()
   const { caps } = useMyCapabilities()
   // Adding, importing and session building need the drills create capability;
   // a read-only parent has none. The drills insert RLS is the real enforcement.
   const coaching = caps.has('drills.create')
+  // Edit and delete on a card mirror the drills RLS: anyone with drills.manage
+  // on any drill, an owner on their own while they hold drills.create. Seeded
+  // drills have no creator, so only drills.manage reaches them. The database is
+  // the real enforcement; this only decides whether to surface the actions.
+  const canManage = (d: Drill) =>
+    caps.has('drills.manage') || (!!d.createdBy && d.createdBy === user?.id && caps.has('drills.create'))
   const [searchParams, setSearchParams] = useSearchParams()
   const presetCorner = searchParams.get('corner')
   const initialCorner = presetCorner && presetCorner in CORNERS ? (presetCorner as CornerKey) : null
@@ -30,6 +39,8 @@ export function Library() {
   const [sort, setSort] = useState('recent')
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [editing, setEditing] = useState<Drill | null>(null)
+  const [deleting, setDeleting] = useState<Drill | null>(null)
   const { data: drills = [], isLoading, isError } = useDrills()
 
   // Apply the corner preset from the URL once, then clear it.
@@ -249,12 +260,38 @@ export function Library() {
       ) : (
         <div className="grid-drills">
           {results.map((d) => (
-            <DrillCard key={d.id} drill={d} onClick={() => nav('drill', { drillId: d.id })} />
+            <DrillCard
+              key={d.id}
+              drill={d}
+              onClick={() => nav('drill', { drillId: d.id })}
+              action={
+                canManage(d) ? (
+                  // The action row sits inside the clickable card, so it stops
+                  // the click from also opening the drill.
+                  <div className="row" style={{ gap: 8, marginTop: 2 }} onClick={(e) => e.stopPropagation()}>
+                    <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={() => setEditing(d)}>
+                      <Icon.edit />
+                      Edit
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm icon-only"
+                      style={{ width: 38, padding: 0, alignSelf: 'stretch', height: 'auto' }}
+                      aria-label={'Delete ' + d.title}
+                      onClick={() => setDeleting(d)}
+                    >
+                      <Icon.trash />
+                    </button>
+                  </div>
+                ) : undefined
+              }
+            />
           ))}
         </div>
       )}
 
       {addOpen && <DrillFormModal onClose={() => setAddOpen(false)} />}
+      {editing && <DrillFormModal drill={editing} onClose={() => setEditing(null)} />}
+      {deleting && <DeleteDrillModal drill={deleting} onClose={() => setDeleting(null)} />}
       {importOpen && <ImportFAModal onClose={() => setImportOpen(false)} />}
     </div>
   )

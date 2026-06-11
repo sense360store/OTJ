@@ -4,9 +4,10 @@
 -- REVIEW REQUIRED. Migrations are gated. Applied by hand through the
 -- Supabase connector after line by line review, and only after migration
 -- A (the manager enum value) is live, because this file seeds rows
--- against 'manager'. Numbering follows migration A: if A is 0013 this is
--- 0014, and both shift together if the pending FA video migration takes a
--- slot first. Do not auto-merge.
+-- against 'manager'. Numbering follows migration A: A is 0014 and this is
+-- 0015, both renumbered up by one when 0013_spond landed on main. The final
+-- numbers are confirmed at apply time against the live ledger. Do not
+-- auto-merge.
 --
 -- The model. Until now a member held exactly one role (profiles.role) and
 -- at most one team (profiles.team_id). This migration makes both many to

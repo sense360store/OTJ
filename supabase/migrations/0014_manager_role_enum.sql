@@ -5,11 +5,10 @@
 -- Supabase connector after line by line review, and only once the live
 -- ledger is confirmed to have this slot free. Do not auto-merge.
 --
--- Numbering. 0013 is the next free number against supabase/migrations on
--- this branch (0012 is the last file here). The FA video migration is
--- also pending and not yet on this ledger, so the final number is
--- assigned at apply time to avoid a collision: if FA video lands first
--- this becomes 0014, and the model migration that follows shifts with it.
+-- Numbering. 0013 was taken by 0013_spond when it landed on main, so this
+-- is 0014, the next free slot, and the model migration that follows is
+-- 0015. The final number is still confirmed at apply time against the live
+-- ledger, since other migrations may also be pending.
 --
 -- This file does one thing and nothing else. Adding a value to an enum
 -- and then using that value in the same transaction fails in Postgres
