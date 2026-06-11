@@ -1,0 +1,30 @@
+-- =====================================================================
+-- OTJ Training Hub, migration 0014_role_kind_manager: the manager value
+--
+-- REVIEW REQUIRED. Migrations are gated. Run by hand via the connector
+-- after review, and only once the live ledger is confirmed to have this
+-- slot free. Do not auto-merge.
+--
+-- Numbering: provisional. The repo ledger ends at 0013_spond, but other
+-- gated work may be pending apply, so the final number is assigned at
+-- apply time against the live ledger. Whatever the numbers become, this
+-- file must apply before the RBAC v2 roles migration and the member
+-- teams migration that follow it in this set.
+--
+-- RBAC v2 (the roles migration in this set) makes manager one of the
+-- four built in system roles: admin, manager, coach, parent. The
+-- decision recorded there keeps profiles.role as a denormalised display
+-- primary typed role_kind, so the enum needs a manager value for a
+-- member whose highest system role is manager.
+--
+-- This statement stands alone in its own migration on purpose. Postgres
+-- refuses to add an enum value and use that value inside the same
+-- transaction, and each migration applies as one transaction. Nothing
+-- in this file or in the two migrations that follow references the new
+-- value: the roles table keys are text, and the member teams data
+-- migration matches roles by key. The first real use is the invite-user
+-- function deriving a display primary at runtime, long after this
+-- transaction has committed.
+-- =====================================================================
+
+alter type public.role_kind add value if not exists 'manager';

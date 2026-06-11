@@ -79,6 +79,45 @@ on conflict (id) do update set
   role = excluded.role,
   age_groups = excluded.age_groups;
 
+-- RBAC v2: roles, capabilities and the demo admin's assignments --------
+-- The RBAC v2 migrations seed roles per club and migrate members per
+-- profile, but on a fresh local reset they run before this file creates
+-- the club and the demo user, so the equivalent rows are created here.
+-- Mirrors the migration seed exactly: admin holds every capability,
+-- manager the eleven content capabilities, coach the five create
+-- capabilities, parent none. The demo admin holds the admin role and,
+-- as for live admins, defaults to all teams.
+insert into public.roles (club_id, key, label, system)
+select '11111111-1111-1111-1111-111111111111', v.key, v.label, true
+from (values
+  ('admin',   'Admin'),
+  ('manager', 'Manager'),
+  ('coach',   'Coach'),
+  ('parent',  'Parent')
+) as v(key, label)
+on conflict (club_id, key) do nothing;
+
+insert into public.role_capabilities (role_id, capability)
+select r.id, c.key
+from public.roles r
+join public.capabilities c on (
+  r.key = 'admin'
+  or (r.key = 'manager' and c.key not in ('users.manage', 'club.manage'))
+  or (r.key = 'coach' and c.key like '%.create')
+)
+where r.club_id = '11111111-1111-1111-1111-111111111111' and r.system
+on conflict do nothing;
+
+insert into public.member_roles (member_id, role_id)
+select '22222222-2222-2222-2222-222222222222', r.id
+from public.roles r
+where r.club_id = '11111111-1111-1111-1111-111111111111'
+  and r.key = 'admin' and r.system
+on conflict do nothing;
+
+update public.profiles set all_teams = true
+where id = '22222222-2222-2222-2222-222222222222';
+
 -- Media (10) ----------------------------------------------------------
 insert into public.media (id, club_id, name, type, kind, yt_url, size, dims, length, pages, created_by) values
 ('e000000e-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','Dynamic Warm-Up.mp4','video','pitch',null,'10.1 MB','640×480','1:32',null,'22222222-2222-2222-2222-222222222222'),
