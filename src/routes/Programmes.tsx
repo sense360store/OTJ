@@ -6,9 +6,8 @@
 // edit affordances.
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
-import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useProgrammes, useTemplates } from '../lib/queries'
+import { useProgrammes, useMyCapabilities, useTemplates } from '../lib/queries'
 import type { Programme, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading } from '../components/ui'
@@ -100,7 +99,7 @@ function ProgrammeCard({
 
 export function Programmes() {
   const nav = useNav()
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   const [importOpen, setImportOpen] = useState(false)
   const [building, setBuilding] = useState(false)
   const { data: programmes = [], isLoading, isError } = useProgrammes()
@@ -108,7 +107,7 @@ export function Programmes() {
   const { sessions } = useSessions()
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
-  const coaching = role === 'coach' || role === 'admin'
+  const coaching = caps.has('programmes.create')
   const templateCount = (id: string) => templates.filter((t) => t.programmeId === id).length
   const linkedTo = (id: string) => sessions.filter((s) => s.programmeId === id)
   return (

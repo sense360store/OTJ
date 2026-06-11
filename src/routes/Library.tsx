@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
-import { useAuth } from '../hooks/useAuth'
-import { useDrills } from '../lib/queries'
+import { useDrills, useMyCapabilities } from '../lib/queries'
 import { CORNERS, AGES, LEVELS } from '../lib/data'
 import type { CornerKey } from '../lib/data'
 import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
@@ -13,10 +12,10 @@ import { ImportFAModal } from '../components/ImportFAModal'
 
 export function Library() {
   const nav = useNav()
-  const { role } = useAuth()
-  // Adding, importing and session building are for coaching roles; parents
-  // browse read-only. The drills insert RLS is the real enforcement.
-  const coaching = role === 'coach' || role === 'admin'
+  const { caps } = useMyCapabilities()
+  // Adding, importing and session building need the drills create capability;
+  // a read-only parent has none. The drills insert RLS is the real enforcement.
+  const coaching = caps.has('drills.create')
   const [searchParams, setSearchParams] = useSearchParams()
   const presetCorner = searchParams.get('corner')
   const initialCorner = presetCorner && presetCorner in CORNERS ? (presetCorner as CornerKey) : null

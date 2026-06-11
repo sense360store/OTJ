@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
-import { useAuth } from '../hooks/useAuth'
 import { useStartFromTemplate } from '../hooks/useStartFromTemplate'
-import { useDeleteTemplate, useProgrammes, useTemplates } from '../lib/queries'
+import { useDeleteTemplate, useMyCapabilities, useProgrammes, useTemplates } from '../lib/queries'
 import type { Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
@@ -18,14 +17,14 @@ function TemplateCard({
   onEdit: ((t: Template) => void) | null
   onDelete: ((t: Template) => void) | null
 }) {
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   const startFromTemplate = useStartFromTemplate()
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
   // Using a template creates a session, which parents cannot do; for them the
   // card is read-only. The session built from a template belongs to the
   // signed-in coach and defaults to their team, the same as one built in the
   // planner. The template's intentions copy onto the new session.
-  const coaching = role === 'coach' || role === 'admin'
+  const coaching = caps.has('sessions.create')
   const week = t.programmeWeek ?? t.week
   return (
     <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -127,7 +126,7 @@ function DeleteTemplateModal({ t, onClose }: { t: Template; onClose: () => void 
 
 export function Templates() {
   const nav = useNav()
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Template | null>(null)
@@ -143,11 +142,12 @@ export function Templates() {
   const standalone = templates.filter((t) => t.programmeId == null)
   const list = standalone.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
   const inProgrammes = templates.length - standalone.length
-  // Curating templates is admin only per the permissions matrix; every coach
-  // can still use one, and every coaching role can import from England
-  // Football. Parents read only. The templates RLS enforces the writes.
-  const curator = role === 'admin'
-  const coaching = role === 'coach' || role === 'admin'
+  // Curating templates (creating and editing the curated shells) needs the
+  // templates manage capability, which admin and manager hold; every coach can
+  // still use one and import from England Football, which needs only templates
+  // create. Parents read only. The templates RLS enforces the writes.
+  const curator = caps.has('templates.manage')
+  const coaching = caps.has('templates.create')
   return (
     <div>
       <div className="page-head">

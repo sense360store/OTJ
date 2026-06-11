@@ -10,7 +10,29 @@ export type Phase = 'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'
 export type Level = 'Foundation' | 'Developing' | 'Advanced'
 export type MediaType = 'video' | 'youtube' | 'image' | 'pdf'
 export type SessionStatus = 'upcoming' | 'completed'
-export type Role = 'coach' | 'admin' | 'parent'
+export type Role = 'coach' | 'admin' | 'parent' | 'manager'
+
+// Roles in descending privilege: admin (root), manager (all content
+// management), coach (content creation), parent (read only). The primary
+// role (profiles.role) is the highest privilege role a member holds; it is
+// for display and sorting only, never access. member_roles is the source of
+// truth for what a member can do.
+export const ROLE_PRIVILEGE: Role[] = ['admin', 'manager', 'coach', 'parent']
+
+// The primary role to denormalize onto profiles.role from a set of held
+// roles: the highest privilege one. An empty set should never reach here
+// (a member always holds at least one role), but coach is a safe default.
+export function primaryRole(roles: Role[]): Role {
+  return ROLE_PRIVILEGE.find((r) => roles.includes(r)) ?? roles[0] ?? 'coach'
+}
+
+// A member holding admin or manager sees every team in the team switcher
+// and filters; everyone else sees only the teams they belong to. This is a
+// UI default, not an RLS rule: content stays club wide and teams scope no
+// access.
+export function seesAllTeams(roles: Role[]): boolean {
+  return roles.includes('admin') || roles.includes('manager')
+}
 
 // A club team. Teams are a filter and a default, never access control.
 export interface Team {
@@ -18,7 +40,9 @@ export interface Team {
   name: string
 }
 
-// A club member as the Users screen and the owner labels see one.
+// A club member as the Users screen and the owner labels see one. roles and
+// teamIds are the full sets from member_roles and member_teams; role and
+// teamId are the denormalized primaries kept for display and sorting.
 export interface Member {
   id: string
   fullName: string
@@ -26,7 +50,9 @@ export interface Member {
   // Storage path of the uploaded profile photo, null for initials.
   avatarUrl: string | null
   role: Role
+  roles: Role[]
   teamId: string | null
+  teamIds: string[]
   joined: string
 }
 

@@ -16,6 +16,7 @@ import {
   useTeamMap,
   useLiveSessionSync,
   useSetLiveActivity,
+  useMyCapabilities,
 } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
@@ -715,22 +716,25 @@ function LiveMessage({ title, sub, onExit }: { title: string; sub?: string; onEx
 export function LiveSession() {
   const { sessionId } = useParams()
   const nav = useNav()
-  const { user, role, profileLoading } = useAuth()
+  const { user } = useAuth()
+  const { caps, isPending: capsPending } = useMyCapabilities()
   const { data: session, isLoading, isError } = useSession(sessionId)
   // One realtime channel per session id, cleaned up on unmount. The driver
   // subscribes too, harmlessly; its own writes come back as cache freshness.
   useLiveSessionSync(sessionId)
   const onExit = () => nav('sessions')
 
-  // Wait for the role too, so a watcher is never flashed the driver controls.
-  if (isLoading || profileLoading) return <LiveLoading />
+  // Wait for the capabilities too, so a watcher is never flashed the driver
+  // controls.
+  if (isLoading || capsPending) return <LiveLoading />
   if (isError) return <LiveMessage title="Couldn't load this session" sub="Go back and try again." onExit={onExit} />
   if (!session) return <LiveMessage title="Session not found" sub="It may have been removed." onExit={onExit} />
-  // Driving follows the sessions update policy: the owner while they hold a
-  // coaching role, or an admin. A coach demoted to parent watches their old
-  // sessions like anyone else. The RLS is the real enforcement; this only
-  // decides which view to render.
-  const canDrive = role === 'admin' || (role === 'coach' && session.coachId === user?.id)
+  // Driving follows the sessions update policy: anyone with sessions.manage, or
+  // the owner while they hold sessions.create. A coach demoted to parent
+  // watches their old sessions like anyone else. The RLS is the real
+  // enforcement; this only decides which view to render.
+  const canDrive =
+    caps.has('sessions.manage') || (session.coachId === user?.id && caps.has('sessions.create'))
   if (canDrive) return <LiveRunner key={session.id} session={session} onExit={onExit} />
   return <LiveWatcher key={session.id} session={session} onExit={onExit} />
 }

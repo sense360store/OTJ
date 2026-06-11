@@ -8,6 +8,7 @@ import {
   useRenameMedia,
   useDeleteMedia,
   useRemoveSampleMedia,
+  useMyCapabilities,
   mediaTypeForFile,
   oversizeMessage,
 } from '../lib/queries'
@@ -481,10 +482,11 @@ export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose
 }
 
 export function Media() {
-  const { user, role } = useAuth()
-  // Uploading is for coaching roles; parents browse read-only. The media
-  // insert RLS is the real enforcement.
-  const coaching = role === 'coach' || role === 'admin'
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
+  // Uploading needs the media create capability; a read-only parent has none.
+  // The media insert RLS is the real enforcement.
+  const coaching = caps.has('media.create')
   const [q, setQ] = useState('')
   const [type, setType] = useState('')
   const [open, setOpen] = useState<MediaItem | null>(null)
@@ -510,11 +512,12 @@ export function Media() {
   const counts: Record<MediaType, number> = { video: 0, youtube: 0, image: 0, pdf: 0 }
   media.forEach((m) => counts[m.type]++)
   const samples = media.filter(isSampleMedia)
-  // Replace and delete are owner or admin only, mirroring the media RLS; the
-  // role condition matters for a coach demoted to parent, who still matches
-  // created_by. The database is the real enforcement; this only decides
-  // whether to surface the actions.
-  const canManage = (m: MediaItem) => role === 'admin' || (coaching && !!m.createdBy && m.createdBy === user?.id)
+  // Replace and delete are owner or manager, mirroring the media RLS: anyone
+  // with media.manage edits any item, an owner edits their own while they hold
+  // media.create (so a coach demoted to parent loses it). The database is the
+  // real enforcement; this only decides whether to surface the actions.
+  const canManage = (m: MediaItem) =>
+    caps.has('media.manage') || (!!m.createdBy && m.createdBy === user?.id && caps.has('media.create'))
   return (
     <div>
       <div className="page-head">
@@ -523,7 +526,7 @@ export function Media() {
           <div className="sub">All your videos, YouTube links, diagrams and PDFs in one place.</div>
         </div>
         <div className="row wrap" style={{ gap: 10 }}>
-          {role === 'admin' && samples.length > 0 && (
+          {caps.has('media.manage') && samples.length > 0 && (
             <button className="btn btn-ghost" onClick={() => setRemoveSamplesOpen(true)}>
               <Icon.trash />
               Remove all samples

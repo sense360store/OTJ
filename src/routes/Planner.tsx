@@ -4,8 +4,8 @@ import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useActivityTitle, useDrillMap, useMediaMap, useMemberMap, useSession, useTeams } from '../lib/queries'
-import { PHASES } from '../lib/data'
+import { useActivityTitle, useDrillMap, useMediaMap, useMemberMap, useMyCapabilities, useMyMember, useSession, useTeams } from '../lib/queries'
+import { PHASES, seesAllTeams } from '../lib/data'
 import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, ListInput, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
@@ -160,9 +160,11 @@ function PlannerEditor({
 }) {
   const nav = useNav()
   const { user, role } = useAuth()
+  const { caps } = useMyCapabilities()
   const { upsertSession } = useSessions()
   const { data: teams = [] } = useTeams()
   const memberById = useMemberMap()
+  const me = useMyMember()
 
   const [session, setSession] = useState<Session>(() =>
     existing
@@ -175,10 +177,20 @@ function PlannerEditor({
   const [dragIdx, setDragIdx] = useState<number | null>(null)
 
   // Visibility is club-wide, so any coach can open any club session here.
-  // Editing follows ownership (own, or admin); everyone else gets a read-only
-  // view of the plan. The sessions RLS enforces the same rule on write.
-  const readOnly = !!existing && existing.coachId !== user?.id && role !== 'admin'
+  // Editing follows the sessions update policy: the owner, or anyone with
+  // sessions.manage (admin or manager); everyone else gets a read-only view of
+  // the plan. The sessions RLS enforces the same rule on write.
+  const readOnly = !!existing && existing.coachId !== user?.id && !caps.has('sessions.manage')
   const owner = existing ? memberById[existing.coachId] : undefined
+  // The team selector shows all teams to a member holding admin or manager, and
+  // the member's own teams to everyone else, plus the session's current team so
+  // an existing assignment always renders. A UI default, not an RLS rule.
+  const myRoles = me?.roles ?? (role ? [role] : [])
+  const baseTeams = seesAllTeams(myRoles) ? teams : teams.filter((t) => me?.teamIds.includes(t.id) ?? false)
+  const teamOptions =
+    session.teamId && !baseTeams.some((t) => t.id === session.teamId)
+      ? [...baseTeams, ...teams.filter((t) => t.id === session.teamId)]
+      : baseTeams
 
   const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
   const setField = (k: 'name' | 'date' | 'time' | 'ageGroup' | 'venue' | 'focus' | 'space' | 'sourceUrl', v: string) =>
@@ -364,7 +376,7 @@ function PlannerEditor({
                 <label>Team</label>
                 <select value={session.teamId ?? ''} disabled={readOnly} onChange={(e) => setTeam(e.target.value)}>
                   <option value="">Club (no team)</option>
-                  {teams.map((t) => (
+                  {teamOptions.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
                     </option>

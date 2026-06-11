@@ -13,7 +13,7 @@ import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
-import { useActivityTitle, useDrillMap, useMediaMap, useProgrammeMap, useSession, useTeamMap } from '../lib/queries'
+import { useActivityTitle, useDrillMap, useMediaMap, useMyCapabilities, useProgrammeMap, useSession, useTeamMap } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -48,18 +48,20 @@ function loadChecked(sessionId: string): string[] {
 
 function SessionDayView({ session }: { session: Session }) {
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
   const teamById = useTeamMap()
   const actTitle = useActivityTitle()
   // The same link opens the live view for everyone; the label says whether
-  // this user will drive it (owner, or admin) or watch it.
-  const canDrive = session.coachId === user?.id || role === 'admin'
-  // Edit and delete follow the sessions write RLS: owner with a coaching
-  // role, or admin. The role condition matters for a coach demoted to parent,
-  // who still matches coach_id on old sessions.
-  const canManage = role === 'admin' || (role === 'coach' && session.coachId === user?.id)
+  // this user will drive it (owner, or anyone with sessions.manage) or watch.
+  const isOwner = session.coachId === user?.id
+  const canDrive = caps.has('sessions.manage') || (isOwner && caps.has('sessions.create'))
+  // Edit and delete follow the sessions write RLS: anyone with sessions.manage,
+  // or the owner while they hold sessions.create (so a coach demoted to parent
+  // loses it on sessions they still own).
+  const canManage = caps.has('sessions.manage') || (isOwner && caps.has('sessions.create'))
   const [tab, setTab] = useState<Tab>('setup')
   const [viewerAt, setViewerAt] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)

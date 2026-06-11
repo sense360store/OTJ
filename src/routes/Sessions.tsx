@@ -7,8 +7,8 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useMemberMap, useTeamMap, useTeams } from '../lib/queries'
-import { sessionMinutes } from '../lib/data'
+import { useMemberMap, useMyCapabilities, useMyMember, useTeamMap, useTeams } from '../lib/queries'
+import { seesAllTeams, sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, fmtDate, Loading, PHASE_COLOR } from '../components/ui'
@@ -149,13 +149,21 @@ function SessionCard({
 export function Sessions() {
   const nav = useNav()
   const { user, role } = useAuth()
+  const { caps } = useMyCapabilities()
   // Parents watch and follow; they cannot plan, so the create affordance and
-  // the planner links stay hidden for them.
-  const coaching = role === 'coach' || role === 'admin'
+  // the planner links stay hidden for them. The sessions create capability is
+  // the gate.
+  const coaching = caps.has('sessions.create')
   const { sessions, loading, error } = useSessions()
   const { data: teams = [] } = useTeams()
   const teamById = useTeamMap()
   const memberById = useMemberMap()
+  // The team filter shows all teams to a member holding admin or manager, and
+  // the member's own teams to everyone else. A UI default, not an RLS rule:
+  // content stays club wide, and All teams still spans the whole club.
+  const me = useMyMember()
+  const myRoles = me?.roles ?? (role ? [role] : [])
+  const teamOptions = seesAllTeams(myRoles) ? teams : teams.filter((t) => me?.teamIds.includes(t.id) ?? false)
   const [view, setView] = useState<'mine' | 'all'>('mine')
   const [teamId, setTeamId] = useState('')
   const [deleting, setDeleting] = useState<Session | null>(null)
@@ -205,7 +213,7 @@ export function Sessions() {
         <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
           <option value="">All teams</option>
           <option value="club">Club</option>
-          {teams.map((t) => (
+          {teamOptions.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
             </option>
@@ -234,7 +242,7 @@ export function Sessions() {
                 nav={nav}
                 ownerName={mine ? null : memberById[s.coachId]?.fullName || (s.coachId ? 'Another coach' : 'Club session')}
                 teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
-                canManage={(coaching && mine) || role === 'admin'}
+                canManage={caps.has('sessions.manage') || (mine && caps.has('sessions.create'))}
                 coaching={coaching}
                 onDelete={() => setDeleting(s)}
               />

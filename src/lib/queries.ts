@@ -38,7 +38,7 @@ import type {
   Team,
   Template,
 } from './data'
-import { youtubeId } from './data'
+import { primaryRole, ROLE_PRIVILEGE, youtubeId } from './data'
 import { sourceLabelForUrl } from './fa'
 
 // ---- Database row shapes (snake_case) ----------------------------------
@@ -171,6 +171,21 @@ interface ProfileRow {
   team_id: string | null
   created_at: string
 }
+
+// The many to many join rows (migration B). member_roles and member_teams are
+// the source of truth for a member's roles and teams; the single columns on
+// profiles are denormalized primaries.
+interface MemberRoleRow {
+  member_id: string
+  role: Role
+}
+interface MemberTeamRow {
+  member_id: string
+  team_id: string
+}
+
+// Roles sorted by descending privilege, for stable badge and checkbox order.
+const byPrivilege = (a: Role, b: Role) => ROLE_PRIVILEGE.indexOf(a) - ROLE_PRIVILEGE.indexOf(b)
 
 interface ClubRow {
   id: string
@@ -326,8 +341,13 @@ function toMember(r: ProfileRow): Member {
     fullName: r.full_name ?? '',
     avatar: r.avatar,
     avatarUrl: r.avatar_url,
+    // role and teamId are the denormalized primaries. roles and teamIds
+    // default to the primaries here and are overwritten with the join table
+    // truth in useProfiles when those reads succeed.
     role: r.role,
+    roles: [r.role],
     teamId: r.team_id,
+    teamIds: r.team_id ? [r.team_id] : [],
     joined: r.created_at,
   }
 }
@@ -481,7 +501,41 @@ export function useProfiles() {
         .select(PROFILE_COLS)
         .order('created_at', { ascending: true })
       if (error) throw error
-      return (data as unknown as ProfileRow[]).map(toMember)
+      const members = (data as unknown as ProfileRow[]).map(toMember)
+
+      // member_roles and member_teams hold the full sets. Merge them over the
+      // single-column defaults. Until migration B is live these reads fail and
+      // the defaults (the primary role and team) stand in, so the screen keeps
+      // working through the transition.
+      const [rolesRes, teamsRes] = await Promise.all([
+        supabase.from('member_roles').select('member_id, role'),
+        supabase.from('member_teams').select('member_id, team_id'),
+      ])
+      if (!rolesRes.error && rolesRes.data) {
+        const byMember = new Map<string, Role[]>()
+        for (const row of rolesRes.data as MemberRoleRow[]) {
+          byMember.set(row.member_id, [...(byMember.get(row.member_id) ?? []), row.role])
+        }
+        for (const m of members) {
+          const roles = byMember.get(m.id)
+          // A member missing from member_roles keeps the single-column default
+          // rather than dropping to no roles.
+          if (roles && roles.length > 0) {
+            m.roles = [...roles].sort(byPrivilege)
+            m.role = primaryRole(roles)
+          }
+        }
+      }
+      if (!teamsRes.error && teamsRes.data) {
+        const byMember = new Map<string, string[]>()
+        for (const row of teamsRes.data as MemberTeamRow[]) {
+          byMember.set(row.member_id, [...(byMember.get(row.member_id) ?? []), row.team_id])
+        }
+        // The join table is authoritative once read, so an empty set wins: a
+        // member with no team rows has no teams.
+        for (const m of members) m.teamIds = byMember.get(m.id) ?? []
+      }
+      return members
     },
   })
 }
@@ -529,6 +583,15 @@ export function useProgrammeMap(): Record<string, Programme> {
 export function useMemberMap(): Record<string, Member> {
   const { data } = useProfiles()
   return useMemo(() => Object.fromEntries((data ?? []).map((m) => [m.id, m])), [data])
+}
+
+// The signed in member as a Member, resolved from the profiles read, so the
+// team switcher and filters can read the caller's full roles and teams. Null
+// until the profiles read has settled or when signed out.
+export function useMyMember(): Member | null {
+  const { user } = useAuth()
+  const { data } = useProfiles()
+  return useMemo(() => (user ? ((data ?? []).find((m) => m.id === user.id) ?? null) : null), [user, data])
 }
 
 // Resolves an activity's display title. A drillId that no longer matches a
@@ -1501,17 +1564,99 @@ export function useDeleteTeam() {
   })
 }
 
-export function useUpdateProfile() {
+// ---- Member roles and teams (many to many) --------------------------------
+// member_roles and member_teams are the source of truth; profiles.role and
+// profiles.team_id are denormalized primaries the Users screen keeps in step.
+// Both join tables are write gated on users.manage by RLS; the screen only
+// surfaces the controls. Each mutation reads the member's current set fresh,
+// diffs it against the desired set, applies the inserts and deletes, and sets
+// the primary so display stays coherent.
+
+export function useSetMemberRoles() {
   const qc = useQueryClient()
-  return useMutation<void, Error, { id: string; role?: Role; teamId?: string | null }>({
-    mutationFn: async ({ id, role, teamId }) => {
-      const patch: Record<string, unknown> = {}
-      if (role !== undefined) patch.role = role
-      if (teamId !== undefined) patch.team_id = teamId
-      const { error } = await supabase.from('profiles').update(patch).eq('id', id)
-      if (error) throw error
+  return useMutation<void, Error, { memberId: string; roles: Role[] }>({
+    mutationFn: async ({ memberId, roles }) => {
+      if (roles.length === 0) throw new Error('A member must keep at least one role.')
+      const desired = new Set(roles)
+      const { data: currentRows, error: readError } = await supabase
+        .from('member_roles')
+        .select('role')
+        .eq('member_id', memberId)
+      if (readError) throw readError
+      const current = new Set((currentRows ?? []).map((r) => (r as { role: Role }).role))
+      const toAdd = roles.filter((r) => !current.has(r))
+      const toRemove = [...current].filter((r) => !desired.has(r))
+      // Set the primary first. A member editing their own roles down (removing
+      // admin) still holds users.manage when this runs; the member_roles
+      // deletes that follow are what remove their access, so doing the primary
+      // write first keeps profiles.role from being stranded on the old value.
+      const { error: primaryError } = await supabase
+        .from('profiles')
+        .update({ role: primaryRole(roles) })
+        .eq('id', memberId)
+      if (primaryError) throw primaryError
+      if (toAdd.length > 0) {
+        const { error } = await supabase
+          .from('member_roles')
+          .insert(toAdd.map((role) => ({ member_id: memberId, role })))
+        if (error) throw error
+      }
+      if (toRemove.length > 0) {
+        const { error } = await supabase
+          .from('member_roles')
+          .delete()
+          .eq('member_id', memberId)
+          .in('role', toRemove)
+        if (error) throw error
+      }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['profiles'] })
+      qc.invalidateQueries({ queryKey: ['member_states'] })
+      // A member editing their own roles changes their own capabilities.
+      qc.invalidateQueries({ queryKey: ['my_roles'] })
+    },
+  })
+}
+
+export function useSetMemberTeams() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { memberId: string; teamIds: string[] }>({
+    mutationFn: async ({ memberId, teamIds }) => {
+      const desired = new Set(teamIds)
+      const { data: currentRows, error: readError } = await supabase
+        .from('member_teams')
+        .select('team_id')
+        .eq('member_id', memberId)
+      if (readError) throw readError
+      const current = new Set((currentRows ?? []).map((r) => (r as { team_id: string }).team_id))
+      const toAdd = teamIds.filter((t) => !current.has(t))
+      const toRemove = [...current].filter((t) => !desired.has(t))
+      if (toAdd.length > 0) {
+        const { error } = await supabase
+          .from('member_teams')
+          .insert(toAdd.map((team_id) => ({ member_id: memberId, team_id })))
+        if (error) throw error
+      }
+      if (toRemove.length > 0) {
+        const { error } = await supabase
+          .from('member_teams')
+          .delete()
+          .eq('member_id', memberId)
+          .in('team_id', toRemove)
+        if (error) throw error
+      }
+      // Keep profiles.team_id as a primary: the current primary if it is still
+      // selected, otherwise the first selected team, otherwise null.
+      const { data: prof } = await supabase.from('profiles').select('team_id').eq('id', memberId).maybeSingle()
+      const currentPrimary = (prof as { team_id: string | null } | null)?.team_id ?? null
+      const nextPrimary = currentPrimary && desired.has(currentPrimary) ? currentPrimary : (teamIds[0] ?? null)
+      if (nextPrimary !== currentPrimary) {
+        const { error } = await supabase.from('profiles').update({ team_id: nextPrimary }).eq('id', memberId)
+        if (error) throw error
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
   })
 }
 
@@ -1668,8 +1813,8 @@ export function useClearCrest() {
 export interface InviteInput {
   email: string
   fullName: string
-  role: 'coach' | 'admin' | 'parent'
-  teamId: string | null
+  roles: Role[]
+  teamIds: string[]
 }
 
 // ---- Import from England Football ---------------------------------------
@@ -1822,7 +1967,7 @@ export function useInviteUser() {
   return useMutation<{ warning?: string }, Error, InviteInput>({
     mutationFn: async (input) => {
       const { data, error } = await supabase.functions.invoke('invite-user', {
-        body: { email: input.email, full_name: input.fullName, role: input.role, team_id: input.teamId },
+        body: { email: input.email, full_name: input.fullName, roles: input.roles, team_ids: input.teamIds },
       })
       if (error) {
         // The function replies with a plain { error } body; surface it.
@@ -1889,19 +2034,49 @@ export function useRoleCapabilities() {
   })
 }
 
-// The signed in member's capability set, for gating what the UI surfaces
-// (the Users screen, its nav item, admin only affordances). Until 0012 is
-// applied the mapping read fails; the fallback mirrors the old admin role
-// check so the Users screen stays reachable through the transition. The
-// server enforces the real boundary either way.
-export function useMyCapabilities(): { caps: Set<string>; isPending: boolean } {
-  const { role, profileLoading } = useAuth()
-  const { data, isPending, isError } = useRoleCapabilities()
+// The signed in member's full role set, read from member_roles (the source
+// of truth, migration B), so capabilities and affordances reflect every role
+// held, not just the primary. Falls back to the single primary role from the
+// profile when the read fails or returns nothing (the table missing during
+// the transition, or a member with no rows yet), so the app keeps working.
+export function useMyRoles(): { roles: Role[]; isPending: boolean } {
+  const { user, role, profileLoading } = useAuth()
+  const enabled = !!user
+  const query = useQuery({
+    queryKey: ['my_roles', user?.id],
+    enabled,
+    retry: false,
+    queryFn: async (): Promise<Role[]> => {
+      const { data, error } = await supabase.from('member_roles').select('role').eq('member_id', user!.id)
+      if (error) throw error
+      return (data ?? []).map((r) => (r as { role: Role }).role)
+    },
+  })
   return useMemo(() => {
-    if (profileLoading || isPending) return { caps: new Set<string>(), isPending: true }
-    if (isError || !data) return { caps: new Set<string>(role === 'admin' ? ['users.manage'] : []), isPending: false }
-    return { caps: new Set(data.filter((rc) => rc.role === role).map((rc) => rc.capability)), isPending: false }
-  }, [role, profileLoading, data, isPending, isError])
+    if (profileLoading || (enabled && query.isLoading)) return { roles: [], isPending: true }
+    if (!enabled) return { roles: [], isPending: false }
+    const fromQuery = query.data && query.data.length > 0 ? query.data : null
+    return { roles: fromQuery ?? (role ? [role] : []), isPending: false }
+  }, [enabled, profileLoading, query.isLoading, query.data, role])
+}
+
+// The signed in member's capability set, the union of every role they hold, for
+// gating what the UI surfaces (the Users screen, nav items, create, edit,
+// delete and drive affordances). A member who is admin plus coach gets both
+// sets of capabilities. Until 0012 is applied the mapping read fails; the
+// fallback mirrors the old admin role check so the Users screen stays reachable
+// through the transition. The server enforces the real boundary either way.
+export function useMyCapabilities(): { caps: Set<string>; isPending: boolean } {
+  const { roles, isPending: rolesPending } = useMyRoles()
+  const { data, isPending: mappingPending, isError } = useRoleCapabilities()
+  return useMemo(() => {
+    if (rolesPending || mappingPending) return { caps: new Set<string>(), isPending: true }
+    if (isError || !data) {
+      return { caps: new Set<string>(roles.includes('admin') ? ['users.manage'] : []), isPending: false }
+    }
+    const held = new Set(roles)
+    return { caps: new Set(data.filter((rc) => held.has(rc.role)).map((rc) => rc.capability)), isPending: false }
+  }, [roles, rolesPending, data, mappingPending, isError])
 }
 
 // Saves a tick grid edit. Changes apply to every member of the role at once:

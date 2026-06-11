@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sessionMinutes } from './data'
+import { primaryRole, seesAllTeams, sessionMinutes } from './data'
 
 describe('sessionMinutes', () => {
   it('sums the activity durations', () => {
@@ -21,5 +21,34 @@ describe('sessionMinutes', () => {
       { phase: 'Game' as const, duration: 25 },
     ]
     expect(sessionMinutes({ activities })).toBe(25)
+  })
+})
+
+describe('primaryRole', () => {
+  it('picks the highest privilege role held', () => {
+    expect(primaryRole(['coach', 'admin'])).toBe('admin')
+    expect(primaryRole(['coach', 'manager'])).toBe('manager')
+    expect(primaryRole(['parent', 'coach'])).toBe('coach')
+  })
+
+  it('is order independent', () => {
+    expect(primaryRole(['admin', 'coach'])).toBe(primaryRole(['coach', 'admin']))
+  })
+
+  it('returns the single role when only one is held', () => {
+    expect(primaryRole(['parent'])).toBe('parent')
+  })
+})
+
+describe('seesAllTeams', () => {
+  it('is true for admin or manager', () => {
+    expect(seesAllTeams(['admin'])).toBe(true)
+    expect(seesAllTeams(['coach', 'manager'])).toBe(true)
+  })
+
+  it('is false for a coach or parent without a managing role', () => {
+    expect(seesAllTeams(['coach'])).toBe(false)
+    expect(seesAllTeams(['parent'])).toBe(false)
+    expect(seesAllTeams(['coach', 'parent'])).toBe(false)
   })
 })

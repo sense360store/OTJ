@@ -48,27 +48,9 @@ const NAV: NavSection[] = [
   },
 ]
 
-// The role drives which nav items show, except Users, which follows the
-// users.manage capability below; the routes and RLS enforce the same
-// boundary. Parent is read-only: everything except the planner and the
-// admin tools.
-const ROLE_NAV: Record<Role, Set<string>> = {
-  coach: new Set(['home', 'library', 'sessions', 'planner', 'programmes', 'templates', 'media']),
-  admin: new Set([
-    'home',
-    'library',
-    'sessions',
-    'planner',
-    'programmes',
-    'templates',
-    'media',
-    'admin-club',
-    'admin-teams',
-  ]),
-  parent: new Set(['home', 'library', 'sessions', 'programmes', 'templates', 'media']),
-}
-
-const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent' }
+// The footer identity chip shows the member's primary role label. Nav
+// visibility is decided by capabilities in showItem below, not by role name.
+const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent', manager: 'Manager' }
 
 export function Sidebar() {
   const navigate = useNavigate()
@@ -78,9 +60,24 @@ export function Sidebar() {
   const { name, motto } = useClubBranding()
   const { data: drills } = useDrills()
   const { caps } = useMyCapabilities()
-  const allowed = ROLE_NAV[role ?? 'coach']
-  // The Users item is capability driven so it tracks the tick grid.
-  const showItem = (id: string) => (id === 'admin-users' ? caps.has('users.manage') : allowed.has(id))
+  // Nav visibility follows capabilities so it tracks the tick grid and a
+  // member's full role set. Content items are open to every member; the
+  // planner and the admin tools are gated on the capability that also gates
+  // their RLS and route.
+  const showItem = (id: string) => {
+    switch (id) {
+      case 'planner':
+        return caps.has('sessions.create')
+      case 'admin-users':
+        return caps.has('users.manage')
+      case 'admin-teams':
+        return caps.has('teams.manage')
+      case 'admin-club':
+        return caps.has('club.manage')
+      default:
+        return true
+    }
+  }
   const isActive = (id: string) => screen === id || (id === 'library' && screen === 'drill')
   // The library badge is the live drill count, shown once the read resolves.
   const badgeFor = (id: string): string | undefined =>

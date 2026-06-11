@@ -4,13 +4,15 @@ import { Crest } from './Crest'
 import { UserAvatar } from './UserAvatar'
 import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
+import { useMyCapabilities } from '../lib/queries'
 
 export function TopBar() {
   const navigate = useNavigate()
   const { dark, setDark } = useTheme()
-  const { role } = useAuth()
-  // Parents are read-only; the planner shortcut is a coaching affordance.
-  const coaching = role === 'coach' || role === 'admin'
+  // The planner shortcut follows the create capability; a read-only parent
+  // does not see it.
+  const { caps } = useMyCapabilities()
+  const coaching = caps.has('sessions.create')
   return (
     <div className="topbar">
       <div className="topbar-search">

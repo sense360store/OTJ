@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
 import { useAuth } from '../hooks/useAuth'
-import { useDrillMap, useDrills, useMediaMap, useMemberMap, useTeamMap, useTemplates } from '../lib/queries'
+import { useDrillMap, useDrills, useMediaMap, useMemberMap, useMyCapabilities, useTeamMap, useTemplates } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -284,7 +284,8 @@ export function Home() {
   const { sessions, loading: sessionsLoading, error: sessionsError } = useSessions()
   const { data: drills = [], isLoading: drillsLoading, isError: drillsError } = useDrills()
   const { data: templates = [], isLoading: templatesLoading, isError: templatesError } = useTemplates()
-  const { user, profile, role } = useAuth()
+  const { user, profile } = useAuth()
+  const { caps } = useMyCapabilities()
   const teamById = useTeamMap()
   const memberById = useMemberMap()
   // The This week list honours the Sessions screen's default: yours first,
@@ -296,8 +297,9 @@ export function Home() {
 
   const firstName = profile?.full_name?.split(' ')[0]
   // Parents are read-only; the planning and creating affordances stay hidden
-  // for them. The check is positive so nothing flashes in while loading.
-  const coaching = role === 'coach' || role === 'admin'
+  // for them. The dashboard is session centric, so the sessions create
+  // capability is the umbrella gate.
+  const coaching = caps.has('sessions.create')
 
   if (sessionsLoading || drillsLoading || templatesLoading) return <Loading />
   if (sessionsError || drillsError || templatesError) return <ErrorNote />
@@ -339,7 +341,7 @@ export function Home() {
     actions.push({ label: 'Add drill', icon: Icon.plus, on: () => setAddOpen(true) })
     actions.push({ label: 'Import from England Football', icon: Icon.download, on: () => setImportOpen(true) })
     actions.push({ label: 'Upload media', icon: Icon.upload, on: () => setUploadOpen(true) })
-    if (role === 'admin') {
+    if (caps.has('users.manage')) {
       actions.push({ label: 'Invite', icon: Icon.users, on: () => navigate('/admin/users') })
     }
   } else if (liveNow) {
@@ -370,7 +372,7 @@ export function Home() {
           <NextSessionHero
             s={next}
             isOwn={isMine(next)}
-            canManage={(coaching && isMine(next)) || role === 'admin'}
+            canManage={caps.has('sessions.manage') || (isMine(next) && caps.has('sessions.create'))}
             teamName={teamName(next)}
             todayStr={todayStr}
             nav={nav}

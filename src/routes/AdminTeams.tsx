@@ -3,9 +3,8 @@
 // one never hides or orphans content: the foreign keys null the references
 // and the confirm spells that out. REVIEW: role gated admin surface.
 import { useState } from 'react'
-import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteTeam, useInsertTeam, useProfiles, useRenameTeam, useTeams } from '../lib/queries'
+import { useDeleteTeam, useInsertTeam, useMyCapabilities, useProfiles, useRenameTeam, useTeams } from '../lib/queries'
 import type { Team } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal } from '../components/ui'
@@ -90,12 +89,12 @@ export function AdminTeams() {
   const insert = useInsertTeam()
   const [name, setName] = useState('')
   const [removing, setRemoving] = useState<Team | null>(null)
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
-  // The route guard already keeps coaches out; this is belt and braces for
-  // the brief render before a redirect.
-  if (role !== 'admin') return null
+  // The route guard already keeps members without teams.manage out; this is
+  // belt and braces for the brief render before a redirect.
+  if (!caps.has('teams.manage')) return null
 
   const add = () => {
     const trimmed = name.trim()

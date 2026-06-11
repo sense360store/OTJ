@@ -14,7 +14,7 @@ import { Icon } from '../components/icons'
 import { UserAvatar } from '../components/UserAvatar'
 import { Loading } from '../components/ui'
 
-const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent' }
+const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent', manager: 'Manager' }
 
 function joinedLabel(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })

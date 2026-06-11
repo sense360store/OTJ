@@ -20,9 +20,9 @@ import {
   useMedia,
   useTemplates,
   useUpdateProgramme,
+  useMyCapabilities,
 } from '../lib/queries'
 import type { ProgrammeInput } from '../lib/queries'
-import { useAuth } from '../hooks/useAuth'
 import { sessionMinutes } from '../lib/data'
 import type { Programme, Template } from '../lib/data'
 
@@ -121,10 +121,10 @@ function TemplatePicker({
   onClose: () => void
   usedIds: Set<string>
 }) {
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   const { data: templates = [], isLoading } = useTemplates()
   const [q, setQ] = useState('')
-  const admin = role === 'admin'
+  const admin = caps.has('templates.manage')
   if (isLoading) return <Loading label="Loading templates…" />
   const list = templates.filter(
     (t) => !usedIds.has(t.id) && (!q || t.name.toLowerCase().includes(q.toLowerCase())),
@@ -184,8 +184,8 @@ export function ProgrammeFormModal({
   onClose: () => void
   onSaved?: (id: string) => void
 }) {
-  const { role } = useAuth()
-  const admin = role === 'admin'
+  const { caps } = useMyCapabilities()
+  const admin = caps.has('templates.manage')
   const insert = useInsertProgramme()
   const update = useUpdateProgramme()
   const assign = useAssignTemplateWeek()

@@ -44,36 +44,27 @@ function RequireAuth() {
   )
 }
 
-// Admin only routes (Club and Teams). The role drives what the router
-// serves, and the RLS enforces the same boundary server side.
-function RequireAdmin() {
-  const { role, profileLoading } = useAuth()
-  if (profileLoading) return <Splash />
-  if (role !== 'admin') return <Navigate to="/" replace />
-  return <Outlet />
-}
-
-// The Users screen follows the users.manage capability rather than the role
-// name, so the tick grid stays the single place that access is defined. The
-// profiles RLS and the invite-user and remove-user functions enforce the
-// same boundary server side; a member without it navigating to /admin/users
-// directly is redirected home.
-function RequireUsersManage() {
+// Capability gated routes. The capability drives what the router serves, and
+// the same capability gates the matching RLS policy server side, so a member
+// reaching a URL directly without it is redirected home. The tick grid stays
+// the single place access is defined, and the gate reads the member's full
+// role set through useMyCapabilities.
+function RequireCap({ cap }: { cap: string }) {
   const { caps, isPending } = useMyCapabilities()
   if (isPending) return <Splash />
-  if (!caps.has('users.manage')) return <Navigate to="/" replace />
+  if (!caps.has(cap)) return <Navigate to="/" replace />
   return <Outlet />
 }
 
-// The planner is a write surface, so the read-only parent role is redirected
-// to the sessions list, direct URLs included. The sessions insert RLS refuses
-// a parent's write anyway; this keeps the surface honest. Waits for the
-// profile so a coach hitting the URL directly is not bounced before their
-// role is known.
+// The planner is a write surface, so a member who cannot create sessions (a
+// read-only parent) is redirected to the sessions list, direct URLs included.
+// The sessions insert RLS refuses the write anyway; this keeps the surface
+// honest. Waits on the capability read so a coach hitting the URL directly is
+// not bounced before their roles are known.
 function RequirePlanner() {
-  const { role, profileLoading } = useAuth()
-  if (profileLoading) return <Splash />
-  if (role === 'parent') return <Navigate to="/sessions" replace />
+  const { caps, isPending } = useMyCapabilities()
+  if (isPending) return <Splash />
+  if (!caps.has('sessions.create')) return <Navigate to="/sessions" replace />
   return <Outlet />
 }
 
@@ -127,11 +118,13 @@ export function App() {
           <Route path="media" element={<Media />} />
           {/* Account self-service is open to every role, parents included. */}
           <Route path="account" element={<Account />} />
-          <Route element={<RequireAdmin />}>
+          <Route element={<RequireCap cap="club.manage" />}>
             <Route path="admin/club" element={<AdminClub />} />
+          </Route>
+          <Route element={<RequireCap cap="teams.manage" />}>
             <Route path="admin/teams" element={<AdminTeams />} />
           </Route>
-          <Route element={<RequireUsersManage />}>
+          <Route element={<RequireCap cap="users.manage" />}>
             <Route path="admin/users" element={<AdminUsers />} />
           </Route>
         </Route>
