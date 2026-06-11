@@ -5,16 +5,24 @@
 // 360px with 44px touch targets.
 //
 // Roles: every club member reads this page. Use week and Apply to team
-// create sessions, so they are for coaching roles; Edit and Delete follow
-// the programmes RLS (owner, or admin). Parents see the plan, the progress
-// and the PDF only.
+// create sessions, so they follow sessions.create; Edit and Delete follow
+// the owner or manager arms of the programmes RLS. Members without the
+// capabilities see the plan, the progress and the PDF only.
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useStartFromTemplate } from '../hooks/useStartFromTemplate'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteProgramme, useMediaMap, useProgramme, useSignedMediaUrl, useTeamMap, useTemplates } from '../lib/queries'
+import {
+  useDeleteProgramme,
+  useMediaMap,
+  useMyCapabilities,
+  useProgramme,
+  useSignedMediaUrl,
+  useTeamMap,
+  useTemplates,
+} from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Programme, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -181,7 +189,8 @@ function DeleteProgrammeModal({ p, onClose, onDeleted }: { p: Programme; onClose
 
 function ProgrammeView({ p }: { p: Programme }) {
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
   const { data: templates = [] } = useTemplates()
   const { sessions } = useSessions()
   const teamById = useTeamMap()
@@ -190,12 +199,14 @@ function ProgrammeView({ p }: { p: Programme }) {
   const [deleting, setDeleting] = useState(false)
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null)
 
-  const coaching = role === 'coach' || role === 'admin'
-  // Backfilled programmes have no owner, so only an admin curates them. The
-  // owner arm carries the coaching role condition the programmes RLS has, so
-  // a coach demoted to parent loses the buttons with the access. The RLS
-  // enforces the same rule; this only surfaces the buttons.
-  const canManage = role === 'admin' || (coaching && !!p.createdBy && p.createdBy === user?.id)
+  const coaching = caps.has('sessions.create')
+  // Backfilled programmes have no owner, so only a programmes.manage holder
+  // curates them. The owner arm carries the programmes.create condition the
+  // programmes RLS has, so a coach demoted to parent loses the buttons with
+  // the access. The RLS enforces the same rule; this only surfaces the
+  // buttons.
+  const canManage =
+    caps.has('programmes.manage') || (caps.has('programmes.create') && !!p.createdBy && p.createdBy === user?.id)
 
   const weekTemplates: Record<number, Template> = {}
   for (const t of templates) {
@@ -294,7 +305,7 @@ function ProgrammeView({ p }: { p: Programme }) {
             coaching={coaching}
             manyTeams={manyTeams}
             nav={nav}
-            onEditTemplate={role === 'admin' ? setEditingTemplate : null}
+            onEditTemplate={caps.has('templates.manage') ? setEditingTemplate : null}
           />
         ))}
       </div>

@@ -4,7 +4,15 @@ import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useActivityTitle, useDrillMap, useMediaMap, useMemberMap, useSession, useTeams } from '../lib/queries'
+import {
+  useActivityTitle,
+  useDrillMap,
+  useMediaMap,
+  useMemberMap,
+  useMyCapabilities,
+  useSession,
+  useTeams,
+} from '../lib/queries'
 import { PHASES } from '../lib/data'
 import type { Activity, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -159,7 +167,8 @@ function PlannerEditor({
   newDefaults?: { coachId: string; teamId: string | null }
 }) {
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
   const { upsertSession } = useSessions()
   const { data: teams = [] } = useTeams()
   const memberById = useMemberMap()
@@ -175,9 +184,11 @@ function PlannerEditor({
   const [dragIdx, setDragIdx] = useState<number | null>(null)
 
   // Visibility is club-wide, so any coach can open any club session here.
-  // Editing follows ownership (own, or admin); everyone else gets a read-only
-  // view of the plan. The sessions RLS enforces the same rule on write.
-  const readOnly = !!existing && existing.coachId !== user?.id && role !== 'admin'
+  // Editing mirrors the sessions update RLS arms: sessions.manage on any
+  // session, the owner on their own (the route already requires
+  // sessions.create); everyone else gets a read-only view of the plan. The
+  // sessions RLS enforces the same rule on write.
+  const readOnly = !!existing && existing.coachId !== user?.id && !caps.has('sessions.manage')
   const owner = existing ? memberById[existing.coachId] : undefined
 
   const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)

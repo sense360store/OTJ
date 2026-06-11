@@ -5,7 +5,7 @@ import type { IconComponent } from './icons'
 import { UserAvatar } from './UserAvatar'
 import { useDrills, useMyCapabilities } from '../lib/queries'
 import { useAuth } from '../hooks/useAuth'
-import type { Role } from '../hooks/useAuth'
+import { ROLE_LABELS } from '../lib/data'
 import { useClubBranding } from '../hooks/useClubBranding'
 import { screenFromPath } from '../lib/screen'
 
@@ -48,27 +48,16 @@ const NAV: NavSection[] = [
   },
 ]
 
-// The role drives which nav items show, except Users, which follows the
-// users.manage capability below; the routes and RLS enforce the same
-// boundary. Parent is read-only: everything except the planner and the
-// admin tools.
-const ROLE_NAV: Record<Role, Set<string>> = {
-  coach: new Set(['home', 'library', 'sessions', 'planner', 'programmes', 'templates', 'media']),
-  admin: new Set([
-    'home',
-    'library',
-    'sessions',
-    'planner',
-    'programmes',
-    'templates',
-    'media',
-    'admin-club',
-    'admin-teams',
-  ]),
-  parent: new Set(['home', 'library', 'sessions', 'programmes', 'templates', 'media']),
+// Capabilities drive which nav items show, granting on any held role, so the
+// nav tracks the tick grid; the route guards and RLS enforce the same
+// boundary. Items without a capability are read surfaces open to every
+// member, parents included.
+const ITEM_CAP: Record<string, string> = {
+  planner: 'sessions.create',
+  'admin-club': 'club.manage',
+  'admin-users': 'users.manage',
+  'admin-teams': 'teams.manage',
 }
-
-const ROLE_LABEL: Record<Role, string> = { coach: 'Coach', admin: 'Admin', parent: 'Parent' }
 
 export function Sidebar() {
   const navigate = useNavigate()
@@ -78,9 +67,10 @@ export function Sidebar() {
   const { name, motto } = useClubBranding()
   const { data: drills } = useDrills()
   const { caps } = useMyCapabilities()
-  const allowed = ROLE_NAV[role ?? 'coach']
-  // The Users item is capability driven so it tracks the tick grid.
-  const showItem = (id: string) => (id === 'admin-users' ? caps.has('users.manage') : allowed.has(id))
+  const showItem = (id: string) => {
+    const cap = ITEM_CAP[id]
+    return !cap || caps.has(cap)
+  }
   const isActive = (id: string) => screen === id || (id === 'library' && screen === 'drill')
   // The library badge is the live drill count, shown once the read resolves.
   const badgeFor = (id: string): string | undefined =>
@@ -148,7 +138,9 @@ export function Sidebar() {
             <UserAvatar name={profile?.full_name} fallbackText={profile?.avatar} path={profile?.avatar_url} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <b>{profile?.full_name ?? 'Coach'}</b>
-              <span className="role-badge">{role ? ROLE_LABEL[role] : 'Coach'}</span>
+              {/* The display primary role; the full set lives on the Users
+                  screen and the Account screen. */}
+              <span className="role-badge">{role ? ROLE_LABELS[role] : 'Coach'}</span>
             </div>
           </button>
           <button className="icon-btn" title="Log out" onClick={() => void signOut()}>

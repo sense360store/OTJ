@@ -1,60 +1,175 @@
-// The club's people and what each role can do. Lists club profiles with
-// their invited or active state, sends invites through the invite-user Edge
-// Function, removes members through the remove-user Edge Function, changes
-// roles and teams through the profiles_users_manage policy, and edits the
-// role to capability grid (role_capabilities) that the policies consult on
-// every request. The route guard in App.tsx keeps members without
-// users.manage out, and the RLS and the functions enforce the same boundary
-// server side; the checks here only decide what to surface. REVIEW: invite,
-// removal and role assignment logic.
+// The club's people, their roles and what each role can do. Lists club
+// profiles with their invited or active state, sends invites through the
+// invite-user Edge Function, removes members through the remove-user Edge
+// Function, assigns role and team sets through member_roles and member_teams
+// (plus the all teams flag), manages custom roles in the roles table, and
+// edits the role to capability grid (role_capabilities, keyed by role_id)
+// that the policies consult on every request. The route guard in App.tsx
+// keeps members without users.manage out, and the RLS, the triggers and the
+// functions enforce the same boundaries server side; the checks here only
+// decide what to surface. REVIEW: invite, removal and role assignment logic.
 import { Fragment, useMemo, useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import {
   useCapabilities,
+  useCreateRole,
+  useDeleteRole,
   useInviteUser,
   useMemberStates,
   useMyCapabilities,
   useProfiles,
   useRemoveUser,
+  useRenameRole,
   useRoleCapabilities,
+  useRoles,
   useSaveRoleCapabilities,
+  useSetMemberAllTeams,
+  useSetMemberRoles,
+  useSetMemberTeams,
   useTeams,
-  useUpdateProfile,
 } from '../lib/queries'
-import type { Capability, Member, Role, RoleCapability, Team } from '../lib/data'
+import { RESERVED_CAPABILITIES, roleKeyFromLabel } from '../lib/data'
+import type { Capability, Member, RoleCapability, RoleInfo, Team } from '../lib/data'
 import { Icon } from '../components/icons'
 import { UserAvatar } from '../components/UserAvatar'
 import { ErrorNote, Loading, Modal } from '../components/ui'
 
-const ROLE_OPTIONS: { value: Role; label: string }[] = [
-  { value: 'coach', label: 'Coach' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'parent', label: 'Parent' },
-]
+const isAdminRole = (r: RoleInfo) => r.system && r.key === 'admin'
+const holdsAdmin = (m: Member) => m.roles.some(isAdminRole)
 
 function joinedLabel(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-function InviteCard({ teams }: { teams: Team[] }) {
+function sameSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x) => b.includes(x))
+}
+
+// One labelled checkbox, shared by the role and team pickers.
+function CheckItem({
+  label,
+  checked,
+  disabled,
+  title,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  disabled?: boolean
+  title?: string
+  onChange: () => void
+}) {
+  return (
+    <label
+      className="row"
+      title={title}
+      style={{ gap: 7, alignItems: 'center', fontSize: 13.5, fontWeight: 600, opacity: disabled ? 0.55 : 1, cursor: disabled ? 'default' : 'pointer' }}
+    >
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={onChange} />
+      {label}
+    </label>
+  )
+}
+
+// Team membership editor: the durable all teams flag plus the specific
+// selection. While all teams is on every team shows ticked and disabled, so
+// the state is unmistakable; the specific selection is kept underneath and
+// applies again when the flag goes off.
+function TeamPicker({
+  teams,
+  allTeams,
+  teamIds,
+  disabled,
+  onAllTeams,
+  onToggleTeam,
+}: {
+  teams: Team[]
+  allTeams: boolean
+  teamIds: Set<string>
+  disabled?: boolean
+  onAllTeams: (on: boolean) => void
+  onToggleTeam: (id: string) => void
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <CheckItem
+        label="All teams, current and future"
+        checked={allTeams}
+        disabled={disabled}
+        onChange={() => onAllTeams(!allTeams)}
+      />
+      <div className="row wrap" style={{ gap: 14 }}>
+        {teams.map((t) => (
+          <CheckItem
+            key={t.id}
+            label={t.name}
+            checked={allTeams || teamIds.has(t.id)}
+            disabled={allTeams || disabled}
+            title={allTeams ? 'All teams is on, so every team is included.' : undefined}
+            onChange={() => onToggleTeam(t.id)}
+          />
+        ))}
+        {teams.length === 0 && (
+          <span className="muted" style={{ fontSize: 12.5 }}>
+            No teams yet. Add them on the Teams screen.
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
   const invite = useInviteUser()
+  const defaultRoleIds = () => new Set(roles.filter((r) => r.system && r.key === 'coach').map((r) => r.id))
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
-  const [role, setRole] = useState<Role>('coach')
-  const [teamId, setTeamId] = useState('')
+  const [roleIds, setRoleIds] = useState<Set<string>>(defaultRoleIds)
+  const [allTeams, setAllTeams] = useState(false)
+  const [teamIds, setTeamIds] = useState<Set<string>>(() => new Set())
   const [note, setNote] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+
+  const toggleRole = (r: RoleInfo) => {
+    setRoleIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(r.id)) {
+        next.delete(r.id)
+      } else {
+        next.add(r.id)
+        // Admin and manager default to every team, as the invite function
+        // would; the toggle stays editable.
+        if (r.system && (r.key === 'admin' || r.key === 'manager')) setAllTeams(true)
+      }
+      return next
+    })
+  }
+
+  const toggleTeam = (id: string) =>
+    setTeamIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
   const send = () => {
     setNote(null)
     invite.mutate(
-      { email: email.trim(), fullName: fullName.trim(), role, teamId: teamId || null },
+      {
+        email: email.trim(),
+        fullName: fullName.trim(),
+        roleIds: [...roleIds],
+        teamIds: allTeams ? [] : [...teamIds],
+        allTeams,
+      },
       {
         onSuccess: (data) => {
           setNote({ kind: 'ok', text: data.warning ?? `Invite sent to ${email.trim()}.` })
           setEmail('')
           setFullName('')
-          setRole('coach')
-          setTeamId('')
+          setRoleIds(defaultRoleIds())
+          setAllTeams(false)
+          setTeamIds(new Set())
         },
         onError: (e) => setNote({ kind: 'error', text: e.message }),
       },
@@ -65,9 +180,10 @@ function InviteCard({ teams }: { teams: Team[] }) {
     <div className="card" style={{ padding: 18, marginBottom: 18 }}>
       <h3 style={{ fontSize: 17, marginBottom: 4 }}>Invite someone</h3>
       <p className="muted" style={{ fontSize: 13.5, marginBottom: 14 }}>
-        They get an email with a link to the app, set a password and are signed in to this club.
+        They get an email with a link to the app, set a password and are signed in to this club with the roles and
+        teams you pick here.
       </p>
-      <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
+      <div className="row wrap" style={{ gap: 10 }}>
         <div className="field" style={{ flex: 2, minWidth: 200, marginBottom: 0 }}>
           <label>Email</label>
           <input
@@ -81,36 +197,42 @@ function InviteCard({ teams }: { teams: Team[] }) {
           <label>Full name</label>
           <input placeholder="First and last name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
         </div>
-        <div className="field" style={{ flex: 1, minWidth: 110, marginBottom: 0 }}>
-          <label>Role</label>
-          <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-            {ROLE_OPTIONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
+      </div>
+      <div className="field" style={{ marginTop: 12, marginBottom: 0 }}>
+        <label>Roles</label>
+        <div className="row wrap" style={{ gap: 14, paddingTop: 4 }}>
+          {roles.map((r) => (
+            <CheckItem key={r.id} label={r.label} checked={roleIds.has(r.id)} onChange={() => toggleRole(r)} />
+          ))}
         </div>
-        <div className="field" style={{ flex: 1, minWidth: 120, marginBottom: 0 }}>
-          <label>Team (optional)</label>
-          <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-            <option value="">No team</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+      </div>
+      <div className="field" style={{ marginTop: 12, marginBottom: 0 }}>
+        <label>Teams</label>
+        <div style={{ paddingTop: 4 }}>
+          <TeamPicker
+            teams={teams}
+            allTeams={allTeams}
+            teamIds={teamIds}
+            onAllTeams={setAllTeams}
+            onToggleTeam={toggleTeam}
+          />
         </div>
+      </div>
+      <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
         <button
           className="btn btn-primary"
           onClick={send}
-          disabled={invite.isPending || !email.trim() || !fullName.trim()}
+          disabled={invite.isPending || !email.trim() || !fullName.trim() || roleIds.size === 0}
         >
           <Icon.plus />
           {invite.isPending ? 'Sending…' : 'Send invite'}
         </button>
       </div>
+      {roleIds.size === 0 && (
+        <p className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
+          Pick at least one role.
+        </p>
+      )}
       {note && (
         <p
           className="muted"
@@ -123,12 +245,143 @@ function InviteCard({ teams }: { teams: Team[] }) {
   )
 }
 
+// Edits one member's role set and team membership. Saves only what changed,
+// in order: roles, the all teams flag, then the specific teams. Server
+// refusals (the last admin trigger, a permission failure) surface verbatim
+// and the modal stays open.
+function ManageMemberModal({
+  member,
+  roles,
+  teams,
+  lastAdmin,
+  onClose,
+}: {
+  member: Member
+  roles: RoleInfo[]
+  teams: Team[]
+  lastAdmin: boolean
+  onClose: () => void
+}) {
+  const setMemberRoles = useSetMemberRoles()
+  const setMemberTeams = useSetMemberTeams()
+  const setMemberAllTeams = useSetMemberAllTeams()
+  const [roleIds, setRoleIds] = useState<Set<string>>(() => new Set(member.roles.map((r) => r.id)))
+  const [allTeams, setAllTeams] = useState(member.allTeams)
+  const [teamIds, setTeamIds] = useState<Set<string>>(() => new Set(member.teamIds))
+  const [error, setError] = useState<string | null>(null)
+
+  const saving = setMemberRoles.isPending || setMemberTeams.isPending || setMemberAllTeams.isPending
+
+  const toggleRole = (id: string) =>
+    setRoleIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const toggleTeam = (id: string) =>
+    setTeamIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const save = async () => {
+    setError(null)
+    try {
+      const nextRoles = [...roleIds]
+      if (!sameSet(nextRoles, member.roles.map((r) => r.id))) {
+        await setMemberRoles.mutateAsync({ memberId: member.id, roleIds: nextRoles })
+      }
+      if (allTeams !== member.allTeams) {
+        await setMemberAllTeams.mutateAsync({ memberId: member.id, allTeams })
+      }
+      const nextTeams = [...teamIds]
+      if (!sameSet(nextTeams, member.teamIds)) {
+        await setMemberTeams.mutateAsync({ memberId: member.id, teamIds: nextTeams })
+      }
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The change did not save. Try again.')
+    }
+  }
+
+  return (
+    <Modal
+      title="Roles and teams"
+      sub={member.fullName || 'Unnamed'}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={() => void save()} disabled={saving || roleIds.size === 0}>
+            <Icon.check />
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <div className="field" style={{ marginBottom: 14 }}>
+        <label>Roles</label>
+        <p className="muted" style={{ fontSize: 12.5, margin: '2px 0 8px' }}>
+          A member can hold several roles and gets everything any of them grants.
+        </p>
+        <div className="row wrap" style={{ gap: 14 }}>
+          {roles.map((r) => {
+            // The club must keep one admin; the trigger refuses server side
+            // and this keeps the obvious case from a round trip.
+            const locked = isAdminRole(r) && lastAdmin && roleIds.has(r.id)
+            return (
+              <CheckItem
+                key={r.id}
+                label={r.label}
+                checked={roleIds.has(r.id)}
+                disabled={locked || saving}
+                title={locked ? 'The club must keep at least one admin. Make someone else an admin first.' : undefined}
+                onChange={() => toggleRole(r.id)}
+              />
+            )
+          })}
+        </div>
+        {roleIds.size === 0 && (
+          <p className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
+            Keep at least one role.
+          </p>
+        )}
+      </div>
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label>Teams</label>
+        <div style={{ paddingTop: 4 }}>
+          <TeamPicker
+            teams={teams}
+            allTeams={allTeams}
+            teamIds={teamIds}
+            disabled={saving}
+            onAllTeams={setAllTeams}
+            onToggleTeam={toggleTeam}
+          />
+        </div>
+      </div>
+      {error && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 12 }}>
+          {error}
+        </p>
+      )}
+    </Modal>
+  )
+}
+
 function MemberRow({
   m,
   teams,
   isSelf,
   lastAdmin,
   state,
+  onManage,
   onRemove,
 }: {
   m: Member
@@ -138,12 +391,17 @@ function MemberRow({
   // Invited until they first sign in, then active. Undefined while the
   // states read is pending or unavailable; no chip shows.
   state?: 'invited' | 'active'
+  onManage: () => void
   onRemove: () => void
 }) {
-  const update = useUpdateProfile()
-  // The club must keep at least one admin, so the only admin cannot demote
-  // themselves; promote someone else first.
-  const roleLocked = isSelf && lastAdmin
+  const teamSummary = m.allTeams
+    ? 'All teams'
+    : m.teamIds.length > 0
+      ? m.teamIds
+          .map((id) => teams.find((t) => t.id === id)?.name)
+          .filter(Boolean)
+          .join(', ')
+      : 'No teams'
   return (
     <div
       className="row wrap"
@@ -166,39 +424,26 @@ function MemberRow({
           )}
         </b>
         <div className="muted" style={{ fontSize: 12.5 }}>
-          Joined {joinedLabel(m.joined)}
+          Joined {joinedLabel(m.joined)} · {teamSummary}
         </div>
       </div>
-      <div className="field" style={{ width: 130, marginBottom: 0 }}>
-        <label>Role</label>
-        <select
-          value={m.role}
-          disabled={roleLocked || update.isPending}
-          title={roleLocked ? "You are the club's only admin. Promote another admin first." : undefined}
-          onChange={(e) => update.mutate({ id: m.id, role: e.target.value as Role })}
-        >
-          {ROLE_OPTIONS.map((r) => (
-            <option key={r.value} value={r.value}>
-              {r.label}
-            </option>
-          ))}
-        </select>
+      {/* Every held role, in privilege order. */}
+      <div className="row wrap" style={{ gap: 6, flex: 1, minWidth: 140, justifyContent: 'flex-end' }}>
+        {m.roles.map((r) => (
+          <span key={r.id} className="pill" style={{ fontSize: 11.5 }}>
+            {r.label}
+          </span>
+        ))}
+        {m.roles.length === 0 && (
+          <span className="pill" style={{ fontSize: 11.5, color: 'var(--m-pdf)' }} title="No roles means no write access. Assign one.">
+            No roles
+          </span>
+        )}
       </div>
-      <div className="field" style={{ width: 150, marginBottom: 0 }}>
-        <label>Team</label>
-        <select
-          value={m.teamId ?? ''}
-          disabled={update.isPending}
-          onChange={(e) => update.mutate({ id: m.id, teamId: e.target.value || null })}
-        >
-          <option value="">No team</option>
-          {teams.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      </div>
+      <button className="btn btn-ghost btn-sm" onClick={onManage}>
+        <Icon.edit />
+        Manage
+      </button>
       {/* Removal is for administering others, and the only admin cannot be
           removed; remove-user enforces both server side. */}
       {!isSelf && (
@@ -212,16 +457,6 @@ function MemberRow({
         >
           <Icon.trash />
         </button>
-      )}
-      {roleLocked && (
-        <div className="muted" style={{ fontSize: 12.5, flexBasis: '100%' }}>
-          You are the club's only admin, so your role is locked. Promote another admin first.
-        </div>
-      )}
-      {update.isError && (
-        <div className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', flexBasis: '100%' }}>
-          The change did not save. Try again.
-        </div>
       )}
     </div>
   )
@@ -280,6 +515,171 @@ function RemoveMemberModal({
   )
 }
 
+// ---- The roles manager ------------------------------------------------------
+
+function DeleteRoleModal({
+  role,
+  holders,
+  onClose,
+}: {
+  role: RoleInfo
+  holders: number
+  onClose: () => void
+}) {
+  const deleteRole = useDeleteRole()
+  return (
+    <Modal
+      title="Delete role"
+      sub={role.label}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={deleteRole.isPending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{ background: 'var(--m-pdf)' }}
+            disabled={deleteRole.isPending}
+            onClick={() => deleteRole.mutate({ id: role.id }, { onSuccess: onClose })}
+          >
+            <Icon.trash />
+            {deleteRole.isPending ? 'Deleting…' : 'Delete role'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        {holders === 0
+          ? 'Nobody holds this role.'
+          : `${holders} member${holders === 1 ? ' holds' : 's hold'} this role; deleting it takes the role and its capabilities off them.`}{' '}
+        Its capability ticks are removed with it. Members keep their other roles and stay in the club.
+      </p>
+      {deleteRole.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+          {deleteRole.error.message}
+        </p>
+      )}
+    </Modal>
+  )
+}
+
+function RolesCard({ roles, members }: { roles: RoleInfo[]; members: Member[] }) {
+  const createRole = useCreateRole()
+  const renameRole = useRenameRole()
+  const [label, setLabel] = useState('')
+  const [renaming, setRenaming] = useState<{ id: string; label: string } | null>(null)
+  const [deleting, setDeleting] = useState<RoleInfo | null>(null)
+
+  const key = roleKeyFromLabel(label)
+  const holders = (r: RoleInfo) => members.filter((m) => m.roles.some((x) => x.id === r.id)).length
+
+  const create = () => {
+    if (!key) return
+    createRole.mutate({ key, label: label.trim() }, { onSuccess: () => setLabel('') })
+  }
+
+  const saveRename = () => {
+    if (!renaming || !renaming.label.trim()) return
+    renameRole.mutate({ id: renaming.id, label: renaming.label.trim() }, { onSuccess: () => setRenaming(null) })
+  }
+
+  return (
+    <div className="card" style={{ padding: 18, marginTop: 18 }}>
+      <h3 style={{ fontSize: 17, marginBottom: 4 }}>Roles</h3>
+      <p className="muted" style={{ fontSize: 13.5, marginBottom: 8 }}>
+        The four system roles are fixed; custom roles recombine the content capabilities in the grid below. User and
+        club administration stay with Admin.
+      </p>
+      {roles.map((r) => (
+        <div
+          key={r.id}
+          className="row wrap"
+          style={{ gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)', alignItems: 'center' }}
+        >
+          {renaming?.id === r.id ? (
+            <>
+              <input
+                value={renaming.label}
+                autoFocus
+                onChange={(e) => setRenaming({ id: r.id, label: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && saveRename()}
+                style={{ flex: 1, minWidth: 140 }}
+              />
+              <button className="btn btn-primary btn-sm" onClick={saveRename} disabled={renameRole.isPending || !renaming.label.trim()}>
+                {renameRole.isPending ? 'Saving…' : 'Save'}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setRenaming(null)} disabled={renameRole.isPending}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ flex: 1, minWidth: 140 }}>
+                <b style={{ fontSize: 14 }}>{r.label}</b>{' '}
+                <span className="mono muted" style={{ fontSize: 11.5 }}>
+                  {r.key}
+                </span>
+              </div>
+              <span className="pill" style={{ fontSize: 11.5 }}>
+                {holders(r)} member{holders(r) === 1 ? '' : 's'}
+              </span>
+              {r.system ? (
+                <span className="pill" style={{ fontSize: 11.5 }} title="System roles cannot be renamed or deleted; their capabilities stay editable.">
+                  System
+                </span>
+              ) : (
+                <>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setRenaming({ id: r.id, label: r.label })}>
+                    <Icon.edit />
+                    Rename
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm icon-only"
+                    style={{ width: 38, padding: 0 }}
+                    aria-label={'Delete ' + r.label}
+                    title="Delete this role"
+                    onClick={() => setDeleting(r)}
+                  >
+                    <Icon.trash />
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      ))}
+      <div className="row wrap" style={{ gap: 10, paddingTop: 14, borderTop: '1px solid var(--line)', alignItems: 'flex-end' }}>
+        <div className="field" style={{ flex: 1, minWidth: 180, marginBottom: 0 }}>
+          <label>New role</label>
+          <input placeholder="For example Team Manager" value={label} onChange={(e) => setLabel(e.target.value)} />
+        </div>
+        <button className="btn btn-primary" onClick={create} disabled={createRole.isPending || !key}>
+          <Icon.plus />
+          {createRole.isPending ? 'Creating…' : 'Create role'}
+        </button>
+      </div>
+      {label && key && (
+        <p className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
+          Saved with the key <span className="mono">{key}</span>. Tick its capabilities in the grid below, then assign
+          it to members.
+        </p>
+      )}
+      {createRole.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 8 }}>
+          {createRole.error.message}
+        </p>
+      )}
+      {renameRole.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 8 }}>
+          {renameRole.error.message}
+        </p>
+      )}
+      {deleting && <DeleteRoleModal role={deleting} holders={holders(deleting)} onClose={() => setDeleting(null)} />}
+    </div>
+  )
+}
+
 // ---- The role to capability grid ------------------------------------------
 
 // Render order: content entities first, administration last, create before
@@ -296,12 +696,13 @@ function capabilityOrder(a: Capability, b: Capability): number {
   return d !== 0 ? d : actA.localeCompare(actB)
 }
 
-const tickKey = (role: Role, capability: string) => `${role}:${capability}`
+const tickKey = (roleId: string, capability: string) => `${roleId}:${capability}`
 
 function ConfirmGridModal({
   adds,
   removes,
   catalogue,
+  roles,
   pending,
   error,
   onClose,
@@ -310,16 +711,17 @@ function ConfirmGridModal({
   adds: RoleCapability[]
   removes: RoleCapability[]
   catalogue: Capability[]
+  roles: RoleInfo[]
   pending: boolean
   error: string | null
   onClose: () => void
   onApply: () => void
 }) {
   const label = (key: string) => catalogue.find((c) => c.key === key)?.label ?? key
-  const roleLabel = (r: Role) => ROLE_OPTIONS.find((o) => o.value === r)?.label ?? r
+  const roleLabel = (id: string) => roles.find((r) => r.id === id)?.label ?? 'Role'
   const lines = [
-    ...adds.map((a) => `${roleLabel(a.role)} gains ${label(a.capability)}`),
-    ...removes.map((r) => `${roleLabel(r.role)} loses ${label(r.capability)}`),
+    ...adds.map((a) => `${roleLabel(a.roleId)} gains ${label(a.capability)}`),
+    ...removes.map((r) => `${roleLabel(r.roleId)} loses ${label(r.capability)}`),
   ]
   return (
     <Modal
@@ -339,7 +741,7 @@ function ConfirmGridModal({
       }
     >
       <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-        Capabilities attach to roles, not people. These changes take effect immediately for every member with the
+        Capabilities attach to roles, not people. These changes take effect immediately for every member holding the
         role.
       </p>
       <ul style={{ fontSize: 14, lineHeight: 1.7, paddingLeft: 18 }}>
@@ -356,7 +758,7 @@ function ConfirmGridModal({
   )
 }
 
-function CapabilityGrid() {
+function CapabilityGrid({ roles }: { roles: RoleInfo[] }) {
   const { data: catalogue, isLoading: catalogueLoading, isError: catalogueError } = useCapabilities()
   const { data: mapping, isLoading: mappingLoading, isError: mappingError } = useRoleCapabilities()
   const save = useSaveRoleCapabilities()
@@ -364,15 +766,15 @@ function CapabilityGrid() {
   const [draft, setDraft] = useState<Set<string> | null>(null)
   const [confirming, setConfirming] = useState(false)
 
-  const current = useMemo(() => new Set((mapping ?? []).map((rc) => tickKey(rc.role, rc.capability))), [mapping])
+  const current = useMemo(() => new Set((mapping ?? []).map((rc) => tickKey(rc.roleId, rc.capability))), [mapping])
   const rows = useMemo(() => [...(catalogue ?? [])].sort(capabilityOrder), [catalogue])
 
   const heading = (
     <>
       <h3 style={{ fontSize: 17, marginBottom: 4 }}>Roles and capabilities</h3>
       <p className="muted" style={{ fontSize: 13.5, marginBottom: 14 }}>
-        Ticks decide what every member of a role can do, club wide. Reading club content is open to every member and
-        is not gated here.
+        Ticks decide what every member holding a role can do, club wide. A member with several roles gets everything
+        any of them grants. Reading club content is open to every member and is not gated here.
       </p>
     </>
   )
@@ -385,12 +787,12 @@ function CapabilityGrid() {
       </div>
     )
   }
-  if (catalogueError || mappingError || rows.length === 0) {
+  if (catalogueError || mappingError || rows.length === 0 || roles.length === 0) {
     return (
       <div className="card" style={{ padding: 18, marginTop: 18 }}>
         {heading}
         <p className="muted" style={{ fontSize: 13.5 }}>
-          The capability grid is not available. It arrives with the 0012_rbac migration; apply it and reload.
+          The capability grid is not available. It needs the RBAC migrations (0012 and 0015); apply them and reload.
         </p>
       </div>
     )
@@ -400,20 +802,22 @@ function CapabilityGrid() {
   const adds: RoleCapability[] = []
   const removes: RoleCapability[] = []
   if (draft) {
-    for (const r of ROLE_OPTIONS) {
+    for (const r of roles) {
       for (const c of rows) {
-        const k = tickKey(r.value, c.key)
-        if (draft.has(k) && !current.has(k)) adds.push({ role: r.value, capability: c.key })
-        if (!draft.has(k) && current.has(k)) removes.push({ role: r.value, capability: c.key })
+        const k = tickKey(r.id, c.key)
+        if (draft.has(k) && !current.has(k)) adds.push({ roleId: r.id, capability: c.key })
+        if (!draft.has(k) && current.has(k)) removes.push({ roleId: r.id, capability: c.key })
       }
     }
   }
   const changeCount = adds.length + removes.length
 
-  const toggle = (role: Role, capability: string) => {
-    // Admins keep user management, so the grid cannot lock everyone out.
-    if (role === 'admin' && capability === 'users.manage') return
-    const k = tickKey(role, capability)
+  const toggle = (roleId: string, capability: string) => {
+    // The reserved capabilities never change from the grid: locked on for
+    // admin, not offered anywhere else. The database trigger enforces the
+    // same rule.
+    if (RESERVED_CAPABILITIES.includes(capability)) return
+    const k = tickKey(roleId, capability)
     const next = new Set(ticks)
     if (next.has(k)) next.delete(k)
     else next.add(k)
@@ -438,45 +842,57 @@ function CapabilityGrid() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'minmax(220px, 1fr) repeat(3, 84px)',
+            gridTemplateColumns: `minmax(220px, 1fr) repeat(${roles.length}, 92px)`,
             alignItems: 'center',
-            minWidth: 480,
+            minWidth: 220 + roles.length * 92,
           }}
         >
           <span />
-          {ROLE_OPTIONS.map((r) => (
-            <b key={r.value} style={{ fontSize: 13, textAlign: 'center', padding: '6px 0' }}>
+          {roles.map((r) => (
+            <b key={r.id} style={{ fontSize: 13, textAlign: 'center', padding: '6px 4px' }}>
               {r.label}
             </b>
           ))}
-          {rows.map((c) => (
-            <Fragment key={c.key}>
-              <div style={{ borderTop: '1px solid var(--line)', padding: '10px 12px 10px 0' }}>
-                <b style={{ fontSize: 13.5 }}>{c.label}</b>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  {c.description}
-                </div>
-              </div>
-              {ROLE_OPTIONS.map((r) => {
-                const locked = r.value === 'admin' && c.key === 'users.manage'
-                return (
-                  <div
-                    key={r.value}
-                    style={{ textAlign: 'center', borderTop: '1px solid var(--line)', padding: '10px 0', alignSelf: 'stretch', display: 'grid', placeItems: 'center' }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={ticks.has(tickKey(r.value, c.key))}
-                      disabled={locked || save.isPending}
-                      title={locked ? 'Admins keep user management, so the grid cannot lock everyone out.' : undefined}
-                      aria-label={`${c.label} for ${r.label}`}
-                      onChange={() => toggle(r.value, c.key)}
-                    />
+          {rows.map((c) => {
+            const reserved = RESERVED_CAPABILITIES.includes(c.key)
+            return (
+              <Fragment key={c.key}>
+                <div style={{ borderTop: '1px solid var(--line)', padding: '10px 12px 10px 0' }}>
+                  <b style={{ fontSize: 13.5 }}>{c.label}</b>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    {c.description}
+                    {reserved && ' Reserved to the admin role.'}
                   </div>
-                )
-              })}
-            </Fragment>
-          ))}
+                </div>
+                {roles.map((r) => {
+                  const cell = {
+                    textAlign: 'center' as const,
+                    borderTop: '1px solid var(--line)',
+                    padding: '10px 0',
+                    alignSelf: 'stretch' as const,
+                    display: 'grid',
+                    placeItems: 'center',
+                  }
+                  // Reserved capabilities: shown locked on for admin, not
+                  // offered at all on any other role.
+                  if (reserved && !isAdminRole(r)) return <div key={r.id} style={cell} />
+                  const locked = reserved && isAdminRole(r)
+                  return (
+                    <div key={r.id} style={cell}>
+                      <input
+                        type="checkbox"
+                        checked={locked || ticks.has(tickKey(r.id, c.key))}
+                        disabled={locked || save.isPending}
+                        title={locked ? 'Reserved to the admin role, so the club always keeps an administrator.' : undefined}
+                        aria-label={`${c.label} for ${r.label}`}
+                        onChange={() => toggle(r.id, c.key)}
+                      />
+                    </div>
+                  )
+                })}
+              </Fragment>
+            )
+          })}
         </div>
       </div>
       {changeCount > 0 && (
@@ -494,6 +910,7 @@ function CapabilityGrid() {
           adds={adds}
           removes={removes}
           catalogue={rows}
+          roles={roles}
           pending={save.isPending}
           error={save.isError ? 'Could not save every change. The grid shows what saved; try again.' : null}
           onClose={() => setConfirming(false)}
@@ -508,16 +925,19 @@ export function AdminUsers() {
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
   const { data: members = [], isLoading, isError } = useProfiles()
+  const { data: roles = [], isLoading: rolesLoading, isError: rolesError } = useRoles()
   const { data: teams = [] } = useTeams()
   const { data: states } = useMemberStates()
+  const [managingId, setManagingId] = useState<string | null>(null)
   const [removing, setRemoving] = useState<Member | null>(null)
   const [removedNote, setRemovedNote] = useState<string | null>(null)
-  if (isLoading) return <Loading />
-  if (isError) return <ErrorNote />
+  if (isLoading || rolesLoading) return <Loading />
+  if (isError || rolesError) return <ErrorNote />
   // The route guard already keeps members without users.manage out; this is
   // belt and braces for the brief render before a redirect.
   if (!caps.has('users.manage')) return null
-  const adminCount = members.filter((m) => m.role === 'admin').length
+  const adminCount = members.filter(holdsAdmin).length
+  const managing = managingId ? members.find((m) => m.id === managingId) : undefined
   return (
     <div>
       <div className="page-head">
@@ -527,7 +947,7 @@ export function AdminUsers() {
         </div>
       </div>
 
-      <InviteCard teams={teams} />
+      <InviteCard teams={teams} roles={roles} />
 
       <div className="card" style={{ padding: '6px 18px 4px' }}>
         <div className="row" style={{ padding: '12px 0 8px', justifyContent: 'space-between' }}>
@@ -548,8 +968,9 @@ export function AdminUsers() {
             m={m}
             teams={teams}
             isSelf={m.id === user?.id}
-            lastAdmin={adminCount === 1 && m.role === 'admin'}
+            lastAdmin={adminCount === 1 && holdsAdmin(m)}
             state={states?.[m.id]}
+            onManage={() => setManagingId(m.id)}
             onRemove={() => {
               setRemovedNote(null)
               setRemoving(m)
@@ -558,7 +979,20 @@ export function AdminUsers() {
         ))}
       </div>
 
-      <CapabilityGrid />
+      <RolesCard roles={roles} members={members} />
+
+      <CapabilityGrid roles={roles} />
+
+      {managing && (
+        <ManageMemberModal
+          key={managing.id}
+          member={managing}
+          roles={roles}
+          teams={teams}
+          lastAdmin={adminCount === 1 && holdsAdmin(managing)}
+          onClose={() => setManagingId(null)}
+        />
+      )}
 
       {removing && (
         <RemoveMemberModal

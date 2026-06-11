@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { embedSrc, isSampleMedia, sessionMinutes } from './data'
+import {
+  embedSrc,
+  hasAllCaps,
+  isSampleMedia,
+  memberTeamIds,
+  nextPrimaryTeamId,
+  primaryRoleKey,
+  roleKeyFromLabel,
+  sessionMinutes,
+  sortRoles,
+} from './data'
 
 describe('sessionMinutes', () => {
   it('sums the activity durations', () => {
@@ -53,5 +63,119 @@ describe('isSampleMedia', () => {
 
   it('a stored file is not a sample', () => {
     expect(isSampleMedia({ storagePath: 'club/abc.png' })).toBe(false)
+  })
+})
+
+// Shorthand for a role shape in the tests below.
+const role = (key: string, label: string, system = true) => ({ key, label, system })
+
+describe('sortRoles', () => {
+  it('orders system roles by privilege: admin, manager, coach, parent', () => {
+    const shuffled = [role('parent', 'Parent'), role('coach', 'Coach'), role('admin', 'Admin'), role('manager', 'Manager')]
+    expect(sortRoles(shuffled).map((r) => r.key)).toEqual(['admin', 'manager', 'coach', 'parent'])
+  })
+
+  it('puts custom roles after every system role, alphabetically by label', () => {
+    const roles = [
+      role('zeta', 'Zeta', false),
+      role('parent', 'Parent'),
+      role('analyst', 'Analyst', false),
+      role('admin', 'Admin'),
+    ]
+    expect(sortRoles(roles).map((r) => r.key)).toEqual(['admin', 'parent', 'analyst', 'zeta'])
+  })
+
+  it('does not mutate its input', () => {
+    const roles = [role('parent', 'Parent'), role('admin', 'Admin')]
+    sortRoles(roles)
+    expect(roles.map((r) => r.key)).toEqual(['parent', 'admin'])
+  })
+
+  it('treats a custom role reusing a system key as custom', () => {
+    const roles = [role('admin', 'Shadow admin', false), role('coach', 'Coach')]
+    expect(sortRoles(roles).map((r) => r.label)).toEqual(['Coach', 'Shadow admin'])
+  })
+})
+
+describe('primaryRoleKey', () => {
+  it('picks the highest precedence system role held', () => {
+    expect(primaryRoleKey([role('coach', 'Coach'), role('admin', 'Admin')])).toBe('admin')
+    expect(primaryRoleKey([role('parent', 'Parent'), role('manager', 'Manager')])).toBe('manager')
+    expect(primaryRoleKey([role('parent', 'Parent')])).toBe('parent')
+  })
+
+  it('defaults to coach when only custom roles are held, matching invite-user', () => {
+    expect(primaryRoleKey([role('analyst', 'Analyst', false)])).toBe('coach')
+    expect(primaryRoleKey([])).toBe('coach')
+  })
+
+  it('ignores a custom role that reuses a system key', () => {
+    expect(primaryRoleKey([role('admin', 'Shadow admin', false), role('parent', 'Parent')])).toBe('parent')
+  })
+})
+
+describe('roleKeyFromLabel', () => {
+  it('slugs a label to the database key shape', () => {
+    expect(roleKeyFromLabel('Team Manager')).toBe('team_manager')
+    expect(roleKeyFromLabel('U10s lead!')).toBe('u10s_lead')
+  })
+
+  it('strips diacritics and edge punctuation', () => {
+    expect(roleKeyFromLabel('  Café crew  ')).toBe('cafe_crew')
+    expect(roleKeyFromLabel('---')).toBe('')
+    expect(roleKeyFromLabel('')).toBe('')
+  })
+
+  it('always satisfies the slug constraint when non-empty', () => {
+    for (const label of ['Team Manager', 'Café crew', '9 a side', 'A'.repeat(100)]) {
+      const key = roleKeyFromLabel(label)
+      expect(key).toMatch(/^[a-z0-9][a-z0-9_]{0,62}$/)
+    }
+  })
+})
+
+describe('memberTeamIds', () => {
+  const allIds = ['t1', 't2', 't3']
+
+  it('returns the specific selection while all teams is off', () => {
+    expect(memberTeamIds({ allTeams: false, teamIds: ['t2'] }, allIds)).toEqual(['t2'])
+  })
+
+  it('returns every club team while all teams is on, whatever is selected', () => {
+    expect(memberTeamIds({ allTeams: true, teamIds: ['t2'] }, allIds)).toEqual(allIds)
+    expect(memberTeamIds({ allTeams: true, teamIds: [] }, allIds)).toEqual(allIds)
+  })
+
+  it('includes a team created after the flag was set', () => {
+    const grown = [...allIds, 't4']
+    expect(memberTeamIds({ allTeams: true, teamIds: ['t1'] }, grown)).toContain('t4')
+  })
+})
+
+describe('nextPrimaryTeamId', () => {
+  it('keeps the current primary while it stays selected', () => {
+    expect(nextPrimaryTeamId('t2', ['t1', 't2'])).toBe('t2')
+  })
+
+  it('falls to the first selected team when the primary is dropped', () => {
+    expect(nextPrimaryTeamId('t2', ['t1', 't3'])).toBe('t1')
+  })
+
+  it('clears the primary when nothing is selected', () => {
+    expect(nextPrimaryTeamId('t2', [])).toBeNull()
+    expect(nextPrimaryTeamId(null, [])).toBeNull()
+  })
+
+  it('sets a primary for a member who had none', () => {
+    expect(nextPrimaryTeamId(null, ['t3'])).toBe('t3')
+  })
+})
+
+describe('hasAllCaps', () => {
+  it('is true only when every needed capability is held', () => {
+    const caps = new Set(['drills.create', 'media.create', 'templates.create'])
+    expect(hasAllCaps(caps, ['drills.create', 'media.create'])).toBe(true)
+    expect(hasAllCaps(caps, ['drills.create', 'programmes.create'])).toBe(false)
+    expect(hasAllCaps(caps, [])).toBe(true)
   })
 })

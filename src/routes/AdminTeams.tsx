@@ -1,11 +1,11 @@
-// Admin only: rename, add or remove the club's teams, backed by the teams
-// RLS. Teams are a filter and a default, never access control, so removing
-// one never hides or orphans content: the foreign keys null the references
-// and the confirm spells that out. REVIEW: role gated admin surface.
+// Rename, add or remove the club's teams, behind teams.manage and backed by
+// the teams RLS. Teams are a filter and a default, never access control, so
+// removing one never hides or orphans content: the foreign keys null the
+// references and the confirm spells that out. REVIEW: capability gated
+// admin surface.
 import { useState } from 'react'
-import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteTeam, useInsertTeam, useProfiles, useRenameTeam, useTeams } from '../lib/queries'
+import { useDeleteTeam, useInsertTeam, useMyCapabilities, useProfiles, useRenameTeam, useTeams } from '../lib/queries'
 import type { Team } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal } from '../components/ui'
@@ -90,12 +90,12 @@ export function AdminTeams() {
   const insert = useInsertTeam()
   const [name, setName] = useState('')
   const [removing, setRemoving] = useState<Team | null>(null)
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
-  // The route guard already keeps coaches out; this is belt and braces for
-  // the brief render before a redirect.
-  if (role !== 'admin') return null
+  // The route guard already keeps members without teams.manage out; this is
+  // belt and braces for the brief render before a redirect.
+  if (!caps.has('teams.manage')) return null
 
   const add = () => {
     const trimmed = name.trim()
@@ -153,7 +153,9 @@ export function AdminTeams() {
       {removing && (
         <DeleteTeamModal
           team={removing}
-          memberCount={members.filter((m) => m.teamId === removing.id).length}
+          // Membership is a set now: count specific members plus everyone on
+          // the all teams flag.
+          memberCount={members.filter((m) => m.allTeams || m.teamIds.includes(removing.id)).length}
           sessionCount={sessions.filter((s) => s.teamId === removing.id).length}
           onClose={() => setRemoving(null)}
         />

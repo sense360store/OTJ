@@ -10,7 +10,23 @@ export type Phase = 'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'
 export type Level = 'Foundation' | 'Developing' | 'Advanced'
 export type MediaType = 'video' | 'youtube' | 'image' | 'pdf'
 export type SessionStatus = 'upcoming' | 'completed'
-export type Role = 'coach' | 'admin' | 'parent'
+
+// The system role keys, which double as the role_kind enum values behind
+// profiles.role (the denormalised display primary). RBAC v2 made roles data:
+// access flows from the roles a member holds in member_roles, never from
+// this type. Custom roles exist only as RoleInfo rows.
+export type Role = 'admin' | 'manager' | 'coach' | 'parent'
+
+// Privilege order for the system roles: sorting role badges, ordering grid
+// columns and picking the display primary all use it. Highest first.
+export const ROLE_PRECEDENCE: Role[] = ['admin', 'manager', 'coach', 'parent']
+
+export const ROLE_LABELS: Record<Role, string> = {
+  admin: 'Admin',
+  manager: 'Manager',
+  coach: 'Coach',
+  parent: 'Parent',
+}
 
 // A club team. Teams are a filter and a default, never access control.
 export interface Team {
@@ -18,7 +34,21 @@ export interface Team {
   name: string
 }
 
-// A club member as the Users screen and the owner labels see one.
+// A role as a row in the roles table: the four seeded system roles plus any
+// custom roles the club's admins create. key is the stable slug code refers
+// to; label is what the UI shows; system rows cannot be deleted or re-keyed.
+export interface RoleInfo {
+  id: string
+  key: string
+  label: string
+  system: boolean
+}
+
+// A club member as the Users screen and the owner labels see one. roles and
+// teamIds are the real assignment sets (member_roles and member_teams);
+// role and teamId remain the denormalised display primaries and sit in no
+// access decision. allTeams means every team, current and future, and while
+// it is true the specific teamIds are moot.
 export interface Member {
   id: string
   fullName: string
@@ -28,6 +58,9 @@ export interface Member {
   role: Role
   teamId: string | null
   joined: string
+  roles: RoleInfo[]
+  teamIds: string[]
+  allTeams: boolean
 }
 
 // A capability from the catalogue: a named permission such as
@@ -40,10 +73,27 @@ export interface Capability {
   description: string
 }
 
-// One tick in the role to capability mapping.
+// One tick in the role to capability mapping, keyed by the roles table id
+// since 0015_rbac_roles re-keyed role_capabilities from the enum.
 export interface RoleCapability {
-  role: Role
+  roleId: string
   capability: string
+}
+
+// The two administrative capabilities the database reserves to the admin
+// system role. The grid never offers them on any other role; a trigger
+// refuses them server side whatever writes the table.
+export const RESERVED_CAPABILITIES = ['users.manage', 'club.manage']
+
+// The FA importers write several entities in one call as the signed in
+// caller, so the import affordance needs every capability the call would
+// use: a session import creates a template plus its drills and media, and a
+// programme import additionally creates the programme row.
+export const FA_IMPORT_CAPS = ['templates.create', 'drills.create', 'media.create']
+export const FA_PROGRAMME_IMPORT_CAPS = [...FA_IMPORT_CAPS, 'programmes.create']
+
+export function hasAllCaps(caps: ReadonlySet<string>, needed: readonly string[]): boolean {
+  return needed.every((c) => caps.has(c))
 }
 
 // The club row. crestUrl is a storage path in the media bucket or a full URL.
@@ -126,6 +176,10 @@ export interface Template {
   name: string
   author: string
   focus: string
+  // The owning member, for the owner arm of the edit and delete affordances.
+  // Templates from before ownership existed, and FA imports, have none and
+  // are curated through templates.manage only.
+  createdBy?: string
   activities: Activity[]
   // FA session model fields. intentions copy onto a session built from the
   // template; programme and week are the legacy grouping labels, kept for
@@ -216,6 +270,68 @@ export const LEVELS: Level[] = ['Foundation', 'Developing', 'Advanced']
 
 export function sessionMinutes(s: { activities: Activity[] }): number {
   return s.activities.reduce((a, x) => a + (x.duration || 0), 0)
+}
+
+// ---- Role helpers --------------------------------------------------------
+// Pure functions over the RBAC v2 shapes, shared by the Users screen, the
+// shell and the assignment mutations.
+
+// Sort position for a role: system roles in privilege order, custom roles
+// after them all.
+export function rolePrecedence(role: Pick<RoleInfo, 'key' | 'system'>): number {
+  const i = role.system ? ROLE_PRECEDENCE.indexOf(role.key as Role) : -1
+  return i === -1 ? ROLE_PRECEDENCE.length : i
+}
+
+// Privilege order for badges and grid columns: admin, manager, coach, parent,
+// then custom roles alphabetically by label.
+export function sortRoles<T extends Pick<RoleInfo, 'key' | 'label' | 'system'>>(roles: T[]): T[] {
+  return [...roles].sort((a, b) => {
+    const d = rolePrecedence(a) - rolePrecedence(b)
+    if (d !== 0) return d
+    return a.label.localeCompare(b.label) || a.key.localeCompare(b.key)
+  })
+}
+
+// The display primary for profiles.role: the highest precedence system role
+// held, or coach when only custom roles are held. Mirrors the invite-user
+// function so the two never disagree.
+export function primaryRoleKey(roles: Pick<RoleInfo, 'key' | 'system'>[]): Role {
+  const systemKeys = roles.filter((r) => r.system).map((r) => r.key)
+  return ROLE_PRECEDENCE.find((k) => systemKeys.includes(k)) ?? 'coach'
+}
+
+// A custom role's stable key, derived from its label. Must satisfy the
+// database slug constraint, one lowercase word of letters, digits and
+// underscores starting with a letter or digit. Empty when the label has
+// nothing usable in it, which the UI treats as not ready to create.
+export function roleKeyFromLabel(label: string): string {
+  return label
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 63)
+}
+
+// ---- Team membership helpers ----------------------------------------------
+
+// The teams a member effectively belongs to: every club team while the all
+// teams flag is on (current and future teams alike, which is why the flag is
+// durable), otherwise the specific selection.
+export function memberTeamIds(
+  member: Pick<Member, 'allTeams' | 'teamIds'>,
+  allTeamIds: string[],
+): string[] {
+  return member.allTeams ? allTeamIds : member.teamIds
+}
+
+// The display primary team after a membership edit: keep the current primary
+// while it is still in the selection, otherwise fall to the first selected
+// team, or none.
+export function nextPrimaryTeamId(current: string | null, selected: string[]): string | null {
+  if (current && selected.includes(current)) return current
+  return selected[0] ?? null
 }
 
 // ---- YouTube helpers ---------------------------------------------------

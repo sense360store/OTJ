@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
+import { useDrill, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl } from '../lib/queries'
 import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -77,11 +77,13 @@ function NumberedList({ items, size = 15 }: { items: string[]; size?: number }) 
 
 function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
   const { sessions: allSessions, upsertSession } = useSessions()
   // The sessions read is club-wide, but adding a drill writes the session, so
-  // only sessions the signed-in user can edit are offered (own, or admin).
-  const sessions = allSessions.filter((s) => role === 'admin' || s.coachId === user?.id)
+  // only sessions the signed-in user can edit are offered: any with
+  // sessions.manage, their own otherwise.
+  const sessions = allSessions.filter((s) => caps.has('sessions.manage') || s.coachId === user?.id)
   const [phase, setPhase] = useState<Phase>('Skill')
   const [target, setTarget] = useState(sessions[0]?.id || '')
   const add = () => {
@@ -139,7 +141,8 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
 export function DrillDetail() {
   const { id } = useParams()
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
   const [addOpen, setAddOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -174,14 +177,16 @@ export function DrillDetail() {
   const embed = media ? embedSrc(media.embedUrl) : null
   const playable = !sample && (media?.type === 'video' || media?.type === 'youtube')
   const openHref = signedUrl ?? undefined
-  // Adding to a session writes a session, which parents cannot do.
-  const coaching = role === 'coach' || role === 'admin'
-  // Edit and delete are owner or admin only, mirroring the drills RLS. The
-  // role condition matters for a coach demoted to parent, who still matches
-  // created_by on old drills. Seeded drills have no creator, so only an admin
-  // can manage them. The database is the real enforcement; this only decides
+  // Adding to a session writes a session, so it follows sessions.create.
+  const canPlan = caps.has('sessions.create')
+  // Edit and delete mirror the drills RLS arms: drills.manage on any drill,
+  // an owner holding drills.create on their own. The capability condition
+  // matters for a coach demoted to parent, who still matches created_by on
+  // old drills. Seeded drills have no creator, so only a manage holder
+  // touches them. The database is the real enforcement; this only decides
   // whether to surface the actions.
-  const canManage = role === 'admin' || (coaching && !!drill.createdBy && drill.createdBy === user?.id)
+  const canManage =
+    caps.has('drills.manage') || (caps.has('drills.create') && !!drill.createdBy && drill.createdBy === user?.id)
 
   return (
     <div>
@@ -313,7 +318,7 @@ export function DrillDetail() {
             </div>
           </div>
 
-          {coaching && (
+          {canPlan && (
             <div className="row" style={{ gap: 10, marginTop: 22 }}>
               <button className="btn btn-primary btn-block" onClick={() => setAddOpen(true)}>
                 <Icon.plus />

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useStartFromTemplate } from '../hooks/useStartFromTemplate'
-import { useDeleteTemplate, useProgrammes, useTemplates } from '../lib/queries'
+import { useDeleteTemplate, useMyCapabilities, useProgrammes, useTemplates } from '../lib/queries'
+import { FA_IMPORT_CAPS, hasAllCaps } from '../lib/data'
 import type { Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
@@ -18,14 +19,15 @@ function TemplateCard({
   onEdit: ((t: Template) => void) | null
   onDelete: ((t: Template) => void) | null
 }) {
-  const { role } = useAuth()
+  const { caps } = useMyCapabilities()
   const startFromTemplate = useStartFromTemplate()
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
-  // Using a template creates a session, which parents cannot do; for them the
-  // card is read-only. The session built from a template belongs to the
-  // signed-in coach and defaults to their team, the same as one built in the
-  // planner. The template's intentions copy onto the new session.
-  const coaching = role === 'coach' || role === 'admin'
+  // Using a template creates a session, so it follows sessions.create; for
+  // members without it the card is read-only. The session built from a
+  // template belongs to the signed-in coach and defaults to their team, the
+  // same as one built in the planner. The template's intentions copy onto
+  // the new session.
+  const coaching = caps.has('sessions.create')
   const week = t.programmeWeek ?? t.week
   return (
     <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -127,7 +129,8 @@ function DeleteTemplateModal({ t, onClose }: { t: Template; onClose: () => void 
 
 export function Templates() {
   const nav = useNav()
-  const { role } = useAuth()
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Template | null>(null)
@@ -143,11 +146,16 @@ export function Templates() {
   const standalone = templates.filter((t) => t.programmeId == null)
   const list = standalone.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()))
   const inProgrammes = templates.length - standalone.length
-  // Curating templates is admin only per the permissions matrix; every coach
-  // can still use one, and every coaching role can import from England
-  // Football. Parents read only. The templates RLS enforces the writes.
-  const curator = role === 'admin'
-  const coaching = role === 'coach' || role === 'admin'
+  // Edit and delete mirror the templates RLS arms: templates.manage on any
+  // template (curation), an owner holding templates.create on their own.
+  // Templates without an owner (imports, anything from before ownership)
+  // stay curation only. The FA import writes a template plus its drills and
+  // media, so it needs every capability the call would use. The templates
+  // RLS enforces the writes.
+  const canCreate = caps.has('templates.create')
+  const canImport = hasAllCaps(caps, FA_IMPORT_CAPS)
+  const canManage = (t: Template) =>
+    caps.has('templates.manage') || (canCreate && !!t.createdBy && t.createdBy === user?.id)
   return (
     <div>
       <div className="page-head">
@@ -156,13 +164,13 @@ export function Templates() {
           <div className="sub">Reusable session shells — build a new plan in one click.</div>
         </div>
         <div className="row wrap">
-          {coaching && (
+          {canImport && (
             <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
               <Icon.download />
               Import from England Football
             </button>
           )}
-          {curator && (
+          {canCreate && (
             <button className="btn btn-primary" onClick={() => setCreating(true)}>
               <Icon.plus />
               New template
@@ -193,7 +201,7 @@ export function Templates() {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
         {list.map((t) => (
-          <TemplateCard key={t.id} t={t} onEdit={curator ? setEditing : null} onDelete={curator ? setDeleting : null} />
+          <TemplateCard key={t.id} t={t} onEdit={canManage(t) ? setEditing : null} onDelete={canManage(t) ? setDeleting : null} />
         ))}
       </div>
       {creating && <TemplateFormModal onClose={() => setCreating(false)} />}
