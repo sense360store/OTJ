@@ -5,6 +5,7 @@ import {
   useMediaSrc,
   useUploadMedia,
   useReplaceMedia,
+  useRenameMedia,
   useDeleteMedia,
   useRemoveSampleMedia,
   mediaTypeForFile,
@@ -26,12 +27,14 @@ function MediaCard({
   m,
   onOpen,
   onPlay,
+  onRename,
   onDelete,
   onReplace,
 }: {
   m: MediaItem
   onOpen: () => void
   onPlay: (() => void) | null
+  onRename: (() => void) | null
   onDelete: (() => void) | null
   onReplace: (() => void) | null
 }) {
@@ -94,6 +97,17 @@ function MediaCard({
             <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={onOpen}>
               <Icon.external />
               View
+            </button>
+          )}
+          {onRename && (
+            <button
+              className="btn btn-ghost btn-sm icon-only"
+              style={{ width: 38, padding: 0 }}
+              aria-label="Rename media"
+              title="Rename"
+              onClick={onRename}
+            >
+              <Icon.edit />
             </button>
           )}
           {onDelete && (
@@ -181,6 +195,52 @@ function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void })
         {item.type === 'youtube' && item.yt && <span className="pill">YouTube link</span>}
         <span className="pill">{usedLabel(item.usedIn ?? 0)}</span>
       </div>
+    </Modal>
+  )
+}
+
+// Rename in place: the row keeps its id, file and links, so every drill that
+// references it keeps working. Owner or admin only, mirroring the media
+// update RLS.
+function RenameModal({ item, onClose }: { item: MediaItem; onClose: () => void }) {
+  const rename = useRenameMedia()
+  const [name, setName] = useState(item.name)
+  const canSubmit = !!name.trim() && name.trim() !== item.name
+  const submit = () => rename.mutate({ id: item.id, name: name.trim() }, { onSuccess: onClose })
+  return (
+    <Modal
+      title="Rename media"
+      sub={item.name}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={rename.isPending}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={submit} disabled={!canSubmit || rename.isPending}>
+            <Icon.check />
+            {rename.isPending ? 'Saving…' : 'Rename'}
+          </button>
+        </>
+      }
+    >
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label>Display name</label>
+        <input
+          value={name}
+          autoFocus
+          placeholder="Name shown in the library"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && canSubmit && !rename.isPending) submit()
+          }}
+        />
+      </div>
+      {rename.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 10 }}>
+          {rename.error.message}
+        </p>
+      )}
     </Modal>
   )
 }
@@ -429,6 +489,7 @@ export function Media() {
   const [type, setType] = useState('')
   const [open, setOpen] = useState<MediaItem | null>(null)
   const [playing, setPlaying] = useState<MediaItem | null>(null)
+  const [renaming, setRenaming] = useState<MediaItem | null>(null)
   const [del, setDel] = useState<MediaItem | null>(null)
   const [replacing, setReplacing] = useState<MediaItem | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -511,6 +572,7 @@ export function Media() {
             m={m}
             onOpen={() => setOpen(m)}
             onPlay={!isSampleMedia(m) && (m.type === 'video' || m.type === 'youtube') ? () => setPlaying(m) : null}
+            onRename={canManage(m) ? () => setRenaming(m) : null}
             onDelete={canManage(m) ? () => setDel(m) : null}
             onReplace={canManage(m) ? () => setReplacing(m) : null}
           />
@@ -519,6 +581,7 @@ export function Media() {
 
       {open && <MediaModal item={open} onClose={() => setOpen(null)} />}
       {playing && <MediaPlayerModal item={playing} onClose={() => setPlaying(null)} />}
+      {renaming && <RenameModal item={renaming} onClose={() => setRenaming(null)} />}
       {del && <DeleteModal item={del} onClose={() => setDel(null)} />}
       {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
       {replacing && <UploadModal replace={replacing} onClose={() => setReplacing(null)} />}
