@@ -1,0 +1,23 @@
+-- =====================================================================
+-- OTJ Training Hub, migration A: add the manager role enum value
+--
+-- REVIEW REQUIRED. Migrations are gated. Applied by hand through the
+-- Supabase connector after line by line review, and only once the live
+-- ledger is confirmed to have this slot free. Do not auto-merge.
+--
+-- Numbering. 0013 is the next free number against supabase/migrations on
+-- this branch (0012 is the last file here). The FA video migration is
+-- also pending and not yet on this ledger, so the final number is
+-- assigned at apply time to avoid a collision: if FA video lands first
+-- this becomes 0014, and the model migration that follows shifts with it.
+--
+-- This file does one thing and nothing else. Adding a value to an enum
+-- and then using that value in the same transaction fails in Postgres
+-- with "unsafe use of new value", so the value is added here, alone, and
+-- must commit before anything seeds the manager role or maps a row to it.
+-- The model migration (member_roles, member_teams, the has_perm rewrite
+-- and the manager capability seed) is a separate file, applied only after
+-- this one is live.
+-- =====================================================================
+
+alter type role_kind add value if not exists 'manager';
