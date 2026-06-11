@@ -13,6 +13,7 @@ import {
   ASSET_HOST,
   contentRegion,
   countSessionLinks,
+  findVideoEmbed,
   MAX_PROGRAMME_WEEKS,
   normalisedHref,
   PAGE_HOST,
@@ -110,6 +111,58 @@ Deno.test('themeFromTitle reads the theme the FA names before the word session',
   assertEquals(themeFromTitle('Pressing session'), 'Pressing')
   // No "session" in the title means no reliable theme, left for the coach.
   assertEquals(themeFromTitle('Moving with the ball: dribbling and turning - week six'), '')
+})
+
+// ---- Video session pages: the FA delivers some sessions as a Vimeo embed ---
+// The goalkeeping basics page carries no diagrams, setup strip or coaching
+// points, only the FA large video player. parseSessionPage must read the
+// player.vimeo.com embed so the import makes a video drill, not an empty
+// template.
+
+Deno.test('parseSessionPage reads the FA video embed and the empty drill shape', () => {
+  const page = parseSessionPage(fixture('session-2022-goalkeeping-the-basics.html'))
+  assertEquals(page.title, 'Goalkeeping session: the basics')
+  assertEquals(page.videoEmbedUrl, 'https://player.vimeo.com/video/129532422')
+  // No diagrams, no setup strip, no coaching points: the empty drill shape
+  // that, without a video, the importer now refuses instead of landing empty.
+  assertEquals(page.activities.length, 0)
+  assertEquals(page.players, '')
+  assertEquals(page.space, '')
+  assertEquals(page.equipment.length, 0)
+  assertEquals(page.points.length, 0)
+})
+
+Deno.test('the goalkeeping video page is not mistaken for a programme overview', () => {
+  // fa-import refuses an empty page as an overview only when it links several
+  // session pages; a real video session links none, so it reaches the import.
+  const url = new URL('https://learn.englandfootball.com/sessions/resources/2022/Goalkeeping-session-the-basics')
+  assert(countSessionLinks(fixture('session-2022-goalkeeping-the-basics.html'), url) <= 1)
+})
+
+Deno.test('a normal session page with diagrams is not treated as a video session', () => {
+  // The marking page carries the large video player too, but it has real
+  // activity diagrams, so the import takes the diagram path, not the video one.
+  const page = parseSessionPage(fixture('session-2025-marking-defend-as-friends.html'))
+  assertEquals(page.title, 'Marking and intercepting session: defend as friends')
+  assert(page.activities.length > 0)
+})
+
+Deno.test('findVideoEmbed ignores a page with no allowlisted player', () => {
+  assertEquals(findVideoEmbed('<html><body><iframe src="https://youtube.com/embed/x"></iframe></body></html>'), '')
+  // A video-wrap with an unknown player type is not stored.
+  assertEquals(
+    findVideoEmbed(
+      '<main><div class="efl-large-video-player__video-wrap" data-video-type="dailymotion" data-video-id="123"></div></main>',
+    ),
+    '',
+  )
+  // The allowlisted Vimeo player resolves to its player URL.
+  assertEquals(
+    findVideoEmbed(
+      '<main><div class="efl-large-video-player__video-wrap" data-video-type="vimeo" data-video-id="42"></div></main>',
+    ),
+    'https://player.vimeo.com/video/42',
+  )
 })
 
 // ---- The overview parser: week links, allowlist, dedupe, cap --------------

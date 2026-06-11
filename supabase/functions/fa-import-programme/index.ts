@@ -246,7 +246,9 @@ Deno.serve(async (req) => {
         week,
         url: link.url,
         status: 'failed',
-        error: 'Imported the drills but could not create the week template.',
+        error: result.unimportable
+          ? 'The week page has no drills or video the importer can read.'
+          : 'Imported the drills but could not create the week template.',
         created: result.created,
         warnings: result.warnings,
       })

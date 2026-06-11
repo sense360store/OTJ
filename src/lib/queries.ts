@@ -79,6 +79,7 @@ interface MediaRow {
   type: MediaType
   kind: string | null
   storage_path: string | null
+  embed_url: string | null
   yt_url: string | null
   size: string | null
   dims: string | null
@@ -184,7 +185,7 @@ interface ClubRow {
 const DRILL_COLS =
   'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at, setup_notes, easier, harder, theme, format, source_url, source_label'
 const MEDIA_COLS =
-  'id, club_id, name, type, kind, storage_path, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label'
+  'id, club_id, name, type, kind, storage_path, embed_url, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label'
 const TEMPLATE_COLS =
   'id, club_id, name, focus, author, activities, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label'
 const PROGRAMME_COLS =
@@ -251,6 +252,7 @@ function toMedia(r: MediaRow): MediaItem {
     pages: r.pages ?? undefined,
     yt: r.yt_url ?? undefined,
     storagePath: r.storage_path ?? undefined,
+    embedUrl: r.embed_url ?? undefined,
     createdBy: r.created_by ?? undefined,
     sourceUrl: r.source_url ?? undefined,
     sourceLabel: r.source_label ?? undefined,
