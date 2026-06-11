@@ -1,6 +1,6 @@
 -- =====================================================================
 -- OTJ Training Hub - video media embeds
--- Migration 0013_video_media
+-- Migration 0014_video_media
 --
 -- REVIEW REQUIRED. One structural change: media gains a nullable
 -- embed_url so a media row can point at a third party video player
