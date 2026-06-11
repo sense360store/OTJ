@@ -7,10 +7,13 @@
 // `npx supabase functions deploy invite-user` and set the app origin with
 // `npx supabase secrets set APP_ORIGIN=https://your-app.vercel.app`.
 //
-// Flow: verify the caller is a signed in admin, validate the payload,
-// invite via the auth admin API with the metadata keys handle_new_user
-// reads (full_name, role, club_id), then set the new profile's team_id
-// when one was supplied, because the trigger does not know about teams.
+// Flow: verify the caller is signed in and holds the users.manage
+// capability (0012_rbac), validate the payload, invite via the auth
+// admin API with the metadata keys handle_new_user reads (full_name,
+// role, club_id), then set the new profile's team_id when one was
+// supplied, because the trigger does not know about teams. Inviting,
+// and assigning a role on invite, is a users.manage action; the role
+// name itself is never checked here.
 // =====================================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
@@ -41,7 +44,10 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
-  // Resolve the caller from the Authorization JWT and require the admin role.
+  // Resolve the caller from the Authorization JWT and require the
+  // users.manage capability through the role_capabilities mapping. A
+  // missing mapping row, or the table not existing yet because 0012 has
+  // not been applied, refuses the invite: this fails closed.
   const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
   if (!jwt) return reply(401, { error: 'Not signed in.' })
   const { data: userData, error: userError } = await admin.auth.getUser(jwt)
@@ -52,8 +58,17 @@ Deno.serve(async (req) => {
     .select('id, club_id, role')
     .eq('id', userData.user.id)
     .maybeSingle()
-  if (!caller || caller.role !== 'admin' || !caller.club_id) {
-    return reply(403, { error: 'Only a club admin can send invites.' })
+  if (!caller || !caller.club_id) {
+    return reply(403, { error: 'Only a member with user management access can send invites.' })
+  }
+  const { data: perm } = await admin
+    .from('role_capabilities')
+    .select('capability')
+    .eq('role', caller.role)
+    .eq('capability', 'users.manage')
+    .maybeSingle()
+  if (!perm) {
+    return reply(403, { error: 'Only a member with user management access can send invites.' })
   }
 
   // Validate the payload: email, full name, role limited to coach, admin or
