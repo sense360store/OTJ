@@ -565,7 +565,7 @@ export function Media() {
         })}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(248px,1fr))', gap: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%, 248px),1fr))', gap: 18 }}>
         {list.map((m) => (
           <MediaCard
             key={m.id}

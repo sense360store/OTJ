@@ -191,7 +191,7 @@ export function Templates() {
         <Icon.search />
         <input placeholder="Search templates…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%, 310px),1fr))', gap: 18 }}>
         {list.map((t) => (
           <TemplateCard key={t.id} t={t} onEdit={curator ? setEditing : null} onDelete={curator ? setDeleting : null} />
         ))}

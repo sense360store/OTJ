@@ -224,7 +224,7 @@ export function Sessions() {
                 : 'Nothing on the club calendar yet.'}
         </Empty>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%, 330px),1fr))', gap: 18 }}>
           {list.map((s) => {
             const mine = s.coachId === user?.id
             return (

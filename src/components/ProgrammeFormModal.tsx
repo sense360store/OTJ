@@ -67,7 +67,7 @@ function PdfPicker({ value, onChange }: { value: string | null; onChange: (id: s
     minHeight: 44,
   })
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gap: 8 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%, 210px),1fr))', gap: 8 }}>
       <button type="button" style={tile(value === null)} onClick={() => onChange(null)}>
         <div
           style={{

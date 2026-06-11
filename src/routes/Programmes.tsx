@@ -138,7 +138,7 @@ export function Programmes() {
             : 'Nothing here yet. Programmes appear once a coach imports or builds one.'}
         </Empty>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%, 310px),1fr))', gap: 18 }}>
           {programmes.map((p) => (
             <ProgrammeCard
               key={p.id}

@@ -67,24 +67,34 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+/* Root guard: the page never scrolls sideways. overflow-x: clip stops a stray
+   wide child from pushing the viewport without creating a scroll container, so
+   sticky headers keep working. The real fixes (wrapping text, fitting grids)
+   come first; this is the final safeguard. */
+html, body { margin: 0; padding: 0; overflow-x: clip; }
 body {
   font-family: var(--sans);
   background: var(--bg);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Long unbroken strings (a pasted name, a URL, a long word) break onto the
+     next line instead of forcing the layout wider than the screen. anywhere,
+     not break-word, so the break also counts when a flex or grid item measures
+     its minimum width, which is what stops a heading from widening the page.
+     Inherited, so it covers every text node. */
+  overflow-wrap: anywhere;
 }
 #root { min-height: 100vh; }
 button { font-family: inherit; cursor: pointer; }
 a { color: inherit; text-decoration: none; }
 ::selection { background: var(--gold); color: var(--ink); }
 
-h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; color: var(--ink); }
+h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; color: var(--ink); overflow-wrap: anywhere; }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
 /* ============================================================ LAYOUT */
-.app { display: flex; min-height: 100vh; }
+.app { display: flex; min-height: 100vh; overflow-x: clip; }
 
 .sidebar {
   width: var(--sidebar-w);
@@ -184,6 +194,11 @@ h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; c
 .muted { color: var(--slate); }
 .eyebrow { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; color: var(--slate-2); }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+/* The title block is a flex child holding the page heading. Without min-width 0
+   it refuses to shrink below the heading's longest word, so a long word (or a
+   long member name in "Welcome back, ...") would push the whole page wider than
+   the screen. This lets it shrink so the heading wraps. */
+.page-head > div { min-width: 0; }
 .page-head h2 { font-size: 30px; font-weight: 800; }
 .page-head .sub { color: var(--slate); margin-top: 4px; font-size: 15px; }
 .row { display: flex; align-items: center; gap: 10px; }
@@ -244,6 +259,10 @@ h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; c
 .dc-corner-strip { height: 4px; }
 .drill-card h3 { font-size: 15.5px; font-weight: 700; line-height: 1.25; }
 .dc-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+/* The corner tag and duration pill share a space-between row. A long corner
+   label (Psychological) plus the pill can exceed a narrow card, so the card,
+   which clips, would cut the pill off. Let the pill drop to the next line. */
+.dc-body > .row { flex-wrap: wrap; }
 
 /* ============================================================ FILTER BAR */
 .filterbar { display: flex; flex-direction: column; gap: 12px; margin-bottom: 22px; }
