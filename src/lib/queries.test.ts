@@ -1,0 +1,122 @@
+import { describe, expect, it } from 'vitest'
+import {
+  toActivity,
+  toActivityRow,
+  toDrill,
+  toSession,
+  type DrillRow,
+  type SessionRow,
+} from './queries'
+
+// A complete session row, the shape Supabase returns. Each test overrides only
+// the fields it asserts on.
+function sessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
+  return {
+    id: 's1',
+    club_id: 'c1',
+    coach_id: 'coach1',
+    team_id: null,
+    name: 'Monday training',
+    focus: 'Passing',
+    date: '2026-06-10',
+    start_time: '17:30',
+    venue: 'Ainley Top',
+    age_group: 'U10',
+    status: 'upcoming',
+    activities: null,
+    created_at: '2026-01-01T00:00:00Z',
+    intentions: [],
+    space: '',
+    source_url: null,
+    source_label: null,
+    programme_id: null,
+    programme_week: null,
+    live_activity_index: null,
+    live_activity_started_at: null,
+    ...overrides,
+  }
+}
+
+function drillRow(overrides: Partial<DrillRow> = {}): DrillRow {
+  return {
+    id: 'd1',
+    club_id: 'c1',
+    title: 'Rondo',
+    summary: null,
+    corner: 'technical',
+    skill: null,
+    level: null,
+    ages: null,
+    duration: null,
+    players: null,
+    area: null,
+    equipment: null,
+    points: null,
+    tags: null,
+    media_id: null,
+    created_by: null,
+    created_at: '2026-01-01T00:00:00Z',
+    setup_notes: null,
+    easier: null,
+    harder: null,
+    theme: null,
+    format: null,
+    source_url: null,
+    source_label: null,
+    ...overrides,
+  }
+}
+
+describe('session row to app mapping', () => {
+  it('maps start_time, age_group and venue to the app contract', () => {
+    const s = toSession(sessionRow())
+    expect(s.time).toBe('17:30')
+    expect(s.ageGroup).toBe('U10')
+    expect(s.venue).toBe('Ainley Top')
+  })
+
+  it('coerces a null start_time and age_group to empty strings', () => {
+    const s = toSession(sessionRow({ start_time: null, age_group: null }))
+    expect(s.time).toBe('')
+    expect(s.ageGroup).toBe('')
+  })
+
+  it('maps an activity drill_id to drillId', () => {
+    const s = toSession(sessionRow({ activities: [{ phase: 'Skill', duration: 12, drill_id: 'd1' }] }))
+    expect(s.activities).toEqual([{ phase: 'Skill', duration: 12, drillId: 'd1' }])
+  })
+
+  it('passes an unknown drillId through without throwing', () => {
+    const row = sessionRow({ activities: [{ phase: 'Skill', duration: 10, drill_id: 'ghost-drill' }] })
+    expect(() => toSession(row)).not.toThrow()
+    expect(toSession(row).activities[0]).toEqual({ phase: 'Skill', duration: 10, drillId: 'ghost-drill' })
+  })
+})
+
+describe('activity mapping round-trips', () => {
+  it('app to row to app preserves a drill activity', () => {
+    const activity = { phase: 'Game' as const, duration: 20, drillId: 'd7' }
+    expect(toActivity(toActivityRow(activity))).toEqual(activity)
+  })
+
+  it('row to app to row preserves drill_id', () => {
+    const row = { phase: 'Warm-Up' as const, duration: 8, drill_id: 'd2' }
+    expect(toActivityRow(toActivity(row))).toEqual(row)
+  })
+
+  it('maps a custom activity title with no drill', () => {
+    const activity = { phase: 'Cool-Down' as const, duration: 5, title: 'Stretch' }
+    expect(toActivityRow(activity)).toEqual({ phase: 'Cool-Down', duration: 5, title: 'Stretch' })
+    expect(toActivity(toActivityRow(activity))).toEqual(activity)
+  })
+})
+
+describe('drill row to app mapping', () => {
+  it('maps media_id to mediaId', () => {
+    expect(toDrill(drillRow({ media_id: 'm3' })).mediaId).toBe('m3')
+  })
+
+  it('keeps a null media_id as null', () => {
+    expect(toDrill(drillRow({ media_id: null })).mediaId).toBeNull()
+  })
+})
