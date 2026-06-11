@@ -3,6 +3,8 @@
 // the UI, not enums: theme, format and skill are stored as plain text so free
 // text stays possible and existing values keep working.
 
+import type { MediaItem } from './data'
+
 export const FA_THEMES: string[] = ['Attacking', 'Coaching', 'Defending', 'Goalkeeping', 'Futsal']
 
 export const FA_PLAYER_SKILLS: string[] = [
@@ -38,14 +40,34 @@ export const FA_SOURCE_LABEL = 'England Football Learning'
 
 const FA_HOSTS = ['learn.englandfootball.com', 'cdn.englandfootball.com']
 
+// True when a URL points at England Football Learning or its CDN.
+export function isFaUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  try {
+    return FA_HOSTS.includes(new URL(url).hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+// An FA video: kind video, streamed from an embed URL, with its source page
+// on England Football Learning. The FA domain locks its Vimeo player, so the
+// embed refuses to play on our domain ("Because of its privacy settings,
+// this video cannot be played here"). That lock is the FA's access control
+// and is not ours to bypass: wherever one of these would play inline, the UI
+// presents a link out to the source page instead, where the video plays on
+// the FA's own site.
+export function isFaVideo(m: Pick<MediaItem, 'type' | 'embedUrl' | 'sourceUrl'>): boolean {
+  return m.type === 'video' && !!m.embedUrl && isFaUrl(m.sourceUrl)
+}
+
 // The display label for a source link: "England Football Learning" for FA
 // pages, the bare domain for anything else, empty for an unparsable URL.
 export function sourceLabelForUrl(url: string | null | undefined): string {
   if (!url) return ''
+  if (isFaUrl(url)) return FA_SOURCE_LABEL
   try {
-    const host = new URL(url).hostname.toLowerCase()
-    if (FA_HOSTS.includes(host)) return FA_SOURCE_LABEL
-    return host.replace(/^www\./, '')
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '')
   } catch {
     return ''
   }
