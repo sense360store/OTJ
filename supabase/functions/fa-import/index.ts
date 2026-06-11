@@ -91,6 +91,12 @@ Deno.serve(async (req) => {
     week: page.week,
   })
 
+  // A page the importer could read nothing from, neither drills nor a video,
+  // is refused here rather than landing as an empty template.
+  if (result.unimportable) {
+    return reply(422, { error: 'This page has no drills or video the importer can read.' })
+  }
+
   if (!result.templateId) {
     return reply(500, {
       error: 'Imported the drills but could not create the template. Check the drill library.',
