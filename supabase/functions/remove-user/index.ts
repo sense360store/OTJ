@@ -10,12 +10,23 @@
 // Flow: verify the caller is signed in and holds the users.manage
 // capability (0012_rbac), validate the target is a member of the
 // caller's own club, refuse self removal and refuse removing the
-// club's only admin, then delete the auth user. The profile row goes
-// with it through the profiles on delete cascade foreign key inside
-// one database transaction, so there is never a partial state: either
-// both rows are removed or neither is. The member's content survives
-// as club owned, because created_by on drills, media, templates and
-// programmes and coach_id on sessions are on delete set null (0012).
+// club's last admin, then delete the auth user. The profile row goes
+// with it through the profiles on delete cascade foreign key inside one
+// database transaction, so there is never a partial state: either both
+// rows are removed or neither is.
+//
+// The member's content survives as club owned, because created_by on
+// drills, media, templates and programmes and coach_id on sessions are
+// on delete set null (0012). The member's membership rows go with them:
+// member_roles and member_teams reference profiles on delete cascade
+// (migration B), so deleting the auth user cascades auth.users ->
+// profiles -> member_roles and member_teams in the same transaction. No
+// extra delete is needed.
+//
+// Many to many (migration B). The last admin guard counts admins through
+// member_roles, the source of truth, not profiles.role, so a member who
+// is admin plus coach is still counted as an admin and the club can never
+// be left with no admin.
 // =====================================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
@@ -91,21 +102,33 @@ Deno.serve(async (req) => {
   // The target must be a member of the caller's own club.
   const { data: target } = await admin
     .from('profiles')
-    .select('id, club_id, role, full_name')
+    .select('id, club_id, full_name')
     .eq('id', userId)
     .maybeSingle()
   if (!target || target.club_id !== caller.club_id) {
     return reply(404, { error: 'That member was not found in your club.' })
   }
 
-  // The club must keep at least one admin, or nobody can manage users,
-  // teams or the club again without database access.
-  if (target.role === 'admin') {
+  // The last admin guard, read through member_roles. First, does the target
+  // hold the admin role at all? A member who is admin plus coach still
+  // counts, whatever their profiles.role primary says.
+  const { data: targetAdmin } = await admin
+    .from('member_roles')
+    .select('role')
+    .eq('member_id', userId)
+    .eq('role', 'admin')
+    .maybeSingle()
+  if (targetAdmin) {
+    // Count the members of the caller's club who hold the admin role. The
+    // inner join to profiles scopes the count to the club, since
+    // member_roles carries no club_id of its own. The club must keep at
+    // least one admin, or nobody can manage users, teams or the club again
+    // without database access.
     const { count, error: countError } = await admin
-      .from('profiles')
-      .select('id', { count: 'exact', head: true })
-      .eq('club_id', caller.club_id)
+      .from('member_roles')
+      .select('member_id, profiles!inner(club_id)', { count: 'exact', head: true })
       .eq('role', 'admin')
+      .eq('profiles.club_id', caller.club_id)
     if (countError || count === null) {
       return reply(500, { error: 'Could not check the club admins. Nothing was changed. Try again.' })
     }
@@ -114,12 +137,13 @@ Deno.serve(async (req) => {
     }
   }
 
-  // One call performs the whole removal. Deleting the auth user removes
-  // the profile through the on delete cascade foreign key inside one
-  // database transaction, so a failure here leaves both rows in place
-  // and a success removes both; no path orphans either row. The content
-  // foreign keys (created_by columns, sessions.coach_id) null out in
-  // the same transaction.
+  // One call performs the whole removal. Deleting the auth user removes the
+  // profile through the on delete cascade foreign key, and the member_roles
+  // and member_teams rows through their cascade to profiles, all inside one
+  // database transaction, so a failure here leaves every row in place and a
+  // success removes them together; no path orphans a row. The content
+  // foreign keys (created_by columns, sessions.coach_id) null out in the
+  // same transaction.
   const { error: deleteError } = await admin.auth.admin.deleteUser(userId)
   if (deleteError) {
     console.error('deleteUser failed:', deleteError.message)
