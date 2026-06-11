@@ -43,6 +43,7 @@ import {
   resolveCaller,
   SOURCE_LABEL,
   storeFaAsset,
+  weeksAreReliable,
   MAX_PROGRAMME_WEEKS,
 } from '../_shared/fa.ts'
 import type { FaCaller } from '../_shared/fa.ts'
@@ -159,10 +160,19 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Safety valve: misread week links must not become a misleading partial
+  // programme. Fewer than MIN_PROGRAMME_WEEKS links, or week numbers that do
+  // not run 1..n, mean the overview's weekly sessions were not read
+  // reliably, and nothing is created.
+  if (!weeksAreReliable(overview.weekLinks)) {
+    return reply(422, {
+      error: "Could not read this programme's weekly sessions reliably. Try importing its weeks individually with Import from England Football.",
+    })
+  }
+
   // Partial parses warn, never abort the run.
   const warnings: string[] = []
-  if (overview.intentions.length === 0) warnings.push('No session intentions were found on the overview.')
-  if (overview.weekLinks.length === 0) warnings.push('No week links were found on the overview.')
+  if (overview.intentions.length === 0) warnings.push('No programme intentions were found on the overview.')
   if (overview.truncated) warnings.push(`Only the first ${MAX_PROGRAMME_WEEKS} week links were imported.`)
   if (!overview.pdfUrl) warnings.push('No programme PDF was found on the overview.')
 

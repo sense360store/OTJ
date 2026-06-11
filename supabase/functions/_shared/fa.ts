@@ -38,6 +38,9 @@ export const SOURCE_LABEL = 'England Football Learning'
 // of weeks; these only exist to bound a malformed or unexpected page.
 export const MAX_ACTIVITIES = 16
 export const MAX_PROGRAMME_WEEKS = 10
+// The FA programme format is six weeks. Fewer than this many extracted week
+// links means the overview's weekly sessions were not read reliably.
+export const MIN_PROGRAMME_WEEKS = 3
 export const MAX_PAGE_BYTES = 3 * 1024 * 1024
 export const MAX_ASSET_BYTES = 15 * 1024 * 1024
 export const FETCH_TIMEOUT_MS = 20_000
@@ -154,9 +157,45 @@ const WEEK_WORDS: Record<string, number> = {
   twelve: 12,
 }
 
+// The overviews name weeks both ways round: a heading says "week one" while
+// the week link itself says "first week of the programme here".
+const ORDINAL_WORDS: Record<string, number> = {
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+  sixth: 6,
+  seventh: 7,
+  eighth: 8,
+  ninth: 9,
+  tenth: 10,
+  eleventh: 11,
+  twelfth: 12,
+}
+
 export function weekNumber(word: string): number | null {
   const n = WEEK_WORDS[word.toLowerCase()] ?? parseInt(word, 10)
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+// The week named in a run of text, either way round: "week six" and
+// "Tactics board: week one", or "first week of the programme" and "2nd
+// week". Hyphenated counts ("six-week programme") name a length, not a
+// week, and stay null, as does any text without a number.
+export function weekFromText(text: string): number | null {
+  const after = text.match(/\bweek\s+([a-z0-9]+)/i)
+  if (after) {
+    const n = weekNumber(after[1])
+    if (n != null) return n
+  }
+  const before = text.match(/\b([a-z]+|\d+)(?:st|nd|rd|th)?\s+week\b/i)
+  if (before) {
+    const word = before[1].toLowerCase()
+    const n = ORDINAL_WORDS[word] ?? weekNumber(word)
+    if (n != null) return n
+  }
+  return null
 }
 
 // The og:<prop> meta content and the description meta, shared by the session
@@ -321,14 +360,49 @@ export function normalisedHref(url: URL): string {
   return url.origin + url.pathname.replace(/\/+$/, '')
 }
 
-// Distinct same-host links to session pages other than the page itself. A
-// programme overview links each of its weekly sessions; a real session page
-// links at most a couple of related ones. fa-import refuses an overview
-// pasted as a session through this. Counted only, never followed.
+// The page region the link scans read. FA pages wrap their own content in
+// <main> and append related-content rails (the "Related sessions" carousel,
+// twenty cards of unrelated session links) inside it as full-width carousel
+// sections. Reading link candidates from the whole document made the parser
+// read week numbers out of that rail's card text; this is the same
+// containment approach parseSessionPage uses for the gallery and the
+// coaching-points section. Headings, metas and PDFs are unaffected: only
+// the link scans are scoped.
+export function contentRegion(html: string): string {
+  let region = html
+  const mainOpen = region.search(/<main\b[^>]*>/i)
+  if (mainOpen !== -1) {
+    const mainClose = region.indexOf('</main>', mainOpen)
+    region = mainClose === -1 ? region.slice(mainOpen) : region.slice(mainOpen, mainClose)
+  }
+  // Drop every full-width carousel section, wherever it sits.
+  for (;;) {
+    const marker = region.indexOf('efl-full-width-carousel')
+    if (marker === -1) break
+    const sectionOpen = region.lastIndexOf('<section', marker)
+    const from = sectionOpen === -1 ? marker : sectionOpen
+    const sectionClose = region.indexOf('</section>', marker)
+    if (sectionClose === -1) {
+      region = region.slice(0, from)
+      break
+    }
+    region = region.slice(0, from) + region.slice(sectionClose + '</section>'.length)
+  }
+  // Belt and braces for a page without the carousel class: cut at a
+  // recommended-content heading.
+  const related = region.search(/<h\d[^>]*>\s*(related sessions|you might also like|recommended)/i)
+  return related === -1 ? region : region.slice(0, related)
+}
+
+// Distinct same-host links to session pages other than the page itself,
+// within the page's own content region. A programme overview links each of
+// its weekly sessions; a real session page links at most a couple. fa-import
+// refuses an overview pasted as a session through this. Counted only, never
+// followed.
 export function countSessionLinks(html: string, self: URL): number {
   const selfPath = self.pathname.replace(/\/+$/, '').toLowerCase()
   const paths = new Set<string>()
-  for (const m of html.matchAll(/<a[^>]+href\s*=\s*"([^"]+)"/gi)) {
+  for (const m of contentRegion(html).matchAll(/<a[^>]+href\s*=\s*"([^"]+)"/gi)) {
     let target: URL
     try {
       target = new URL(decodeEntities(m[1]), self)
@@ -347,7 +421,12 @@ export function parseOverviewPage(html: string, pageUrl: URL): ParsedOverview {
   const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)
   const title = ogContent(html, 'title') || (h1 ? textOf(h1[1]) : '')
   const summary = metaDescription(html)
-  const intentions = listAfter(html, 'Session intentions')
+  // Overviews head their list "Programme intentions"; older or synthetic
+  // pages may carry the session wording.
+  const intentions = (() => {
+    const programme = listAfter(html, 'Programme intentions')
+    return programme.length > 0 ? programme : listAfter(html, 'Session intentions')
+  })()
 
   // The programme PDF, when linked: prefer an anchor naming the programme,
   // then a session plan, then any FA Learning PDF on the CDN.
@@ -363,13 +442,15 @@ export function parseOverviewPage(html: string, pageUrl: URL): ParsedOverview {
   }
   const pdfUrl = programmePdf || planPdf || anyPdf
 
-  // Candidate week links: same host over https, not the overview itself, one
-  // entry per distinct page, and either a session path or a week named in the
-  // link text (cards wrap their heading in the anchor, so textOf sees it).
+  // Candidate week links: within the page's own content region (never the
+  // related-content rails), same host over https, not the overview itself,
+  // one entry per distinct page, and either a session path or a week named
+  // in the link text (cards wrap their heading in the anchor, so textOf
+  // sees it).
   const self = normalisedHref(pageUrl)
   const seen = new Set<string>()
   const candidates: OverviewWeekLink[] = []
-  for (const m of html.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)) {
+  for (const m of contentRegion(html).matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)) {
     let url: URL
     try {
       url = new URL(decodeEntities(m[1]), pageUrl)
@@ -379,8 +460,7 @@ export function parseOverviewPage(html: string, pageUrl: URL): ParsedOverview {
     if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== PAGE_HOST) continue
     const openTag = m[0].match(/^<a\b[^>]*>/i)?.[0] ?? ''
     const text = textOf(m[2]) || attrOf(openTag, 'aria-label') || attrOf(openTag, 'title')
-    const wk = text.match(/week\s+([a-z0-9]+)/i)
-    const week = wk ? weekNumber(wk[1]) : null
+    const week = weekFromText(text)
     if (week == null && !/session/i.test(url.pathname)) continue
     const href = normalisedHref(url)
     if (href === self || seen.has(href)) continue
@@ -405,6 +485,17 @@ export function parseOverviewPage(html: string, pageUrl: URL): ParsedOverview {
   if (truncated) weekLinks = weekLinks.slice(0, MAX_PROGRAMME_WEEKS)
 
   return { title, summary, intentions, pdfUrl, weekLinks, truncated }
+}
+
+// The safety valve behind the programme import. Extracted week links count
+// as reliable only when there are at least MIN_PROGRAMME_WEEKS of them and
+// their week numbers run 1..n with no gaps (a link without a named week
+// takes its position). A parse that misread stray links instead of the
+// programme's own weeks fails this, and the import refuses rather than
+// creating a misleading partial programme.
+export function weeksAreReliable(links: OverviewWeekLink[]): boolean {
+  if (links.length < MIN_PROGRAMME_WEEKS) return false
+  return links.every((l, i) => (l.week ?? i + 1) === i + 1)
 }
 
 // ---- Allowlisted fetching ----------------------------------------------

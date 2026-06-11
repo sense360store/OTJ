@@ -1614,7 +1614,11 @@ export function useImportFA() {
         warnings: body.warnings ?? [],
       }
     },
-    onSuccess: () => {
+    // Settled, not success: the function writes drills and media one by one,
+    // so rows persist even when the call ultimately reports an error (a
+    // partial import, a timeout on a long run). The lists must show them
+    // either way, with no manual refresh.
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['templates'] })
       qc.invalidateQueries({ queryKey: ['drills'] })
       qc.invalidateQueries({ queryKey: ['media'] })
@@ -1693,7 +1697,11 @@ export function useImportFAProgramme() {
         warnings: body.warnings ?? [],
       }
     },
-    onSuccess: () => {
+    // Settled, not success: the programme row is created before the weeks
+    // import, so it persists even when the call ultimately fails or times
+    // out part way. The Programmes screen must show it either way, with no
+    // manual refresh.
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['programmes'] })
       qc.invalidateQueries({ queryKey: ['templates'] })
       qc.invalidateQueries({ queryKey: ['drills'] })

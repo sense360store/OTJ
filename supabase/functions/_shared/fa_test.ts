@@ -1,23 +1,31 @@
 // Smoke tests for the shared FA import core. These are hermetic (no network,
-// no database): they pin the allowlist and the parsing behaviour the two
-// Edge Functions are built on, so the refactor out of fa-import can be
-// checked without a live stack. Run with:
+// no database): they pin the allowlist and the parsing behaviour the Edge
+// Functions are built on, so changes can be checked without a live stack.
+// The two fixture files are real FA programme overview pages, fetched
+// unmodified (see fixtures/README.md). Run with:
 //
-//   deno test --allow-env supabase/functions/_shared/fa_test.ts
+//   deno test --allow-env --allow-read supabase/functions/_shared/fa_test.ts
 //
 // The underscore folder is not deployed; this file ships nowhere.
 import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
   allowedUrl,
   ASSET_HOST,
+  contentRegion,
   countSessionLinks,
   MAX_PROGRAMME_WEEKS,
   normalisedHref,
   PAGE_HOST,
   parseOverviewPage,
   parseSessionPage,
+  weekFromText,
   weekNumber,
+  weeksAreReliable,
 } from './fa.ts'
+
+function fixture(name: string): string {
+  return Deno.readTextFileSync(new URL(`./fixtures/${name}`, import.meta.url))
+}
 
 // ---- The allowlist (the wrong-domain rejection happens before any fetch) --
 
@@ -155,6 +163,102 @@ Deno.test('parseOverviewPage caps the week links', () => {
   assertEquals(overview.weekLinks.length, MAX_PROGRAMME_WEEKS)
   assertEquals(overview.weekLinks[0].week, 1)
   assertEquals(overview.weekLinks[MAX_PROGRAMME_WEEKS - 1].week, MAX_PROGRAMME_WEEKS)
+})
+
+// ---- The real overview pages parse to their own contiguous weeks ----------
+// Live regression: the whole-document scan used to read the "Related
+// sessions" rail and return weeks 3 and 9 pointing at unrelated sessions
+// ("Receiving and finishing session: festival week", "Pressing and covering
+// session: games week"). The scoped scan must yield each programme's six
+// real weeks, 1..6 with no gaps, on its own theme.
+
+Deno.test('the 2025 marking and intercepting overview yields its six real weeks', () => {
+  const url = new URL(
+    'https://learn.englandfootball.com/sessions/resources/2025/Session-programme-marking-and-intercepting-to-defend',
+  )
+  const overview = parseOverviewPage(fixture('overview-2025-marking-and-intercepting-to-defend.html'), url)
+  assertEquals(overview.title, 'Session programme: marking and intercepting to defend')
+  assert(overview.intentions.length > 0, 'programme intentions were read')
+  assertEquals(
+    overview.weekLinks.map((l) => l.week),
+    [1, 2, 3, 4, 5, 6],
+  )
+  assertEquals(
+    overview.weekLinks.map((l) => l.url),
+    [
+      'https://learn.englandfootball.com/sessions/resources/2025/Marking-session-marking-rivals',
+      'https://learn.englandfootball.com/sessions/resources/2025/Marking-and-intercepting-session-defend-as-friends',
+      'https://learn.englandfootball.com/sessions/resources/2025/Marking-and-intercepting-session-interception-perfection',
+      'https://learn.englandfootball.com/sessions/resources/2025/Intercepting-session-table-football',
+      'https://learn.englandfootball.com/sessions/resources/2025/Marking-and-intercepting-session-intercept-as-a-team',
+      'https://learn.englandfootball.com/sessions/resources/2025/Marking-and-intercepting-session-festival-week',
+    ],
+  )
+  // Nothing from the related rail: those point at other programmes' themes.
+  for (const l of overview.weekLinks) {
+    assert(!/Receiving-and-finishing|Pressing-and-covering|Passing-and-receiving/i.test(l.url), `unrelated: ${l.url}`)
+  }
+  assert(weeksAreReliable(overview.weekLinks))
+  assertEquals(overview.truncated, false)
+})
+
+Deno.test('the 2024 press tackle and cover overview yields its six real weeks', () => {
+  const url = new URL(
+    'https://learn.englandfootball.com/sessions/resources/2024/Session-programme-press-tackle-and-cover',
+  )
+  const overview = parseOverviewPage(fixture('overview-2024-press-tackle-and-cover.html'), url)
+  assertEquals(overview.title, 'Session programme: press, tackle, and cover')
+  assert(overview.intentions.length > 0, 'programme intentions were read')
+  assertEquals(
+    overview.weekLinks.map((l) => l.week),
+    [1, 2, 3, 4, 5, 6],
+  )
+  // Every week stays on the programme's pressing and tackling theme.
+  for (const l of overview.weekLinks) {
+    assert(/\/sessions\/resources\/2025\/Pressing/.test(l.url), `unrelated: ${l.url}`)
+  }
+  assert(weeksAreReliable(overview.weekLinks))
+})
+
+Deno.test('contentRegion drops the related rail and keeps the week blocks', () => {
+  const region = contentRegion(fixture('overview-2025-marking-and-intercepting-to-defend.html'))
+  assert(region.includes('first week of the programme here'))
+  assert(region.includes('sixth week of the programme here'))
+  assert(!region.includes('Related sessions'))
+  assert(!region.includes('efl-carousel-card'))
+})
+
+// ---- The safety valve: misread weeks never become a partial programme -----
+
+Deno.test('weeksAreReliable refuses sparse, offset or too few weeks', () => {
+  const link = (week: number | null) => ({ url: `https://learn.englandfootball.com/sessions/w${week}`, week, text: '' })
+  // The live failure shape: two links numbered 3 and 9.
+  assertEquals(weeksAreReliable([link(3), link(9)]), false)
+  // Contiguous but fewer than three.
+  assertEquals(weeksAreReliable([link(1), link(2)]), false)
+  // Offset from one.
+  assertEquals(weeksAreReliable([link(2), link(3), link(4)]), false)
+  // A gap.
+  assertEquals(weeksAreReliable([link(1), link(2), link(4)]), false)
+  // The real shape passes.
+  assertEquals(weeksAreReliable([link(1), link(2), link(3)]), true)
+  // Unnumbered links count by position.
+  assertEquals(weeksAreReliable([link(null), link(null), link(null)]), true)
+  assertEquals(weeksAreReliable([link(null), link(null)]), false)
+})
+
+Deno.test('weekFromText reads both word orders and ignores hyphenated lengths', () => {
+  assertEquals(weekFromText('Tactics board: week one'), 1)
+  assertEquals(weekFromText('On the pitch: week six'), 6)
+  assertEquals(weekFromText('first week of the programme here'), 1)
+  assertEquals(weekFromText('sixth week of the programme here'), 6)
+  assertEquals(weekFromText('2nd week'), 2)
+  assertEquals(weekFromText('Week 4: table football'), 4)
+  // A six-week programme names a length, not a week.
+  assertEquals(weekFromText('six-week programme here'), null)
+  assertEquals(weekFromText('festival week'), null)
+  assertEquals(weekFromText('every week counts'), null)
+  assertEquals(weekFromText('no weeks here at all'), null)
 })
 
 // ---- fa-import's overview refusal counts session links, never follows -----
