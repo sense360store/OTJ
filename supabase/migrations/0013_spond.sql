@@ -47,8 +47,8 @@
 -- so this table is also the allow list. spond_name is a team display
 -- label (never a person). A null spond_subgroup_id maps the whole group;
 -- a set one maps a single subgroup. The unique constraint treats nulls
--- as distinct, so the mapping editor (PR A3) is responsible for not
--- creating a second whole group row for the same group. team_id cascades
+-- as not distinct (PG15+), so the database itself blocks a second whole
+-- group row for the same group, not only the mapping editor. team_id cascades
 -- on delete: a mapping to a removed team has no meaning and goes with it.
 -- ---------------------------------------------------------------------
 create table public.spond_groups (
@@ -59,7 +59,7 @@ create table public.spond_groups (
   spond_name        text not null,
   team_id           uuid not null references public.teams (id) on delete cascade,
   created_at        timestamptz not null default now(),
-  unique (club_id, spond_group_id, spond_subgroup_id)
+  unique nulls not distinct (club_id, spond_group_id, spond_subgroup_id)
 );
 
 -- ---------------------------------------------------------------------
