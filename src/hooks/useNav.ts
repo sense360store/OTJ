@@ -31,6 +31,9 @@ export function useNav() {
       case 'templates':
         navigate('/templates')
         break
+      case 'englandFootball':
+        navigate('/england-football')
+        break
       case 'programmes':
         navigate('/programmes')
         break

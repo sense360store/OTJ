@@ -15,6 +15,7 @@ import { DrillDetail } from './routes/DrillDetail'
 import { Sessions } from './routes/Sessions'
 import { Planner } from './routes/Planner'
 import { Templates } from './routes/Templates'
+import { EnglandFootball } from './routes/EnglandFootball'
 import { Programmes } from './routes/Programmes'
 import { ProgrammeDetail } from './routes/ProgrammeDetail'
 import { Media } from './routes/Media'
@@ -107,6 +108,10 @@ export function App() {
             <Route path="planner" element={<Planner />} />
           </Route>
           <Route path="templates" element={<Templates />} />
+          {/* The England Football catalogue is a read surface for every
+              role; sync and import affordances are role-gated in the screen
+              and the fa_catalogue RLS enforces the writes. */}
+          <Route path="england-football" element={<EnglandFootball />} />
           {/* Programmes are a read surface for every role; the create, import
               and edit affordances are role-gated in the screens and the
               programmes RLS enforces the writes. */}
