@@ -88,6 +88,10 @@ export function Library() {
         </div>
         {coaching && (
           <div className="row wrap">
+            <button className="btn btn-ghost" onClick={() => nav('englandFootball')}>
+              <Icon.grid />
+              Browse England Football
+            </button>
             <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
               <Icon.download />
               Import from England Football

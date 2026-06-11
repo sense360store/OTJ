@@ -1687,6 +1687,126 @@ export function useImportFASmart() {
   })
 }
 
+// ---- England Football catalogue -------------------------------------------
+// The browsable index of the FA sessions listing: facts and links only
+// (titles, summaries, taxonomy labels, hot-linked thumbnail URLs), synced on
+// demand by the fa-catalogue Edge Function and read club-wide through RLS.
+// Importing an entry goes through the same fa-import-smart path as a pasted
+// URL; the entry is then marked with what it became. See CLAUDE.md,
+// Third-party content.
+
+export interface FaCatalogueEntry {
+  id: string
+  url: string
+  title: string
+  summary: string
+  theme: string
+  skills: string[]
+  format: string
+  ageBand: string
+  kind: 'programme' | 'session'
+  thumbnailUrl: string
+  importedRef: string | null
+  importedKind: 'programme' | 'session' | null
+  syncedAt: string | null
+}
+
+interface FaCatalogueRow {
+  id: string
+  url: string
+  title: string | null
+  summary: string | null
+  theme: string | null
+  skills: string[] | null
+  format: string | null
+  age_band: string | null
+  kind: string | null
+  thumbnail_url: string | null
+  imported_ref: string | null
+  imported_kind: string | null
+  synced_at: string | null
+}
+
+const CATALOGUE_COLS =
+  'id, url, title, summary, theme, skills, format, age_band, kind, thumbnail_url, imported_ref, imported_kind, synced_at'
+
+function toCatalogueEntry(r: FaCatalogueRow): FaCatalogueEntry {
+  return {
+    id: r.id,
+    url: r.url,
+    title: r.title ?? '',
+    summary: r.summary ?? '',
+    theme: r.theme ?? '',
+    skills: r.skills ?? [],
+    format: r.format ?? '',
+    ageBand: r.age_band ?? '',
+    kind: r.kind === 'programme' ? 'programme' : 'session',
+    thumbnailUrl: r.thumbnail_url ?? '',
+    importedRef: r.imported_ref,
+    importedKind: r.imported_kind === 'programme' ? 'programme' : r.imported_kind === 'session' ? 'session' : null,
+    syncedAt: r.synced_at,
+  }
+}
+
+export function useFaCatalogue() {
+  return useQuery({
+    queryKey: ['fa-catalogue'],
+    queryFn: async (): Promise<FaCatalogueEntry[]> => {
+      const { data, error } = await supabase.from('fa_catalogue').select(CATALOGUE_COLS).order('title', { ascending: true })
+      if (error) throw error
+      return (data as unknown as FaCatalogueRow[]).map(toCatalogueEntry)
+    },
+  })
+}
+
+export interface SyncCatalogueResult {
+  entries: number
+  imported: number
+  warnings: string[]
+}
+
+// One user-initiated sync of the listing index. The function fetches the FA
+// /sessions listing as the signed in coach, upserts facts and links, and
+// reconciles which entries are already imported. Never scheduled, never
+// automatic.
+export function useSyncFaCatalogue() {
+  const qc = useQueryClient()
+  return useMutation<SyncCatalogueResult, Error, void>({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('fa-catalogue', { body: {} })
+      if (error) {
+        let message = 'Could not sync the catalogue. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as { entries?: number; imported?: number; warnings?: string[] }
+      return { entries: body.entries ?? 0, imported: body.imported ?? 0, warnings: body.warnings ?? [] }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fa-catalogue'] }),
+  })
+}
+
+// Marks an entry with what its import created, so the badge shows without a
+// re-sync. The next sync reconciles the same fact from source URLs.
+export function useMarkCatalogueImported() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; ref: string; kind: 'programme' | 'session' }>({
+    mutationFn: async ({ id, ref, kind }) => {
+      const { error } = await supabase.from('fa_catalogue').update({ imported_ref: ref, imported_kind: kind }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fa-catalogue'] }),
+  })
+}
+
 export function useInviteUser() {
   const qc = useQueryClient()
   return useMutation<{ warning?: string }, Error, InviteInput>({

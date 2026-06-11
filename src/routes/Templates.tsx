@@ -171,6 +171,12 @@ export function Templates() {
         </div>
         <div className="row wrap">
           {coaching && (
+            <button className="btn btn-ghost" onClick={() => nav('englandFootball')}>
+              <Icon.grid />
+              Browse England Football
+            </button>
+          )}
+          {coaching && (
             <button className="btn btn-ghost" onClick={() => setImportOpen(true)}>
               <Icon.download />
               Import from England Football

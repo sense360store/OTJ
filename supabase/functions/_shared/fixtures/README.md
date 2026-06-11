@@ -16,6 +16,12 @@ session that is titled "sessions" and links its programme overview.
 | `overview-2024-press-tackle-and-cover.html` | https://learn.englandfootball.com/sessions/resources/2024/Session-programme-press-tackle-and-cover | 2026-06-11 |
 | `session-2026-receiving-and-finishing-festival-week.html` | https://learn.englandfootball.com/sessions/resources/2026/Receiving-and-finishing-session-festival-week | 2026-06-11 |
 | `session-2026-marking-and-intercepting-dynamic-defending.html` | https://learn.englandfootball.com/sessions/resources/2026/Marking-and-intercepting-sessions-dynamic-defending | 2026-06-11 |
+| `listing-sessions-index.html` | https://learn.englandfootball.com/sessions | 2026-06-11 |
+
+The listing fixture pins the catalogue parser: the filter taxonomy
+(fieldsets of labelled GUID checkboxes) and the result cards (efl-card
+anchors carrying their GUIDs in data-filter), roughly 190 resources on
+one server rendered page.
 
 Content is England Football Learning's, held here solely as test input
 for the club's import parser under the club's FA affiliation (see
