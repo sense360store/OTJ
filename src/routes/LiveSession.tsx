@@ -18,6 +18,7 @@ import {
   useSetLiveActivity,
 } from '../lib/queries'
 import { embedSrc, sessionMinutes } from '../lib/data'
+import { isFaVideo } from '../lib/fa'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { fmtClock, MediaAttribution, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
@@ -108,7 +109,14 @@ function LiveMediaPeek({ media, drill }: { media: MediaItem; drill: Drill }) {
         >
           <div className="detail-media">
             <div className="player">
-              {embedSrc(media.embedUrl) ? <MediaPlayerSurface item={media} /> : <MediaThumb media={media} />}
+              {/* An FA sourced video routes to the surface too, which shows
+                  the link out to England Football Learning in place of the
+                  domain locked embed. */}
+              {embedSrc(media.embedUrl) || isFaVideo(media) ? (
+                <MediaPlayerSurface item={media} />
+              ) : (
+                <MediaThumb media={media} />
+              )}
             </div>
           </div>
           <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />

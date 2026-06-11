@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
 import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
+import { isFaVideo } from '../lib/fa'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -169,9 +170,12 @@ export function DrillDetail() {
   // A sample (a seeded row with no file or playable link behind it) offers no
   // Play or Open here; it is labelled for what it is instead.
   const sample = !!media && isSampleMedia(media)
-  // An embedded video (an FA Vimeo session) plays inline here in a sandboxed
-  // iframe, so it needs no Play overlay or open out.
+  // An embedded video plays inline here in a sandboxed iframe, so it needs no
+  // Play overlay or open out. An FA sourced video never plays inline (the FA
+  // domain locks its player), so it takes the same slot but the surface
+  // renders the link out to England Football Learning instead.
   const embed = media ? embedSrc(media.embedUrl) : null
+  const faVideo = !!media && isFaVideo(media)
   const playable = !sample && (media?.type === 'video' || media?.type === 'youtube')
   const openHref = signedUrl ?? undefined
   // Adding to a session writes a session, which parents cannot do.
@@ -193,7 +197,7 @@ export function DrillDetail() {
       <div className="detail-grid">
         <div>
           <div className="detail-media">
-            {embed && media ? (
+            {(embed || faVideo) && media ? (
               <div className="player">
                 <MediaPlayerSurface item={media} />
               </div>
@@ -227,7 +231,7 @@ export function DrillDetail() {
                 <span className="pill" style={{ color: 'var(--slate-2)' }}>
                   Sample, no file attached
                 </span>
-              ) : embed ? null : playable ? (
+              ) : embed || faVideo ? null : playable ? (
                 <button className="btn btn-ghost btn-sm" onClick={() => setPlayerOpen(true)}>
                   <Icon.play />
                   Play
