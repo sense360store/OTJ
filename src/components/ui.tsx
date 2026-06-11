@@ -281,7 +281,8 @@ export function SourceLink({ url, label }: { url?: string | null; label?: string
 // CLAUDE.md, Third-party content.
 export function MediaAttribution({ media, style }: { media?: MediaItem | null; style?: CSSProperties }) {
   if (!media?.sourceLabel) return null
-  const line = `Image: ${media.sourceLabel}`
+  const noun = media.type === 'video' || media.type === 'youtube' ? 'Video' : 'Image'
+  const line = `${noun}: ${media.sourceLabel}`
   const base: CSSProperties = { fontSize: 12, fontWeight: 600, ...style }
   if (media.sourceUrl) {
     return (

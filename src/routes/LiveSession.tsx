@@ -17,10 +17,11 @@ import {
   useLiveSessionSync,
   useSetLiveActivity,
 } from '../lib/queries'
-import { sessionMinutes } from '../lib/data'
+import { embedSrc, sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { fmtClock, MediaAttribution, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
+import { MediaPlayerSurface } from '../components/MediaPlayerModal'
 
 function lsKey(id: string) {
   return 'otj_live_' + id
@@ -107,7 +108,7 @@ function LiveMediaPeek({ media, drill }: { media: MediaItem; drill: Drill }) {
         >
           <div className="detail-media">
             <div className="player">
-              <MediaThumb media={media} />
+              {embedSrc(media.embedUrl) ? <MediaPlayerSurface item={media} /> : <MediaThumb media={media} />}
             </div>
           </div>
           <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />
