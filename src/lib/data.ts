@@ -72,6 +72,10 @@ export interface MediaItem {
   pages?: number
   yt?: string
   storagePath?: string
+  // Embedded video player URL (an FA Vimeo session, for example). Set instead
+  // of storagePath for a video that streams from its host rather than a stored
+  // file.
+  embedUrl?: string
   createdBy?: string
   usedIn?: number
   // Attribution for third-party content (CLAUDE.md, Third-party content).
@@ -234,12 +238,29 @@ export function youtubeThumb(url: string | undefined | null): string | null {
   return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null
 }
 
+// ---- Embedded video players ---------------------------------------------
+// A video media row can stream from a third party player rather than a stored
+// file. Only allowlisted hosts render, so a stored embed_url can never point
+// the iframe at an arbitrary origin. player.vimeo.com backs the FA video
+// session import; this is the browser side mirror of the importer's allowlist.
+const EMBED_HOSTS = ['player.vimeo.com']
+
+export function embedSrc(url: string | undefined | null): string | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    return u.protocol === 'https:' && EMBED_HOSTS.includes(u.hostname.toLowerCase()) ? u.href : null
+  } catch {
+    return null
+  }
+}
+
 // ---- Samples -------------------------------------------------------------
 // A sample is a media row with nothing behind it: no stored file and no
 // playable YouTube link. The ten seeded demo rows ship this way (two of them
 // carry a bare youtu.be link with no video id, which plays nothing). Samples
 // are badged plainly, never offer a View or Play action, and can be replaced
 // with real content or removed.
-export function isSampleMedia(m: Pick<MediaItem, 'storagePath' | 'yt'>): boolean {
-  return !m.storagePath && !youtubeId(m.yt)
+export function isSampleMedia(m: Pick<MediaItem, 'storagePath' | 'yt' | 'embedUrl'>): boolean {
+  return !m.storagePath && !youtubeId(m.yt) && !m.embedUrl
 }
