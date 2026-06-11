@@ -4,7 +4,7 @@ import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useDrill, useDrills, useMediaMap, useSignedMediaUrl } from '../lib/queries'
-import { isSampleMedia, PHASES } from '../lib/data'
+import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -24,7 +24,7 @@ import {
 } from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { DeleteDrillModal } from '../components/DeleteDrillModal'
-import { MediaPlayerModal } from '../components/MediaPlayerModal'
+import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
 
 function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
   return (
@@ -169,6 +169,9 @@ export function DrillDetail() {
   // A sample (a seeded row with no file or playable link behind it) offers no
   // Play or Open here; it is labelled for what it is instead.
   const sample = !!media && isSampleMedia(media)
+  // An embedded video (an FA Vimeo session) plays inline here in a sandboxed
+  // iframe, so it needs no Play overlay or open out.
+  const embed = media ? embedSrc(media.embedUrl) : null
   const playable = !sample && (media?.type === 'video' || media?.type === 'youtube')
   const openHref = signedUrl ?? undefined
   // Adding to a session writes a session, which parents cannot do.
@@ -190,7 +193,11 @@ export function DrillDetail() {
       <div className="detail-grid">
         <div>
           <div className="detail-media">
-            {playable && media ? (
+            {embed && media ? (
+              <div className="player">
+                <MediaPlayerSurface item={media} />
+              </div>
+            ) : playable && media ? (
               <button
                 className="player"
                 onClick={() => setPlayerOpen(true)}
@@ -220,7 +227,7 @@ export function DrillDetail() {
                 <span className="pill" style={{ color: 'var(--slate-2)' }}>
                   Sample, no file attached
                 </span>
-              ) : playable ? (
+              ) : embed ? null : playable ? (
                 <button className="btn btn-ghost btn-sm" onClick={() => setPlayerOpen(true)}>
                   <Icon.play />
                   Play

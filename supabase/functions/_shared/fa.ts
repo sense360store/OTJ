@@ -233,6 +233,33 @@ export interface ParsedPage {
   pdfUrl: string
   programme: string
   week: number | null
+  // A video player embed found in the content region, when the page carries
+  // one. '' when there is none.
+  videoEmbedUrl: string
+}
+
+// Embedded video players the importer will store, keyed by the FA large video
+// player's data-video-type. The id builds the player URL on the type's fixed
+// host, so the stored embed host is never read from the page. player.vimeo.com
+// is the host the FA Vimeo player resolves its data-video-id to.
+const VIDEO_EMBED_BUILDERS: Record<string, (id: string) => string> = {
+  vimeo: (id) => `https://player.vimeo.com/video/${id}`,
+}
+
+// The first allowlisted video embed in the page's content region, as a player
+// URL, or '' when there is none. The FA delivers a video session through its
+// large video player, which names the video by data attribute (data-video-type
+// and data-video-id) rather than a server rendered iframe. Scoped to the
+// content region so a related-content rail never supplies the video.
+export function findVideoEmbed(html: string): string {
+  const region = contentRegion(html)
+  for (const m of region.matchAll(/<div\b[^>]*efl-large-video-player__video-wrap[^>]*>/gi)) {
+    const tag = m[0]
+    const build = VIDEO_EMBED_BUILDERS[attrOf(tag, 'data-video-type').toLowerCase()]
+    const id = attrOf(tag, 'data-video-id')
+    if (build && /^\d+$/.test(id)) return build(id)
+  }
+  return ''
 }
 
 export function parseSessionPage(html: string): ParsedPage {
@@ -327,7 +354,24 @@ export function parseSessionPage(html: string): ParsedPage {
     if (inTitle) week = weekNumber(inTitle[1])
   }
 
-  return { title, summary, intentions, space, players, equipment, activities, easier, harder, points, pdfUrl, programme, week }
+  const videoEmbedUrl = findVideoEmbed(html)
+
+  return {
+    title,
+    summary,
+    intentions,
+    space,
+    players,
+    equipment,
+    activities,
+    easier,
+    harder,
+    points,
+    pdfUrl,
+    programme,
+    week,
+    videoEmbedUrl,
+  }
 }
 
 // ---- Programme overview parsing -------------------------------------------
@@ -659,6 +703,9 @@ export interface SessionImportResult {
   templateId: string | null
   created: { drills: number; media: number; template: number }
   warnings: string[]
+  // True when the page carried nothing the importer could read, neither drills
+  // nor a video: nothing was created and the caller refuses with a 422.
+  unimportable?: boolean
 }
 
 // The drill theme the FA names in a session page title: the text before the
@@ -686,12 +733,24 @@ export async function importParsedSession(
   pageHref: string,
   templateFields: Record<string, unknown>,
 ): Promise<SessionImportResult> {
-  const warnings = sessionPageWarnings(page)
   const sourceFields: SourceFields = { source_url: pageHref, source_label: SOURCE_LABEL }
   // The theme is the only taxonomy the page states reliably (its title). The
   // FA session pages carry no four corner or difficulty indicator the parser
   // can map, so corner and level stay null for the coach to set in the editor.
   const theme = themeFromTitle(page.title)
+
+  // A page with no activity diagrams, no setup strip and no coaching points is
+  // not a readable drill session. When it embeds an allowlisted video (an FA
+  // video session, delivered as a Vimeo embed) import that as one video drill;
+  // otherwise refuse, so the empty template this path used to create is never
+  // created. The caller turns the refusal into a 422.
+  const hasSetup = !!page.space || !!page.players || page.equipment.length > 0
+  if (page.activities.length === 0 && !hasSetup && page.points.length === 0) {
+    if (page.videoEmbedUrl) return await importVideoSession(caller, page, theme, sourceFields, templateFields)
+    return { templateId: null, created: { drills: 0, media: 0, template: 0 }, warnings: [], unimportable: true }
+  }
+
+  const warnings = sessionPageWarnings(page)
 
   // One draft drill per activity, in page order. The diagram is stored
   // unmodified first; the drill then references it. The theme comes from the
@@ -767,6 +826,91 @@ export async function importParsedSession(
   return {
     templateId: template.id as string,
     created: { drills: drillIds.length, media: mediaCount, template: 1 },
+    warnings,
+  }
+}
+
+// Import a session the FA delivers as a video rather than diagrams: one video
+// media row holding the embed URL (no stored file), one drill carrying the
+// page summary and referencing it, and the template, the same shape a diagram
+// import produces. A media insert failure degrades to a warning and a drill
+// with no media, never an abort, matching the rest of the import.
+async function importVideoSession(
+  caller: FaCaller,
+  page: ParsedPage,
+  theme: string,
+  sourceFields: SourceFields,
+  templateFields: Record<string, unknown>,
+): Promise<SessionImportResult> {
+  const warnings: string[] = []
+
+  // One video media row: the embed URL with no stored file. type is the
+  // existing 'video' kind; embed_url with a null storage_path marks it an
+  // embed rather than an uploaded clip.
+  let mediaId: string | null = null
+  let mediaCount = 0
+  const { data: media, error: mediaError } = await caller.db
+    .from('media')
+    .insert({
+      club_id: caller.clubId,
+      created_by: caller.userId,
+      name: page.title,
+      type: 'video',
+      kind: 'video',
+      embed_url: page.videoEmbedUrl,
+      ...sourceFields,
+    })
+    .select('id')
+    .single()
+  if (mediaError || !media) {
+    warnings.push('Could not store the session video.')
+  } else {
+    mediaId = media.id as string
+    mediaCount = 1
+  }
+
+  // One drill carrying the page summary and referencing the video.
+  const { data: drill, error: drillError } = await caller.db
+    .from('drills')
+    .insert({
+      club_id: caller.clubId,
+      created_by: caller.userId,
+      title: page.title,
+      summary: page.summary || null,
+      duration: 10,
+      media_id: mediaId,
+      theme: theme || null,
+      ...sourceFields,
+    })
+    .select('id')
+    .single()
+  if (drillError || !drill) {
+    return { templateId: null, created: { drills: 0, media: mediaCount, template: 0 }, warnings }
+  }
+
+  // The template ties the single video drill together, ten minutes by default,
+  // with the page's intentions, the same as a diagram import.
+  const activities = [{ phase: 'Skill', drill_id: drill.id as string, duration: 10 }]
+  const { data: template, error: templateError } = await caller.db
+    .from('templates')
+    .insert({
+      club_id: caller.clubId,
+      name: page.title,
+      focus: page.title.split(':')[0].trim(),
+      author: SOURCE_LABEL,
+      activities,
+      intentions: page.intentions,
+      ...templateFields,
+      ...sourceFields,
+    })
+    .select('id')
+    .single()
+  if (templateError || !template) {
+    return { templateId: null, created: { drills: 1, media: mediaCount, template: 0 }, warnings }
+  }
+  return {
+    templateId: template.id as string,
+    created: { drills: 1, media: mediaCount, template: 1 },
     warnings,
   }
 }
