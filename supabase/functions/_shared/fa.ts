@@ -498,6 +498,36 @@ export function weeksAreReliable(links: OverviewWeekLink[]): boolean {
   return links.every((l, i) => (l.week ?? i + 1) === i + 1)
 }
 
+// ---- Page kind detection ---------------------------------------------------
+// One detection, shared by the smart importer and both mirror guards, so a
+// coach never has to classify an FA URL. A title beginning "Session
+// programme", or a weekly-sessions container of named week links running
+// 1..n, means a programme overview. Otherwise a setup strip or an activity
+// gallery means a single session page. Order matters: overviews embed each
+// week's gallery, so the programme arms run first. The weekly-container arm
+// accepts only fully numbered week links; unnumbered document-order links
+// also occur as plain cross references on session pages.
+
+export type FaPageKind = 'programme' | 'session' | 'unknown'
+
+export interface DetectedPage {
+  kind: FaPageKind
+  session: ParsedPage
+  overview: ParsedOverview
+}
+
+export function detectFaPage(html: string, pageUrl: URL): DetectedPage {
+  const overview = parseOverviewPage(html, pageUrl)
+  const session = parseSessionPage(html)
+  let kind: FaPageKind = 'unknown'
+  const allNumbered = overview.weekLinks.length > 0 && overview.weekLinks.every((l) => l.week != null)
+  const hasSetup = !!(session.space || session.players || session.equipment.length > 0)
+  if (/^session\s+programme/i.test(overview.title)) kind = 'programme'
+  else if (allNumbered && weeksAreReliable(overview.weekLinks)) kind = 'programme'
+  else if (hasSetup || session.activities.length > 0) kind = 'session'
+  return { kind, session, overview }
+}
+
 // ---- Allowlisted fetching ----------------------------------------------
 
 export function allowedUrl(raw: string, host: string): URL | null {
@@ -751,4 +781,265 @@ export async function importParsedSession(
     created: { drills: drillIds.length, media: mediaCount, template: 1 },
     warnings,
   }
+}
+
+// ---- Entrypoint cores ------------------------------------------------------
+// The request bodies of fa-import and fa-import-programme, factored here so
+// fa-import-smart routes to exactly the same code paths: one per import
+// kind, never duplicated. Each takes the already fetched and detected page
+// and replies as its function always has; extra carries fields the caller
+// wants on every reply (the smart importer's kind).
+
+// Import one session page as the caller: fa-import's behaviour. The single
+// page import keeps writing the legacy programme and week labels it has
+// always written; the entity-backed links are set by the programme import
+// only.
+export async function runSessionImport(
+  caller: FaCaller,
+  detected: DetectedPage,
+  pageUrl: URL,
+  extra: Record<string, unknown> = {},
+): Promise<Response> {
+  const page = detected.session
+  if (detected.kind === 'programme') {
+    return reply(422, {
+      ...extra,
+      error: 'That link is a programme overview. Use Import from England Football and it will import the whole programme.',
+    })
+  }
+  // A page that is neither shape (no title, or no setup strip and no
+  // gallery) would only manufacture a junk template of anonymous drills.
+  if (detected.kind !== 'session' || !page.title) {
+    return reply(422, { ...extra, error: 'That page does not look like an England Football session page.' })
+  }
+
+  const result = await importParsedSession(caller, page, pageUrl.href, {
+    programme: page.programme || null,
+    week: page.week,
+  })
+
+  if (!result.templateId) {
+    return reply(500, {
+      ...extra,
+      error: 'Imported the drills but could not create the template. Check the drill library.',
+      created: result.created,
+      warnings: result.warnings,
+    })
+  }
+
+  return reply(200, {
+    ...extra,
+    ok: true,
+    template_id: result.templateId,
+    template_name: page.title,
+    created: result.created,
+    warnings: result.warnings,
+  })
+}
+
+export interface WeekOutcome {
+  week: number
+  url: string
+  status: 'imported' | 'skipped' | 'failed'
+  template_id?: string
+  template_name?: string
+  created?: { drills: number; media: number; template: number }
+  warnings?: string[]
+  error?: string
+}
+
+// The FA titles overviews "Session programme: moving with the ball and
+// turning to attack"; the programme is named by what follows the prefix.
+function programmeName(title: string): string {
+  const m = title.match(/^session programme[:\s]+(.+)$/i)
+  const name = (m ? m[1] : title).trim()
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : title
+}
+
+// Find or create the programme row for this overview. One programme per
+// overview URL per club; a name that already exists (a programme backfilled
+// from the legacy labels, or week pages imported singly before the overview)
+// is adopted and pointed at this overview rather than duplicated.
+async function upsertProgramme(
+  caller: FaCaller,
+  name: string,
+  sourceUrl: string,
+  fresh: Record<string, unknown>,
+  warnings: string[],
+): Promise<{ id: string; pdfMediaId: string | null } | null> {
+  const { data: existing } = await caller.db
+    .from('programmes')
+    .select('id, pdf_media_id')
+    .eq('club_id', caller.clubId)
+    .eq('source_url', sourceUrl)
+    .maybeSingle()
+  if (existing) {
+    const { error } = await caller.db.from('programmes').update(fresh).eq('id', existing.id)
+    if (error) warnings.push('Could not refresh the programme details.')
+    return { id: existing.id as string, pdfMediaId: (existing.pdf_media_id as string | null) ?? null }
+  }
+
+  const { data: inserted, error: insertError } = await caller.db
+    .from('programmes')
+    .insert({ club_id: caller.clubId, created_by: caller.userId, name, ...fresh })
+    .select('id, pdf_media_id')
+    .single()
+  if (inserted) return { id: inserted.id as string, pdfMediaId: null }
+
+  // 23505 is the unique (club_id, name) violation: adopt the existing row.
+  if (insertError?.code === '23505') {
+    const { data: byName } = await caller.db
+      .from('programmes')
+      .select('id, pdf_media_id')
+      .eq('club_id', caller.clubId)
+      .eq('name', name)
+      .maybeSingle()
+    if (byName) {
+      const { error } = await caller.db.from('programmes').update(fresh).eq('id', byName.id)
+      if (error) warnings.push('Could not refresh the programme details.')
+      return { id: byName.id as string, pdfMediaId: (byName.pdf_media_id as string | null) ?? null }
+    }
+  }
+  return null
+}
+
+// Import a whole programme from its overview page: fa-import-programme's
+// behaviour. Fetches each week link through the single sanctioned one-level
+// follow (same host, capped at MAX_PROGRAMME_WEEKS) and imports it through
+// the shared session core. Idempotent on the normalised overview URL; weeks
+// whose templates already exist are skipped; a failed week is reported and
+// the rest continue.
+export async function runProgrammeImport(
+  caller: FaCaller,
+  detected: DetectedPage,
+  pageUrl: URL,
+  extra: Record<string, unknown> = {},
+): Promise<Response> {
+  const overview = detected.overview
+  // The mirror of the session import's refusal: a single session page pasted
+  // here would manufacture a junk programme named after one session, and a
+  // page that is neither shape would do worse.
+  if (detected.kind === 'session') {
+    return reply(422, {
+      ...extra,
+      error: 'That link looks like a single session page. Use Import from England Football for one session, or paste the programme overview link.',
+    })
+  }
+  if (detected.kind !== 'programme' || !overview.title) {
+    return reply(422, { ...extra, error: 'That page does not look like an England Football programme page.' })
+  }
+
+  // Safety valve: misread week links must not become a misleading partial
+  // programme. Fewer than MIN_PROGRAMME_WEEKS links, or week numbers that do
+  // not run 1..n, mean the overview's weekly sessions were not read
+  // reliably, and nothing is created.
+  if (!weeksAreReliable(overview.weekLinks)) {
+    return reply(422, {
+      ...extra,
+      error: "Could not read this programme's weekly sessions reliably. Try importing its weeks individually with Import from England Football.",
+    })
+  }
+
+  // Partial parses warn, never abort the run.
+  const warnings: string[] = []
+  if (overview.intentions.length === 0) warnings.push('No programme intentions were found on the overview.')
+  if (overview.truncated) warnings.push(`Only the first ${MAX_PROGRAMME_WEEKS} week links were imported.`)
+  if (!overview.pdfUrl) warnings.push('No programme PDF was found on the overview.')
+
+  const name = programmeName(overview.title)
+  const sourceUrl = normalisedHref(pageUrl)
+  const fresh = {
+    summary: overview.summary || null,
+    intentions: overview.intentions,
+    weeks: overview.weekLinks.length || 6,
+    source_url: sourceUrl,
+    source_label: SOURCE_LABEL,
+  }
+
+  // The programme row comes first, so every imported week has something to
+  // point at even if a later step fails.
+  const programme = await upsertProgramme(caller, name, sourceUrl, fresh, warnings)
+  if (!programme) {
+    return reply(500, { ...extra, error: 'Could not create the programme. Check your access and try again.', warnings })
+  }
+
+  // The programme PDF, stored unmodified with attribution and attached once;
+  // a re-import never duplicates an already attached copy.
+  if (overview.pdfUrl && !programme.pdfMediaId) {
+    const sourceFields = { source_url: sourceUrl, source_label: SOURCE_LABEL }
+    const stored = await storeFaAsset(caller, warnings, sourceFields, overview.pdfUrl, `${name} programme PDF`, 'pdf')
+    if (stored) {
+      const { error } = await caller.db.from('programmes').update({ pdf_media_id: stored }).eq('id', programme.id)
+      if (error) warnings.push('Stored the programme PDF but could not attach it.')
+    }
+  }
+
+  // Weeks already imported for this programme are skipped, not duplicated.
+  const { data: existingTemplates } = await caller.db
+    .from('templates')
+    .select('programme_week')
+    .eq('programme_id', programme.id)
+    .not('programme_week', 'is', null)
+  const existingWeeks = new Set((existingTemplates ?? []).map((t) => t.programme_week as number))
+
+  // Import each week through the shared core, in page order. A failed week
+  // is reported and the rest continue.
+  const outcomes: WeekOutcome[] = []
+  for (let i = 0; i < overview.weekLinks.length; i++) {
+    const link = overview.weekLinks[i]
+    const week = link.week ?? i + 1
+    if (existingWeeks.has(week)) {
+      outcomes.push({ week, url: link.url, status: 'skipped' })
+      continue
+    }
+    const weekUrl = allowedUrl(link.url, PAGE_HOST)
+    if (!weekUrl) {
+      outcomes.push({ week, url: link.url, status: 'failed', error: 'The week link is not on the allowlisted host.' })
+      continue
+    }
+    const weekHtml = await fetchFaPage(weekUrl)
+    if (weekHtml == null) {
+      outcomes.push({ week, url: link.url, status: 'failed', error: 'Could not fetch the week page.' })
+      continue
+    }
+    const page = parseSessionPage(weekHtml)
+    if (!page.title) {
+      outcomes.push({ week, url: link.url, status: 'failed', error: 'The week page does not look like a session page.' })
+      continue
+    }
+    const result = await importParsedSession(caller, page, weekUrl.href, {
+      programme_id: programme.id,
+      programme_week: week,
+    })
+    if (!result.templateId) {
+      outcomes.push({
+        week,
+        url: link.url,
+        status: 'failed',
+        error: 'Imported the drills but could not create the week template.',
+        created: result.created,
+        warnings: result.warnings,
+      })
+      continue
+    }
+    existingWeeks.add(week)
+    outcomes.push({
+      week,
+      url: link.url,
+      status: 'imported',
+      template_id: result.templateId,
+      template_name: page.title,
+      created: result.created,
+      warnings: result.warnings,
+    })
+  }
+
+  return reply(200, {
+    ...extra,
+    ok: true,
+    programme_id: programme.id,
+    programme_name: name,
+    weeks: outcomes,
+    warnings,
+  })
 }

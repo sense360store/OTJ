@@ -1,13 +1,16 @@
-// Import from England Football. Paste a session link from
-// learn.englandfootball.com and the fa-import Edge Function fetches that one
-// page as the signed in coach: each activity diagram is stored unmodified
-// with attribution, one draft drill is created per activity, and a template
-// ties them together. See CLAUDE.md, Third-party content, for the policy the
-// fixed note below states.
+// Import from England Football, one action for any England Football
+// Learning link. The fa-import-smart Edge Function fetches the pasted page
+// as the signed in coach and decides what it is: a single session page
+// imports as a template (each activity diagram stored unmodified with
+// attribution, one draft drill per activity), and a programme overview
+// imports every week the same way, tied to one programme, following only
+// the overview's own week links (the single sanctioned one-level follow:
+// same host, capped). The coach never classifies the URL. See CLAUDE.md,
+// Third-party content.
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
-import { useImportFA } from '../lib/queries'
-import type { ImportFAResult } from '../lib/queries'
+import { useImportFASmart } from '../lib/queries'
+import type { ImportFAResult, ImportProgrammeResult, ImportProgrammeWeek, ImportSmartResult } from '../lib/queries'
 import { Icon } from './icons'
 import { Modal } from './ui'
 
@@ -22,7 +25,26 @@ function looksLikeFAUrl(raw: string): boolean {
   }
 }
 
-function ResultCard({ result, onClose }: { result: ImportFAResult; onClose: () => void }) {
+function ResultBadge() {
+  return (
+    <span
+      style={{
+        width: 38,
+        height: 38,
+        borderRadius: '50%',
+        flex: '0 0 38px',
+        background: 'color-mix(in srgb, var(--c-physical) 18%, transparent)',
+        color: 'var(--c-physical)',
+        display: 'grid',
+        placeItems: 'center',
+      }}
+    >
+      <Icon.checkCircle style={{ width: 20, height: 20 }} />
+    </span>
+  )
+}
+
+function SessionResult({ result, onClose }: { result: ImportFAResult; onClose: () => void }) {
   const nav = useNav()
   const viewTemplate = () => {
     onClose()
@@ -31,20 +53,7 @@ function ResultCard({ result, onClose }: { result: ImportFAResult; onClose: () =
   return (
     <div>
       <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
-        <span
-          style={{
-            width: 38,
-            height: 38,
-            borderRadius: '50%',
-            flex: '0 0 38px',
-            background: 'color-mix(in srgb, var(--c-physical) 18%, transparent)',
-            color: 'var(--c-physical)',
-            display: 'grid',
-            placeItems: 'center',
-          }}
-        >
-          <Icon.checkCircle style={{ width: 20, height: 20 }} />
-        </span>
+        <ResultBadge />
         <div>
           <div style={{ fontWeight: 800, fontSize: 16 }}>{result.templateName || 'Session imported'}</div>
           <div className="muted" style={{ fontSize: 13.5, marginTop: 2 }}>
@@ -82,8 +91,103 @@ function ResultCard({ result, onClose }: { result: ImportFAResult; onClose: () =
   )
 }
 
+function weekLine(w: ImportProgrammeWeek): string {
+  if (w.status === 'imported')
+    return `Imported ${w.drills} drill${w.drills !== 1 ? 's' : ''} and ${w.media} file${w.media !== 1 ? 's' : ''}`
+  if (w.status === 'skipped') return 'Skipped, already imported'
+  return w.error || 'Failed'
+}
+
+function ProgrammeResult({ result, onClose }: { result: ImportProgrammeResult; onClose: () => void }) {
+  const nav = useNav()
+  const imported = result.weeks.filter((w) => w.status === 'imported').length
+  const viewProgramme = () => {
+    onClose()
+    if (result.programmeId) nav('programme', { programmeId: result.programmeId })
+    else nav('programmes')
+  }
+  // Per-week parse warnings roll up under each week so a long import stays
+  // readable; overview-level warnings sit at the bottom.
+  return (
+    <div>
+      <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+        <ResultBadge />
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>{result.programmeName || 'Programme imported'}</div>
+          <div className="muted" style={{ fontSize: 13.5, marginTop: 2 }}>
+            {imported} of {result.weeks.length} week{result.weeks.length !== 1 ? 's' : ''} imported with England
+            Football Learning attribution.
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
+        {result.weeks.map((w, i) => (
+          <div
+            key={i}
+            style={{ padding: '8px 10px', borderRadius: 10, border: '1px solid var(--line)', background: 'var(--bg-2)' }}
+          >
+            <div className="row" style={{ gap: 8 }}>
+              <span className="role-badge" style={{ fontSize: 12 }}>
+                Week {w.week}
+              </span>
+              <span style={{ flex: 1, fontWeight: 700, fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {w.templateName || (w.status === 'skipped' ? 'Already in the programme' : '')}
+              </span>
+              <span
+                className="muted"
+                style={{ fontSize: 12.5, fontWeight: 700, color: w.status === 'failed' ? 'var(--m-pdf)' : undefined }}
+              >
+                {weekLine(w)}
+              </span>
+            </div>
+            {w.warnings.length > 0 && (
+              <div style={{ marginTop: 4 }}>
+                {w.warnings.map((x, j) => (
+                  <div key={j} className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                    {x}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {result.warnings.length > 0 && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: '10px 12px',
+            borderRadius: 10,
+            border: '1px solid var(--line)',
+            background: 'var(--bg-2)',
+          }}
+        >
+          {result.warnings.map((w, i) => (
+            <div key={i} className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+              {w}
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="muted" style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 12 }}>
+        The import is a starting point: open each week's template and drills to set corner, theme, format and timings
+        for your group.
+      </p>
+      <button className="btn btn-primary btn-block" style={{ marginTop: 12 }} onClick={viewProgramme}>
+        <Icon.book />
+        View programme
+      </button>
+    </div>
+  )
+}
+
+function ImportResult({ result, onClose }: { result: ImportSmartResult; onClose: () => void }) {
+  if (result.kind === 'programme') return <ProgrammeResult result={result.programme} onClose={onClose} />
+  return <SessionResult result={result.session} onClose={onClose} />
+}
+
 export function ImportFAModal({ onClose }: { onClose: () => void }) {
-  const importFA = useImportFA()
+  const importFA = useImportFASmart()
   const [url, setUrl] = useState('')
   const [error, setError] = useState<string | null>(null)
   const result = importFA.data
@@ -92,7 +196,7 @@ export function ImportFAModal({ onClose }: { onClose: () => void }) {
     setError(null)
     const trimmed = url.trim()
     if (!looksLikeFAUrl(trimmed)) {
-      setError(`Paste a session link from ${PAGE_HOST}.`)
+      setError(`Paste a link from ${PAGE_HOST}.`)
       return
     }
     importFA.mutate({ url: trimmed }, { onError: (e) => setError(e.message) })
@@ -101,7 +205,7 @@ export function ImportFAModal({ onClose }: { onClose: () => void }) {
   return (
     <Modal
       title="Import from England Football"
-      sub="Paste a session page link and get a ready made template."
+      sub="Paste any England Football Learning link. A session page becomes a template; a programme overview imports every week."
       onClose={onClose}
       footer={
         result ? null : (
@@ -111,18 +215,18 @@ export function ImportFAModal({ onClose }: { onClose: () => void }) {
             </button>
             <button className="btn btn-primary" onClick={submit} disabled={!url.trim() || importFA.isPending}>
               <Icon.download />
-              {importFA.isPending ? 'Importing…' : 'Import session'}
+              {importFA.isPending ? 'Importing…' : 'Import'}
             </button>
           </>
         )
       }
     >
       {result ? (
-        <ResultCard result={result} onClose={onClose} />
+        <ImportResult result={result} onClose={onClose} />
       ) : (
         <>
           <div className="field">
-            <label>Session page link</label>
+            <label>England Football link</label>
             <input
               type="url"
               placeholder={`https://${PAGE_HOST}/sessions/…`}
@@ -139,13 +243,14 @@ export function ImportFAModal({ onClose }: { onClose: () => void }) {
             />
           </div>
           <p className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-            This import runs under the club's FA affiliation, for non-commercial coaching use only. FA images are
-            stored unmodified and shown with England Football Learning attribution. One page per import; nothing else
-            is fetched.
+            This import runs under the club's FA affiliation, for non-commercial coaching use only. FA images and PDFs
+            are stored unmodified and shown with England Football Learning attribution. Only the pasted page is
+            fetched, plus a programme overview's own week pages, same host, capped at ten. Re-importing the same
+            overview updates the programme and skips weeks that already exist.
           </p>
           {importFA.isPending && (
             <p className="muted" style={{ fontSize: 13.5, fontWeight: 700 }}>
-              Fetching the page and storing the diagrams…
+              Fetching the page and importing. A programme overview imports every week and can take a minute or two…
             </p>
           )}
           {error && (

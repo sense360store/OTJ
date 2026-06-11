@@ -1566,11 +1566,13 @@ export interface InviteInput {
 }
 
 // ---- Import from England Football ---------------------------------------
-// The fetch happens in the fa-import Edge Function because the browser
-// cannot reach the FA site cross origin. The function acts as the signed in
-// caller through RLS (no service role) and enforces the domain allowlist;
-// see CLAUDE.md, Third-party content. functions.invoke sends the signed in
-// user's access token automatically.
+// One import action for any England Football Learning link. The
+// fa-import-smart Edge Function fetches the page (the browser cannot reach
+// the FA site cross origin), detects whether it is a single session or a
+// programme overview, and routes to the matching import path, acting as the
+// signed in caller through RLS (no service role) behind the domain
+// allowlist; see CLAUDE.md, Third-party content. functions.invoke sends the
+// signed in user's access token automatically.
 
 export interface ImportFAResult {
   templateId: string | null
@@ -1579,58 +1581,6 @@ export interface ImportFAResult {
   media: number
   warnings: string[]
 }
-
-interface ImportFABody {
-  template_id?: string
-  template_name?: string
-  created?: { drills?: number; media?: number }
-  warnings?: string[]
-}
-
-export function useImportFA() {
-  const qc = useQueryClient()
-  return useMutation<ImportFAResult, Error, { url: string }>({
-    mutationFn: async ({ url }) => {
-      const { data, error } = await supabase.functions.invoke('fa-import', { body: { url } })
-      if (error) {
-        let message = 'Could not import that page. Try again.'
-        const ctx = (error as { context?: Response }).context
-        if (ctx) {
-          try {
-            const body = (await ctx.json()) as { error?: string }
-            if (body?.error) message = body.error
-          } catch {
-            // keep the generic message
-          }
-        }
-        throw new Error(message)
-      }
-      const body = (data ?? {}) as ImportFABody
-      return {
-        templateId: body.template_id ?? null,
-        templateName: body.template_name ?? '',
-        drills: body.created?.drills ?? 0,
-        media: body.created?.media ?? 0,
-        warnings: body.warnings ?? [],
-      }
-    },
-    // Settled, not success: the function writes drills and media one by one,
-    // so rows persist even when the call ultimately reports an error (a
-    // partial import, a timeout on a long run). The lists must show them
-    // either way, with no manual refresh.
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['templates'] })
-      qc.invalidateQueries({ queryKey: ['drills'] })
-      qc.invalidateQueries({ queryKey: ['media'] })
-    },
-  })
-}
-
-// Import a whole FA programme from its overview page. The fa-import-programme
-// Edge Function performs the single sanctioned one-level follow (the
-// overview's own week links, same host, capped) as the signed in caller
-// through RLS, ties the weeks to one programme row and attaches the
-// programme PDF when present. See CLAUDE.md, Third-party content.
 
 export interface ImportProgrammeWeek {
   week: number
@@ -1649,7 +1599,16 @@ export interface ImportProgrammeResult {
   warnings: string[]
 }
 
-interface ImportProgrammeBody {
+// What the unified import produced: exactly one of the two shapes, named.
+export type ImportSmartResult =
+  | { kind: 'session'; session: ImportFAResult }
+  | { kind: 'programme'; programme: ImportProgrammeResult }
+
+interface ImportSmartBody {
+  kind?: string
+  template_id?: string
+  template_name?: string
+  created?: { drills?: number; media?: number }
   programme_id?: string
   programme_name?: string
   weeks?: {
@@ -1663,13 +1622,13 @@ interface ImportProgrammeBody {
   warnings?: string[]
 }
 
-export function useImportFAProgramme() {
+export function useImportFASmart() {
   const qc = useQueryClient()
-  return useMutation<ImportProgrammeResult, Error, { url: string }>({
+  return useMutation<ImportSmartResult, Error, { url: string }>({
     mutationFn: async ({ url }) => {
-      const { data, error } = await supabase.functions.invoke('fa-import-programme', { body: { url } })
+      const { data, error } = await supabase.functions.invoke('fa-import-smart', { body: { url } })
       if (error) {
-        let message = 'Could not import that programme. Try again.'
+        let message = 'Could not import that page. Try again.'
         const ctx = (error as { context?: Response }).context
         if (ctx) {
           try {
@@ -1681,26 +1640,44 @@ export function useImportFAProgramme() {
         }
         throw new Error(message)
       }
-      const body = (data ?? {}) as ImportProgrammeBody
-      return {
-        programmeId: body.programme_id ?? null,
-        programmeName: body.programme_name ?? '',
-        weeks: (body.weeks ?? []).map((w) => ({
-          week: w.week ?? 0,
-          status: w.status === 'imported' || w.status === 'skipped' ? w.status : 'failed',
-          templateName: w.template_name ?? '',
-          drills: w.created?.drills ?? 0,
-          media: w.created?.media ?? 0,
-          warnings: w.warnings ?? [],
-          error: w.error ?? '',
-        })),
-        warnings: body.warnings ?? [],
+      const body = (data ?? {}) as ImportSmartBody
+      if (body.kind === 'programme') {
+        return {
+          kind: 'programme',
+          programme: {
+            programmeId: body.programme_id ?? null,
+            programmeName: body.programme_name ?? '',
+            weeks: (body.weeks ?? []).map((w) => ({
+              week: w.week ?? 0,
+              status: w.status === 'imported' || w.status === 'skipped' ? w.status : 'failed',
+              templateName: w.template_name ?? '',
+              drills: w.created?.drills ?? 0,
+              media: w.created?.media ?? 0,
+              warnings: w.warnings ?? [],
+              error: w.error ?? '',
+            })),
+            warnings: body.warnings ?? [],
+          },
+        }
       }
+      if (body.kind === 'session') {
+        return {
+          kind: 'session',
+          session: {
+            templateId: body.template_id ?? null,
+            templateName: body.template_name ?? '',
+            drills: body.created?.drills ?? 0,
+            media: body.created?.media ?? 0,
+            warnings: body.warnings ?? [],
+          },
+        }
+      }
+      throw new Error('Could not read the import result. Try again.')
     },
-    // Settled, not success: the programme row is created before the weeks
-    // import, so it persists even when the call ultimately fails or times
-    // out part way. The Programmes screen must show it either way, with no
-    // manual refresh.
+    // Settled, not success: the function writes rows progressively (a
+    // programme row lands before its weeks import), so content persists
+    // even when the call ultimately fails or times out part way. The lists
+    // must show it either way, with no manual refresh.
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['programmes'] })
       qc.invalidateQueries({ queryKey: ['templates'] })

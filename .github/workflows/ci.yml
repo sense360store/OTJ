@@ -67,5 +67,5 @@ jobs:
         with:
           deno-version: v2.x
       - run: npm ci
-      - run: deno check supabase/functions/fa-import/index.ts supabase/functions/fa-import-programme/index.ts supabase/functions/invite-user/index.ts
+      - run: deno check supabase/functions/fa-import/index.ts supabase/functions/fa-import-programme/index.ts supabase/functions/fa-import-smart/index.ts supabase/functions/invite-user/index.ts
       - run: deno test --allow-env --allow-read supabase/functions/_shared/fa_test.ts
