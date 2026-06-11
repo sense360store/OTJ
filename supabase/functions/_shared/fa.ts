@@ -661,6 +661,18 @@ export interface SessionImportResult {
   warnings: string[]
 }
 
+// The drill theme the FA names in a session page title: the text before the
+// word "session". "Goalkeeping session: the basics" gives "Goalkeeping";
+// "Marking and intercepting session: defend as friends" gives "Marking and
+// intercepting". This matches the theme backfill already applied to the
+// existing FA drills. A title without the word "session" yields no theme,
+// left for the coach to set.
+export function themeFromTitle(title: string): string {
+  const m = title.match(/^(.*?)\s+session\b/i)
+  if (!m) return ''
+  return m[1].replace(/[\s:–—-]+$/, '').trim()
+}
+
 // Import one parsed session page as the caller: one media row per activity
 // diagram (stored unmodified), one draft drill per activity in page order,
 // the session plan PDF when linked, and one template tying the drills
@@ -676,11 +688,16 @@ export async function importParsedSession(
 ): Promise<SessionImportResult> {
   const warnings = sessionPageWarnings(page)
   const sourceFields: SourceFields = { source_url: pageHref, source_label: SOURCE_LABEL }
+  // The theme is the only taxonomy the page states reliably (its title). The
+  // FA session pages carry no four corner or difficulty indicator the parser
+  // can map, so corner and level stay null for the coach to set in the editor.
+  const theme = themeFromTitle(page.title)
 
   // One draft drill per activity, in page order. The diagram is stored
-  // unmodified first; the drill then references it. Theme, format, corner
-  // and level are left for the coach. A page that repeats an image (a two
-  // week page revisiting a practice) stores the file once and reuses it.
+  // unmodified first; the drill then references it. The theme comes from the
+  // page title; format, corner and level stay null. A page that repeats an
+  // image (a two week page revisiting a practice) stores the file once and
+  // reuses it.
   let mediaCount = 0
   const drillIds: string[] = []
   const storedByUrl = new Map<string, string | null>()
@@ -710,6 +727,7 @@ export async function importParsedSession(
         easier: page.easier,
         harder: page.harder,
         media_id: mediaId,
+        theme: theme || null,
         ...sourceFields,
       })
       .select('id')
