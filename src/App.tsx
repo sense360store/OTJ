@@ -3,6 +3,7 @@
 // REVIEW: contains the auth guard and the admin route guard.
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
+import { useMyCapabilities } from './lib/queries'
 import { SessionsProvider } from './context/SessionsContext'
 import { Sidebar } from './components/Sidebar'
 import { TopBar, MobileTop } from './components/TopBar'
@@ -43,13 +44,24 @@ function RequireAuth() {
   )
 }
 
-// Admin only routes. The role drives what the router serves, and the RLS and
-// the Edge Function enforce the same boundary server side; a coach navigating
-// to /admin/users directly is redirected home.
+// Admin only routes (Club and Teams). The role drives what the router
+// serves, and the RLS enforces the same boundary server side.
 function RequireAdmin() {
   const { role, profileLoading } = useAuth()
   if (profileLoading) return <Splash />
   if (role !== 'admin') return <Navigate to="/" replace />
+  return <Outlet />
+}
+
+// The Users screen follows the users.manage capability rather than the role
+// name, so the tick grid stays the single place that access is defined. The
+// profiles RLS and the invite-user and remove-user functions enforce the
+// same boundary server side; a member without it navigating to /admin/users
+// directly is redirected home.
+function RequireUsersManage() {
+  const { caps, isPending } = useMyCapabilities()
+  if (isPending) return <Splash />
+  if (!caps.has('users.manage')) return <Navigate to="/" replace />
   return <Outlet />
 }
 
@@ -117,8 +129,10 @@ export function App() {
           <Route path="account" element={<Account />} />
           <Route element={<RequireAdmin />}>
             <Route path="admin/club" element={<AdminClub />} />
-            <Route path="admin/users" element={<AdminUsers />} />
             <Route path="admin/teams" element={<AdminTeams />} />
+          </Route>
+          <Route element={<RequireUsersManage />}>
+            <Route path="admin/users" element={<AdminUsers />} />
           </Route>
         </Route>
       </Route>

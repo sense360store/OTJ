@@ -410,7 +410,7 @@ export function Home() {
                   key={s.id}
                   s={s}
                   teamName={teamName(s)}
-                  ownerName={isMine(s) ? null : memberById[s.coachId]?.fullName || 'Another coach'}
+                  ownerName={isMine(s) ? null : memberById[s.coachId]?.fullName || (s.coachId ? 'Another coach' : 'Club session')}
                   nav={nav}
                 />
               ))

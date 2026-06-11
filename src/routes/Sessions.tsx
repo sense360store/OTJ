@@ -263,7 +263,7 @@ export function Sessions() {
                 key={s.id}
                 s={s}
                 nav={nav}
-                ownerName={mine ? null : memberById[s.coachId]?.fullName || 'Another coach'}
+                ownerName={mine ? null : memberById[s.coachId]?.fullName || (s.coachId ? 'Another coach' : 'Club session')}
                 teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
                 canManage={(coaching && mine) || role === 'admin'}
                 coaching={coaching}
