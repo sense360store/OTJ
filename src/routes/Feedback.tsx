@@ -2,7 +2,7 @@
 // general feedback, club visible by design so duplicates are avoided and
 // status is transparent. Every member reads and files; a creator edits and
 // deletes their own items; holders of club.manage move status through the
-// select on each row. The feedback RLS plus the status guard trigger are the
+// select on each row. The feedback RLS plus the column guard trigger are the
 // enforcement; the UI only decides what to surface.
 import { useState } from 'react'
 import type { ReactNode } from 'react'

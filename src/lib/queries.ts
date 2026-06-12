@@ -1920,8 +1920,8 @@ export function useLinkSessionSpondEvent() {
 // Club visible by design, so duplicates are avoided and status is
 // transparent. The feedback RLS is the enforcement: every member reads and
 // files, a creator edits and deletes their own items, and status moves only
-// with club.manage (the feedback_guard_status trigger holds that line server
-// side). The UI only decides what to surface.
+// with club.manage (the feedback_guard_columns trigger holds the column
+// rules server side). The UI only decides what to surface.
 
 interface FeedbackRow {
   id: string
@@ -2035,7 +2035,7 @@ export function useDeleteFeedback() {
   })
 }
 
-// club.manage only. The manage arm of the update RLS plus the status guard
+// club.manage only. The manage arm of the update RLS plus the column guard
 // trigger are the real enforcement; the select on the row only surfaces it.
 export function useSetFeedbackStatus() {
   const qc = useQueryClient()

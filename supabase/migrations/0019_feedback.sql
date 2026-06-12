@@ -17,9 +17,11 @@
 -- feedback is about the app, not coaching content, so this is
 -- deliberately the one insert open to the parent role. A creator edits
 -- and deletes their own items (title, body and kind, never the
--- status); holders of club.manage move status. The status rule is
--- enforced by trigger because an RLS with check sees only the new row
--- and cannot say "and status is unchanged".
+-- status); holders of club.manage move status and rewrite nothing
+-- else. RLS grants rows, not columns, and a with check sees only the
+-- new row, so the column rules are held by trigger: status moves need
+-- club.manage, content edits need the creator, and a row's identity
+-- columns never change.
 --
 -- updated_at carries no trigger, matching the rest of the schema
 -- (nothing else has one); the application sets it on update.
@@ -55,14 +57,19 @@ create table public.feedback (
 create index on public.feedback (club_id, created_at desc);
 
 -- ---------------------------------------------------------------------
--- The status guard. The update policies below give a creator their own
--- row and club.manage holders any row, but only a trigger can compare
--- old to new, so the status line is held here whatever writes the
--- table: a creator edits title, body and kind freely, and any status
--- move (including filing an item as something other than new) requires
--- club.manage.
+-- The column guard. The update policies below give a creator their own
+-- row and club.manage holders any row, but a row policy cannot say
+-- which columns, and only a trigger can compare old to new, so the
+-- column rules are held here whatever writes the table:
+--   * any status move, including filing an item as something other
+--     than new, requires club.manage;
+--   * title, body and kind change only by the creator, so a status
+--     manager cannot silently rewrite someone else's words;
+--   * club_id, created_by and created_at never change, so an item is
+--     never reassigned to another club, author or moment.
+-- A creator holding club.manage passes both lines on their own items.
 -- ---------------------------------------------------------------------
-create or replace function public.feedback_guard_status()
+create or replace function public.feedback_guard_columns()
 returns trigger
 language plpgsql
 set search_path = public
@@ -74,16 +81,25 @@ begin
     end if;
     return new;
   end if;
+  if new.club_id <> old.club_id or new.created_by <> old.created_by or new.created_at <> old.created_at then
+    raise exception 'feedback rows keep their club, author and filing time';
+  end if;
   if new.status is distinct from old.status and not public.has_perm('club.manage') then
     raise exception 'changing feedback status requires club.manage';
+  end if;
+  if (new.title is distinct from old.title
+      or new.body is distinct from old.body
+      or new.kind is distinct from old.kind)
+    and old.created_by <> auth.uid() then
+    raise exception 'feedback content can be edited only by its creator';
   end if;
   return new;
 end;
 $$;
 
-create trigger feedback_guard_status
+create trigger feedback_guard_columns
   before insert or update on public.feedback
-  for each row execute function public.feedback_guard_status();
+  for each row execute function public.feedback_guard_columns();
 
 -- ---------------------------------------------------------------------
 -- Grants. Hosted Supabase no longer auto grants Data API access to new
@@ -97,7 +113,7 @@ grant select, insert, update, delete on public.feedback to authenticated;
 -- the header). Inserting pins the row to the caller's club and to
 -- themselves, with no capability gate: every member may file. Update is
 -- two permissive arms, creator and club.manage, with the trigger above
--- holding the status line between them. Delete belongs to the creator
+-- holding the column rules between them. Delete belongs to the creator
 -- alone: the manager path for an unwanted item is the declined status,
 -- in the open, not removal.
 -- ---------------------------------------------------------------------

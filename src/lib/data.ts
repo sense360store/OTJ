@@ -297,7 +297,7 @@ export interface SpondEvent {
 // ---- Feedback ------------------------------------------------------------
 // The feedback log's classification and lifecycle. Kind is what an item is;
 // status is where it stands, and moves only by holders of club.manage (the
-// feedback_guard_status trigger holds that line server side).
+// feedback_guard_columns trigger holds that line server side).
 
 export type FeedbackKind = 'feature' | 'bug' | 'general'
 export type FeedbackStatus = 'new' | 'planned' | 'in_progress' | 'done' | 'declined'
