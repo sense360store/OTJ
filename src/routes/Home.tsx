@@ -1,11 +1,16 @@
-// The Home dashboard: schedule-first, action-first. The hero is the next
-// session (the signed-in coach's own; the club's next for a parent), This
-// week lists the coming seven days' club sessions, the quick actions row
-// carries the everyday starts, and What's new shows the latest drills and
-// templates. A number only rides inside a card that does something; there
-// are no standalone stat tiles. The corner distribution moved to the Drill
-// Library as a filter-aware strip.
+// The Home route dispatches on the capability set: parents (no sessions.create,
+// the coaching write capability) get the development dashboard in ParentHome;
+// coaches and admins, and anyone holding both a coaching role and the parent
+// role, get the schedule-first CoachHome below.
+//
+// CoachHome: schedule-first, action-first. The hero is the next session (the
+// signed-in coach's own), This week lists the coming seven days' club sessions,
+// the quick actions row carries the everyday starts, and What's new shows the
+// latest drills and templates. A number only rides inside a card that does
+// something; there are no standalone stat tiles. The corner distribution moved
+// to the Drill Library as a filter-aware strip.
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
@@ -19,6 +24,7 @@ import { Chip, DrillCard, Empty, ErrorNote, Loading, MediaThumb } from '../compo
 import { DrillFormModal } from '../components/DrillFormModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 import { UploadModal } from './Media'
+import { ParentHome } from './ParentHome'
 import './Home.css'
 
 type Nav = ReturnType<typeof useNav>
@@ -278,7 +284,11 @@ interface QuickAction {
   on: () => void
 }
 
-export function Home() {
+// The coach and admin Home: schedule-first, action-first. Parents are routed
+// away to the development dashboard before this renders, so the schedule
+// framing here is always a planner's; the capability checks below stay as
+// defence in depth.
+function CoachHome() {
   const nav = useNav()
   const navigate = useNavigate()
   const { sessions, loading: sessionsLoading, error: sessionsError } = useSessions()
@@ -479,4 +489,22 @@ export function Home() {
       {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
     </div>
   )
+}
+
+// The Home dispatch, pulled out as a presentational switch over the capability
+// set so the routing is covered by the static renderer. sessions.create is the
+// coaching write capability; a member without it is a parent (or any read-only
+// member) and gets the development dashboard, everyone else the coach home. A
+// member holding both a coaching role and the parent role still holds
+// sessions.create, so they keep the coach home.
+export function HomeSwitch({ caps, parent, coach }: { caps: ReadonlySet<string>; parent: ReactNode; coach: ReactNode }) {
+  return <>{caps.has('sessions.create') ? coach : parent}</>
+}
+
+export function Home() {
+  const { caps, isPending } = useMyCapabilities()
+  // Wait for the capability set so neither home flashes before the role is
+  // known.
+  if (isPending) return <Loading />
+  return <HomeSwitch caps={caps} parent={<ParentHome />} coach={<CoachHome />} />
 }

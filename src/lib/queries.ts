@@ -514,6 +514,37 @@ export function useTeams() {
   })
 }
 
+// The signed in member's team scope: the specific teams they belong to
+// (member_teams) plus the durable all teams flag on their profile. Teams gate
+// no row level security, so this only narrows a view; the parent dashboard
+// uses it to focus club wide content on the member's team(s). Both reads ride
+// existing policies open to every club member: the member_teams club select
+// and the profiles club select.
+export interface MyTeams {
+  teamIds: string[]
+  allTeams: boolean
+}
+
+export function useMyTeams() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['my_teams', user?.id],
+    enabled: !!user,
+    queryFn: async (): Promise<MyTeams> => {
+      const [profileRes, teamsRes] = await Promise.all([
+        supabase.from('profiles').select('all_teams').eq('id', user!.id).maybeSingle(),
+        supabase.from('member_teams').select('team_id').eq('member_id', user!.id),
+      ])
+      if (profileRes.error) throw profileRes.error
+      if (teamsRes.error) throw teamsRes.error
+      return {
+        allTeams: (profileRes.data as { all_teams: boolean } | null)?.all_teams ?? false,
+        teamIds: (teamsRes.data ?? []).map((r: { team_id: string }) => r.team_id),
+      }
+    },
+  })
+}
+
 // The club's roles, system and custom, in privilege order. Every club member
 // may read them (the role badges); only users.manage writes them.
 export function useRoles() {
