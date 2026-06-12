@@ -705,15 +705,17 @@ export function mediaTypeForFile(file: File): MediaType | null {
   return mime ? detectMediaType(mime) : null
 }
 
-// The media bucket rides on the project's global upload limit, 50 MB (the
-// same value config.toml sets locally). Checked before any bytes move, so an
-// oversized pick fails at once with a plain message instead of a storage
-// error at the end of a long upload.
-export const MEDIA_MAX_BYTES = 50 * 1024 * 1024
+// The per file upload ceiling, raised from 50 MB so self hosted FA session
+// videos fit inline playback. config.toml and the hosted project's storage
+// limits must carry the same value, or the server rejects what the client
+// allows. Checked before any bytes move, so an oversized pick fails at once
+// with a plain message instead of a storage error at the end of a long
+// upload.
+export const MEDIA_MAX_BYTES = 300 * 1024 * 1024
 
 export function oversizeMessage(file: File): string | null {
   if (file.size <= MEDIA_MAX_BYTES) return null
-  return `That file is ${formatBytes(file.size)} and the upload limit is 50 MB. Compress the file or trim the clip and try again.`
+  return `That file is ${formatBytes(file.size)} and the upload limit is ${formatBytes(MEDIA_MAX_BYTES)}. Compress the file or trim the clip and try again.`
 }
 
 // A storage key safe filename: keep word characters, dots and hyphens, collapse
