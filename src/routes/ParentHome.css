@@ -1,0 +1,193 @@
+/* The parent dashboard. Mobile-first: a single column of card sections, every
+   tap target 44px-plus, reusing the global card, pill and grid-drills styles
+   so it sits flush with the rest of the app. */
+
+.parent-section {
+  padding: 18px;
+  margin-bottom: 16px;
+}
+.parent-section-sub {
+  margin: 6px 0 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+/* No team note: a soft gold banner above club wide content. */
+.parent-note {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--gold-soft);
+  border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line));
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.parent-note svg {
+  width: 20px;
+  height: 20px;
+  color: var(--gold-600);
+  flex: 0 0 20px;
+  margin-top: 1px;
+}
+.parent-note b {
+  display: block;
+  font-size: 14.5px;
+  margin-bottom: 2px;
+}
+.parent-note p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--slate);
+}
+
+/* This week: an informational session row with a small calendar block. */
+.parent-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.psn {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+}
+.psn-date {
+  width: 48px;
+  flex: 0 0 48px;
+  text-align: center;
+  background: var(--bg-2);
+  border-radius: var(--radius-sm);
+  padding: 7px 0;
+}
+.psn-dow {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate-2);
+}
+.psn-day {
+  display: block;
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+.psn-body {
+  flex: 1;
+  min-width: 0;
+}
+.psn-body > b {
+  display: block;
+  font-size: 15px;
+  line-height: 1.25;
+}
+.psn-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.psn-focus {
+  display: block;
+  margin-top: 7px;
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--gold-600);
+}
+
+/* Last session: a prominent focus line above the drill cards. */
+.parent-focus {
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--gold-600);
+  margin-bottom: 10px;
+}
+
+/* Practice at home: tappable suggestion rows. */
+.practice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.practice-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 13px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition: 0.14s;
+}
+.practice-row:hover {
+  border-color: color-mix(in srgb, var(--navy) 25%, var(--line));
+}
+.practice-ico {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--navy) 10%, transparent);
+  color: var(--navy);
+}
+.practice-ico svg {
+  width: 17px;
+  height: 17px;
+}
+.practice-body {
+  flex: 1;
+  min-width: 0;
+}
+.practice-text {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.practice-from {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--slate-2);
+}
+
+/* Positive support: a warm list with gold markers. */
+.touchline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.touchline li {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  font-size: 14.5px;
+  line-height: 1.45;
+  font-weight: 600;
+}
+.touchline-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+}
