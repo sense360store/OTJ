@@ -273,14 +273,19 @@ export interface SpondMapping {
   createdAt: string
 }
 
-// A synced Spond event: four integer counts plus event facts. teamId nulls
-// if the team is later deleted, leaving the event in place.
+// A synced Spond event: four integer counts plus event facts. teamId is
+// null for a club event, one the sync matched through more than one
+// mapping, and nulls if the team is later deleted, leaving the event in
+// place; both label as "All teams". spondType is Spond's own event
+// classification ("EVENT" or "MATCH"), an event fact about the event
+// itself, not member data.
 export interface SpondEvent {
   id: string
   title: string
   startsAt: string
   teamId: string | null
   teamName: string | null
+  spondType: string | null
   accepted: number
   declined: number
   unanswered: number

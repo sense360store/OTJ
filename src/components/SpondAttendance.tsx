@@ -15,7 +15,7 @@
 import { useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useSpondEvents } from '../lib/queries'
-import { bySpondEventCloseness, SPOND_COUNT_LABELS, spondEventWhen, syncedAgo } from '../lib/spond'
+import { bySpondEventCloseness, SPOND_COUNT_LABELS, spondEventInTeam, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
 import { Icon } from './icons'
 import { Chip, Modal } from './ui'
 
@@ -30,10 +30,23 @@ export function CancelledBadge() {
   )
 }
 
+// Spond classed this event as a match (spond_type 'MATCH'); training and
+// other events carry no badge.
+export function MatchBadge() {
+  return (
+    <span
+      className="tag"
+      style={{ background: 'color-mix(in srgb, var(--m-video) 14%, transparent)', color: 'var(--m-video)' }}
+    >
+      Match
+    </span>
+  )
+}
+
 // The picker. Defaults to the session's team, nearest event to the session
-// date first; the all club events toggle exists because whole group events
-// (a gala, say) are attributed to a single mapping's team and would
-// otherwise never show for the others.
+// date first. Club events, those with no team because more than one mapping
+// matched them, show under every team's filter; the all club events toggle
+// remains for finding another team's events.
 function LinkSpondEventModal({
   teamId,
   date,
@@ -50,7 +63,7 @@ function LinkSpondEventModal({
   const { data: events = [], isPending, isError } = useSpondEvents()
   const [showAll, setShowAll] = useState(!teamId)
   const shown = useMemo(() => {
-    const pool = showAll || !teamId ? events : events.filter((e) => e.teamId === teamId)
+    const pool = showAll || !teamId ? events : events.filter((e) => spondEventInTeam(e, teamId))
     return [...pool].sort(bySpondEventCloseness(date, time))
   }, [events, showAll, teamId, date, time])
 
@@ -108,7 +121,7 @@ function LinkSpondEventModal({
                 {e.cancelled && <CancelledBadge />}
               </span>
               <span className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>
-                {spondEventWhen(e.startsAt)} · {e.teamName ?? 'No team'} · {e.accepted} accepted
+                {spondEventWhen(e.startsAt)} · {spondTeamLabel(e.teamName)} · {e.accepted} accepted
               </span>
             </button>
           ))}
@@ -182,7 +195,7 @@ export function SpondAttendanceCard({
             {event.cancelled && <CancelledBadge />}
           </div>
           <div className="muted" style={{ fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>
-            {spondEventWhen(event.startsAt)}
+            {spondEventWhen(event.startsAt)} · {spondTeamLabel(event.teamName)}
           </div>
           <div className="row wrap" style={{ gap: 6, marginTop: 10 }}>
             {SPOND_COUNT_LABELS.map((label) => (

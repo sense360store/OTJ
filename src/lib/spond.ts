@@ -46,6 +46,19 @@ export function parseSpondMappingInput(raw: string): SpondGroupRef | null {
   return { groupId, subgroupId }
 }
 
+// A synced event's team label. Null is a club event, one the sync matched
+// through more than one mapping (or an event whose team was later deleted),
+// so it reads as the whole club's.
+export function spondTeamLabel(teamName: string | null): string {
+  return teamName ?? 'All teams'
+}
+
+// The picker's team filter: a club event (no team) is visible under every
+// team's filter, not only the all events toggle.
+export function spondEventInTeam(event: { teamId: string | null }, teamId: string): boolean {
+  return event.teamId === null || event.teamId === teamId
+}
+
 // Comparator for the event picker: nearest to the session's moment first,
 // so the Tuesday session offers Tuesday's event before the gala in three
 // weeks. The session date is a plain yyyy-mm-dd with the start time joined
