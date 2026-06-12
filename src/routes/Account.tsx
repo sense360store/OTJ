@@ -190,6 +190,21 @@ function TeamRow() {
   )
 }
 
+// The team setting in the Profile card. A coach gets the Default team control:
+// it seeds the team on sessions they plan. A parent does not plan, and their
+// dashboard and schedule scope is their member_teams, set by an admin, so the
+// control would do nothing; they get a quiet line in its place. Presentational
+// over canPlan so the static renderer covers which one shows, the same style
+// as HomeSwitch; canPlan is sessions.create, the test the Home dispatch uses.
+export function TeamSetting({ canPlan, control }: { canPlan: boolean; control: ReactNode }) {
+  if (canPlan) return <>{control}</>
+  return (
+    <p className="muted" style={{ fontSize: 13.5, marginTop: 14, marginBottom: 0 }}>
+      Your team is set by a club admin.
+    </p>
+  )
+}
+
 function PasswordForm() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -410,6 +425,10 @@ export function Account() {
   const { profile, role, profileLoading } = useAuth()
   const { data: club } = useClub()
   const { caps } = useMyCapabilities()
+  // The Default team control seeds the planner default, which parents do not
+  // have, so it follows the same coaching write capability the Home dispatch
+  // uses.
+  const canPlan = caps.has('sessions.create')
 
   if (profileLoading) return <Loading />
 
@@ -425,7 +444,7 @@ export function Account() {
       <SectionCard title="Profile" sub="How you appear across the club. Changes show everywhere at once.">
         <PhotoRow />
         <NameRow />
-        <TeamRow />
+        <TeamSetting canPlan={canPlan} control={<TeamRow />} />
       </SectionCard>
 
       <SectionCard title="Security" sub="Change your password or the email you sign in with.">

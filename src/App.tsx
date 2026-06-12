@@ -3,8 +3,8 @@
 // REVIEW: contains the auth guard and the capability route guards.
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
-import { useMyCapabilities } from './lib/queries'
 import { SessionsProvider } from './context/SessionsContext'
+import { RequireCap } from './components/RequireCap'
 import { Sidebar } from './components/Sidebar'
 import { TopBar, MobileTop } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
@@ -46,19 +46,6 @@ function RequireAuth() {
   )
 }
 
-// Capability gated routes. Every guard follows a capability, never a role
-// name, so a member holding any role that grants it gets in and the tick
-// grid stays the single place access is defined. The RLS, the triggers and
-// the Edge Functions enforce the same boundary server side; a member without
-// the capability navigating directly is redirected. Waits for the capability
-// read so a direct URL hit is not bounced before the set is known.
-function RequireCap({ cap, redirect = '/' }: { cap: string; redirect?: string }) {
-  const { caps, isPending } = useMyCapabilities()
-  if (isPending) return <Splash />
-  if (!caps.has(cap)) return <Navigate to={redirect} replace />
-  return <Outlet />
-}
-
 // Keep signed-in users out of the login screen.
 function LoginGate() {
   const { user, loading } = useAuth()
@@ -91,25 +78,29 @@ export function App() {
         <Route path="/live/:sessionId" element={<LiveSession />} />
         <Route element={<AppShell />}>
           <Route index element={<Home />} />
-          <Route path="library" element={<Library />} />
-          <Route path="drill/:id" element={<DrillDetail />} />
+          {/* Detail routes stay reachable read only for every role: the parent
+              dashboard and schedule link straight into them, and that is the
+              only path by which a parent meets a drill. Action buttons inside
+              are capability gated, so a parent sees them read only. Session day
+              stays inside the shell so the bottom nav remains reachable
+              pitch-side; the full-screen viewer overlays it. */}
           <Route path="sessions" element={<Sessions />} />
-          {/* Session day stays inside the shell so the bottom nav remains
-              reachable pitch-side; the full-screen viewer overlays it. */}
+          <Route path="drill/:id" element={<DrillDetail />} />
           <Route path="session-day/:sessionId" element={<SessionDay />} />
-          {/* The planner is a write surface: building a plan needs
-              sessions.create, so members without it (parents) go to the
-              sessions list instead, direct URLs included. */}
-          <Route element={<RequireCap cap="sessions.create" redirect="/sessions" />}>
-            <Route path="planner" element={<Planner />} />
-          </Route>
-          <Route path="templates" element={<Templates />} />
-          {/* Programmes are a read surface for every role; the create, import
-              and edit affordances are role-gated in the screens and the
-              programmes RLS enforces the writes. */}
-          <Route path="programmes" element={<Programmes />} />
           <Route path="programmes/:id" element={<ProgrammeDetail />} />
-          <Route path="media" element={<Media />} />
+          {/* Browse and authoring surfaces need the coaching write capability.
+              A parent (no sessions.create) is redirected to Home, not shown an
+              empty shell: their world is their team's schedule, not a
+              browsable coaching database. The create, import and edit
+              affordances inside are role gated and the RLS enforces the
+              writes. */}
+          <Route element={<RequireCap cap="sessions.create" />}>
+            <Route path="library" element={<Library />} />
+            <Route path="planner" element={<Planner />} />
+            <Route path="programmes" element={<Programmes />} />
+            <Route path="templates" element={<Templates />} />
+            <Route path="media" element={<Media />} />
+          </Route>
           {/* Account self-service is open to every role, parents included. */}
           <Route path="account" element={<Account />} />
           {/* The feedback log is open to every role too, filing included:
