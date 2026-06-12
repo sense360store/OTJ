@@ -771,11 +771,14 @@ function readVideoLength(file: File): Promise<string | undefined> {
 
 export type UploadInput = { mode: 'file'; file: File; name: string } | { mode: 'youtube'; ytUrl: string; name: string }
 
+// Creates a library media row from a file upload or a YouTube link. The
+// mutation resolves to the new row's id so a caller can link it at once; the
+// drill form's inline creator sets it as the drill's media.
 export function useUploadMedia() {
   const qc = useQueryClient()
   const { user, profile } = useAuth()
 
-  return useMutation<void, Error, UploadInput>({
+  return useMutation<string, Error, UploadInput>({
     mutationFn: async (input) => {
       if (!user || !profile?.club_id) {
         throw new Error('You must be signed in to upload media.')
@@ -787,15 +790,19 @@ export function useUploadMedia() {
         if (!youtubeId(input.ytUrl)) {
           throw new Error('Enter a valid YouTube link.')
         }
-        const { error } = await supabase.from('media').insert({
-          club_id: clubId,
-          created_by: user.id,
-          name: input.name,
-          type: 'youtube',
-          yt_url: input.ytUrl,
-        })
+        const { data, error } = await supabase
+          .from('media')
+          .insert({
+            club_id: clubId,
+            created_by: user.id,
+            name: input.name,
+            type: 'youtube',
+            yt_url: input.ytUrl,
+          })
+          .select('id')
+          .single()
         if (error) throw new Error(`Could not save the link: ${error.message}`)
-        return
+        return (data as { id: string }).id
       }
 
       // File: detect, guard the size, upload to Storage, then register the
@@ -817,22 +824,27 @@ export function useUploadMedia() {
       const dims = type === 'image' ? await readImageDims(file) : undefined
       const length = type === 'video' ? await readVideoLength(file) : undefined
 
-      const { error: insertError } = await supabase.from('media').insert({
-        club_id: clubId,
-        created_by: user.id,
-        name: input.name,
-        type,
-        storage_path: path,
-        size,
-        dims: dims ?? null,
-        length: length ?? null,
-      })
+      const { data: inserted, error: insertError } = await supabase
+        .from('media')
+        .insert({
+          club_id: clubId,
+          created_by: user.id,
+          name: input.name,
+          type,
+          storage_path: path,
+          size,
+          dims: dims ?? null,
+          length: length ?? null,
+        })
+        .select('id')
+        .single()
       // If the row insert fails after the object uploaded, remove the object so
       // no orphan is left behind in Storage.
       if (insertError) {
         await supabase.storage.from('media').remove([path])
         throw new Error(`The file uploaded but could not be saved to the library: ${insertError.message}`)
       }
+      return (inserted as { id: string }).id
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['media'] }),
   })

@@ -3,20 +3,41 @@
 // plus the FA session model fields (setup notes, STEP adaptations, theme,
 // format, source link). The list inputs are plain chip editors; ages toggle
 // against the fixed age taxonomy. The media picker lists the club's media
-// with thumbnails and allows none.
-import { useState } from 'react'
+// with thumbnails and allows none, and members who can create media can add
+// a new item inline without leaving the form.
+import { useRef, useState } from 'react'
 import { Icon } from './icons'
 import { Chip, ListInput, Loading, MediaThumb, MEDIA_META, Modal } from './ui'
-import { useInsertDrill, useMedia, useUpdateDrill } from '../lib/queries'
-import type { DrillInput } from '../lib/queries'
-import { AGES, CORNERS, LEVELS } from '../lib/data'
+import {
+  mediaTypeForFile,
+  oversizeMessage,
+  useInsertDrill,
+  useMedia,
+  useMyCapabilities,
+  useUpdateDrill,
+  useUploadMedia,
+} from '../lib/queries'
+import type { DrillInput, UploadInput } from '../lib/queries'
+import { AGES, CORNERS, LEVELS, youtubeId } from '../lib/data'
 import type { CornerKey, Drill, Level } from '../lib/data'
 import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
 
 // The club's media with thumbnails. One tile per item plus a none tile; the
-// selection sets mediaId or clears it.
-function MediaPicker({ value, onChange }: { value: string | null; onChange: (id: string | null) => void }) {
+// selection sets mediaId or clears it. Members holding media.create also get
+// an add tile that opens the inline creator, so a drill and its media are
+// added in one flow; a new item becomes the selection as soon as it saves.
+function MediaPicker({
+  value,
+  onChange,
+  upload,
+}: {
+  value: string | null
+  onChange: (id: string | null) => void
+  upload: ReturnType<typeof useUploadMedia>
+}) {
   const { data: media = [], isLoading } = useMedia()
+  const { caps } = useMyCapabilities()
+  const [adding, setAdding] = useState(false)
   if (isLoading) return <Loading label="Loading media…" />
   const tile = (on: boolean) => ({
     display: 'flex',
@@ -30,42 +51,213 @@ function MediaPicker({ value, onChange }: { value: string | null; onChange: (id:
     cursor: 'pointer',
   })
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-      <button type="button" style={tile(value === null)} onClick={() => onChange(null)}>
-        <div
-          style={{
-            width: 58,
-            height: 40,
-            borderRadius: 8,
-            flex: '0 0 58px',
-            display: 'grid',
-            placeItems: 'center',
-            border: '1px dashed var(--line)',
-            color: 'var(--slate-2)',
-          }}
-        >
-          <Icon.x style={{ width: 16, height: 16 }} />
-        </div>
-        <div style={{ fontWeight: 700, fontSize: 13.5 }}>No media</div>
-      </button>
-      {media.map((m) => {
-        const on = value === m.id
-        return (
-          <button type="button" key={m.id} style={tile(on)} onClick={() => onChange(on ? null : m.id)}>
-            <div style={{ width: 58, height: 40, borderRadius: 8, overflow: 'hidden', flex: '0 0 58px' }}>
-              <MediaThumb media={m} showPlay={false} showBadge={false} label="" />
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <button type="button" style={tile(value === null)} onClick={() => onChange(null)}>
+          <div
+            style={{
+              width: 58,
+              height: 40,
+              borderRadius: 8,
+              flex: '0 0 58px',
+              display: 'grid',
+              placeItems: 'center',
+              border: '1px dashed var(--line)',
+              color: 'var(--slate-2)',
+            }}
+          >
+            <Icon.x style={{ width: 16, height: 16 }} />
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 13.5 }}>No media</div>
+        </button>
+        {caps.has('media.create') && (
+          <button type="button" style={tile(false)} onClick={() => setAdding((a) => !a)}>
+            <div
+              style={{
+                width: 58,
+                height: 40,
+                borderRadius: 8,
+                flex: '0 0 58px',
+                display: 'grid',
+                placeItems: 'center',
+                border: '1px dashed var(--line)',
+                color: 'var(--slate-2)',
+              }}
+            >
+              <Icon.plus style={{ width: 16, height: 16 }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {m.name}
-              </div>
+              <div style={{ fontWeight: 700, fontSize: 13.5 }}>Add media</div>
               <div className="muted" style={{ fontSize: 12 }}>
-                {MEDIA_META[m.type].label}
+                Upload or YouTube link
               </div>
             </div>
           </button>
-        )
-      })}
+        )}
+        {media.map((m) => {
+          const on = value === m.id
+          return (
+            <button type="button" key={m.id} style={tile(on)} onClick={() => onChange(on ? null : m.id)}>
+              <div style={{ width: 58, height: 40, borderRadius: 8, overflow: 'hidden', flex: '0 0 58px' }}>
+                <MediaThumb media={m} showPlay={false} showBadge={false} label="" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {m.name}
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {MEDIA_META[m.type].label}
+                </div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+      {adding && (
+        <InlineMediaCreator
+          upload={upload}
+          onCreated={(id) => {
+            onChange(id)
+            setAdding(false)
+          }}
+          onClose={() => setAdding(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// The inline creator the add tile opens: the Media Library's two add modes
+// (file upload and YouTube link) surfaced inside the drill form, so the coach
+// keeps their half filled fields. It submits through the same useUploadMedia
+// mutation with the same accept set, size guard and link validation as the
+// library's upload modal; the new row is normal club media, owned by its
+// creator, and shows in the Media Library afterwards. A failure stays here as
+// an inline message and attaches nothing.
+function InlineMediaCreator({
+  upload,
+  onCreated,
+  onClose,
+}: {
+  upload: ReturnType<typeof useUploadMedia>
+  onCreated: (id: string) => void
+  onClose: () => void
+}) {
+  const [mode, setMode] = useState<'file' | 'youtube'>('file')
+  const [file, setFile] = useState<File | null>(null)
+  const [name, setName] = useState('')
+  const [yt, setYt] = useState('')
+  const [drag, setDrag] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const pickFile = (f: File | null) => {
+    setError(null)
+    if (!f) return
+    // Type and size checked at pick time so the failure is immediate; the
+    // mutation re-checks both before any bytes move.
+    if (!mediaTypeForFile(f)) {
+      setFile(null)
+      setError('Unsupported file type. Upload an image, video or PDF.')
+      return
+    }
+    const tooBig = oversizeMessage(f)
+    if (tooBig) {
+      setFile(null)
+      setError(tooBig)
+      return
+    }
+    setFile(f)
+    if (!name) setName(f.name)
+  }
+
+  const canSubmit = mode === 'file' ? !!file && !!name.trim() : !!youtubeId(yt) && !!name.trim()
+
+  const submit = () => {
+    setError(null)
+    let input: UploadInput
+    if (mode === 'file') {
+      if (!file) return
+      input = { mode: 'file', file, name: name.trim() }
+    } else {
+      if (!youtubeId(yt)) {
+        setError('Enter a valid YouTube link.')
+        return
+      }
+      input = { mode: 'youtube', ytUrl: yt.trim(), name: name.trim() }
+    }
+    upload.mutate(input, { onSuccess: onCreated, onError: (e: Error) => setError(e.message) })
+  }
+
+  return (
+    <div style={{ border: '1.5px solid var(--line)', borderRadius: 12, padding: 12, display: 'grid', gap: 12 }}>
+      <div className="row" style={{ gap: 8 }}>
+        <Chip on={mode === 'file'} icon={Icon.upload} onClick={() => { setMode('file'); setError(null) }}>
+          File
+        </Chip>
+        <Chip on={mode === 'youtube'} icon={Icon.youtube} onClick={() => { setMode('youtube'); setError(null) }}>
+          YouTube
+        </Chip>
+      </div>
+      {mode === 'file' ? (
+        <div
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDrag(false)
+            pickFile(e.dataTransfer.files?.[0] ?? null)
+          }}
+          style={{
+            border: '1.5px dashed ' + (drag ? 'var(--royal)' : 'var(--line)'),
+            borderRadius: 12,
+            padding: '18px 14px',
+            textAlign: 'center',
+            cursor: 'pointer',
+            background: drag ? 'var(--bg-2)' : 'transparent',
+          }}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*,image/svg+xml,.svg,video/*,application/pdf"
+            style={{ display: 'none' }}
+            onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+          />
+          <div style={{ fontWeight: 700, fontSize: 13.5 }}>{file ? file.name : 'Drop a file or click to choose'}</div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+            Images (SVG included), videos and PDFs
+          </div>
+        </div>
+      ) : (
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>YouTube link</label>
+          <input
+            placeholder="https://www.youtube.com/watch?v=…"
+            value={yt}
+            onChange={(e) => { setYt(e.target.value); setError(null) }}
+          />
+        </div>
+      )}
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label>Display name</label>
+        <input placeholder="Name shown in the library" value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      {error && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, margin: 0 }}>
+          {error}
+        </p>
+      )}
+      <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} disabled={upload.isPending}>
+          Cancel
+        </button>
+        <button type="button" className="btn btn-primary btn-sm" onClick={submit} disabled={!canSubmit || upload.isPending}>
+          <Icon.upload />
+          {upload.isPending ? (mode === 'file' ? 'Uploading…' : 'Saving…') : mode === 'file' ? 'Upload' : 'Add link'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -97,6 +289,10 @@ function fromDrill(drill?: Drill): DrillInput {
 export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () => void }) {
   const insert = useInsertDrill()
   const update = useUpdateDrill()
+  // The inline media creator's mutation lives at form level so saving the
+  // drill waits for an in flight upload; otherwise the drill would save
+  // without the media that was still uploading.
+  const upload = useUploadMedia()
   const [form, setForm] = useState<DrillInput>(() => fromDrill(drill))
   const [error, setError] = useState<string | null>(null)
   const pending = insert.isPending || update.isPending
@@ -128,7 +324,7 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
           <button className="btn btn-ghost" onClick={onClose} disabled={pending}>
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={submit} disabled={!form.title.trim() || pending}>
+          <button className="btn btn-primary" onClick={submit} disabled={!form.title.trim() || pending || upload.isPending}>
             <Icon.check />
             {pending ? 'Saving…' : drill ? 'Save changes' : 'Add drill'}
           </button>
@@ -284,7 +480,7 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
       </div>
       <div className="field" style={{ marginBottom: 0 }}>
         <label>Media</label>
-        <MediaPicker value={form.mediaId} onChange={(id) => set('mediaId', id)} />
+        <MediaPicker value={form.mediaId} onChange={(id) => set('mediaId', id)} upload={upload} />
       </div>
       {error && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 10 }}>
