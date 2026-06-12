@@ -74,8 +74,11 @@ function fromDrill(drill?: Drill): DrillInput {
   return {
     title: drill?.title ?? '',
     summary: drill?.summary ?? '',
-    corner: drill?.corner ?? 'technical',
-    skill: drill?.skill || 'Passing',
+    // Editing keeps the drill's real classification: an unclassified drill
+    // (an FA import) opens with no corner selected and no skill, never a
+    // defaulted Technical or Passing that saving would silently write.
+    corner: drill ? drill.corner : 'technical',
+    skill: drill?.skill ?? '',
     level: drill?.level ?? 'Foundation',
     ages: drill?.ages ?? [],
     duration: drill?.duration || 10,
@@ -150,9 +153,16 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
       </div>
       <div className="field">
         <label>Corner</label>
+        {/* The chips toggle, so a corner can be cleared as well as set and an
+            unclassified drill can stay that way. */}
         <div className="row wrap" style={{ gap: 8 }}>
           {Object.values(CORNERS).map((c) => (
-            <Chip key={c.key} on={form.corner === c.key} dot={c.color} onClick={() => set('corner', c.key as CornerKey)}>
+            <Chip
+              key={c.key}
+              on={form.corner === c.key}
+              dot={c.color}
+              onClick={() => set('corner', form.corner === c.key ? null : (c.key as CornerKey))}
+            >
               {c.label}
             </Chip>
           ))}
@@ -162,6 +172,7 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
         <div className="field" style={{ flex: 1 }}>
           <label>Skill</label>
           <select value={form.skill} onChange={(e) => set('skill', e.target.value)}>
+            <option value="">None</option>
             {skills.map((s) => (
               <option key={s} value={s}>
                 {s}

@@ -22,6 +22,7 @@ import {
   Chip,
   DrillCard,
   SourceLink,
+  TopicTags,
 } from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { DeleteDrillModal } from '../components/DeleteDrillModal'
@@ -34,7 +35,13 @@ function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: str
         <Ico />
         {k}
       </div>
-      <div className="v">{v}</div>
+      <div className="v">
+        {v || (
+          <span className="muted" style={{ fontWeight: 500 }}>
+            Not set
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -166,8 +173,17 @@ export function DrillDetail() {
         It may have been removed.
       </Empty>
     )
+  // Relatedness needs a real shared value: a missing corner or skill is not a
+  // match key (two unclassified drills have nothing in common), and FA drills
+  // relate through overlapping topic tags instead.
   const related = allDrills
-    .filter((d) => d.id !== drill.id && (d.corner === drill.corner || d.skill === drill.skill))
+    .filter(
+      (d) =>
+        d.id !== drill.id &&
+        ((!!drill.corner && d.corner === drill.corner) ||
+          (!!drill.skill && d.skill === drill.skill) ||
+          d.tags.some((t) => drill.tags.includes(t))),
+    )
     .slice(0, 3)
   const MediaIcon = media ? MEDIA_META[media.type].icon : null
   // A sample (a seeded row with no file or playable link behind it) offers no
@@ -257,8 +273,11 @@ export function DrillDetail() {
         </div>
 
         <div>
+          {/* The classification slot: the corner when one was set, the real
+              topic tags otherwise. A corner is never defaulted or invented
+              from the tags. */}
           <div className="row wrap" style={{ gap: 8, marginBottom: 12 }}>
-            <CornerTag corner={drill.corner} />
+            {drill.corner ? <CornerTag corner={drill.corner} /> : <TopicTags tags={drill.tags} />}
             <span className="pill">{drill.level}</span>
             {drill.theme && <span className="pill">{drill.theme}</span>}
             {drill.format && <span className="pill">{drill.format}</span>}
@@ -314,11 +333,14 @@ export function DrillDetail() {
                   Ages {drill.ages[0]}–{drill.ages[drill.ages.length - 1]}
                 </span>
               )}
-              {drill.tags.map((t) => (
-                <span className="pill" key={t}>
-                  #{t}
-                </span>
-              ))}
+              {/* Tags render once: in the classification slot above when the
+                  drill has no corner, down here otherwise. */}
+              {drill.corner != null &&
+                drill.tags.map((t) => (
+                  <span className="pill" key={t}>
+                    #{t}
+                  </span>
+                ))}
             </div>
           </div>
 

@@ -50,6 +50,24 @@ export function CornerTag({ corner, small }: { corner: CornerKey; small?: boolea
   )
 }
 
+/* ---- Topic tags ------------------------------------------------- */
+// The classification slot for a drill with no corner: the real topic tags
+// (FA imports carry them) instead of a defaulted corner. Tags and corner
+// are different classifications, so a corner is never invented from them;
+// with neither, the slot renders nothing.
+export function TopicTags({ tags, small }: { tags: string[]; small?: boolean }) {
+  if (tags.length === 0) return null
+  return (
+    <span className="row wrap" style={{ gap: 5 }}>
+      {tags.map((t) => (
+        <span key={t} className="pill" style={small ? { padding: '2px 7px', fontSize: 11 } : undefined}>
+          #{t}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 /* ---- media type meta ------------------------------------------- */
 export const MEDIA_META: Record<MediaType, { label: string; icon: IconComponent; color: string }> = {
   video: { label: 'Video', icon: Icon.video, color: 'var(--m-video)' },
@@ -302,17 +320,19 @@ export function MediaAttribution({ media, style }: { media?: MediaItem | null; s
 export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: () => void; action?: ReactNode }) {
   const mediaById = useMediaMap()
   const media = drill.mediaId ? mediaById[drill.mediaId] : undefined
-  const c = CORNERS[drill.corner]
+  // An unclassified drill gets a neutral strip and its topic tags in the
+  // corner slot, never a defaulted corner.
+  const c = drill.corner ? CORNERS[drill.corner] : null
   return (
     <div className="drill-card" onClick={onClick}>
-      <div className="dc-corner-strip" style={{ background: c.color }}></div>
+      <div className="dc-corner-strip" style={{ background: c ? c.color : 'var(--line)' }}></div>
       <div style={{ padding: 0 }}>
         <MediaThumb media={media} />
       </div>
       <div className="dc-body">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <CornerTag corner={drill.corner} small />
-          <span className="pill">
+          {drill.corner ? <CornerTag corner={drill.corner} small /> : <TopicTags tags={drill.tags} small />}
+          <span className="pill" style={{ marginLeft: 'auto' }}>
             <Icon.clock />
             {drill.duration}m
           </span>
@@ -333,7 +353,7 @@ export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: 
           {drill.summary}
         </p>
         <div className="dc-meta">
-          <span className="pill">{drill.skill}</span>
+          {drill.skill && <span className="pill">{drill.skill}</span>}
           {drill.ages.length > 0 && (
             <span className="pill">
               {drill.ages[0]}–{drill.ages[drill.ages.length - 1]}
