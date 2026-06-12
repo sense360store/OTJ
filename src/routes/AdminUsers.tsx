@@ -31,6 +31,7 @@ import {
 import { RESERVED_CAPABILITIES, roleKeyFromLabel } from '../lib/data'
 import type { Capability, Member, RoleCapability, RoleInfo, Team } from '../lib/data'
 import { Icon } from '../components/icons'
+import { Tick } from '../components/Tick'
 import { UserAvatar } from '../components/UserAvatar'
 import { ErrorNote, Loading, Modal } from '../components/ui'
 
@@ -45,7 +46,12 @@ function sameSet(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((x) => b.includes(x))
 }
 
-// One labelled checkbox, shared by the role and team pickers.
+// One labelled checkbox, shared by the role and team pickers. Renders the
+// shared Tick, so the pickers and the capability grid keep one look. The
+// disabled dimming of the box itself lives in Tick.css; this dims the text.
+// Layout, margin and colour are inline because these labels sit inside
+// .field wrappers, whose label rule (display block, slate, bottom margin)
+// would otherwise win over a class and detach the box from its wording.
 function CheckItem({
   label,
   checked,
@@ -61,12 +67,20 @@ function CheckItem({
 }) {
   return (
     <label
-      className="row"
       title={title}
-      style={{ gap: 7, alignItems: 'center', fontSize: 13.5, fontWeight: 600, opacity: disabled ? 0.55 : 1, cursor: disabled ? 'default' : 'pointer' }}
+      style={{
+        display: 'flex',
+        gap: 7,
+        alignItems: 'center',
+        margin: 0,
+        color: 'var(--ink)',
+        fontSize: 13.5,
+        fontWeight: 600,
+        cursor: disabled ? 'default' : 'pointer',
+      }}
     >
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={onChange} />
-      {label}
+      <Tick checked={checked} disabled={disabled} onChange={onChange} />
+      <span style={{ opacity: disabled ? 0.55 : 1 }}>{label}</span>
     </label>
   )
 }
@@ -91,14 +105,19 @@ function TeamPicker({
   onToggleTeam: (id: string) => void
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div>
       <CheckItem
         label="All teams, current and future"
         checked={allTeams}
         disabled={disabled}
         onChange={() => onAllTeams(!allTeams)}
       />
-      <div className="row wrap" style={{ gap: 14 }}>
+      {/* The team list nests under the all teams toggle, indented behind a
+          faint rule, so the toggle clearly governs the group. */}
+      <div
+        className="row wrap"
+        style={{ gap: '8px 14px', margin: '8px 0 0 7px', padding: '1px 0 1px 16px', borderLeft: '2px solid var(--line)' }}
+      >
         {teams.map((t) => (
           <CheckItem
             key={t.id}
@@ -179,7 +198,7 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
   return (
     <div className="card" style={{ padding: 18, marginBottom: 18 }}>
       <h3 style={{ fontSize: 17, marginBottom: 4 }}>Invite someone</h3>
-      <p className="muted" style={{ fontSize: 13.5, marginBottom: 14 }}>
+      <p className="muted" style={{ fontSize: 13.5, marginBottom: 12 }}>
         They get an email with a link to the app, set a password and are signed in to this club with the roles and
         teams you pick here.
       </p>
@@ -198,27 +217,30 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
           <input placeholder="First and last name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
         </div>
       </div>
-      <div className="field" style={{ marginTop: 12, marginBottom: 0 }}>
+      <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
         <label>Roles</label>
-        <div className="row wrap" style={{ gap: 14, paddingTop: 4 }}>
+        <div className="row wrap" style={{ gap: '8px 14px' }}>
           {roles.map((r) => (
             <CheckItem key={r.id} label={r.label} checked={roleIds.has(r.id)} onChange={() => toggleRole(r)} />
           ))}
         </div>
       </div>
-      <div className="field" style={{ marginTop: 12, marginBottom: 0 }}>
+      <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
         <label>Teams</label>
-        <div style={{ paddingTop: 4 }}>
-          <TeamPicker
-            teams={teams}
-            allTeams={allTeams}
-            teamIds={teamIds}
-            onAllTeams={setAllTeams}
-            onToggleTeam={toggleTeam}
-          />
-        </div>
+        <TeamPicker
+          teams={teams}
+          allTeams={allTeams}
+          teamIds={teamIds}
+          onAllTeams={setAllTeams}
+          onToggleTeam={toggleTeam}
+        />
       </div>
-      <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
+      <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 12 }}>
+        {roleIds.size === 0 && (
+          <span className="muted" style={{ fontSize: 12.5 }}>
+            Pick at least one role.
+          </span>
+        )}
         <button
           className="btn btn-primary"
           onClick={send}
@@ -228,15 +250,10 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
           {invite.isPending ? 'Sending…' : 'Send invite'}
         </button>
       </div>
-      {roleIds.size === 0 && (
-        <p className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
-          Pick at least one role.
-        </p>
-      )}
       {note && (
         <p
           className="muted"
-          style={{ fontSize: 13.5, marginTop: 12, color: note.kind === 'error' ? 'var(--m-pdf)' : 'var(--m-image)' }}
+          style={{ fontSize: 13.5, marginTop: 10, color: note.kind === 'error' ? 'var(--m-pdf)' : 'var(--m-image)' }}
         >
           {note.text}
         </p>
@@ -330,7 +347,7 @@ function ManageMemberModal({
         <p className="muted" style={{ fontSize: 12.5, margin: '2px 0 8px' }}>
           A member can hold several roles and gets everything any of them grants.
         </p>
-        <div className="row wrap" style={{ gap: 14 }}>
+        <div className="row wrap" style={{ gap: '8px 14px' }}>
           {roles.map((r) => {
             // The club must keep one admin; the trigger refuses server side
             // and this keeps the obvious case from a round trip.
@@ -355,16 +372,14 @@ function ManageMemberModal({
       </div>
       <div className="field" style={{ marginBottom: 0 }}>
         <label>Teams</label>
-        <div style={{ paddingTop: 4 }}>
-          <TeamPicker
-            teams={teams}
-            allTeams={allTeams}
-            teamIds={teamIds}
-            disabled={saving}
-            onAllTeams={setAllTeams}
-            onToggleTeam={toggleTeam}
-          />
-        </div>
+        <TeamPicker
+          teams={teams}
+          allTeams={allTeams}
+          teamIds={teamIds}
+          disabled={saving}
+          onAllTeams={setAllTeams}
+          onToggleTeam={toggleTeam}
+        />
       </div>
       {error && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 12 }}>
@@ -879,12 +894,11 @@ function CapabilityGrid({ roles }: { roles: RoleInfo[] }) {
                   const locked = reserved && isAdminRole(r)
                   return (
                     <div key={r.id} style={cell}>
-                      <input
-                        type="checkbox"
+                      <Tick
                         checked={locked || ticks.has(tickKey(r.id, c.key))}
                         disabled={locked || save.isPending}
                         title={locked ? 'Reserved to the admin role, so the club always keeps an administrator.' : undefined}
-                        aria-label={`${c.label} for ${r.label}`}
+                        ariaLabel={`${c.label} for ${r.label}`}
                         onChange={() => toggle(r.id, c.key)}
                       />
                     </div>
