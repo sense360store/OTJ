@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  alreadyImportedFrom,
+  faImportBody,
   toActivity,
   toActivityRow,
   toDrill,
@@ -108,6 +110,41 @@ describe('activity mapping round-trips', () => {
     const activity = { phase: 'Cool-Down' as const, duration: 5, title: 'Stretch' }
     expect(toActivityRow(activity)).toEqual({ phase: 'Cool-Down', duration: 5, title: 'Stretch' })
     expect(toActivity(toActivityRow(activity))).toEqual(activity)
+  })
+})
+
+describe('fa-import duplicate handling', () => {
+  it('recognises the 409 already_imported conflict and carries the existing template', () => {
+    expect(
+      alreadyImportedFrom(409, {
+        error: 'already_imported',
+        template_id: 'template-1',
+        template_name: 'Goalkeeping session: the basics',
+      }),
+    ).toEqual({ alreadyImported: true, templateId: 'template-1', templateName: 'Goalkeeping session: the basics' })
+  })
+
+  it('keeps every other error on the plain error path', () => {
+    expect(alreadyImportedFrom(409, { error: 'Something else went wrong.' })).toBeNull()
+    expect(alreadyImportedFrom(422, { error: 'already_imported' })).toBeNull()
+    expect(alreadyImportedFrom(409, null)).toBeNull()
+    expect(alreadyImportedFrom(409, {})).toBeNull()
+  })
+
+  it('tolerates a conflict body that names no template', () => {
+    expect(alreadyImportedFrom(409, { error: 'already_imported' })).toEqual({
+      alreadyImported: true,
+      templateId: null,
+      templateName: '',
+    })
+  })
+
+  it('sends the reimport flag only on the explicit re-call', () => {
+    const url = 'https://learn.englandfootball.com/sessions/a-page'
+    expect(faImportBody(url)).toEqual({ url })
+    expect('reimport' in faImportBody(url)).toBe(false)
+    expect('reimport' in faImportBody(url, false)).toBe(false)
+    expect(faImportBody(url, true)).toEqual({ url, reimport: true })
   })
 })
 

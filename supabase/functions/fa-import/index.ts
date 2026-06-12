@@ -20,6 +20,10 @@
 //   * One page per call. No link following, no crawling, no caps lifted
 //     by the caller. A programme overview is refused here and belongs
 //     to fa-import-programme.
+//   * A page the caller's club already imported is refused with a 409
+//     naming the existing template, unless the request carries
+//     reimport: true, the coach's explicit choice to import a second
+//     copy. Nothing is created on the refusal.
 //
 // Parsing is deliberately defensive: a missing piece becomes an empty
 // field and a warning in the response, never a failure. Deploy with
@@ -28,6 +32,7 @@
 // =====================================================================
 import {
   allowedUrl,
+  alreadyImportedRefusal,
   corsHeaders,
   countSessionLinks,
   fetchFaPage,
@@ -83,10 +88,18 @@ Deno.serve(async (req) => {
     })
   }
 
+  // Refuse a page this club already imported, pointing the coach at the
+  // existing template, unless the request asks for a second copy with
+  // reimport: true. pageHref feeds both the check and the import below, so
+  // the source_url the check matches is exactly the form the import writes.
+  const pageHref = pageUrl.href
+  const refusal = await alreadyImportedRefusal(caller, pageHref, payload)
+  if (refusal) return refusal
+
   // The single-page import keeps writing the legacy programme and week
   // labels it has always written; the entity-backed links are set by the
   // programme import only.
-  const result = await importParsedSession(caller, page, pageUrl.href, {
+  const result = await importParsedSession(caller, page, pageHref, {
     programme: page.programme || null,
     week: page.week,
   })

@@ -1970,6 +1970,18 @@ export interface ImportFAResult {
   warnings: string[]
 }
 
+// The structured 409 fa-import returns for a page the club already
+// imported: nothing was created, and the coach is pointed at the existing
+// template. Re-calling with reimport: true is the explicit choice to
+// create a second copy.
+export interface ImportFADuplicate {
+  alreadyImported: true
+  templateId: string | null
+  templateName: string
+}
+
+export type ImportFAOutcome = ImportFAResult | ImportFADuplicate
+
 interface ImportFABody {
   template_id?: string
   template_name?: string
@@ -1977,17 +1989,39 @@ interface ImportFABody {
   warnings?: string[]
 }
 
+interface ImportFAErrorBody {
+  error?: string
+  template_id?: string
+  template_name?: string
+}
+
+// Recognise the already imported conflict in a fa-import error response.
+// Only the dedicated 409 already_imported body counts; every other error
+// stays on the plain error path.
+export function alreadyImportedFrom(status: number, body: ImportFAErrorBody | null | undefined): ImportFADuplicate | null {
+  if (status !== 409 || body?.error !== 'already_imported') return null
+  return { alreadyImported: true, templateId: body.template_id ?? null, templateName: body.template_name ?? '' }
+}
+
+// The fa-import request body. The reimport flag rides along only when the
+// coach explicitly chose a second copy; it is never sent by default.
+export function faImportBody(url: string, reimport?: boolean): { url: string; reimport?: true } {
+  return reimport === true ? { url, reimport: true } : { url }
+}
+
 export function useImportFA() {
   const qc = useQueryClient()
-  return useMutation<ImportFAResult, Error, { url: string }>({
-    mutationFn: async ({ url }) => {
-      const { data, error } = await supabase.functions.invoke('fa-import', { body: { url } })
+  return useMutation<ImportFAOutcome, Error, { url: string; reimport?: boolean }>({
+    mutationFn: async ({ url, reimport }) => {
+      const { data, error } = await supabase.functions.invoke('fa-import', { body: faImportBody(url, reimport) })
       if (error) {
         let message = 'Could not import that page. Try again.'
         const ctx = (error as { context?: Response }).context
         if (ctx) {
           try {
-            const body = (await ctx.json()) as { error?: string }
+            const body = (await ctx.json()) as ImportFAErrorBody
+            const duplicate = alreadyImportedFrom(ctx.status, body)
+            if (duplicate) return duplicate
             if (body?.error) message = body.error
           } catch {
             // keep the generic message
