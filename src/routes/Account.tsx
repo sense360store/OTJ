@@ -358,6 +358,43 @@ export function AdminSection({ caps }: { caps: Set<string> }) {
   )
 }
 
+// The feedback log's entry point, open to every role: it lives here rather
+// than in the nav because it is an occasional surface, not a daily one. The
+// row mirrors the admin rows above so the page reads as one list style.
+function FeedbackSection() {
+  const navigate = useNavigate()
+  return (
+    <SectionCard title="Feedback" sub="Help shape the Hub. The log is club wide, so check it before filing.">
+      <button
+        className="row"
+        onClick={() => navigate('/feedback')}
+        style={{
+          gap: 12,
+          alignItems: 'center',
+          width: '100%',
+          padding: '10px 0',
+          background: 'none',
+          border: 0,
+          borderTop: '1px solid var(--line)',
+          textAlign: 'left',
+          color: 'inherit',
+          font: 'inherit',
+          cursor: 'pointer',
+        }}
+      >
+        <Icon.note style={{ width: 18, height: 18, color: 'var(--royal)', flex: '0 0 auto' }} />
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <b style={{ display: 'block', fontSize: 14.5, fontWeight: 600 }}>Feedback log</b>
+          <span className="muted" style={{ fontSize: 12.5 }}>
+            Feature requests, bugs and where they stand
+          </span>
+        </span>
+        <Icon.chevR style={{ width: 16, height: 16, flex: '0 0 auto' }} className="muted" />
+      </button>
+    </SectionCard>
+  )
+}
+
 function FactRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="row" style={{ gap: 12, padding: '9px 0', borderTop: '1px solid var(--line)' }}>
@@ -407,6 +444,8 @@ export function Account() {
           either changed.
         </p>
       </SectionCard>
+
+      <FeedbackSection />
 
       <AdminSection caps={caps} />
     </div>

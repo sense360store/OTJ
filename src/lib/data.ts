@@ -294,6 +294,44 @@ export interface SpondEvent {
   syncedAt: string
 }
 
+// ---- Feedback ------------------------------------------------------------
+// The feedback log's classification and lifecycle. Kind is what an item is;
+// status is where it stands, and moves only by holders of club.manage (the
+// feedback_guard_status trigger holds that line server side).
+
+export type FeedbackKind = 'feature' | 'bug' | 'general'
+export type FeedbackStatus = 'new' | 'planned' | 'in_progress' | 'done' | 'declined'
+
+export const FEEDBACK_KINDS: FeedbackKind[] = ['feature', 'bug', 'general']
+export const FEEDBACK_KIND_LABELS: Record<FeedbackKind, string> = {
+  feature: 'Feature',
+  bug: 'Bug',
+  general: 'General',
+}
+
+export const FEEDBACK_STATUSES: FeedbackStatus[] = ['new', 'planned', 'in_progress', 'done', 'declined']
+export const FEEDBACK_STATUS_LABELS: Record<FeedbackStatus, string> = {
+  new: 'New',
+  planned: 'Planned',
+  in_progress: 'In progress',
+  done: 'Done',
+  declined: 'Declined',
+}
+
+// A filed feedback item. Club visible by design, so duplicates are avoided
+// and status is transparent; createdBy drives the creator's edit and delete
+// affordances exactly as ownership does elsewhere.
+export interface FeedbackItem {
+  id: string
+  kind: FeedbackKind
+  title: string
+  body: string
+  status: FeedbackStatus
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
 // ---- Taxonomy ----------------------------------------------------------
 export const CORNERS: Record<CornerKey, CornerInfo> = {
   technical: { key: 'technical', label: 'Technical', short: 'TEC', color: 'var(--c-technical)' },

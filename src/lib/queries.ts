@@ -25,6 +25,9 @@ import type {
   Club,
   CornerKey,
   Drill,
+  FeedbackItem,
+  FeedbackKind,
+  FeedbackStatus,
   Level,
   MediaItem,
   MediaType,
@@ -1909,6 +1912,144 @@ export function useLinkSessionSpondEvent() {
       if (!data?.length) throw new Error('Only the session owner or an admin can change its Spond link.')
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+  })
+}
+
+// ---- Feedback --------------------------------------------------------------
+// The club feedback log: feature requests, bug reports and general feedback.
+// Club visible by design, so duplicates are avoided and status is
+// transparent. The feedback RLS is the enforcement: every member reads and
+// files, a creator edits and deletes their own items, and status moves only
+// with club.manage (the feedback_guard_status trigger holds that line server
+// side). The UI only decides what to surface.
+
+interface FeedbackRow {
+  id: string
+  club_id: string
+  created_by: string
+  kind: FeedbackKind
+  title: string
+  body: string | null
+  status: FeedbackStatus
+  created_at: string
+  updated_at: string
+}
+
+const FEEDBACK_COLS = 'id, club_id, created_by, kind, title, body, status, created_at, updated_at'
+
+function toFeedbackItem(r: FeedbackRow): FeedbackItem {
+  return {
+    id: r.id,
+    kind: r.kind,
+    title: r.title,
+    body: r.body ?? '',
+    status: r.status,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
+// The club's feedback, newest first.
+export function useFeedback() {
+  return useQuery({
+    queryKey: ['feedback'],
+    queryFn: async (): Promise<FeedbackItem[]> => {
+      const { data, error } = await supabase
+        .from('feedback')
+        .select(FEEDBACK_COLS)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+      if (error) throw error
+      return (data as unknown as FeedbackRow[]).map(toFeedbackItem)
+    },
+  })
+}
+
+export interface FeedbackInput {
+  kind: FeedbackKind
+  title: string
+  body: string
+}
+
+// Files an item as the signed in member. Status is not sent: it starts as
+// new through the column default, and the guard trigger refuses anything
+// else from a member without club.manage anyway.
+export function useInsertFeedback() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<void, Error, FeedbackInput>({
+    mutationFn: async (input) => {
+      if (!user || !profile?.club_id) {
+        throw new Error('You must be signed in to send feedback.')
+      }
+      const { error } = await supabase.from('feedback').insert({
+        club_id: profile.club_id,
+        created_by: user.id,
+        kind: input.kind,
+        title: input.title.trim(),
+        body: input.body.trim() || null,
+      })
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback'] }),
+  })
+}
+
+// Creator only, and title, body and kind only; status moves through the
+// status hook below. The feedback update RLS is the real enforcement, and a
+// write it blocks updates no rows, which is reported rather than swallowed.
+// updated_at is set here because the schema carries no updated_at trigger.
+export function useUpdateFeedback() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; input: FeedbackInput }>({
+    mutationFn: async ({ id, input }) => {
+      const { data, error } = await supabase
+        .from('feedback')
+        .update({
+          kind: input.kind,
+          title: input.title.trim(),
+          body: input.body.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('You can only edit feedback you filed.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback'] }),
+  })
+}
+
+// Creator only; the feedback delete RLS is the real enforcement, and a
+// blocked delete (no error, zero rows) removes nothing and is reported.
+export function useDeleteFeedback() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { data, error } = await supabase.from('feedback').delete().eq('id', id).select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('You can only delete feedback you filed.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback'] }),
+  })
+}
+
+// club.manage only. The manage arm of the update RLS plus the status guard
+// trigger are the real enforcement; the select on the row only surfaces it.
+export function useSetFeedbackStatus() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; status: FeedbackStatus }>({
+    mutationFn: async ({ id, status }) => {
+      const { data, error } = await supabase
+        .from('feedback')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('Only a holder of club.manage can change feedback status.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback'] }),
   })
 }
 

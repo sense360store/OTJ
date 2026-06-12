@@ -22,6 +22,7 @@ import { Media } from './routes/Media'
 import { LiveSession } from './routes/LiveSession'
 import { SessionDay } from './routes/SessionDay'
 import { Account } from './routes/Account'
+import { Feedback } from './routes/Feedback'
 import { AdminClub } from './routes/AdminClub'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
@@ -111,6 +112,10 @@ export function App() {
           <Route path="media" element={<Media />} />
           {/* Account self-service is open to every role, parents included. */}
           <Route path="account" element={<Account />} />
+          {/* The feedback log is open to every role too, filing included:
+              feedback is about the app, not coaching content. The feedback
+              RLS enforces the writes. */}
+          <Route path="feedback" element={<Feedback />} />
           <Route element={<RequireCap cap="club.manage" />}>
             <Route path="admin/club" element={<AdminClub />} />
             <Route path="admin/spond" element={<AdminSpond />} />
