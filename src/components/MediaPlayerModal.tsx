@@ -5,7 +5,10 @@
 // wants the app or channel context. FA sourced video falls back to a link out
 // to the source page on England Football Learning only when no stored file is
 // available: a stored file always wins. Images and PDFs never open here; they
-// keep their existing open behaviour.
+// keep their existing open behaviour. The module pairs the player components
+// with the videoDisplayMode helper they share with the tests, so the fast
+// refresh component-only rule is relaxed here.
+/* eslint-disable react-refresh/only-export-components */
 import type { MediaItem } from '../lib/data'
 import { embedSrc, youtubeId } from '../lib/data'
 import { isFaVideo } from '../lib/fa'

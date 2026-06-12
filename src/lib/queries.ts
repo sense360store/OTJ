@@ -41,6 +41,8 @@ import type {
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, sortRoles, youtubeId } from './data'
 import { sourceLabelForUrl } from './fa'
+import { formatBytes } from './faAttach'
+import type { AttachPlan } from './faAttach'
 
 // ---- Database row shapes (snake_case) ----------------------------------
 // Separate from the component-facing camelCase types. Nullable columns are
@@ -714,18 +716,6 @@ export function oversizeMessage(file: File): string | null {
   return `That file is ${formatBytes(file.size)} and the upload limit is 50 MB. Compress the file or trim the clip and try again.`
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB']
-  let value = bytes / 1024
-  let i = 0
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024
-    i++
-  }
-  return `${value >= 10 ? Math.round(value) : value.toFixed(1)} ${units[i]}`
-}
-
 // A storage key safe filename: keep word characters, dots and hyphens, collapse
 // the rest. The {club_id}/{uuid}- prefix guarantees uniqueness regardless.
 function sanitiseFilename(name: string): string {
@@ -929,6 +919,135 @@ export function useReplaceMedia() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['media'] })
     },
+  })
+}
+
+// ---- FA video source files -------------------------------------------------
+// The bulk attach behind the FA video source file pipeline. The FA supplies
+// the licensed source MP4s for imported video sessions; the plan
+// (src/lib/faAttach.ts) has already matched each file to its FA video media
+// row by Vimeo id, or by session and part. Each file goes into the media
+// bucket exactly like an uploaded clip, then storage_path is set on the
+// matched row, the one write that flips playback from the FA link out to the
+// inline player. embed_url, source_url and source_label are not touched, so
+// provenance and attribution survive. Every write rides the existing paths:
+// the authenticated storage insert policy and the media update RLS (owner
+// with media.create, or media.manage), club scoped, so a coach can only
+// attach within their own club and a refusal is reported per file, never
+// swallowed. The update is conditional on storage_path still being null, so
+// re running over the same set skips rather than duplicates even under
+// concurrency. No Vimeo fetching of any kind happens here.
+
+export interface AttachFAFilesOutcome {
+  fileName: string
+  status: 'stored' | 'skipped' | 'unmatched' | 'rejected' | 'failed'
+  mediaName?: string
+  detail: string
+}
+
+export function useAttachFAVideoFiles() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+
+  return useMutation<
+    AttachFAFilesOutcome[],
+    Error,
+    { plan: AttachPlan<File>; onProgress?: (done: number, total: number) => void }
+  >({
+    mutationFn: async ({ plan, onProgress }) => {
+      if (!user || !profile?.club_id) {
+        throw new Error('You must be signed in to attach files.')
+      }
+      const clubId = profile.club_id
+      const total = plan.storeCount
+      let done = 0
+      const outcomes: AttachFAFilesOutcome[] = []
+
+      // Sequential on purpose: the files are large, and one upload at a time
+      // keeps the progress readable and the failure modes simple.
+      for (const entry of plan.entries) {
+        if (entry.status !== 'store') {
+          outcomes.push({
+            fileName: entry.file.name,
+            status: entry.status === 'skip' ? 'skipped' : entry.status,
+            mediaName: entry.mediaName,
+            detail: entry.reason,
+          })
+          continue
+        }
+
+        const file = entry.file
+        const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+        const { error: uploadError } = await supabase.storage
+          .from('media')
+          .upload(path, file, { contentType: contentTypeForFile(file) ?? 'video/mp4' })
+        if (uploadError) {
+          outcomes.push({
+            fileName: file.name,
+            status: 'failed',
+            mediaName: entry.mediaName,
+            detail: `The upload failed: ${uploadError.message}`,
+          })
+          onProgress?.(++done, total)
+          continue
+        }
+
+        const length = await readVideoLength(file)
+        // Conditional on the path still being empty: a row that gained a file
+        // since the plan was made is left alone, and an RLS refusal also lands
+        // here as zero rows rather than an exception.
+        const { data, error } = await supabase
+          .from('media')
+          .update({ storage_path: path, size: formatBytes(file.size), length: length ?? null })
+          .eq('id', entry.mediaId!)
+          .is('storage_path', null)
+          .select('id')
+        if (error || !data?.length) {
+          // The object uploaded but the row did not take it; remove the orphan.
+          await supabase.storage.from('media').remove([path])
+          if (error) {
+            outcomes.push({
+              fileName: file.name,
+              status: 'failed',
+              mediaName: entry.mediaName,
+              detail: `Could not update the media record: ${error.message}`,
+            })
+          } else {
+            // Zero rows without an error: read the row back to tell a file
+            // attached meanwhile apart from a permission refusal, honestly.
+            const { data: row } = await supabase
+              .from('media')
+              .select('storage_path')
+              .eq('id', entry.mediaId!)
+              .maybeSingle()
+            if ((row as { storage_path: string | null } | null)?.storage_path) {
+              outcomes.push({
+                fileName: file.name,
+                status: 'skipped',
+                mediaName: entry.mediaName,
+                detail: 'A file was attached to this video meanwhile.',
+              })
+            } else {
+              outcomes.push({
+                fileName: file.name,
+                status: 'failed',
+                mediaName: entry.mediaName,
+                detail: 'You do not have permission to attach files to this video.',
+              })
+            }
+          }
+          onProgress?.(++done, total)
+          continue
+        }
+
+        outcomes.push({ fileName: file.name, status: 'stored', mediaName: entry.mediaName, detail: entry.reason })
+        onProgress?.(++done, total)
+      }
+      return outcomes
+    },
+    // Settled, not success: files store one by one, so rows changed before a
+    // late failure must show in the library either way.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['media'] }),
   })
 }
 
