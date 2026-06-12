@@ -6,11 +6,13 @@
 // REVIEW: part of the auth flow (signed-in password and email updates).
 import { useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { useClub, useRemoveAvatar, useTeams, useUpdateMyProfile, useUploadAvatar } from '../lib/queries'
+import { useClub, useMyCapabilities, useRemoveAvatar, useTeams, useUpdateMyProfile, useUploadAvatar } from '../lib/queries'
 import { ROLE_LABELS } from '../lib/data'
 import { Icon } from '../components/icons'
+import type { IconComponent } from '../components/icons'
 import { UserAvatar } from '../components/UserAvatar'
 import { Loading } from '../components/ui'
 
@@ -305,6 +307,57 @@ function EmailForm() {
   )
 }
 
+// The admin screens are linked only from the desktop sidebar; the mobile
+// bottom nav carries no admin entries, so this section is how an admin
+// reaches them on a phone. Each row gates on the same capability id as the
+// sidebar's ITEM_CAP map, and a member with no admin capability sees no
+// section at all.
+const ADMIN_LINKS: { cap: string; label: string; sub: string; icon: IconComponent; to: string }[] = [
+  { cap: 'club.manage', label: 'Club', sub: 'Name, motto and crest', icon: Icon.star, to: '/admin/club' },
+  { cap: 'users.manage', label: 'Users', sub: 'Members, invites and roles', icon: Icon.users, to: '/admin/users' },
+  { cap: 'teams.manage', label: 'Teams', sub: 'The club teams', icon: Icon.flag, to: '/admin/teams' },
+  { cap: 'club.manage', label: 'Spond', sub: 'Attendance mirrored from Spond', icon: Icon.link, to: '/admin/spond' },
+]
+
+export function AdminSection({ caps }: { caps: Set<string> }) {
+  const navigate = useNavigate()
+  const links = ADMIN_LINKS.filter((l) => caps.has(l.cap))
+  if (links.length === 0) return null
+  return (
+    <SectionCard title="Admin" sub="Club management screens your capabilities open.">
+      {links.map((l) => (
+        <button
+          key={l.to}
+          className="row"
+          onClick={() => navigate(l.to)}
+          style={{
+            gap: 12,
+            alignItems: 'center',
+            width: '100%',
+            padding: '10px 0',
+            background: 'none',
+            border: 0,
+            borderTop: '1px solid var(--line)',
+            textAlign: 'left',
+            color: 'inherit',
+            font: 'inherit',
+            cursor: 'pointer',
+          }}
+        >
+          <l.icon style={{ width: 18, height: 18, color: 'var(--royal)', flex: '0 0 auto' }} />
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <b style={{ display: 'block', fontSize: 14.5, fontWeight: 600 }}>{l.label}</b>
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              {l.sub}
+            </span>
+          </span>
+          <Icon.chevR style={{ width: 16, height: 16, flex: '0 0 auto' }} className="muted" />
+        </button>
+      ))}
+    </SectionCard>
+  )
+}
+
 function FactRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="row" style={{ gap: 12, padding: '9px 0', borderTop: '1px solid var(--line)' }}>
@@ -319,6 +372,7 @@ function FactRow({ label, value }: { label: string; value: ReactNode }) {
 export function Account() {
   const { profile, role, profileLoading } = useAuth()
   const { data: club } = useClub()
+  const { caps } = useMyCapabilities()
 
   if (profileLoading) return <Loading />
 
@@ -353,6 +407,8 @@ export function Account() {
           either changed.
         </p>
       </SectionCard>
+
+      <AdminSection caps={caps} />
     </div>
   )
 }
