@@ -233,6 +233,9 @@ export interface ParsedPage {
   pdfUrl: string
   programme: string
   week: number | null
+  // The FA topic tags from the page's tag cloud, structural labels removed,
+  // deduplicated, in page order. Empty when the page carries no tag cloud.
+  tags: string[]
   // The video player embeds found in the content region, in document order,
   // empty when the page carries none.
   videoEmbeds: ParsedVideoEmbed[]
@@ -277,6 +280,32 @@ export function findVideoEmbeds(html: string): ParsedVideoEmbed[] {
     embeds.push({ embedUrl: build(id), heading: heading ? textOf(heading[1]) : '' })
   }
   return embeds
+}
+
+// Tag cloud entries that name the page type rather than a topic. The session
+// pages render "Session design" (and older pages "Sessions") alongside the
+// real topics; the hero banner's own "Session" marker sits outside the cloud
+// but is dropped too in case a page ever carries it as a tag.
+const NON_TOPIC_TAGS = new Set(['session', 'sessions', 'session design'])
+
+// The page's topic tags: the tag cloud the FA renders in the article info
+// block under the title, one div.tag-cloud__item per tag (for example
+// Defending, Marking, Intercepting). Scoped to the content region like the
+// other scans so a related-content rail can never supply tags. Structural
+// labels are dropped, duplicates collapse to the first occurrence, page
+// order is kept. A page without the block yields an empty list and the
+// import carries on; this never fails.
+export function findTopicTags(html: string): string[] {
+  const tags: string[] = []
+  const seen = new Set<string>()
+  for (const m of contentRegion(html).matchAll(/tag-cloud__item[^>]*>([\s\S]*?)<\/div>/gi)) {
+    const tag = textOf(m[1])
+    const key = tag.toLowerCase()
+    if (!tag || NON_TOPIC_TAGS.has(key) || seen.has(key)) continue
+    seen.add(key)
+    tags.push(tag)
+  }
+  return tags
 }
 
 export function parseSessionPage(html: string): ParsedPage {
@@ -371,6 +400,7 @@ export function parseSessionPage(html: string): ParsedPage {
     if (inTitle) week = weekNumber(inTitle[1])
   }
 
+  const tags = findTopicTags(html)
   const videoEmbeds = findVideoEmbeds(html)
 
   return {
@@ -387,6 +417,7 @@ export function parseSessionPage(html: string): ParsedPage {
     pdfUrl,
     programme,
     week,
+    tags,
     videoEmbeds,
   }
 }
@@ -790,9 +821,10 @@ export async function importParsedSession(
   templateFields: Record<string, unknown>,
 ): Promise<SessionImportResult> {
   const sourceFields: SourceFields = { source_url: pageHref, source_label: SOURCE_LABEL }
-  // The theme is the only taxonomy the page states reliably (its title). The
-  // FA session pages carry no four corner or difficulty indicator the parser
-  // can map, so corner and level stay null for the coach to set in the editor.
+  // The taxonomy the page states reliably: the theme from its title and the
+  // topic tags from its tag cloud. The FA session pages carry no four corner,
+  // difficulty or format indicator the parser can map, so corner, level and
+  // format stay null for the coach to set in the editor.
   const theme = themeFromTitle(page.title)
 
   // A page with no activity diagrams, no setup strip and no coaching points is
@@ -810,9 +842,9 @@ export async function importParsedSession(
 
   // One draft drill per activity, in page order. The diagram is stored
   // unmodified first; the drill then references it. The theme comes from the
-  // page title; format, corner and level stay null. A page that repeats an
-  // image (a two week page revisiting a practice) stores the file once and
-  // reuses it.
+  // page title and the topic tags from the page's tag cloud; format, corner
+  // and level stay null. A page that repeats an image (a two week page
+  // revisiting a practice) stores the file once and reuses it.
   let mediaCount = 0
   const drillIds: string[] = []
   const storedByUrl = new Map<string, string | null>()
@@ -843,6 +875,7 @@ export async function importParsedSession(
         harder: page.harder,
         media_id: mediaId,
         theme: theme || null,
+        tags: page.tags,
         ...sourceFields,
       })
       .select('id')
@@ -888,9 +921,9 @@ export async function importParsedSession(
 
 // Import a session the FA delivers as videos rather than diagrams: one video
 // media row per embed (no stored file), one draft drill per video in page
-// order carrying the page summary and referencing its media row, and the
-// template tying the drills together, the same shape a diagram import
-// produces. Drills take the page title plus each video's own section heading
+// order carrying the page summary, theme and topic tags and referencing its
+// media row, and the template tying the drills together, the same shape a
+// diagram import produces. Drills take the page title plus each video's own section heading
 // (or a numbered video label when the page names none) so a coach can tell
 // the parts apart. A media insert failure degrades to a warning and a drill
 // with no media, never an abort, matching the rest of the import.
@@ -947,6 +980,7 @@ async function importVideoSession(
         duration: 10,
         media_id: mediaId,
         theme: theme || null,
+        tags: page.tags,
         ...sourceFields,
       })
       .select('id')
