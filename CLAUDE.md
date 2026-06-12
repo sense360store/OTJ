@@ -118,7 +118,7 @@ Deploy front-end: connect the GitHub repo in the Vercel dashboard, framework pre
 
 ## Build order
 
-Work one phase per branch, one pull request per phase. Each phase is independently useful.
+Work one phase per branch, one pull request per phase. Each phase is independently useful. Every branch is cut from current `main`, never from another feature branch.
 
 1. **Project plus login.** Vite migration, prototype components ported into `routes/` and `components/`, `styles.css` in unchanged, Supabase project, the six-table migration applied, Login screen and auth guard. App runs on seeded data behind a password.
 2. **Persisted planning.** Replace every `window.OTJ` read with a TanStack Query hook and every `upsertSession` with a Supabase mutation. RLS locks each coach to their own sessions.
@@ -191,8 +191,20 @@ The club is an FA-affiliated charity club and holds permission to use England Fo
 - Imported images are stored unmodified, with the source URL and "England Football Learning" attribution recorded and displayed wherever the image renders large.
 - Nothing is sold or made public. The app is invite-only club membership.
 - Where an FA-derived drill needs a diagram, the FA's own image is used, not a recreation.
+- FA videos may be downloaded by the club and used in the app under the FA's stated permission for non profit use, and must never be sold or placed behind any paid or subscription access.
 
 For non-FA third-party content the default remains link and attribute, do not copy.
+
+---
+
+## Spond integration
+
+Spond is where the club arranges sessions and parents respond. The Hub mirrors attendance from it under a standing policy:
+
+- The integration is read only toward Spond. Authentication is the only non GET call. The platform never creates, modifies, cancels or responds to anything on Spond, and no write of any kind flows from this app to Spond without an explicit new decision.
+- Attendance is counts only, the children's data boundary. Spond event responses identify children and their parents. The sync derives four integer counts per event (accepted, declined, unanswered, waiting) in memory and discards everything else. No member identifying data (ids, names, emails, phone numbers, comments or payload fragments) is ever persisted, logged, or returned. `spond_events` has no payload or member columns by design, and test fixtures are synthetic, never real payloads.
+- A dedicated Spond organiser account is used, never a personal login. Its credentials live only in the `SPOND_EMAIL` and `SPOND_PASSWORD` function secrets, never in the repo and never in the client. The sync fails closed when they are missing.
+- Sync direction is Spond to app only. Sessions are arranged and answered in Spond; the Hub holds a synced copy of the counts.
 
 ---
 
