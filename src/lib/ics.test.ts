@@ -23,6 +23,7 @@ function session(overrides: Partial<Session> = {}): Session {
     programmeWeek: null,
     liveActivityIndex: null,
     liveActivityStartedAt: null,
+    spondEventId: null,
     ...overrides,
   }
 }

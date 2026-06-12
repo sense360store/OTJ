@@ -146,6 +146,7 @@ export function ApplyProgrammeModal({
           programmeWeek: week,
           liveActivityIndex: null,
           liveActivityStartedAt: null,
+          spondEventId: null,
         }
         await upsert.mutateAsync(s)
       }

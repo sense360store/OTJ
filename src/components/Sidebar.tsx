@@ -44,6 +44,7 @@ const NAV: NavSection[] = [
       { id: 'admin-club', label: 'Club', icon: Icon.star, to: '/admin/club' },
       { id: 'admin-users', label: 'Users', icon: Icon.users, to: '/admin/users' },
       { id: 'admin-teams', label: 'Teams', icon: Icon.flag, to: '/admin/teams' },
+      { id: 'admin-spond', label: 'Spond', icon: Icon.link, to: '/admin/spond' },
     ],
   },
 ]
@@ -57,6 +58,7 @@ const ITEM_CAP: Record<string, string> = {
   'admin-club': 'club.manage',
   'admin-users': 'users.manage',
   'admin-teams': 'teams.manage',
+  'admin-spond': 'club.manage',
 }
 
 export function Sidebar() {

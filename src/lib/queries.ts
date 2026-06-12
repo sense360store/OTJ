@@ -36,6 +36,8 @@ import type {
   RoleInfo,
   Session,
   SessionStatus,
+  SpondEvent,
+  SpondMapping,
   Team,
   Template,
 } from './data'
@@ -158,6 +160,7 @@ export interface SessionRow {
   programme_week: number | null
   live_activity_index: number | null
   live_activity_started_at: string | null
+  spond_event_id: string | null
 }
 
 interface TeamRow {
@@ -212,7 +215,7 @@ const TEMPLATE_COLS =
 const PROGRAMME_COLS =
   'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at'
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id'
 const TEAM_COLS = 'id, club_id, name, created_at'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
@@ -343,6 +346,7 @@ export function toSession(r: SessionRow): Session {
     programmeWeek: r.programme_week,
     liveActivityIndex: r.live_activity_index ?? null,
     liveActivityStartedAt: r.live_activity_started_at ?? null,
+    spondEventId: r.spond_event_id ?? null,
   }
 }
 
@@ -1487,6 +1491,9 @@ export function useUpsertSession() {
         // so applying a programme tags the rows and a planner edit keeps them.
         programme_id: input.programmeId,
         programme_week: input.programmeWeek,
+        // The Spond event link travels the same way: linking in the planner
+        // edits the draft and saving writes it here.
+        spond_event_id: input.spondEventId,
       }
 
       if (isUpdate) {
@@ -1641,6 +1648,266 @@ export function useLiveSessionSync(sessionId: string | undefined) {
       void supabase.removeChannel(channel)
     }
   }, [sessionId, qc])
+}
+
+// ---- Spond attendance (counts only) ----------------------------------------
+// The client side of the Spond mirror: the mapping editor's reads and writes,
+// the synced events read, the sync trigger and the session link. THE
+// CHILDREN'S DATA BOUNDARY applies here as on the server (CLAUDE.md, Spond
+// integration): the reads select the four counts and event facts only, the
+// tables hold nothing member identifying by design, and no hook here may
+// ever request, store or log anything that does. The browser never calls
+// Spond; the only network the sync button touches is the spond-sync Edge
+// Function, and freshness comes only from pressing it.
+//
+// RLS is the enforcement throughout: club members read both tables, writing
+// the mapping needs club.manage (spond_groups_manage), the sync writes
+// events server side as the caller, and the session link rides the existing
+// sessions update policies. The UI only decides what to surface.
+
+interface SpondMappingRow {
+  id: string
+  spond_group_id: string
+  spond_subgroup_id: string | null
+  spond_name: string
+  team_id: string
+  created_at: string
+  // The to-one teams embed; null only if the join found nothing.
+  teams: { name: string } | null
+}
+
+interface SpondEventDbRow {
+  id: string
+  title: string
+  starts_at: string
+  team_id: string | null
+  accepted_count: number
+  declined_count: number
+  unanswered_count: number
+  waiting_count: number
+  cancelled: boolean
+  synced_at: string
+  teams: { name: string } | null
+}
+
+// Counts and event facts only; there is nothing else in these tables to
+// select, and nothing more may ever be added to these lists.
+const SPOND_MAPPING_COLS = 'id, spond_group_id, spond_subgroup_id, spond_name, team_id, created_at, teams(name)'
+const SPOND_EVENT_COLS =
+  'id, title, starts_at, team_id, accepted_count, declined_count, unanswered_count, waiting_count, cancelled, synced_at, teams(name)'
+
+function toSpondMapping(r: SpondMappingRow): SpondMapping {
+  return {
+    id: r.id,
+    groupId: r.spond_group_id,
+    subgroupId: r.spond_subgroup_id,
+    name: r.spond_name,
+    teamId: r.team_id,
+    teamName: r.teams?.name ?? '',
+    createdAt: r.created_at,
+  }
+}
+
+function toSpondEvent(r: SpondEventDbRow): SpondEvent {
+  return {
+    id: r.id,
+    title: r.title,
+    startsAt: r.starts_at,
+    teamId: r.team_id,
+    teamName: r.teams?.name ?? null,
+    accepted: r.accepted_count,
+    declined: r.declined_count,
+    unanswered: r.unanswered_count,
+    waiting: r.waiting_count,
+    cancelled: r.cancelled,
+    syncedAt: r.synced_at,
+  }
+}
+
+// The club's mappings, in the creation order the sync processes them.
+export function useSpondMappings() {
+  return useQuery({
+    queryKey: ['spond_mappings'],
+    queryFn: async (): Promise<SpondMapping[]> => {
+      const { data, error } = await supabase
+        .from('spond_groups')
+        .select(SPOND_MAPPING_COLS)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+      if (error) throw error
+      return (data as unknown as SpondMappingRow[]).map(toSpondMapping)
+    },
+  })
+}
+
+// The synced events, the admin's view of what the mirror holds and the pool
+// the session link picker offers. Ordered by start so the table reads as a
+// calendar.
+export function useSpondEvents() {
+  return useQuery({
+    queryKey: ['spond_events'],
+    queryFn: async (): Promise<SpondEvent[]> => {
+      const { data, error } = await supabase
+        .from('spond_events')
+        .select(SPOND_EVENT_COLS)
+        .order('starts_at', { ascending: true })
+        .order('id', { ascending: true })
+      if (error) throw error
+      return (data as unknown as SpondEventDbRow[]).map(toSpondEvent)
+    },
+  })
+}
+
+export interface SpondMappingInput {
+  groupId: string
+  subgroupId: string | null
+  name: string
+  teamId: string
+}
+
+// Adds a mapping row, which is also the sync's allow list. The unique
+// constraint (nulls not distinct) refuses a duplicate group or subgroup
+// mapping; that lands here as a plain message the form shows inline.
+export function useInsertSpondMapping() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, SpondMappingInput>({
+    mutationFn: async (input) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase.from('spond_groups').insert({
+        club_id: profile.club_id,
+        spond_group_id: input.groupId,
+        spond_subgroup_id: input.subgroupId,
+        spond_name: input.name,
+        team_id: input.teamId,
+      })
+      if (error) {
+        if (error.code === '23505') throw new Error('That Spond group or subgroup is already mapped.')
+        throw error
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['spond_mappings'] }),
+  })
+}
+
+// Removing a mapping stops future syncs for that group. Events already
+// synced are untouched: nothing references the mapping, so this is a pure
+// row delete.
+export function useDeleteSpondMapping() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('spond_groups').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['spond_mappings'] }),
+  })
+}
+
+// The spond-sync response, mapped to the app contract. One outcome per
+// mapping: our mapping id and display label, counts and plain failure text,
+// never any Spond payload content.
+export interface SpondSyncOutcome {
+  id: string
+  name: string
+  status: 'synced' | 'failed'
+  events: number
+  warnings: string[]
+  error: string
+}
+
+export interface SpondSyncResult {
+  ok: boolean
+  // The no mappings outcome carries a message instead of outcomes.
+  message: string
+  window: { from: string; to: string } | null
+  outcomes: SpondSyncOutcome[]
+  eventsTotal: number
+  // Set when a Spond rate limit or server error stopped the run early.
+  stopped: string
+}
+
+interface SpondSyncBody {
+  ok?: boolean
+  message?: string
+  window?: { from?: string; to?: string }
+  mappings?: {
+    id?: string
+    spond_name?: string
+    status?: string
+    events?: number
+    warnings?: string[]
+    error?: string
+  }[]
+  events_total?: number
+  stopped?: string
+}
+
+// Triggers the spond-sync Edge Function, the only thing that ever refreshes
+// the mirror. The function checks sessions.create before contacting Spond; a
+// 403 (capability), 503 (the organiser account secrets are missing) or 502
+// (Spond unreachable) replies with a plain { error } body shown verbatim.
+export function useSpondSync() {
+  const qc = useQueryClient()
+  return useMutation<SpondSyncResult, Error, void>({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('spond-sync', {})
+      if (error) {
+        let message = 'Could not sync from Spond. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as SpondSyncBody
+      return {
+        ok: body.ok === true,
+        message: body.message ?? '',
+        window: body.window?.from && body.window?.to ? { from: body.window.from, to: body.window.to } : null,
+        outcomes: (body.mappings ?? []).map((m) => ({
+          id: m.id ?? '',
+          name: m.spond_name ?? '',
+          status: m.status === 'synced' ? ('synced' as const) : ('failed' as const),
+          events: m.events ?? 0,
+          warnings: m.warnings ?? [],
+          error: m.error ?? '',
+        })),
+        eventsTotal: body.events_total ?? 0,
+        stopped: body.stopped ?? '',
+      }
+    },
+    // Settled, not success: the function upserts per mapping, so rows written
+    // before a late failure must show either way. Sessions are not
+    // invalidated because they carry only the link id; the counts always
+    // render from the spond_events read.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['spond_events'] }),
+  })
+}
+
+// Links a session to a synced event, or unlinks with null. A plain sessions
+// update riding the existing update policies (owner, or sessions.manage),
+// so ownership rules apply exactly as they do to any other session edit; a
+// write RLS blocks updates no rows, which is reported rather than swallowed.
+export function useLinkSessionSpondEvent() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { sessionId: string; spondEventId: string | null }>({
+    mutationFn: async ({ sessionId, spondEventId }) => {
+      const { data, error } = await supabase
+        .from('sessions')
+        .update({ spond_event_id: spondEventId })
+        .eq('id', sessionId)
+        .select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('Only the session owner or an admin can change its Spond link.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+  })
 }
 
 // ---- Teams (teams.manage) -------------------------------------------------

@@ -25,6 +25,7 @@ import { Account } from './routes/Account'
 import { AdminClub } from './routes/AdminClub'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
+import { AdminSpond } from './routes/AdminSpond'
 
 function Splash() {
   return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--slate)' }}>Loading…</div>
@@ -112,6 +113,7 @@ export function App() {
           <Route path="account" element={<Account />} />
           <Route element={<RequireCap cap="club.manage" />}>
             <Route path="admin/club" element={<AdminClub />} />
+            <Route path="admin/spond" element={<AdminSpond />} />
           </Route>
           <Route element={<RequireCap cap="teams.manage" />}>
             <Route path="admin/teams" element={<AdminTeams />} />

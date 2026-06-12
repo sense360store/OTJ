@@ -35,6 +35,7 @@ function sessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
     programme_week: null,
     live_activity_index: null,
     live_activity_started_at: null,
+    spond_event_id: null,
     ...overrides,
   }
 }

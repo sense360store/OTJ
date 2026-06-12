@@ -248,6 +248,45 @@ export interface Session {
   // clock from it locally.
   liveActivityIndex: number | null
   liveActivityStartedAt: string | null
+  // The synced Spond event this session mirrors attendance from, null when
+  // unlinked. The link is the only Spond fact a session carries; the counts
+  // render from the spond_events read and are never stored on the session.
+  spondEventId: string | null
+}
+
+// ---- Spond attendance (counts only) ----------------------------------------
+// The component-facing shapes of the Spond mirror. Counts and event facts
+// only, the children's data boundary (CLAUDE.md, Spond integration): nothing
+// here can hold a name or a member id, and no client code path requests one.
+
+// A mapping from a Spond group or subgroup to a club team, the allow list the
+// sync processes. name is a team display label such as "U8 Tigers", never a
+// person's name.
+export interface SpondMapping {
+  id: string
+  groupId: string
+  // Null maps the whole group; set, it maps a single subgroup.
+  subgroupId: string | null
+  name: string
+  teamId: string
+  teamName: string
+  createdAt: string
+}
+
+// A synced Spond event: four integer counts plus event facts. teamId nulls
+// if the team is later deleted, leaving the event in place.
+export interface SpondEvent {
+  id: string
+  title: string
+  startsAt: string
+  teamId: string | null
+  teamName: string | null
+  accepted: number
+  declined: number
+  unanswered: number
+  waiting: number
+  cancelled: boolean
+  syncedAt: string
 }
 
 // ---- Taxonomy ----------------------------------------------------------

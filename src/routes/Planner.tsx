@@ -19,6 +19,7 @@ import { Icon } from '../components/icons'
 import { Empty, ErrorNote, ListInput, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
+import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { downloadSessionIcs } from '../lib/ics'
 
 // A new session belongs to the signed-in coach and defaults to their team
@@ -44,6 +45,7 @@ function blankSession(coachId: string, teamId: string | null): Session {
     programmeWeek: null,
     liveActivityIndex: null,
     liveActivityStartedAt: null,
+    spondEventId: null,
   }
 }
 
@@ -431,6 +433,17 @@ function PlannerEditor({
               />
             </div>
           </div>
+
+          {/* Linking edits the draft like every other planner field; Save
+              writes it with the session. */}
+          <SpondAttendanceCard
+            spondEventId={session.spondEventId}
+            teamId={session.teamId}
+            date={session.date}
+            time={session.time}
+            canEdit={!readOnly}
+            onLink={(id) => setSession((s) => ({ ...s, spondEventId: id }))}
+          />
 
           <div className="card side-card" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
             <button className="btn btn-gold btn-block" disabled={!session.activities.length} onClick={start}>
