@@ -16,6 +16,7 @@ import { useAuth } from '../hooks/useAuth'
 import {
   useActivityTitle,
   useDrillMap,
+  useLinkSessionSpondEvent,
   useMediaMap,
   useMyCapabilities,
   useProgrammeMap,
@@ -29,6 +30,7 @@ import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
+import { SpondAttendanceCard } from '../components/SpondAttendance'
 import './SessionDay.css'
 
 type Tab = 'setup' | 'kit' | 'plan'
@@ -75,6 +77,9 @@ function SessionDayView({ session }: { session: Session }) {
   const [viewerAt, setViewerAt] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [checked, setChecked] = useState<string[]>(() => loadChecked(session.id))
+  // Linking writes at once here, unlike the planner's draft: this view shows
+  // the saved session, so there is no save step to ride.
+  const linkSpond = useLinkSessionSpondEvent()
 
   // Activities resolved once: drill, diagram media (images only; videos and
   // PDFs are not part of the diagram carousel) and the slide index.
@@ -176,6 +181,18 @@ function SessionDayView({ session }: { session: Session }) {
           {session.programmeWeek != null ? ` · Week ${session.programmeWeek}` : ''}
         </button>
       )}
+
+      <SpondAttendanceCard
+        spondEventId={session.spondEventId}
+        teamId={session.teamId}
+        date={session.date}
+        time={session.time}
+        canEdit={canManage}
+        busy={linkSpond.isPending}
+        errorText={linkSpond.isError ? linkSpond.error.message : ''}
+        onLink={(id) => linkSpond.mutate({ sessionId: session.id, spondEventId: id })}
+        style={{ marginBottom: 12 }}
+      />
 
       <div className="sd-tabs">
         <button className={'sd-tab' + (tab === 'setup' ? ' on' : '')} onClick={() => setTab('setup')}>
