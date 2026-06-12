@@ -1,0 +1,29 @@
+-- =====================================================================
+-- OTJ Training Hub, migration 0018_spond_type: the Spond event type
+--
+-- REVIEW REQUIRED. Migrations are gated. Run by hand via the connector
+-- after review, and only once the live ledger is confirmed to have this
+-- slot free. Do not auto-merge.
+--
+-- One column: spond_type on spond_events, nullable, no default. It holds
+-- Spond's own classification of the event, the payload's spondType field
+-- ("EVENT" or "MATCH" per the reference library github.com/Olen/Spond,
+-- _event_template.py, read at build time), so the app can tell a match
+-- from a training event without guessing from the title.
+--
+-- THE CHILDREN'S DATA BOUNDARY, restated for this column. spond_type is
+-- an event fact about the event itself, like the title or the start
+-- time, not member data. spond_events still has no member columns and no
+-- raw payload column; nothing here identifies a person, so the boundary
+-- holds. The sync reads the one field defensively and stores nothing
+-- else new from the payload.
+--
+-- Numbering: the ledger ends at 0017_video_media, so this is 0018.
+--
+-- No RLS change: the existing spond_events policies cover the new column
+-- as they cover the rest of the row. No other schema change; team_id is
+-- already nullable, which the shared event attribution in the same phase
+-- relies on.
+-- =====================================================================
+alter table public.spond_events
+  add column spond_type text;

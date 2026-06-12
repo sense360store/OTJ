@@ -12,6 +12,7 @@
 import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
   buildEventRow,
+  claimEvent,
   deriveCounts,
   deriveLocation,
   eventsQuery,
@@ -44,6 +45,7 @@ const SYNTHETIC_EVENT = {
     longitude: -1.5,
   },
   cancelled: false,
+  spondType: 'EVENT',
   responses: {
     acceptedIds: ['FAKE-MEMBER-1', 'FAKE-MEMBER-2'],
     declinedIds: ['FAKE-MEMBER-3'],
@@ -128,6 +130,7 @@ Deno.test('the upsert row carries counts only, never the ids or names behind the
 Deno.test('the row contains exactly the allowed spond_events columns', () => {
   const row = buildEventRow('club-1', 'team-1', SYNTHETIC_EVENT, SYNCED_AT)
   assert(row !== null)
+  assertEquals(SPOND_EVENT_COLUMNS.length, 14)
   assertEquals(Object.keys(row).sort(), [...SPOND_EVENT_COLUMNS].sort())
 })
 
@@ -143,6 +146,7 @@ Deno.test('the row carries the event facts, normalised', () => {
   assertEquals(row.location, 'Invented Sports Ground, 1 Made Up Lane, Nowhere')
   assertEquals(row.cancelled, false)
   assertEquals(row.synced_at, SYNCED_AT)
+  assertEquals(row.spond_type, 'EVENT')
 })
 
 Deno.test('missing optional fields map to null and a missing cancelled flag to false', () => {
@@ -158,6 +162,17 @@ Deno.test('missing optional fields map to null and a missing cancelled flag to f
   assertEquals(row.location, null)
   assertEquals(row.cancelled, false)
   assertEquals(row.accepted_count, 0)
+  assertEquals(row.spond_type, null)
+})
+
+Deno.test('spondType stores uppercased when a non empty string, else null', () => {
+  const base = { id: 'EVT-SYNTH-4', heading: 'Fixture', startTimestamp: '2026-07-01T09:00:00Z' }
+  assertEquals(buildEventRow('c', 't', { ...base, spondType: 'MATCH' }, SYNCED_AT)?.spond_type, 'MATCH')
+  assertEquals(buildEventRow('c', 't', { ...base, spondType: 'match' }, SYNCED_AT)?.spond_type, 'MATCH')
+  assertEquals(buildEventRow('c', 't', base, SYNCED_AT)?.spond_type, null)
+  assertEquals(buildEventRow('c', 't', { ...base, spondType: '' }, SYNCED_AT)?.spond_type, null)
+  assertEquals(buildEventRow('c', 't', { ...base, spondType: 7 }, SYNCED_AT)?.spond_type, null)
+  assertEquals(buildEventRow('c', 't', { ...base, spondType: { kind: 'MATCH' } }, SYNCED_AT)?.spond_type, null)
 })
 
 Deno.test('cancelled must be boolean true, never a truthy accident', () => {
@@ -271,4 +286,59 @@ Deno.test('a missing or unexpected groups response yields the empty set', () => 
   assertEquals(visibleGroupIds(null), new Set())
   assertEquals(visibleGroupIds(undefined), new Set())
   assertEquals(visibleGroupIds({ groups: [] }), new Set())
+})
+
+// ---- Shared event attribution -------------------------------------------------
+// An event matched by more than one mapping with different teams is a club
+// event: the queued row is rewritten with team_id null. The same event seen
+// again with the same team stays on that team.
+
+function rowFor(team: string | null, eventId = 'EVT-SYNTH-1') {
+  const row = buildEventRow('club-1', 'team-ignored', { ...SYNTHETIC_EVENT, id: eventId }, SYNCED_AT)
+  assert(row !== null)
+  return { ...row, team_id: team }
+}
+
+Deno.test('the first mapping to produce an event queues it on its team', () => {
+  const queued = new Map()
+  const claim = claimEvent(queued, rowFor('team-1'))
+  assertEquals(claim, { outcome: 'queued' })
+  assertEquals(queued.get('EVT-SYNTH-1')?.team_id, 'team-1')
+})
+
+Deno.test('the same event seen again with the same team stays on that team', () => {
+  const queued = new Map()
+  claimEvent(queued, rowFor('team-1'))
+  assertEquals(claimEvent(queued, rowFor('team-1')), { outcome: 'already_synced' })
+  assertEquals(queued.get('EVT-SYNTH-1')?.team_id, 'team-1')
+})
+
+Deno.test('the same event seen with a different team becomes a club event', () => {
+  const queued = new Map()
+  const first = rowFor('team-1')
+  claimEvent(queued, first)
+  const claim = claimEvent(queued, rowFor('team-2'))
+  assert(claim.outcome === 'shared')
+  // The rewrite is the first queued row, team cleared and nothing else
+  // changed, ready for an additional upsert on the same conflict target.
+  assertEquals(claim.rewrite, { ...first, team_id: null })
+  assertEquals(queued.get('EVT-SYNTH-1')?.team_id, null)
+})
+
+Deno.test('a third mapping after the rewrite still reads the event as shared and null', () => {
+  const queued = new Map()
+  claimEvent(queued, rowFor('team-1'))
+  claimEvent(queued, rowFor('team-2'))
+  const claim = claimEvent(queued, rowFor('team-3'))
+  assert(claim.outcome === 'shared')
+  assertEquals(claim.rewrite.team_id, null)
+  assertEquals(queued.get('EVT-SYNTH-1')?.team_id, null)
+})
+
+Deno.test('claims track each event id independently', () => {
+  const queued = new Map()
+  claimEvent(queued, rowFor('team-1', 'EVT-SYNTH-A'))
+  assertEquals(claimEvent(queued, rowFor('team-2', 'EVT-SYNTH-B')), { outcome: 'queued' })
+  assertEquals(queued.get('EVT-SYNTH-A')?.team_id, 'team-1')
+  assertEquals(queued.get('EVT-SYNTH-B')?.team_id, 'team-2')
 })

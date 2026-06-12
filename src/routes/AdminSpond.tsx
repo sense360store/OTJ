@@ -19,9 +19,9 @@ import {
 } from '../lib/queries'
 import type { SpondSyncResult } from '../lib/queries'
 import type { SpondMapping, Team } from '../lib/data'
-import { parseSpondMappingInput, SPOND_COUNT_LABELS, spondEventWhen, syncedAgo } from '../lib/spond'
+import { parseSpondMappingInput, SPOND_COUNT_LABELS, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
 import { Icon } from '../components/icons'
-import { CancelledBadge } from '../components/SpondAttendance'
+import { CancelledBadge, MatchBadge } from '../components/SpondAttendance'
 import { ErrorNote, fmtDate, Loading, Modal } from '../components/ui'
 
 // The add form. One source input takes a raw group id, a raw group-S-subgroup
@@ -299,8 +299,9 @@ function EventsCard() {
           <div key={e.id} style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
             <div className="row" style={{ gap: 8 }}>
               <b style={{ fontSize: 14, flex: 1, minWidth: 0 }}>{e.title}</b>
+              {e.spondType === 'MATCH' && <MatchBadge />}
               {e.cancelled && <CancelledBadge />}
-              <span className="pill">{e.teamName ?? 'No team'}</span>
+              <span className="pill">{spondTeamLabel(e.teamName)}</span>
             </div>
             <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>
               <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bySpondEventCloseness, parseSpondMappingInput, syncedAgo } from './spond'
+import { bySpondEventCloseness, parseSpondMappingInput, spondEventInTeam, spondTeamLabel, syncedAgo } from './spond'
 
 // Real Spond ids are 32 character uppercase hex strings.
 const GROUP = 'A1B2C3D4E5F60718293A4B5C6D7E8F90'
@@ -71,6 +71,28 @@ describe('bySpondEventCloseness', () => {
       '2026-06-16T17:30:00Z',
       '2026-07-20T10:00:00Z',
     ])
+  })
+})
+
+describe('spondTeamLabel', () => {
+  it('labels a club event, one with no team, as All teams', () => {
+    expect(spondTeamLabel(null)).toBe('All teams')
+  })
+
+  it('labels a team event with its team name', () => {
+    expect(spondTeamLabel('Titans')).toBe('Titans')
+  })
+})
+
+describe('spondEventInTeam', () => {
+  it('keeps a team event under its own team filter only', () => {
+    expect(spondEventInTeam({ teamId: 'team-1' }, 'team-1')).toBe(true)
+    expect(spondEventInTeam({ teamId: 'team-1' }, 'team-2')).toBe(false)
+  })
+
+  it('shows a club event under every team filter', () => {
+    expect(spondEventInTeam({ teamId: null }, 'team-1')).toBe(true)
+    expect(spondEventInTeam({ teamId: null }, 'team-2')).toBe(true)
   })
 })
 

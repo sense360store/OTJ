@@ -205,6 +205,7 @@ Spond is where the club arranges sessions and parents respond. The Hub mirrors a
 - Attendance is counts only, the children's data boundary. Spond event responses identify children and their parents. The sync derives four integer counts per event (accepted, declined, unanswered, waiting) in memory and discards everything else. No member identifying data (ids, names, emails, phone numbers, comments or payload fragments) is ever persisted, logged, or returned. `spond_events` has no payload or member columns by design, and test fixtures are synthetic, never real payloads.
 - A dedicated Spond organiser account is used, never a personal login. Its credentials live only in the `SPOND_EMAIL` and `SPOND_PASSWORD` function secrets, never in the repo and never in the client. The sync fails closed when they are missing.
 - Sync direction is Spond to app only. Sessions are arranged and answered in Spond; the Hub holds a synced copy of the counts.
+- An event matched by more than one mapping in a run is shared and becomes a club event, stored with no team. `spond_type` stores Spond's own event classification ("EVENT" or "MATCH") as an event fact about the event itself, not member data.
 
 ---
 

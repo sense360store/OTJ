@@ -46,6 +46,7 @@
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
   buildEventRow,
+  claimEvent,
   eventsQuery,
   extractAccessToken,
   MAX_EVENTS_PER_GROUP,
@@ -225,8 +226,10 @@ Deno.serve(async (req) => {
 
   // The club's mappings, read through RLS as the caller. The sync touches
   // only groups present here: spond_groups is the allow list. Mappings
-  // are processed in creation order, so when two mappings match the same
-  // event in one run the earliest wins, deterministically.
+  // are processed in creation order, so attribution is deterministic:
+  // an event matched again with the same team stays on that team, and an
+  // event matched by mappings with different teams becomes a club event
+  // with no team (claimEvent in ../_shared/spond.ts).
   const { data: mappingRows, error: mappingsError } = await caller.db
     .from('spond_groups')
     .select('id, spond_group_id, spond_subgroup_id, spond_name, team_id')
@@ -267,7 +270,9 @@ Deno.serve(async (req) => {
 
   const syncedAt = new Date().toISOString()
   const outcomes: MappingOutcome[] = []
-  const seenEventIds = new Set<string>()
+  // The row each event id first queued this run, the shared attribution
+  // state claimEvent reads and rewrites.
+  const queuedRows = new Map<string, SpondEventRow>()
   let processed = 0
   let eventsTotal = 0
   let stopped: string | null = null
@@ -311,8 +316,12 @@ Deno.serve(async (req) => {
     // Reduce each event to its row: counts and facts only, everything
     // else discarded in buildEventRow. Malformed events and events an
     // earlier mapping already synced this run are counted and reported,
-    // never echoed.
+    // never echoed. An event an earlier mapping queued with a different
+    // team is shared: claimEvent rewrites it as a club event (team_id
+    // null) and the rewrite rides this mapping's upsert. The map keys
+    // rewrites by event id so one upsert never targets a row twice.
     const rows: SpondEventRow[] = []
+    const rewrites = new Map<string, SpondEventRow>()
     let malformed = 0
     let alreadySynced = 0
     for (const event of fetched.events) {
@@ -326,11 +335,15 @@ Deno.serve(async (req) => {
         malformed++
         continue
       }
-      if (seenEventIds.has(row.spond_event_id)) {
+      const claim = claimEvent(queuedRows, row)
+      if (claim.outcome === 'already_synced') {
         alreadySynced++
         continue
       }
-      seenEventIds.add(row.spond_event_id)
+      if (claim.outcome === 'shared') {
+        rewrites.set(claim.rewrite.spond_event_id, claim.rewrite)
+        continue
+      }
       rows.push(row)
     }
     if (malformed > 0) {
@@ -341,15 +354,27 @@ Deno.serve(async (req) => {
         `${alreadySynced} event${alreadySynced === 1 ? ' was' : 's were'} already synced by an earlier mapping this run.`,
       )
     }
+    if (rewrites.size > 0) {
+      warnings.push(
+        rewrites.size === 1
+          ? '1 event is shared with other teams and is now a club event.'
+          : `${rewrites.size} events are shared with other teams and are now club events.`,
+      )
+    }
 
     // Upsert on the unique (club_id, spond_event_id): new events insert,
     // existing ones take fresh counts, fields, the mapping's team and
-    // synced_at. Re running a sync updates rows and never duplicates.
-    // The write goes through RLS as the caller.
-    if (rows.length > 0) {
+    // synced_at. Re running a sync updates rows and never duplicates,
+    // which is also how an event a previous run attributed to one team
+    // self heals to a club event once it is detected as shared. The
+    // shared rewrites ride the same call, an additional upsert on the
+    // same conflict target setting team_id null. The write goes through
+    // RLS as the caller.
+    const upserts = [...rows, ...rewrites.values()]
+    if (upserts.length > 0) {
       const { error: writeError } = await caller.db
         .from('spond_events')
-        .upsert(rows, { onConflict: 'club_id,spond_event_id' })
+        .upsert(upserts, { onConflict: 'club_id,spond_event_id' })
       if (writeError) {
         console.error('spond-sync: upsert failed', { mapping: mapping.id, code: writeError.code })
         failed('Could not write the synced events. Check your access and try again.', warnings)

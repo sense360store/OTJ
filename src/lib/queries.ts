@@ -1681,6 +1681,7 @@ interface SpondEventDbRow {
   title: string
   starts_at: string
   team_id: string | null
+  spond_type: string | null
   accepted_count: number
   declined_count: number
   unanswered_count: number
@@ -1694,7 +1695,7 @@ interface SpondEventDbRow {
 // select, and nothing more may ever be added to these lists.
 const SPOND_MAPPING_COLS = 'id, spond_group_id, spond_subgroup_id, spond_name, team_id, created_at, teams(name)'
 const SPOND_EVENT_COLS =
-  'id, title, starts_at, team_id, accepted_count, declined_count, unanswered_count, waiting_count, cancelled, synced_at, teams(name)'
+  'id, title, starts_at, team_id, spond_type, accepted_count, declined_count, unanswered_count, waiting_count, cancelled, synced_at, teams(name)'
 
 function toSpondMapping(r: SpondMappingRow): SpondMapping {
   return {
@@ -1715,6 +1716,7 @@ function toSpondEvent(r: SpondEventDbRow): SpondEvent {
     startsAt: r.starts_at,
     teamId: r.team_id,
     teamName: r.teams?.name ?? null,
+    spondType: r.spond_type,
     accepted: r.accepted_count,
     declined: r.declined_count,
     unanswered: r.unanswered_count,
