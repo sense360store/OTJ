@@ -10,6 +10,7 @@
 import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
   allowedUrl,
+  alreadyImportedRefusal,
   ASSET_HOST,
   contentRegion,
   countSessionLinks,
@@ -24,6 +25,7 @@ import {
   weekNumber,
   weeksAreReliable,
 } from './fa.ts'
+import type { FaCaller } from './fa.ts'
 
 function fixture(name: string): string {
   return Deno.readTextFileSync(new URL(`./fixtures/${name}`, import.meta.url))
@@ -358,6 +360,122 @@ Deno.test('normalisedHref drops query, fragment and trailing slashes', () => {
     'https://learn.englandfootball.com/sessions/a-page',
   )
   assertEquals(normalisedHref(new URL('https://learn.englandfootball.com/')), 'https://learn.englandfootball.com')
+})
+
+// ---- The single-session import refuses an already imported page -----------
+// alreadyImportedRefusal makes one read of templates through the caller's
+// client; the stub below records that read and answers it, keeping these
+// tests hermetic like the rest of the file. fa-import passes the same
+// pageUrl.href to the check and to importParsedSession, so the form the
+// check matches is by construction the form the import writes as
+// source_url; the tests pin that the check uses the string it is given
+// byte for byte and adds no normalisation of its own.
+
+interface RecordedRead {
+  table: string
+  select: string
+  filters: [string, unknown][]
+  order: { column: string; ascending: boolean } | null
+  limit: number | null
+}
+
+function stubCaller(row: { id: string; name: string } | null) {
+  const reads: RecordedRead[] = []
+  const db = {
+    from(table: string) {
+      const read: RecordedRead = { table, select: '', filters: [], order: null, limit: null }
+      reads.push(read)
+      const builder = {
+        select(columns: string) {
+          read.select = columns
+          return builder
+        },
+        eq(column: string, value: unknown) {
+          read.filters.push([column, value])
+          return builder
+        },
+        order(column: string, opts: { ascending: boolean }) {
+          read.order = { column, ascending: opts.ascending }
+          return builder
+        },
+        limit(count: number) {
+          read.limit = count
+          return builder
+        },
+        maybeSingle() {
+          return Promise.resolve({ data: row, error: null })
+        },
+      }
+      return builder
+    },
+  }
+  const caller: FaCaller = { db: db as unknown as FaCaller['db'], userId: 'user-1', clubId: 'club-1' }
+  return { caller, reads }
+}
+
+const IMPORTED_HREF = new URL(
+  'https://learn.englandfootball.com/sessions/resources/2022/Goalkeeping-session-the-basics',
+).href
+
+Deno.test('an already imported page is refused with the conflict naming the existing template', async () => {
+  const { caller, reads } = stubCaller({ id: 'template-1', name: 'Goalkeeping session: the basics' })
+  const refusal = await alreadyImportedRefusal(caller, IMPORTED_HREF, { url: IMPORTED_HREF })
+  assert(refusal !== null)
+  assertEquals(refusal.status, 409)
+  const body = await refusal.json()
+  assertEquals(body.error, 'already_imported')
+  assertEquals(body.message, 'This session has already been imported.')
+  assertEquals(body.template_id, 'template-1')
+  assertEquals(body.template_name, 'Goalkeeping session: the basics')
+  // One read of templates, scoped to the caller's club, matched on the page
+  // address.
+  assertEquals(reads.length, 1)
+  assertEquals(reads[0].table, 'templates')
+  assertEquals(reads[0].filters, [
+    ['club_id', 'club-1'],
+    ['source_url', IMPORTED_HREF],
+  ])
+})
+
+Deno.test('the duplicate check matches the source_url form the import writes, byte for byte', async () => {
+  // A trailing slash or query survives URL parsing into pageUrl.href and is
+  // stored that way; the check must match that stored form rather than a
+  // re-normalised one, or check and write would drift apart.
+  const href = new URL('https://learn.englandfootball.com/sessions/a-page/?week=2').href
+  const { caller, reads } = stubCaller(null)
+  assertEquals(await alreadyImportedRefusal(caller, href, {}), null)
+  assertEquals(reads[0].filters[1], ['source_url', 'https://learn.englandfootball.com/sessions/a-page/?week=2'])
+})
+
+Deno.test('a page not imported before proceeds', async () => {
+  const { caller } = stubCaller(null)
+  assertEquals(await alreadyImportedRefusal(caller, IMPORTED_HREF, {}), null)
+})
+
+Deno.test('reimport true skips the refusal without reading at all', async () => {
+  const { caller, reads } = stubCaller({ id: 'template-1', name: 'Goalkeeping session: the basics' })
+  assertEquals(await alreadyImportedRefusal(caller, IMPORTED_HREF, { reimport: true }), null)
+  assertEquals(reads.length, 0)
+})
+
+Deno.test('the reimport override must be boolean true, never a truthy accident', async () => {
+  const { caller } = stubCaller({ id: 'template-1', name: 'Goalkeeping session: the basics' })
+  for (const value of ['true', 'yes', 1, {}, []]) {
+    const refusal = await alreadyImportedRefusal(caller, IMPORTED_HREF, { reimport: value })
+    assert(refusal !== null, `reimport ${JSON.stringify(value)} must not skip the refusal`)
+    assertEquals(refusal.status, 409)
+  }
+})
+
+Deno.test('a club holding duplicates from before the check is pointed at the earliest import', async () => {
+  // Clubs that imported a page twice before the check existed hold several
+  // matching templates. The read orders by created_at and caps itself at
+  // one row, so it refuses cleanly instead of erroring on the surplus.
+  const { caller, reads } = stubCaller({ id: 'template-1', name: 'First import' })
+  const refusal = await alreadyImportedRefusal(caller, IMPORTED_HREF, {})
+  assert(refusal !== null)
+  assertEquals(reads[0].order, { column: 'created_at', ascending: true })
+  assertEquals(reads[0].limit, 1)
 })
 
 Deno.test('weekNumber reads words and digits', () => {

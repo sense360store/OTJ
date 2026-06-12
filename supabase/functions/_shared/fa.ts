@@ -725,6 +725,45 @@ export interface SessionImportResult {
   unimportable?: boolean
 }
 
+// ---- Already-imported detection -------------------------------------------
+// The refusal that keeps the single-session import from silently creating a
+// second full set of template, drills and media. A page the caller's club
+// already imported left a template carrying the page's address as
+// source_url; the match is on the exact pageHref string fa-import also
+// passes to importParsedSession, so the check reads the same form the
+// import writes and the two cannot drift apart. No normalisation is applied
+// on either side. reimport: true in the request body is the explicit opt-in
+// that skips the refusal and imports a second copy; it must be boolean
+// true, never a truthy accident. Clubs that imported a page twice before
+// this check existed hold more than one matching template, so the read
+// takes the earliest instead of erroring on the surplus. A failed read
+// proceeds rather than blocking the import; the worst case is the old
+// behaviour, a duplicate. Returns the 409 refusal, or null when the import
+// should proceed.
+
+export async function alreadyImportedRefusal(
+  caller: FaCaller,
+  pageHref: string,
+  payload: Record<string, unknown>,
+): Promise<Response | null> {
+  if (payload.reimport === true) return null
+  const { data: existing } = await caller.db
+    .from('templates')
+    .select('id, name')
+    .eq('club_id', caller.clubId)
+    .eq('source_url', pageHref)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (!existing) return null
+  return reply(409, {
+    error: 'already_imported',
+    message: 'This session has already been imported.',
+    template_id: existing.id,
+    template_name: existing.name,
+  })
+}
+
 // The drill theme the FA names in a session page title: the text before the
 // word "session". "Goalkeeping session: the basics" gives "Goalkeeping";
 // "Marking and intercepting session: defend as friends" gives "Marking and

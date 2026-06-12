@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useImportFA } from '../lib/queries'
-import type { ImportFAResult } from '../lib/queries'
+import type { ImportFADuplicate, ImportFAResult } from '../lib/queries'
 import { Icon } from './icons'
 import { Modal } from './ui'
 
@@ -82,11 +82,76 @@ function ResultCard({ result, onClose }: { result: ImportFAResult; onClose: () =
   )
 }
 
+// The already imported outcome: fa-import found this page in the club's
+// library and created nothing. Keeping the existing template is the safe
+// default; importing again is the explicit choice to create a second copy.
+export function DuplicateCard({
+  result,
+  onKeep,
+  onView,
+  onReimport,
+}: {
+  result: ImportFADuplicate
+  onKeep: () => void
+  onView: () => void
+  onReimport: () => void
+}) {
+  return (
+    <div>
+      <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+        <span
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: '50%',
+            flex: '0 0 38px',
+            background: 'color-mix(in srgb, var(--c-social) 18%, transparent)',
+            color: 'var(--c-social)',
+            display: 'grid',
+            placeItems: 'center',
+          }}
+        >
+          <Icon.copy style={{ width: 20, height: 20 }} />
+        </span>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>Already in the library</div>
+          <div className="muted" style={{ fontSize: 13.5, marginTop: 2 }}>
+            {result.templateName
+              ? `This page was imported before as "${result.templateName}".`
+              : 'This session has already been imported.'}
+          </div>
+        </div>
+      </div>
+      <p className="muted" style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 12 }}>
+        Keep the existing template, or import the page again. Importing again creates a second copy: another template
+        and another set of drills and media.
+      </p>
+      <button className="btn btn-primary btn-block" style={{ marginTop: 12 }} onClick={onKeep}>
+        <Icon.check />
+        Keep the existing one
+      </button>
+      <div className="row" style={{ gap: 8, marginTop: 8 }}>
+        <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onView}>
+          <Icon.book />
+          View template
+        </button>
+        <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onReimport}>
+          <Icon.download />
+          Import again anyway
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function ImportFAModal({ onClose }: { onClose: () => void }) {
   const importFA = useImportFA()
+  const nav = useNav()
   const [url, setUrl] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const result = importFA.data
+  const outcome = importFA.data
+  const duplicate = outcome && 'alreadyImported' in outcome ? outcome : null
+  const result = outcome && !('alreadyImported' in outcome) ? outcome : null
 
   const submit = () => {
     setError(null)
@@ -98,13 +163,26 @@ export function ImportFAModal({ onClose }: { onClose: () => void }) {
     importFA.mutate({ url: trimmed }, { onError: (e) => setError(e.message) })
   }
 
+  // The explicit second copy: the same page re-called with the reimport
+  // flag set. Calling mutate again clears the duplicate outcome, so the
+  // form and its progress note show while the import runs.
+  const reimportAnyway = () => {
+    setError(null)
+    importFA.mutate({ url: url.trim(), reimport: true }, { onError: (e) => setError(e.message) })
+  }
+
+  const viewExisting = () => {
+    onClose()
+    nav('templates')
+  }
+
   return (
     <Modal
       title="Import from England Football"
       sub="Paste a session page link and get a ready made template."
       onClose={onClose}
       footer={
-        result ? null : (
+        outcome ? null : (
           <>
             <button className="btn btn-ghost" onClick={onClose} disabled={importFA.isPending}>
               Cancel
@@ -119,6 +197,8 @@ export function ImportFAModal({ onClose }: { onClose: () => void }) {
     >
       {result ? (
         <ResultCard result={result} onClose={onClose} />
+      ) : duplicate ? (
+        <DuplicateCard result={duplicate} onKeep={onClose} onView={viewExisting} onReimport={reimportAnyway} />
       ) : (
         <>
           <div className="field">
