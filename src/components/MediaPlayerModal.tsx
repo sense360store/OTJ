@@ -1,12 +1,11 @@
-// Inline playback for the two video media types. Uploaded clips play in an
-// HTML5 element on the same signed URL the cards use; playsinline keeps iOS
-// from hijacking playback into the native fullscreen player. YouTube items
-// render the privacy-enhanced nocookie embed, with a small link out kept for
-// anyone who wants the app or channel context. FA sourced video is the
-// exception: the FA domain locks its Vimeo player, so instead of an embed
-// that cannot play here the surface offers a link out to the source page on
-// England Football Learning. Images and PDFs never open here; they keep
-// their existing open behaviour.
+// Inline playback for video media. Uploaded clips play in an HTML5 element on
+// the same signed URL the cards use; playsinline keeps iOS from hijacking
+// playback into the native fullscreen player. YouTube items render the
+// privacy-enhanced nocookie embed, with a small link out kept for anyone who
+// wants the app or channel context. FA sourced video falls back to a link out
+// to the source page on England Football Learning only when no stored file is
+// available: a stored file always wins. Images and PDFs never open here; they
+// keep their existing open behaviour.
 import type { MediaItem } from '../lib/data'
 import { embedSrc, youtubeId } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
@@ -22,23 +21,65 @@ const FILL = {
   background: '#0a0e1a',
 } as const
 
+// Determine which display mode to use for a media item. Precedence:
+// a stored file beats an FA link out, which beats an allowlisted embed.
+export function videoDisplayMode(
+  item: Pick<MediaItem, 'type' | 'storagePath' | 'embedUrl' | 'sourceUrl' | 'yt'>,
+): 'file' | 'fa-link' | 'embed' | 'youtube' | 'thumb' {
+  if (item.type === 'video' && item.storagePath) return 'file'
+  if (isFaVideo(item)) return 'fa-link'
+  if (embedSrc(item.embedUrl)) return 'embed'
+  if (item.type === 'youtube' && youtubeId(item.yt)) return 'youtube'
+  return 'thumb'
+}
+
 // The 16/9 player surface alone, sized by a surrounding .player box. Shared
 // by the player overlay and the media library preview modal.
 export function MediaPlayerSurface({ item }: { item: MediaItem }) {
-  // A video that streams from an allowlisted player has an embed URL and no
-  // stored file: render it in a sandboxed iframe. The host is checked here
-  // too, so a bad embed_url never reaches the iframe. An FA sourced embed is
-  // domain locked by the FA and never plays here, so it gets the link out
-  // panel instead of the iframe.
-  const fa = isFaVideo(item)
-  const embed = embedSrc(item.embedUrl)
-  const filePath = item.type === 'video' && !embed && !fa ? item.storagePath : undefined
+  const mode = videoDisplayMode(item)
+  // A stored file always wins: pass its path to the signed URL hook regardless
+  // of whether the row also carries an embed URL or an FA source URL.
+  const filePath = mode === 'file' ? item.storagePath : undefined
   // A playback error on an expired URL retries once on a fresh URL before
   // falling back to the thumb with a plain could not load label.
   const { src: signedUrl, isLoading, broken, onError, onLoad } = useMediaSrc(filePath)
-  const ytId = item.type === 'youtube' ? youtubeId(item.yt) : null
+  const ytId = mode === 'youtube' ? youtubeId(item.yt) : null
 
-  if (fa && item.sourceUrl) {
+  // Stored file: always the first choice. Checked before FA and embed sources.
+  if (mode === 'file') {
+    if (signedUrl) {
+      return (
+        <video
+          src={signedUrl}
+          controls
+          playsInline
+          preload="metadata"
+          style={FILL}
+          onError={onError}
+          onLoadedMetadata={onLoad}
+        />
+      )
+    }
+    if (isLoading) {
+      return (
+        <div className="thumb thumb-diagram" style={{ position: 'absolute', inset: 0 }}>
+          <span className="thumb-label">loading…</span>
+        </div>
+      )
+    }
+    if (broken) {
+      return <MediaThumb media={item} showPlay={false} label="could not load this video" />
+    }
+    // Waiting for the query to settle: hold in loading state.
+    return (
+      <div className="thumb thumb-diagram" style={{ position: 'absolute', inset: 0 }}>
+        <span className="thumb-label">loading…</span>
+      </div>
+    )
+  }
+
+  // FA domain locked: link out as fallback when no stored file is present.
+  if (mode === 'fa-link' && item.sourceUrl) {
     return (
       <div
         style={{
@@ -68,10 +109,12 @@ export function MediaPlayerSurface({ item }: { item: MediaItem }) {
       </div>
     )
   }
-  if (embed) {
+
+  // Non-FA allowlisted embed: sandboxed iframe.
+  if (mode === 'embed') {
     return (
       <iframe
-        src={embed}
+        src={embedSrc(item.embedUrl)!}
         title={item.name}
         sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
         allow="autoplay; fullscreen; picture-in-picture"
@@ -80,29 +123,7 @@ export function MediaPlayerSurface({ item }: { item: MediaItem }) {
       />
     )
   }
-  if (item.type === 'video' && signedUrl) {
-    return (
-      <video
-        src={signedUrl}
-        controls
-        playsInline
-        preload="metadata"
-        style={FILL}
-        onError={onError}
-        onLoadedMetadata={onLoad}
-      />
-    )
-  }
-  if (item.type === 'video' && isLoading) {
-    return (
-      <div className="thumb thumb-diagram" style={{ position: 'absolute', inset: 0 }}>
-        <span className="thumb-label">loading…</span>
-      </div>
-    )
-  }
-  if (item.type === 'video' && broken) {
-    return <MediaThumb media={item} showPlay={false} label="could not load this video" />
-  }
+
   if (ytId) {
     return (
       <iframe
@@ -115,6 +136,7 @@ export function MediaPlayerSurface({ item }: { item: MediaItem }) {
       />
     )
   }
+
   return <MediaThumb media={item} showPlay={false} />
 }
 
