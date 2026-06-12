@@ -22,7 +22,7 @@ function looksLikeFAUrl(raw: string): boolean {
   }
 }
 
-function ResultCard({ result, onClose }: { result: ImportFAResult; onClose: () => void }) {
+export function ResultCard({ result, onClose }: { result: ImportFAResult; onClose: () => void }) {
   const nav = useNav()
   const viewTemplate = () => {
     onClose()
@@ -51,6 +51,11 @@ function ResultCard({ result, onClose }: { result: ImportFAResult; onClose: () =
             Created {result.drills} drill{result.drills !== 1 ? 's' : ''} and stored {result.media} file
             {result.media !== 1 ? 's' : ''} with England Football Learning attribution.
           </div>
+          {result.tags.length > 0 && (
+            <div className="muted" style={{ fontSize: 13.5, marginTop: 2 }}>
+              Tagged {result.tags.join(', ')} from the page's topics.
+            </div>
+          )}
         </div>
       </div>
       {result.warnings.length > 0 && (

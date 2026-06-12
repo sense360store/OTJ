@@ -85,6 +85,11 @@ function ResultCard({ result, onClose }: { result: ImportProgrammeResult; onClos
                 {weekLine(w)}
               </span>
             </div>
+            {w.tags.length > 0 && (
+              <div className="muted" style={{ fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>
+                Tagged {w.tags.join(', ')}
+              </div>
+            )}
             {w.warnings.length > 0 && (
               <div style={{ marginTop: 4 }}>
                 {w.warnings.map((x, j) => (

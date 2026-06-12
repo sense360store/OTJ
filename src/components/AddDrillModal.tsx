@@ -11,7 +11,7 @@ export function AddDrillModal({ onClose, onAdd }: { onClose: () => void; onAdd: 
   const mediaById = useMediaMap()
   const list = drills.filter((d) => !q || (d.title + d.skill + d.tags.join(' ')).toLowerCase().includes(q.toLowerCase()))
   const count = Object.values(picked).filter(Boolean).length
-  const phaseFor = (corner: CornerKey): Activity['phase'] =>
+  const phaseFor = (corner: CornerKey | null): Activity['phase'] =>
     corner === 'physical' ? 'Warm-Up' : corner === 'social' ? 'Game' : 'Skill'
   const confirm = () => {
     const items: Activity[] = drills

@@ -118,11 +118,14 @@ Deno.serve(async (req) => {
     })
   }
 
+  // The captured topic tags ride the summary so the coach can see what the
+  // import classified, alongside the counts and warnings.
   return reply(200, {
     ok: true,
     template_id: result.templateId,
     template_name: page.title,
     created: result.created,
+    tags: page.tags,
     warnings: result.warnings,
   })
 })

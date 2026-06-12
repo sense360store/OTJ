@@ -137,7 +137,10 @@ export interface MediaItem {
 export interface Drill {
   id: string
   title: string
-  corner: CornerKey
+  // Null when the drill was never classified (FA imports carry topic tags
+  // instead). The UI shows the tags in the corner slot rather than
+  // defaulting a corner that was never set.
+  corner: CornerKey | null
   skill: string
   ages: string[]
   level: Level

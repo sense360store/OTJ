@@ -14,6 +14,7 @@ import {
   ASSET_HOST,
   contentRegion,
   countSessionLinks,
+  findTopicTags,
   findVideoEmbeds,
   MAX_PROGRAMME_WEEKS,
   normalisedHref,
@@ -69,6 +70,13 @@ const SESSION_HTML = `
 <meta name="description" content="A session about moving with the ball." />
 </head><body>
 <p>This is week six of the moving with the ball and turning to attack session programme.</p>
+<div class="tag-cloud--container">
+  <div class="tag-cloud">
+    <div class="tag-cloud__item"><span>Session design</span></div>
+    <div class="tag-cloud__item"><span>Attacking</span></div>
+    <div class="tag-cloud__item"><span>Moving with the ball</span></div>
+  </div>
+</div>
 <h2>Session intentions</h2>
 <ul><li>Move with the ball</li><li>Turn away from pressure</li></ul>
 <div class="session-setup__grid__item"><img src="/icons/players.svg"><p>8-16 players</p></div>
@@ -103,6 +111,46 @@ Deno.test('parseSessionPage extracts the session model fields', () => {
   assertEquals(page.pdfUrl, 'https://cdn.englandfootball.com/EFLearning/plans/week-six.pdf')
   assertEquals(page.programme, 'Moving with the ball and turning to attack')
   assertEquals(page.week, 6)
+  // The topic tags, the structural "Session design" label dropped.
+  assertEquals(page.tags, ['Attacking', 'Moving with the ball'])
+})
+
+// ---- Topic tags: the tag cloud under the session title ---------------------
+// The page lists its topics as div.tag-cloud__item entries in the article
+// info block. The importer writes them to drills.tags so the library's topic
+// filter can match FA drills; structural labels naming the page type rather
+// than a topic are dropped.
+
+Deno.test('findTopicTags reads the real pages and drops the structural labels', () => {
+  // The marking session's cloud is Session design, Defending, Marking,
+  // Intercepting: the three topics survive, in page order.
+  assertEquals(findTopicTags(fixture('session-2025-marking-defend-as-friends.html')), [
+    'Defending',
+    'Marking',
+    'Intercepting',
+  ])
+  // The goalkeeping video session's cloud is Goalkeeping, Sessions: the
+  // plural scaffolding label is dropped, so a video session is tagged too.
+  assertEquals(findTopicTags(fixture('session-2022-goalkeeping-the-basics.html')), ['Goalkeeping'])
+})
+
+Deno.test('a page without a tag cloud yields no tags and never fails', () => {
+  assertEquals(findTopicTags('<html><body><p>No tags here.</p></body></html>'), [])
+  assertEquals(parseSessionPage('<html><body><p>Nothing here.</p></body></html>').tags, [])
+})
+
+Deno.test('findTopicTags deduplicates, keeps page order and skips empty items', () => {
+  const html = `
+    <main>
+      <div class="tag-cloud">
+        <div class="tag-cloud__item"><span>Session</span></div>
+        <div class="tag-cloud__item"><span>Defending</span></div>
+        <div class="tag-cloud__item"><span>Marking</span></div>
+        <div class="tag-cloud__item"><span>defending</span></div>
+        <div class="tag-cloud__item"><span></span></div>
+      </div>
+    </main>`
+  assertEquals(findTopicTags(html), ['Defending', 'Marking'])
 })
 
 // ---- Theme from the session title: the text before the word "session" -----

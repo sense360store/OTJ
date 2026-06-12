@@ -156,4 +156,15 @@ describe('drill row to app mapping', () => {
   it('keeps a null media_id as null', () => {
     expect(toDrill(drillRow({ media_id: null })).mediaId).toBeNull()
   })
+
+  it('keeps a null corner null instead of defaulting a classification', () => {
+    // An FA import has no corner; presenting one as Technical misled coaches.
+    expect(toDrill(drillRow({ corner: null })).corner).toBeNull()
+    expect(toDrill(drillRow({ corner: 'physical' })).corner).toBe('physical')
+  })
+
+  it('maps tags through and defaults a null column to an empty list', () => {
+    expect(toDrill(drillRow({ tags: ['Defending', 'Marking'] })).tags).toEqual(['Defending', 'Marking'])
+    expect(toDrill(drillRow({ tags: null })).tags).toEqual([])
+  })
 })

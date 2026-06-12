@@ -53,9 +53,14 @@ export function Library() {
   }, [])
 
   // The filter options are the FA taxonomy plus any values already stored on
-  // drills, so existing values keep appearing.
+  // drills, so existing values keep appearing. The theme options also carry
+  // every topic tag in use, so a topic captured by the FA import (Marking,
+  // Intercepting) becomes selectable as soon as a drill carries it.
   const skillOptions = useMemo(() => withExistingValues(FA_PLAYER_SKILLS, drills.map((d) => d.skill)), [drills])
-  const themeOptions = useMemo(() => withExistingValues(FA_THEMES, drills.map((d) => d.theme)), [drills])
+  const themeOptions = useMemo(
+    () => withExistingValues(FA_THEMES, [...drills.map((d) => d.theme), ...drills.flatMap((d) => d.tags)]),
+    [drills],
+  )
   const formatOptions = useMemo(() => withExistingValues(FA_FORMATS, drills.map((d) => d.format)), [drills])
 
   // One pass applies every refinement except the corner, which yields both
@@ -66,7 +71,10 @@ export function Library() {
   const { results, cornerCounts } = useMemo(() => {
     const refined = drills.filter((d) => {
       if (skill && d.skill !== skill) return false
-      if (theme && d.theme !== theme) return false
+      // The theme filter matches the legacy single theme or any topic tag, so
+      // a drill tagged Defending, Marking, Intercepting appears under any one
+      // of them and older themed drills keep matching.
+      if (theme && d.theme !== theme && !d.tags.includes(theme)) return false
       if (format && d.format !== format) return false
       if (age && !d.ages.includes(age)) return false
       if (level && d.level !== level) return false
@@ -76,9 +84,11 @@ export function Library() {
       }
       return true
     })
+    // Only classified drills count towards the corner distribution; a drill
+    // with no corner sits outside it rather than inflating Technical.
     const counts: Record<CornerKey, number> = { technical: 0, physical: 0, social: 0, psychological: 0 }
     refined.forEach((d) => {
-      counts[d.corner]++
+      if (d.corner) counts[d.corner]++
     })
     let r = corner ? refined.filter((d) => d.corner === corner) : refined
     if (sort === 'duration') r = [...r].sort((a, b) => a.duration - b.duration)

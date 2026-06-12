@@ -241,7 +241,9 @@ export function toDrill(r: DrillRow): Drill {
   return {
     id: r.id,
     title: r.title,
-    corner: r.corner ?? 'technical',
+    // A null corner stays null: an unclassified drill (an FA import) must
+    // not present as Technical anywhere.
+    corner: r.corner,
     skill: r.skill ?? '',
     ages: r.ages ?? [],
     level: r.level ?? 'Foundation',
@@ -1135,7 +1137,8 @@ export function useDeleteMedia() {
 export interface DrillInput {
   title: string
   summary: string
-  corner: CornerKey
+  // Null leaves the drill unclassified rather than forcing a corner onto it.
+  corner: CornerKey | null
   skill: string
   level: Level
   ages: string[]
@@ -1981,6 +1984,9 @@ export interface ImportFAResult {
   templateName: string
   drills: number
   media: number
+  // The FA topic tags the import captured onto the drills, for the result
+  // card's summary. Empty when the page carried none.
+  tags: string[]
   warnings: string[]
 }
 
@@ -2000,6 +2006,7 @@ interface ImportFABody {
   template_id?: string
   template_name?: string
   created?: { drills?: number; media?: number }
+  tags?: string[]
   warnings?: string[]
 }
 
@@ -2049,6 +2056,7 @@ export function useImportFA() {
         templateName: body.template_name ?? '',
         drills: body.created?.drills ?? 0,
         media: body.created?.media ?? 0,
+        tags: body.tags ?? [],
         warnings: body.warnings ?? [],
       }
     },
@@ -2076,6 +2084,8 @@ export interface ImportProgrammeWeek {
   templateName: string
   drills: number
   media: number
+  // The FA topic tags captured onto the week's drills.
+  tags: string[]
   warnings: string[]
   error: string
 }
@@ -2095,6 +2105,7 @@ interface ImportProgrammeBody {
     status?: string
     template_name?: string
     created?: { drills?: number; media?: number }
+    tags?: string[]
     warnings?: string[]
     error?: string
   }[]
@@ -2129,6 +2140,7 @@ export function useImportFAProgramme() {
           templateName: w.template_name ?? '',
           drills: w.created?.drills ?? 0,
           media: w.created?.media ?? 0,
+          tags: w.tags ?? [],
           warnings: w.warnings ?? [],
           error: w.error ?? '',
         })),

@@ -55,6 +55,9 @@ interface WeekOutcome {
   template_id?: string
   template_name?: string
   created?: { drills: number; media: number; template: number }
+  // The topic tags captured onto the week's drills, reported so the coach
+  // can see what the import classified.
+  tags?: string[]
   warnings?: string[]
   error?: string
 }
@@ -262,6 +265,7 @@ Deno.serve(async (req) => {
       template_id: result.templateId,
       template_name: page.title,
       created: result.created,
+      tags: page.tags,
       warnings: result.warnings,
     })
   }
