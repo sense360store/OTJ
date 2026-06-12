@@ -15,10 +15,12 @@ import {
 import type { UploadInput } from '../lib/queries'
 import type { Drill, MediaItem, MediaType } from '../lib/data'
 import { isSampleMedia, youtubeId } from '../lib/data'
+import { isFaVideo } from '../lib/fa'
 import { useAuth } from '../hooks/useAuth'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, MediaAttribution, MediaThumb, MEDIA_META, Modal } from '../components/ui'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
+import { AttachFAVideosModal } from '../components/AttachFAVideosModal'
 
 function usedLabel(used: number): string {
   return used > 0 ? `Used in ${used} drill${used !== 1 ? 's' : ''}` : 'Not in use'
@@ -495,6 +497,7 @@ export function Media() {
   const [del, setDel] = useState<MediaItem | null>(null)
   const [replacing, setReplacing] = useState<MediaItem | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [attachOpen, setAttachOpen] = useState(false)
   const [removeSamplesOpen, setRemoveSamplesOpen] = useState(false)
   const { data: mediaItems = [], isLoading, isError } = useMedia()
   const { data: drills = [] } = useDrills()
@@ -533,6 +536,16 @@ export function Media() {
             <button className="btn btn-ghost" onClick={() => setRemoveSamplesOpen(true)}>
               <Icon.trash />
               Remove all samples
+            </button>
+          )}
+          {/* The FA video source file pipeline: bulk attach the FA supplied
+              MP4s to imported FA videos. Surfaced whenever the club has FA
+              videos, stored or not, so a re run stays reachable; the media
+              write RLS decides per row. */}
+          {(canCreate || caps.has('media.manage')) && media.some((m) => isFaVideo(m)) && (
+            <button className="btn btn-ghost" onClick={() => setAttachOpen(true)}>
+              <Icon.film />
+              Attach FA video files
             </button>
           )}
           {canCreate && (
@@ -590,6 +603,7 @@ export function Media() {
       {renaming && <RenameModal item={renaming} onClose={() => setRenaming(null)} />}
       {del && <DeleteModal item={del} onClose={() => setDel(null)} />}
       {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
+      {attachOpen && <AttachFAVideosModal onClose={() => setAttachOpen(false)} />}
       {replacing && <UploadModal replace={replacing} onClose={() => setReplacing(null)} />}
       {removeSamplesOpen && (
         <RemoveSamplesModal samples={samples} drills={drills} onClose={() => setRemoveSamplesOpen(false)} />
