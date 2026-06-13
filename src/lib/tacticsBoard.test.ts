@@ -7,8 +7,10 @@ import {
   formationCount,
   formationPositions,
   nextNumber,
+  rosterTokens,
   serializeTokens,
   type BoardSnapshot,
+  type RosterPlayer,
 } from './tacticsBoard'
 
 // The board's pure helpers carry the data shape a later phase persists, so the
@@ -91,6 +93,84 @@ describe('nextNumber', () => {
     expect(nextNumber(tokens, 'home')).toBe(8)
     // The away side is numbered on its own.
     expect(nextNumber(tokens, 'away')).toBe(1)
+  })
+})
+
+describe('rosterTokens', () => {
+  const roster: RosterPlayer[] = [
+    { displayName: 'Alex', shirtNumber: 7 },
+    { displayName: 'Sam B', shirtNumber: 9 },
+    { displayName: 'Jo', shirtNumber: 4 },
+  ]
+
+  it('places one token per player with the display name as the label', () => {
+    const tokens = rosterTokens(roster, 'home')
+    expect(tokens.length).toBe(roster.length)
+    expect(tokens.map((t) => t.label)).toEqual(['Alex', 'Sam B', 'Jo'])
+  })
+
+  it('uses each player shirt number as the token number', () => {
+    const tokens = rosterTokens(roster, 'home')
+    expect(tokens.map((t) => t.number)).toEqual([7, 9, 4])
+  })
+
+  it('falls back to the next free number for a player with none, without colliding', () => {
+    const mixed: RosterPlayer[] = [
+      { displayName: 'No number', shirtNumber: null },
+      { displayName: 'Has one', shirtNumber: 1 },
+      { displayName: 'Also none', shirtNumber: null },
+    ]
+    const tokens = rosterTokens(mixed, 'home')
+    const numbers = tokens.map((t) => t.number)
+    // 1 is taken by the second player, so the fallbacks skip it.
+    expect(numbers).toEqual([2, 1, 3])
+    expect(new Set(numbers).size).toBe(numbers.length)
+  })
+
+  it('seats the away roster in the far half, mirroring home', () => {
+    const home = rosterTokens(roster, 'home')
+    const away = rosterTokens(roster, 'away')
+    expect(home[0].side).toBe('home')
+    expect(away[0].side).toBe('away')
+    home.forEach((t, i) => expect(away[i].y).toBeCloseTo(1 - t.y))
+  })
+
+  it('keeps every position a clean fraction inside the pitch', () => {
+    for (const t of rosterTokens(roster, 'home')) {
+      expect(t.x).toBeGreaterThanOrEqual(0)
+      expect(t.x).toBeLessThanOrEqual(1)
+      expect(t.y).toBeGreaterThanOrEqual(0)
+      expect(t.y).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('returns an empty board for an empty roster', () => {
+    expect(rosterTokens([], 'home')).toEqual([])
+  })
+
+  it('snapshots the names so a later roster change cannot touch a saved board', () => {
+    // A board saves the serialised tokens. Build them from the roster, then
+    // mutate the source roster the way a delete or rename would. The saved
+    // tokens are a plain copy with no link back to a player, so they are
+    // unaffected: a deleted player never corrupts an existing board.
+    const source: RosterPlayer[] = [
+      { displayName: 'Alex', shirtNumber: 7 },
+      { displayName: 'Sam B', shirtNumber: 9 },
+    ]
+    const saved = serializeTokens(rosterTokens(source, 'home'))
+    const before = JSON.stringify(saved)
+    // Delete the first player and rename the second in the live roster.
+    source.shift()
+    source[0].displayName = 'Renamed'
+    // The saved tokens carry only id, number, label, side and the fractions,
+    // never a player id, and are untouched by the roster edits.
+    expect(JSON.stringify(saved)).toBe(before)
+    expect(saved.map((t) => t.label)).toEqual(['Alex', 'Sam B'])
+    for (const t of saved) {
+      expect(Object.keys(t).sort()).toEqual(['id', 'label', 'number', 'side', 'x', 'y'])
+    }
+    // And a load of those saved tokens round trips unchanged.
+    expect(deserializeTokens(saved).map((t) => t.label)).toEqual(['Alex', 'Sam B'])
   })
 })
 

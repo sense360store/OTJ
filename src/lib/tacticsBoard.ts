@@ -114,6 +114,65 @@ export function nextNumber(tokens: Token[], side: TokenSide): number {
   return Math.max(...onSide.map((t) => t.number)) + 1
 }
 
+// ---- Roster seeding ------------------------------------------------------
+// The minimum a board needs to seat a team's real players: a display name and
+// an optional shirt number. This mirrors the player roster (see data.ts and
+// 0021_players.sql) without depending on it, so the pure layout stays testable
+// and the board keeps no link back to a player.
+export interface RosterPlayer {
+  displayName: string
+  shirtNumber: number | null
+}
+
+// Seed tokens from a team's roster, the opt in alternative to the formation
+// picker: one token per player, the player's display name copied into the
+// token label and their shirt number used as the token number. A player with
+// no number takes the next free one so numbers (and the side-number token id)
+// stay unique within the side. Players are laid out in tidy rows across the
+// side's half of the pitch, the same fraction coordinates a formation uses, so
+// the coach drags them into shape from there.
+//
+// The label is the display name as a PLAIN STRING copied in here; the token
+// carries no id or foreign key back to the player. So a board built or saved
+// from a roster is a snapshot: renaming or deleting a player later never
+// changes or corrupts it (see 0020_boards.sql tokens and serializeTokens).
+export function rosterTokens(players: RosterPlayer[], side: TokenSide): Token[] {
+  const used = new Set<number>()
+  // Reserve the numbers players already carry so the fallback never collides
+  // with a real shirt number that appears later in the list.
+  for (const p of players) {
+    if (typeof p.shirtNumber === 'number') used.add(p.shirtNumber)
+  }
+  let nextFree = 1
+  function takeNumber(preferred: number | null): number {
+    if (typeof preferred === 'number') return preferred
+    while (used.has(nextFree)) nextFree++
+    used.add(nextFree)
+    return nextFree
+  }
+
+  const cols = Math.min(5, Math.max(1, players.length))
+  const rows = Math.ceil(players.length / cols)
+  return players.map((p, i) => {
+    const number = takeNumber(p.shirtNumber)
+    const col = i % cols
+    const row = Math.floor(i / cols)
+    const rowCount = Math.min(cols, players.length - row * cols)
+    const x = spreadX(col, rowCount)
+    // Spread rows down the side's band, then mirror for the away side so the
+    // two rosters face each other the way two formations do.
+    const yHome = rows <= 1 ? (LINE_BACK + LINE_FRONT) / 2 : LINE_BACK - (LINE_BACK - LINE_FRONT) * (row / (rows - 1))
+    return {
+      id: `${side}-${number}`,
+      number,
+      label: p.displayName,
+      side,
+      x,
+      y: orient(side, yHome),
+    }
+  })
+}
+
 // ---- Saved boards --------------------------------------------------------
 // Phase two persists a board. A saved board is the name, the formation it was
 // seeded from, the team it frames and the tokens, plus its ownership and

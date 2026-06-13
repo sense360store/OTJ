@@ -33,6 +33,7 @@ import type {
   MediaType,
   Member,
   Phase,
+  Player,
   Programme,
   Role,
   RoleCapability,
@@ -3016,5 +3017,110 @@ export function useDeleteBoard() {
       if (!data?.length) throw new Error('You can only delete your own boards.')
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['boards'] }),
+  })
+}
+
+// ---- Players: the optional team roster (sessions.create) ------------------
+// The first child data the app holds, so the read is the deliberate exception
+// to the club wide content rule: the players RLS gates select on
+// sessions.create, so this hook returns nothing for a parent (and the roster
+// manager and board routes are sessions.create gated regardless). The board
+// seeds tokens from these, snapshotting the display name into the token label;
+// there is no link back from a saved board to a player (see tacticsBoard.ts
+// and 0020_boards.sql), so deleting a player never corrupts a saved board. See
+// 0021_players.sql for the full child data boundary.
+
+interface PlayerRow {
+  id: string
+  team_id: string
+  display_name: string
+  shirt_number: number | null
+  created_by: string
+}
+
+const PLAYER_COLS = 'id, team_id, display_name, shirt_number, created_by'
+
+function toPlayer(r: PlayerRow): Player {
+  return {
+    id: r.id,
+    teamId: r.team_id,
+    displayName: r.display_name,
+    shirtNumber: r.shirt_number,
+    createdBy: r.created_by,
+  }
+}
+
+// The club's roster across every team, ordered for a stable list: by shirt
+// number (nulls last) then display name. The roster manager filters this to
+// the selected team and the board reads the selected team's slice.
+export function usePlayers() {
+  return useQuery({
+    queryKey: ['players'],
+    queryFn: async (): Promise<Player[]> => {
+      const { data, error } = await supabase
+        .from('players')
+        .select(PLAYER_COLS)
+        .order('shirt_number', { ascending: true, nullsFirst: false })
+        .order('display_name', { ascending: true })
+      if (error) throw error
+      return (data as unknown as PlayerRow[]).map(toPlayer)
+    },
+  })
+}
+
+// Adds a player to a team. club_id and created_by come from the signed-in
+// user, which the players insert check requires. The RLS is the real gate; the
+// manager only surfaces the action to a sessions.create holder.
+export function useInsertPlayer() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<void, Error, { teamId: string; displayName: string; shirtNumber: number | null }>({
+    mutationFn: async ({ teamId, displayName, shirtNumber }) => {
+      const name = displayName.trim()
+      if (!name) throw new Error('Enter a name.')
+      if (!user || !profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase.from('players').insert({
+        club_id: profile.club_id,
+        team_id: teamId,
+        display_name: name,
+        shirt_number: shirtNumber,
+        created_by: user.id,
+      })
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
+  })
+}
+
+// Renames a player or sets their shirt number. Sends only the changed fields;
+// the players update RLS is the real enforcement.
+export function useUpdatePlayer() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; displayName?: string; shirtNumber?: number | null }>({
+    mutationFn: async ({ id, displayName, shirtNumber }) => {
+      const patch: { display_name?: string; shirt_number?: number | null } = {}
+      if (displayName !== undefined) {
+        const name = displayName.trim()
+        if (!name) throw new Error('Enter a name.')
+        patch.display_name = name
+      }
+      if (shirtNumber !== undefined) patch.shirt_number = shirtNumber
+      const { error } = await supabase.from('players').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
+  })
+}
+
+// Removes a player. No board references a player (a saved board snapshots the
+// name as a plain label), so a removal never touches a board.
+export function useDeletePlayer() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('players').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
   })
 }

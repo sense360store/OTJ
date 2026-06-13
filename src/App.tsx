@@ -16,6 +16,7 @@ import { DrillDetail } from './routes/DrillDetail'
 import { Sessions } from './routes/Sessions'
 import { Planner } from './routes/Planner'
 import { Board } from './routes/Board'
+import { Roster } from './routes/Roster'
 import { Templates } from './routes/Templates'
 import { Programmes } from './routes/Programmes'
 import { ProgrammeDetail } from './routes/ProgrammeDetail'
@@ -99,6 +100,7 @@ export function App() {
             <Route path="library" element={<Library />} />
             <Route path="planner" element={<Planner />} />
             <Route path="board" element={<Board />} />
+            <Route path="roster" element={<Roster />} />
             <Route path="programmes" element={<Programmes />} />
             <Route path="templates" element={<Templates />} />
             <Route path="media" element={<Media />} />
