@@ -171,7 +171,7 @@ function ImportFromSpondModal({ team, mapping, onClose }: { team: Team; mapping:
         <>
           <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
             This brings over player names from the mapped Spond group <b>{mapping.name}</b> into this team's roster. Each
-            name is stored as a first name and last initial only. No guardian, contact or other Spond data is imported.
+            child's full name is stored. No guardian, contact or other Spond data is imported.
           </p>
           <p className="muted" style={{ fontSize: 13.5 }}>
             Players already on the roster are left as they are, so importing again adds no duplicates.
@@ -269,7 +269,7 @@ export function Roster() {
           <div className="field" style={{ flex: 1, marginBottom: 0 }}>
             <label>New player</label>
             <input
-              placeholder="First name or first name and last initial"
+              placeholder="Full name"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               maxLength={40}

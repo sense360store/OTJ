@@ -3173,8 +3173,8 @@ export function useDeletePlayer() {
 
 // The spond-roster-import response, mapped to the app contract. The import
 // brings the children in a team's mapped Spond group into that team's
-// roster: names only, the first name plus last initial form (see
-// 0021_players.sql and the function's name boundary). The browser never
+// roster: names only, each child's full name (see 0021_players.sql, updated
+// by 0023_players_fullname.sql, and the function's name boundary). The browser never
 // calls Spond; the only network this touches is the Edge Function, which
 // reads the names server side and returns counts, never a payload.
 export interface RosterImportResult {
