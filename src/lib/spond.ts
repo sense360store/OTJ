@@ -4,7 +4,7 @@
 // calls Spond, and the only Spond data the client touches is the counts and
 // event facts the spond_events read returns (CLAUDE.md, Spond integration).
 import { blankSession } from './data'
-import type { Session, SpondEvent } from './data'
+import type { Session, SpondEvent, SpondMapping } from './data'
 
 // The four counts in display order, the only attendance figures the app
 // holds. They key straight into SpondEvent.
@@ -46,6 +46,17 @@ export function parseSpondMappingInput(raw: string): SpondGroupRef | null {
   if (subgroupId === undefined) return { groupId, subgroupId: null }
   if (!SPOND_ID.test(subgroupId)) return null
   return { groupId, subgroupId }
+}
+
+// Whether a team has a Spond group mapped, and which mapping the roster
+// import would pull. The roster manager offers Import from Spond only when
+// this returns a mapping; with no mapping the action is hidden. Returns the
+// first mapping for the team (the import server side pulls every mapping the
+// team carries, this only decides the affordance). Pure so the test pins
+// that import is offered only for a mapped team.
+export function mappingForTeam(mappings: SpondMapping[], teamId: string): SpondMapping | null {
+  if (!teamId) return null
+  return mappings.find((m) => m.teamId === teamId) ?? null
 }
 
 // A synced event's team label. Null is a club event, one the sync matched

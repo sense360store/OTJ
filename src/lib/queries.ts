@@ -3170,3 +3170,67 @@ export function useDeletePlayer() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
   })
 }
+
+// The spond-roster-import response, mapped to the app contract. The import
+// brings the children in a team's mapped Spond group into that team's
+// roster: names only, the first name plus last initial form (see
+// 0021_players.sql and the function's name boundary). The browser never
+// calls Spond; the only network this touches is the Edge Function, which
+// reads the names server side and returns counts, never a payload.
+export interface RosterImportResult {
+  ok: boolean
+  added: number
+  alreadyPresent: number
+  skipped: number
+  // The no mapping outcome carries a message instead of counts.
+  message: string
+  warnings: string[]
+}
+
+interface RosterImportBody {
+  ok?: boolean
+  added?: number
+  already_present?: number
+  skipped?: number
+  message?: string
+  warnings?: string[]
+}
+
+// Triggers the spond-roster-import Edge Function for one team. The function
+// checks sessions.create before contacting Spond; a 403 (capability), 503
+// (the organiser account secrets are missing) or 502 (Spond unreachable)
+// replies with a plain { error } body shown verbatim. On success the roster
+// query is invalidated so the new players appear.
+export function useSpondRosterImport() {
+  const qc = useQueryClient()
+  return useMutation<RosterImportResult, Error, { teamId: string }>({
+    mutationFn: async ({ teamId }) => {
+      const { data, error } = await supabase.functions.invoke('spond-roster-import', { body: { team_id: teamId } })
+      if (error) {
+        let message = 'Could not import from Spond. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as RosterImportBody
+      return {
+        ok: body.ok === true,
+        added: body.added ?? 0,
+        alreadyPresent: body.already_present ?? 0,
+        skipped: body.skipped ?? 0,
+        message: body.message ?? '',
+        warnings: body.warnings ?? [],
+      }
+    },
+    // Settled, not success: an error after a partial write still refreshes
+    // the roster so the screen shows the true state.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
+  })
+}

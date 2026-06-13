@@ -6,8 +6,18 @@
 // any other field, and parents never reach this screen (see 0021_players.sql).
 // REVIEW: child data surface.
 import { useMemo, useState } from 'react'
-import { useDeletePlayer, useInsertPlayer, useMyCapabilities, usePlayers, useTeams, useUpdatePlayer } from '../lib/queries'
-import type { Player } from '../lib/data'
+import {
+  useDeletePlayer,
+  useInsertPlayer,
+  useMyCapabilities,
+  usePlayers,
+  useSpondMappings,
+  useSpondRosterImport,
+  useTeams,
+  useUpdatePlayer,
+} from '../lib/queries'
+import { mappingForTeam } from '../lib/spond'
+import type { Player, SpondMapping, Team } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal } from '../components/ui'
 
@@ -106,10 +116,85 @@ function PlayerRow({ player, onDelete }: { player: Player; onDelete: () => void 
   )
 }
 
+// Import from Spond: a deliberate, confirmed action that brings the children
+// in the team's mapped Spond group into this roster. The confirm step notes
+// that it imports player names, so it is never an accident. The browser never
+// calls Spond; the Edge Function reads the names server side and returns
+// counts (added, already present), the first time the Spond pipeline reads a
+// name (CLAUDE.md, Spond integration; 0021_players.sql for the name boundary).
+function ImportFromSpondModal({ team, mapping, onClose }: { team: Team; mapping: SpondMapping; onClose: () => void }) {
+  const importer = useSpondRosterImport()
+  const run = () => importer.mutate({ teamId: team.id })
+  const result = importer.data
+
+  return (
+    <Modal
+      title="Import from Spond"
+      sub={team.name}
+      onClose={onClose}
+      footer={
+        result ? (
+          <button className="btn btn-primary" onClick={onClose}>
+            Done
+          </button>
+        ) : (
+          <>
+            <button className="btn btn-ghost" onClick={onClose} disabled={importer.isPending}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={run} disabled={importer.isPending}>
+              <Icon.rotate />
+              {importer.isPending ? 'Importing…' : 'Import'}
+            </button>
+          </>
+        )
+      }
+    >
+      {result ? (
+        <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+          <p style={{ marginTop: 0 }}>
+            {result.added} added, {result.alreadyPresent} already on the roster
+            {result.skipped > 0 ? `, ${result.skipped} skipped` : ''}.
+          </p>
+          {result.message && (
+            <p className="muted" style={{ fontSize: 13.5 }}>
+              {result.message}
+            </p>
+          )}
+          {result.warnings.map((w, i) => (
+            <p key={i} className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)' }}>
+              {w}
+            </p>
+          ))}
+        </div>
+      ) : (
+        <>
+          <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
+            This brings over player names from the mapped Spond group <b>{mapping.name}</b> into this team's roster. Each
+            name is stored as a first name and last initial only. No guardian, contact or other Spond data is imported.
+          </p>
+          <p className="muted" style={{ fontSize: 13.5 }}>
+            Players already on the roster are left as they are, so importing again adds no duplicates.
+          </p>
+          {importer.isError && (
+            <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+              {importer.error.message}
+            </p>
+          )}
+        </>
+      )}
+    </Modal>
+  )
+}
+
 export function Roster() {
   const { caps } = useMyCapabilities()
   const { data: teams = [], isLoading: teamsLoading, isError: teamsError } = useTeams()
   const { data: players = [], isLoading: playersLoading, isError: playersError } = usePlayers()
+  // Club members read spond_groups club wide (no capability), so a coach can
+  // see whether the selected team has a mapping. The import affordance shows
+  // only when it does; the Edge Function is the real gate.
+  const { data: mappings = [] } = useSpondMappings()
 
   const [teamId, setTeamId] = useState('')
   const selectedTeam = teamId || teams[0]?.id || ''
@@ -118,8 +203,11 @@ export function Roster() {
   const [newShirt, setNewShirt] = useState('')
   const insert = useInsertPlayer()
   const [removing, setRemoving] = useState<Player | null>(null)
+  const [importing, setImporting] = useState(false)
 
   const teamPlayers = useMemo(() => players.filter((p) => p.teamId === selectedTeam), [players, selectedTeam])
+  const spondMapping = mappingForTeam(mappings, selectedTeam)
+  const selectedTeamObj = teams.find((t) => t.id === selectedTeam) ?? null
 
   if (teamsLoading || playersLoading) return <Loading />
   if (teamsError || playersError) return <ErrorNote />
@@ -157,16 +245,24 @@ export function Roster() {
       </div>
 
       <div className="card" style={{ padding: 18, maxWidth: 620 }}>
-        <div className="field" style={{ maxWidth: 280 }}>
-          <label>Team</label>
-          <select className="select" value={selectedTeam} onChange={(e) => setTeamId(e.target.value)}>
-            {teams.length === 0 && <option value="">No teams</option>}
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+        <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
+          <div className="field" style={{ maxWidth: 280, flex: 1, marginBottom: 0 }}>
+            <label>Team</label>
+            <select className="select" value={selectedTeam} onChange={(e) => setTeamId(e.target.value)}>
+              {teams.length === 0 && <option value="">No teams</option>}
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {spondMapping && (
+            <button className="btn btn-ghost" onClick={() => setImporting(true)}>
+              <Icon.rotate />
+              Import from Spond
+            </button>
+          )}
         </div>
 
         <div className="row" style={{ gap: 10, marginTop: 14, alignItems: 'flex-end' }}>
@@ -220,6 +316,9 @@ export function Roster() {
       </div>
 
       {removing && <DeletePlayerModal player={removing} onClose={() => setRemoving(null)} />}
+      {importing && spondMapping && selectedTeamObj && (
+        <ImportFromSpondModal team={selectedTeamObj} mapping={spondMapping} onClose={() => setImporting(false)} />
+      )}
     </div>
   )
 }
