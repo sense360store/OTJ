@@ -113,3 +113,87 @@ export function nextNumber(tokens: Token[], side: TokenSide): number {
   if (onSide.length === 0) return 1
   return Math.max(...onSide.map((t) => t.number)) + 1
 }
+
+// ---- Saved boards --------------------------------------------------------
+// Phase two persists a board. A saved board is the name, the formation it was
+// seeded from, the team it frames and the tokens, plus its ownership and
+// timestamps. The tokens carry no person data, only the numbers and free text
+// labels a coach typed (see 0020_boards.sql).
+export interface Board {
+  id: string
+  name: string
+  formation: string | null
+  teamId: string | null
+  tokens: Token[]
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+// The part of a board that a save serialises and a load restores: name,
+// formation, team and tokens. The side toggle is an authoring control, not
+// part of the saved shape, so it is deliberately absent. The unsaved
+// indicator compares two of these.
+export interface BoardSnapshot {
+  name: string
+  formation: string | null
+  teamId: string | null
+  tokens: Token[]
+}
+
+// Serialise the tokens to the value the jsonb column stores: a plain copy of
+// the array as state holds it. Kept explicit rather than passing the live
+// array straight through, so the stored shape is the one field set the schema
+// documents and a stray property on a token never leaks into the database.
+export function serializeTokens(tokens: Token[]): Token[] {
+  return tokens.map((t) => ({ id: t.id, number: t.number, label: t.label, side: t.side, x: t.x, y: t.y }))
+}
+
+// Read tokens back from the stored jsonb, defensively. The column is just
+// jsonb, so a hand edit or a future shape change could leave a stray or
+// malformed entry; each token is rebuilt from its fields, the id derived from
+// side and number the same way the board mints it, the fractions clamped, and
+// anything without a usable number or position dropped. So a loaded board
+// always lands inside the pitch.
+export function deserializeTokens(value: unknown): Token[] {
+  if (!Array.isArray(value)) return []
+  const out: Token[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const number = typeof r.number === 'number' ? r.number : Number(r.number)
+    // side is the home or away colour; accept a colour key too for resilience.
+    const side: TokenSide = r.side === 'away' || r.colour === 'away' ? 'away' : 'home'
+    const x = typeof r.x === 'number' ? r.x : Number(r.x)
+    const y = typeof r.y === 'number' ? r.y : Number(r.y)
+    if (!Number.isFinite(number) || !Number.isFinite(x) || !Number.isFinite(y)) continue
+    out.push({
+      id: `${side}-${number}`,
+      number,
+      label: typeof r.label === 'string' ? r.label : '',
+      side,
+      x: clampFraction(x),
+      y: clampFraction(y),
+    })
+  }
+  return out
+}
+
+// A board's saved shape flattened to a string, so a move, a relabel, a
+// formation change, a team change or a rename all register as a difference.
+export function boardSignature(snap: BoardSnapshot): string {
+  return JSON.stringify({
+    name: snap.name.trim(),
+    formation: snap.formation ?? '',
+    teamId: snap.teamId ?? '',
+    tokens: serializeTokens(snap.tokens),
+  })
+}
+
+// True when the on-screen board differs from the last saved or loaded state.
+// Drives the quiet unsaved indicator and the warn-before-loading-over check,
+// so a coach does not lose work by loading another board on top of unsaved
+// changes.
+export function boardIsDirty(current: BoardSnapshot, saved: BoardSnapshot): boolean {
+  return boardSignature(current) !== boardSignature(saved)
+}

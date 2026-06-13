@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { FORMATIONS, clampFraction, formationCount, formationPositions, nextNumber } from './tacticsBoard'
+import {
+  FORMATIONS,
+  boardIsDirty,
+  clampFraction,
+  deserializeTokens,
+  formationCount,
+  formationPositions,
+  nextNumber,
+  serializeTokens,
+  type BoardSnapshot,
+} from './tacticsBoard'
 
 // The board's pure helpers carry the data shape a later phase persists, so the
 // suite pins the clamp and the formation maths without a DOM or a pitch.
@@ -81,5 +91,76 @@ describe('nextNumber', () => {
     expect(nextNumber(tokens, 'home')).toBe(8)
     // The away side is numbered on its own.
     expect(nextNumber(tokens, 'away')).toBe(1)
+  })
+})
+
+describe('serialize then deserialize', () => {
+  it('returns identical token positions for a saved board', () => {
+    const tokens = [...formationPositions('4-4-2', 'home'), ...formationPositions('2-3-1', 'away')]
+    const round = deserializeTokens(serializeTokens(tokens))
+    expect(round).toEqual(tokens)
+    // The positions in particular survive untouched.
+    round.forEach((t, i) => {
+      expect(t.x).toBe(tokens[i].x)
+      expect(t.y).toBe(tokens[i].y)
+    })
+  })
+
+  it('keeps a dragged position through the round trip', () => {
+    const tokens = formationPositions('1-2-1', 'home').map((t, i) => (i === 0 ? { ...t, x: 0.123, y: 0.456 } : t))
+    const round = deserializeTokens(serializeTokens(tokens))
+    expect(round[0].x).toBe(0.123)
+    expect(round[0].y).toBe(0.456)
+  })
+
+  it('reads tokens back defensively, dropping malformed entries and rebuilding the id', () => {
+    const stored = [
+      { number: 7, label: 'CB', side: 'home', x: 0.4, y: 0.7 },
+      { number: 'nope', side: 'home', x: 0.5, y: 0.5 },
+      'garbage',
+      { number: 9, side: 'away', x: 1.4, y: -0.2 },
+    ]
+    const tokens = deserializeTokens(stored)
+    expect(tokens.length).toBe(2)
+    expect(tokens[0]).toEqual({ id: 'home-7', number: 7, label: 'CB', side: 'home', x: 0.4, y: 0.7 })
+    // Out of range fractions are clamped back onto the pitch.
+    expect(tokens[1].x).toBe(1)
+    expect(tokens[1].y).toBe(0)
+    expect(tokens[1].id).toBe('away-9')
+  })
+
+  it('returns an empty board for a non array value', () => {
+    expect(deserializeTokens(null)).toEqual([])
+    expect(deserializeTokens({})).toEqual([])
+  })
+})
+
+describe('boardIsDirty', () => {
+  const base: BoardSnapshot = {
+    name: 'Titans high press',
+    formation: '2-3-1',
+    teamId: 'team-1',
+    tokens: formationPositions('2-3-1', 'home'),
+  }
+
+  it('is clean against an identical snapshot', () => {
+    expect(boardIsDirty(base, { ...base, tokens: [...base.tokens] })).toBe(false)
+  })
+
+  it('reports unsaved changes after a token moves', () => {
+    const moved: BoardSnapshot = {
+      ...base,
+      tokens: base.tokens.map((t, i) => (i === 0 ? { ...t, x: t.x + 0.1, y: t.y - 0.1 } : t)),
+    }
+    expect(boardIsDirty(moved, base)).toBe(true)
+  })
+
+  it('reports unsaved changes after a relabel, a rename, a formation or a team change', () => {
+    expect(boardIsDirty({ ...base, tokens: base.tokens.map((t, i) => (i === 0 ? { ...t, label: 'GK' } : t)) }, base)).toBe(
+      true,
+    )
+    expect(boardIsDirty({ ...base, name: 'Renamed' }, base)).toBe(true)
+    expect(boardIsDirty({ ...base, formation: '4-4-2' }, base)).toBe(true)
+    expect(boardIsDirty({ ...base, teamId: 'team-2' }, base)).toBe(true)
   })
 })

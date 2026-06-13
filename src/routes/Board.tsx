@@ -1,31 +1,66 @@
-// The tactics board: place numbered discs on a pitch and drag them into shape.
-// Phase one is standalone and frontend only. It follows sessions.create, the
-// same coaching write capability as the planner, so coaches and admins reach
-// it and parents do not. Nothing here is saved; the board lives in component
-// state for the session only and clears on reload. Positions are held as
-// fractions of the pitch, the clean shape a later phase will persist and embed
-// elsewhere.
-import { useState } from 'react'
+// The tactics board: place numbered discs on a pitch, drag them into shape,
+// and (phase two) save the board and load it back later. It follows
+// sessions.create, the same coaching write capability as the planner, so
+// coaches and admins reach it and parents do not. Positions are held as
+// fractions of the pitch, the shape the boards table persists, so a saved
+// board renders identically at any size.
+//
+// Saving an already loaded board updates it; a fresh board inserts. Reads are
+// club wide, so the saved boards list is every board in the club; a coach
+// renames and deletes their own, an admin any. A quiet indicator marks the
+// board as having unsaved changes when it differs from the last saved or
+// loaded state, so loading another board does not silently lose work; there
+// is no autosave.
+import { useMemo, useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
-import { useTeams } from '../lib/queries'
 import {
+  useBoards,
+  useDeleteBoard,
+  useMemberMap,
+  useMyCapabilities,
+  useRenameBoard,
+  useSaveBoard,
+  useTeamMap,
+  useTeams,
+} from '../lib/queries'
+import {
+  boardIsDirty,
   FORMATIONS,
   formationPositions,
   nextNumber,
+  type Board,
+  type BoardSnapshot,
   type Token,
   type TokenSide,
 } from '../lib/tacticsBoard'
 import { Icon } from '../components/icons'
 import { TacticsPitch } from '../components/TacticsPitch'
+import { ErrorNote, Loading, Modal } from '../components/ui'
 import './Board.css'
 
+// A coarse "updated 20 minutes ago" label for the saved boards list. Freshness
+// not precision, matching the rest of the app's relative times.
+function updatedAgo(iso: string, now: Date = new Date()): string {
+  const ms = now.getTime() - Date.parse(iso)
+  if (!Number.isFinite(ms)) return ''
+  const minutes = Math.floor(ms / 60_000)
+  if (minutes < 1) return 'updated just now'
+  if (minutes < 60) return `updated ${minutes} minute${minutes === 1 ? '' : 's'} ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `updated ${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.floor(hours / 24)
+  return `updated ${days} day${days === 1 ? '' : 's'} ago`
+}
+
 export function Board() {
-  const { profile } = useAuth()
+  const { user, profile } = useAuth()
+  const { caps } = useMyCapabilities()
+  const isAdmin = caps.has('club.manage')
   const { data: teams } = useTeams()
   const teamList = teams ?? []
-  // The team selector is the roster source seam. There is no player roster
-  // table yet, so it defaults to the coach's team and frames the board; tokens
-  // come from the formation picker and the add control until a roster lands.
+  // The team selector frames the board and is saved with it. It defaults to
+  // the coach's team; tokens come from the formation picker and the add
+  // control until a roster lands.
   const [teamId, setTeamId] = useState<string | null>(null)
   const selectedTeam = teamId ?? profile?.team_id ?? teamList[0]?.id ?? ''
 
@@ -33,6 +68,31 @@ export function Board() {
   // The side new tokens and formations take, the "show shape against
   // opposition" control: place one side, switch, place the other.
   const [side, setSide] = useState<TokenSide>('home')
+  // The formation the board was last seeded from, saved with it. Empty for a
+  // hand placed board.
+  const [formation, setFormation] = useState('')
+
+  // The save state: the board's name, the id of the loaded board (null for a
+  // fresh one), and the snapshot of the last saved state of the loaded board
+  // the unsaved indicator compares against.
+  const [name, setName] = useState('')
+  const [loadedId, setLoadedId] = useState<string | null>(null)
+  const [savedSnapshot, setSavedSnapshot] = useState<BoardSnapshot | null>(null)
+
+  const [browsing, setBrowsing] = useState(false)
+
+  const save = useSaveBoard()
+
+  const current: BoardSnapshot = useMemo(
+    () => ({ name, formation, teamId: selectedTeam || null, tokens }),
+    [name, formation, selectedTeam, tokens],
+  )
+  // The clean baseline. For a loaded board it is the last saved state; for a
+  // fresh board it is the empty pitch with the auto-selected default team, so
+  // the default team selection is never itself counted as an unsaved change.
+  const baseline: BoardSnapshot =
+    loadedId && savedSnapshot ? savedSnapshot : { name: '', formation: '', teamId: selectedTeam || null, tokens: [] }
+  const dirty = boardIsDirty(current, baseline)
 
   // Placing a formation replaces that side's tokens and leaves the other side
   // alone, so home and away can sit on the board together.
@@ -40,6 +100,7 @@ export function Board() {
     if (!key) return
     const placed = formationPositions(key, side)
     setTokens((prev) => [...prev.filter((t) => t.side !== side), ...placed])
+    setFormation(key)
   }
 
   function addToken() {
@@ -64,12 +125,62 @@ export function Board() {
     setTokens((prev) => prev.map((t) => (t.id === id ? { ...t, label } : t)))
   }
 
+  // Load a saved board onto the pitch, replacing the current state and marking
+  // it clean. A board saved with no team (its team was later deleted) falls
+  // back to the default team the same way a fresh board does, so the baseline
+  // records that resolved team rather than the stored null, and loading alone
+  // never reads as an unsaved change.
+  function loadBoard(b: Board) {
+    const resolvedTeam = b.teamId ?? profile?.team_id ?? teamList[0]?.id ?? null
+    setTokens(b.tokens)
+    setFormation(b.formation ?? '')
+    setTeamId(b.teamId)
+    setName(b.name)
+    setLoadedId(b.id)
+    setSavedSnapshot({ name: b.name, formation: b.formation ?? '', teamId: resolvedTeam, tokens: b.tokens })
+    setBrowsing(false)
+  }
+
+  // Start a fresh board, clearing the pitch and detaching from any loaded one.
+  // The baseline falls back to the empty pitch, so no snapshot is needed.
+  function newBoard() {
+    setTokens([])
+    setFormation('')
+    setName('')
+    setLoadedId(null)
+    setSavedSnapshot(null)
+  }
+
+  function saveBoard() {
+    save.mutate(
+      { id: loadedId, name, formation: formation || null, teamId: selectedTeam || null, tokens },
+      {
+        onSuccess: (b) => {
+          setLoadedId(b.id)
+          setSavedSnapshot({ name: b.name, formation: b.formation ?? '', teamId: b.teamId, tokens: b.tokens })
+        },
+      },
+    )
+  }
+
+  const canSave = !!name.trim() && !save.isPending
+
   return (
     <div>
       <div className="page-head">
         <div>
           <h2>Tactics board</h2>
-          <div className="sub">Place players and drag them into shape. Nothing is saved; the board clears on reload.</div>
+          <div className="sub">Place players and drag them into shape. Save a board to load it back later.</div>
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <button type="button" className="btn btn-ghost" onClick={newBoard}>
+            <Icon.plus />
+            New board
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={() => setBrowsing(true)}>
+            <Icon.list />
+            Saved boards
+          </button>
         </div>
       </div>
 
@@ -88,7 +199,7 @@ export function Board() {
 
         <label className="board-field">
           <span>Formation</span>
-          <select className="select" value="" onChange={(e) => placeFormation(e.target.value)}>
+          <select className="select" value={formation} onChange={(e) => placeFormation(e.target.value)}>
             <option value="">Place a formation…</option>
             {FORMATIONS.map((f) => (
               <option key={f.key} value={f.key}>
@@ -136,7 +247,237 @@ export function Board() {
         </div>
       </div>
 
+      <div className="card board-save">
+        <label className="board-field board-name">
+          <span>Board name</span>
+          <input
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Titans 2-3-1 high press"
+            maxLength={80}
+          />
+        </label>
+        <div className="board-save-actions">
+          {dirty && (
+            <span className="board-unsaved" aria-live="polite">
+              Unsaved changes
+            </span>
+          )}
+          <button type="button" className="btn btn-primary" onClick={saveBoard} disabled={!canSave}>
+            <Icon.check />
+            {save.isPending ? 'Saving…' : loadedId ? 'Save changes' : 'Save board'}
+          </button>
+        </div>
+        {save.isError && (
+          <p className="board-save-error" role="alert">
+            {save.error.message}
+          </p>
+        )}
+      </div>
+
       <TacticsPitch tokens={tokens} onMove={moveToken} onLabel={labelToken} />
+
+      {browsing && (
+        <BoardsModal
+          currentUserId={user?.id}
+          isAdmin={isAdmin}
+          dirty={dirty}
+          onLoad={loadBoard}
+          onClose={() => setBrowsing(false)}
+        />
+      )}
     </div>
+  )
+}
+
+// The saved boards list: every board in the club, newest first. Selecting one
+// loads it onto the pitch, confirming first if the current board has unsaved
+// changes. The creator (and an admin on any board) sees rename and delete.
+function BoardsModal({
+  currentUserId,
+  isAdmin,
+  dirty,
+  onLoad,
+  onClose,
+}: {
+  currentUserId: string | undefined
+  isAdmin: boolean
+  dirty: boolean
+  onLoad: (b: Board) => void
+  onClose: () => void
+}) {
+  const { data: boards = [], isLoading, isError } = useBoards()
+  const teamById = useTeamMap()
+  const memberById = useMemberMap()
+  const [confirmLoad, setConfirmLoad] = useState<Board | null>(null)
+  const [renaming, setRenaming] = useState<Board | null>(null)
+  const [deleting, setDeleting] = useState<Board | null>(null)
+
+  // Load directly when there is nothing to lose; otherwise confirm first.
+  function requestLoad(b: Board) {
+    if (dirty) setConfirmLoad(b)
+    else onLoad(b)
+  }
+
+  return (
+    <Modal title="Saved boards" sub="Boards saved across the club. Loading one replaces the pitch." onClose={onClose}>
+      {isLoading ? (
+        <Loading />
+      ) : isError ? (
+        <ErrorNote />
+      ) : boards.length === 0 ? (
+        <p className="muted" style={{ fontSize: 13.5 }}>
+          No boards saved yet. Build a shape on the pitch, name it and save.
+        </p>
+      ) : (
+        boards.map((b) => {
+          const mine = !!currentUserId && b.createdBy === currentUserId
+          const canManage = mine || isAdmin
+          const author = mine ? 'You' : memberById[b.createdBy]?.fullName || 'A coach'
+          const teamName = b.teamId ? teamById[b.teamId]?.name : null
+          return (
+            <div key={b.id} className="board-list-row">
+              <button type="button" className="board-list-main" onClick={() => requestLoad(b)}>
+                <b className="board-list-name">{b.name}</b>
+                <span className="board-list-meta">
+                  {teamName && <span className="pill">{teamName}</span>}
+                  <span className="muted">{author}</span>
+                  <span className="muted">{updatedAgo(b.updatedAt)}</span>
+                </span>
+              </button>
+              {canManage && (
+                <div className="board-list-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm icon-only"
+                    aria-label={'Rename ' + b.name}
+                    onClick={() => setRenaming(b)}
+                  >
+                    <Icon.edit />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm icon-only"
+                    aria-label={'Delete ' + b.name}
+                    onClick={() => setDeleting(b)}
+                  >
+                    <Icon.trash />
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })
+      )}
+
+      {confirmLoad && (
+        <ConfirmLoadModal
+          board={confirmLoad}
+          onConfirm={() => {
+            onLoad(confirmLoad)
+            setConfirmLoad(null)
+          }}
+          onClose={() => setConfirmLoad(null)}
+        />
+      )}
+      {renaming && <RenameBoardModal board={renaming} onClose={() => setRenaming(null)} />}
+      {deleting && <DeleteBoardModal board={deleting} onClose={() => setDeleting(null)} />}
+    </Modal>
+  )
+}
+
+function ConfirmLoadModal({ board, onConfirm, onClose }: { board: Board; onConfirm: () => void; onClose: () => void }) {
+  return (
+    <Modal
+      title="Load over unsaved changes?"
+      sub={board.name}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={onConfirm}>
+            Load board
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        The current board has unsaved changes. Loading this board replaces it and those changes are lost.
+      </p>
+    </Modal>
+  )
+}
+
+function RenameBoardModal({ board, onClose }: { board: Board; onClose: () => void }) {
+  const rename = useRenameBoard()
+  const [name, setName] = useState(board.name)
+  const ready = !!name.trim() && !rename.isPending
+  const submit = () => {
+    if (!ready) return
+    rename.mutate({ id: board.id, name }, { onSuccess: onClose })
+  }
+  return (
+    <Modal
+      title="Rename board"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={rename.isPending}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={submit} disabled={!ready}>
+            {rename.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label>Name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus />
+      </div>
+      {rename.isError && (
+        <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+          {rename.error.message}
+        </p>
+      )}
+    </Modal>
+  )
+}
+
+function DeleteBoardModal({ board, onClose }: { board: Board; onClose: () => void }) {
+  const del = useDeleteBoard()
+  const remove = () => del.mutate({ id: board.id }, { onSuccess: onClose })
+  return (
+    <Modal
+      title="Delete board"
+      sub={board.name}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{ background: 'var(--m-pdf)' }}
+            onClick={remove}
+            disabled={del.isPending}
+          >
+            <Icon.trash />
+            {del.isPending ? 'Deleting…' : 'Delete'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>This removes the saved board for the whole club. It cannot be undone.</p>
+      {del.isError && (
+        <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+          {del.error.message}
+        </p>
+      )}
+    </Modal>
   )
 }
