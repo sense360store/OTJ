@@ -2,7 +2,7 @@
 // reads member names. These are hermetic (no network, no database) and
 // every fixture is synthetic: invented member names and ids, never a real
 // Spond payload, even redacted. They pin the parts that can be wrong
-// quietly: the name form (full name to first name plus last initial, the
+// quietly: the name form (the child's full name, first and last joined, the
 // single name fallback, the 40 char bound), the shirt number read, the
 // subgroup scoping of members, and the de-dupe, including the name
 // boundary expressed as a test (guardian and contact fields ignored).
@@ -48,9 +48,9 @@ const SYNTHETIC_MEMBER = {
 
 // ---- The name form ----------------------------------------------------------
 
-Deno.test('a full name becomes the first name plus the last initial', () => {
-  assertEquals(rosterDisplayName(SYNTHETIC_MEMBER), 'Jack T')
-  assertEquals(rosterDisplayName({ firstName: 'Amara', lastName: 'okafor' }), 'Amara O')
+Deno.test('a member becomes the full name, first and last joined', () => {
+  assertEquals(rosterDisplayName(SYNTHETIC_MEMBER), 'Jack Thompson')
+  assertEquals(rosterDisplayName({ firstName: 'Amara', lastName: 'okafor' }), 'Amara okafor')
 })
 
 Deno.test('a single name field is stored as is', () => {
@@ -102,12 +102,12 @@ Deno.test('an absent, out of range or unreadable number is null', () => {
 Deno.test('a member reduces to name plus optional number, never guardian or contact data', () => {
   const reduced = reduceMember(SYNTHETIC_MEMBER)
   assert(reduced !== null)
-  assertEquals(reduced, { display_name: 'Jack T', shirt_number: null })
+  // The child's full name is the roster value, the user's decision; the
+  // surname is the child's own, never a guardian's.
+  assertEquals(reduced, { display_name: 'Jack Thompson', shirt_number: null })
   // Exactly the two roster keys, nothing carried through from the payload.
   assertEquals(Object.keys(reduced).sort(), ['display_name', 'shirt_number'])
   const flat = JSON.stringify(reduced)
-  // The child's full surname never survives, only the initial.
-  assert(!flat.includes('Thompson'), 'reduced row leaked the full surname')
   // No guardian name, no contact field, no member id.
   for (const leak of [
     'Madeup',
@@ -188,15 +188,15 @@ Deno.test('the member read is capped at MAX_ROSTER_MEMBERS', () => {
 
 Deno.test('new members are added and existing names are already present', () => {
   const members = [
-    { firstName: 'Jack', lastName: 'Thompson' }, // Jack T, already on the roster
-    { firstName: 'Amara', lastName: 'Okafor' }, // Amara O, new
+    { firstName: 'Jack', lastName: 'Thompson' }, // Jack Thompson, already on the roster
+    { firstName: 'Amara', lastName: 'Okafor' }, // Amara Okafor, new
     {}, // no usable name, skipped
   ]
-  const plan = planRosterImport(members, ['Jack T'])
+  const plan = planRosterImport(members, ['Jack Thompson'])
   assertEquals(plan.added, 1)
   assertEquals(plan.alreadyPresent, 1)
   assertEquals(plan.skipped, 1)
-  assertEquals(plan.inserts, [{ display_name: 'Amara O', shirt_number: null }])
+  assertEquals(plan.inserts, [{ display_name: 'Amara Okafor', shirt_number: null }])
 })
 
 Deno.test('re running the import adds nobody twice', () => {
@@ -213,12 +213,12 @@ Deno.test('re running the import adds nobody twice', () => {
   assertEquals(second.inserts, [])
 })
 
-Deno.test('two members reducing to the same name collapse to one row', () => {
-  // Two different children both reduce to "Jack T"; the second is already
-  // present within the run, so the roster never gains a duplicate row.
+Deno.test('two members with the same full name collapse to one row', () => {
+  // Two children with the same full name; the second is already present
+  // within the run, so the roster never gains a duplicate row.
   const members = [
     { firstName: 'Jack', lastName: 'Thompson' },
-    { firstName: 'Jack', lastName: 'Turner' },
+    { firstName: 'Jack', lastName: 'Thompson' },
   ]
   const plan = planRosterImport(members, [])
   assertEquals(plan.added, 1)
@@ -226,12 +226,12 @@ Deno.test('two members reducing to the same name collapse to one row', () => {
 })
 
 Deno.test('the de-dupe is case insensitive', () => {
-  const plan = planRosterImport([{ firstName: 'Jack', lastName: 'Thompson' }], ['jack t'])
+  const plan = planRosterImport([{ firstName: 'Jack', lastName: 'Thompson' }], ['jack thompson'])
   assertEquals(plan.added, 0)
   assertEquals(plan.alreadyPresent, 1)
 })
 
 Deno.test('the shirt number rides the reduced row into the insert', () => {
   const plan = planRosterImport([{ firstName: 'Nine', lastName: 'Striker', shirtNumber: 9 }], [])
-  assertEquals(plan.inserts, [{ display_name: 'Nine S', shirt_number: 9 }])
+  assertEquals(plan.inserts, [{ display_name: 'Nine Striker', shirt_number: 9 }])
 })

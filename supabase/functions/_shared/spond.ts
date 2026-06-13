@@ -295,15 +295,18 @@ export function visibleGroupIds(groups: unknown): Set<string> {
 // the one place the Spond pipeline reads member names, deliberately
 // isolated here and pinned by spond_roster_test.ts.
 //
-// THE ROSTER NAME BOUNDARY (mirrors 0021_players.sql). From a Spond group
-// member only what the roster holds is ever read: a display name, reduced
-// to a first name plus last initial, and an optional shirt number if
-// Spond exposes one. Everything else the member object carries is never
-// read and never stored, in particular the member's guardians array
-// (guardian names, emails, phone numbers) and the member's own email and
-// phoneNumber. The member is reduced to name plus optional number in
-// memory and the rest is discarded, the same discipline buildEventRow
-// uses for events.
+// THE ROSTER NAME BOUNDARY (mirrors 0021_players.sql, updated by
+// 0023_players_fullname.sql). From a Spond group member only what the roster
+// holds is ever read: a display name, the child's full name as Spond gives it
+// (the first and last name fields joined), and an optional shirt number if
+// Spond exposes one. The full name is the user's decision: coaches know the
+// children by full name and the roster is the single source, so the minimal
+// form would be less readable than the Spond app it replaces. Everything else
+// the member object carries is never read and never stored, in particular the
+// member's guardians array (guardian names, emails, phone numbers) and the
+// member's own email and phoneNumber. The member is reduced to name plus
+// optional number in memory and the rest is discarded, the same discipline
+// buildEventRow uses for events.
 //
 // The member model is the reference library's (github.com/Olen/Spond,
 // read at build time, and the spond-classes Member dataclass it documents:
@@ -329,17 +332,17 @@ export interface RosterPlayer {
   shirt_number: number | null
 }
 
-// The child's name in the roster's minimum form: the first name plus the
-// last name's initial, e.g. "Jack T", from the member's firstName and
-// lastName (the reference library's Member.first_name and last_name). When
-// Spond gives only a single name field, it is stored as is. Always clamped
-// to ROSTER_NAME_MAX. Null when no usable name exists. The guardians array
-// and every other field are never read.
+// The child's full name as Spond gives it: the first and last name fields
+// joined, e.g. "Jack Thompson", from the member's firstName and lastName (the
+// reference library's Member.first_name and last_name). When Spond gives only
+// a single name field, it is stored as is. Always clamped to ROSTER_NAME_MAX,
+// truncating only the rare name genuinely longer than 40. Null when no usable
+// name exists. The guardians array and every other field are never read.
 export function rosterDisplayName(member: unknown): string | null {
   const m = asRecord(member)
   const first = typeof m.firstName === 'string' ? m.firstName.trim() : ''
   const last = typeof m.lastName === 'string' ? m.lastName.trim() : ''
-  const name = first && last ? `${first} ${last[0].toUpperCase()}` : first || last
+  const name = first && last ? `${first} ${last}` : first || last
   if (!name) return null
   return name.slice(0, ROSTER_NAME_MAX)
 }
@@ -404,8 +407,8 @@ export function selectGroupMembers(groups: unknown, groupId: string, subgroupId:
 // whose name is already on the roster, or already added earlier in this
 // run, is counted already present and never inserted a second time, so re
 // running the import creates no duplicates. A member with no usable name
-// is counted skipped. The comparison is case insensitive so "Jack T" does
-// not re add over an existing "jack t". Pure so the test pins the
+// is counted skipped. The comparison is case insensitive so "Jack Thompson"
+// does not re add over an existing "jack thompson". Pure so the test pins the
 // reduction and the de-dupe together.
 export interface RosterImportPlan {
   inserts: RosterPlayer[]

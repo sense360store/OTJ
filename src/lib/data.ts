@@ -35,10 +35,11 @@ export interface Team {
 }
 
 // A child on a team's roster, the first child data the app holds. The shape
-// is deliberately minimal: a display name (a first name, or first name plus
-// last initial, the coach's choice), an optional shirt number, and the team.
-// No date of birth, contact, medical or any other field, and no link to an
-// auth user (see 0021_players.sql for the full child data boundary). The
+// is deliberately minimal: a display name (the child's full name, typed by a
+// coach or brought over by a Spond squad import), an optional shirt number,
+// and the team. No date of birth, contact, medical or any other field, and no
+// link to an auth user (see 0021_players.sql, updated by
+// 0023_players_fullname.sql, for the full child data boundary). The
 // roster is readable and writable only by holders of sessions.create, never
 // parents.
 export interface Player {

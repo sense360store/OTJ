@@ -17,8 +17,12 @@
 //
 // THE ROSTER NAME BOUNDARY. This is the first time the Spond pipeline
 // reads names, and it is deliberately isolated. From each member only the
-// roster's fields are read: a display name reduced to a first name plus
-// last initial (e.g. "Jack T"), and a shirt number if Spond exposes one.
+// roster's fields are read: a display name, the child's full name as Spond
+// gives it (the first and last name fields joined, e.g. "Jack Thompson"),
+// and a shirt number if Spond exposes one. The full name is the user's
+// decision: coaches know the children by full name and the roster is the
+// single source, so the minimal form would be less readable than the Spond
+// app it replaces.
 // The member's guardians (names, emails, phone numbers), its own email and
 // phoneNumber, and every other profile field Spond returns are never read
 // and never stored, the same discipline buildEventRow uses for events. The
