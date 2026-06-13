@@ -108,8 +108,9 @@ function IntentionPills({ intentions }: { intentions: string[] }) {
 }
 
 // The gentle note a parent with no team assignment sees above club wide
-// content. The fix is an admin action, so the note points there.
-function NoTeamNote() {
+// content. The fix is an admin action, so the note points there. Shared with
+// the Sessions schedule, which scopes to the same member_teams.
+export function NoTeamNote() {
   return (
     <div className="parent-note">
       <Icon.flag />

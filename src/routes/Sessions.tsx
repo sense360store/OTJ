@@ -7,12 +7,13 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useMemberMap, useMyCapabilities, useTeamMap, useTeams } from '../lib/queries'
-import { sessionMinutes } from '../lib/data'
+import { useMemberMap, useMyCapabilities, useMyTeams, useTeamMap, useTeams } from '../lib/queries'
+import { memberTeamIds, sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, fmtDate, Loading, PHASE_COLOR } from '../components/ui'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
+import { NoTeamNote } from './ParentHome'
 import { downloadSessionIcs } from '../lib/ics'
 
 type Nav = ReturnType<typeof useNav>
@@ -151,29 +152,52 @@ export function Sessions() {
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
   // Members without sessions.create (parents) watch and follow; the create
-  // affordance and the planner links stay hidden for them.
+  // affordance and the planner links stay hidden for them, and the schedule
+  // scopes to their team rather than offering the club-wide ownership filter.
   const canPlan = caps.has('sessions.create')
   const { sessions, loading, error } = useSessions()
   const { data: teams = [] } = useTeams()
   const teamById = useTeamMap()
   const memberById = useMemberMap()
+  // The parent's team scope: their child's team(s), or every team via the all
+  // teams flag. The read rides the same member_teams policy ParentHome uses.
+  const { data: myTeams } = useMyTeams()
   const [view, setView] = useState<'mine' | 'all'>('mine')
   const [teamId, setTeamId] = useState('')
+  // Parents default to their team's schedule; a club wide toggle covers
+  // helping across teams.
+  const [parentScope, setParentScope] = useState<'team' | 'club'>('team')
   const [deleting, setDeleting] = useState<Session | null>(null)
 
   if (loading) return <Loading />
   if (error) return <ErrorNote />
 
-  // Members who cannot plan own no sessions, so the ownership filter
-  // disappears for them and they always see the whole club.
-  const effView = canPlan ? view : 'all'
-  // The filter's club value selects sessions saved without a team, a valid
-  // state for club-wide events. Team ids are UUIDs, so the sentinel is safe.
-  const list = sessions.filter(
-    (s) =>
-      (effView === 'mine' ? s.coachId === user?.id : true) &&
-      (!teamId || (teamId === 'club' ? !s.teamId : s.teamId === teamId)),
-  )
+  // The parent team scope, resolved the same way ParentHome resolves it: the
+  // member's teams, every team while the all teams flag is on, or none. Club
+  // sessions (no team) are shared with everyone, so they stay in scope. With
+  // no team set there is nothing to narrow to, so the club schedule shows with
+  // the gentle note. Teams gate no access; this only narrows the view.
+  const scope = myTeams ?? { teamIds: [], allTeams: false }
+  const effectiveIds = memberTeamIds(scope, Object.keys(teamById))
+  const hasTeam = scope.allTeams || scope.teamIds.length > 0
+  // The toggle earns its place only when the member's teams differ from the
+  // whole club: a specific selection, not the all teams flag and not no team.
+  const showParentToggle = !canPlan && !scope.allTeams && scope.teamIds.length > 0
+  const teamChipLabel = scope.teamIds.length > 1 ? 'My teams' : 'My team'
+  const teamScoped = (s: Session) => s.teamId == null || effectiveIds.includes(s.teamId)
+
+  // Coaches filter by ownership and an optional team; the club value selects
+  // sessions saved without a team. Parents see their team's schedule by
+  // default, the whole club when they toggle or hold no team.
+  const list = canPlan
+    ? sessions.filter(
+        (s) =>
+          (view === 'mine' ? s.coachId === user?.id : true) &&
+          (!teamId || (teamId === 'club' ? !s.teamId : s.teamId === teamId)),
+      )
+    : hasTeam && parentScope === 'team'
+      ? sessions.filter(teamScoped)
+      : sessions
 
   return (
     <div>
@@ -181,7 +205,11 @@ export function Sessions() {
         <div>
           <h2>Sessions</h2>
           <div className="sub">
-            {canPlan ? 'Training nights across the club. You see your own by default.' : 'Training nights across the club.'}
+            {canPlan
+              ? 'Training nights across the club. You see your own by default.'
+              : hasTeam
+                ? "Your team's training nights."
+                : 'Training nights across the club.'}
           </div>
         </div>
         {canPlan && (
@@ -192,37 +220,50 @@ export function Sessions() {
         )}
       </div>
 
-      <div className="filter-row" style={{ marginBottom: 18 }}>
-        {canPlan && (
-          <>
-            <Chip on={view === 'mine'} onClick={() => setView('mine')}>
-              My sessions
-            </Chip>
-            <Chip on={view === 'all'} onClick={() => setView('all')}>
-              All sessions
-            </Chip>
-          </>
-        )}
-        <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
-          <option value="">All teams</option>
-          <option value="club">Club</option>
-          {teams.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      </div>
+      {!canPlan && !hasTeam && <NoTeamNote />}
+
+      {(canPlan || showParentToggle) && (
+        <div className="filter-row" style={{ marginBottom: 18 }}>
+          {canPlan ? (
+            <>
+              <Chip on={view === 'mine'} onClick={() => setView('mine')}>
+                My sessions
+              </Chip>
+              <Chip on={view === 'all'} onClick={() => setView('all')}>
+                All sessions
+              </Chip>
+              <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
+                <option value="">All teams</option>
+                <option value="club">Club</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <>
+              <Chip on={parentScope === 'team'} onClick={() => setParentScope('team')}>
+                {teamChipLabel}
+              </Chip>
+              <Chip on={parentScope === 'club'} onClick={() => setParentScope('club')}>
+                All club
+              </Chip>
+            </>
+          )}
+        </div>
+      )}
 
       {list.length === 0 ? (
         <Empty icon={Icon.calendar} title="No sessions here yet">
-          {effView === 'mine' && !teamId
-            ? 'Plan your first session and it will appear here.'
-            : canPlan
-              ? 'Nothing matches this filter. Try All sessions or another team.'
-              : teamId
-                ? 'Nothing matches this filter. Try another team.'
-                : 'Nothing on the club calendar yet.'}
+          {canPlan
+            ? view === 'mine' && !teamId
+              ? 'Plan your first session and it will appear here.'
+              : 'Nothing matches this filter. Try All sessions or another team.'
+            : hasTeam && parentScope === 'team'
+              ? 'Nothing scheduled for your team yet. Tap All club to see the whole club.'
+              : 'Nothing on the club calendar yet.'}
         </Empty>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: 18 }}>

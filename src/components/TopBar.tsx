@@ -6,18 +6,31 @@ import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
 import { useMyCapabilities } from '../lib/queries'
 
+// The global search jumps into the drill library on focus, so it shows only
+// for members who have the library. Parents are scoped to their team's
+// schedule and have no library, so they get no search. Exported for the search
+// test.
+export function TopSearch({ canSearch }: { canSearch: boolean }) {
+  const navigate = useNavigate()
+  if (!canSearch) return null
+  return (
+    <div className="topbar-search">
+      <Icon.search />
+      <input placeholder="Search drills, skills, media…" onFocus={() => navigate('/library')} readOnly />
+    </div>
+  )
+}
+
 export function TopBar() {
   const navigate = useNavigate()
   const { dark, setDark } = useTheme()
   const { caps } = useMyCapabilities()
-  // The planner shortcut follows the capability that backs the planner.
+  // The planner shortcut and the global search both follow the coaching write
+  // capability the Home dispatch uses.
   const canPlan = caps.has('sessions.create')
   return (
     <div className="topbar">
-      <div className="topbar-search">
-        <Icon.search />
-        <input placeholder="Search drills, skills, media…" onFocus={() => navigate('/library')} readOnly />
-      </div>
+      <TopSearch canSearch={canPlan} />
       <div className="topbar-spacer"></div>
       <button className="icon-btn" title="Notifications">
         <Icon.bell />
