@@ -6,6 +6,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import {
   useActivityTitle,
+  useBoards,
   useDrillMap,
   useMediaMap,
   useMemberMap,
@@ -20,6 +21,7 @@ import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { Empty, ErrorNote, ListInput, Loading, MediaAttribution, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
 import { AddDrillModal } from '../components/AddDrillModal'
+import { BoardPickerModal } from '../components/BoardPicker'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { DiagramViewer } from '../components/DiagramViewer'
 import { MediaPlayerModal } from '../components/MediaPlayerModal'
@@ -50,6 +52,7 @@ function blankSession(coachId: string, teamId: string | null): Session {
     liveActivityIndex: null,
     liveActivityStartedAt: null,
     spondEventId: null,
+    boardId: null,
   }
 }
 
@@ -397,6 +400,7 @@ function PlannerEditor({
   const { caps } = useMyCapabilities()
   const { upsertSession } = useSessions()
   const { data: teams = [] } = useTeams()
+  const { data: boards = [] } = useBoards()
   const memberById = useMemberMap()
 
   const [session, setSession] = useState<Session>(() =>
@@ -405,6 +409,7 @@ function PlannerEditor({
       : blankSession(newDefaults?.coachId ?? '', newDefaults?.teamId ?? null),
   )
   const [addOpen, setAddOpen] = useState(false)
+  const [boardPickerOpen, setBoardPickerOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const dragFrom = useRef<number | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -426,6 +431,11 @@ function PlannerEditor({
     setSession((s) => ({ ...s, [k]: v }))
   const setIntentions = (v: string[]) => setSession((s) => ({ ...s, intentions: v }))
   const setTeam = (v: string) => setSession((s) => ({ ...s, teamId: v || null }))
+  const setBoard = (id: string | null) => setSession((s) => ({ ...s, boardId: id }))
+  // The attached board's name, resolved from the club list for the label. A
+  // board the coach cannot see (or one deleted) leaves boardId set but the
+  // lookup empty, so the control falls back to a neutral label.
+  const attachedBoard = session.boardId ? boards.find((b) => b.id === session.boardId) : undefined
   const removeAct = (i: number) => {
     setExpandedIdx(null)
     setSession((s) => ({ ...s, activities: s.activities.filter((_, j) => j !== i) }))
@@ -667,6 +677,41 @@ function PlannerEditor({
                 onChange={(e) => setField('sourceUrl', e.target.value)}
               />
             </div>
+            <div className="field">
+              <label>Tactics board</label>
+              {session.boardId ? (
+                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                  <span className="pill" style={{ flex: 1, minWidth: 0 }}>
+                    <Icon.layers />
+                    {attachedBoard?.name ?? 'Attached board'}
+                  </span>
+                  {!readOnly && (
+                    <>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBoardPickerOpen(true)}>
+                        Change
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-quiet btn-sm icon-only"
+                        aria-label="Remove board"
+                        onClick={() => setBoard(null)}
+                      >
+                        <Icon.x />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : readOnly ? (
+                <span className="muted" style={{ fontSize: 13 }}>
+                  None attached
+                </span>
+              ) : (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBoardPickerOpen(true)}>
+                  <Icon.plus />
+                  Attach a board
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Linking edits the draft like every other planner field; Save
@@ -728,6 +773,14 @@ function PlannerEditor({
             addActivities(items)
             setAddOpen(false)
           }}
+        />
+      )}
+      {boardPickerOpen && (
+        <BoardPickerModal
+          currentId={session.boardId}
+          defaultTeamId={session.teamId}
+          onSelect={setBoard}
+          onClose={() => setBoardPickerOpen(false)}
         />
       )}
       {deleteOpen && existing && (

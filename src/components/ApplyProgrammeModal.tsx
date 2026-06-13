@@ -147,6 +147,7 @@ export function ApplyProgrammeModal({
           liveActivityIndex: null,
           liveActivityStartedAt: null,
           spondEventId: null,
+          boardId: null,
         }
         await upsert.mutateAsync(s)
       }

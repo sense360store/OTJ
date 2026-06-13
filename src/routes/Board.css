@@ -150,6 +150,14 @@
 .board-disc:active {
   cursor: grabbing;
 }
+/* The read only disc on an embedded board: the same look, but it neither
+   grabs nor drags. */
+.board-disc-static {
+  cursor: default;
+}
+.board-disc-static:active {
+  cursor: default;
+}
 .side-home .board-disc {
   background: var(--token-home);
 }
@@ -178,6 +186,48 @@
 }
 .side-away .board-token-label:focus {
   box-shadow: 0 0 0 2px var(--token-away);
+}
+/* The read only label on an embedded board: plain text under the disc, no
+   input affordance. */
+.board-token-label-static {
+  display: inline-block;
+  width: 64px;
+  text-align: center;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The embedded board on the session day: a slightly tighter cap than the
+   editable page so it sits as one card among the rest. */
+.board-pitch-readonly {
+  max-width: 460px;
+}
+.sd-board-card {
+  margin-bottom: 12px;
+}
+.sd-board-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.sd-board-head h4 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+}
+.sd-board-actions {
+  display: flex;
+  gap: 6px;
 }
 
 /* The save bar: name the board and save it, with the quiet unsaved marker. */
