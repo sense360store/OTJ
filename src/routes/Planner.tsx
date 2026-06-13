@@ -14,7 +14,7 @@ import {
   useSession,
   useTeams,
 } from '../lib/queries'
-import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
+import { blankSession, embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
@@ -27,34 +27,7 @@ import { DiagramViewer } from '../components/DiagramViewer'
 import { MediaPlayerModal } from '../components/MediaPlayerModal'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { downloadSessionIcs } from '../lib/ics'
-
-// A new session belongs to the signed-in coach and defaults to their team
-// when one is set. Team is a filter and a default, never access control.
-function blankSession(coachId: string, teamId: string | null): Session {
-  return {
-    id: crypto.randomUUID(),
-    name: 'New Session',
-    date: '2026-06-16',
-    time: '17:30',
-    ageGroup: 'U8s',
-    venue: 'Springmill 3G',
-    focus: 'All-round',
-    status: 'upcoming',
-    activities: [],
-    coachId,
-    teamId,
-    intentions: [],
-    space: '',
-    sourceUrl: '',
-    sourceLabel: '',
-    programmeId: null,
-    programmeWeek: null,
-    liveActivityIndex: null,
-    liveActivityStartedAt: null,
-    spondEventId: null,
-    boardId: null,
-  }
-}
+import { PlanFromSpond } from '../components/PlanFromSpond'
 
 interface DragHandlers {
   onDragStart: DragEventHandler<HTMLDivElement>
@@ -494,6 +467,10 @@ function PlannerEditor({
 
       <div className="planner">
         <div className="timeline-wrap">
+          {/* A new session can start from a synced Spond event: picking one
+              creates its own pre filled session and navigates there, so the
+              surface shows only while building a fresh plan. */}
+          {!existing && <PlanFromSpond />}
           {session.intentions.length > 0 && (
             <div className="card" style={{ padding: '16px 18px', marginBottom: 14 }}>
               <div className="eyebrow" style={{ marginBottom: 8 }}>

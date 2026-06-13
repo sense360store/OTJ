@@ -3,6 +3,8 @@
 // of any kind happens here or anywhere else client side; the browser never
 // calls Spond, and the only Spond data the client touches is the counts and
 // event facts the spond_events read returns (CLAUDE.md, Spond integration).
+import { blankSession } from './data'
+import type { Session, SpondEvent } from './data'
 
 // The four counts in display order, the only attendance figures the app
 // holds. They key straight into SpondEvent.
@@ -97,4 +99,89 @@ export function spondEventWhen(startsAt: string): string {
   const date = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
   const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   return `${date} · ${time}`
+}
+
+// The event's local wall clock split into the session's yyyy-mm-dd date and
+// HH:mm time, the same instant the suggestion row shows through spondEventWhen.
+// An unreadable timestamp leaves both blank.
+export function spondEventLocalDateTime(startsAt: string): { date: string; time: string } {
+  const d = new Date(startsAt)
+  if (Number.isNaN(d.getTime())) return { date: '', time: '' }
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${min}` }
+}
+
+// Whether an event reads as training. The sync stores Spond's own
+// classification in spond_type, but this club creates plain events, so
+// spond_type is null in practice (never "MATCH"). The training filter is
+// therefore a title heuristic rather than a spond_type check: a title that
+// contains "training", case insensitive.
+export function isTrainingEvent(title: string): boolean {
+  return title.toLowerCase().includes('training')
+}
+
+// The "Plan from Spond" suggestions: synced events a coach could turn into a
+// session, ordered upcoming soonest first then recent past most recent first.
+// Drops events the coach has already planned (a session they own linked to
+// it), narrows to their teams plus club events (team_id null) unless the all
+// teams toggle widens it, and applies the training title heuristic when the
+// toggle is on. Pure so the screen wires it to live data and the test pins the
+// scope and ordering.
+export interface SpondPlanOptions {
+  events: SpondEvent[]
+  // Event ids the current coach already owns a session linked to. One event
+  // can be planned by several coaches, so this clears the suggestion for the
+  // owner only and leaves it for everyone else.
+  plannedEventIds: Set<string>
+  // The coach's effective team ids (member_teams resolved, every team when the
+  // all teams flag is set). Club events (team_id null) are always in scope.
+  scopeTeamIds: string[]
+  // Widen to every team's events, the club wide toggle.
+  showAllTeams: boolean
+  // The training title heuristic, on by default.
+  trainingOnly: boolean
+  now?: Date
+}
+
+export function spondPlanSuggestions({
+  events,
+  plannedEventIds,
+  scopeTeamIds,
+  showAllTeams,
+  trainingOnly,
+  now = new Date(),
+}: SpondPlanOptions): SpondEvent[] {
+  const at = now.getTime()
+  const inScope = (e: SpondEvent) => showAllTeams || e.teamId === null || scopeTeamIds.includes(e.teamId)
+  const pool = events.filter(
+    (e) => !plannedEventIds.has(e.id) && inScope(e) && (!trainingOnly || isTrainingEvent(e.title)),
+  )
+  const upcoming = pool
+    .filter((e) => Date.parse(e.startsAt) >= at)
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))
+  const past = pool
+    .filter((e) => Date.parse(e.startsAt) < at)
+    .sort((a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt))
+  return [...upcoming, ...past]
+}
+
+// The pre filled session "Plan this" creates: the tapping coach owns it, the
+// date and time come from the event, the team is the event's team or the
+// coach's default when the event is a club event with no team, and the link is
+// set so the session shows the attendance block. No drills are added; the
+// coach builds those in the planner. Rides the existing session create path
+// and its RLS, so no new policy. Pure so the test pins the carried fields.
+export function sessionFromSpondEvent(event: SpondEvent, coachId: string, defaultTeamId: string | null): Session {
+  const { date, time } = spondEventLocalDateTime(event.startsAt)
+  return {
+    ...blankSession(coachId, event.teamId ?? defaultTeamId),
+    name: event.title,
+    date,
+    time,
+    spondEventId: event.id,
+  }
 }

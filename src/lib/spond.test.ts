@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import { bySpondEventCloseness, parseSpondMappingInput, spondEventInTeam, spondTeamLabel, syncedAgo } from './spond'
+import {
+  bySpondEventCloseness,
+  isTrainingEvent,
+  parseSpondMappingInput,
+  sessionFromSpondEvent,
+  spondEventInTeam,
+  spondEventLocalDateTime,
+  spondPlanSuggestions,
+  spondTeamLabel,
+  syncedAgo,
+} from './spond'
+import type { SpondEvent } from './data'
+
+// A synced event fixture: counts and event facts only, the shape the
+// spond_events read returns. Overrides set the fields a case turns on.
+function ev(over: Partial<SpondEvent> & Pick<SpondEvent, 'id' | 'startsAt'>): SpondEvent {
+  return {
+    title: 'Training',
+    teamId: null,
+    teamName: null,
+    spondType: null,
+    accepted: 0,
+    declined: 0,
+    unanswered: 0,
+    waiting: 0,
+    cancelled: false,
+    syncedAt: '2026-06-13T12:00:00Z',
+    ...over,
+  }
+}
 
 // Real Spond ids are 32 character uppercase hex strings.
 const GROUP = 'A1B2C3D4E5F60718293A4B5C6D7E8F90'
@@ -93,6 +122,112 @@ describe('spondEventInTeam', () => {
   it('shows a club event under every team filter', () => {
     expect(spondEventInTeam({ teamId: null }, 'team-1')).toBe(true)
     expect(spondEventInTeam({ teamId: null }, 'team-2')).toBe(true)
+  })
+})
+
+describe('isTrainingEvent', () => {
+  it('matches training in the title, case insensitive', () => {
+    expect(isTrainingEvent('U8 Training')).toBe(true)
+    expect(isTrainingEvent('Monday training night')).toBe(true)
+    expect(isTrainingEvent('TRAINING')).toBe(true)
+  })
+
+  it('does not match events without training in the title', () => {
+    expect(isTrainingEvent('Friendly vs Horbury')).toBe(false)
+    expect(isTrainingEvent('End of season tournament')).toBe(false)
+  })
+})
+
+describe('spondEventLocalDateTime', () => {
+  it('splits a local timestamp into the session date and time', () => {
+    // A timestamp with no zone is read as local, so the wall clock round trips
+    // in any timezone the test runs under.
+    expect(spondEventLocalDateTime('2026-06-16T17:30:00')).toEqual({ date: '2026-06-16', time: '17:30' })
+  })
+
+  it('returns blanks for an unreadable timestamp', () => {
+    expect(spondEventLocalDateTime('not a time')).toEqual({ date: '', time: '' })
+  })
+})
+
+describe('spondPlanSuggestions', () => {
+  const now = new Date('2026-06-13T12:00:00Z')
+  const opts = {
+    plannedEventIds: new Set<string>(),
+    scopeTeamIds: ['team-1'],
+    showAllTeams: false,
+    trainingOnly: true,
+    now,
+  }
+
+  it("shows the coach's team events and club events, not other teams'", () => {
+    const events = [
+      ev({ id: 'mine', startsAt: '2026-06-16T17:30:00Z', teamId: 'team-1' }),
+      ev({ id: 'club', startsAt: '2026-06-17T17:30:00Z', teamId: null }),
+      ev({ id: 'other', startsAt: '2026-06-18T17:30:00Z', teamId: 'team-2' }),
+    ]
+    expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual(['mine', 'club'])
+  })
+
+  it('widens to every team when the all teams toggle is on', () => {
+    const events = [
+      ev({ id: 'mine', startsAt: '2026-06-16T17:30:00Z', teamId: 'team-1' }),
+      ev({ id: 'other', startsAt: '2026-06-18T17:30:00Z', teamId: 'team-2' }),
+    ]
+    expect(spondPlanSuggestions({ ...opts, events, showAllTeams: true }).map((e) => e.id)).toEqual(['mine', 'other'])
+  })
+
+  it('narrows by the training title heuristic, and widens when it is off', () => {
+    const events = [
+      ev({ id: 'train', startsAt: '2026-06-16T17:30:00Z', teamId: 'team-1', title: 'U8 Training' }),
+      ev({ id: 'match', startsAt: '2026-06-17T17:30:00Z', teamId: 'team-1', title: 'Friendly vs Horbury' }),
+    ]
+    expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual(['train'])
+    expect(spondPlanSuggestions({ ...opts, events, trainingOnly: false }).map((e) => e.id)).toEqual(['train', 'match'])
+  })
+
+  it("drops an event the coach has already planned, and keeps the rest", () => {
+    const events = [
+      ev({ id: 'planned', startsAt: '2026-06-16T17:30:00Z', teamId: 'team-1' }),
+      ev({ id: 'open', startsAt: '2026-06-17T17:30:00Z', teamId: 'team-1' }),
+    ]
+    const out = spondPlanSuggestions({ ...opts, events, plannedEventIds: new Set(['planned']) })
+    expect(out.map((e) => e.id)).toEqual(['open'])
+  })
+
+  it('orders upcoming soonest first, then recent past most recent first', () => {
+    const events = [
+      ev({ id: 'past-old', startsAt: '2026-06-06T17:30:00Z', teamId: 'team-1' }),
+      ev({ id: 'soon', startsAt: '2026-06-14T17:30:00Z', teamId: 'team-1' }),
+      ev({ id: 'later', startsAt: '2026-06-20T17:30:00Z', teamId: 'team-1' }),
+      ev({ id: 'past-recent', startsAt: '2026-06-10T17:30:00Z', teamId: 'team-1' }),
+    ]
+    expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual([
+      'soon',
+      'later',
+      'past-recent',
+      'past-old',
+    ])
+  })
+})
+
+describe('sessionFromSpondEvent', () => {
+  it("carries the event's date, time, team and link, owned by the coach", () => {
+    const event = ev({ id: 'e1', startsAt: '2026-06-16T17:30:00', teamId: 'team-1', title: 'U8 Training' })
+    const s = sessionFromSpondEvent(event, 'coach-1', 'default-team')
+    expect(s.coachId).toBe('coach-1')
+    expect(s.teamId).toBe('team-1')
+    expect(s.spondEventId).toBe('e1')
+    expect(s.name).toBe('U8 Training')
+    expect(s.date).toBe('2026-06-16')
+    expect(s.time).toBe('17:30')
+    // Nothing is auto added; the coach builds the drills in the planner.
+    expect(s.activities).toEqual([])
+  })
+
+  it("falls back to the coach's default team for a club event with no team", () => {
+    const event = ev({ id: 'e2', startsAt: '2026-06-16T17:30:00', teamId: null })
+    expect(sessionFromSpondEvent(event, 'coach-1', 'default-team').teamId).toBe('default-team')
   })
 })
 
