@@ -46,4 +46,14 @@ describe('TacticsBoardView', () => {
     expect(html).not.toContain('Jordan')
     expect(html).not.toContain('Sam')
   })
+
+  it('keeps a long display name accessible in full when the pill truncates', () => {
+    // A long full name seeded from a roster. The pill sizes to its content up
+    // to a CSS max and may truncate visually, but the full name is never lost:
+    // it stays on the title attribute (hover or tap) and the disc's aria-label.
+    const long: Token[] = [{ id: 'home-2', number: 2, label: 'William McKenzie', side: 'home', x: 0.5, y: 0.6 }]
+    const html = renderToStaticMarkup(<TacticsBoardView tokens={long} />)
+    expect(html).toContain('title="William McKenzie"')
+    expect(html).toContain('aria-label="Player 2 William McKenzie"')
+  })
 })

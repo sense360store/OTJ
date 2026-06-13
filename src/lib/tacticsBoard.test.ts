@@ -129,6 +129,29 @@ describe('rosterTokens', () => {
     expect(new Set(numbers).size).toBe(numbers.length)
   })
 
+  it('shows the position index when no shirt number is set, the number when it is', () => {
+    // Spond supplies no shirt numbers, so a roster seeded from it has every
+    // shirtNumber null and the disc number falls back to the 1 based board
+    // position. A real shirt number, when one is present, shows instead.
+    const noNumbers: RosterPlayer[] = [
+      { displayName: 'Theo Draper', shirtNumber: null },
+      { displayName: 'William McKenzie', shirtNumber: null },
+      { displayName: 'Bekki Marsh', shirtNumber: null },
+    ]
+    expect(rosterTokens(noNumbers, 'home').map((t) => t.number)).toEqual([1, 2, 3])
+
+    const oneNumbered: RosterPlayer[] = [
+      { displayName: 'Theo Draper', shirtNumber: null },
+      { displayName: 'William McKenzie', shirtNumber: 10 },
+      { displayName: 'Bekki Marsh', shirtNumber: null },
+    ]
+    const numbers = rosterTokens(oneNumbered, 'home').map((t) => t.number)
+    // The numbered player shows the real shirt number; the others take a free
+    // position index that never collides with it.
+    expect(numbers[1]).toBe(10)
+    expect(new Set(numbers).size).toBe(numbers.length)
+  })
+
   it('seats the away roster in the far half, mirroring home', () => {
     const home = rosterTokens(roster, 'home')
     const away = rosterTokens(roster, 'away')
