@@ -83,7 +83,10 @@
 }
 
 /* The pitch holds its proportions and centres, filling the width up to a cap
-   so it stays a sane height on a wide screen and fills a phone. */
+   so it stays a sane height on a wide screen and fills a phone. The pitch
+   itself does not suppress touch: only the token being dragged does (see
+   .board-disc), so the page pans normally around the pitch and a read only
+   board never captures touch. */
 .board-pitch {
   position: relative;
   width: 100%;
@@ -94,7 +97,6 @@
   overflow: hidden;
   background: var(--pitch-grass);
   box-shadow: var(--shadow-sm);
-  touch-action: none;
 }
 .board-pitch-svg {
   position: absolute;
@@ -150,10 +152,12 @@
 .board-disc:active {
   cursor: grabbing;
 }
-/* The read only disc on an embedded board: the same look, but it neither
-   grabs nor drags. */
+/* The read only disc on an embedded board or a board in view mode: the same
+   look, but it neither grabs nor drags, and it does not suppress touch, so the
+   page pans freely over it. */
 .board-disc-static {
   cursor: default;
+  touch-action: auto;
 }
 .board-disc-static:active {
   cursor: default;
@@ -228,6 +232,49 @@
 .sd-board-actions {
   display: flex;
   gap: 6px;
+}
+
+/* The mode bar: the view or edit status in text and the mode actions. In view
+   mode it carries the single prominent Edit board button; in edit mode the Done
+   and Cancel actions. */
+.board-mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.board-mode-text {
+  flex: 1;
+  min-width: 200px;
+}
+.board-mode-title {
+  font-family: var(--display, inherit);
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--ink);
+}
+.board-mode-text .sub {
+  font-size: 12.5px;
+  color: var(--slate);
+  margin-top: 2px;
+}
+.board-mode-actions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .board-edit-btn {
+    width: 100%;
+  }
+  .board-mode-actions {
+    width: 100%;
+  }
+  .board-mode-actions .btn {
+    flex: 1;
+  }
 }
 
 /* The save bar: name the board and save it, with the quiet unsaved marker. */

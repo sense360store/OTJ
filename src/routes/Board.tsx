@@ -26,19 +26,28 @@ import {
 } from '../lib/queries'
 import {
   boardIsDirty,
+  captureBoardEdit,
   FORMATIONS,
   formationPositions,
   nextNumber,
   rosterTokens,
   type Board,
+  type BoardEdit,
   type BoardSnapshot,
   type Token,
   type TokenSide,
 } from '../lib/tacticsBoard'
+import type { Team } from '../lib/data'
 import { Icon } from '../components/icons'
 import { TacticsPitch } from '../components/TacticsPitch'
+import { TacticsBoardView } from '../components/TacticsBoardView'
 import { ErrorNote, Loading, Modal } from '../components/ui'
 import './Board.css'
+
+// The board page opens read only and enters editing on demand, so a coach can
+// scroll the page on a phone (the read only pitch attaches no drag handlers and
+// does not capture touch) and only reaches the tools when they choose to edit.
+export type BoardMode = 'view' | 'edit'
 
 // A coarse "updated 20 minutes ago" label for the saved boards list. Freshness
 // not precision, matching the rest of the app's relative times.
@@ -87,6 +96,12 @@ export function Board() {
   const [savedSnapshot, setSavedSnapshot] = useState<BoardSnapshot | null>(null)
 
   const [browsing, setBrowsing] = useState(false)
+
+  // The page opens read only and enters editing on demand. editBaseline holds
+  // the editable state as it was when edit mode was entered, so Cancel restores
+  // it; it is null outside edit mode.
+  const [mode, setMode] = useState<BoardMode>('view')
+  const [editBaseline, setEditBaseline] = useState<BoardEdit | null>(null)
 
   const save = useSaveBoard()
 
@@ -152,11 +167,38 @@ export function Board() {
     setTokens((prev) => prev.map((t) => (t.id === id ? { ...t, label } : t)))
   }
 
+  // Enter edit mode, snapshotting the editable state so Cancel can restore it.
+  function enterEdit() {
+    setEditBaseline(captureBoardEdit({ name, formation, side, teamId, tokens }))
+    setMode('edit')
+  }
+
+  // Done keeps the on-screen changes and returns to viewing. It does not save to
+  // the database; the save button and the unsaved indicator are unchanged.
+  function doneEdit() {
+    setEditBaseline(null)
+    setMode('view')
+  }
+
+  // Cancel reverts to the board as it was when edit mode was entered, then
+  // returns to viewing.
+  function cancelEdit() {
+    if (editBaseline) {
+      setName(editBaseline.name)
+      setFormation(editBaseline.formation)
+      setSide(editBaseline.side)
+      setTeamId(editBaseline.teamId)
+      setTokens(editBaseline.tokens)
+    }
+    setEditBaseline(null)
+    setMode('view')
+  }
+
   // Load a saved board onto the pitch, replacing the current state and marking
   // it clean. A board saved with no team (its team was later deleted) falls
   // back to the default team the same way a fresh board does, so the baseline
   // records that resolved team rather than the stored null, and loading alone
-  // never reads as an unsaved change.
+  // never reads as an unsaved change. A loaded board lands in view mode.
   function loadBoard(b: Board) {
     const resolvedTeam = b.teamId ?? profile?.team_id ?? teamList[0]?.id ?? null
     setTokens(b.tokens)
@@ -166,16 +208,21 @@ export function Board() {
     setLoadedId(b.id)
     setSavedSnapshot({ name: b.name, formation: b.formation ?? '', teamId: resolvedTeam, tokens: b.tokens })
     setBrowsing(false)
+    setEditBaseline(null)
+    setMode('view')
   }
 
   // Start a fresh board, clearing the pitch and detaching from any loaded one.
-  // The baseline falls back to the empty pitch, so no snapshot is needed.
+  // The baseline falls back to the empty pitch, so no snapshot is needed. A new
+  // board opens straight into editing, the one place a coach starts building.
   function newBoard() {
     setTokens([])
     setFormation('')
     setName('')
     setLoadedId(null)
     setSavedSnapshot(null)
+    setEditBaseline(captureBoardEdit({ name: '', formation: '', side, teamId, tokens: [] }))
+    setMode('edit')
   }
 
   function saveBoard() {
@@ -211,10 +258,156 @@ export function Board() {
         </div>
       </div>
 
+      <BoardStage
+        mode={mode}
+        tokens={tokens}
+        onEdit={enterEdit}
+        onDone={doneEdit}
+        onCancel={cancelEdit}
+        onMove={moveToken}
+        onLabel={labelToken}
+        teamList={teamList}
+        selectedTeam={selectedTeam}
+        onTeam={setTeamId}
+        formation={formation}
+        onFormation={placeFormation}
+        side={side}
+        onSide={setSide}
+        teamPlayerCount={teamPlayers.length}
+        onSeedRoster={seedFromRoster}
+        onAddToken={addToken}
+        onRemoveToken={removeToken}
+        onClear={() => setTokens([])}
+        name={name}
+        onName={setName}
+        dirty={dirty}
+        canSave={canSave}
+        saving={save.isPending}
+        saveError={save.isError ? save.error.message : null}
+        loadedId={loadedId}
+        onSave={saveBoard}
+      />
+
+      {browsing && (
+        <BoardsModal
+          currentUserId={user?.id}
+          isAdmin={isAdmin}
+          dirty={dirty}
+          onLoad={loadBoard}
+          onClose={() => setBrowsing(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// The board surface and its mode bar, pulled out so the two modes are one
+// testable unit. View mode renders the read only TacticsBoardView (no drag
+// handlers, the page scrolls and pans normally) under a prominent Edit board
+// button. Edit mode renders the editable TacticsPitch with the full toolset and
+// the Done and Cancel actions. The mode is conveyed in text (the status line),
+// not by colour alone, and Edit board, Done and Cancel are real buttons.
+export function BoardStage({
+  mode,
+  tokens,
+  onEdit,
+  onDone,
+  onCancel,
+  onMove,
+  onLabel,
+  teamList,
+  selectedTeam,
+  onTeam,
+  formation,
+  onFormation,
+  side,
+  onSide,
+  teamPlayerCount,
+  onSeedRoster,
+  onAddToken,
+  onRemoveToken,
+  onClear,
+  name,
+  onName,
+  dirty,
+  canSave,
+  saving,
+  saveError,
+  loadedId,
+  onSave,
+}: {
+  mode: BoardMode
+  tokens: Token[]
+  onEdit: () => void
+  onDone: () => void
+  onCancel: () => void
+  onMove: (id: string, x: number, y: number) => void
+  onLabel: (id: string, label: string) => void
+  teamList: Team[]
+  selectedTeam: string
+  onTeam: (id: string) => void
+  formation: string
+  onFormation: (key: string) => void
+  side: TokenSide
+  onSide: (side: TokenSide) => void
+  teamPlayerCount: number
+  onSeedRoster: () => void
+  onAddToken: () => void
+  onRemoveToken: () => void
+  onClear: () => void
+  name: string
+  onName: (name: string) => void
+  dirty: boolean
+  canSave: boolean
+  saving: boolean
+  saveError: string | null
+  loadedId: string | null
+  onSave: () => void
+}) {
+  if (mode === 'view') {
+    return (
+      <>
+        <div className="card board-mode-bar">
+          <div className="board-mode-text">
+            <div className="board-mode-title" role="status">
+              Viewing
+            </div>
+            <div className="sub">The board is read only. Edit to move players and use the tools.</div>
+          </div>
+          <button type="button" className="btn btn-primary board-edit-btn" onClick={onEdit}>
+            <Icon.edit />
+            Edit board
+          </button>
+        </div>
+        <TacticsBoardView tokens={tokens} />
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className="card board-mode-bar">
+        <div className="board-mode-text">
+          <div className="board-mode-title" role="status">
+            Editing
+          </div>
+          <div className="sub">Done returns to viewing. Save persists the board.</div>
+        </div>
+        <div className="board-mode-actions">
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-primary" onClick={onDone}>
+            <Icon.check />
+            Done
+          </button>
+        </div>
+      </div>
+
       <div className="card board-controls">
         <label className="board-field">
           <span>Team</span>
-          <select className="select" value={selectedTeam} onChange={(e) => setTeamId(e.target.value)}>
+          <select className="select" value={selectedTeam} onChange={(e) => onTeam(e.target.value)}>
             {teamList.length === 0 && <option value="">No teams</option>}
             {teamList.map((t) => (
               <option key={t.id} value={t.id}>
@@ -226,7 +419,7 @@ export function Board() {
 
         <label className="board-field">
           <span>Formation</span>
-          <select className="select" value={formation} onChange={(e) => placeFormation(e.target.value)}>
+          <select className="select" value={formation} onChange={(e) => onFormation(e.target.value)}>
             <option value="">Place a formation…</option>
             {FORMATIONS.map((f) => (
               <option key={f.key} value={f.key}>
@@ -241,16 +434,16 @@ export function Board() {
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={seedFromRoster}
-            disabled={teamPlayers.length === 0}
+            onClick={onSeedRoster}
+            disabled={teamPlayerCount === 0}
             title={
-              teamPlayers.length === 0
+              teamPlayerCount === 0
                 ? 'This team has no roster. Add players in Roster, or place a formation.'
                 : undefined
             }
           >
             <Icon.users />
-            {teamPlayers.length === 0 ? 'No roster' : `Seed ${side} from roster (${teamPlayers.length})`}
+            {teamPlayerCount === 0 ? 'No roster' : `Seed ${side} from roster (${teamPlayerCount})`}
           </button>
         </div>
 
@@ -261,7 +454,7 @@ export function Board() {
               type="button"
               className={'board-side home' + (side === 'home' ? ' active' : '')}
               aria-pressed={side === 'home'}
-              onClick={() => setSide('home')}
+              onClick={() => onSide('home')}
             >
               Home
             </button>
@@ -269,7 +462,7 @@ export function Board() {
               type="button"
               className={'board-side away' + (side === 'away' ? ' active' : '')}
               aria-pressed={side === 'away'}
-              onClick={() => setSide('away')}
+              onClick={() => onSide('away')}
             >
               Away
             </button>
@@ -277,15 +470,15 @@ export function Board() {
         </div>
 
         <div className="board-actions">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={addToken}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onAddToken}>
             <Icon.plus />
             Add token
           </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={removeToken} disabled={tokens.length === 0}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onRemoveToken} disabled={tokens.length === 0}>
             <Icon.x />
             Remove token
           </button>
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => setTokens([])} disabled={tokens.length === 0}>
+          <button type="button" className="btn btn-quiet btn-sm" onClick={onClear} disabled={tokens.length === 0}>
             <Icon.trash />
             Clear board
           </button>
@@ -298,7 +491,7 @@ export function Board() {
           <input
             className="input"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => onName(e.target.value)}
             placeholder="e.g. Titans 2-3-1 high press"
             maxLength={80}
           />
@@ -309,30 +502,20 @@ export function Board() {
               Unsaved changes
             </span>
           )}
-          <button type="button" className="btn btn-primary" onClick={saveBoard} disabled={!canSave}>
+          <button type="button" className="btn btn-primary" onClick={onSave} disabled={!canSave}>
             <Icon.check />
-            {save.isPending ? 'Saving…' : loadedId ? 'Save changes' : 'Save board'}
+            {saving ? 'Saving…' : loadedId ? 'Save changes' : 'Save board'}
           </button>
         </div>
-        {save.isError && (
+        {saveError && (
           <p className="board-save-error" role="alert">
-            {save.error.message}
+            {saveError}
           </p>
         )}
       </div>
 
-      <TacticsPitch tokens={tokens} onMove={moveToken} onLabel={labelToken} />
-
-      {browsing && (
-        <BoardsModal
-          currentUserId={user?.id}
-          isAdmin={isAdmin}
-          dirty={dirty}
-          onLoad={loadBoard}
-          onClose={() => setBrowsing(false)}
-        />
-      )}
-    </div>
+      <TacticsPitch tokens={tokens} onMove={onMove} onLabel={onLabel} />
+    </>
   )
 }
 
