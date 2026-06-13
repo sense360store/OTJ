@@ -45,6 +45,8 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, sortRoles, youtubeId } from './data'
+import type { Board, Token } from './tacticsBoard'
+import { deserializeTokens, serializeTokens } from './tacticsBoard'
 import { sourceLabelForUrl } from './fa'
 import { formatBytes } from './faAttach'
 import type { AttachPlan } from './faAttach'
@@ -2863,5 +2865,156 @@ export function useRemoveUser() {
       qc.invalidateQueries({ queryKey: ['templates'] })
       qc.invalidateQueries({ queryKey: ['programmes'] })
     },
+  })
+}
+
+// ---- Tactics boards --------------------------------------------------------
+// The save and load layer for the tactics board. Reads are club wide (select
+// is club wide RLS), so the list is every board in the club; ownership only
+// decides who may rename or delete. The tokens jsonb carries no person data,
+// only the numbers and free text labels a coach typed (0020_boards.sql); the
+// mappers below go through serializeTokens and deserializeTokens, the single
+// seam between the stored array and the board's state shape. updated_at has no
+// trigger, so the write hooks set it in application code.
+
+interface BoardRow {
+  id: string
+  name: string
+  formation: string | null
+  team_id: string | null
+  tokens: unknown
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+const BOARD_COLS = 'id, name, formation, team_id, tokens, created_by, created_at, updated_at'
+
+function toBoard(r: BoardRow): Board {
+  return {
+    id: r.id,
+    name: r.name,
+    formation: r.formation,
+    teamId: r.team_id,
+    tokens: deserializeTokens(r.tokens),
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
+// The club's saved boards, newest first by last update so the most recently
+// touched board sits at the top of the list.
+export function useBoards() {
+  return useQuery({
+    queryKey: ['boards'],
+    queryFn: async (): Promise<Board[]> => {
+      const { data, error } = await supabase
+        .from('boards')
+        .select(BOARD_COLS)
+        .order('updated_at', { ascending: false })
+        .order('id', { ascending: true })
+      if (error) throw error
+      return (data as unknown as BoardRow[]).map(toBoard)
+    },
+  })
+}
+
+export interface BoardInput {
+  // Null inserts a fresh board; a present id updates the board already loaded.
+  id: string | null
+  name: string
+  formation: string | null
+  teamId: string | null
+  tokens: Token[]
+}
+
+// Saves the current board: a present id updates that board, a null id inserts
+// a fresh one. Insert sets club_id and created_by from the signed-in user,
+// which the RLS insert check requires; update sends neither, so a board never
+// changes club or owner. updated_at is set here because the schema carries no
+// updated_at trigger. The boards RLS is the real enforcement; the page only
+// decides whether to surface the action.
+export function useSaveBoard() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<Board, Error, BoardInput>({
+    mutationFn: async (input) => {
+      const name = input.name.trim()
+      if (!name) throw new Error('Give the board a name before saving.')
+      const tokens = serializeTokens(input.tokens)
+
+      if (input.id) {
+        const { data, error } = await supabase
+          .from('boards')
+          .update({
+            name,
+            formation: input.formation || null,
+            team_id: input.teamId,
+            tokens,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', input.id)
+          .select(BOARD_COLS)
+          .single()
+        if (error) throw error
+        return toBoard(data as unknown as BoardRow)
+      }
+
+      if (!user || !profile?.club_id) {
+        throw new Error('You must be signed in to save a board.')
+      }
+      const { data, error } = await supabase
+        .from('boards')
+        .insert({
+          club_id: profile.club_id,
+          created_by: user.id,
+          name,
+          formation: input.formation || null,
+          team_id: input.teamId,
+          tokens,
+        })
+        .select(BOARD_COLS)
+        .single()
+      if (error) throw error
+      return toBoard(data as unknown as BoardRow)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['boards'] }),
+  })
+}
+
+// Renames a board in place. Creator or admin only; the boards update RLS is
+// the real enforcement, and a write it blocks updates no rows, which is
+// reported rather than swallowed. updated_at is set here for the same reason
+// as the save.
+export function useRenameBoard() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name: string }>({
+    mutationFn: async ({ id, name }) => {
+      const trimmed = name.trim()
+      if (!trimmed) throw new Error('Enter a name.')
+      const { data, error } = await supabase
+        .from('boards')
+        .update({ name: trimmed, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('You can only rename your own boards.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['boards'] }),
+  })
+}
+
+// Creator or admin only; the boards delete RLS is the real enforcement, and a
+// blocked delete (no error, zero rows) removes nothing and is reported.
+export function useDeleteBoard() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { data, error } = await supabase.from('boards').delete().eq('id', id).select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('You can only delete your own boards.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['boards'] }),
   })
 }
