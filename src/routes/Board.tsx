@@ -18,6 +18,7 @@ import {
   useDeleteBoard,
   useMemberMap,
   useMyCapabilities,
+  usePlayers,
   useRenameBoard,
   useSaveBoard,
   useTeamMap,
@@ -28,6 +29,7 @@ import {
   FORMATIONS,
   formationPositions,
   nextNumber,
+  rosterTokens,
   type Board,
   type BoardSnapshot,
   type Token,
@@ -58,6 +60,11 @@ export function Board() {
   const isAdmin = caps.has('club.manage')
   const { data: teams } = useTeams()
   const teamList = teams ?? []
+  // The roster source: a team's real players, the opt in alternative to the
+  // formation picker. The players read is gated on sessions.create by RLS, the
+  // same capability that gates this page, so it returns nothing for a parent
+  // (who never reaches the board anyway).
+  const { data: players = [] } = usePlayers()
   // The team selector frames the board and is saved with it. It defaults to
   // the coach's team; tokens come from the formation picker and the add
   // control until a roster lands.
@@ -94,6 +101,9 @@ export function Board() {
     loadedId && savedSnapshot ? savedSnapshot : { name: '', formation: '', teamId: selectedTeam || null, tokens: [] }
   const dirty = boardIsDirty(current, baseline)
 
+  // The selected team's roster, the source the "Seed from roster" control uses.
+  const teamPlayers = useMemo(() => players.filter((p) => p.teamId === selectedTeam), [players, selectedTeam])
+
   // Placing a formation replaces that side's tokens and leaves the other side
   // alone, so home and away can sit on the board together.
   function placeFormation(key: string) {
@@ -101,6 +111,23 @@ export function Board() {
     const placed = formationPositions(key, side)
     setTokens((prev) => [...prev.filter((t) => t.side !== side), ...placed])
     setFormation(key)
+  }
+
+  // Seed the current side from the selected team's roster, the opt in
+  // alternative to a formation: one token per player, the display name copied
+  // into the token label and the shirt number used as the number. It replaces
+  // that side's tokens the way a formation does and clears the formation key,
+  // since the shape no longer came from a picker. The label is a plain string
+  // snapshot of the name with no link back to the player, so a board saved from
+  // here never breaks when a player is later renamed or removed.
+  function seedFromRoster() {
+    if (teamPlayers.length === 0) return
+    const placed = rosterTokens(
+      teamPlayers.map((p) => ({ displayName: p.displayName, shirtNumber: p.shirtNumber })),
+      side,
+    )
+    setTokens((prev) => [...prev.filter((t) => t.side !== side), ...placed])
+    setFormation('')
   }
 
   function addToken() {
@@ -208,6 +235,24 @@ export function Board() {
             ))}
           </select>
         </label>
+
+        <div className="board-field">
+          <span>Roster</span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={seedFromRoster}
+            disabled={teamPlayers.length === 0}
+            title={
+              teamPlayers.length === 0
+                ? 'This team has no roster. Add players in Roster, or place a formation.'
+                : undefined
+            }
+          >
+            <Icon.users />
+            {teamPlayers.length === 0 ? 'No roster' : `Seed ${side} from roster (${teamPlayers.length})`}
+          </button>
+        </div>
 
         <div className="board-field">
           <span>Add as</span>

@@ -55,6 +55,7 @@ const FULL_NAV: NavSection[] = [
       SESSIONS,
       { id: 'planner', label: 'Session Planner', icon: Icon.layers, to: '/planner' },
       { id: 'board', label: 'Tactics Board', icon: Icon.target, to: '/board' },
+      { id: 'roster', label: 'Roster', icon: Icon.users, to: '/roster' },
       { id: 'programmes', label: 'Programmes', icon: Icon.list, to: '/programmes' },
     ],
   },

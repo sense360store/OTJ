@@ -34,6 +34,21 @@ export interface Team {
   name: string
 }
 
+// A child on a team's roster, the first child data the app holds. The shape
+// is deliberately minimal: a display name (a first name, or first name plus
+// last initial, the coach's choice), an optional shirt number, and the team.
+// No date of birth, contact, medical or any other field, and no link to an
+// auth user (see 0021_players.sql for the full child data boundary). The
+// roster is readable and writable only by holders of sessions.create, never
+// parents.
+export interface Player {
+  id: string
+  teamId: string
+  displayName: string
+  shirtNumber: number | null
+  createdBy: string
+}
+
 // A role as a row in the roles table: the four seeded system roles plus any
 // custom roles the club's admins create. key is the stable slug code refers
 // to; label is what the UI shows; system rows cannot be deleted or re-keyed.
