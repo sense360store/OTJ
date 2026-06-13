@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   bySpondEventCloseness,
   isTrainingEvent,
+  mappingForTeam,
   parseSpondMappingInput,
   sessionFromSpondEvent,
   spondEventInTeam,
@@ -10,7 +11,7 @@ import {
   spondTeamLabel,
   syncedAgo,
 } from './spond'
-import type { SpondEvent } from './data'
+import type { SpondEvent, SpondMapping } from './data'
 
 // A synced event fixture: counts and event facts only, the shape the
 // spond_events read returns. Overrides set the fields a case turns on.
@@ -228,6 +229,39 @@ describe('sessionFromSpondEvent', () => {
   it("falls back to the coach's default team for a club event with no team", () => {
     const event = ev({ id: 'e2', startsAt: '2026-06-16T17:30:00', teamId: null })
     expect(sessionFromSpondEvent(event, 'coach-1', 'default-team').teamId).toBe('default-team')
+  })
+})
+
+describe('mappingForTeam', () => {
+  const mapping = (over: Partial<SpondMapping>): SpondMapping => ({
+    id: 'm1',
+    groupId: 'GROUPID',
+    subgroupId: null,
+    name: 'U8 Tigers',
+    teamId: 'team-1',
+    teamName: 'Titans',
+    createdAt: '2026-06-01T00:00:00Z',
+    ...over,
+  })
+
+  it('offers import only when the team has a mapping', () => {
+    const mappings = [mapping({ id: 'm1', teamId: 'team-1' })]
+    // A mapped team gets a mapping back, so the import affordance shows.
+    expect(mappingForTeam(mappings, 'team-1')?.id).toBe('m1')
+    // An unmapped team gets null, so the import affordance is hidden.
+    expect(mappingForTeam(mappings, 'team-2')).toBeNull()
+    // No team selected, no import.
+    expect(mappingForTeam(mappings, '')).toBeNull()
+    // No mappings at all, no import.
+    expect(mappingForTeam([], 'team-1')).toBeNull()
+  })
+
+  it('returns the first mapping when a team carries more than one', () => {
+    const mappings = [
+      mapping({ id: 'm1', teamId: 'team-1', subgroupId: 'SUBA' }),
+      mapping({ id: 'm2', teamId: 'team-1', subgroupId: 'SUBB' }),
+    ]
+    expect(mappingForTeam(mappings, 'team-1')?.id).toBe('m1')
   })
 })
 

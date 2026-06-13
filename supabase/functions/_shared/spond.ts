@@ -285,3 +285,156 @@ export function visibleGroupIds(groups: unknown): Set<string> {
   }
   return ids
 }
+
+// =====================================================================
+// Roster import: members to roster rows.
+//
+// Used only by the spond-roster-import Edge Function, never by
+// spond-sync. spond-sync stays counts only and never touches a name, so
+// the attendance pipeline keeps its name free boundary forever; this is
+// the one place the Spond pipeline reads member names, deliberately
+// isolated here and pinned by spond_roster_test.ts.
+//
+// THE ROSTER NAME BOUNDARY (mirrors 0021_players.sql). From a Spond group
+// member only what the roster holds is ever read: a display name, reduced
+// to a first name plus last initial, and an optional shirt number if
+// Spond exposes one. Everything else the member object carries is never
+// read and never stored, in particular the member's guardians array
+// (guardian names, emails, phone numbers) and the member's own email and
+// phoneNumber. The member is reduced to name plus optional number in
+// memory and the rest is discarded, the same discipline buildEventRow
+// uses for events.
+//
+// The member model is the reference library's (github.com/Olen/Spond,
+// read at build time, and the spond-classes Member dataclass it documents:
+// id, firstName, lastName, subGroups, guardians, email, phoneNumber).
+// subGroups is the list of subgroup ids the member belongs to. The Ossett
+// setup is the children as members, so a member's firstName and lastName
+// are the child's name (the user confirmed this single source); when a
+// child profile is managed by an adult the parent appears in the member's
+// guardians sub array, which is never read here.
+// =====================================================================
+
+// The roster's documented name bound, the players.display_name check
+// (1 to 40). A reduced name is always clamped to this.
+export const ROSTER_NAME_MAX = 40
+
+// Defensive cap on members read from one group in one import, so a
+// malformed or unexpectedly huge group response is bounded.
+export const MAX_ROSTER_MEMBERS = 200
+
+// One member reduced to the only fields the roster holds.
+export interface RosterPlayer {
+  display_name: string
+  shirt_number: number | null
+}
+
+// The child's name in the roster's minimum form: the first name plus the
+// last name's initial, e.g. "Jack T", from the member's firstName and
+// lastName (the reference library's Member.first_name and last_name). When
+// Spond gives only a single name field, it is stored as is. Always clamped
+// to ROSTER_NAME_MAX. Null when no usable name exists. The guardians array
+// and every other field are never read.
+export function rosterDisplayName(member: unknown): string | null {
+  const m = asRecord(member)
+  const first = typeof m.firstName === 'string' ? m.firstName.trim() : ''
+  const last = typeof m.lastName === 'string' ? m.lastName.trim() : ''
+  const name = first && last ? `${first} ${last[0].toUpperCase()}` : first || last
+  if (!name) return null
+  return name.slice(0, ROSTER_NAME_MAX)
+}
+
+// An optional shirt or jersey number, only when Spond exposes one on the
+// member object itself. The reference library's standard member model
+// carries no such field, so this is null in practice; it is read
+// defensively from a top level shirtNumber or jerseyNumber, bounded to a
+// real football number (1 to 99), so a value is carried if Spond ever
+// returns one. Read only from the member's own scalar fields, never from
+// any nested object, so guardian data is never reached.
+export function rosterShirtNumber(member: unknown): number | null {
+  const m = asRecord(member)
+  for (const field of ['shirtNumber', 'jerseyNumber'] as const) {
+    const value = m[field]
+    const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+    if (Number.isInteger(n) && n >= 1 && n <= 99) return n
+  }
+  return null
+}
+
+// One member reduced to a roster row, name plus optional number, or null
+// when it has no usable name. The member's guardians, email, phoneNumber,
+// subGroups and every other field are discarded here, never stored.
+export function reduceMember(member: unknown): RosterPlayer | null {
+  const display_name = rosterDisplayName(member)
+  if (!display_name) return null
+  return { display_name, shirt_number: rosterShirtNumber(member) }
+}
+
+// The subgroup ids a member belongs to, the member's subGroups list (the
+// reference library's Member.subgroup_uids, aliased from the API key
+// "subGroups"). Only the ids are read. An unexpected shape yields an empty
+// list, so a subgroup mapping then matches no member rather than guessing.
+export function memberSubgroupIds(member: unknown): string[] {
+  const value = asRecord(member).subGroups
+  if (!Array.isArray(value)) return []
+  return value.filter((id): id is string => typeof id === 'string' && id.length > 0)
+}
+
+// The members of one mapped group, scoped the same way the events query is
+// scoped (eventsQuery): a whole group mapping (no subgroup) reads every
+// member, a subgroup mapping reads only members whose subGroups list
+// contains the subgroup id. The group is found by id in the groups/
+// response, the same response spond-sync reads for visibleGroupIds, which
+// already carries each group's members; spond-sync discards them, this
+// reads them. Returns an empty list when the group is absent or its
+// members are not an array, capped at MAX_ROSTER_MEMBERS.
+export function selectGroupMembers(groups: unknown, groupId: string, subgroupId: string | null): unknown[] {
+  if (!Array.isArray(groups)) return []
+  const group = groups.find((g) => asRecord(g).id === groupId)
+  const members = asRecord(group).members
+  if (!Array.isArray(members)) return []
+  const scoped = subgroupId === null ? members : members.filter((m) => memberSubgroupIds(m).includes(subgroupId))
+  return scoped.slice(0, MAX_ROSTER_MEMBERS)
+}
+
+// The import plan from the reduced members and the names already on the
+// team's roster: the rows to insert and the three counts the function
+// reports. De-dupe is by display name within the team (players have no
+// natural key but the name, the same key the manager shows): a member
+// whose name is already on the roster, or already added earlier in this
+// run, is counted already present and never inserted a second time, so re
+// running the import creates no duplicates. A member with no usable name
+// is counted skipped. The comparison is case insensitive so "Jack T" does
+// not re add over an existing "jack t". Pure so the test pins the
+// reduction and the de-dupe together.
+export interface RosterImportPlan {
+  inserts: RosterPlayer[]
+  added: number
+  alreadyPresent: number
+  skipped: number
+}
+
+export function planRosterImport(members: unknown[], existingNames: Iterable<string>): RosterImportPlan {
+  const seen = new Set<string>()
+  for (const name of existingNames) seen.add(name.toLowerCase())
+  const inserts: RosterPlayer[] = []
+  let added = 0
+  let alreadyPresent = 0
+  let skipped = 0
+  for (const member of members) {
+    const reduced = reduceMember(member)
+    if (!reduced) {
+      skipped++
+      continue
+    }
+    const key = reduced.display_name.toLowerCase()
+    if (seen.has(key)) {
+      alreadyPresent++
+      continue
+    }
+    seen.add(key)
+    inserts.push(reduced)
+    added++
+  }
+  return { inserts, added, alreadyPresent, skipped }
+}
