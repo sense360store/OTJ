@@ -54,6 +54,7 @@ const FULL_NAV: NavSection[] = [
       { id: 'library', label: 'Drill Library', icon: Icon.grid, to: '/library' },
       SESSIONS,
       { id: 'planner', label: 'Session Planner', icon: Icon.layers, to: '/planner' },
+      { id: 'board', label: 'Tactics Board', icon: Icon.target, to: '/board' },
       { id: 'programmes', label: 'Programmes', icon: Icon.list, to: '/programmes' },
     ],
   },
@@ -76,6 +77,7 @@ const PLANNER_ITEMS: BottomItem[] = [
   { id: 'home', label: 'Home', icon: Icon.home, to: '/' },
   { id: 'library', label: 'Drills', icon: Icon.grid, to: '/library' },
   { id: 'planner', label: 'Plan', icon: Icon.layers, to: '/planner' },
+  { id: 'board', label: 'Board', icon: Icon.target, to: '/board' },
   { id: 'sessions', label: 'Sessions', icon: Icon.calendar, to: '/sessions' },
   { id: 'media', label: 'Media', icon: Icon.film, to: '/media' },
 ]

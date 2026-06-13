@@ -1,0 +1,193 @@
+/* Tactics board. The grass tone is a calmer green than the physical corner
+   accent so the white markings and the discs read clearly; both shades flip
+   nowhere, the pitch stays green in dark mode by design. */
+:root {
+  --pitch-grass: #2f9152;
+  --pitch-grass-2: #2a8549;
+  --pitch-line: rgba(255, 255, 255, 0.78);
+  --token-home: #1f43d6;
+  --token-away: #e23b3b;
+}
+
+.board-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+.board-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.board-field > span {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--slate);
+}
+.board-controls .select {
+  height: 42px;
+}
+.board-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.board-side-toggle {
+  display: inline-flex;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  overflow: hidden;
+}
+.board-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  background: var(--card);
+  color: var(--slate);
+  border: 0;
+  font: inherit;
+  font-weight: 700;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.board-side::before {
+  content: '';
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+}
+.board-side.home::before {
+  background: var(--token-home);
+}
+.board-side.away::before {
+  background: var(--token-away);
+}
+.board-side.active {
+  color: #fff;
+}
+.board-side.home.active {
+  background: var(--token-home);
+}
+.board-side.away.active {
+  background: var(--token-away);
+}
+.board-side.active::before {
+  background: #fff;
+}
+
+/* The pitch holds its proportions and centres, filling the width up to a cap
+   so it stays a sane height on a wide screen and fills a phone. */
+.board-pitch {
+  position: relative;
+  width: 100%;
+  max-width: 540px;
+  margin: 0 auto;
+  aspect-ratio: 680 / 1050;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--pitch-grass);
+  box-shadow: var(--shadow-sm);
+  touch-action: none;
+}
+.board-pitch-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.pitch-stripe.even {
+  fill: var(--pitch-grass);
+}
+.pitch-stripe.odd {
+  fill: var(--pitch-grass-2);
+}
+.pitch-lines line,
+.pitch-lines rect,
+.pitch-lines circle {
+  stroke: var(--pitch-line);
+  stroke-width: 3;
+  fill: none;
+}
+.pitch-lines .pitch-spot {
+  fill: var(--pitch-line);
+  stroke: none;
+}
+
+/* A token is positioned by its centre; the disc and the label sit under it. */
+.board-token {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 0;
+}
+.board-disc {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  color: #fff;
+  font-family: var(--display, inherit);
+  font-weight: 800;
+  font-size: 16px;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+  touch-action: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  padding: 0;
+}
+.board-disc:active {
+  cursor: grabbing;
+}
+.side-home .board-disc {
+  background: var(--token-home);
+}
+.side-away .board-disc {
+  background: var(--token-away);
+}
+.board-token-label {
+  width: 64px;
+  text-align: center;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 4px;
+}
+.board-token-label::placeholder {
+  color: var(--slate-2);
+  font-weight: 600;
+}
+.board-token-label:focus {
+  outline: none;
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--token-home);
+}
+.side-away .board-token-label:focus {
+  box-shadow: 0 0 0 2px var(--token-away);
+}
+
+@media (max-width: 900px) {
+  .board-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .board-disc {
+    width: 34px;
+    height: 34px;
+    font-size: 15px;
+  }
+}
