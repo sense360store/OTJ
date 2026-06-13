@@ -142,7 +142,8 @@ export interface SpondPlanOptions {
   scopeTeamIds: string[]
   // Widen to every team's events, the club wide toggle.
   showAllTeams: boolean
-  // The training title heuristic, on by default.
+  // The training title heuristic, off by default so a coach sees every
+  // unplanned event and opts into the filter.
   trainingOnly: boolean
   now?: Date
 }
