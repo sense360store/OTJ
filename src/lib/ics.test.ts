@@ -24,6 +24,7 @@ function session(overrides: Partial<Session> = {}): Session {
     liveActivityIndex: null,
     liveActivityStartedAt: null,
     spondEventId: null,
+    boardId: null,
     ...overrides,
   }
 }

@@ -267,6 +267,10 @@ export interface Session {
   // unlinked. The link is the only Spond fact a session carries; the counts
   // render from the spond_events read and are never stored on the session.
   spondEventId: string | null
+  // The saved tactics board attached to this session, null when none. The
+  // session day renders it read only inline. references boards on delete set
+  // null, so deleting a board detaches it here (see 0022_session_board.sql).
+  boardId: string | null
 }
 
 // ---- Spond attendance (counts only) ----------------------------------------

@@ -167,6 +167,7 @@ export interface SessionRow {
   live_activity_index: number | null
   live_activity_started_at: string | null
   spond_event_id: string | null
+  board_id: string | null
 }
 
 interface TeamRow {
@@ -221,7 +222,7 @@ const TEMPLATE_COLS =
 const PROGRAMME_COLS =
   'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at'
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id'
 const TEAM_COLS = 'id, club_id, name, created_at'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
@@ -353,6 +354,7 @@ export function toSession(r: SessionRow): Session {
     liveActivityIndex: r.live_activity_index ?? null,
     liveActivityStartedAt: r.live_activity_started_at ?? null,
     spondEventId: r.spond_event_id ?? null,
+    boardId: r.board_id ?? null,
   }
 }
 
@@ -1531,6 +1533,9 @@ export function useUpsertSession() {
         // The Spond event link travels the same way: linking in the planner
         // edits the draft and saving writes it here.
         spond_event_id: input.spondEventId,
+        // The attached tactics board, set in the planner draft or on the
+        // session day, travels with the session on insert and update.
+        board_id: input.boardId,
       }
 
       if (isUpdate) {
@@ -1946,6 +1951,31 @@ export function useLinkSessionSpondEvent() {
       if (!data?.length) throw new Error('Only the session owner or an admin can change its Spond link.')
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+  })
+}
+
+// Attaches a saved board to a session, or detaches it when boardId is null.
+// Used on the session day, where the change writes at once (unlike the
+// planner draft, which carries board_id through the upsert). The sessions
+// update RLS (owner, or admin) is the real enforcement; a blocked write
+// updates no rows and is reported. Both the list and the per-id cache are
+// invalidated so the embedded board appears or clears without a manual reload.
+export function useLinkSessionBoard() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { sessionId: string; boardId: string | null }>({
+    mutationFn: async ({ sessionId, boardId }) => {
+      const { data, error } = await supabase
+        .from('sessions')
+        .update({ board_id: boardId })
+        .eq('id', sessionId)
+        .select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('Only the session owner or an admin can attach a board.')
+    },
+    onSettled: (_data, _err, { sessionId }) => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['sessions', sessionId] })
+    },
   })
 }
 
@@ -2917,6 +2947,22 @@ export function useBoards() {
         .order('id', { ascending: true })
       if (error) throw error
       return (data as unknown as BoardRow[]).map(toBoard)
+    },
+  })
+}
+
+// One saved board by id, for the session day embed: a session carries a
+// board_id and renders that board read only inline. Club wide read RLS gates
+// it the same as the list, so a parent who reaches the session day reads the
+// attached board too. Returns null for a missing or detached board.
+export function useBoard(id: string | undefined) {
+  return useQuery({
+    queryKey: ['boards', id],
+    enabled: !!id,
+    queryFn: async (): Promise<Board | null> => {
+      const { data, error } = await supabase.from('boards').select(BOARD_COLS).eq('id', id!).maybeSingle()
+      if (error) throw error
+      return data ? toBoard(data as unknown as BoardRow) : null
     },
   })
 }

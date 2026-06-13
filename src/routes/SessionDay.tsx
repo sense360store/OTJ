@@ -15,7 +15,9 @@ import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import {
   useActivityTitle,
+  useBoard,
   useDrillMap,
+  useLinkSessionBoard,
   useLinkSessionSpondEvent,
   useMediaMap,
   useMyCapabilities,
@@ -31,7 +33,12 @@ import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
+import { BoardPickerModal } from '../components/BoardPicker'
+import { TacticsBoardView } from '../components/TacticsBoardView'
+import type { Board } from '../lib/tacticsBoard'
 import './SessionDay.css'
+// The embedded board reuses the tactics board's pitch and disc styles.
+import './Board.css'
 
 type Tab = 'setup' | 'kit' | 'plan'
 
@@ -58,7 +65,7 @@ function loadChecked(sessionId: string): string[] {
 
 function SessionDayView({ session }: { session: Session }) {
   const nav = useNav()
-  const { user } = useAuth()
+  const { user, role } = useAuth()
   const { caps } = useMyCapabilities()
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
@@ -193,6 +200,10 @@ function SessionDayView({ session }: { session: Session }) {
         onLink={(id) => linkSpond.mutate({ sessionId: session.id, spondEventId: id })}
         style={{ marginBottom: 12 }}
       />
+
+      {/* The attached tactics board, read only inline. A parent reaching the
+          session day sees the shape and numbers, never roster names. */}
+      <SessionBoardCard session={session} canManage={canManage} numberOnly={role === 'parent'} />
 
       <div className="sd-tabs">
         <button className={'sd-tab' + (tab === 'setup' ? ' on' : '')} onClick={() => setTab('setup')}>
@@ -364,6 +375,102 @@ function SessionDayView({ session }: { session: Session }) {
       )}
       {deleting && <DeleteSessionModal s={session} onClose={() => setDeleting(false)} onDeleted={() => nav('sessions')} />}
     </div>
+  )
+}
+
+// The attached board section, presentational so the read only render and the
+// attach affordances can be exercised without the data hooks or a query
+// client. The container resolves the board and wires the link mutation.
+//
+// When nothing is attached and the viewer cannot edit (a parent, or another
+// coach's session), the card renders nothing rather than an empty shell. With
+// a board it shows the read only renderer; numberOnly hides roster names for a
+// parent.
+export function SessionBoardCardView({
+  board,
+  boardId,
+  numberOnly,
+  canEdit,
+  onAttach,
+  onRemove,
+}: {
+  board: Board | null
+  boardId: string | null
+  numberOnly: boolean
+  canEdit: boolean
+  onAttach: () => void
+  onRemove: () => void
+}) {
+  if (!boardId && !canEdit) return null
+  return (
+    <div className="card sd-board-card">
+      <div className="sd-board-head">
+        <Icon.layers />
+        <h4>{board ? board.name : 'Tactics board'}</h4>
+        {canEdit && (
+          <div className="sd-board-actions">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onAttach}>
+              {boardId ? 'Change' : 'Attach'}
+            </button>
+            {boardId && (
+              <button
+                type="button"
+                className="btn btn-quiet btn-sm icon-only"
+                aria-label="Remove board"
+                onClick={onRemove}
+              >
+                <Icon.x />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {board ? (
+        <TacticsBoardView tokens={board.tokens} numberOnly={numberOnly} />
+      ) : boardId ? (
+        <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
+          This board is not available.
+        </p>
+      ) : (
+        <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
+          No board attached. Attach one to show the shape here.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function SessionBoardCard({
+  session,
+  canManage,
+  numberOnly,
+}: {
+  session: Session
+  canManage: boolean
+  numberOnly: boolean
+}) {
+  const { data: board } = useBoard(session.boardId ?? undefined)
+  const link = useLinkSessionBoard()
+  const [picking, setPicking] = useState(false)
+  return (
+    <>
+      <SessionBoardCardView
+        board={board ?? null}
+        boardId={session.boardId}
+        numberOnly={numberOnly}
+        canEdit={canManage}
+        onAttach={() => setPicking(true)}
+        onRemove={() => link.mutate({ sessionId: session.id, boardId: null })}
+      />
+      {picking && (
+        <BoardPickerModal
+          currentId={session.boardId}
+          defaultTeamId={session.teamId}
+          onSelect={(id) => link.mutate({ sessionId: session.id, boardId: id })}
+          onClose={() => setPicking(false)}
+        />
+      )}
+    </>
   )
 }
 

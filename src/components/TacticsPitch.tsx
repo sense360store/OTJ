@@ -12,6 +12,7 @@
 import { useRef } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { clampFraction, type Token } from '../lib/tacticsBoard'
+import { PitchMarkings } from './TacticsBoardView'
 
 // Keep a disc fully inside the touchlines while it is dragged.
 const EDGE_MARGIN = 0.045
@@ -56,38 +57,7 @@ export function TacticsPitch({
 
   return (
     <div className="board-pitch" ref={pitchRef}>
-      <svg className="board-pitch-svg" viewBox="0 0 680 1050" role="presentation" aria-hidden="true">
-        {/* Mown stripes, six bands the length of the field. */}
-        {Array.from({ length: 6 }, (_, i) => (
-          <rect
-            key={i}
-            className={i % 2 === 0 ? 'pitch-stripe even' : 'pitch-stripe odd'}
-            x={30}
-            y={30 + i * 165}
-            width={620}
-            height={165}
-          />
-        ))}
-        <g className="pitch-lines">
-          {/* Touchlines and goal lines. */}
-          <rect x={30} y={30} width={620} height={990} fill="none" />
-          {/* Halfway line and centre circle. */}
-          <line x1={30} y1={525} x2={650} y2={525} />
-          <circle cx={340} cy={525} r={95} fill="none" />
-          <circle cx={340} cy={525} r={5} className="pitch-spot" />
-          {/* Top penalty area, goal area, penalty spot. */}
-          <rect x={160} y={30} width={360} height={165} fill="none" />
-          <rect x={250} y={30} width={180} height={65} fill="none" />
-          <circle cx={340} cy={150} r={5} className="pitch-spot" />
-          {/* Bottom penalty area, goal area, penalty spot. */}
-          <rect x={160} y={855} width={360} height={165} fill="none" />
-          <rect x={250} y={955} width={180} height={65} fill="none" />
-          <circle cx={340} cy={900} r={5} className="pitch-spot" />
-          {/* Goals, drawn just outside each goal line. */}
-          <rect x={290} y={12} width={100} height={18} fill="none" />
-          <rect x={290} y={1020} width={100} height={18} fill="none" />
-        </g>
-      </svg>
+      <PitchMarkings />
       {tokens.map((t) => (
         <div key={t.id} className={`board-token side-${t.side}`} style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%` }}>
           <button

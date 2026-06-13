@@ -34,6 +34,7 @@ export function useStartFromTemplate() {
       liveActivityIndex: null,
       liveActivityStartedAt: null,
       spondEventId: null,
+      boardId: null,
     }
     upsertSession(s)
     nav('planner', { sessionId: s.id })
