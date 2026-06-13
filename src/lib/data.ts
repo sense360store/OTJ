@@ -376,6 +376,36 @@ export function sessionMinutes(s: { activities: Activity[] }): number {
   return s.activities.reduce((a, x) => a + (x.duration || 0), 0)
 }
 
+// A new session belongs to the signed-in coach and defaults to their team
+// when one is set. Team is a filter and a default, never access control. The
+// planner builds a draft from this for an unsaved session, and the Spond plan
+// surface overrides the carried fields (name, date, time, link) on top.
+export function blankSession(coachId: string, teamId: string | null): Session {
+  return {
+    id: crypto.randomUUID(),
+    name: 'New Session',
+    date: '2026-06-16',
+    time: '17:30',
+    ageGroup: 'U8s',
+    venue: 'Springmill 3G',
+    focus: 'All-round',
+    status: 'upcoming',
+    activities: [],
+    coachId,
+    teamId,
+    intentions: [],
+    space: '',
+    sourceUrl: '',
+    sourceLabel: '',
+    programmeId: null,
+    programmeWeek: null,
+    liveActivityIndex: null,
+    liveActivityStartedAt: null,
+    spondEventId: null,
+    boardId: null,
+  }
+}
+
 // ---- Role helpers --------------------------------------------------------
 // Pure functions over the RBAC v2 shapes, shared by the Users screen, the
 // shell and the assignment mutations.

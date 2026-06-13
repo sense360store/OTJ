@@ -13,6 +13,7 @@ import type { Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, fmtDate, Loading, PHASE_COLOR } from '../components/ui'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
+import { PlanFromSpond } from '../components/PlanFromSpond'
 import { NoTeamNote } from './ParentHome'
 import { downloadSessionIcs } from '../lib/ics'
 
@@ -254,6 +255,10 @@ export function Sessions() {
           )}
         </div>
       )}
+
+      {/* Coaches can start a session from a synced Spond event. Hidden when
+          there is nothing to suggest, so it adds no empty card here. */}
+      <PlanFromSpond hideWhenEmpty />
 
       {list.length === 0 ? (
         <Empty icon={Icon.calendar} title="No sessions here yet">
