@@ -238,6 +238,27 @@ export function deserializeTokens(value: unknown): Token[] {
   return out
 }
 
+// ---- Edit mode -----------------------------------------------------------
+// The board page opens in view mode (read only) and enters edit mode on demand.
+// Cancel reverts to the board exactly as it was when edit mode was entered, so
+// the page snapshots the editable state at that moment and restores it. Unlike
+// BoardSnapshot this carries the authoring controls too (the side toggle), since
+// Cancel returns them as well, and it is on-screen state, never persisted.
+export interface BoardEdit {
+  name: string
+  formation: string
+  side: TokenSide
+  teamId: string | null
+  tokens: Token[]
+}
+
+// Capture the editable state at edit-entry so Cancel can restore it. The tokens
+// are cloned (serializeTokens mints fresh objects) so later moves and relabels
+// on the working board never reach back and mutate the snapshot.
+export function captureBoardEdit(state: BoardEdit): BoardEdit {
+  return { ...state, tokens: serializeTokens(state.tokens) }
+}
+
 // A board's saved shape flattened to a string, so a move, a relabel, a
 // formation change, a team change or a rename all register as a difference.
 export function boardSignature(snap: BoardSnapshot): string {

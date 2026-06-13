@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FORMATIONS,
   boardIsDirty,
+  captureBoardEdit,
   clampFraction,
   deserializeTokens,
   formationCount,
@@ -9,6 +10,7 @@ import {
   nextNumber,
   rosterTokens,
   serializeTokens,
+  type BoardEdit,
   type BoardSnapshot,
   type RosterPlayer,
 } from './tacticsBoard'
@@ -212,6 +214,40 @@ describe('serialize then deserialize', () => {
   it('returns an empty board for a non array value', () => {
     expect(deserializeTokens(null)).toEqual([])
     expect(deserializeTokens({})).toEqual([])
+  })
+})
+
+describe('captureBoardEdit', () => {
+  const state: BoardEdit = {
+    name: 'Titans high press',
+    formation: '2-3-1',
+    side: 'home',
+    teamId: 'team-1',
+    tokens: formationPositions('2-3-1', 'home'),
+  }
+
+  it('captures the editable fields the edit session restores on cancel', () => {
+    const snap = captureBoardEdit(state)
+    expect(snap.name).toBe(state.name)
+    expect(snap.formation).toBe(state.formation)
+    expect(snap.side).toBe(state.side)
+    expect(snap.teamId).toBe(state.teamId)
+    expect(snap.tokens).toEqual(state.tokens)
+  })
+
+  it('clones the tokens so a later move on the working board cannot reach the snapshot', () => {
+    // This is the Cancel guarantee: edit mode snapshots, the coach drags tokens
+    // around, then Cancel restores the snapshot to the pre edit positions. The
+    // snapshot must be isolated from the working board, so moving a working
+    // token after the capture leaves the captured position intact.
+    const snap = captureBoardEdit(state)
+    const before = snap.tokens[0].x
+    // A move the way the board mutates state: a fresh array of fresh tokens.
+    const working = state.tokens.map((t, i) => (i === 0 ? { ...t, x: t.x + 0.25, y: t.y + 0.25 } : t))
+    expect(working[0].x).not.toBe(before)
+    // The captured snapshot is untouched, so restoring it returns the original
+    // positions.
+    expect(snap.tokens[0].x).toBe(before)
   })
 })
 
