@@ -122,7 +122,7 @@ export function PlanFromSpond({ hideWhenEmpty = false }: { hideWhenEmpty?: boole
   const { data: events = [], isLoading, isError } = useSpondEvents()
   const { data: myTeams } = useMyTeams()
   const teamById = useTeamMap()
-  const [trainingOnly, setTrainingOnly] = useState(true)
+  const [trainingOnly, setTrainingOnly] = useState(false)
   const [showAll, setShowAll] = useState(false)
 
   // Coaches plan; parents never see this. The planner route already redirects

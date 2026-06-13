@@ -156,7 +156,7 @@ describe('spondPlanSuggestions', () => {
     plannedEventIds: new Set<string>(),
     scopeTeamIds: ['team-1'],
     showAllTeams: false,
-    trainingOnly: true,
+    trainingOnly: false,
     now,
   }
 
@@ -177,13 +177,13 @@ describe('spondPlanSuggestions', () => {
     expect(spondPlanSuggestions({ ...opts, events, showAllTeams: true }).map((e) => e.id)).toEqual(['mine', 'other'])
   })
 
-  it('narrows by the training title heuristic, and widens when it is off', () => {
+  it('shows every in scope event by default, and narrows to training titles once the filter is on', () => {
     const events = [
       ev({ id: 'train', startsAt: '2026-06-16T17:30:00Z', teamId: 'team-1', title: 'U8 Training' }),
       ev({ id: 'match', startsAt: '2026-06-17T17:30:00Z', teamId: 'team-1', title: 'Friendly vs Horbury' }),
     ]
-    expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual(['train'])
-    expect(spondPlanSuggestions({ ...opts, events, trainingOnly: false }).map((e) => e.id)).toEqual(['train', 'match'])
+    expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual(['train', 'match'])
+    expect(spondPlanSuggestions({ ...opts, events, trainingOnly: true }).map((e) => e.id)).toEqual(['train'])
   })
 
   it("drops an event the coach has already planned, and keeps the rest", () => {
