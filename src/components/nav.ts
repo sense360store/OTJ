@@ -79,6 +79,7 @@ const PLANNER_ITEMS: BottomItem[] = [
   { id: 'library', label: 'Drills', icon: Icon.grid, to: '/library' },
   { id: 'planner', label: 'Plan', icon: Icon.layers, to: '/planner' },
   { id: 'board', label: 'Board', icon: Icon.target, to: '/board' },
+  { id: 'roster', label: 'Roster', icon: Icon.users, to: '/roster' },
   { id: 'sessions', label: 'Sessions', icon: Icon.calendar, to: '/sessions' },
   { id: 'media', label: 'Media', icon: Icon.film, to: '/media' },
 ]

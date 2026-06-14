@@ -31,6 +31,14 @@ describe('Sidebar navigation', () => {
     }
   })
 
+  it('shows a coach the Roster entry but never a parent', () => {
+    // The Roster manager sits in the Plan group behind sessions.create, so a
+    // coach sees it and a parent does not; the route guard and players RLS
+    // enforce the same boundary.
+    expect(ids(new Set(['sessions.create']))).toContain('roster')
+    expect(ids(new Set())).not.toContain('roster')
+  })
+
   it('keeps the full nav for a member holding both a coaching role and parent', () => {
     // The parent role grants no write capabilities, so a member who also
     // coaches still holds sessions.create and keeps the full nav.
