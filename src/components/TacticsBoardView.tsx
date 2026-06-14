@@ -72,7 +72,11 @@ export function TacticsBoardView({ tokens, numberOnly = false }: { tokens: Token
           >
             {t.number}
           </span>
-          {!numberOnly && t.label ? <span className="board-token-label board-token-label-static">{t.label}</span> : null}
+          {!numberOnly && t.label ? (
+            <span className="board-token-label board-token-label-static" title={t.label}>
+              {t.label}
+            </span>
+          ) : null}
         </div>
       ))}
     </div>

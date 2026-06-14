@@ -75,6 +75,7 @@ export function TacticsPitch({
             className="board-token-label"
             value={t.label}
             placeholder="label"
+            title={t.label || undefined}
             onChange={(e) => onLabel(t.id, e.target.value)}
             aria-label={`Label for player ${t.number}`}
           />
