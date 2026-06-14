@@ -72,16 +72,16 @@ const FULL_NAV: NavSection[] = [
 // Parents: two destinations, Home and Sessions, with no Plan or Content groups.
 const PARENT_NAV: NavSection[] = [{ group: null, items: [HOME, SESSIONS] }, ADMIN_SECTION]
 
-// The mobile bottom nav, the planner slot following the same coaching write
-// capability.
+// The mobile bottom nav, a short row of primary destinations; the planner slot
+// follows the same coaching write capability. Every other sidebar destination
+// the capability set opens rides in the More sheet (see moreItemsFor), so the
+// Roster and the admin screens stay reachable on a phone without the row
+// growing past a thumb's reach.
 const PLANNER_ITEMS: BottomItem[] = [
   { id: 'home', label: 'Home', icon: Icon.home, to: '/' },
-  { id: 'library', label: 'Drills', icon: Icon.grid, to: '/library' },
   { id: 'planner', label: 'Plan', icon: Icon.layers, to: '/planner' },
   { id: 'board', label: 'Board', icon: Icon.target, to: '/board' },
-  { id: 'roster', label: 'Roster', icon: Icon.users, to: '/roster' },
   { id: 'sessions', label: 'Sessions', icon: Icon.calendar, to: '/sessions' },
-  { id: 'media', label: 'Media', icon: Icon.film, to: '/media' },
 ]
 const PARENT_ITEMS: BottomItem[] = [
   { id: 'home', label: 'Home', icon: Icon.home, to: '/' },
@@ -117,4 +117,15 @@ export function navItemsFor(caps: ReadonlySet<string>): NavItem[] {
 // The bottom nav layout for a capability set. Exported for the nav test.
 export function bottomItemsFor(caps: ReadonlySet<string>): BottomItem[] {
   return caps.has('sessions.create') ? PLANNER_ITEMS : PARENT_ITEMS
+}
+
+// The More sheet destinations for a capability set: every sidebar destination
+// the set opens that the short bottom row does not already carry. Reuses
+// navItemsFor and ITEM_CAP, so the sheet is gated by the same capability map as
+// the sidebar, never a second copy: a coach finds the Roster here, an admin the
+// admin screens, and a parent holding neither finds an empty list (the bottom
+// nav then drops the More entry). Exported for the nav test.
+export function moreItemsFor(caps: ReadonlySet<string>): NavItem[] {
+  const inRow = new Set(bottomItemsFor(caps).map((it) => it.id))
+  return navItemsFor(caps).filter((it) => !inRow.has(it.id))
 }
