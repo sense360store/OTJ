@@ -350,6 +350,12 @@ export interface FeedbackItem {
   createdBy: string
   createdAt: string
   updatedAt: string
+  // The promotion to a public GitHub issue, null until an admin promotes the
+  // item. The repository is public, so the issue holds no identifying data;
+  // see the feedback-to-github function. The number and url are GitHub's own
+  // coordinates, shown club wide as a link once set.
+  githubIssueNumber: number | null
+  githubIssueUrl: string | null
 }
 
 // A reply on a feedback item. Club visible by design, the same

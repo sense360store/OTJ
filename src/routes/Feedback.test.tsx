@@ -19,20 +19,23 @@ const item: FeedbackItem = {
   createdBy: 'u1',
   createdAt: '2026-06-01T10:00:00.000Z',
   updatedAt: '2026-06-01T10:00:00.000Z',
+  githubIssueNumber: null,
+  githubIssueUrl: null,
 }
 
 const noop = () => {}
 
-function renderCard(flags: { isOwner?: boolean; canManage?: boolean } = {}): string {
+function renderCard(flags: { isOwner?: boolean; canManage?: boolean; override?: Partial<FeedbackItem> } = {}): string {
   return renderToStaticMarkup(
     <FeedbackCard
-      item={item}
+      item={{ ...item, ...flags.override }}
       authorName="Sam Coach"
       isOwner={flags.isOwner ?? false}
       canManage={flags.canManage ?? false}
       onEdit={noop}
       onDelete={noop}
       onStatus={noop}
+      onPromote={noop}
     />,
   )
 }
@@ -62,6 +65,35 @@ describe('FeedbackCard', () => {
     const others = renderCard()
     expect(others).not.toContain('aria-label="Edit')
     expect(others).not.toContain('aria-label="Delete')
+  })
+})
+
+describe('FeedbackCard promote to GitHub', () => {
+  it('offers the promote action to a club.manage holder', () => {
+    const html = renderCard({ canManage: true })
+    expect(html).toContain('aria-label="Promote Timer drifts on the live screen to a GitHub issue"')
+  })
+
+  it('does not offer the promote action to a member without club.manage', () => {
+    const html = renderCard()
+    expect(html).not.toContain('Promote')
+  })
+
+  it('shows the issue link, not the promote action, once the item is promoted', () => {
+    const html = renderCard({
+      canManage: true,
+      override: { githubIssueNumber: 12, githubIssueUrl: 'https://github.com/sense360store/OTJ/issues/12' },
+    })
+    expect(html).toContain('aria-label="GitHub issue #12"')
+    expect(html).toContain('https://github.com/sense360store/OTJ/issues/12')
+    expect(html).not.toContain('Promote')
+  })
+
+  it('shows the issue link to a member without club.manage too', () => {
+    const html = renderCard({
+      override: { githubIssueNumber: 12, githubIssueUrl: 'https://github.com/sense360store/OTJ/issues/12' },
+    })
+    expect(html).toContain('aria-label="GitHub issue #12"')
   })
 })
 

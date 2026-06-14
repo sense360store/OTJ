@@ -18,6 +18,7 @@ import {
   useInsertFeedback,
   useMemberMap,
   useMyCapabilities,
+  usePromoteFeedbackToGithub,
   useSetFeedbackStatus,
   useUpdateFeedback,
 } from '../lib/queries'
@@ -82,6 +83,7 @@ export function FeedbackCard({
   onEdit,
   onDelete,
   onStatus,
+  onPromote,
   statusBusy,
   statusError,
   thread,
@@ -94,6 +96,7 @@ export function FeedbackCard({
   onEdit: () => void
   onDelete: () => void
   onStatus: (status: FeedbackStatus) => void
+  onPromote?: () => void
   statusBusy?: boolean
   statusError?: string
   thread?: ReactNode
@@ -153,6 +156,36 @@ export function FeedbackCard({
           </select>
         ) : (
           <TagBadge color={STATUS_COLOR[item.status]}>{FEEDBACK_STATUS_LABELS[item.status]}</TagBadge>
+        )}
+        {item.githubIssueNumber != null && item.githubIssueUrl ? (
+          // Shown club wide once the item is promoted: the public issue's own
+          // link. Replaces the promote action; an item is promoted once.
+          <a
+            className="tag"
+            href={item.githubIssueUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={'GitHub issue #' + item.githubIssueNumber}
+            style={{ gap: 4, alignItems: 'center', whiteSpace: 'nowrap', textDecoration: 'none' }}
+          >
+            <Icon.external width={13} height={13} />
+            Issue #{item.githubIssueNumber}
+          </a>
+        ) : (
+          canManage &&
+          onPromote && (
+            // Admin only: a coach never holds club.manage and never sees this.
+            // Opens the panel that makes the public nature explicit.
+            <button
+              className="btn btn-ghost btn-sm"
+              aria-label={'Promote ' + item.title + ' to a GitHub issue'}
+              onClick={onPromote}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              <Icon.external />
+              Promote to GitHub
+            </button>
+          )
         )}
         {isOwner && (
           <>
@@ -348,6 +381,112 @@ function DeleteFeedbackModal({ item, onClose }: { item: FeedbackItem; onClose: (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
           {del.error.message}
         </p>
+      )}
+    </Modal>
+  )
+}
+
+// Promotes an item to a public GitHub issue. club.manage only (the function
+// gates on it; FeedbackCard only surfaces the action to holders). The panel
+// makes the public nature explicit, pre fills the title and body from the
+// item for the admin to edit, and on success shows the created issue link.
+// The admin's edited text is what is posted; no AI drafts it in this phase.
+function PromoteToGithubModal({ item, onClose }: { item: FeedbackItem; onClose: () => void }) {
+  const promote = usePromoteFeedbackToGithub()
+  const [title, setTitle] = useState(item.title)
+  const [body, setBody] = useState(item.body)
+  const [done, setDone] = useState<{ number: number | null; url: string; warning: string } | null>(null)
+  const ready = title.trim().length >= 3
+
+  const submit = () => {
+    if (!ready) return
+    promote.mutate(
+      { id: item.id, title, body },
+      { onSuccess: (r) => setDone({ number: r.issueNumber, url: r.issueUrl, warning: r.warning }) },
+    )
+  }
+
+  return (
+    <Modal
+      title="Promote to GitHub issue"
+      sub="Opens a public issue on the project repository."
+      onClose={onClose}
+      footer={
+        done ? (
+          <button className="btn btn-primary" onClick={onClose}>
+            <Icon.check />
+            Done
+          </button>
+        ) : (
+          <>
+            <button className="btn btn-ghost" onClick={onClose} disabled={promote.isPending}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={submit} disabled={!ready || promote.isPending}>
+              <Icon.external />
+              {promote.isPending ? 'Creating…' : 'Create issue'}
+            </button>
+          </>
+        )
+      }
+    >
+      {done ? (
+        <>
+          <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>The issue was created.</p>
+          <p>
+            <a className="btn btn-ghost btn-sm" href={done.url} target="_blank" rel="noreferrer">
+              <Icon.external />
+              {done.number != null ? `Issue #${done.number}` : 'View issue'}
+            </a>
+          </p>
+          {done.warning && (
+            <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)' }}>
+              {done.warning}
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <p
+            style={{
+              fontSize: 13.5,
+              lineHeight: 1.55,
+              background: 'color-mix(in srgb, var(--m-pdf) 12%, transparent)',
+              color: 'var(--m-pdf)',
+              padding: '10px 12px',
+              borderRadius: 11,
+              margin: '0 0 12px',
+            }}
+          >
+            The repository is public, so this issue is world readable. Do not include any name, child's name, email,
+            contact or private detail. Only the title and details below are posted.
+          </p>
+          <div className="field">
+            <label htmlFor="promote-title">Issue title</label>
+            <input
+              id="promote-title"
+              value={title}
+              maxLength={256}
+              placeholder="A short summary, at least 3 characters"
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="promote-body">Issue details</label>
+            <textarea
+              id="promote-body"
+              rows={6}
+              value={body}
+              placeholder="What the issue is. This text is posted publicly."
+              onChange={(e) => setBody(e.target.value)}
+            />
+          </div>
+          {promote.isError && (
+            <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+              {promote.error.message}
+            </p>
+          )}
+        </>
       )}
     </Modal>
   )
@@ -607,6 +746,7 @@ function FeedbackRow({
   const setStatus = useSetFeedbackStatus()
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [promoting, setPromoting] = useState(false)
   return (
     <>
       <FeedbackCard
@@ -618,12 +758,14 @@ function FeedbackRow({
         onEdit={() => setEditing(true)}
         onDelete={() => setDeleting(true)}
         onStatus={(status) => setStatus.mutate({ id: item.id, status })}
+        onPromote={() => setPromoting(true)}
         statusBusy={setStatus.isPending}
         statusError={setStatus.isError ? setStatus.error.message : ''}
         thread={<FeedbackThread feedbackId={item.id} canManage={canManage} />}
       />
       {editing && <EditFeedbackModal item={item} onClose={() => setEditing(false)} />}
       {deleting && <DeleteFeedbackModal item={item} onClose={() => setDeleting(false)} />}
+      {promoting && <PromoteToGithubModal item={item} onClose={() => setPromoting(false)} />}
     </>
   )
 }
