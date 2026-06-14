@@ -19,4 +19,11 @@ describe('Bottom navigation', () => {
     expect(coach).toContain('planner')
     expect(coach).toContain('library')
   })
+
+  it('shows a coach the Roster row but never a parent', () => {
+    // The Roster carries the Import from Spond action, so a coach reaches it
+    // from the bottom nav; a parent, holding no sessions.create, does not.
+    expect(ids(new Set(['sessions.create']))).toContain('roster')
+    expect(ids(new Set())).not.toContain('roster')
+  })
 })
