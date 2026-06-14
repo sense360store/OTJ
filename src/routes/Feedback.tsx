@@ -8,8 +8,13 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import {
+  useAddFeedbackComment,
   useDeleteFeedback,
+  useDeleteFeedbackComment,
+  useEditFeedbackComment,
   useFeedback,
+  useFeedbackComments,
+  useFeedbackCommentCounts,
   useInsertFeedback,
   useMemberMap,
   useMyCapabilities,
@@ -18,7 +23,7 @@ import {
 } from '../lib/queries'
 import type { FeedbackInput } from '../lib/queries'
 import { FEEDBACK_KIND_LABELS, FEEDBACK_KINDS, FEEDBACK_STATUS_LABELS, FEEDBACK_STATUSES } from '../lib/data'
-import type { FeedbackItem, FeedbackKind, FeedbackStatus } from '../lib/data'
+import type { FeedbackComment, FeedbackItem, FeedbackKind, FeedbackStatus } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
 
@@ -73,21 +78,25 @@ export function FeedbackCard({
   authorName,
   isOwner,
   canManage,
+  commentCount = 0,
   onEdit,
   onDelete,
   onStatus,
   statusBusy,
   statusError,
+  thread,
 }: {
   item: FeedbackItem
   authorName: string
   isOwner: boolean
   canManage: boolean
+  commentCount?: number
   onEdit: () => void
   onDelete: () => void
   onStatus: (status: FeedbackStatus) => void
   statusBusy?: boolean
   statusError?: string
+  thread?: ReactNode
 }) {
   const [expanded, setExpanded] = useState(false)
   return (
@@ -105,12 +114,23 @@ export function FeedbackCard({
             padding: 0,
             color: 'inherit',
             font: 'inherit',
-            cursor: item.body ? 'pointer' : 'default',
+            cursor: 'pointer',
           }}
         >
           <span className="row wrap" style={{ gap: 8 }}>
             <TagBadge color={KIND_COLOR[item.kind]}>{FEEDBACK_KIND_LABELS[item.kind]}</TagBadge>
             <b style={{ fontSize: 14.5 }}>{item.title}</b>
+            {commentCount > 0 && (
+              <span
+                className="row mono"
+                aria-label={commentCount + (commentCount === 1 ? ' comment' : ' comments')}
+                title={commentCount + (commentCount === 1 ? ' comment' : ' comments')}
+                style={{ gap: 3, alignItems: 'center', color: 'var(--slate)', fontSize: 12 }}
+              >
+                <Icon.comment width={14} height={14} />
+                {commentCount}
+              </span>
+            )}
           </span>
           <span className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginTop: 3 }}>
             {authorName} · {filedAgo(item.createdAt)}
@@ -155,8 +175,13 @@ export function FeedbackCard({
           </>
         )}
       </div>
-      {expanded && item.body && (
-        <p style={{ fontSize: 14, lineHeight: 1.55, margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{item.body}</p>
+      {expanded && (
+        <>
+          {item.body && (
+            <p style={{ fontSize: 14, lineHeight: 1.55, margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{item.body}</p>
+          )}
+          {thread}
+        </>
       )}
       {statusError && (
         <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', margin: '6px 0 0' }}>
@@ -328,6 +353,242 @@ function DeleteFeedbackModal({ item, onClose }: { item: FeedbackItem; onClose: (
   )
 }
 
+// One comment in a thread, presentational so the test can pin who sees the
+// edit and delete affordances. An author sees edit and delete on their own
+// comment; a club.manage holder sees delete on any comment for moderation.
+export function CommentRow({
+  comment,
+  authorName,
+  isOwner,
+  canManage,
+  onEdit,
+  onDelete,
+}: {
+  comment: FeedbackComment
+  authorName: string
+  isOwner: boolean
+  canManage: boolean
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const edited = comment.updatedAt && comment.updatedAt !== comment.createdAt
+  return (
+    <div className="row" style={{ gap: 10, alignItems: 'flex-start', padding: '8px 0' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>
+          {authorName} · {filedAgo(comment.createdAt)}
+          {edited ? ' · edited' : ''}
+        </span>
+        <p style={{ fontSize: 14, lineHeight: 1.55, margin: '3px 0 0', whiteSpace: 'pre-wrap' }}>{comment.body}</p>
+      </div>
+      {isOwner && (
+        <button
+          className="btn btn-ghost btn-sm icon-only"
+          style={{ width: 32, padding: 0 }}
+          aria-label={'Edit comment by ' + authorName}
+          onClick={onEdit}
+        >
+          <Icon.edit />
+        </button>
+      )}
+      {(isOwner || canManage) && (
+        <button
+          className="btn btn-ghost btn-sm icon-only"
+          style={{ width: 32, padding: 0 }}
+          aria-label={'Delete comment by ' + authorName}
+          onClick={onDelete}
+        >
+          <Icon.trash />
+        </button>
+      )}
+    </div>
+  )
+}
+
+// The thread under an expanded item, presentational over the resolved names
+// and the ownership and capability flags. Comments arrive oldest first so the
+// conversation reads top to bottom.
+export function CommentThread({
+  comments,
+  authorNameFor,
+  currentUserId,
+  canManage,
+  onEdit,
+  onDelete,
+}: {
+  comments: FeedbackComment[]
+  authorNameFor: (createdBy: string) => string
+  currentUserId?: string
+  canManage: boolean
+  onEdit: (comment: FeedbackComment) => void
+  onDelete: (comment: FeedbackComment) => void
+}) {
+  if (comments.length === 0) {
+    return (
+      <p className="muted" style={{ fontSize: 13, margin: '8px 0 0' }}>
+        No comments yet. Start the conversation below.
+      </p>
+    )
+  }
+  return (
+    <div style={{ marginTop: 8 }}>
+      {comments.map((comment) => (
+        <CommentRow
+          key={comment.id}
+          comment={comment}
+          authorName={authorNameFor(comment.createdBy)}
+          isOwner={comment.createdBy === currentUserId}
+          canManage={canManage}
+          onEdit={() => onEdit(comment)}
+          onDelete={() => onDelete(comment)}
+        />
+      ))}
+    </div>
+  )
+}
+
+// Edits a comment's body in a small modal. Body only, matching the update
+// policy.
+function EditCommentModal({ comment, onClose }: { comment: FeedbackComment; onClose: () => void }) {
+  const edit = useEditFeedbackComment()
+  const [body, setBody] = useState(comment.body)
+  const ready = body.trim().length >= 1
+  return (
+    <Modal
+      title="Edit comment"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={edit.isPending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => edit.mutate({ id: comment.id, body }, { onSuccess: onClose })}
+            disabled={!ready || edit.isPending}
+          >
+            <Icon.check />
+            {edit.isPending ? 'Saving…' : 'Save changes'}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label htmlFor="comment-edit-body">Comment</label>
+        <textarea
+          id="comment-edit-body"
+          rows={4}
+          maxLength={2000}
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+        />
+      </div>
+      {edit.isError && (
+        <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+          {edit.error.message}
+        </p>
+      )}
+    </Modal>
+  )
+}
+
+// Confirms a comment delete. Reachable by the author or a club.manage holder
+// moderating; the RLS decides which.
+function DeleteCommentModal({ comment, onClose }: { comment: FeedbackComment; onClose: () => void }) {
+  const del = useDeleteFeedbackComment()
+  return (
+    <Modal
+      title="Delete comment"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{ background: 'var(--m-pdf)' }}
+            onClick={() => del.mutate({ id: comment.id }, { onSuccess: onClose })}
+            disabled={del.isPending}
+          >
+            <Icon.trash />
+            {del.isPending ? 'Deleting…' : 'Delete'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>This removes the comment from the thread for the whole club.</p>
+      {del.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+          {del.error.message}
+        </p>
+      )}
+    </Modal>
+  )
+}
+
+// Wires an item's thread to its hooks: the comment list, the reply box, and
+// the edit and delete modals. Mounted only when the item is expanded, so a
+// closed row fetches nothing.
+function FeedbackThread({ feedbackId, canManage }: { feedbackId: string; canManage: boolean }) {
+  const { user } = useAuth()
+  const { data: comments = [], isLoading, isError } = useFeedbackComments(feedbackId)
+  const memberById = useMemberMap()
+  const add = useAddFeedbackComment()
+  const [reply, setReply] = useState('')
+  const [editing, setEditing] = useState<FeedbackComment | null>(null)
+  const [deleting, setDeleting] = useState<FeedbackComment | null>(null)
+  const ready = reply.trim().length >= 1
+
+  const post = () => {
+    if (!ready) return
+    add.mutate({ feedbackId, body: reply }, { onSuccess: () => setReply('') })
+  }
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 4 }}>
+      {isLoading ? (
+        <Loading />
+      ) : isError ? (
+        <ErrorNote />
+      ) : (
+        <CommentThread
+          comments={comments}
+          authorNameFor={(id) => memberById[id]?.fullName || '—'}
+          currentUserId={user?.id}
+          canManage={canManage}
+          onEdit={setEditing}
+          onDelete={setDeleting}
+        />
+      )}
+      <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
+        <label htmlFor={'reply-' + feedbackId}>Reply</label>
+        <textarea
+          id={'reply-' + feedbackId}
+          rows={2}
+          maxLength={2000}
+          value={reply}
+          placeholder="Add a comment, visible to the whole club."
+          onChange={(e) => setReply(e.target.value)}
+        />
+      </div>
+      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+        <button className="btn btn-primary btn-sm" onClick={post} disabled={!ready || add.isPending}>
+          <Icon.check />
+          {add.isPending ? 'Posting…' : 'Post comment'}
+        </button>
+      </div>
+      {add.isError && (
+        <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', margin: '6px 0 0' }}>
+          {add.error.message}
+        </p>
+      )}
+      {editing && <EditCommentModal comment={editing} onClose={() => setEditing(null)} />}
+      {deleting && <DeleteCommentModal comment={deleting} onClose={() => setDeleting(null)} />}
+    </div>
+  )
+}
+
 // Wires one row to its mutations: the status select for club.manage holders
 // and the creator's edit and delete modals.
 function FeedbackRow({
@@ -335,11 +596,13 @@ function FeedbackRow({
   authorName,
   isOwner,
   canManage,
+  commentCount,
 }: {
   item: FeedbackItem
   authorName: string
   isOwner: boolean
   canManage: boolean
+  commentCount: number
 }) {
   const setStatus = useSetFeedbackStatus()
   const [editing, setEditing] = useState(false)
@@ -351,11 +614,13 @@ function FeedbackRow({
         authorName={authorName}
         isOwner={isOwner}
         canManage={canManage}
+        commentCount={commentCount}
         onEdit={() => setEditing(true)}
         onDelete={() => setDeleting(true)}
         onStatus={(status) => setStatus.mutate({ id: item.id, status })}
         statusBusy={setStatus.isPending}
         statusError={setStatus.isError ? setStatus.error.message : ''}
+        thread={<FeedbackThread feedbackId={item.id} canManage={canManage} />}
       />
       {editing && <EditFeedbackModal item={item} onClose={() => setEditing(false)} />}
       {deleting && <DeleteFeedbackModal item={item} onClose={() => setDeleting(false)} />}
@@ -368,6 +633,7 @@ export function Feedback() {
   const { caps } = useMyCapabilities()
   const { data: items = [], isLoading, isError } = useFeedback()
   const memberById = useMemberMap()
+  const { data: commentCounts = {} } = useFeedbackCommentCounts()
   const [creating, setCreating] = useState(false)
   const canManage = caps.has('club.manage')
 
@@ -400,6 +666,7 @@ export function Feedback() {
               authorName={memberById[item.createdBy]?.fullName || '—'}
               isOwner={item.createdBy === user?.id}
               canManage={canManage}
+              commentCount={commentCounts[item.id] ?? 0}
             />
           ))
         )}

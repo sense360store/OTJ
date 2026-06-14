@@ -25,6 +25,7 @@ import type {
   Club,
   CornerKey,
   Drill,
+  FeedbackComment,
   FeedbackItem,
   FeedbackKind,
   FeedbackStatus,
@@ -2114,6 +2115,131 @@ export function useSetFeedbackStatus() {
       if (!data?.length) throw new Error('Only a holder of club.manage can change feedback status.')
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['feedback'] }),
+  })
+}
+
+// ---- Feedback comments -----------------------------------------------------
+// Replies on a feedback item, club visible by design, the same transparency
+// as the log itself: the whole club reads a thread just as it reads the item.
+// Any member files a comment (parents included, no capability gate); an author
+// edits and deletes their own; club.manage may also delete any for
+// moderation. The feedback_comments RLS is the enforcement; the UI only
+// decides what to surface. The comment list and the per item counts share the
+// ['feedback_comments'] key so a post refreshes both the open thread and the
+// collapsed row badges.
+
+interface FeedbackCommentRow {
+  id: string
+  feedback_id: string
+  created_by: string
+  body: string
+  created_at: string
+  updated_at: string
+}
+
+const FEEDBACK_COMMENT_COLS = 'id, feedback_id, created_by, body, created_at, updated_at'
+
+function toFeedbackComment(r: FeedbackCommentRow): FeedbackComment {
+  return {
+    id: r.id,
+    feedbackId: r.feedback_id,
+    body: r.body,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
+// One item's thread, oldest first so a conversation reads top to bottom.
+export function useFeedbackComments(feedbackId: string) {
+  return useQuery({
+    queryKey: ['feedback_comments', feedbackId],
+    enabled: !!feedbackId,
+    queryFn: async (): Promise<FeedbackComment[]> => {
+      const { data, error } = await supabase
+        .from('feedback_comments')
+        .select(FEEDBACK_COMMENT_COLS)
+        .eq('feedback_id', feedbackId)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+      if (error) throw error
+      return (data as unknown as FeedbackCommentRow[]).map(toFeedbackComment)
+    },
+  })
+}
+
+// A count per feedback item for the collapsed row badge, in one club wide
+// read rather than a query per row. RLS scopes it to the club already.
+export function useFeedbackCommentCounts() {
+  return useQuery({
+    queryKey: ['feedback_comments', 'counts'],
+    queryFn: async (): Promise<Record<string, number>> => {
+      const { data, error } = await supabase.from('feedback_comments').select('feedback_id')
+      if (error) throw error
+      const counts: Record<string, number> = {}
+      for (const r of (data ?? []) as { feedback_id: string }[]) {
+        counts[r.feedback_id] = (counts[r.feedback_id] ?? 0) + 1
+      }
+      return counts
+    },
+  })
+}
+
+// Files a comment as the signed in member. club_id and created_by are pinned
+// to the caller, matching the insert RLS.
+export function useAddFeedbackComment() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<void, Error, { feedbackId: string; body: string }>({
+    mutationFn: async ({ feedbackId, body }) => {
+      if (!user || !profile?.club_id) {
+        throw new Error('You must be signed in to comment.')
+      }
+      const { error } = await supabase.from('feedback_comments').insert({
+        feedback_id: feedbackId,
+        club_id: profile.club_id,
+        created_by: user.id,
+        body: body.trim(),
+      })
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback_comments'] }),
+  })
+}
+
+// Author only, body only. The update RLS is the real enforcement, and a
+// write it blocks updates no rows, which is reported rather than swallowed.
+export function useEditFeedbackComment() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; body: string }>({
+    mutationFn: async ({ id, body }) => {
+      const { data, error } = await supabase
+        .from('feedback_comments')
+        .update({ body: body.trim() })
+        .eq('id', id)
+        .select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('You can only edit comments you wrote.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback_comments'] }),
+  })
+}
+
+// Author, or a club.manage holder moderating. The delete RLS (two arms) is
+// the real enforcement; a blocked delete removes nothing and is reported.
+export function useDeleteFeedbackComment() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { data, error } = await supabase
+        .from('feedback_comments')
+        .delete()
+        .eq('id', id)
+        .select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('You can only delete your own comment, unless you manage the club.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback_comments'] }),
   })
 }
 

@@ -352,6 +352,18 @@ export interface FeedbackItem {
   updatedAt: string
 }
 
+// A reply on a feedback item. Club visible by design, the same
+// transparency as the feedback log itself; createdBy drives the author's
+// edit and delete affordances exactly as ownership does elsewhere.
+export interface FeedbackComment {
+  id: string
+  feedbackId: string
+  body: string
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
 // ---- Taxonomy ----------------------------------------------------------
 export const CORNERS: Record<CornerKey, CornerInfo> = {
   technical: { key: 'technical', label: 'Technical', short: 'TEC', color: 'var(--c-technical)' },
