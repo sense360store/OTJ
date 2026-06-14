@@ -1998,9 +1998,12 @@ interface FeedbackRow {
   status: FeedbackStatus
   created_at: string
   updated_at: string
+  github_issue_number: number | null
+  github_issue_url: string | null
 }
 
-const FEEDBACK_COLS = 'id, club_id, created_by, kind, title, body, status, created_at, updated_at'
+const FEEDBACK_COLS =
+  'id, club_id, created_by, kind, title, body, status, created_at, updated_at, github_issue_number, github_issue_url'
 
 function toFeedbackItem(r: FeedbackRow): FeedbackItem {
   return {
@@ -2012,6 +2015,8 @@ function toFeedbackItem(r: FeedbackRow): FeedbackItem {
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    githubIssueNumber: r.github_issue_number ?? null,
+    githubIssueUrl: r.github_issue_url ?? null,
   }
 }
 
@@ -2114,6 +2119,68 @@ export function useSetFeedbackStatus() {
       if (error) throw error
       if (!data?.length) throw new Error('Only a holder of club.manage can change feedback status.')
     },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback'] }),
+  })
+}
+
+// Promotes one feedback item to a public GitHub issue through the
+// feedback-to-github Edge Function. ADMIN ONLY: the function gates on
+// club.manage, so a coach never reaches it; the UI hides the action from
+// anyone without the capability anyway. The repository is public, so the
+// admin's approved title and body are the issue content and carry no
+// identifying data. The function is idempotent: a second promotion of an
+// already promoted item returns the existing issue with alreadyPromoted set
+// rather than creating a duplicate. A 403 (capability), 503 (the GITHUB_TOKEN
+// secret is missing) or 502 (GitHub unreachable or refusing) replies with a
+// plain { error } body shown verbatim. On success the feedback query is
+// invalidated so the row shows the link and its planned status.
+export interface PromoteFeedbackResult {
+  ok: boolean
+  alreadyPromoted: boolean
+  issueNumber: number | null
+  issueUrl: string
+  warning: string
+}
+
+interface PromoteFeedbackBody {
+  ok?: boolean
+  already_promoted?: boolean
+  issue_number?: number
+  issue_url?: string
+  warning?: string
+}
+
+export function usePromoteFeedbackToGithub() {
+  const qc = useQueryClient()
+  return useMutation<PromoteFeedbackResult, Error, { id: string; title: string; body: string }>({
+    mutationFn: async ({ id, title, body }) => {
+      const { data, error } = await supabase.functions.invoke('feedback-to-github', {
+        body: { feedback_id: id, title, body },
+      })
+      if (error) {
+        let message = 'Could not create the GitHub issue. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const errBody = (await ctx.json()) as { error?: string }
+            if (errBody?.error) message = errBody.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const result = (data ?? {}) as PromoteFeedbackBody
+      return {
+        ok: result.ok === true,
+        alreadyPromoted: result.already_promoted === true,
+        issueNumber: typeof result.issue_number === 'number' ? result.issue_number : null,
+        issueUrl: result.issue_url ?? '',
+        warning: result.warning ?? '',
+      }
+    },
+    // Settled, not success: a write back failure still created the public issue,
+    // and a re read shows the true state either way.
     onSettled: () => qc.invalidateQueries({ queryKey: ['feedback'] }),
   })
 }
