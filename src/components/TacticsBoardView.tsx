@@ -10,7 +10,7 @@
 // (its labels carry the players' names, see tacticsBoard.ts) shows shape and
 // numbers to parents, never names. The styles live in Board.css, which the
 // consuming screen imports.
-import type { Token } from '../lib/tacticsBoard'
+import { tokenFirstName, type Token } from '../lib/tacticsBoard'
 
 // The pitch grass, stripes and markings, drawn once and shared by the editable
 // board and the read only view. A portrait 680 by 1050 viewBox the container
@@ -55,7 +55,9 @@ export function PitchMarkings() {
 // The read only board: the pitch plus static discs. No pointer handlers, no
 // buttons and no inputs, so the snapshot cannot be dragged or edited. Each disc
 // shows its number; its label renders as plain text beneath unless numberOnly
-// hides it.
+// hides it. The visible label is the first name only (see tokenFirstName), so a
+// board seeded from a roster reads cleanly; the full name stays on the title
+// (hover or tap) and the disc's accessible name.
 export function TacticsBoardView({ tokens, numberOnly = false }: { tokens: Token[]; numberOnly?: boolean }) {
   return (
     <div className="board-pitch board-pitch-readonly">
@@ -74,7 +76,7 @@ export function TacticsBoardView({ tokens, numberOnly = false }: { tokens: Token
           </span>
           {!numberOnly && t.label ? (
             <span className="board-token-label board-token-label-static" title={t.label}>
-              {t.label}
+              {tokenFirstName(t.label)}
             </span>
           ) : null}
         </div>

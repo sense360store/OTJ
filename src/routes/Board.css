@@ -152,6 +152,21 @@
 .board-disc:active {
   cursor: grabbing;
 }
+/* The selected disc: a gold ring around it, a shape change rather than colour
+   alone so it reads against both the home and away disc fills and for anyone
+   who does not see colour. Paired with aria-pressed on the button so assistive
+   tech announces the selection too. */
+.board-disc.selected {
+  outline: 3px solid var(--gold, #f4c020);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(10, 31, 107, 0.45), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+/* Keyboard focus gets its own ring so a coach tabbing between discs can see
+   which one Delete would remove. */
+.board-disc:focus-visible {
+  outline: 3px solid var(--royal, #1f43d6);
+  outline-offset: 2px;
+}
 /* The read only disc on an embedded board or a board in view mode: the same
    look, but it neither grabs nor drags, and it does not suppress touch, so the
    page pans freely over it. */
@@ -210,6 +225,18 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The selection tip above the editable pitch: quiet instruction that doubles
+   as a live region, so the current selection state is announced when it
+   changes. */
+.board-tip {
+  max-width: 540px;
+  margin: 0 auto 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--slate);
+  text-align: center;
 }
 
 /* The embedded board on the session day: a slightly tighter cap than the

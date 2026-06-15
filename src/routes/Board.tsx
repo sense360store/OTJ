@@ -27,6 +27,7 @@ import {
 import {
   boardIsDirty,
   captureBoardEdit,
+  deleteToken,
   FORMATIONS,
   formationPositions,
   nextNumber,
@@ -81,6 +82,10 @@ export function Board() {
   const selectedTeam = teamId ?? profile?.team_id ?? teamList[0]?.id ?? ''
 
   const [tokens, setTokens] = useState<Token[]>([])
+  // The selected token, the one the Remove selected button and the Delete key
+  // act on. Null when nothing is selected. Selection is an edit mode concern,
+  // so it clears whenever the board is replaced or editing ends.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   // The side new tokens and formations take, the "show shape against
   // opposition" control: place one side, switch, place the other.
   const [side, setSide] = useState<TokenSide>('home')
@@ -126,6 +131,7 @@ export function Board() {
     const placed = formationPositions(key, side)
     setTokens((prev) => [...prev.filter((t) => t.side !== side), ...placed])
     setFormation(key)
+    setSelectedId(null)
   }
 
   // Seed the current side from the selected team's roster, the opt in
@@ -143,6 +149,7 @@ export function Board() {
     )
     setTokens((prev) => [...prev.filter((t) => t.side !== side), ...placed])
     setFormation('')
+    setSelectedId(null)
   }
 
   function addToken() {
@@ -153,23 +160,30 @@ export function Board() {
     ])
   }
 
-  // Remove the most recently added token; the per disc affordance is left for a
-  // later phase.
-  function removeToken() {
-    setTokens((prev) => prev.slice(0, -1))
-  }
-
   function moveToken(id: string, x: number, y: number) {
     setTokens((prev) => prev.map((t) => (t.id === id ? { ...t, x, y } : t)))
   }
 
-  function labelToken(id: string, label: string) {
-    setTokens((prev) => prev.map((t) => (t.id === id ? { ...t, label } : t)))
+  // Remove one chosen token: the selection based delete behind the Remove
+  // selected button (passed the selected id) and the Delete or Backspace key on
+  // a focused disc. Clears the selection when the removed token was the selected
+  // one, so the Remove selected button disables again.
+  function removeToken(id: string) {
+    setTokens((prev) => deleteToken(prev, id))
+    setSelectedId((cur) => (cur === id ? null : cur))
+  }
+
+  // Clear the whole board and any selection.
+  function clearBoard() {
+    setTokens([])
+    setSelectedId(null)
   }
 
   // Enter edit mode, snapshotting the editable state so Cancel can restore it.
+  // Selection starts empty.
   function enterEdit() {
     setEditBaseline(captureBoardEdit({ name, formation, side, teamId, tokens }))
+    setSelectedId(null)
     setMode('edit')
   }
 
@@ -177,6 +191,7 @@ export function Board() {
   // the database; the save button and the unsaved indicator are unchanged.
   function doneEdit() {
     setEditBaseline(null)
+    setSelectedId(null)
     setMode('view')
   }
 
@@ -191,6 +206,7 @@ export function Board() {
       setTokens(editBaseline.tokens)
     }
     setEditBaseline(null)
+    setSelectedId(null)
     setMode('view')
   }
 
@@ -209,6 +225,7 @@ export function Board() {
     setSavedSnapshot({ name: b.name, formation: b.formation ?? '', teamId: resolvedTeam, tokens: b.tokens })
     setBrowsing(false)
     setEditBaseline(null)
+    setSelectedId(null)
     setMode('view')
   }
 
@@ -221,6 +238,7 @@ export function Board() {
     setName('')
     setLoadedId(null)
     setSavedSnapshot(null)
+    setSelectedId(null)
     setEditBaseline(captureBoardEdit({ name: '', formation: '', side, teamId, tokens: [] }))
     setMode('edit')
   }
@@ -261,11 +279,13 @@ export function Board() {
       <BoardStage
         mode={mode}
         tokens={tokens}
+        selectedId={selectedId}
         onEdit={enterEdit}
         onDone={doneEdit}
         onCancel={cancelEdit}
         onMove={moveToken}
-        onLabel={labelToken}
+        onSelect={setSelectedId}
+        onDelete={removeToken}
         teamList={teamList}
         selectedTeam={selectedTeam}
         onTeam={setTeamId}
@@ -276,8 +296,7 @@ export function Board() {
         teamPlayerCount={teamPlayers.length}
         onSeedRoster={seedFromRoster}
         onAddToken={addToken}
-        onRemoveToken={removeToken}
-        onClear={() => setTokens([])}
+        onClear={clearBoard}
         name={name}
         onName={setName}
         dirty={dirty}
@@ -310,11 +329,13 @@ export function Board() {
 export function BoardStage({
   mode,
   tokens,
+  selectedId,
   onEdit,
   onDone,
   onCancel,
   onMove,
-  onLabel,
+  onSelect,
+  onDelete,
   teamList,
   selectedTeam,
   onTeam,
@@ -325,7 +346,6 @@ export function BoardStage({
   teamPlayerCount,
   onSeedRoster,
   onAddToken,
-  onRemoveToken,
   onClear,
   name,
   onName,
@@ -338,11 +358,13 @@ export function BoardStage({
 }: {
   mode: BoardMode
   tokens: Token[]
+  selectedId: string | null
   onEdit: () => void
   onDone: () => void
   onCancel: () => void
   onMove: (id: string, x: number, y: number) => void
-  onLabel: (id: string, label: string) => void
+  onSelect: (id: string | null) => void
+  onDelete: (id: string) => void
   teamList: Team[]
   selectedTeam: string
   onTeam: (id: string) => void
@@ -353,7 +375,6 @@ export function BoardStage({
   teamPlayerCount: number
   onSeedRoster: () => void
   onAddToken: () => void
-  onRemoveToken: () => void
   onClear: () => void
   name: string
   onName: (name: string) => void
@@ -474,9 +495,14 @@ export function BoardStage({
             <Icon.plus />
             Add token
           </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onRemoveToken} disabled={tokens.length === 0}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => selectedId && onDelete(selectedId)}
+            disabled={!selectedId}
+          >
             <Icon.x />
-            Remove token
+            Remove selected
           </button>
           <button type="button" className="btn btn-quiet btn-sm" onClick={onClear} disabled={tokens.length === 0}>
             <Icon.trash />
@@ -514,7 +540,12 @@ export function BoardStage({
         )}
       </div>
 
-      <TacticsPitch tokens={tokens} onMove={onMove} onLabel={onLabel} />
+      <p className="board-tip" aria-live="polite">
+        {selectedId
+          ? 'Player selected. Use Remove selected, or press Delete, to remove it.'
+          : 'Tap a player to select it. Drag to move. Tap the grass to deselect.'}
+      </p>
+      <TacticsPitch tokens={tokens} selectedId={selectedId} onMove={onMove} onSelect={onSelect} onDelete={onDelete} />
     </>
   )
 }
