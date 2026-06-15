@@ -20,6 +20,19 @@ export interface Token {
   y: number
 }
 
+// The label as it shows on the pitch: the first name only. A token seeded from
+// a roster carries a player's full name in its label (see rosterTokens); the
+// disc shows just the first name so it stays legible, while the full name is
+// kept on the title attribute and the disc's accessible name. The first name is
+// the text before the first space; a single word label (a one word name, or a
+// hand placed token with none) is returned unchanged. Surrounding whitespace is
+// trimmed so a stray leading space never yields an empty first name.
+export function tokenFirstName(label: string): string {
+  const trimmed = label.trim()
+  const space = trimmed.indexOf(' ')
+  return space === -1 ? trimmed : trimmed.slice(0, space)
+}
+
 // A formation as the count of outfield players per line, back to front. The
 // goalkeeper is implied and added on top, so the token count a formation
 // places is the line sum plus one.
@@ -276,4 +289,29 @@ export function boardSignature(snap: BoardSnapshot): string {
 // changes.
 export function boardIsDirty(current: BoardSnapshot, saved: BoardSnapshot): boolean {
   return boardSignature(current) !== boardSignature(saved)
+}
+
+// ---- Selection and gestures ---------------------------------------------
+// A token on the editable board both drags and selects from one pointer press,
+// so press, move and release have to decide between the two. The rule is a
+// distance: a release that never travelled far from where it pressed is a tap
+// (which selects the token), one that did is a drag (which moved it). The
+// threshold is a few pixels so a deliberate drag always crosses it while a
+// slightly imprecise tap, a finger that shifts a pixel or two, still selects.
+export const DRAG_THRESHOLD = 6
+
+// True when a pointer has moved far enough from its press point to count as a
+// drag rather than a tap. Pulled out as a pure helper so the tap-versus-drag
+// decision is tested directly, without simulating pointer events in a DOM.
+export function isDrag(dx: number, dy: number, threshold = DRAG_THRESHOLD): boolean {
+  return Math.hypot(dx, dy) >= threshold
+}
+
+// Remove one token by id: the selection based delete behind the Remove selected
+// button and the Delete or Backspace key. Returns a new array without that one
+// token and leaves every other token untouched; an id that matches nothing
+// returns the list unchanged. Kept pure so "delete the chosen token and only
+// that token" is tested without a pitch.
+export function deleteToken(tokens: Token[], id: string): Token[] {
+  return tokens.filter((t) => t.id !== id)
 }
