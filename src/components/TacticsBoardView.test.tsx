@@ -32,10 +32,22 @@ describe('TacticsBoardView', () => {
     expect(html).not.toContain('<input')
   })
 
-  it('shows the free text labels by default', () => {
+  it('shows a single word label whole', () => {
+    // Jordan and Sam are one word names, so the first name is the whole name.
     const html = renderToStaticMarkup(<TacticsBoardView tokens={tokens} />)
-    expect(html).toContain('Jordan')
-    expect(html).toContain('Sam')
+    expect(html).toContain('title="Jordan">Jordan</span>')
+    expect(html).toContain('title="Sam">Sam</span>')
+  })
+
+  it('shows the first name only for a multi word name, the full name on the title', () => {
+    // A board seeded from a roster carries full names; the pitch shows just the
+    // first name so the disc stays legible, with the full name on the title.
+    const named: Token[] = [
+      { id: 'home-9', number: 9, label: 'William McGrath', side: 'home', x: 0.5, y: 0.6 },
+    ]
+    const html = renderToStaticMarkup(<TacticsBoardView tokens={named} />)
+    // The visible label text is the first name; the full name is the title.
+    expect(html).toContain('title="William McGrath">William</span>')
   })
 
   it('shows numbers only when numberOnly is set, hiding roster names', () => {
@@ -47,13 +59,16 @@ describe('TacticsBoardView', () => {
     expect(html).not.toContain('Sam')
   })
 
-  it('keeps a long display name accessible in full when the pill truncates', () => {
-    // A long full name seeded from a roster. The pill sizes to its content up
-    // to a CSS max and may truncate visually, but the full name is never lost:
-    // it stays on the title attribute (hover or tap) and the disc's aria-label.
+  it('keeps the full display name accessible on the title and the disc aria-label', () => {
+    // The visible label is the first name, but the full name is never lost: it
+    // stays on the title attribute (hover or tap) and the disc's aria-label, so
+    // a screen reader and a long press both reach the whole name. The first name
+    // alone is what renders, and the rare long first name still truncates with
+    // an ellipsis via the kept label fit styling.
     const long: Token[] = [{ id: 'home-2', number: 2, label: 'William McKenzie', side: 'home', x: 0.5, y: 0.6 }]
     const html = renderToStaticMarkup(<TacticsBoardView tokens={long} />)
-    expect(html).toContain('title="William McKenzie"')
+    expect(html).toContain('title="William McKenzie">William</span>')
     expect(html).toContain('aria-label="Player 2 William McKenzie"')
+    expect(html).toContain('board-token-label-static')
   })
 })

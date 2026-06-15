@@ -1,17 +1,20 @@
-// The pitch and its draggable player discs, pulled out as a presentational
-// component so the static renderer can cover the markings and the token layout
-// without a DOM or pointer events. The SVG is drawn in a portrait 680 by 1050
-// viewBox at sensible proportions; the container holds that aspect ratio and
-// fills the available width, so the same board reads on a phone and a desktop.
+// The pitch and its player discs, pulled out as a presentational component so
+// the static renderer can cover the markings and the token layout without a DOM
+// or pointer events. The SVG is drawn in a portrait 680 by 1050 viewBox at
+// sensible proportions; the container holds that aspect ratio and fills the
+// available width, so the same board reads on a phone and a desktop.
 //
-// Dragging uses native pointer events, so one path serves mouse and touch.
-// pointerdown captures the pointer to the disc, pointermove maps the pointer
-// into a pitch fraction and reports it, pointerup releases. Positions live in
-// the parent as fractions, which is why this component only reports moves and
-// never holds a position of its own.
+// One pointer press on a disc does double duty: a tap selects the token, a press
+// and drag moves it. pointerdown opens a gesture and captures the pointer to the
+// disc, pointermove starts dragging once the pointer crosses a small threshold
+// (so a slightly imprecise tap still selects), pointerup selects when no drag
+// happened. A press on the pitch background clears the selection. Positions live
+// in the parent as fractions, which is why this component only reports moves and
+// holds no position of its own; selection lives in the parent too, so the Remove
+// selected button beside the pitch acts on the same choice.
 import { useRef } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
-import { clampFraction, type Token } from '../lib/tacticsBoard'
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { clampFraction, isDrag, tokenFirstName, type Token } from '../lib/tacticsBoard'
 import { PitchMarkings } from './TacticsBoardView'
 
 // Keep a disc fully inside the touchlines while it is dragged.
@@ -19,15 +22,22 @@ const EDGE_MARGIN = 0.045
 
 export function TacticsPitch({
   tokens,
+  selectedId,
   onMove,
-  onLabel,
+  onSelect,
+  onDelete,
 }: {
   tokens: Token[]
+  selectedId: string | null
   onMove: (id: string, x: number, y: number) => void
-  onLabel: (id: string, label: string) => void
+  onSelect: (id: string | null) => void
+  onDelete: (id: string) => void
 }) {
   const pitchRef = useRef<HTMLDivElement>(null)
-  const draggingId = useRef<string | null>(null)
+  // The active pointer gesture on a token: which token, where the press began,
+  // and whether it has crossed the drag threshold yet. Held in a ref so a move
+  // never rerenders; null between gestures.
+  const gesture = useRef<{ id: string; startX: number; startY: number; dragging: boolean } | null>(null)
 
   // Map a pointer position to a clamped pitch fraction. Returns null before the
   // pitch has measured, so a stray move is ignored rather than throwing.
@@ -40,47 +50,103 @@ export function TacticsPitch({
     }
   }
 
-  const onPointerDown = (id: string) => (e: ReactPointerEvent) => {
-    draggingId.current = id
-    e.currentTarget.setPointerCapture(e.pointerId)
+  // Pointer capture so the move and up land on the disc even if the finger
+  // leaves it. Wrapped because some environments (and the test renderer) have
+  // no pointer capture, where the calls would throw.
+  function capture(e: ReactPointerEvent) {
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      /* no pointer capture available */
+    }
   }
+  function release(e: ReactPointerEvent) {
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* nothing captured to release */
+    }
+  }
+
+  const onPointerDown = (id: string) => (e: ReactPointerEvent) => {
+    // Open a gesture. It is not yet a drag or a tap; movement or release decides.
+    gesture.current = { id, startX: e.clientX, startY: e.clientY, dragging: false }
+    capture(e)
+  }
+
   const onPointerMove = (id: string) => (e: ReactPointerEvent) => {
-    if (draggingId.current !== id) return
+    const g = gesture.current
+    if (!g || g.id !== id) return
+    // Below the threshold the press is still a candidate tap; once it crosses,
+    // the gesture becomes a drag for the rest of its life.
+    if (!g.dragging) {
+      if (!isDrag(e.clientX - g.startX, e.clientY - g.startY)) return
+      g.dragging = true
+    }
     const f = toFraction(e)
     if (f) onMove(id, f.x, f.y)
   }
-  const endDrag = (id: string) => (e: ReactPointerEvent) => {
-    if (draggingId.current !== id) return
-    draggingId.current = null
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+
+  const onPointerUp = (id: string) => (e: ReactPointerEvent) => {
+    const g = gesture.current
+    if (!g || g.id !== id) return
+    const wasDrag = g.dragging
+    gesture.current = null
+    release(e)
+    // A press that never became a drag is a tap: select this token.
+    if (!wasDrag) onSelect(id)
+  }
+
+  const onPointerCancel = (id: string) => (e: ReactPointerEvent) => {
+    if (gesture.current?.id === id) gesture.current = null
+    release(e)
+  }
+
+  // Delete or Backspace on a focused disc removes that token, the keyboard twin
+  // of the Remove selected button.
+  const onKeyDown = (id: string) => (e: ReactKeyboardEvent) => {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault()
+      onDelete(id)
+    }
+  }
+
+  // A press on the pitch background, anywhere outside a token, clears the
+  // selection. The check walks up from the event target, so a press that began
+  // on a disc or its label never deselects.
+  const onPitchPointerDown = (e: ReactPointerEvent) => {
+    if (!(e.target as Element).closest('.board-token')) onSelect(null)
   }
 
   return (
-    <div className="board-pitch" ref={pitchRef}>
+    <div className="board-pitch" ref={pitchRef} onPointerDown={onPitchPointerDown}>
       <PitchMarkings />
-      {tokens.map((t) => (
-        <div key={t.id} className={`board-token side-${t.side}`} style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%` }}>
-          <button
-            type="button"
-            className="board-disc"
-            onPointerDown={onPointerDown(t.id)}
-            onPointerMove={onPointerMove(t.id)}
-            onPointerUp={endDrag(t.id)}
-            onPointerCancel={endDrag(t.id)}
-            aria-label={`Drag player ${t.number}${t.label ? ` ${t.label}` : ''}`}
-          >
-            {t.number}
-          </button>
-          <input
-            className="board-token-label"
-            value={t.label}
-            placeholder="label"
-            title={t.label || undefined}
-            onChange={(e) => onLabel(t.id, e.target.value)}
-            aria-label={`Label for player ${t.number}`}
-          />
-        </div>
-      ))}
+      {tokens.map((t) => {
+        const selected = t.id === selectedId
+        return (
+          <div key={t.id} className={`board-token side-${t.side}`} style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%` }}>
+            <button
+              type="button"
+              className={'board-disc' + (selected ? ' selected' : '')}
+              aria-pressed={selected}
+              aria-label={`Player ${t.number}${t.label ? ` ${t.label}` : ''}`}
+              title={selected ? 'Selected. Press Delete to remove, or drag to move.' : 'Tap to select, drag to move.'}
+              onPointerDown={onPointerDown(t.id)}
+              onPointerMove={onPointerMove(t.id)}
+              onPointerUp={onPointerUp(t.id)}
+              onPointerCancel={onPointerCancel(t.id)}
+              onKeyDown={onKeyDown(t.id)}
+            >
+              {t.number}
+            </button>
+            {t.label ? (
+              <span className="board-token-label board-token-label-static" title={t.label}>
+                {tokenFirstName(t.label)}
+              </span>
+            ) : null}
+          </div>
+        )
+      })}
     </div>
   )
 }
