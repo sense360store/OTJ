@@ -10,6 +10,7 @@ import { CORNERS, cornerClass, youtubeThumb } from '../lib/data'
 import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
 import { sourceLabelForUrl } from '../lib/fa'
 import { useMediaMap, useMediaSrc } from '../lib/queries'
+import { formatBytes } from '../lib/faAttach'
 
 const REAL_MEDIA_STYLE = {
   position: 'absolute',
@@ -440,6 +441,65 @@ export function ErrorNote({ children }: { children?: ReactNode }) {
   return (
     <div className="muted" style={{ padding: '48px 0', textAlign: 'center', fontWeight: 600 }}>
       {children ?? 'Something went wrong loading this. Refresh to try again.'}
+    </div>
+  )
+}
+
+/* ---- upload progress ------------------------------------------- */
+// A calm upload status block shown while a file is being stored: a determinate
+// bar driven by real byte progress, the name and size, and a note that large
+// files take a while. loaded === null is the brief moment before the first
+// progress event arrives (or an upload that cannot report bytes); it shows an
+// honest "Starting" state rather than a fake bar. The block keeps one fixed
+// shape across states so nothing jumps as it fills.
+export function UploadProgress({
+  label,
+  loaded,
+  total,
+}: {
+  label: string
+  loaded: number | null
+  total: number
+}) {
+  const known = loaded !== null && total > 0
+  const pct = known ? Math.min(100, Math.max(0, Math.round((loaded / total) * 100))) : 0
+  const done = known && loaded >= total
+  const status = loaded === null ? 'Starting…' : done ? 'Finishing…' : `Uploading… ${pct}%`
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{ border: '1.5px solid var(--line)', borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}
+    >
+      <div className="row" style={{ gap: 10, justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontWeight: 700, fontSize: 13.5, overflowWrap: 'anywhere' }}>{label}</span>
+        <span className="mono muted" style={{ fontSize: 12, flex: '0 0 auto' }}>
+          {formatBytes(total)}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={known ? pct : undefined}
+        style={{ height: 6, borderRadius: 999, background: 'var(--line)', overflow: 'hidden' }}
+      >
+        <div
+          style={{
+            height: '100%',
+            width: `${pct}%`,
+            background: 'var(--royal)',
+            borderRadius: 999,
+            transition: 'width 120ms linear',
+          }}
+        />
+      </div>
+      <div className="muted" style={{ fontSize: 12.5 }}>
+        {status}
+      </div>
+      <div className="muted" style={{ fontSize: 12 }}>
+        Large files can take a little while. Keep this open until it finishes.
+      </div>
     </div>
   )
 }

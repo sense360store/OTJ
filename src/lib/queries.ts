@@ -52,6 +52,8 @@ import { deserializeTokens, serializeTokens } from './tacticsBoard'
 import { sourceLabelForUrl } from './fa'
 import { formatBytes } from './faAttach'
 import type { AttachPlan } from './faAttach'
+import { uploadFileWithProgress } from './storageUpload'
+import type { UploadProgressFn } from './storageUpload'
 
 // ---- Database row shapes (snake_case) ----------------------------------
 // Separate from the component-facing camelCase types. Nullable columns are
@@ -751,13 +753,15 @@ export function mediaTypeForFile(file: File): MediaType | null {
   return mime ? detectMediaType(mime) : null
 }
 
-// The per file upload ceiling, raised from 50 MB so self hosted FA session
-// videos fit inline playback. config.toml and the hosted project's storage
-// limits must carry the same value, or the server rejects what the client
-// allows. Checked before any bytes move, so an oversized pick fails at once
-// with a plain message instead of a storage error at the end of a long
-// upload.
-export const MEDIA_MAX_BYTES = 300 * 1024 * 1024
+// The per file upload ceiling. Raised to 500 MB on the Supabase Pro plan so
+// self hosted FA session videos fit inline playback, up from the 300 MB that
+// suited the old Free plan. This single constant is the one frontend source
+// of truth: every client side size check derives from it, so the checks
+// cannot drift apart. config.toml and the hosted project's storage limits
+// must carry the same value, or the server rejects what the client allows.
+// Checked before any bytes move, so an oversized pick fails at once with a
+// plain message instead of a storage error at the end of a long upload.
+export const MEDIA_MAX_BYTES = 500 * 1024 * 1024
 
 export function oversizeMessage(file: File): string | null {
   if (file.size <= MEDIA_MAX_BYTES) return null
@@ -817,6 +821,10 @@ function readVideoLength(file: File): Promise<string | undefined> {
 
 export type UploadInput = { mode: 'file'; file: File; name: string } | { mode: 'youtube'; ytUrl: string; name: string }
 
+// onProgress reports real upload bytes for a file upload so the UI can show a
+// progress bar; it never fires for a YouTube link, which moves no bytes.
+export type UploadArgs = { input: UploadInput; onProgress?: UploadProgressFn }
+
 // Creates a library media row from a file upload or a YouTube link. The
 // mutation resolves to the new row's id so a caller can link it at once; the
 // drill form's inline creator sets it as the drill's media.
@@ -824,8 +832,8 @@ export function useUploadMedia() {
   const qc = useQueryClient()
   const { user, profile } = useAuth()
 
-  return useMutation<string, Error, UploadInput>({
-    mutationFn: async (input) => {
+  return useMutation<string, Error, UploadArgs>({
+    mutationFn: async ({ input, onProgress }) => {
       if (!user || !profile?.club_id) {
         throw new Error('You must be signed in to upload media.')
       }
@@ -863,7 +871,7 @@ export function useUploadMedia() {
       const tooBig = oversizeMessage(file)
       if (tooBig) throw new Error(tooBig)
       const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
-      const { error: uploadError } = await supabase.storage.from('media').upload(path, file, { contentType })
+      const { error: uploadError } = await uploadFileWithProgress('media', path, file, { onProgress })
       if (uploadError) throw new Error(`The upload failed: ${uploadError.message}`)
 
       const size = formatBytes(file.size)
@@ -907,8 +915,8 @@ export function useReplaceMedia() {
   const qc = useQueryClient()
   const { profile } = useAuth()
 
-  return useMutation<void, Error, { id: string; previousPath?: string | null; input: UploadInput }>({
-    mutationFn: async ({ id, previousPath, input }) => {
+  return useMutation<void, Error, { id: string; previousPath?: string | null; input: UploadInput; onProgress?: UploadProgressFn }>({
+    mutationFn: async ({ id, previousPath, input, onProgress }) => {
       if (!profile?.club_id) {
         throw new Error('You must be signed in to replace media.')
       }
@@ -945,7 +953,7 @@ export function useReplaceMedia() {
         if (tooBig) throw new Error(tooBig)
 
         const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
-        const { error: uploadError } = await supabase.storage.from('media').upload(path, file, { contentType })
+        const { error: uploadError } = await uploadFileWithProgress('media', path, file, { onProgress })
         if (uploadError) throw new Error(`The upload failed: ${uploadError.message}`)
 
         const size = formatBytes(file.size)
@@ -1012,9 +1020,13 @@ export function useAttachFAVideoFiles() {
   return useMutation<
     AttachFAFilesOutcome[],
     Error,
-    { plan: AttachPlan<File>; onProgress?: (done: number, total: number) => void }
+    {
+      plan: AttachPlan<File>
+      onProgress?: (done: number, total: number) => void
+      onBytes?: (p: { name: string; loaded: number; total: number }) => void
+    }
   >({
-    mutationFn: async ({ plan, onProgress }) => {
+    mutationFn: async ({ plan, onProgress, onBytes }) => {
       if (!user || !profile?.club_id) {
         throw new Error('You must be signed in to attach files.')
       }
@@ -1038,9 +1050,9 @@ export function useAttachFAVideoFiles() {
 
         const file = entry.file
         const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
-        const { error: uploadError } = await supabase.storage
-          .from('media')
-          .upload(path, file, { contentType: contentTypeForFile(file) ?? 'video/mp4' })
+        const { error: uploadError } = await uploadFileWithProgress('media', path, file, {
+          onProgress: (loaded, total) => onBytes?.({ name: file.name, loaded, total }),
+        })
         if (uploadError) {
           outcomes.push({
             fileName: file.name,
