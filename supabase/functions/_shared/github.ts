@@ -34,6 +34,20 @@ export const GITHUB_API_BASE = 'https://api.github.com'
 // Issues permission. A label that already exists is reused.
 export const GITHUB_ISSUE_LABEL = 'from-hub'
 
+// The type label applied alongside the provenance label, derived from the
+// feedback item's stored kind so the engineering backlog is filterable by
+// type. The mapping is deliberate, not the kind verbatim: a feature request is
+// an "enhancement" in GitHub's vocabulary, a bug is "bug", and a general note
+// carries no type label. Both targets are GitHub default labels, so they
+// already exist on the repository. The kind is read from the feedback row the
+// function loads, never from client input, so the label reflects the stored
+// kind. An unknown kind maps to no label rather than guessing.
+export function typeLabelForKind(kind: string | null | undefined): string | null {
+  if (kind === 'feature') return 'enhancement'
+  if (kind === 'bug') return 'bug'
+  return null
+}
+
 // A short timeout: a single issue create, no retry. A slow GitHub fails the
 // promotion plainly rather than holding the request open.
 export const GITHUB_TIMEOUT_MS = 15_000
@@ -74,15 +88,33 @@ export function readPromoteInput(raw: unknown): PromoteInput | { error: string }
 }
 
 // The issue creation payload. The admin's title and body pass through
-// unchanged; the provenance label rides along.
+// unchanged; the provenance label always rides along, and the type label from
+// the feedback kind rides along when the kind maps to one.
 export interface IssuePayload {
   title: string
   body: string
   labels: string[]
 }
 
-export function buildIssuePayload(input: PromoteInput): IssuePayload {
-  return { title: input.title, body: input.body, labels: [GITHUB_ISSUE_LABEL] }
+// Build the create payload. The provenance label is always present; the type
+// label derived from kind is added when present (feature and bug), and absent
+// for general or an unknown kind. Passing no kind, or null, yields the
+// provenance only payload, which is also the degrade target when a type label
+// would block the create (see shouldRetryWithoutTypeLabel).
+export function buildIssuePayload(input: PromoteInput, kind?: string | null): IssuePayload {
+  const typeLabel = typeLabelForKind(kind)
+  const labels = typeLabel ? [GITHUB_ISSUE_LABEL, typeLabel] : [GITHUB_ISSUE_LABEL]
+  return { title: input.title, body: input.body, labels }
+}
+
+// Whether a failed create should be retried with the provenance label alone.
+// The type label is best effort and must never block the promotion: if a label
+// did not exist on a repository that does not auto create it, GitHub answers
+// 422, so the create is retried once without the type label. Only a 422 with a
+// type label in play is retried; every other failure is a real one and passes
+// through unchanged.
+export function shouldRetryWithoutTypeLabel(status: number, hadTypeLabel: boolean): boolean {
+  return hadTypeLabel && status === 422
 }
 
 // The feedback row's promotion state, the only columns the function reads off
@@ -91,6 +123,7 @@ export function buildIssuePayload(input: PromoteInput): IssuePayload {
 export interface FeedbackPromotionRow {
   id: string
   status: string
+  kind: string
   github_issue_number: number | null
   github_issue_url: string | null
 }

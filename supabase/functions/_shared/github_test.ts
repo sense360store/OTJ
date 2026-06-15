@@ -19,6 +19,8 @@ import {
   promotedStatus,
   readIssueResponse,
   readPromoteInput,
+  shouldRetryWithoutTypeLabel,
+  typeLabelForKind,
 } from './github.ts'
 
 // ---- readPromoteInput ------------------------------------------------------
@@ -63,6 +65,59 @@ Deno.test('readPromoteInput refuses a non object body', () => {
 Deno.test('buildIssuePayload passes the title and body through unchanged and adds the provenance label', () => {
   const payload = buildIssuePayload({ feedbackId: 'f1', title: 'Timer drifts', body: 'Clock reads fast.' })
   assertEquals(payload, { title: 'Timer drifts', body: 'Clock reads fast.', labels: [GITHUB_ISSUE_LABEL] })
+})
+
+Deno.test('buildIssuePayload adds the enhancement label for a feature kind', () => {
+  const payload = buildIssuePayload({ feedbackId: 'f1', title: 'A title', body: '' }, 'feature')
+  assertEquals(payload.labels, [GITHUB_ISSUE_LABEL, 'enhancement'])
+})
+
+Deno.test('buildIssuePayload adds the bug label for a bug kind', () => {
+  const payload = buildIssuePayload({ feedbackId: 'f1', title: 'A title', body: '' }, 'bug')
+  assertEquals(payload.labels, [GITHUB_ISSUE_LABEL, 'bug'])
+})
+
+Deno.test('buildIssuePayload adds no type label for a general kind', () => {
+  const payload = buildIssuePayload({ feedbackId: 'f1', title: 'A title', body: '' }, 'general')
+  assertEquals(payload.labels, [GITHUB_ISSUE_LABEL])
+})
+
+// ---- typeLabelForKind: the kind to label mapping ---------------------------
+
+Deno.test('typeLabelForKind maps feature to enhancement, bug to bug, general to none', () => {
+  assertEquals(typeLabelForKind('feature'), 'enhancement')
+  assertEquals(typeLabelForKind('bug'), 'bug')
+  assertEquals(typeLabelForKind('general'), null)
+})
+
+Deno.test('typeLabelForKind maps an unknown or missing kind to no label', () => {
+  assertEquals(typeLabelForKind('whatever'), null)
+  assertEquals(typeLabelForKind(null), null)
+  assertEquals(typeLabelForKind(undefined), null)
+})
+
+// ---- shouldRetryWithoutTypeLabel: the best effort degrade ------------------
+// A missing type label must never block the promotion: a 422 with a type label
+// in play degrades to the provenance label alone, so the issue is still
+// created. Every other failure, and any failure with no type label sent, is a
+// real one and is not retried.
+
+Deno.test('shouldRetryWithoutTypeLabel retries a 422 only when a type label was sent', () => {
+  assert(shouldRetryWithoutTypeLabel(422, true))
+  assert(!shouldRetryWithoutTypeLabel(422, false))
+})
+
+Deno.test('shouldRetryWithoutTypeLabel does not retry other statuses', () => {
+  assert(!shouldRetryWithoutTypeLabel(401, true))
+  assert(!shouldRetryWithoutTypeLabel(404, true))
+  assert(!shouldRetryWithoutTypeLabel(500, true))
+})
+
+Deno.test('the degrade target payload carries the provenance label alone', () => {
+  // The function builds this when a type label would block the create, so the
+  // issue is still created without the type label.
+  const payload = buildIssuePayload({ feedbackId: 'f1', title: 'A title', body: '' }, null)
+  assertEquals(payload.labels, [GITHUB_ISSUE_LABEL])
 })
 
 // ---- alreadyPromoted: the de-dupe guard ------------------------------------
