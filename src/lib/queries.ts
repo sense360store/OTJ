@@ -2185,6 +2185,66 @@ export function usePromoteFeedbackToGithub() {
   })
 }
 
+// Refreshes promoted feedback items from their GitHub issues through the
+// feedback-github-refresh Edge Function, the issue-state-flows-back half of
+// the lifecycle (issue #83). ADMIN ONLY: the function gates on club.manage,
+// so a coach never reaches it; the screen only fires it for holders anyway.
+// For each promoted item whose linked issue is now closed and that is not
+// already done or declined, the function moves the item to done. It is best
+// effort and idempotent: a GitHub read failure changes nothing, and a second
+// run once everything is synced changes nothing. This runs quietly when an
+// admin opens the feedback screen; its result is not shown, the feedback
+// query is invalidated on settled so any moved status simply appears.
+export interface RefreshFeedbackResult {
+  ok: boolean
+  checked: number
+  updated: number
+  failed: number
+  stopped: boolean
+}
+
+interface RefreshFeedbackBody {
+  ok?: boolean
+  checked?: number
+  updated?: number
+  failed?: number
+  stopped?: boolean
+}
+
+export function useRefreshFeedbackFromGithub() {
+  const qc = useQueryClient()
+  return useMutation<RefreshFeedbackResult, Error, void>({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('feedback-github-refresh', {})
+      if (error) {
+        let message = 'Could not refresh issue state from GitHub.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const errBody = (await ctx.json()) as { error?: string }
+            if (errBody?.error) message = errBody.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as RefreshFeedbackBody
+      return {
+        ok: body.ok === true,
+        checked: body.checked ?? 0,
+        updated: body.updated ?? 0,
+        failed: body.failed ?? 0,
+        stopped: body.stopped === true,
+      }
+    },
+    // Settled, not success: the function moves items one at a time, so any
+    // status moved before a late stop must show, and a re read shows the true
+    // state either way.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['feedback'] }),
+  })
+}
+
 // ---- Feedback comments -----------------------------------------------------
 // Replies on a feedback item, club visible by design, the same transparency
 // as the log itself: the whole club reads a thread just as it reads the item.

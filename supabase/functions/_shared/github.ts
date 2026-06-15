@@ -181,3 +181,80 @@ export function githubErrorMessage(status: number): string {
   }
   return `GitHub returned HTTP ${status}. No issue was created.`
 }
+
+// =====================================================================
+// Issue state read back (phase 2: lifecycle, the issue-state-flows-back half)
+//
+// The promotion above is one way: an admin opens a public issue from a
+// feedback item. This second half reflects the issue's lifecycle back onto
+// the feedback item, in ONE direction only: when the linked issue is closed,
+// the feedback item moves to done. Nothing else flows back. The refresh never
+// reopens an item, never moves a status away from a terminal state, and never
+// closes, edits or deletes an issue: issues are a durable record. This is
+// polling, run when an admin opens the feedback screen, not a webhook, so
+// there is no public endpoint and no signature verification.
+//
+// THE PUBLIC BOUNDARY is unchanged: the GitHub issue read here returns the
+// issue's own fields (its state, its number); only the state is read, and no
+// member data is ever stored, logged or returned. The decision is pure and
+// network free so it is unit testable; the function does the GitHub read and
+// the write back through the caller's own RLS client.
+// =====================================================================
+
+// A defensive cap on how many issues one refresh reads, so a pathological
+// number of promoted items cannot make a single open fan out without bound.
+// A club's open promoted items are few; the rest, if ever there were more,
+// are simply picked up on the next open.
+export const MAX_ISSUES_PER_REFRESH = 50
+
+// The terminal feedback statuses, the ones the refresh never moves away from.
+// A done or declined item is left exactly as it is whatever its issue now
+// says: done is the target and declined is a deliberate human decision.
+export function isTerminalStatus(status: string): boolean {
+  return status === 'done' || status === 'declined'
+}
+
+// The columns the refresh reads off a feedback row: its id, its current
+// status, and the linked issue number. Never any field that is issue content
+// or member data; the refresh only decides a status move.
+export interface FeedbackIssueRow {
+  id: string
+  status: string
+  github_issue_number: number | null
+}
+
+// The promoted, non terminal items worth a GitHub read this run. An item with
+// no real issue number is not promoted and is skipped; a terminal item can
+// never change and is skipped. Filtering here keeps the function reading only
+// what could move, and makes the rule unit testable.
+export function issuesToCheck(rows: FeedbackIssueRow[]): FeedbackIssueRow[] {
+  return rows.filter((r) => alreadyPromoted(r) && !isTerminalStatus(r.status))
+}
+
+// GitHub's issue state, read from a GET /issues/{number} response. GitHub
+// returns 'open' or 'closed' and nothing else for this field; a missing or
+// mistyped value, or a non object body, reads as null so the refresh leaves
+// the status unchanged on any doubt. Only the state is taken; every other
+// field GitHub returns (including any that could carry text) is ignored.
+export interface IssueState {
+  state: 'open' | 'closed'
+}
+
+export function readIssueState(body: unknown): IssueState | null {
+  if (!body || typeof body !== 'object') return null
+  const b = body as Record<string, unknown>
+  const state = b.state
+  if (state === 'open' || state === 'closed') return { state }
+  return null
+}
+
+// The decision the refresh makes per promoted item, pure and network free. A
+// closed issue moves a non terminal feedback item to done; everything else is
+// no change. An open issue never moves a status, and a closed issue never
+// moves an item that is already done or declined. This only ever returns
+// 'done' or null: the refresh can move a status TO done and nothing else.
+export function closedIssueStatus(currentStatus: string, issueState: 'open' | 'closed'): 'done' | null {
+  if (issueState !== 'closed') return null
+  if (isTerminalStatus(currentStatus)) return null
+  return 'done'
+}
