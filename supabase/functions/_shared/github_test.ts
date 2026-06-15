@@ -12,12 +12,16 @@ import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
   alreadyPromoted,
   buildIssuePayload,
+  closedIssueStatus,
   GITHUB_ISSUE_LABEL,
   githubErrorMessage,
   ISSUE_BODY_MAX,
   ISSUE_TITLE_MAX,
+  issuesToCheck,
+  isTerminalStatus,
   promotedStatus,
   readIssueResponse,
+  readIssueState,
   readPromoteInput,
   shouldRetryWithoutTypeLabel,
   typeLabelForKind,
@@ -167,4 +171,80 @@ Deno.test('githubErrorMessage maps the common failures to plain text', () => {
   assert(githubErrorMessage(404).includes('repository'))
   assert(githubErrorMessage(429).includes('rate'))
   assert(githubErrorMessage(500).includes('500'))
+})
+
+// ---- isTerminalStatus ------------------------------------------------------
+// The phase 2 lifecycle refresh never moves a done or declined item.
+
+Deno.test('isTerminalStatus is true for done and declined only', () => {
+  assert(isTerminalStatus('done'))
+  assert(isTerminalStatus('declined'))
+  assert(!isTerminalStatus('new'))
+  assert(!isTerminalStatus('planned'))
+  assert(!isTerminalStatus('in_progress'))
+})
+
+// ---- issuesToCheck: which promoted items are worth a GitHub read -----------
+// Only promoted (a real issue number) and non terminal items can move, so only
+// those are read; an unpromoted or terminal row is filtered out.
+
+Deno.test('issuesToCheck keeps promoted non terminal rows and drops the rest', () => {
+  const rows = [
+    { id: 'a', status: 'new', github_issue_number: 1 },
+    { id: 'b', status: 'in_progress', github_issue_number: 2 },
+    { id: 'c', status: 'done', github_issue_number: 3 },
+    { id: 'd', status: 'declined', github_issue_number: 4 },
+    { id: 'e', status: 'planned', github_issue_number: null },
+    { id: 'f', status: 'new', github_issue_number: 0 },
+  ]
+  assertEquals(
+    issuesToCheck(rows).map((r) => r.id),
+    ['a', 'b'],
+  )
+})
+
+// ---- readIssueState: the GitHub issue state parser -------------------------
+// Reads only the state field; a closed state, an open state, and a malformed
+// response (no usable state) so the refresh changes nothing on doubt.
+
+Deno.test('readIssueState reads a closed state', () => {
+  assertEquals(readIssueState({ number: 7, state: 'closed', extra: 'ignored' }), { state: 'closed' })
+})
+
+Deno.test('readIssueState reads an open state', () => {
+  assertEquals(readIssueState({ number: 7, state: 'open' }), { state: 'open' })
+})
+
+Deno.test('readIssueState rejects a malformed or missing state', () => {
+  assertEquals(readIssueState(null), null)
+  assertEquals(readIssueState('closed'), null)
+  assertEquals(readIssueState({}), null)
+  assertEquals(readIssueState({ state: 'CLOSED' }), null)
+  assertEquals(readIssueState({ state: 'merged' }), null)
+  assertEquals(readIssueState({ state: 1 }), null)
+})
+
+// ---- closedIssueStatus: the closed-to-done decision ------------------------
+// A closed issue moves a non terminal item to done; a closed issue leaves a
+// terminal item alone; an open issue never moves a status. This only ever
+// returns 'done' or null, so the refresh can move a status TO done and nothing
+// else: it never reopens and never leaves a terminal state.
+
+Deno.test('closedIssueStatus moves a non terminal item to done when the issue is closed', () => {
+  assertEquals(closedIssueStatus('new', 'closed'), 'done')
+  assertEquals(closedIssueStatus('planned', 'closed'), 'done')
+  assertEquals(closedIssueStatus('in_progress', 'closed'), 'done')
+})
+
+Deno.test('closedIssueStatus leaves a terminal item alone even when the issue is closed', () => {
+  assertEquals(closedIssueStatus('done', 'closed'), null)
+  assertEquals(closedIssueStatus('declined', 'closed'), null)
+})
+
+Deno.test('closedIssueStatus never moves a status while the issue is open', () => {
+  assertEquals(closedIssueStatus('new', 'open'), null)
+  assertEquals(closedIssueStatus('planned', 'open'), null)
+  assertEquals(closedIssueStatus('in_progress', 'open'), null)
+  assertEquals(closedIssueStatus('done', 'open'), null)
+  assertEquals(closedIssueStatus('declined', 'open'), null)
 })

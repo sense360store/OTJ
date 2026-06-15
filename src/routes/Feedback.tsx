@@ -4,7 +4,7 @@
 // deletes their own items; holders of club.manage move status through the
 // select on each row. The feedback RLS plus the status guard trigger are the
 // enforcement; the UI only decides what to surface.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import {
@@ -19,6 +19,7 @@ import {
   useMemberMap,
   useMyCapabilities,
   usePromoteFeedbackToGithub,
+  useRefreshFeedbackFromGithub,
   useSetFeedbackStatus,
   useUpdateFeedback,
 } from '../lib/queries'
@@ -778,6 +779,22 @@ export function Feedback() {
   const { data: commentCounts = {} } = useFeedbackCommentCounts()
   const [creating, setCreating] = useState(false)
   const canManage = caps.has('club.manage')
+
+  // Issue #83, the issue-state-flows-back half: when an admin opens this
+  // screen, refresh promoted items from their GitHub issues so any item whose
+  // issue is now closed moves to done. Polling on open, not a webhook. It runs
+  // once per open (the ref guards re renders) and only for a club.manage
+  // holder; a coach or parent never fires it, and the function gates on
+  // club.manage regardless. It is quiet: no spinner and nothing blocks, the
+  // list renders now and the refresh invalidates the feedback query when it
+  // returns so a moved status simply appears. Any failure is swallowed.
+  const { mutate: refreshFromGithub } = useRefreshFeedbackFromGithub()
+  const refreshedRef = useRef(false)
+  useEffect(() => {
+    if (!canManage || refreshedRef.current) return
+    refreshedRef.current = true
+    refreshFromGithub()
+  }, [canManage, refreshFromGithub])
 
   return (
     <div style={{ maxWidth: 760 }}>
