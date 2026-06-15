@@ -58,8 +58,10 @@ import {
   promotedStatus,
   readIssueResponse,
   readPromoteInput,
+  shouldRetryWithoutTypeLabel,
+  typeLabelForKind,
 } from '../_shared/github.ts'
-import type { FeedbackPromotionRow } from '../_shared/github.ts'
+import type { FeedbackPromotionRow, IssuePayload } from '../_shared/github.ts'
 
 const GITHUB_TOKEN = Deno.env.get('GITHUB_TOKEN') ?? ''
 
@@ -119,7 +121,7 @@ Deno.serve(async (req) => {
   // any field that would become issue content.
   const { data: row, error: readError } = await caller.db
     .from('feedback')
-    .select('id, status, github_issue_number, github_issue_url')
+    .select('id, status, kind, github_issue_number, github_issue_url')
     .eq('id', input.feedbackId)
     .maybeSingle()
   if (readError) {
@@ -142,18 +144,41 @@ Deno.serve(async (req) => {
     })
   }
 
-  // Create the issue. One POST, no retry, a short timeout. The admin's title
-  // and body pass through unchanged, with the provenance label.
-  let res: Response
-  try {
-    res = await fetch(`${GITHUB_API_BASE}/repos/${GITHUB_REPO}/issues`, {
+  // Create the issue. One POST, a short timeout. The admin's title and body
+  // pass through unchanged, with the provenance label and the type label
+  // derived from the stored feedback kind (feature to enhancement, bug to bug,
+  // general to no type label). The kind is read from the row above, never from
+  // client input, so the label reflects the stored kind.
+  const typeLabel = typeLabelForKind(feedback.kind)
+  function postIssue(payload: IssuePayload): Promise<Response> {
+    return fetch(`${GITHUB_API_BASE}/repos/${GITHUB_REPO}/issues`, {
       method: 'POST',
       headers: { ...githubHeaders(), 'content-type': 'application/json' },
-      body: JSON.stringify(buildIssuePayload(input)),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
     })
+  }
+  let res: Response
+  try {
+    res = await postIssue(buildIssuePayload(input, feedback.kind))
   } catch {
     return reply(502, { error: 'Could not reach GitHub within the timeout. No issue was created.' })
+  }
+  // The type label is best effort and must never block the promotion. If GitHub
+  // rejects the create with 422 while a type label was in play (a label that
+  // did not exist on a repository that does not auto create it), degrade to the
+  // provenance label alone and create the issue without the type label.
+  if (!res.ok && shouldRetryWithoutTypeLabel(res.status, typeLabel !== null)) {
+    console.error('feedback-to-github: retrying create without the type label', {
+      feedbackId: feedback.id,
+      status: res.status,
+    })
+    await res.body?.cancel()
+    try {
+      res = await postIssue(buildIssuePayload(input, null))
+    } catch {
+      return reply(502, { error: 'Could not reach GitHub within the timeout. No issue was created.' })
+    }
   }
   if (!res.ok) {
     console.error('feedback-to-github: issue create failed', { feedbackId: feedback.id, status: res.status })
