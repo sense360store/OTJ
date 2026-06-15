@@ -7,7 +7,7 @@
 // a new item inline without leaving the form.
 import { useRef, useState } from 'react'
 import { Icon } from './icons'
-import { Chip, ListInput, Loading, MediaThumb, MEDIA_META, Modal } from './ui'
+import { Chip, ListInput, Loading, MediaThumb, MEDIA_META, Modal, UploadProgress } from './ui'
 import {
   mediaTypeForFile,
   oversizeMessage,
@@ -149,6 +149,8 @@ function InlineMediaCreator({
   const [yt, setYt] = useState('')
   const [drag, setDrag] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Real byte progress for an in flight file upload; null until the first event.
+  const [progress, setProgress] = useState<{ loaded: number; total: number } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const pickFile = (f: File | null) => {
@@ -186,7 +188,11 @@ function InlineMediaCreator({
       }
       input = { mode: 'youtube', ytUrl: yt.trim(), name: name.trim() }
     }
-    upload.mutate(input, { onSuccess: onCreated, onError: (e: Error) => setError(e.message) })
+    setProgress(null)
+    upload.mutate(
+      { input, onProgress: (loaded, total) => setProgress({ loaded, total }) },
+      { onSuccess: onCreated, onError: (e: Error) => setError(e.message) },
+    )
   }
 
   return (
@@ -200,6 +206,9 @@ function InlineMediaCreator({
         </Chip>
       </div>
       {mode === 'file' ? (
+        upload.isPending && file ? (
+          <UploadProgress label={file.name} loaded={progress?.loaded ?? null} total={progress?.total ?? file.size} />
+        ) : (
         <div
           onClick={() => inputRef.current?.click()}
           onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
@@ -230,6 +239,7 @@ function InlineMediaCreator({
             Images (SVG included), videos and PDFs
           </div>
         </div>
+        )
       ) : (
         <div className="field" style={{ marginBottom: 0 }}>
           <label>YouTube link</label>

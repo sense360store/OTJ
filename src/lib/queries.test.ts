@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   alreadyImportedFrom,
   faImportBody,
+  MEDIA_MAX_BYTES,
+  oversizeMessage,
   toActivity,
   toActivityRow,
   toDrill,
@@ -168,5 +170,33 @@ describe('drill row to app mapping', () => {
   it('maps tags through and defaults a null column to an empty list', () => {
     expect(toDrill(drillRow({ tags: ['Defending', 'Marking'] })).tags).toEqual(['Defending', 'Marking'])
     expect(toDrill(drillRow({ tags: null })).tags).toEqual([])
+  })
+})
+
+// A file just at the size of N bytes; only file.size is read by the guard.
+function sized(size: number): File {
+  return { size } as unknown as File
+}
+
+describe('media upload size cap', () => {
+  it('the cap is 500 MB, the Pro plan ceiling', () => {
+    expect(MEDIA_MAX_BYTES).toBe(500 * 1024 * 1024)
+    expect(MEDIA_MAX_BYTES).toBe(524288000)
+  })
+
+  it('accepts a file exactly at the 500 MB limit', () => {
+    expect(oversizeMessage(sized(MEDIA_MAX_BYTES))).toBeNull()
+    expect(oversizeMessage(sized(MEDIA_MAX_BYTES - 1))).toBeNull()
+  })
+
+  it('rejects a file over the limit and names the 500 MB cap', () => {
+    const msg = oversizeMessage(sized(MEDIA_MAX_BYTES + 1))
+    expect(msg).not.toBeNull()
+    expect(msg).toContain('500 MB')
+  })
+
+  it('still accepts a file at the old 300 MB level, which is now well under', () => {
+    expect(oversizeMessage(sized(300 * 1024 * 1024))).toBeNull()
+    expect(oversizeMessage(sized(273 * 1024 * 1024))).toBeNull()
   })
 })

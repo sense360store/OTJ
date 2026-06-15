@@ -22,7 +22,7 @@ import {
 import { MEDIA_MAX_BYTES, useAttachFAVideoFiles, useMedia } from '../lib/queries'
 import type { AttachFAFilesOutcome } from '../lib/queries'
 import { Icon } from './icons'
-import { Modal } from './ui'
+import { Modal, UploadProgress } from './ui'
 
 const PLAN_META: Record<AttachPlanStatus, { label: string; color: string }> = {
   store: { label: 'Will store', color: 'var(--c-physical)' },
@@ -64,6 +64,9 @@ export function AttachFAVideosModal({ onClose }: { onClose: () => void }) {
   const [manifest, setManifest] = useState<ParsedManifest | null>(null)
   const [manifestNames, setManifestNames] = useState<string[]>([])
   const [progress, setProgress] = useState({ done: 0, total: 0 })
+  // Real byte progress for the file currently being stored; the count of files
+  // lives in progress above and the footer button.
+  const [fileBytes, setFileBytes] = useState<{ name: string; loaded: number; total: number } | null>(null)
   const [drag, setDrag] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -96,8 +99,13 @@ export function AttachFAVideosModal({ onClose }: { onClose: () => void }) {
     if (!plan || plan.storeCount === 0) return
     setError(null)
     setProgress({ done: 0, total: plan.storeCount })
+    setFileBytes(null)
     attach.mutate(
-      { plan, onProgress: (done, total) => setProgress({ done, total }) },
+      {
+        plan,
+        onProgress: (done, total) => setProgress({ done, total }),
+        onBytes: (p) => setFileBytes(p),
+      },
       { onError: (e) => setError(e.message) },
     )
   }
@@ -166,6 +174,13 @@ export function AttachFAVideosModal({ onClose }: { onClose: () => void }) {
               ? `${pending} imported FA video${pending !== 1 ? 's are' : ' is'} waiting for a source file.`
               : 'Every imported FA video already has a stored file.'}
           </p>
+          {attach.isPending ? (
+            <UploadProgress
+              label={fileBytes?.name ?? 'Storing files…'}
+              loaded={fileBytes?.loaded ?? null}
+              total={fileBytes?.total ?? 0}
+            />
+          ) : (
           <div
             onClick={() => inputRef.current?.click()}
             onDragOver={(e) => {
@@ -205,6 +220,7 @@ export function AttachFAVideosModal({ onClose }: { onClose: () => void }) {
               MP4 (H.264 video, AAC audio), with an optional manifest (.json, .csv or .txt)
             </div>
           </div>
+          )}
           {manifestNames.length > 0 && manifest && (
             <p className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
               Manifest: {manifestNames.join(', ')} ({manifest.entries.size}{' '}

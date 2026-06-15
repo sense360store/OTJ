@@ -18,7 +18,7 @@ import { isSampleMedia, youtubeId } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
 import { useAuth } from '../hooks/useAuth'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, MediaAttribution, MediaThumb, MEDIA_META, Modal } from '../components/ui'
+import { ErrorNote, Loading, MediaAttribution, MediaThumb, MEDIA_META, Modal, UploadProgress } from '../components/ui'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
 import { AttachFAVideosModal } from '../components/AttachFAVideosModal'
 
@@ -356,6 +356,9 @@ export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose
   const [yt, setYt] = useState('')
   const [drag, setDrag] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Real byte progress for an in flight file upload; null until the first
+  // progress event so the bar starts honestly rather than guessing.
+  const [progress, setProgress] = useState<{ loaded: number; total: number } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const pickFile = (f: File | null) => {
@@ -383,6 +386,7 @@ export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose
   const submit = () => {
     setError(null)
     const callbacks = { onSuccess: onClose, onError: (e: Error) => setError(e.message) }
+    const onProgress = (loaded: number, total: number) => setProgress({ loaded, total })
     let input: UploadInput
     if (tab === 'file') {
       if (!file) return
@@ -394,8 +398,9 @@ export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose
       }
       input = { mode: 'youtube', ytUrl: yt.trim(), name: name.trim() }
     }
-    if (replace) replaceMedia.mutate({ id: replace.id, previousPath: replace.storagePath, input }, callbacks)
-    else upload.mutate(input, callbacks)
+    setProgress(null)
+    if (replace) replaceMedia.mutate({ id: replace.id, previousPath: replace.storagePath, input, onProgress }, callbacks)
+    else upload.mutate({ input, onProgress }, callbacks)
   }
 
   return (
@@ -431,6 +436,9 @@ export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose
       </div>
 
       {tab === 'file' ? (
+        isPending && file ? (
+          <UploadProgress label={file.name} loaded={progress?.loaded ?? null} total={progress?.total ?? file.size} />
+        ) : (
         <div
           onClick={() => inputRef.current?.click()}
           onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
@@ -462,6 +470,7 @@ export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose
           </div>
           <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>Images (SVG included), videos and PDFs</div>
         </div>
+        )
       ) : (
         <div className="field">
           <label>YouTube link</label>
