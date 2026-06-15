@@ -14,9 +14,11 @@ import {
   ASSET_HOST,
   contentRegion,
   countSessionLinks,
+  findActivities,
   findSessionPlanPdf,
   findTopicTags,
   findVideoEmbeds,
+  importParsedSession,
   MAX_PROGRAMME_WEEKS,
   normalisedHref,
   PAGE_HOST,
@@ -240,9 +242,9 @@ Deno.test('parseSessionPage reads the FA video embeds and the empty drill shape'
 })
 
 Deno.test('the goalkeeping fixture yields three video embeds, one drill each, not one', () => {
-  // importVideoSession creates one media row and one drill per entry here, so
-  // three embeds in page order with their section headings means the coach
-  // gets all three parts, named apart.
+  // The import creates one media row and one drill per entry here, so three
+  // embeds in page order with their section headings means the coach gets all
+  // three parts, named apart.
   const embeds = findVideoEmbeds(fixture('session-2022-goalkeeping-the-basics.html'))
   assertEquals(embeds, [
     { embedUrl: 'https://player.vimeo.com/video/129532422', heading: 'Warm up' },
@@ -283,6 +285,186 @@ Deno.test('findVideoEmbeds ignores a page with no allowlisted player', () => {
     ),
     [{ embedUrl: 'https://player.vimeo.com/video/42', heading: '' }],
   )
+})
+
+// ---- The activity scan is scoped to the content region --------------------
+// The live import bug: a page with no real diagram gallery but an image-gallery
+// reference elsewhere (a related-content rail, a script) had a phantom activity
+// read out of it, which made the activity list non-empty and stopped the video
+// import from running, so the three videos were discarded as empty "no media"
+// drills. findActivities is scoped to the content region like every other scan,
+// so only a gallery inside the page's own content yields activities.
+
+Deno.test('findActivities reads the real diagram gallery and drops a stray gallery in the related rail', () => {
+  // The marking page's four diagrams are read.
+  assertEquals(findActivities(fixture('session-2025-marking-defend-as-friends.html')).length, 4)
+  // The goalkeeping video page has no gallery at all: no activities.
+  assertEquals(findActivities(fixture('session-2022-goalkeeping-the-basics.html')).length, 0)
+  // A gallery class sitting in the dropped related-sessions rail is not an
+  // activity: the scan never reaches it.
+  const withStrayRail = fixture('session-2022-goalkeeping-the-basics.html').replace(
+    '<h2>Related sessions</h2>',
+    `<h2>Related sessions</h2>
+     <div class="image-gallery">
+       <img class="image-gallery__img" src="https://cdn.englandfootball.com/EFLearning/rail-a.jpg" alt="rail thumb">
+       <img class="image-gallery__img" src="https://cdn.englandfootball.com/EFLearning/rail-b.jpg" alt="rail thumb">
+     </div>`,
+  )
+  assertEquals(findActivities(withStrayRail).length, 0)
+})
+
+// ---- Importing a parsed session: diagrams, videos, both or neither ---------
+// importParsedSession reads diagrams and videos independently, so a video
+// session yields video drills, a diagram session yields diagram drills, and a
+// page carrying both yields both. The stub records every insert and answers it
+// with a generated id, keeping these hermetic like the rest of the file. The
+// goalkeeping import touches no network because it has no diagrams to fetch;
+// the mixed-content test uses off-host diagram images so storeFaAsset
+// short-circuits before any fetch.
+
+interface RecordedInsert {
+  table: string
+  row: Record<string, unknown>
+}
+
+function importStub() {
+  const inserts: RecordedInsert[] = []
+  const counts: Record<string, number> = {}
+  const db = {
+    from(table: string) {
+      return {
+        insert(row: Record<string, unknown>) {
+          inserts.push({ table, row })
+          counts[table] = (counts[table] ?? 0) + 1
+          const id = `${table}-${counts[table]}`
+          return {
+            select(_columns: string) {
+              return { single: () => Promise.resolve({ data: { id }, error: null }) }
+            },
+          }
+        },
+      }
+    },
+    storage: {
+      from(_bucket: string) {
+        return {
+          upload: () => Promise.resolve({ error: null }),
+          remove: () => Promise.resolve({ error: null }),
+        }
+      },
+    },
+  }
+  const caller: FaCaller = { db: db as unknown as FaCaller['db'], userId: 'user-1', clubId: 'club-1' }
+  return { caller, inserts }
+}
+
+const GK_HREF = 'https://learn.englandfootball.com/sessions/resources/2022/Goalkeeping-session-the-basics'
+
+Deno.test('a video session imports one video drill per embed, not empty activities', async () => {
+  const page = parseSessionPage(fixture('session-2022-goalkeeping-the-basics.html'))
+  const { caller, inserts } = importStub()
+  const result = await importParsedSession(caller, page, GK_HREF, {})
+  // Three video drills, three video media rows, one template; no diagrams, and
+  // the page is not refused as unimportable.
+  assertEquals(result.unimportable, undefined)
+  assert(result.templateId !== null)
+  assertEquals(result.created, { drills: 3, media: 3, template: 1 })
+
+  const media = inserts.filter((i) => i.table === 'media')
+  const drills = inserts.filter((i) => i.table === 'drills')
+  const templates = inserts.filter((i) => i.table === 'templates')
+  assertEquals([media.length, drills.length, templates.length], [3, 3, 1])
+  // Every media row is a Vimeo embed on the allowlisted player host, none a
+  // stored diagram file.
+  for (const m of media) {
+    assertEquals(m.row.type, 'video')
+    assertEquals(m.row.kind, 'video')
+    assert(String(m.row.embed_url).startsWith('https://player.vimeo.com/video/'))
+  }
+  assert(!media.some((m) => m.row.kind === 'diagram'))
+  // The drills carry the page title plus each section heading, in page order.
+  assertEquals(
+    drills.map((d) => d.row.title),
+    [
+      'Goalkeeping session: the basics · Warm up',
+      'Goalkeeping session: the basics · Shot-stopping 1',
+      'Goalkeeping session: the basics · Shot-stopping 2',
+    ],
+  )
+  // The template ties the three drills together.
+  assertEquals((templates[0].row.activities as unknown[]).length, 3)
+})
+
+Deno.test('a video page with a stray gallery in the related rail still imports the videos', async () => {
+  // The exact live failure shape: scoping the activity scan keeps the rail's
+  // gallery class from manufacturing a phantom activity that would block the
+  // video import.
+  const withStrayRail = fixture('session-2022-goalkeeping-the-basics.html').replace(
+    '<h2>Related sessions</h2>',
+    `<h2>Related sessions</h2>
+     <div class="image-gallery">
+       <img class="image-gallery__img" src="https://cdn.englandfootball.com/EFLearning/rail-a.jpg" alt="rail thumb">
+       <img class="image-gallery__img" src="https://cdn.englandfootball.com/EFLearning/rail-b.jpg" alt="rail thumb">
+     </div>`,
+  )
+  const page = parseSessionPage(withStrayRail)
+  assertEquals(page.activities.length, 0)
+  assertEquals(page.videoEmbeds.length, 3)
+  const { caller, inserts } = importStub()
+  const result = await importParsedSession(caller, page, GK_HREF, {})
+  assertEquals(result.created, { drills: 3, media: 3, template: 1 })
+  // No diagram media was stored from the rail.
+  assert(!inserts.some((i) => i.table === 'media' && i.row.kind === 'diagram'))
+})
+
+Deno.test('a page with both diagrams and videos imports both, diagrams then videos', async () => {
+  // Off-host diagram images so storeFaAsset short-circuits without a network
+  // fetch (the drill is still created with no media, enough to count drills).
+  const html = `
+    <html><head><meta property="og:title" content="Mixed session: shapes and clips" /></head>
+    <body><main>
+      <section class="container image-gallery">
+        <img class="image-gallery__img" src="https://example.com/d1.svg" alt="Shape one: build up">
+        <div class="image-gallery__caption">Shape one: build up</div>
+        <img class="image-gallery__img" src="https://example.com/d2.svg" alt="Shape two: press">
+        <div class="image-gallery__caption">Shape two: press</div>
+      </section>
+      <section class="efl-large-video-player">
+        <h2>Clip one</h2>
+        <div class="efl-large-video-player__video-wrap" data-video-type="vimeo" data-video-id="111"></div>
+      </section>
+    </main></body></html>`
+  const page = parseSessionPage(html)
+  assertEquals(page.activities.length, 2)
+  assertEquals(page.videoEmbeds.length, 1)
+
+  const { caller, inserts } = importStub()
+  const result = await importParsedSession(caller, page, 'https://learn.englandfootball.com/sessions/mixed', {})
+  // Two diagram drills then one video drill, one video media row (the diagrams
+  // were off-host so none stored), one template.
+  assertEquals(result.created, { drills: 3, media: 1, template: 1 })
+  assertEquals(
+    inserts.filter((i) => i.table === 'drills').map((d) => d.row.title),
+    [
+      'Mixed session: shapes and clips · Shape one',
+      'Mixed session: shapes and clips · Shape two',
+      'Mixed session: shapes and clips · Clip one',
+    ],
+  )
+  const media = inserts.filter((i) => i.table === 'media')
+  assertEquals(media.length, 1)
+  assertEquals(media[0].row.kind, 'video')
+})
+
+Deno.test('a page with no diagrams, setup, points or video is unimportable and writes nothing', async () => {
+  const page = parseSessionPage(
+    '<html><head><meta property="og:title" content="Empty session" /></head><body><main><p>Nothing.</p></main></body></html>',
+  )
+  const { caller, inserts } = importStub()
+  const result = await importParsedSession(caller, page, 'https://learn.englandfootball.com/sessions/empty', {})
+  assertEquals(result.unimportable, true)
+  assertEquals(result.created, { drills: 0, media: 0, template: 0 })
+  assertEquals(inserts.length, 0)
 })
 
 // ---- The overview parser: week links, allowlist, dedupe, cap --------------

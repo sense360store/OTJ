@@ -308,6 +308,36 @@ export function findTopicTags(html: string): string[] {
   return tags
 }
 
+// The activity carousel diagrams, in page order. Each slide is an image on the
+// FA CDN plus a caption (also present as the image's alt text; the caption div
+// is preferred, alt is the fallback). The leading phrase before a colon names
+// the activity when present. Scoped to the content region, like the tag, video
+// and link scans, so a related-content rail or a stray reference to the gallery
+// class elsewhere on the page can never manufacture a phantom activity. That
+// matters beyond tidiness: a phantom activity makes the activity list non-empty
+// and used to mask a video session, whose import only ran when no activities
+// were found. A page whose content region carries no gallery yields none.
+export function findActivities(html: string): ParsedActivity[] {
+  const region = contentRegion(html)
+  const galleryAt = region.indexOf('image-gallery')
+  if (galleryAt === -1) return []
+  const gallery = region.slice(galleryAt)
+  const imgs = [...gallery.matchAll(/<img[^>]*image-gallery__img[^>]*>/gi)].map((m) => m[0])
+  const captions = [...gallery.matchAll(/image-gallery__caption[^"]*"\s*>([\s\S]*?)<\/div>/gi)].map((m) =>
+    textOf(m[1]),
+  )
+  const activities: ParsedActivity[] = []
+  imgs.forEach((tag, i) => {
+    const src = attrOf(tag, 'src')
+    if (!src) return
+    const caption = captions[i] || attrOf(tag, 'alt')
+    const colon = caption.indexOf(':')
+    const phrase = colon > 0 && colon <= 48 ? caption.slice(0, colon).trim() : ''
+    activities.push({ imageUrl: src, caption, phrase })
+  })
+  return activities
+}
+
 // The session plan PDF, when linked. Every anchor on the page is read whole,
 // so an inline "download the session plan" link sitting in a paragraph is
 // found, not only a standalone download button. The href is read with attrOf,
@@ -360,26 +390,7 @@ export function parseSessionPage(html: string): ParsedPage {
     else equipment.push(text)
   }
 
-  // Activity carousel: each slide is an image on the FA CDN plus a caption.
-  // The caption is also present as the image's alt text; prefer the caption
-  // div and fall back to alt.
-  const activities: ParsedActivity[] = []
-  const galleryAt = html.indexOf('image-gallery')
-  if (galleryAt !== -1) {
-    const gallery = html.slice(galleryAt)
-    const imgs = [...gallery.matchAll(/<img[^>]*image-gallery__img[^>]*>/gi)].map((m) => m[0])
-    const captions = [...gallery.matchAll(/image-gallery__caption[^"]*"\s*>([\s\S]*?)<\/div>/gi)].map((m) =>
-      textOf(m[1]),
-    )
-    imgs.forEach((tag, i) => {
-      const src = attrOf(tag, 'src')
-      if (!src) return
-      const caption = captions[i] || attrOf(tag, 'alt')
-      const colon = caption.indexOf(':')
-      const phrase = colon > 0 && colon <= 48 ? caption.slice(0, colon).trim() : ''
-      activities.push({ imageUrl: src, caption, phrase })
-    })
-  }
+  const activities = findActivities(html)
 
   const easier = listAfter(html, 'Make it easier')
   const harder = listAfter(html, 'Make it harder')
@@ -406,6 +417,11 @@ export function parseSessionPage(html: string): ParsedPage {
   // the title itself.
   let programme = ''
   let week: number | null = null
+  // Bound the programme-sentence scan to the text before the gallery, as a
+  // gallery caption can mention a programme. This uses the whole-document
+  // position of the gallery (findActivities scopes its own copy to the content
+  // region); -1 when there is no gallery, scanning the whole page text.
+  const galleryAt = html.indexOf('image-gallery')
   const pageText = textOf(html.slice(0, galleryAt === -1 ? html.length : galleryAt))
   const prog = pageText.match(/week\s+(\w+)\s+of\s+the\s+(.+?)\s+session\s+programme/i)
   if (prog) {
@@ -824,13 +840,17 @@ export function themeFromTitle(title: string): string {
   return m[1].replace(/[\s:–—-]+$/, '').trim()
 }
 
-// Import one parsed session page as the caller: one media row per activity
-// diagram (stored unmodified), one draft drill per activity in page order,
-// the session plan PDF when linked, and one template tying the drills
-// together. templateFields carries the per-caller template columns:
-// fa-import passes the legacy programme and week labels it has always
-// written; the programme import passes programme_id and programme_week and
-// leaves the legacy columns alone.
+// Import one parsed session page as the caller: one draft drill per activity
+// diagram (its diagram stored unmodified) and one draft drill per FA video
+// embed (its player URL as the media's embed), the session plan PDF when
+// linked, and one template tying every drill together in page order.
+// Diagrams and videos are read independently: a diagram session yields the
+// diagram drills, a video session the video drills, and a page carrying both
+// yields both, since the FA delivers some sessions as diagrams, some as
+// videos, and occasionally a diagram session alongside a video. templateFields
+// carries the per-caller template columns: fa-import passes the legacy
+// programme and week labels it has always written; the programme import passes
+// programme_id and programme_week and leaves the legacy columns alone.
 export async function importParsedSession(
   caller: FaCaller,
   page: ParsedPage,
@@ -844,24 +864,84 @@ export async function importParsedSession(
   // format stay null for the coach to set in the editor.
   const theme = themeFromTitle(page.title)
 
-  // A page with no activity diagrams, no setup strip and no coaching points is
-  // not a readable drill session. When it embeds allowlisted videos (an FA
-  // video session, delivered as Vimeo embeds) import each video as a video
-  // drill; otherwise refuse, so the empty template this path used to create is
-  // never created. The caller turns the refusal into a 422.
+  // What the page actually carries. Diagram content is its activity gallery, a
+  // setup strip or coaching points; videos are the FA large video player
+  // embeds. The two are independent, so each is read on its own rather than one
+  // being treated as the absence of the other. A page with neither is not a
+  // readable session: nothing is created and the caller turns this into a 422,
+  // so the empty template this path used to create is never created.
   const hasSetup = !!page.space || !!page.players || page.equipment.length > 0
-  if (page.activities.length === 0 && !hasSetup && page.points.length === 0) {
-    if (page.videoEmbeds.length > 0) return await importVideoSession(caller, page, theme, sourceFields, templateFields)
+  const hasDiagramContent = page.activities.length > 0 || hasSetup || page.points.length > 0
+  if (!hasDiagramContent && page.videoEmbeds.length === 0) {
     return { templateId: null, created: { drills: 0, media: 0, template: 0 }, warnings: [], unimportable: true }
   }
 
-  const warnings = sessionPageWarnings(page)
+  // The diagram-shaped warnings (no intentions, no setup strip, no diagrams and
+  // so on) only describe a page the FA delivers as a drill session. A pure
+  // video session is not missing diagrams, it has none by design, so it carries
+  // none of them, only any video store failure raised below.
+  const warnings = hasDiagramContent ? sessionPageWarnings(page) : []
 
-  // One draft drill per activity, in page order. The diagram is stored
-  // unmodified first; the drill then references it. The theme comes from the
-  // page title and the topic tags from the page's tag cloud; format, corner
-  // and level stay null. A page that repeats an image (a two week page
-  // revisiting a practice) stores the file once and reuses it.
+  // Diagram drills first, in page order, then the video drills as additional
+  // drills. Either set may be empty.
+  const diagrams = await importActivityDrills(caller, page, theme, sourceFields, warnings)
+  const videos = await importVideoDrills(caller, page, theme, sourceFields, warnings)
+  const drillIds = [...diagrams.drillIds, ...videos.drillIds]
+  let mediaCount = diagrams.mediaCount + videos.mediaCount
+
+  // The session plan PDF, when the page links one (diagram sessions do, video
+  // pages do not), stored once alongside the drills.
+  if (page.pdfUrl) {
+    const pdfStored = await storeFaAsset(caller, warnings, sourceFields, page.pdfUrl, `${page.title} session plan`, 'pdf')
+    if (pdfStored) mediaCount++
+  }
+
+  // No drill was created (every insert failed): there is nothing for a template
+  // to tie together, so none is made rather than an empty one.
+  if (drillIds.length === 0) {
+    return { templateId: null, created: { drills: 0, media: mediaCount, template: 0 }, warnings }
+  }
+
+  // The template ties every drill together in page order, ten minutes each by
+  // default, with the page's intentions.
+  const activities = drillIds.map((id) => ({ phase: 'Skill', drill_id: id, duration: 10 }))
+  const { data: template, error: templateError } = await caller.db
+    .from('templates')
+    .insert({
+      club_id: caller.clubId,
+      name: page.title,
+      focus: page.programme || page.title.split(':')[0].trim(),
+      author: SOURCE_LABEL,
+      activities,
+      intentions: page.intentions,
+      ...templateFields,
+      ...sourceFields,
+    })
+    .select('id')
+    .single()
+  if (templateError || !template) {
+    return { templateId: null, created: { drills: drillIds.length, media: mediaCount, template: 0 }, warnings }
+  }
+  return {
+    templateId: template.id as string,
+    created: { drills: drillIds.length, media: mediaCount, template: 1 },
+    warnings,
+  }
+}
+
+// One draft drill per activity diagram, in page order. The diagram is stored
+// unmodified first; the drill then references it. The theme comes from the page
+// title and the topic tags from the page's tag cloud; format, corner and level
+// stay null. A page that repeats an image (a two week page revisiting a
+// practice) stores the file once and reuses it. Returns the drill ids in page
+// order and the count of diagram media stored; warnings accrue in place.
+async function importActivityDrills(
+  caller: FaCaller,
+  page: ParsedPage,
+  theme: string,
+  sourceFields: SourceFields,
+  warnings: string[],
+): Promise<{ drillIds: string[]; mediaCount: number }> {
   let mediaCount = 0
   const drillIds: string[] = []
   const storedByUrl = new Map<string, string | null>()
@@ -903,64 +983,31 @@ export async function importParsedSession(
     }
     drillIds.push(drill.id as string)
   }
-
-  if (page.pdfUrl) {
-    const pdfStored = await storeFaAsset(caller, warnings, sourceFields, page.pdfUrl, `${page.title} session plan`, 'pdf')
-    if (pdfStored) mediaCount++
-  }
-
-  // The template ties the drills together in page order, ten minutes each
-  // by default, with the page's intentions.
-  const activities = drillIds.map((id) => ({ phase: 'Skill', drill_id: id, duration: 10 }))
-  const { data: template, error: templateError } = await caller.db
-    .from('templates')
-    .insert({
-      club_id: caller.clubId,
-      name: page.title,
-      focus: page.programme || page.title.split(':')[0].trim(),
-      author: SOURCE_LABEL,
-      activities,
-      intentions: page.intentions,
-      ...templateFields,
-      ...sourceFields,
-    })
-    .select('id')
-    .single()
-  if (templateError || !template) {
-    return { templateId: null, created: { drills: drillIds.length, media: mediaCount, template: 0 }, warnings }
-  }
-  return {
-    templateId: template.id as string,
-    created: { drills: drillIds.length, media: mediaCount, template: 1 },
-    warnings,
-  }
+  return { drillIds, mediaCount }
 }
 
-// Import a session the FA delivers as videos rather than diagrams: one video
-// media row per embed (no stored file), one draft drill per video in page
-// order carrying the page summary, theme and topic tags and referencing its
-// media row, and the template tying the drills together, the same shape a
-// diagram import produces. Drills take the page title plus each video's own section heading
-// (or a numbered video label when the page names none) so a coach can tell
-// the parts apart. A media insert failure degrades to a warning and a drill
-// with no media, never an abort, matching the rest of the import.
-async function importVideoSession(
+// One video media row per FA video embed (the player URL as the embed, no
+// stored file) and one draft drill referencing it, in page order, carrying the
+// page summary, theme and topic tags. Drills take the page title plus each
+// video's own section heading (or a numbered video label when the page names
+// none) so a coach can tell the parts apart; a single unnamed video keeps the
+// bare page title, the shape this import has always produced. A media insert
+// failure degrades to a warning and a drill with no media, never an abort,
+// matching the rest of the import. Returns the drill ids in page order and the
+// count of video media rows; warnings accrue in place.
+async function importVideoDrills(
   caller: FaCaller,
   page: ParsedPage,
   theme: string,
   sourceFields: SourceFields,
-  templateFields: Record<string, unknown>,
-): Promise<SessionImportResult> {
-  const warnings: string[] = []
+  warnings: string[],
+): Promise<{ drillIds: string[]; mediaCount: number }> {
   const videos = page.videoEmbeds
-
   let mediaCount = 0
   const drillIds: string[] = []
   for (let i = 0; i < videos.length; i++) {
     const video = videos[i]
     const label = video.heading || `Video ${i + 1}`
-    // A single unnamed video keeps the bare page title, the shape this import
-    // has always produced; anything else carries its label.
     const title = videos.length === 1 && !video.heading ? page.title : `${page.title} · ${label}`
 
     // One video media row per embed: the embed URL with no stored file. type
@@ -1008,34 +1055,5 @@ async function importVideoSession(
     }
     drillIds.push(drill.id as string)
   }
-
-  if (drillIds.length === 0) {
-    return { templateId: null, created: { drills: 0, media: mediaCount, template: 0 }, warnings }
-  }
-
-  // The template ties the video drills together in page order, ten minutes
-  // each by default, with the page's intentions, the same as a diagram import.
-  const activities = drillIds.map((id) => ({ phase: 'Skill', drill_id: id, duration: 10 }))
-  const { data: template, error: templateError } = await caller.db
-    .from('templates')
-    .insert({
-      club_id: caller.clubId,
-      name: page.title,
-      focus: page.title.split(':')[0].trim(),
-      author: SOURCE_LABEL,
-      activities,
-      intentions: page.intentions,
-      ...templateFields,
-      ...sourceFields,
-    })
-    .select('id')
-    .single()
-  if (templateError || !template) {
-    return { templateId: null, created: { drills: drillIds.length, media: mediaCount, template: 0 }, warnings }
-  }
-  return {
-    templateId: template.id as string,
-    created: { drills: drillIds.length, media: mediaCount, template: 1 },
-    warnings,
-  }
+  return { drillIds, mediaCount }
 }
