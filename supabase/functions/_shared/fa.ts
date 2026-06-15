@@ -308,6 +308,33 @@ export function findTopicTags(html: string): string[] {
   return tags
 }
 
+// The session plan PDF, when linked. Every anchor on the page is read whole,
+// so an inline "download the session plan" link sitting in a paragraph is
+// found, not only a standalone download button. The href is read with attrOf,
+// which decodes HTML entities (so a "...plan.pdf?rev=...&amp;hash=..." link
+// becomes the real URL, with literal ampersands the asset fetch can resolve)
+// and tolerates spacing around the attribute. A candidate is a PDF on the
+// asset host: the decoded href must parse to an https cdn.englandfootball.com
+// URL whose path ends in .pdf. A ?rev=...&hash=... query sits in the URL's
+// search, not its path, so a query string never hides the extension and the
+// .pdf need not be at the end of the raw href. Among the candidates an anchor
+// whose visible text mentions "session plan" wins; otherwise the first England
+// Football Learning PDF stands as the fallback. The asset-host check only
+// narrows detection to files the existing storeFaAsset allowlist would accept;
+// it does not widen what can be fetched.
+export function findSessionPlanPdf(html: string): string {
+  let pdfUrl = ''
+  for (const m of html.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const openTag = m[0].match(/^<a\b[^>]*>/i)?.[0] ?? ''
+    const href = attrOf(openTag, 'href')
+    const asset = allowedUrl(href, ASSET_HOST)
+    if (!asset || !/\.pdf$/i.test(asset.pathname)) continue
+    if (textOf(m[1]).toLowerCase().includes('session plan')) return href
+    if (!pdfUrl && /\/eflearning\//i.test(asset.pathname)) pdfUrl = href
+  }
+  return pdfUrl
+}
+
 export function parseSessionPage(html: string): ParsedPage {
   const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)
   const title = ogContent(html, 'title') || (h1 ? textOf(h1[1]) : '')
@@ -371,18 +398,8 @@ export function parseSessionPage(html: string): ParsedPage {
     }
   }
 
-  // The session plan PDF, when linked: prefer the anchor whose text says
-  // session plan, fall back to any FA Learning PDF on the CDN.
-  let pdfUrl = ''
-  for (const m of html.matchAll(/<a[^>]+href="([^"]+\.pdf[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)) {
-    const href = decodeEntities(m[1])
-    const label = textOf(m[2]).toLowerCase()
-    if (label.includes('session plan')) {
-      pdfUrl = href
-      break
-    }
-    if (!pdfUrl && href.includes('/EFLearning/')) pdfUrl = href
-  }
+  // The session plan PDF, when linked.
+  const pdfUrl = findSessionPlanPdf(html)
 
   // Programme and week, only when the page makes them obvious: the intro
   // sentence "This is week six of the ... session programme" or a week in
