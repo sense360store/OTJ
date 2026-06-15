@@ -14,6 +14,7 @@ import {
   ASSET_HOST,
   contentRegion,
   countSessionLinks,
+  findSessionPlanPdf,
   findTopicTags,
   findVideoEmbeds,
   MAX_PROGRAMME_WEEKS,
@@ -113,6 +114,61 @@ Deno.test('parseSessionPage extracts the session model fields', () => {
   assertEquals(page.week, 6)
   // The topic tags, the structural "Session design" label dropped.
   assertEquals(page.tags, ['Attacking', 'Moving with the ball'])
+})
+
+// ---- The session plan PDF link: inline anchors with query strings ----------
+// The download link on a real FA session page is an inline anchor inside a
+// paragraph, its href a CDN PDF carrying a ?rev=...&hash=... query whose
+// ampersand is HTML encoded as &amp;, with the .pdf followed by that query
+// rather than ending the href. Detection must read the whole anchor, find the
+// .pdf despite the query, decode the entity so the stored URL resolves, and
+// prefer the "session plan" labelled link over the page's other PDFs. This is
+// the Goalkeeping-session-end-lines page's own markup.
+
+const END_LINES_PDF_HTML = `
+<ul><li>Set up two end lines.</li></ul>
+<p>If you like this idea, <a href="https://cdn.englandfootball.com/-/media/EFLearning/7L/Goalkeeping-session-end-lines---session-plan.pdf?rev=c41ee633c98743b49db456b2f71745b4&amp;hash=24162A8FB5A18A2F783528CF01382255">download the session plan</a>&nbsp;and give it a go.</p>
+<a href="https://cdn.englandfootball.com/-/media/EnglandFootball/Files/the-fa-slavery-human-trafficking-statement-2020.pdf?rev=ccb87a8b4cb641e3a4c7cd8f3ff5182d" rel="noopener noreferrer" target="_blank" title="Anti-Slavery">Anti-Slavery</a>`
+
+Deno.test('findSessionPlanPdf reads an inline download link and decodes the href', () => {
+  const url = findSessionPlanPdf(END_LINES_PDF_HTML)
+  assertEquals(
+    url,
+    'https://cdn.englandfootball.com/-/media/EFLearning/7L/Goalkeeping-session-end-lines---session-plan.pdf?rev=c41ee633c98743b49db456b2f71745b4&hash=24162A8FB5A18A2F783528CF01382255',
+  )
+  // The entity is decoded: the stored URL carries a literal ampersand the asset
+  // fetch can resolve, not the &amp; the raw page wrote.
+  assert(url.includes('&hash='))
+  assert(!url.includes('&amp;'))
+  // The footer anti-slavery PDF, on the CDN but not an EF Learning file and not
+  // labelled a session plan, is never chosen.
+  assert(!url.includes('slavery'))
+  // parseSessionPage surfaces the same URL on its pdfUrl field.
+  assertEquals(parseSessionPage(END_LINES_PDF_HTML).pdfUrl, url)
+})
+
+Deno.test('findSessionPlanPdf falls back to an EF Learning PDF, then to nothing', () => {
+  // No "session plan" label: the first England Football Learning PDF on the
+  // asset host stands in.
+  assertEquals(
+    findSessionPlanPdf('<a href="https://cdn.englandfootball.com/-/media/EFLearning/7L/plan.pdf?rev=x">Download</a>'),
+    'https://cdn.englandfootball.com/-/media/EFLearning/7L/plan.pdf?rev=x',
+  )
+  // A session-plan labelled PDF off the asset host is not the real file, so it
+  // is skipped rather than selected and then refused at fetch time.
+  assertEquals(
+    findSessionPlanPdf('<a href="https://example.com/EFLearning/session-plan.pdf">download the session plan</a>'),
+    '',
+  )
+})
+
+Deno.test('a session page with no PDF link yields no PDF and does not error', () => {
+  assertEquals(findSessionPlanPdf('<html><body><p>No links here at all.</p></body></html>'), '')
+  // A non-PDF anchor and an off-host PDF are both ignored, no throw.
+  const html = `<p><a href="https://learn.englandfootball.com/sessions/other">another session</a>
+    <a href="https://example.com/notours/plan.pdf">a plan</a></p>`
+  assertEquals(findSessionPlanPdf(html), '')
+  assertEquals(parseSessionPage('<html><body><p>Nothing here.</p></body></html>').pdfUrl, '')
 })
 
 // ---- Topic tags: the tag cloud under the session title ---------------------
