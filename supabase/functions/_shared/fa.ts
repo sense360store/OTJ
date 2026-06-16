@@ -485,6 +485,49 @@ export function normalisedHref(url: URL): string {
   return url.origin + url.pathname.replace(/\/+$/, '')
 }
 
+// The de-dup identity for an imported library drill: the FA source page plus
+// the activity identity within that page (the diagram phrase or video heading,
+// or a positional "Activity 2" / "Video 2" label when the page names none, the
+// same value the drill title is built from). Two drills with the same key are
+// the same drill, so the importer reuses an existing one rather than inserting
+// a duplicate, and re-importing the same FA session or programme creates no
+// copies. Pure and deterministic so it is unit testable and gives the same key
+// on every import of the same page. The URL is normalised the same way as
+// normalisedHref (origin plus path, query, fragment and trailing slash
+// dropped) and lower cased, so the same page pasted with or without a trailing
+// slash or a tracking query matches; a raw value that does not parse as a URL
+// is kept trimmed and lower cased so the key is still stable. The activity
+// identity is trimmed and lower cased and joined with a separator that cannot
+// occur in a URL or a caption, so "Shot-stopping 1" and "Shot-stopping 2" stay
+// distinct while trivial casing or spacing does not split a drill in two.
+export function faSourceKey(sourceUrl: string, activityIdentity: string): string {
+  let page = sourceUrl.trim()
+  try {
+    const url = new URL(page)
+    page = url.origin + url.pathname.replace(/\/+$/, '')
+  } catch {
+    // Not a parseable URL: keep the trimmed value so the key is still stable.
+  }
+  return `${page.toLowerCase()} :: ${activityIdentity.trim().toLowerCase()}`
+}
+
+// The existing library drill this club already imported for a source key, the
+// earliest when more than one exists (clubs that imported a page before this
+// de-dup existed hold duplicates), or null when none does. The importer reuses
+// it rather than inserting a second copy. A failed read returns null so the
+// import proceeds; the worst case is the old behaviour, a duplicate.
+export async function findDrillBySourceKey(caller: FaCaller, sourceKey: string): Promise<string | null> {
+  const { data } = await caller.db
+    .from('drills')
+    .select('id')
+    .eq('club_id', caller.clubId)
+    .eq('source_key', sourceKey)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  return data ? (data.id as string) : null
+}
+
 // The page region the link scans read. FA pages wrap their own content in
 // <main> and append related-content rails (the "Related sessions" carousel,
 // twenty cards of unrelated session links) inside it as full-width carousel
@@ -882,10 +925,16 @@ export async function importParsedSession(
   // none of them, only any video store failure raised below.
   const warnings = hasDiagramContent ? sessionPageWarnings(page) : []
 
+  // The programme an import attaches a drill to, when the caller is the
+  // programme import (it passes programme_id in templateFields); the single
+  // session import leaves it null. Stored on each new drill so a programme
+  // delete can find and remove its unused drills.
+  const sourceProgrammeId = typeof templateFields.programme_id === 'string' ? templateFields.programme_id : null
+
   // Diagram drills first, in page order, then the video drills as additional
   // drills. Either set may be empty.
-  const diagrams = await importActivityDrills(caller, page, theme, sourceFields, warnings)
-  const videos = await importVideoDrills(caller, page, theme, sourceFields, warnings)
+  const diagrams = await importActivityDrills(caller, page, theme, sourceFields, sourceProgrammeId, warnings)
+  const videos = await importVideoDrills(caller, page, theme, sourceFields, sourceProgrammeId, warnings)
   const drillIds = [...diagrams.drillIds, ...videos.drillIds]
   let mediaCount = diagrams.mediaCount + videos.mediaCount
 
@@ -940,6 +989,7 @@ async function importActivityDrills(
   page: ParsedPage,
   theme: string,
   sourceFields: SourceFields,
+  sourceProgrammeId: string | null,
   warnings: string[],
 ): Promise<{ drillIds: string[]; mediaCount: number }> {
   let mediaCount = 0
@@ -948,6 +998,15 @@ async function importActivityDrills(
   for (let i = 0; i < page.activities.length; i++) {
     const act = page.activities[i]
     const label = act.phrase || `Activity ${i + 1}`
+    // Reuse an already imported drill for this source rather than inserting a
+    // duplicate. This covers a re-import of the same page and a repeated
+    // activity within one page; the diagram is not fetched or stored again.
+    const sourceKey = faSourceKey(sourceFields.source_url, label)
+    const reused = await findDrillBySourceKey(caller, sourceKey)
+    if (reused) {
+      drillIds.push(reused)
+      continue
+    }
     let mediaId: string | null
     if (storedByUrl.has(act.imageUrl)) {
       mediaId = storedByUrl.get(act.imageUrl) ?? null
@@ -973,6 +1032,8 @@ async function importActivityDrills(
         media_id: mediaId,
         theme: theme || null,
         tags: page.tags,
+        source_key: sourceKey,
+        source_programme_id: sourceProgrammeId,
         ...sourceFields,
       })
       .select('id')
@@ -1000,6 +1061,7 @@ async function importVideoDrills(
   page: ParsedPage,
   theme: string,
   sourceFields: SourceFields,
+  sourceProgrammeId: string | null,
   warnings: string[],
 ): Promise<{ drillIds: string[]; mediaCount: number }> {
   const videos = page.videoEmbeds
@@ -1009,6 +1071,16 @@ async function importVideoDrills(
     const video = videos[i]
     const label = video.heading || `Video ${i + 1}`
     const title = videos.length === 1 && !video.heading ? page.title : `${page.title} · ${label}`
+
+    // Reuse an already imported drill for this source rather than inserting a
+    // duplicate, and skip storing its video embed again. The identity is the
+    // page plus the video label, the same basis the diagram drills use.
+    const sourceKey = faSourceKey(sourceFields.source_url, label)
+    const reused = await findDrillBySourceKey(caller, sourceKey)
+    if (reused) {
+      drillIds.push(reused)
+      continue
+    }
 
     // One video media row per embed: the embed URL with no stored file. type
     // is the existing 'video' kind; embed_url with a null storage_path marks
@@ -1045,6 +1117,8 @@ async function importVideoDrills(
         media_id: mediaId,
         theme: theme || null,
         tags: page.tags,
+        source_key: sourceKey,
+        source_programme_id: sourceProgrammeId,
         ...sourceFields,
       })
       .select('id')

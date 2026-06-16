@@ -14,6 +14,7 @@ import {
   ASSET_HOST,
   contentRegion,
   countSessionLinks,
+  faSourceKey,
   findActivities,
   findSessionPlanPdf,
   findTopicTags,
@@ -327,7 +328,11 @@ interface RecordedInsert {
   row: Record<string, unknown>
 }
 
-function importStub() {
+// existingBySourceKey lets a test stand in pre-existing library drills the
+// import should reuse instead of inserting: the source_key the importer
+// computes maps to the id findDrillBySourceKey hands back. Empty by default, so
+// every other import test inserts as before.
+function importStub(existingBySourceKey: Record<string, string> = {}) {
   const inserts: RecordedInsert[] = []
   const counts: Record<string, number> = {}
   const db = {
@@ -342,6 +347,29 @@ function importStub() {
               return { single: () => Promise.resolve({ data: { id }, error: null }) }
             },
           }
+        },
+        // Only findDrillBySourceKey reads here: it filters by club_id then
+        // source_key and takes the earliest. The builder captures the
+        // source_key eq and answers maybeSingle from existingBySourceKey.
+        select(_columns: string) {
+          let sourceKey: string | null = null
+          const builder = {
+            eq(column: string, value: string) {
+              if (column === 'source_key') sourceKey = value
+              return builder
+            },
+            order() {
+              return builder
+            },
+            limit() {
+              return builder
+            },
+            maybeSingle() {
+              const id = sourceKey != null ? existingBySourceKey[sourceKey] : undefined
+              return Promise.resolve({ data: id ? { id } : null, error: null })
+            },
+          }
+          return builder
         },
       }
     },
@@ -465,6 +493,56 @@ Deno.test('a page with no diagrams, setup, points or video is unimportable and w
   assertEquals(result.unimportable, true)
   assertEquals(result.created, { drills: 0, media: 0, template: 0 })
   assertEquals(inserts.length, 0)
+})
+
+// ---- De-dup on import: reuse an existing same-source drill -----------------
+// Re-importing a page the club already imported must reuse its drills, not
+// insert copies. The stub stands in the three existing goalkeeping drills by
+// their source keys; the import then inserts no drill or video media and ties
+// the reused ids into the template.
+
+Deno.test('importParsedSession reuses an existing same-source drill instead of inserting', async () => {
+  const page = parseSessionPage(fixture('session-2022-goalkeeping-the-basics.html'))
+  const labels = ['Warm up', 'Shot-stopping 1', 'Shot-stopping 2']
+  const existing: Record<string, string> = {}
+  labels.forEach((label, i) => {
+    existing[faSourceKey(GK_HREF, label)] = `existing-drill-${i + 1}`
+  })
+  const { caller, inserts } = importStub(existing)
+  const result = await importParsedSession(caller, page, GK_HREF, {})
+
+  // No drill and no video media inserted: every activity matched an existing
+  // drill, so the import reused it and skipped storing the embed again.
+  assertEquals(inserts.filter((i) => i.table === 'drills').length, 0)
+  assertEquals(inserts.filter((i) => i.table === 'media').length, 0)
+  // The template still ties the three reused drill ids together, in page order.
+  const templates = inserts.filter((i) => i.table === 'templates')
+  assertEquals(templates.length, 1)
+  assertEquals(
+    (templates[0].row.activities as { drill_id: string }[]).map((a) => a.drill_id),
+    ['existing-drill-1', 'existing-drill-2', 'existing-drill-3'],
+  )
+  assertEquals(result.created, { drills: 3, media: 0, template: 1 })
+})
+
+Deno.test('importParsedSession stamps a new drill with its source key, programme null for a single session', async () => {
+  const page = parseSessionPage(fixture('session-2022-goalkeeping-the-basics.html'))
+  const { caller, inserts } = importStub()
+  await importParsedSession(caller, page, GK_HREF, {})
+  const drills = inserts.filter((i) => i.table === 'drills')
+  assertEquals(drills.length, 3)
+  // Each new drill carries the computed source key and no programme link.
+  assertEquals(drills[1].row.source_key, faSourceKey(GK_HREF, 'Shot-stopping 1'))
+  assertEquals(drills[0].row.source_programme_id, null)
+})
+
+Deno.test('a programme week import stamps its drills with the programme id', async () => {
+  const page = parseSessionPage(fixture('session-2022-goalkeeping-the-basics.html'))
+  const { caller, inserts } = importStub()
+  await importParsedSession(caller, page, GK_HREF, { programme_id: 'prog-7', programme_week: 2 })
+  const drills = inserts.filter((i) => i.table === 'drills')
+  assert(drills.length > 0)
+  for (const d of drills) assertEquals(d.row.source_programme_id, 'prog-7')
 })
 
 // ---- The overview parser: week links, allowlist, dedupe, cap --------------
@@ -646,6 +724,41 @@ Deno.test('normalisedHref drops query, fragment and trailing slashes', () => {
     'https://learn.englandfootball.com/sessions/a-page',
   )
   assertEquals(normalisedHref(new URL('https://learn.englandfootball.com/')), 'https://learn.englandfootball.com')
+})
+
+// ---- faSourceKey: the de-dup identity for an imported drill ----------------
+// The key is the FA source page plus the activity identity, normalised so the
+// same page and activity always produce the same key (re-imports reuse the
+// drill) while genuinely different activities or pages stay distinct.
+
+Deno.test('faSourceKey is deterministic for the same source and activity', () => {
+  const a = faSourceKey('https://learn.englandfootball.com/sessions/gk', 'Shot-stopping 1')
+  const b = faSourceKey('https://learn.englandfootball.com/sessions/gk', 'Shot-stopping 1')
+  assertEquals(a, b)
+})
+
+Deno.test('faSourceKey normalises the URL and the casing so a re-import matches', () => {
+  const canonical = faSourceKey('https://learn.englandfootball.com/sessions/gk', 'Shot-stopping 1')
+  // A trailing slash, a tracking query, a fragment and different casing are all
+  // the same page and activity, so they all key the same.
+  assertEquals(faSourceKey('https://learn.englandfootball.com/sessions/gk/', 'Shot-stopping 1'), canonical)
+  assertEquals(faSourceKey('https://learn.englandfootball.com/sessions/gk?utm=x#top', 'Shot-stopping 1'), canonical)
+  assertEquals(faSourceKey('https://learn.englandfootball.com/sessions/gk', '  shot-stopping 1  '), canonical)
+})
+
+Deno.test('faSourceKey distinguishes different activities and different pages', () => {
+  const page = 'https://learn.englandfootball.com/sessions/gk'
+  assert(faSourceKey(page, 'Shot-stopping 1') !== faSourceKey(page, 'Shot-stopping 2'))
+  assert(faSourceKey(page, 'Warm up') !== faSourceKey(page, 'Shot-stopping 1'))
+  assert(
+    faSourceKey(page, 'Shot-stopping 1') !==
+      faSourceKey('https://learn.englandfootball.com/sessions/passing', 'Shot-stopping 1'),
+  )
+})
+
+Deno.test('faSourceKey keeps a non-URL source stable rather than throwing', () => {
+  const a = faSourceKey('not a url', 'Activity 1')
+  assertEquals(a, faSourceKey('NOT A URL', 'activity 1'))
 })
 
 // ---- The single-session import refuses an already imported page -----------

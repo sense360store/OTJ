@@ -4,6 +4,7 @@ import {
   faImportBody,
   MEDIA_MAX_BYTES,
   oversizeMessage,
+  partitionDrillsByUsage,
   toActivity,
   toActivityRow,
   toDrill,
@@ -149,6 +150,30 @@ describe('fa-import duplicate handling', () => {
     expect('reimport' in faImportBody(url)).toBe(false)
     expect('reimport' in faImportBody(url, false)).toBe(false)
     expect(faImportBody(url, true)).toEqual({ url, reimport: true })
+  })
+})
+
+describe('imported drill delete decision (issue #91)', () => {
+  it('removes an unused imported drill and keeps one a session still uses', () => {
+    const candidates = ['drill-unused', 'drill-in-use']
+    const used = new Set(['drill-in-use'])
+    expect(partitionDrillsByUsage(candidates, used)).toEqual({
+      toDelete: ['drill-unused'],
+      toKeep: ['drill-in-use'],
+    })
+  })
+
+  it('keeps every candidate when all are in use', () => {
+    const candidates = ['a', 'b']
+    expect(partitionDrillsByUsage(candidates, new Set(['a', 'b']))).toEqual({ toDelete: [], toKeep: ['a', 'b'] })
+  })
+
+  it('removes every candidate when none is in use', () => {
+    expect(partitionDrillsByUsage(['a', 'b'], new Set())).toEqual({ toDelete: ['a', 'b'], toKeep: [] })
+  })
+
+  it('returns empty partitions for no candidates', () => {
+    expect(partitionDrillsByUsage([], new Set(['a']))).toEqual({ toDelete: [], toKeep: [] })
   })
 })
 
