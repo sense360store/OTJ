@@ -84,4 +84,28 @@ describe('SessionBoardCardView', () => {
     expect(html).toContain('Attach')
     expect(html).toContain('No board attached')
   })
+
+  it('constrains the empty state placeholder icon and uses the muted theme colour', () => {
+    // The bug: the board card's heading icon carried no size, so it expanded to
+    // fill the card as a giant dark chevron. It must render at a small fixed
+    // size and in the muted empty-state colour, never as a fill-the-container
+    // graphic that reads as a dark mode element on the light page.
+    const html = renderToStaticMarkup(
+      <SessionBoardCardView
+        board={null}
+        boardId={null}
+        numberOnly={false}
+        canEdit
+        onAttach={noop}
+        onRemove={noop}
+      />,
+    )
+    // A small fixed size, not a percentage that lets it fill the panel.
+    expect(html).toContain('width="20"')
+    expect(html).toContain('height="20"')
+    expect(html).not.toContain('width="100%"')
+    // The muted empty-state token (--slate-2, as .empty svg uses), not a heavy
+    // dark fill inherited from the page ink.
+    expect(html).toContain('var(--slate-2)')
+  })
 })
