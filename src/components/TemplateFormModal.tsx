@@ -119,77 +119,18 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
           {form.activities.map((a, i) => {
             const drill = a.drillId ? drillById[a.drillId] : null
             return (
-              <div key={i} className="act-card" style={{ marginBottom: 0 }}>
-                <span className="tag-dot" style={{ background: PHASE_COLOR[a.phase], width: 10, height: 10 }}></span>
-                <div className="ac-body">
-                  <h4>{actTitle(a)}</h4>
-                  <div className="ac-sub">{drill && <span>{drill.skill}</span>}</div>
-                </div>
-                <select
-                  value={a.phase}
-                  onChange={(e) => setAct(i, { phase: e.target.value as Phase })}
-                  style={{
-                    height: 34,
-                    borderRadius: 8,
-                    border: '1px solid var(--line)',
-                    background: 'var(--bg)',
-                    fontSize: 12.5,
-                    fontWeight: 700,
-                    color: 'var(--ink)',
-                    padding: '0 6px',
-                  }}
-                >
-                  {PHASES.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-                <div className="row" style={{ gap: 4 }}>
-                  <input
-                    type="number"
-                    value={a.duration}
-                    min="1"
-                    max="90"
-                    onChange={(e) => setAct(i, { duration: parseInt(e.target.value) || 0 })}
-                    style={{
-                      width: 52,
-                      height: 34,
-                      borderRadius: 8,
-                      border: '1px solid var(--line)',
-                      background: 'var(--bg)',
-                      textAlign: 'center',
-                      fontWeight: 800,
-                      fontSize: 13,
-                      color: 'var(--ink)',
-                    }}
-                  />
-                  <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
-                    min
-                  </span>
-                </div>
-                <button
-                  className="icon-btn"
-                  style={{ width: 34, height: 34 }}
-                  aria-label="Move up"
-                  disabled={i === 0}
-                  onClick={() => move(i, -1)}
-                >
-                  <Icon.chevDown style={{ width: 15, height: 15, transform: 'rotate(180deg)' }} />
-                </button>
-                <button
-                  className="icon-btn"
-                  style={{ width: 34, height: 34 }}
-                  aria-label="Move down"
-                  disabled={i === form.activities.length - 1}
-                  onClick={() => move(i, 1)}
-                >
-                  <Icon.chevDown style={{ width: 15, height: 15 }} />
-                </button>
-                <button className="act-x" aria-label="Remove activity" onClick={() => removeAct(i)}>
-                  <Icon.trash />
-                </button>
-              </div>
+              <TemplateActivityRow
+                key={i}
+                activity={a}
+                title={actTitle(a)}
+                skill={drill?.skill ?? null}
+                index={i}
+                count={form.activities.length}
+                onPhase={(phase) => setAct(i, { phase })}
+                onDuration={(duration) => setAct(i, { duration })}
+                onMove={(dir) => move(i, dir)}
+                onRemove={() => removeAct(i)}
+              />
             )
           })}
         </div>
@@ -234,5 +175,107 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
         />
       )}
     </Modal>
+  )
+}
+
+// One activity row in the editor. The title takes the available row width while
+// the phase, duration and controls size to their content (the act-edit layout),
+// which keeps a long FA drill title legible instead of collapsing to a sliver
+// that wraps a letter per line. Pulled out as a presentational row, no hooks,
+// so the static suite can pin the layout; the screen resolves the drill and
+// passes its title and skill in.
+export function TemplateActivityRow({
+  activity,
+  title,
+  skill,
+  index,
+  count,
+  onPhase,
+  onDuration,
+  onMove,
+  onRemove,
+}: {
+  activity: Activity
+  title: string
+  skill?: string | null
+  index: number
+  count: number
+  onPhase: (phase: Phase) => void
+  onDuration: (duration: number) => void
+  onMove: (dir: -1 | 1) => void
+  onRemove: () => void
+}) {
+  return (
+    <div className="act-card act-edit" style={{ marginBottom: 0 }}>
+      <span className="tag-dot" style={{ background: PHASE_COLOR[activity.phase], width: 10, height: 10 }}></span>
+      <div className="ac-body">
+        <h4>{title}</h4>
+        <div className="ac-sub">{skill && <span>{skill}</span>}</div>
+      </div>
+      <select
+        value={activity.phase}
+        onChange={(e) => onPhase(e.target.value as Phase)}
+        style={{
+          height: 34,
+          borderRadius: 8,
+          border: '1px solid var(--line)',
+          background: 'var(--bg)',
+          fontSize: 12.5,
+          fontWeight: 700,
+          color: 'var(--ink)',
+          padding: '0 6px',
+        }}
+      >
+        {PHASES.map((p) => (
+          <option key={p} value={p}>
+            {p}
+          </option>
+        ))}
+      </select>
+      <div className="row" style={{ gap: 4 }}>
+        <input
+          type="number"
+          value={activity.duration}
+          min="1"
+          max="90"
+          onChange={(e) => onDuration(parseInt(e.target.value) || 0)}
+          style={{
+            width: 52,
+            height: 34,
+            borderRadius: 8,
+            border: '1px solid var(--line)',
+            background: 'var(--bg)',
+            textAlign: 'center',
+            fontWeight: 800,
+            fontSize: 13,
+            color: 'var(--ink)',
+          }}
+        />
+        <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
+          min
+        </span>
+      </div>
+      <button
+        className="icon-btn"
+        style={{ width: 34, height: 34 }}
+        aria-label="Move up"
+        disabled={index === 0}
+        onClick={() => onMove(-1)}
+      >
+        <Icon.chevDown style={{ width: 15, height: 15, transform: 'rotate(180deg)' }} />
+      </button>
+      <button
+        className="icon-btn"
+        style={{ width: 34, height: 34 }}
+        aria-label="Move down"
+        disabled={index === count - 1}
+        onClick={() => onMove(1)}
+      >
+        <Icon.chevDown style={{ width: 15, height: 15 }} />
+      </button>
+      <button className="act-x" aria-label="Remove activity" onClick={onRemove}>
+        <Icon.trash />
+      </button>
+    </div>
   )
 }

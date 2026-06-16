@@ -4,10 +4,12 @@
 // privacy-enhanced nocookie embed, with a small link out kept for anyone who
 // wants the app or channel context. FA sourced video falls back to a link out
 // to the source page on England Football Learning only when no stored file is
-// available: a stored file always wins. Images and PDFs never open here; they
-// keep their existing open behaviour. The module pairs the player components
-// with the videoDisplayMode helper they share with the tests, so the fast
-// refresh component-only rule is relaxed here.
+// available: a stored file always wins. Images and PDFs render through
+// MediaFileSurface on a signed URL the same controlled way: an image in an
+// <img>, a PDF inline in an <iframe> the browser renders, with open in new tab
+// kept as the fallback. The module pairs the surface components with the
+// videoDisplayMode helper they share with the tests, so the fast refresh
+// component-only rule is relaxed here.
 /* eslint-disable react-refresh/only-export-components */
 import type { MediaItem } from '../lib/data'
 import { embedSrc, youtubeId } from '../lib/data'
@@ -140,6 +142,43 @@ export function MediaPlayerSurface({ item }: { item: MediaItem }) {
     )
   }
 
+  return <MediaThumb media={item} showPlay={false} />
+}
+
+// Image and PDF viewer surface. The media bucket is private, so both render
+// from a short lived signed URL the caller mints and passes in (the caller
+// needs that same URL for its open in new tab link). An image renders in an
+// <img>; a PDF renders inline in an <iframe>, which the browser fills with its
+// own PDF viewer, the same controlled signed URL path the image uses rather
+// than a public file. While the URL resolves the loading thumb shows; if it
+// never arrives (the URL failed even after the retry) the placeholder art
+// shows and the caller's open in new tab link is the way out.
+export function MediaFileSurface({
+  item,
+  src,
+  isLoading,
+  onError,
+  onLoad,
+}: {
+  item: MediaItem
+  src: string | null
+  isLoading: boolean
+  onError: () => void
+  onLoad: () => void
+}) {
+  if (item.type === 'image' && src) {
+    return <img src={src} alt={item.name} style={{ ...FILL, objectFit: 'contain' }} onError={onError} onLoad={onLoad} />
+  }
+  if (item.type === 'pdf' && src) {
+    return <iframe src={src} title={item.name} style={{ ...FILL, border: 0 }} onLoad={onLoad} />
+  }
+  if (item.storagePath && isLoading) {
+    return (
+      <div className="thumb thumb-diagram" style={{ position: 'absolute', inset: 0 }}>
+        <span className="thumb-label">loading…</span>
+      </div>
+    )
+  }
   return <MediaThumb media={item} showPlay={false} />
 }
 

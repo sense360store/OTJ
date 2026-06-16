@@ -300,6 +300,18 @@ h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; c
 .act-x { color: var(--slate-2); background: transparent; border: 0; padding: 6px; border-radius: 7px; display: grid; place-items: center; }
 .act-x:hover { background: color-mix(in srgb, var(--m-pdf) 14%, transparent); color: var(--m-pdf); }
 .act-x svg { width: 16px; height: 16px; }
+/* The template editor packs more controls into each activity row than the
+   planner (phase, duration, two move buttons, remove), which let the title
+   collapse to a sliver and wrap a letter per line. Give the title a floor and
+   the slack, size every control to its content, and wrap the row on a narrow
+   screen so nothing overflows. */
+.act-edit { flex-wrap: wrap; row-gap: 8px; }
+.act-edit .ac-body { flex: 1 1 200px; min-width: 150px; }
+.act-edit .ac-body h4 { overflow-wrap: break-word; }
+.act-edit > select,
+.act-edit > .row,
+.act-edit > .icon-btn,
+.act-edit > .act-x { flex: 0 0 auto; }
 
 /* Expandable drill card: the body is a button that toggles a detail panel
    beneath, so coaches can inspect a drill without leaving the planner. */
