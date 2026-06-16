@@ -6,9 +6,9 @@ import type { ImportFADuplicate, ImportFAResult } from '../lib/queries'
 
 // DuplicateCard is presentational, so the static renderer covers it without
 // a DOM, the same logic-level style as the rest of the suite. The 409
-// handling that produces its input is pinned in queries.test.ts; the
-// re-import button is wired in ImportFAModal to mutate with reimport: true,
-// whose body shape faImportBody pins.
+// handling that produces its input is pinned in queries.test.ts. The dialog
+// offers only keep or view: there is no re-import path, which faImportBody
+// pins by never carrying a reimport flag.
 
 const duplicate: ImportFADuplicate = {
   alreadyImported: true,
@@ -19,7 +19,7 @@ const duplicate: ImportFADuplicate = {
 const noop = () => {}
 
 function render(result: ImportFADuplicate): string {
-  return renderToStaticMarkup(<DuplicateCard result={result} onKeep={noop} onView={noop} onReimport={noop} />)
+  return renderToStaticMarkup(<DuplicateCard result={result} onKeep={noop} onView={noop} />)
 }
 
 // ResultCard reads useNav for its View template button, so it renders inside
@@ -61,12 +61,12 @@ describe('DuplicateCard', () => {
     expect(html).toContain('Goalkeeping session: the basics')
   })
 
-  it('offers the existing template, keep as the safe default, and the explicit second copy', () => {
+  it('offers only keep as the safe default and view the existing template, with no re-import', () => {
     const html = render(duplicate)
     expect(html).toContain('View template')
     expect(html).toContain('Keep the existing one')
-    expect(html).toContain('Import again anyway')
-    expect(html).toContain('second copy')
+    expect(html).not.toContain('Import again anyway')
+    expect(html).not.toContain('second copy')
   })
 
   it('falls back to a plain message when the conflict names no template', () => {

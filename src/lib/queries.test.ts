@@ -144,12 +144,10 @@ describe('fa-import duplicate handling', () => {
     })
   })
 
-  it('sends the reimport flag only on the explicit re-call', () => {
+  it('never carries a reimport flag', () => {
     const url = 'https://learn.englandfootball.com/sessions/a-page'
     expect(faImportBody(url)).toEqual({ url })
     expect('reimport' in faImportBody(url)).toBe(false)
-    expect('reimport' in faImportBody(url, false)).toBe(false)
-    expect(faImportBody(url, true)).toEqual({ url, reimport: true })
   })
 })
 

@@ -2818,8 +2818,7 @@ export interface ImportFAResult {
 
 // The structured 409 fa-import returns for a page the club already
 // imported: nothing was created, and the coach is pointed at the existing
-// template. Re-calling with reimport: true is the explicit choice to
-// create a second copy.
+// template.
 export interface ImportFADuplicate {
   alreadyImported: true
   templateId: string | null
@@ -2850,17 +2849,17 @@ export function alreadyImportedFrom(status: number, body: ImportFAErrorBody | nu
   return { alreadyImported: true, templateId: body.template_id ?? null, templateName: body.template_name ?? '' }
 }
 
-// The fa-import request body. The reimport flag rides along only when the
-// coach explicitly chose a second copy; it is never sent by default.
-export function faImportBody(url: string, reimport?: boolean): { url: string; reimport?: true } {
-  return reimport === true ? { url, reimport: true } : { url }
+// The fa-import request body. The client never asks for a re-import: a page
+// already in the library is kept or viewed, never imported a second time.
+export function faImportBody(url: string): { url: string } {
+  return { url }
 }
 
 export function useImportFA() {
   const qc = useQueryClient()
-  return useMutation<ImportFAOutcome, Error, { url: string; reimport?: boolean }>({
-    mutationFn: async ({ url, reimport }) => {
-      const { data, error } = await supabase.functions.invoke('fa-import', { body: faImportBody(url, reimport) })
+  return useMutation<ImportFAOutcome, Error, { url: string }>({
+    mutationFn: async ({ url }) => {
+      const { data, error } = await supabase.functions.invoke('fa-import', { body: faImportBody(url) })
       if (error) {
         let message = 'Could not import that page. Try again.'
         const ctx = (error as { context?: Response }).context
