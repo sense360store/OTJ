@@ -405,7 +405,11 @@ export function SessionBoardCardView({
   return (
     <div className="card sd-board-card">
       <div className="sd-board-head">
-        <Icon.layers />
+        {/* The heading icon carries no intrinsic size of its own, so it is
+            constrained here to a small muted marker. Left unsized it expands to
+            fill the card, the empty state's giant dark chevron. --slate-2 is the
+            muted token the app's other empty-state graphics use (.empty svg). */}
+        <Icon.layers size={20} style={{ color: 'var(--slate-2)', flex: '0 0 auto' }} />
         <h4>{board ? board.name : 'Tactics board'}</h4>
         {canEdit && (
           <div className="sd-board-actions">
