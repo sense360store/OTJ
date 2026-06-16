@@ -19,7 +19,7 @@ import { isFaVideo } from '../lib/fa'
 import { useAuth } from '../hooks/useAuth'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, MediaAttribution, MediaThumb, MEDIA_META, Modal, UploadProgress } from '../components/ui'
-import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
+import { MediaFileSurface, MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
 import { AttachFAVideosModal } from '../components/AttachFAVideosModal'
 
 function usedLabel(used: number): string {
@@ -129,9 +129,9 @@ function MediaCard({
   )
 }
 
-// The open or preview modal. Images render inline from a signed URL, both
-// video types play inline through the shared player surface, and PDFs stay a
-// thumb with a link out.
+// The open or preview modal. Images and PDFs render inline from a signed URL
+// through the shared file surface (a PDF in an <iframe>), and both video types
+// play inline through the player surface. Open in new tab stays the fallback.
 function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void }) {
   const filePath = item.type === 'image' || item.type === 'pdf' ? item.storagePath : undefined
   // A load error on an expired URL retries once on a fresh URL before the
@@ -162,20 +162,8 @@ function MediaModal({ item, onClose }: { item: MediaItem; onClose: () => void })
         <div className="player">
           {item.type === 'video' || item.type === 'youtube' ? (
             <MediaPlayerSurface item={item} />
-          ) : item.type === 'image' && signedUrl ? (
-            <img
-              src={signedUrl}
-              alt={item.name}
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#0a0e1a' }}
-              onError={onError}
-              onLoad={onLoad}
-            />
-          ) : item.storagePath && isLoading ? (
-            <div className="thumb thumb-diagram" style={{ position: 'absolute', inset: 0 }}>
-              <span className="thumb-label">loading…</span>
-            </div>
           ) : (
-            <MediaThumb media={item} showPlay={false} />
+            <MediaFileSurface item={item} src={signedUrl} isLoading={isLoading} onError={onError} onLoad={onLoad} />
           )}
         </div>
       </div>
