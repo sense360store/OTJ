@@ -250,6 +250,26 @@ export function toActivityRow(a: Activity): ActivityRow {
   return out
 }
 
+// Of the imported drills tied to a programme or template being deleted, which
+// to remove and which to keep. The locked rule (issue #91, part 2): a drill a
+// session still references is kept and detached from the deleted source, never
+// removed, so a coach's planned session does not lose a drill; only a drill no
+// session uses is removed. usedDrillIds is every drill id referenced by a
+// session activity, club wide. Pure so the decision is unit testable on its
+// own, away from the Supabase round trips that feed it.
+export function partitionDrillsByUsage(
+  candidateIds: string[],
+  usedDrillIds: Set<string>,
+): { toDelete: string[]; toKeep: string[] } {
+  const toDelete: string[] = []
+  const toKeep: string[] = []
+  for (const id of candidateIds) {
+    if (usedDrillIds.has(id)) toKeep.push(id)
+    else toDelete.push(id)
+  }
+  return { toDelete, toKeep }
+}
+
 export function toDrill(r: DrillRow): Drill {
   return {
     id: r.id,
@@ -1366,17 +1386,76 @@ export function useUpdateTemplate() {
   })
 }
 
+// Every drill id any club session references, read once so a source delete can
+// tell which of its imported drills are still in use. Visibility is club wide,
+// so this reads every session's activities; RLS scopes it to the club. A failed
+// read returns an empty set, which keeps the delete cautious: nothing counts as
+// used, so the cascade would remove an imported drill it could not prove is in
+// a session. To stay on the safe side a read error instead leaves every
+// candidate untouched, handled by the caller treating a thrown read as "keep
+// all".
+async function fetchUsedDrillIds(): Promise<Set<string>> {
+  const { data, error } = await supabase.from('sessions').select('activities')
+  if (error) throw error
+  const used = new Set<string>()
+  for (const row of (data ?? []) as { activities: ActivityRow[] | null }[]) {
+    for (const a of row.activities ?? []) {
+      if (a.drill_id) used.add(a.drill_id)
+    }
+  }
+  return used
+}
+
+// Remove the imported drills a deleted source brought into the library, except
+// any a session still uses (issue #91, part 2). The candidates are the FA
+// imported drills tied to the source; a drill in use is kept and detached (the
+// source row's delete nulls its link, or for a template its source_url simply
+// stays as attribution), a drill no session references is removed. Best effort
+// by design: the drills delete runs under RLS, so a coach removes only drills
+// they own (an admin any), and a blocked row is left rather than erroring; if
+// the session read fails every candidate is kept. This never throws, so a
+// problem here cannot block the source delete that follows it.
+async function deleteUnusedImportedDrills(candidateIds: string[]): Promise<void> {
+  if (candidateIds.length === 0) return
+  let used: Set<string>
+  try {
+    used = await fetchUsedDrillIds()
+  } catch {
+    // Could not confirm usage: keep every candidate rather than risk removing
+    // a drill a session needs.
+    return
+  }
+  const { toDelete } = partitionDrillsByUsage(candidateIds, used)
+  if (toDelete.length === 0) return
+  await supabase.from('drills').delete().in('id', toDelete)
+}
+
 // Sessions built from a template copy its activities, so deleting the
 // template leaves them untouched. A template serving as a programme week
 // leaves that week empty, which the programme page shows as unassigned.
+// Deleting an FA imported template also removes the library drills that import
+// brought in (matched by the shared source_url), except any a session still
+// uses, which are kept (issue #91). A hand made template carries no source_url
+// and so removes no drills.
 export function useDeleteTemplate() {
   const qc = useQueryClient()
-  return useMutation<void, Error, { id: string }>({
-    mutationFn: async ({ id }) => {
+  return useMutation<void, Error, { id: string; sourceUrl?: string }>({
+    mutationFn: async ({ id, sourceUrl }) => {
+      if (sourceUrl) {
+        const { data } = await supabase
+          .from('drills')
+          .select('id')
+          .eq('source_url', sourceUrl)
+          .not('source_key', 'is', null)
+        await deleteUnusedImportedDrills((data ?? []).map((d) => d.id as string))
+      }
       const { error } = await supabase.from('templates').delete().eq('id', id)
       if (error) throw error
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['templates'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['templates'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
+    },
   })
 }
 
@@ -1448,11 +1527,18 @@ export function useUpdateProgramme() {
 
 // Owner or admin only; the programmes delete RLS is the real enforcement.
 // Deleting a programme leaves its templates and sessions intact: the foreign
-// keys null out in Postgres, so those caches refetch too.
+// keys null out in Postgres, so those caches refetch too. It also removes the
+// library drills the import brought in (tied to the programme by
+// source_programme_id), except any a session still uses, which are kept and
+// detached by the programme row's on delete set null (issue #91). The drills
+// are read and the unused ones removed before the programme is deleted, so the
+// link is still there to find them by.
 export function useDeleteProgramme() {
   const qc = useQueryClient()
   return useMutation<void, Error, { id: string }>({
     mutationFn: async ({ id }) => {
+      const { data } = await supabase.from('drills').select('id').eq('source_programme_id', id)
+      await deleteUnusedImportedDrills((data ?? []).map((d) => d.id as string))
       const { error } = await supabase.from('programmes').delete().eq('id', id)
       if (error) throw error
     },
@@ -1460,6 +1546,7 @@ export function useDeleteProgramme() {
       qc.invalidateQueries({ queryKey: ['programmes'] })
       qc.invalidateQueries({ queryKey: ['templates'] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['drills'] })
     },
   })
 }

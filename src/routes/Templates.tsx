@@ -95,7 +95,7 @@ function TemplateCard({
 // template copied its activities, so they keep their plans.
 function DeleteTemplateModal({ t, onClose }: { t: Template; onClose: () => void }) {
   const del = useDeleteTemplate()
-  const remove = () => del.mutate({ id: t.id }, { onSuccess: onClose })
+  const remove = () => del.mutate({ id: t.id, sourceUrl: t.sourceUrl }, { onSuccess: onClose })
   return (
     <Modal
       title="Delete template"
