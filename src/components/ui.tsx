@@ -2,7 +2,7 @@
 // primitives with the small constants and helpers they share, so the fast
 // refresh component-only rule is relaxed here.
 /* eslint-disable react-refresh/only-export-components */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
@@ -11,6 +11,14 @@ import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
 import { sourceLabelForUrl } from '../lib/fa'
 import { useMediaMap, useMediaSrc } from '../lib/queries'
 import { formatBytes } from '../lib/faAttach'
+import {
+  formatElapsed,
+  formatRate,
+  formatRemaining,
+  remainingSeconds,
+  smoothedSpeed,
+} from '../lib/uploadStats'
+import type { ProgressSample } from '../lib/uploadStats'
 
 const REAL_MEDIA_STYLE = {
   position: 'absolute',
@@ -446,12 +454,29 @@ export function ErrorNote({ children }: { children?: ReactNode }) {
 }
 
 /* ---- upload progress ------------------------------------------- */
+// The wall clock, read defensively so the static renderer (which has no DOM but
+// does run render) and any odd environment still get a number.
+function nowMs(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+}
+
+// Keep the recent byte samples bounded; smoothedSpeed only looks at a short
+// window, so a long upload never needs the whole history.
+const SPEED_WINDOW_MS = 3000
+const MAX_SAMPLES = 60
+
 // A calm upload status block shown while a file is being stored: a determinate
-// bar driven by real byte progress, the name and size, and a note that large
-// files take a while. loaded === null is the brief moment before the first
-// progress event arrives (or an upload that cannot report bytes); it shows an
-// honest "Starting" state rather than a fake bar. The block keeps one fixed
-// shape across states so nothing jumps as it fills.
+// bar driven by real byte progress, the name and size, and under it the elapsed
+// time, current speed and a rough estimate of the time left. loaded === null is
+// the brief moment before the first progress event arrives (or an upload that
+// cannot report bytes); it shows an honest "Starting" state rather than a fake
+// bar. The block keeps one fixed shape across states so nothing jumps as it
+// fills, and the readout row holds its height so the numbers never shift the
+// layout as they update. The maths lives in src/lib/uploadStats.ts so it unit
+// tests without a real upload; here we only sample the byte stream and the
+// clock and feed it through.
 export function UploadProgress({
   label,
   loaded,
@@ -465,6 +490,71 @@ export function UploadProgress({
   const pct = known ? Math.min(100, Math.max(0, Math.round((loaded / total) * 100))) : 0
   const done = known && loaded >= total
   const status = loaded === null ? 'Starting…' : done ? 'Finishing…' : `Uploading… ${pct}%`
+
+  // The byte samples and start time live in refs because they feed a derived
+  // readout, not the render tree directly. The readout line itself is state,
+  // recomputed from the refs and the clock inside the effects below, so render
+  // never reads a ref.
+  const samplesRef = useRef<ProgressSample[]>([])
+  const startRef = useRef<number | null>(null)
+  const labelRef = useRef(label)
+  const lastLoadedRef = useRef(0)
+  const [stats, setStats] = useState('')
+
+  // Build the elapsed / speed / time-left line from the samples and the clock.
+  // Called only from effects, never during render. It takes the current bytes
+  // and size so it reflects the latest props rather than a stale closure.
+  const recompute = useCallback((curLoaded: number | null, curTotal: number) => {
+    const start = startRef.current
+    const elapsedSec = start != null ? (nowMs() - start) / 1000 : 0
+    const curDone = curLoaded !== null && curTotal > 0 && curLoaded >= curTotal
+    if (curDone) {
+      setStats(`${formatElapsed(elapsedSec)} elapsed`)
+      return
+    }
+    if (curLoaded === null || curTotal <= 0) {
+      setStats('')
+      return
+    }
+    const speed = smoothedSpeed(samplesRef.current, SPEED_WINDOW_MS)
+    const speedText = speed == null ? 'calculating speed' : formatRate(speed)
+    const remaining = remainingSeconds(curLoaded, curTotal, speed)
+    setStats(`${formatElapsed(elapsedSec)} elapsed · ${speedText} · ${formatRemaining(remaining)}`)
+  }, [])
+
+  // Record a sample whenever the byte count moves. A new file in a batch (its
+  // label changes, or the count drops back) restarts the clock and samples so
+  // speed and time left read for the file in flight, not the one before it.
+  useEffect(() => {
+    if (loaded === null) {
+      recompute(loaded, total)
+      return
+    }
+    const t = nowMs()
+    const newSegment = label !== labelRef.current || loaded < lastLoadedRef.current
+    if (newSegment && samplesRef.current.length > 0) {
+      samplesRef.current = []
+      startRef.current = t
+    }
+    if (startRef.current === null) startRef.current = t
+    labelRef.current = label
+    lastLoadedRef.current = loaded
+    const buf = samplesRef.current
+    buf.push({ loaded, t })
+    if (buf.length > MAX_SAMPLES) buf.splice(0, buf.length - MAX_SAMPLES)
+    recompute(loaded, total)
+  }, [loaded, label, total, recompute])
+
+  // While the bytes are still flowing, refresh the line twice a second even when
+  // no byte event has landed, so the elapsed clock advances and the speed
+  // settles. It stops once the upload is done.
+  const active = known && !done
+  useEffect(() => {
+    if (!active) return
+    const id = setInterval(() => recompute(loaded, total), 500)
+    return () => clearInterval(id)
+  }, [active, loaded, total, recompute])
+
   return (
     <div
       role="status"
@@ -496,6 +586,11 @@ export function UploadProgress({
       </div>
       <div className="muted" style={{ fontSize: 12.5 }}>
         {status}
+      </div>
+      {/* The readout row holds a line of height even when empty (the Starting
+          state) so the block does not jump as the numbers appear and update. */}
+      <div className="mono muted" style={{ fontSize: 12, minHeight: 16, overflowWrap: 'anywhere' }}>
+        {stats}
       </div>
       <div className="muted" style={{ fontSize: 12 }}>
         Large files can take a little while. Keep this open until it finishes.
