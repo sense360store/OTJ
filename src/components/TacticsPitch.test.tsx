@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { TacticsPitch } from './TacticsPitch'
-import { deserializeTokens, formationPositions, serializeTokens, type Token } from '../lib/tacticsBoard'
+import {
+  deserializeTokens,
+  formationPositions,
+  playerNameMap,
+  serializeTokens,
+  type PlayerNameMap,
+  type Token,
+} from '../lib/tacticsBoard'
 
 // TacticsPitch is presentational, so the static renderer covers the markings,
 // the token layout, the first name labels and the selected state without a DOM
@@ -16,9 +23,9 @@ function discCount(html: string): number {
 }
 
 // Render the pitch with no selection unless one is named.
-function render(tokens: Token[], selectedId: string | null = null) {
+function render(tokens: Token[], selectedId: string | null = null, names?: PlayerNameMap) {
   return renderToStaticMarkup(
-    <TacticsPitch tokens={tokens} selectedId={selectedId} onMove={noop} onSelect={noop} onDelete={noop} />,
+    <TacticsPitch tokens={tokens} names={names} selectedId={selectedId} onMove={noop} onSelect={noop} onDelete={noop} />,
   )
 }
 
@@ -51,19 +58,29 @@ describe('TacticsPitch', () => {
     expect(html).not.toContain('<input')
   })
 
-  it('shows the first name as the label, the full name on the title', () => {
-    // A board seeded from a roster carries full names; the disc shows the first
-    // name and keeps the full name on the title and the disc aria-label.
+  it('resolves names through the map: first name visible, full name on the title', () => {
+    // A roster seeded token carries a playerId, never a name; the map (from
+    // the sessions.create gated players query) resolves it. The disc shows
+    // the first name and keeps the full name on the title and aria-label.
+    // Names are synthetic fixtures.
     const named: Token[] = [
-      { id: 'home-9', number: 9, label: 'William McGrath', side: 'home', x: 0.5, y: 0.6 },
-      { id: 'home-4', number: 4, label: 'Theo', side: 'home', x: 0.4, y: 0.7 },
+      { id: 'home-9', number: 9, side: 'home', x: 0.5, y: 0.6, playerId: 'p-w' },
+      { id: 'home-4', number: 4, side: 'home', x: 0.4, y: 0.7, playerId: 'p-t' },
     ]
-    const html = render(named)
+    const names = playerNameMap([
+      { id: 'p-w', displayName: 'William McGrath' },
+      { id: 'p-t', displayName: 'Theo' },
+    ])
+    const html = render(named, null, names)
     // Multi word name shows the first name visibly, full name on the title.
     expect(html).toContain('title="William McGrath">William</span>')
     expect(html).toContain('aria-label="Player 9 William McGrath"')
     // Single word name stays whole.
     expect(html).toContain('title="Theo">Theo</span>')
+    // Without the map the same tokens render numbers only: no name is in them.
+    const bare = render(named)
+    expect(bare).not.toContain('William')
+    expect(bare).not.toContain('Theo')
   })
 
   it('marks the selected token with a ring class and aria-pressed, the others not', () => {

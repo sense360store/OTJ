@@ -5,12 +5,14 @@
 // the lines for both, and the discs reuse the same token classes. Positions
 // are pitch fractions, so an embedded board reads at any size.
 //
-// numberOnly hides the free text labels and shows the disc number alone. The
-// embedded view passes it for a parent so a board seeded from a team roster
-// (its labels carry the players' names, see tacticsBoard.ts) shows shape and
-// numbers to parents, never names. The styles live in Board.css, which the
-// consuming screen imports.
-import { tokenFirstName, type Token } from '../lib/tacticsBoard'
+// NAMES ARE RESOLVED, NEVER STORED. A token carries a playerId, not a name
+// (see tacticsBoard.ts); the optional names map resolves it at render time.
+// The map is built from the players query, whose row level security answers
+// holders of sessions.create only, so a coach sees names and a parent, who
+// has no map to pass and whose players query returns nothing anyway, sees
+// shape and numbers alone. There is no name in the board payload to hide.
+// The styles live in Board.css, which the consuming screen imports.
+import { tokenDisplayName, tokenFirstName, type PlayerNameMap, type Token } from '../lib/tacticsBoard'
 
 // The pitch grass, stripes and markings, drawn once and shared by the editable
 // board and the read only view. A portrait 680 by 1050 viewBox the container
@@ -53,34 +55,37 @@ export function PitchMarkings() {
 }
 
 // The read only board: the pitch plus static discs. No pointer handlers, no
-// buttons and no inputs, so the snapshot cannot be dragged or edited. Each disc
-// shows its number; its label renders as plain text beneath unless numberOnly
-// hides it. The visible label is the first name only (see tokenFirstName), so a
-// board seeded from a roster reads cleanly; the full name stays on the title
-// (hover or tap) and the disc's accessible name.
-export function TacticsBoardView({ tokens, numberOnly = false }: { tokens: Token[]; numberOnly?: boolean }) {
+// buttons and no inputs, so the snapshot cannot be dragged or edited. Each
+// disc shows its number; when the names map resolves the token's playerId to
+// a name, the first name renders beneath the disc with the full name on the
+// title (hover or tap) and the disc's accessible name. Without a map, or for
+// a token whose player is gone from the roster, the disc stands alone.
+export function TacticsBoardView({ tokens, names }: { tokens: Token[]; names?: PlayerNameMap }) {
   return (
     <div className="board-pitch board-pitch-readonly">
       <PitchMarkings />
-      {tokens.map((t) => (
-        <div
-          key={t.id}
-          className={`board-token side-${t.side}`}
-          style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%` }}
-        >
-          <span
-            className="board-disc board-disc-static"
-            aria-label={`Player ${t.number}${!numberOnly && t.label ? ` ${t.label}` : ''}`}
+      {tokens.map((t) => {
+        const name = tokenDisplayName(t, names)
+        return (
+          <div
+            key={t.id}
+            className={`board-token side-${t.side}`}
+            style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%` }}
           >
-            {t.number}
-          </span>
-          {!numberOnly && t.label ? (
-            <span className="board-token-label board-token-label-static" title={t.label}>
-              {tokenFirstName(t.label)}
+            <span
+              className="board-disc board-disc-static"
+              aria-label={`Player ${t.number}${name ? ` ${name}` : ''}`}
+            >
+              {t.number}
             </span>
-          ) : null}
-        </div>
-      ))}
+            {name ? (
+              <span className="board-token-label board-token-label-static" title={name}>
+                {tokenFirstName(name)}
+              </span>
+            ) : null}
+          </div>
+        )
+      })}
     </div>
   )
 }

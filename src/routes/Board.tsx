@@ -31,10 +31,12 @@ import {
   FORMATIONS,
   formationPositions,
   nextNumber,
+  playerNameMap,
   rosterTokens,
   type Board,
   type BoardEdit,
   type BoardSnapshot,
+  type PlayerNameMap,
   type Token,
   type TokenSide,
 } from '../lib/tacticsBoard'
@@ -124,6 +126,11 @@ export function Board() {
   // The selected team's roster, the source the "Seed from roster" control uses.
   const teamPlayers = useMemo(() => players.filter((p) => p.teamId === selectedTeam), [players, selectedTeam])
 
+  // Resolves token playerIds to names at render time. Built from the same
+  // sessions.create gated players query, so it exists only for coaches and
+  // admins; the persisted board itself carries ids and numbers, never names.
+  const names: PlayerNameMap = useMemo(() => playerNameMap(players), [players])
+
   // Placing a formation replaces that side's tokens and leaves the other side
   // alone, so home and away can sit on the board together.
   function placeFormation(key: string) {
@@ -135,16 +142,16 @@ export function Board() {
   }
 
   // Seed the current side from the selected team's roster, the opt in
-  // alternative to a formation: one token per player, the display name copied
-  // into the token label and the shirt number used as the number. It replaces
-  // that side's tokens the way a formation does and clears the formation key,
-  // since the shape no longer came from a picker. The label is a plain string
-  // snapshot of the name with no link back to the player, so a board saved from
-  // here never breaks when a player is later renamed or removed.
+  // alternative to a formation: one token per player, carrying the player's id
+  // and using the shirt number as the number. It replaces that side's tokens
+  // the way a formation does and clears the formation key, since the shape no
+  // longer came from a picker. The token references the player by id and never
+  // stores the name; the render resolves it live, so renaming a player updates
+  // every board and deleting one leaves a plain numbered disc.
   function seedFromRoster() {
     if (teamPlayers.length === 0) return
     const placed = rosterTokens(
-      teamPlayers.map((p) => ({ displayName: p.displayName, shirtNumber: p.shirtNumber })),
+      teamPlayers.map((p) => ({ id: p.id, shirtNumber: p.shirtNumber })),
       side,
     )
     setTokens((prev) => [...prev.filter((t) => t.side !== side), ...placed])
@@ -156,7 +163,7 @@ export function Board() {
     const number = nextNumber(tokens, side)
     setTokens((prev) => [
       ...prev,
-      { id: `${side}-${number}`, number, label: '', side, x: 0.5, y: side === 'home' ? 0.62 : 0.38 },
+      { id: `${side}-${number}`, number, side, x: 0.5, y: side === 'home' ? 0.62 : 0.38, playerId: null },
     ])
   }
 
@@ -279,6 +286,7 @@ export function Board() {
       <BoardStage
         mode={mode}
         tokens={tokens}
+        names={names}
         selectedId={selectedId}
         onEdit={enterEdit}
         onDone={doneEdit}
@@ -329,6 +337,7 @@ export function Board() {
 export function BoardStage({
   mode,
   tokens,
+  names,
   selectedId,
   onEdit,
   onDone,
@@ -358,6 +367,9 @@ export function BoardStage({
 }: {
   mode: BoardMode
   tokens: Token[]
+  // playerId to name resolution for roster seeded tokens, from the
+  // sessions.create gated players query. The persisted tokens carry no names.
+  names?: PlayerNameMap
   selectedId: string | null
   onEdit: () => void
   onDone: () => void
@@ -400,7 +412,7 @@ export function BoardStage({
             Edit board
           </button>
         </div>
-        <TacticsBoardView tokens={tokens} />
+        <TacticsBoardView tokens={tokens} names={names} />
       </>
     )
   }
@@ -545,7 +557,7 @@ export function BoardStage({
           ? 'Player selected. Use Remove selected, or press Delete, to remove it.'
           : 'Tap a player to select it. Drag to move. Tap the grass to deselect.'}
       </p>
-      <TacticsPitch tokens={tokens} selectedId={selectedId} onMove={onMove} onSelect={onSelect} onDelete={onDelete} />
+      <TacticsPitch tokens={tokens} names={names} selectedId={selectedId} onMove={onMove} onSelect={onSelect} onDelete={onDelete} />
     </>
   )
 }

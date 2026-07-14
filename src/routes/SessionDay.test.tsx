@@ -1,24 +1,28 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { SessionBoardCardView } from './SessionDay'
-import type { Board } from '../lib/tacticsBoard'
+import { playerNameMap, type Board } from '../lib/tacticsBoard'
 
 // SessionBoardCardView is the session day's attached board section pulled out
 // as a presentational component, so the read only embed and the attach
 // affordances render without the data hooks or a query client, the same style
-// as ActivityCardView. The container resolves the board and wires the link
-// mutation; here the board is a plain fixture.
+// as ActivityCardView. The container resolves the board, builds the name map
+// only for a sessions.create holder, and wires the link mutation; here the
+// board and the map are plain fixtures. Names are synthetic, never real
+// children.
 
 const board: Board = {
   id: 'b1',
   name: 'Titans 2-3-1 high press',
   formation: '2-3-1',
   teamId: 't1',
-  tokens: [{ id: 'home-7', number: 7, label: 'Jordan', side: 'home', x: 0.5, y: 0.6 }],
+  tokens: [{ id: 'home-7', number: 7, side: 'home', x: 0.5, y: 0.6, playerId: 'p-jordan' }],
   createdBy: 'u1',
   createdAt: '2026-01-01',
   updatedAt: '2026-01-02',
 }
+
+const names = playerNameMap([{ id: 'p-jordan', displayName: 'Jordan' }])
 
 const noop = () => {}
 
@@ -28,7 +32,6 @@ describe('SessionBoardCardView', () => {
       <SessionBoardCardView
         board={board}
         boardId="b1"
-        numberOnly={false}
         canEdit={false}
         onAttach={noop}
         onRemove={noop}
@@ -41,12 +44,29 @@ describe('SessionBoardCardView', () => {
     expect(html).not.toContain('<button')
   })
 
-  it('shows numbers not names to a parent viewing a roster board', () => {
+  it('resolves names for a coach through the names map', () => {
     const html = renderToStaticMarkup(
       <SessionBoardCardView
         board={board}
         boardId="b1"
-        numberOnly
+        names={names}
+        canEdit
+        onAttach={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(html).toContain('>7<')
+    expect(html).toContain('Jordan')
+  })
+
+  it('shows numbers not names to a parent: no map, and no name in the board itself', () => {
+    // The parent path passes no names map. The board's tokens carry player
+    // ids only, so there is no name anywhere in the render's inputs, not just
+    // none in its output.
+    const html = renderToStaticMarkup(
+      <SessionBoardCardView
+        board={board}
+        boardId="b1"
         canEdit={false}
         onAttach={noop}
         onRemove={noop}
@@ -54,6 +74,7 @@ describe('SessionBoardCardView', () => {
     )
     expect(html).toContain('>7<')
     expect(html).not.toContain('Jordan')
+    expect(JSON.stringify(board.tokens)).not.toContain('Jordan')
   })
 
   it('renders nothing when no board is attached and the viewer cannot edit', () => {
@@ -61,7 +82,6 @@ describe('SessionBoardCardView', () => {
       <SessionBoardCardView
         board={null}
         boardId={null}
-        numberOnly={false}
         canEdit={false}
         onAttach={noop}
         onRemove={noop}
@@ -75,7 +95,6 @@ describe('SessionBoardCardView', () => {
       <SessionBoardCardView
         board={null}
         boardId={null}
-        numberOnly={false}
         canEdit
         onAttach={noop}
         onRemove={noop}
@@ -94,7 +113,6 @@ describe('SessionBoardCardView', () => {
       <SessionBoardCardView
         board={null}
         boardId={null}
-        numberOnly={false}
         canEdit
         onAttach={noop}
         onRemove={noop}

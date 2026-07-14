@@ -14,7 +14,14 @@
 // selected button beside the pitch acts on the same choice.
 import { useRef } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { clampFraction, isDrag, tokenFirstName, type Token } from '../lib/tacticsBoard'
+import {
+  clampFraction,
+  isDrag,
+  tokenDisplayName,
+  tokenFirstName,
+  type PlayerNameMap,
+  type Token,
+} from '../lib/tacticsBoard'
 import { PitchMarkings } from './TacticsBoardView'
 
 // Keep a disc fully inside the touchlines while it is dragged.
@@ -22,12 +29,17 @@ const EDGE_MARGIN = 0.045
 
 export function TacticsPitch({
   tokens,
+  names,
   selectedId,
   onMove,
   onSelect,
   onDelete,
 }: {
   tokens: Token[]
+  // Resolves a token's playerId to a display name (see tacticsBoard.ts). The
+  // editable pitch only renders for sessions.create holders, whose players
+  // query supplies the map; a token whose player is gone shows its number.
+  names?: PlayerNameMap
   selectedId: string | null
   onMove: (id: string, x: number, y: number) => void
   onSelect: (id: string | null) => void
@@ -123,13 +135,14 @@ export function TacticsPitch({
       <PitchMarkings />
       {tokens.map((t) => {
         const selected = t.id === selectedId
+        const name = tokenDisplayName(t, names)
         return (
           <div key={t.id} className={`board-token side-${t.side}`} style={{ left: `${t.x * 100}%`, top: `${t.y * 100}%` }}>
             <button
               type="button"
               className={'board-disc' + (selected ? ' selected' : '')}
               aria-pressed={selected}
-              aria-label={`Player ${t.number}${t.label ? ` ${t.label}` : ''}`}
+              aria-label={`Player ${t.number}${name ? ` ${name}` : ''}`}
               title={selected ? 'Selected. Press Delete to remove, or drag to move.' : 'Tap to select, drag to move.'}
               onPointerDown={onPointerDown(t.id)}
               onPointerMove={onPointerMove(t.id)}
@@ -139,9 +152,9 @@ export function TacticsPitch({
             >
               {t.number}
             </button>
-            {t.label ? (
-              <span className="board-token-label board-token-label-static" title={t.label}>
-                {tokenFirstName(t.label)}
+            {name ? (
+              <span className="board-token-label board-token-label-static" title={name}>
+                {tokenFirstName(name)}
               </span>
             ) : null}
           </div>
