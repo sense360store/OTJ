@@ -2,11 +2,12 @@
 
 Executable verification of the database Row-Level Security and Storage
 policies, against the local Supabase stack only. The suite asserts the
-intended permission contract, not the current behaviour, so it
-**intentionally reports failures today**: those failures are the evidence
-for the remediation migration that follows this harness. Do not weaken an
-assertion to make the suite green; the suite becomes green when the
-policies are fixed.
+intended permission contract, not the current behaviour. The four Storage
+failures this harness originally documented are fixed by
+`0027_storage_boundary.sql` (see `docs/security/storage-boundary.md`), so
+the suite is green today except for one expected failure (the board token
+finding, still open). Do not weaken an assertion to make the suite green;
+a red test means a policy regressed.
 
 ## Exact local command
 
@@ -55,8 +56,11 @@ capability consistency checks.
 ## Storage operations tested
 
 On the private `media` bucket, under disposable per-run paths
-`security-test/<unique-id>/…` only: list, read (download), create
-(upload), replace (upload with upsert), delete.
+`<club-uuid>/security-test/<unique-id>/…` (plus the fixture users' own
+`avatars/<user-id>/` folders and the `<club-uuid>/crest/` folder, always
+with run-unique names) only: list, read (download), create (upload),
+replace (upload with upsert), delete, signed URL creation, and the
+delete-then-recreate path that would bypass the closed update surface.
 
 ## Intended policy contract
 
@@ -80,8 +84,12 @@ select-gated table.
 | feedback: read | yes | yes | yes | no |
 | feedback: file and edit or delete own | yes | yes | yes (the one deliberate parent write) | no |
 | feedback: move status | yes (`club.manage`) | no | no | no |
-| Storage media bucket: read | yes | yes | via app signed URL flow | **no (club isolation)** |
-| Storage media bucket: create, replace, delete | yes | yes (`media.create`, own objects) | **no** | no |
+| Storage media bucket: read | yes | yes | yes (club content, incl. signed URLs) | **no (club isolation)** |
+| Storage media bucket: create | yes (`media.create`) | yes (`media.create`) | **no** | no (own club only) |
+| Storage media bucket: delete | any (`media.manage`) | own uploads only | **no** | no |
+| Storage media bucket: replace/upsert | **no — closed for everyone by design** | no | no | no |
+| Storage crest folder (`{club_id}/crest/`): write | yes (`club.manage`) | no | no | no |
+| Storage avatars (`avatars/{user_id}/`): write | own folder | own folder | own folder | own folder |
 | Storage media bucket: anything unauthenticated | — | — | — | no |
 
 Capability consistency contract: the database catalogue is exactly the
@@ -93,53 +101,41 @@ exists in the catalogue; `RESERVED_CAPABILITIES` (`users.manage`,
 yields all thirteen for admin, the five `*.create` keys for coach, and the
 empty set for parent.
 
-## Known failures before remediation
+## Remediated findings and the one still open
 
-The current Storage policies (`0001_init.sql`) distinguish only
-unauthenticated from authenticated callers, and boards are club-readable
-with free-text token labels. Against the current migrations the suite
-therefore reports, by design:
+The Storage policies from `0001_init.sql` distinguished only
+unauthenticated from authenticated callers. The four Storage tests this
+harness left genuinely red as evidence (parent create, parent delete of
+another member's object, cross-club read, cross-club list) pass since
+`0027_storage_boundary.sql`, which drops the three permissive policies and
+scopes the bucket by club path, capability and uploader; the full design,
+residual risks, apply and rollback procedures are in
+`docs/security/storage-boundary.md`. The suite now also pins the closed
+update surface directly: upsert-replace is refused for everyone, uploader
+and `media.manage` holders included, and the parent delete-then-recreate
+route around it is refused half by half.
+
+Still open, by design:
 
 | Test | Why it fails today | Finding |
 |---|---|---|
-| `storage.test.ts` — parent must not create objects | any authenticated user may insert into the bucket | 1, 2 |
-| `storage.test.ts` — parent must not delete an object created by another user | any authenticated user may delete any object | 1, 2 |
-| `storage.test.ts` — a member of another club must not read this club object | no club scoping on the bucket policies | 1 |
-| `storage.test.ts` — a member of another club must not list this club objects | no club scoping on the bucket policies | 1 |
 | `boards.test.ts` — parent must not receive roster-derived token labels (marked `it.fails`) | board tokens snapshot roster names into a club-readable row while `players` itself is parent-blocked | 3 |
 
 The boards test is declared with `it.fails`, so the runner reports it as
-an expected failure rather than red; when the remediation lands, remove
-`.fails` so it becomes a permanent regression guard. The four Storage
-tests are left genuinely red on purpose.
-
-One nuance worth recording: "parent must not replace an existing object"
-**passes** today only because the bucket has no update policy at all, so
-upsert-replace is refused for everyone. A parent can still achieve
-replacement through delete-then-create, which is exactly what the two red
-delete/create tests prove. The remediation must keep replace closed while
-adding the intended owner or manager arms.
-
-## How the next remediation PR makes these pass
-
-A gated Storage policy migration (human review required) that scopes the
-`media` bucket by capability and ownership rather than bare
-authentication: create requires `media.create`, delete requires ownership
-or `media.manage`, read is scoped to the caller's club. The boards leak
-needs a decision recorded in that PR (gate board reads or strip roster
-labels for non-`sessions.create` readers); this harness only pins the
-target contract.
+an expected failure rather than red; when its remediation lands, remove
+`.fails` so it becomes a permanent regression guard. It is deliberately
+out of scope for the Storage remediation.
 
 ## CI
 
-Not wired into CI in this PR, deliberately. The suite is red by design
-until the remediation migration lands, so a CI job today would be
-permanently failing noise, and it needs `supabase start` (Docker image
-pulls) which is slow and unverified in this repo's Actions setup. Follow-up
-requirement, once remediation lands: add a workflow job that runs
-`npx supabase start`, `npx supabase db reset`, then `npm run test:security`,
-and gate merges on it; keep it out of the required checks until it has
-proven reliable (image caching, health-check timeouts).
+Not wired into CI yet. With the Storage remediation landed the suite is
+green (one expected fail), so the original blocker is gone; what remains
+is that it needs `supabase start` (Docker image pulls), which is slow and
+unverified in this repo's Actions setup. Follow-up requirement: add a
+workflow job that runs `npx supabase start`, `npx supabase db reset`, then
+`npm run test:security`, and gate merges on it; keep it out of the
+required checks until it has proven reliable (image caching, health-check
+timeouts).
 
 ## Limitations
 

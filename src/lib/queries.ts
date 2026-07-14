@@ -2718,7 +2718,7 @@ export function useRemoveAvatar() {
 // ---- Club settings (admin) --------------------------------------------------
 // Writes go through the clubs_update_admin policy; the screens only decide
 // whether to surface the form. The crest is a storage object in the media
-// bucket under club/, stored on the row as its path and signed for rendering
+// bucket under {club_id}/crest/, stored on the row as its path and signed for rendering
 // like any other private object. A crest_url holding a full URL (a seeded or
 // external value) is left alone by the cleanup, which only removes bucket
 // objects.
@@ -2750,7 +2750,7 @@ export function useUploadCrest() {
   return useMutation<void, Error, { club: Club; file: File }>({
     mutationFn: async ({ club, file }) => {
       if (!CREST_TYPES.includes(file.type)) throw new Error('Use a PNG, JPG or SVG file.')
-      const path = `club/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+      const path = `${club.id}/crest/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
       const { error: uploadError } = await supabase.storage
         .from('media')
         .upload(path, file, { contentType: file.type || undefined })
