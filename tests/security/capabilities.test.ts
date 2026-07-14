@@ -1,0 +1,190 @@
+// Capability consistency: the frontend's capability strings, the seeded SQL
+// catalogue, and the reserved capability line must not silently drift.
+//
+// The React hook useMyCapabilities cannot run from SQL, so the seam is:
+//   * a static scan of src/ for capability string literals, checked against
+//     the catalogue the local database actually holds;
+//   * the RESERVED_CAPABILITIES constant exported by src/lib/data.ts,
+//     checked against the catalogue and against the database's own
+//     enforcement (RLS for non-holders, the reserved trigger for holders);
+//   * the hook's exact two-query read path (member_roles, then
+//     role_capabilities) replayed over real JWTs for each role, checked
+//     against the capability sets the seed intends.
+
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { beforeAll, describe, expect, it } from 'vitest'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { RESERVED_CAPABILITIES } from '../../src/lib/data'
+import { CLUB_A, serviceClient, signIn } from './stack'
+
+// The catalogue 0012_rbac seeds, restated here on purpose: if a migration
+// adds, renames or removes a capability, this test must be updated in the
+// same change, which is exactly the drift tripwire wanted.
+const EXPECTED_CATALOGUE = [
+  'club.manage',
+  'drills.create',
+  'drills.manage',
+  'media.create',
+  'media.manage',
+  'programmes.create',
+  'programmes.manage',
+  'sessions.create',
+  'sessions.manage',
+  'teams.manage',
+  'templates.create',
+  'templates.manage',
+  'users.manage',
+].sort()
+
+const COACH_CAPS = [
+  'drills.create',
+  'media.create',
+  'programmes.create',
+  'sessions.create',
+  'templates.create',
+].sort()
+
+const CAPABILITY_PATTERN = /\b(?:drills|media|templates|programmes|sessions|teams|users|club)\.(?:create|manage)\b/g
+
+function scanFrontendCapabilityStrings(): Set<string> {
+  const found = new Set<string>()
+  const srcDir = join(process.cwd(), 'src')
+  for (const entry of readdirSync(srcDir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue
+    if (!/\.(ts|tsx)$/.test(entry.name) || /\.test\./.test(entry.name)) continue
+    const text = readFileSync(join(entry.parentPath, entry.name), 'utf8')
+    for (const match of text.matchAll(CAPABILITY_PATTERN)) found.add(match[0])
+  }
+  return found
+}
+
+// The exact read path of useMyCapabilities (src/lib/queries.ts), replayed
+// over a real JWT: the member's member_roles rows, then the capabilities
+// those roles map to.
+async function capabilitiesAsTheHookReads(client: SupabaseClient, userId: string): Promise<string[]> {
+  const { data: roleRows, error: rolesError } = await client
+    .from('member_roles')
+    .select('role_id')
+    .eq('member_id', userId)
+  if (rolesError) throw rolesError
+  const roleIds = (roleRows ?? []).map((r: { role_id: string }) => r.role_id)
+  if (roleIds.length === 0) return []
+  const { data: capRows, error: capsError } = await client
+    .from('role_capabilities')
+    .select('capability')
+    .in('role_id', roleIds)
+  if (capsError) throw capsError
+  return [...new Set((capRows ?? []).map((rc: { capability: string }) => rc.capability))].sort()
+}
+
+describe('capability catalogue consistency', () => {
+  let catalogue: Set<string>
+
+  beforeAll(async () => {
+    const { client } = await signIn('coachOne')
+    const { data, error } = await client.from('capabilities').select('key')
+    if (error) throw new Error(`could not read the capabilities catalogue: ${error.message}`)
+    catalogue = new Set((data ?? []).map((c: { key: string }) => c.key))
+  })
+
+  it('the database catalogue is exactly the known capability set', () => {
+    expect([...catalogue].sort()).toEqual(EXPECTED_CATALOGUE)
+  })
+
+  it('every capability string referenced by the frontend exists in the catalogue', () => {
+    const referenced = scanFrontendCapabilityStrings()
+    expect(referenced.size).toBeGreaterThan(0)
+    const unknown = [...referenced].filter((cap) => !catalogue.has(cap))
+    expect(unknown, `frontend references capabilities missing from the catalogue`).toEqual([])
+  })
+
+  it('RESERVED_CAPABILITIES in src/lib/data.ts names real catalogue keys and stays users.manage plus club.manage', () => {
+    expect([...RESERVED_CAPABILITIES].sort()).toEqual(['club.manage', 'users.manage'])
+    for (const cap of RESERVED_CAPABILITIES) expect(catalogue.has(cap)).toBe(true)
+  })
+
+  it('reserved capabilities map only to the admin system role in the database', async () => {
+    const { data, error } = await serviceClient()
+      .from('role_capabilities')
+      .select('capability, roles!inner(key, system)')
+      .in('capability', [...RESERVED_CAPABILITIES])
+    expect(error).toBeNull()
+    const rows = (data ?? []) as unknown as { capability: string; roles: { key: string; system: boolean } }[]
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.roles.key).toBe('admin')
+      expect(row.roles.system).toBe(true)
+    }
+  })
+
+  it('a coach cannot grant themselves any capability (RLS refuses without users.manage)', async () => {
+    const { client } = await signIn('coachOne')
+    const { data: coachRole } = await serviceClient()
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'coach')
+      .single()
+    const { error } = await client
+      .from('role_capabilities')
+      .insert({ role_id: coachRole!.id, capability: 'drills.manage' })
+    expect(error).not.toBeNull()
+    expect(error?.code).toBe('42501')
+  })
+
+  it('a coach cannot grant themselves a reserved capability (refused server side)', async () => {
+    const { client } = await signIn('coachOne')
+    const { data: coachRole } = await serviceClient()
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'coach')
+      .single()
+    const { error } = await client
+      .from('role_capabilities')
+      .insert({ role_id: coachRole!.id, capability: 'users.manage' })
+    // The reserved-capability trigger (P0001) fires before the RLS with
+    // check (42501); either refusal holds the line, and the row must not
+    // exist afterwards.
+    expect(error).not.toBeNull()
+    expect(['42501', 'P0001']).toContain(error?.code)
+    const { data: rows } = await serviceClient()
+      .from('role_capabilities')
+      .select('capability')
+      .eq('role_id', coachRole!.id)
+      .eq('capability', 'users.manage')
+    expect(rows).toEqual([])
+  })
+
+  it('even a users.manage holder cannot move a reserved capability off the admin role (trigger refuses)', async () => {
+    const { client } = await signIn('admin')
+    const { data: coachRole } = await serviceClient()
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'coach')
+      .single()
+    const { error } = await client
+      .from('role_capabilities')
+      .insert({ role_id: coachRole!.id, capability: 'users.manage' })
+    expect(error).not.toBeNull()
+    expect(error?.message ?? '').toContain('reserved')
+    // Belt and braces: the row must not exist whatever the API returned.
+    const { data: rows } = await serviceClient()
+      .from('role_capabilities')
+      .select('capability')
+      .eq('role_id', coachRole!.id)
+      .eq('capability', 'users.manage')
+    expect(rows).toEqual([])
+  })
+
+  it('the useMyCapabilities read path yields the intended set per role over real JWTs', async () => {
+    const admin = await signIn('admin')
+    const coach = await signIn('coachOne')
+    const parent = await signIn('parent')
+    expect(await capabilitiesAsTheHookReads(admin.client, admin.userId)).toEqual(EXPECTED_CATALOGUE)
+    expect(await capabilitiesAsTheHookReads(coach.client, coach.userId)).toEqual(COACH_CAPS)
+    expect(await capabilitiesAsTheHookReads(parent.client, parent.userId)).toEqual([])
+  })
+})
