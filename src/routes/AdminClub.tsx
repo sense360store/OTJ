@@ -1,6 +1,6 @@
 // The club's identity, behind club.manage. Name and motto write the club row
 // through the clubs_update_manage policy; the crest uploads to the media
-// bucket under club/ and stores its path on clubs.crest_url. The sidebar,
+// bucket under {club_id}/crest/ and stores its path on clubs.crest_url. The sidebar,
 // the login screen and every other crest usage read the row live and fall
 // back to the bundled asset. REVIEW: capability gated admin surface.
 import { useEffect, useMemo, useRef, useState } from 'react'
