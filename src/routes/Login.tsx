@@ -35,9 +35,12 @@ export function Login() {
     setError(null)
     setInfo(null)
     setBusy(true)
+    // shouldCreateUser stays off: the magic link signs in existing invited
+    // members only. Without it, this button would register a fresh auth user
+    // for any email address while the project accepts signups.
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
     })
     setBusy(false)
     if (error) setError(error.message)
