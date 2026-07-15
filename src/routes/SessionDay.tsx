@@ -21,6 +21,7 @@ import {
   useLinkSessionSpondEvent,
   useMediaMap,
   useMyCapabilities,
+  usePlayers,
   useProgrammeMap,
   useSession,
   useTeamMap,
@@ -35,7 +36,7 @@ import type { DiagramSlide } from '../components/DiagramViewer'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { TacticsBoardView } from '../components/TacticsBoardView'
-import type { Board } from '../lib/tacticsBoard'
+import { playerNameMap, type Board, type PlayerNameMap } from '../lib/tacticsBoard'
 import './SessionDay.css'
 // The embedded board reuses the tactics board's pitch and disc styles.
 import './Board.css'
@@ -65,7 +66,7 @@ function loadChecked(sessionId: string): string[] {
 
 function SessionDayView({ session }: { session: Session }) {
   const nav = useNav()
-  const { user, role } = useAuth()
+  const { user } = useAuth()
   const { caps } = useMyCapabilities()
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
@@ -201,9 +202,11 @@ function SessionDayView({ session }: { session: Session }) {
         style={{ marginBottom: 12 }}
       />
 
-      {/* The attached tactics board, read only inline. A parent reaching the
-          session day sees the shape and numbers, never roster names. */}
-      <SessionBoardCard session={session} canManage={canManage} numberOnly={role === 'parent'} />
+      {/* The attached tactics board, read only inline. The board row carries
+          player ids and numbers, never names; the card resolves names through
+          the sessions.create gated players query, so a parent sees the shape
+          and numbers with nothing to resolve against. */}
+      <SessionBoardCard session={session} canManage={canManage} />
 
       <div className="sd-tabs">
         <button className={'sd-tab' + (tab === 'setup' ? ' on' : '')} onClick={() => setTab('setup')}>
@@ -384,19 +387,21 @@ function SessionDayView({ session }: { session: Session }) {
 //
 // When nothing is attached and the viewer cannot edit (a parent, or another
 // coach's session), the card renders nothing rather than an empty shell. With
-// a board it shows the read only renderer; numberOnly hides roster names for a
-// parent.
+// a board it shows the read only renderer. The board's tokens carry player
+// ids, never names (tacticsBoard.ts); the optional names map resolves them,
+// and the container only builds one for a sessions.create holder, so a
+// parent's render has no name anywhere in its inputs.
 export function SessionBoardCardView({
   board,
   boardId,
-  numberOnly,
+  names,
   canEdit,
   onAttach,
   onRemove,
 }: {
   board: Board | null
   boardId: string | null
-  numberOnly: boolean
+  names?: PlayerNameMap
   canEdit: boolean
   onAttach: () => void
   onRemove: () => void
@@ -430,7 +435,7 @@ export function SessionBoardCardView({
         )}
       </div>
       {board ? (
-        <TacticsBoardView tokens={board.tokens} numberOnly={numberOnly} />
+        <TacticsBoardView tokens={board.tokens} names={names} />
       ) : boardId ? (
         <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
           This board is not available.
@@ -447,13 +452,19 @@ export function SessionBoardCardView({
 function SessionBoardCard({
   session,
   canManage,
-  numberOnly,
 }: {
   session: Session
   canManage: boolean
-  numberOnly: boolean
 }) {
+  const { caps } = useMyCapabilities()
   const { data: board } = useBoard(session.boardId ?? undefined)
+  // Name resolution runs only for a sessions.create holder, mirroring the
+  // players RLS: a coach or admin fetches the roster and sees names on the
+  // embedded board; a parent never issues the query, and the board row they
+  // did read holds ids and numbers only.
+  const canResolveNames = caps.has('sessions.create')
+  const { data: players = [] } = usePlayers(canResolveNames)
+  const names = useMemo(() => playerNameMap(players), [players])
   const link = useLinkSessionBoard()
   const [picking, setPicking] = useState(false)
   return (
@@ -461,7 +472,7 @@ function SessionBoardCard({
       <SessionBoardCardView
         board={board ?? null}
         boardId={session.boardId}
-        numberOnly={numberOnly}
+        names={canResolveNames ? names : undefined}
         canEdit={canManage}
         onAttach={() => setPicking(true)}
         onRemove={() => link.mutate({ sessionId: session.id, boardId: null })}

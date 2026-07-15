@@ -11,8 +11,10 @@ import {
   formationPositions,
   isDrag,
   nextNumber,
+  playerNameMap,
   rosterTokens,
   serializeTokens,
+  tokenDisplayName,
   tokenFirstName,
   type BoardEdit,
   type BoardSnapshot,
@@ -23,6 +25,7 @@ import {
 // suite pins the clamp and the formation maths without a DOM or a pitch.
 
 describe('tokenFirstName', () => {
+  // All names in this suite are synthetic fixtures, never real children.
   it('shows the first name only for a multi word name', () => {
     expect(tokenFirstName('William McGrath')).toBe('William')
   })
@@ -176,16 +179,18 @@ describe('nextNumber', () => {
 })
 
 describe('rosterTokens', () => {
+  // Roster fixtures carry ids and shirt numbers only: seeding takes no name
+  // at all, so a name cannot reach a token even by accident.
   const roster: RosterPlayer[] = [
-    { displayName: 'Alex', shirtNumber: 7 },
-    { displayName: 'Sam B', shirtNumber: 9 },
-    { displayName: 'Jo', shirtNumber: 4 },
+    { id: 'p-alex', shirtNumber: 7 },
+    { id: 'p-sam', shirtNumber: 9 },
+    { id: 'p-jo', shirtNumber: 4 },
   ]
 
-  it('places one token per player with the display name as the label', () => {
+  it('places one token per player, each referencing its player by id', () => {
     const tokens = rosterTokens(roster, 'home')
     expect(tokens.length).toBe(roster.length)
-    expect(tokens.map((t) => t.label)).toEqual(['Alex', 'Sam B', 'Jo'])
+    expect(tokens.map((t) => t.playerId)).toEqual(['p-alex', 'p-sam', 'p-jo'])
   })
 
   it('uses each player shirt number as the token number', () => {
@@ -195,9 +200,9 @@ describe('rosterTokens', () => {
 
   it('falls back to the next free number for a player with none, without colliding', () => {
     const mixed: RosterPlayer[] = [
-      { displayName: 'No number', shirtNumber: null },
-      { displayName: 'Has one', shirtNumber: 1 },
-      { displayName: 'Also none', shirtNumber: null },
+      { id: 'p-1', shirtNumber: null },
+      { id: 'p-2', shirtNumber: 1 },
+      { id: 'p-3', shirtNumber: null },
     ]
     const tokens = rosterTokens(mixed, 'home')
     const numbers = tokens.map((t) => t.number)
@@ -211,16 +216,16 @@ describe('rosterTokens', () => {
     // shirtNumber null and the disc number falls back to the 1 based board
     // position. A real shirt number, when one is present, shows instead.
     const noNumbers: RosterPlayer[] = [
-      { displayName: 'Theo Draper', shirtNumber: null },
-      { displayName: 'William McKenzie', shirtNumber: null },
-      { displayName: 'Bekki Marsh', shirtNumber: null },
+      { id: 'p-1', shirtNumber: null },
+      { id: 'p-2', shirtNumber: null },
+      { id: 'p-3', shirtNumber: null },
     ]
     expect(rosterTokens(noNumbers, 'home').map((t) => t.number)).toEqual([1, 2, 3])
 
     const oneNumbered: RosterPlayer[] = [
-      { displayName: 'Theo Draper', shirtNumber: null },
-      { displayName: 'William McKenzie', shirtNumber: 10 },
-      { displayName: 'Bekki Marsh', shirtNumber: null },
+      { id: 'p-1', shirtNumber: null },
+      { id: 'p-2', shirtNumber: 10 },
+      { id: 'p-3', shirtNumber: null },
     ]
     const numbers = rosterTokens(oneNumbered, 'home').map((t) => t.number)
     // The numbered player shows the real shirt number; the others take a free
@@ -250,29 +255,35 @@ describe('rosterTokens', () => {
     expect(rosterTokens([], 'home')).toEqual([])
   })
 
-  it('snapshots the names so a later roster change cannot touch a saved board', () => {
-    // A board saves the serialised tokens. Build them from the roster, then
-    // mutate the source roster the way a delete or rename would. The saved
-    // tokens are a plain copy with no link back to a player, so they are
-    // unaffected: a deleted player never corrupts an existing board.
-    const source: RosterPlayer[] = [
-      { displayName: 'Alex', shirtNumber: 7 },
-      { displayName: 'Sam B', shirtNumber: 9 },
-    ]
-    const saved = serializeTokens(rosterTokens(source, 'home'))
-    const before = JSON.stringify(saved)
-    // Delete the first player and rename the second in the live roster.
-    source.shift()
-    source[0].displayName = 'Renamed'
-    // The saved tokens carry only id, number, label, side and the fractions,
-    // never a player id, and are untouched by the roster edits.
-    expect(JSON.stringify(saved)).toBe(before)
-    expect(saved.map((t) => t.label)).toEqual(['Alex', 'Sam B'])
+  it('never persists a name: the serialised tokens carry ids and numbers only', () => {
+    // The safeguarding contract at the unit level: seed from a roster,
+    // serialise the way a save does, and the stored value contains player ids
+    // and numbers only. There is no label field in the stored shape at all,
+    // so a name has nowhere to go.
+    const saved = serializeTokens(rosterTokens(roster, 'home'))
     for (const t of saved) {
-      expect(Object.keys(t).sort()).toEqual(['id', 'label', 'number', 'side', 'x', 'y'])
+      expect(Object.keys(t).sort()).toEqual(['id', 'number', 'playerId', 'side', 'x', 'y'])
     }
-    // And a load of those saved tokens round trips unchanged.
-    expect(deserializeTokens(saved).map((t) => t.label)).toEqual(['Alex', 'Sam B'])
+    // And a load of those saved tokens round trips the references.
+    expect(deserializeTokens(saved).map((t) => t.playerId)).toEqual(['p-alex', 'p-sam', 'p-jo'])
+  })
+
+  it('resolves names live: rename updates, delete falls back to the number', () => {
+    const tokens = rosterTokens(roster, 'home')
+    const names = playerNameMap([
+      { id: 'p-alex', displayName: 'Alex Fixture' },
+      { id: 'p-sam', displayName: 'Sam Fixture' },
+    ])
+    // A resolvable player shows its current roster name.
+    expect(tokenDisplayName(tokens[0], names)).toBe('Alex Fixture')
+    // A rename is just a new map: the token itself never changes.
+    expect(tokenDisplayName(tokens[0], { ...names, 'p-alex': 'Renamed Fixture' })).toBe('Renamed Fixture')
+    // A deleted player (id missing from the map) safely shows nothing.
+    expect(tokenDisplayName(tokens[2], names)).toBe('')
+    // No map at all (a parent) shows nothing for every token.
+    expect(tokenDisplayName(tokens[0], undefined)).toBe('')
+    // A hand placed token has no player to resolve regardless of the map.
+    expect(tokenDisplayName({ ...tokens[0], playerId: null }, names)).toBe('')
   })
 })
 
@@ -297,18 +308,31 @@ describe('serialize then deserialize', () => {
 
   it('reads tokens back defensively, dropping malformed entries and rebuilding the id', () => {
     const stored = [
-      { number: 7, label: 'CB', side: 'home', x: 0.4, y: 0.7 },
+      { number: 7, side: 'home', x: 0.4, y: 0.7, playerId: 'p-1' },
       { number: 'nope', side: 'home', x: 0.5, y: 0.5 },
       'garbage',
       { number: 9, side: 'away', x: 1.4, y: -0.2 },
     ]
     const tokens = deserializeTokens(stored)
     expect(tokens.length).toBe(2)
-    expect(tokens[0]).toEqual({ id: 'home-7', number: 7, label: 'CB', side: 'home', x: 0.4, y: 0.7 })
+    expect(tokens[0]).toEqual({ id: 'home-7', number: 7, side: 'home', x: 0.4, y: 0.7, playerId: 'p-1' })
     // Out of range fractions are clamped back onto the pitch.
     expect(tokens[1].x).toBe(1)
     expect(tokens[1].y).toBe(0)
     expect(tokens[1].id).toBe('away-9')
+    expect(tokens[1].playerId).toBeNull()
+  })
+
+  it('ignores a legacy label so a pre boundary row never surfaces a name', () => {
+    // A board saved before the name boundary landed could carry a label in
+    // its jsonb. The loader drops it: the token state has no label field, so
+    // nothing downstream can render it, whatever the row still holds.
+    const legacy = [{ number: 7, label: 'Legacy Name Fixture', side: 'home', x: 0.4, y: 0.7 }]
+    const tokens = deserializeTokens(legacy)
+    expect(tokens).toEqual([{ id: 'home-7', number: 7, side: 'home', x: 0.4, y: 0.7, playerId: null }])
+    expect(JSON.stringify(tokens)).not.toContain('Legacy')
+    // And serialising what was loaded writes the minimal shape back.
+    expect(Object.keys(serializeTokens(tokens)[0]).sort()).toEqual(['id', 'number', 'side', 'x', 'y'])
   })
 
   it('returns an empty board for a non array value', () => {
@@ -371,10 +395,10 @@ describe('boardIsDirty', () => {
     expect(boardIsDirty(moved, base)).toBe(true)
   })
 
-  it('reports unsaved changes after a relabel, a rename, a formation or a team change', () => {
-    expect(boardIsDirty({ ...base, tokens: base.tokens.map((t, i) => (i === 0 ? { ...t, label: 'GK' } : t)) }, base)).toBe(
-      true,
-    )
+  it('reports unsaved changes after a player reference, a rename, a formation or a team change', () => {
+    expect(
+      boardIsDirty({ ...base, tokens: base.tokens.map((t, i) => (i === 0 ? { ...t, playerId: 'p-1' } : t)) }, base),
+    ).toBe(true)
     expect(boardIsDirty({ ...base, name: 'Renamed' }, base)).toBe(true)
     expect(boardIsDirty({ ...base, formation: '4-4-2' }, base)).toBe(true)
     expect(boardIsDirty({ ...base, teamId: 'team-2' }, base)).toBe(true)

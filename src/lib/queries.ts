@@ -3253,8 +3253,11 @@ export function useRemoveUser() {
 // ---- Tactics boards --------------------------------------------------------
 // The save and load layer for the tactics board. Reads are club wide (select
 // is club wide RLS), so the list is every board in the club; ownership only
-// decides who may rename or delete. The tokens jsonb carries no person data,
-// only the numbers and free text labels a coach typed (0020_boards.sql); the
+// decides who may rename or delete. The tokens jsonb carries no person data:
+// numbers, sides, positions and player ids only, never a name, enforced by a
+// check constraint (0028_board_player_boundary.sql). Names are resolved at
+// render time through usePlayers, whose RLS answers sessions.create holders
+// only, so a club wide board read hands a parent nothing to resolve. The
 // mappers below go through serializeTokens and deserializeTokens, the single
 // seam between the stored array and the board's state shape. updated_at has no
 // trigger, so the write hooks set it in application code.
@@ -3422,10 +3425,11 @@ export function useDeleteBoard() {
 // to the club wide content rule: the players RLS gates select on
 // sessions.create, so this hook returns nothing for a parent (and the roster
 // manager and board routes are sessions.create gated regardless). The board
-// seeds tokens from these, snapshotting the display name into the token label;
-// there is no link back from a saved board to a player (see tacticsBoard.ts
-// and 0020_boards.sql), so deleting a player never corrupts a saved board. See
-// 0021_players.sql for the full child data boundary.
+// seeds tokens from these by id: a token references its player and the render
+// resolves the name through this query, so the name itself never reaches the
+// boards table (see tacticsBoard.ts and 0028_board_player_boundary.sql).
+// Deleting a player leaves any token referencing it as a plain numbered disc.
+// See 0021_players.sql for the full child data boundary.
 
 interface PlayerRow {
   id: string
@@ -3449,10 +3453,14 @@ function toPlayer(r: PlayerRow): Player {
 
 // The club's roster across every team, ordered for a stable list: by shirt
 // number (nulls last) then display name. The roster manager filters this to
-// the selected team and the board reads the selected team's slice.
-export function usePlayers() {
+// the selected team and the board reads the selected team's slice. The
+// enabled flag lets a screen shared across roles (the session day board
+// embed) skip the query entirely for a viewer without sessions.create: RLS
+// would return zero rows anyway, but a parent should never even ask.
+export function usePlayers(enabled = true) {
   return useQuery({
     queryKey: ['players'],
+    enabled,
     queryFn: async (): Promise<Player[]> => {
       const { data, error } = await supabase
         .from('players')
@@ -3509,8 +3517,10 @@ export function useUpdatePlayer() {
   })
 }
 
-// Removes a player. No board references a player (a saved board snapshots the
-// name as a plain label), so a removal never touches a board.
+// Removes a player. A board token referencing the player keeps its position
+// and number and simply loses its name resolution, so a removal never
+// corrupts a board; the boards query is invalidated only through the players
+// key, which every name resolving render already watches.
 export function useDeletePlayer() {
   const qc = useQueryClient()
   return useMutation<void, Error, { id: string }>({

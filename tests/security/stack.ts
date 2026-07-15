@@ -194,6 +194,14 @@ export function expectTriggerRefusal(error: PgError | null, messagePart: string)
   expect(error?.message ?? '').toContain(messagePart)
 }
 
+// A check constraint refusal (23514), the schema-level boundary that holds
+// below RLS: it refuses the write for every caller, service role included.
+export function expectCheckConstraintRefusal(error: PgError | null, constraintName: string): void {
+  expect(error, 'expected the write to be refused by a check constraint').not.toBeNull()
+  expect(error?.code).toBe('23514')
+  expect(error?.message ?? '').toContain(constraintName)
+}
+
 // A short unique suffix so disposable rows and object paths never collide
 // across runs against the same local stack.
 export function runId(): string {

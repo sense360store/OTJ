@@ -4,9 +4,10 @@ Executable verification of the database Row-Level Security and Storage
 policies, against the local Supabase stack only. The suite asserts the
 intended permission contract, not the current behaviour. The four Storage
 failures this harness originally documented are fixed by
-`0027_storage_boundary.sql` (see `docs/security/storage-boundary.md`), so
-the suite is green today except for one expected failure (the board token
-finding, still open). Do not weaken an assertion to make the suite green;
+`0027_storage_boundary.sql` (see `docs/security/storage-boundary.md`), and
+the board token finding is fixed by `0028_board_player_boundary.sql` (see
+`docs/security/board-data-boundary.md`), so the suite is fully green with
+no expected failures. Do not weaken an assertion to make the suite green;
 a red test means a policy regressed.
 
 ## Exact local command
@@ -78,9 +79,10 @@ select-gated table.
 | sessions: edit or delete | any (`sessions.manage`) | own only | no | no |
 | players: read | yes | yes (`sessions.create`) | **no** | no |
 | players: write | yes | yes | no | no |
-| boards: read | yes | yes | yes, **but never roster-derived names** | no |
+| boards: read | yes | yes | yes, **and the row can never contain a name** | no |
 | boards: create | yes | yes (`sessions.create`) | no | no |
 | boards: edit or delete | any (`club.manage`) | own only | no | no |
+| boards: persist a token label or stray field | **no (check constraint, all callers incl. service role)** | no | no | no |
 | feedback: read | yes | yes | yes | no |
 | feedback: file and edit or delete own | yes | yes | yes (the one deliberate parent write) | no |
 | feedback: move status | yes (`club.manage`) | no | no | no |
@@ -101,7 +103,7 @@ exists in the catalogue; `RESERVED_CAPABILITIES` (`users.manage`,
 yields all thirteen for admin, the five `*.create` keys for coach, and the
 empty set for parent.
 
-## Remediated findings and the one still open
+## Remediated findings
 
 The Storage policies from `0001_init.sql` distinguished only
 unauthenticated from authenticated callers. The four Storage tests this
@@ -115,21 +117,24 @@ update surface directly: upsert-replace is refused for everyone, uploader
 and `media.manage` holders included, and the parent delete-then-recreate
 route around it is refused half by half.
 
-Still open, by design:
-
-| Test | Why it fails today | Finding |
-|---|---|---|
-| `boards.test.ts` — parent must not receive roster-derived token labels (marked `it.fails`) | board tokens snapshot roster names into a club-readable row while `players` itself is parent-blocked | 3 |
-
-The boards test is declared with `it.fails`, so the runner reports it as
-an expected failure rather than red; when its remediation lands, remove
-`.fails` so it becomes a permanent regression guard. It is deliberately
-out of scope for the Storage remediation.
+The board token finding (finding 3, the last one open) is remediated by
+`0028_board_player_boundary.sql`: board tokens persist player references
+and numbers, never names, and a check constraint refuses any write that
+tries to bring a label back, from any caller including the service role.
+The former `it.fails` expected failure in `boards.test.ts` is now a plain
+passing assertion and a permanent regression guard, alongside new tests
+covering coach name resolution, rename and delete behaviour, manual token
+survival, the constraint, and the exact backfill semantics of the
+migration (through the preserved `board_tokens_without_names` function,
+whose EXECUTE is service_role only; the suite also asserts coach and
+parent RPC calls to it are refused).
+The full design is in `docs/security/board-data-boundary.md` and
+`docs/adr/ADR-0002-board-player-model.md`.
 
 ## CI
 
-Not wired into CI yet. With the Storage remediation landed the suite is
-green (one expected fail), so the original blocker is gone; what remains
+Not wired into CI yet. With the Storage and board remediations landed the
+suite is fully green, so the original blocker is gone; what remains
 is that it needs `supabase start` (Docker image pulls), which is slow and
 unverified in this repo's Actions setup. Follow-up requirement: add a
 workflow job that runs `npx supabase start`, `npx supabase db reset`, then
@@ -145,7 +150,10 @@ timeouts).
 - `tests/security/local-grants.sql` reproduces the legacy Data API grants
   on the local database (the hosted project predates Supabase's revoked
   auto-grants; a fresh local stack does not), so the suite exercises RLS
-  the way production does. It is applied by the test setup through the
+  the way production does, and then restates the deliberate revokes that
+  migrations carve out of those legacy grants (currently the 0028
+  service_role-only backfill transform) so the blanket grant cannot
+  resurrect them locally. It is applied by the test setup through the
   local Docker container only and must never be applied to a hosted
   project.
 - The frontend capability scan is a static string scan; a capability name

@@ -15,3 +15,11 @@ grant usage on schema public to anon, authenticated, service_role;
 grant all on all tables in schema public to anon, authenticated, service_role;
 grant all on all sequences in schema public to anon, authenticated, service_role;
 grant execute on all functions in schema public to anon, authenticated, service_role;
+
+-- Deliberate revokes carved out of the legacy blanket grants. A migration
+-- that intentionally revokes a grant describes the production end state,
+-- and the blanket grants above must not resurrect it locally; restate each
+-- such revoke here so the local stack answers like production. Currently:
+-- 0028 makes the board backfill transform service_role only (it is not an
+-- application RPC; see 0028_board_player_boundary.sql).
+revoke execute on function public.board_tokens_without_names(jsonb, uuid) from anon, authenticated;

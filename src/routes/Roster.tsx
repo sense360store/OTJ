@@ -53,8 +53,8 @@ function DeletePlayerModal({ player, onClose }: { player: Player; onClose: () =>
       }
     >
       <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-        This removes the player from the roster. Any saved board is a snapshot and keeps the name it was saved with, so no
-        board is affected.
+        This removes the player from the roster. A saved board that includes this player keeps its shape; the disc simply
+        shows its number without a name.
       </p>
       {del.isError && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>

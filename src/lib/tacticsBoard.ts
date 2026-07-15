@@ -9,24 +9,53 @@ export type TokenSide = 'home' | 'away'
 
 // A player disc on the board. x runs across the pitch width, y along its
 // length, both fractions from 0 (one edge) to 1 (the other). number is the
-// shirt number, 1 upward; label is a short free text, empty by default, never
-// a real name from any roster. side is the colour only, home or away.
+// shirt number, 1 upward; side is the colour only, home or away.
+//
+// THE NAME BOUNDARY. A token NEVER carries a player's name. A token seeded
+// from a team roster carries the player's id in playerId (null for a hand
+// placed or formation token); the name is resolved at render time from the
+// players table, whose row level security only answers holders of
+// sessions.create (coaches and admins, never parents). So a saved board hands
+// a parent shape and numbers only: there is no name in the row to leak, and
+// the parent's players query returns nothing to resolve against. See
+// 0028_board_player_boundary.sql, which also enforces this shape with a
+// check constraint on the stored jsonb.
 export interface Token {
   id: string
   number: number
-  label: string
   side: TokenSide
   x: number
   y: number
+  playerId: string | null
 }
 
-// The label as it shows on the pitch: the first name only. A token seeded from
-// a roster carries a player's full name in its label (see rosterTokens); the
-// disc shows just the first name so it stays legible, while the full name is
-// kept on the title attribute and the disc's accessible name. The first name is
-// the text before the first space; a single word label (a one word name, or a
-// hand placed token with none) is returned unchanged. Surrounding whitespace is
-// trimmed so a stray leading space never yields an empty first name.
+// The resolution map a render uses to put a name to a token: playerId to the
+// player's display name, built from the (sessions.create gated) players
+// query. A viewer without that capability has no map, so every disc shows
+// its number alone.
+export type PlayerNameMap = Record<string, string>
+
+export function playerNameMap(players: { id: string; displayName: string }[]): PlayerNameMap {
+  const map: PlayerNameMap = {}
+  for (const p of players) map[p.id] = p.displayName
+  return map
+}
+
+// The full display name a token resolves to, or an empty string when there is
+// nothing to show: a token with no playerId (hand placed or formation), a
+// viewer with no name map (a parent), or a playerId whose roster row is gone
+// (the player was deleted; the disc safely falls back to its number).
+export function tokenDisplayName(token: Token, names?: PlayerNameMap): string {
+  if (!token.playerId || !names) return ''
+  return names[token.playerId] ?? ''
+}
+
+// The name as it shows on the pitch: the first name only. The disc shows just
+// the first name so it stays legible, while the full name is kept on the
+// title attribute and the disc's accessible name. The first name is the text
+// before the first space; a single word name is returned unchanged.
+// Surrounding whitespace is trimmed so a stray leading space never yields an
+// empty first name.
 export function tokenFirstName(label: string): string {
   const trimmed = label.trim()
   const space = trimmed.indexOf(' ')
@@ -97,7 +126,7 @@ function orient(side: TokenSide, y: number): number {
 }
 
 function makeToken(side: TokenSide, number: number, x: number, y: number): Token {
-  return { id: `${side}-${number}`, number, label: '', side, x, y }
+  return { id: `${side}-${number}`, number, side, x, y, playerId: null }
 }
 
 // Place a formation for one side: a goalkeeper as number 1, then the outfield
@@ -128,27 +157,27 @@ export function nextNumber(tokens: Token[], side: TokenSide): number {
 }
 
 // ---- Roster seeding ------------------------------------------------------
-// The minimum a board needs to seat a team's real players: a display name and
-// an optional shirt number. This mirrors the player roster (see data.ts and
-// 0021_players.sql) without depending on it, so the pure layout stays testable
-// and the board keeps no link back to a player.
+// The minimum a board needs to seat a team's real players: the player's id
+// and an optional shirt number. DELIBERATELY NO NAME: seeding never touches a
+// display name, so a name cannot reach a token (and so the persisted board)
+// even by accident. The render resolves the name from the id, live, through
+// the sessions.create gated players query (see tokenDisplayName).
 export interface RosterPlayer {
-  displayName: string
+  id: string
   shirtNumber: number | null
 }
 
 // Seed tokens from a team's roster, the opt in alternative to the formation
-// picker: one token per player, the player's display name copied into the
-// token label and their shirt number used as the token number. A player with
-// no number takes the next free one so numbers (and the side-number token id)
-// stay unique within the side. Players are laid out in tidy rows across the
-// side's half of the pitch, the same fraction coordinates a formation uses, so
-// the coach drags them into shape from there.
+// picker: one token per player, carrying the player's id and using their
+// shirt number as the token number. A player with no number takes the next
+// free one so numbers (and the side-number token id) stay unique within the
+// side. Players are laid out in tidy rows across the side's half of the
+// pitch, the same fraction coordinates a formation uses, so the coach drags
+// them into shape from there.
 //
-// The label is the display name as a PLAIN STRING copied in here; the token
-// carries no id or foreign key back to the player. So a board built or saved
-// from a roster is a snapshot: renaming or deleting a player later never
-// changes or corrupts it (see 0020_boards.sql tokens and serializeTokens).
+// The playerId is a REFERENCE, not a copy: renaming a player updates every
+// board's display the next time it renders, and deleting a player leaves the
+// token in place showing its number alone. The token never stores the name.
 export function rosterTokens(players: RosterPlayer[], side: TokenSide): Token[] {
   const used = new Set<number>()
   // Reserve the numbers players already carry so the fallback never collides
@@ -178,10 +207,10 @@ export function rosterTokens(players: RosterPlayer[], side: TokenSide): Token[] 
     return {
       id: `${side}-${number}`,
       number,
-      label: p.displayName,
       side,
       x,
       y: orient(side, yHome),
+      playerId: p.id,
     }
   })
 }
@@ -189,8 +218,9 @@ export function rosterTokens(players: RosterPlayer[], side: TokenSide): Token[] 
 // ---- Saved boards --------------------------------------------------------
 // Phase two persists a board. A saved board is the name, the formation it was
 // seeded from, the team it frames and the tokens, plus its ownership and
-// timestamps. The tokens carry no person data, only the numbers and free text
-// labels a coach typed (see 0020_boards.sql).
+// timestamps. The tokens carry no person data: numbers, positions, sides and
+// player ids only, never a name (see 0020_boards.sql and the constraint in
+// 0028_board_player_boundary.sql).
 export interface Board {
   id: string
   name: string
@@ -213,12 +243,34 @@ export interface BoardSnapshot {
   tokens: Token[]
 }
 
-// Serialise the tokens to the value the jsonb column stores: a plain copy of
-// the array as state holds it. Kept explicit rather than passing the live
-// array straight through, so the stored shape is the one field set the schema
-// documents and a stray property on a token never leaks into the database.
-export function serializeTokens(tokens: Token[]): Token[] {
-  return tokens.map((t) => ({ id: t.id, number: t.number, label: t.label, side: t.side, x: t.x, y: t.y }))
+// The exact shape one stored token takes in the jsonb column: number, side,
+// the fractions, the derived id, and playerId only when the token references
+// a roster player. NOTHING ELSE: no label field exists, so there is no place
+// for a name to be persisted, and the database enforces the same key set with
+// a check constraint (0028_board_player_boundary.sql).
+export interface StoredToken {
+  id: string
+  number: number
+  side: TokenSide
+  x: number
+  y: number
+  playerId?: string
+}
+
+// Serialise the tokens to the value the jsonb column stores. Kept explicit
+// rather than passing the live array straight through, so the stored shape is
+// the one field set the schema documents and a stray property on a token
+// never leaks into the database. playerId is included only when present, so a
+// hand placed token stores five fields and nothing more.
+export function serializeTokens(tokens: Token[]): StoredToken[] {
+  return tokens.map((t) => ({
+    id: t.id,
+    number: t.number,
+    side: t.side,
+    x: t.x,
+    y: t.y,
+    ...(t.playerId ? { playerId: t.playerId } : {}),
+  }))
 }
 
 // Read tokens back from the stored jsonb, defensively. The column is just
@@ -226,7 +278,10 @@ export function serializeTokens(tokens: Token[]): Token[] {
 // malformed entry; each token is rebuilt from its fields, the id derived from
 // side and number the same way the board mints it, the fractions clamped, and
 // anything without a usable number or position dropped. So a loaded board
-// always lands inside the pitch.
+// always lands inside the pitch. Any legacy `label` (or any other stray
+// field) is deliberately IGNORED: a board row written before the name
+// boundary landed can still be loaded, but a name it carried never reaches
+// the client's token state.
 export function deserializeTokens(value: unknown): Token[] {
   if (!Array.isArray(value)) return []
   const out: Token[] = []
@@ -242,10 +297,10 @@ export function deserializeTokens(value: unknown): Token[] {
     out.push({
       id: `${side}-${number}`,
       number,
-      label: typeof r.label === 'string' ? r.label : '',
       side,
       x: clampFraction(x),
       y: clampFraction(y),
+      playerId: typeof r.playerId === 'string' && r.playerId !== '' ? r.playerId : null,
     })
   }
   return out
@@ -266,13 +321,13 @@ export interface BoardEdit {
 }
 
 // Capture the editable state at edit-entry so Cancel can restore it. The tokens
-// are cloned (serializeTokens mints fresh objects) so later moves and relabels
-// on the working board never reach back and mutate the snapshot.
+// are cloned so later moves on the working board never reach back and mutate
+// the snapshot.
 export function captureBoardEdit(state: BoardEdit): BoardEdit {
-  return { ...state, tokens: serializeTokens(state.tokens) }
+  return { ...state, tokens: state.tokens.map((t) => ({ ...t })) }
 }
 
-// A board's saved shape flattened to a string, so a move, a relabel, a
+// A board's saved shape flattened to a string, so a move, a token change, a
 // formation change, a team change or a rename all register as a difference.
 export function boardSignature(snap: BoardSnapshot): string {
   return JSON.stringify({
