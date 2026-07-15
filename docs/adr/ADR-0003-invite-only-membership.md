@@ -12,15 +12,18 @@ defaulted `role` to `coach`. That metadata is client controlled: the
 holding the anon key (which ships in the browser bundle), and the account
 holder can rewrite it later through `auth.updateUser`.
 
-While the hosted project accepts public email signups, that let an
-unauthenticated stranger create an auth user carrying `club_id = <the
-club's uuid>` and `role = 'admin'` and receive a profile inside the club.
-Club membership alone grants every club wide read (drills, media rows and
-Storage objects, templates, programmes, sessions, boards, feedback, Spond
-counts, teams, every profile) and passes the feedback insert policy. No
-content write capability followed, because those flow from `member_roles`,
-which stayed empty; but the read compromise of all club data, plus the
-admin display role, is a confirmed security defect.
+If public email signup is enabled on the hosted project (its current
+state is pending confirmation), that lets an unauthenticated stranger
+create an auth user carrying `club_id = <the club's uuid>` and
+`role = 'admin'` and receive a profile inside the club. Club membership
+alone grants every club wide read (drills, media rows and Storage
+objects, templates, programmes, sessions, boards, feedback, Spond counts,
+teams, every profile) and passes the feedback insert policy. No content
+write capability followed, because those flow from `member_roles`, which
+stayed empty; but the read compromise of all club data, plus the admin
+display role, is a confirmed security defect. The fix removes the
+metadata trust regardless of the signup setting, so the boundary no
+longer depends on it.
 
 The full lifecycle was traced before choosing a fix: the Login screen
 (sign-in, magic link, password reset, no registration form), Supabase
@@ -41,10 +44,17 @@ client controlled metadata.**
    default changes from `coach` to `parent`.
 
 2. A new `grant_club_membership()` database function is the single
-   trusted path onto a club. It is `SECURITY DEFINER`, executable only by
-   `service_role`, validates club scoping, is idempotent, and refuses
-   cross-club claims, wrong-club roles or teams, unknown members and empty
-   role sets.
+   trusted path onto a club. It is `SECURITY DEFINER` with an empty
+   `search_path`, executable only by `service_role` (an in-body
+   `auth.role()` guard plus a revoked EXECUTE grant), derives the display
+   role from the assigned role ids rather than trusting a passed value,
+   and validates club scoping. It is a provisioning function, not a role
+   editor: it provisions a quarantined member, is a no-op for an
+   identical retried invite, and refuses any request that would re-shape
+   an already-provisioned member (closing privilege accumulation). It
+   refuses cross-club claims, wrong-club roles or teams, unknown members,
+   empty role sets and a primary team outside the assigned team set, and
+   replaces role and team sets wholesale so no stale assignment survives.
 
 3. `invite-user` provisions members through `grant_club_membership()`
    after inviting the email, and rolls back the auth user if the grant
@@ -74,8 +84,11 @@ client controlled metadata.**
 - A stray or malicious direct signup produces a quarantined account with
   no club and no access, rather than an error or a breach.
 - Existing invited members are unaffected; the change edits no data.
-- `invite-user` must be redeployed with the migration; the window between
-  the two fails closed (invites land quarantined, repairable).
+- `invite-user` must be redeployed immediately after the migration, under
+  a paused-invitations rollout (pause, apply, deploy, verify a real
+  invite, resume). An invite sent in the gap lands quarantined and is
+  repaired by deleting the auth user and re-inviting, not by re-inviting
+  the same email (a duplicate returns 409).
 - The security suite gains `tests/security/signup.test.ts`, which proves
   the boundary over real JWTs and is part of the standing regression set.
 - Hosted Auth settings (public signup, anonymous sign-in, leaked-password

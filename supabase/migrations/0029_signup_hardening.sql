@@ -17,19 +17,21 @@
 -- raw_user_meta_data is client controlled twice over: signUp accepts
 -- arbitrary metadata from anyone holding the anon key (the anon key
 -- ships in the browser bundle by design), and a signed in user can
--- rewrite their own metadata later through auth.updateUser. While the
--- hosted project accepts public email signups, anyone could therefore
--- create an auth user carrying club_id = <the club's uuid> and
--- role = 'admin' and receive a profile inside the club. member_roles
--- stays empty for such an account, so no write capability follows, but
--- club membership alone grants every club wide select: drills, media
+-- rewrite their own metadata later through auth.updateUser. If public
+-- email signup is enabled on the hosted project (its current state is
+-- pending confirmation), anyone could therefore create an auth user
+-- carrying club_id = <the club's uuid> and role = 'admin' and receive a
+-- profile inside the club. member_roles stays empty for such an account,
+-- so no write capability follows, but club membership alone grants every
+-- club wide select: drills, media
 -- rows and media Storage objects (0027 keys object reads on
 -- my_club()), templates, programmes, sessions (club wide since 0002),
 -- boards, feedback, spond attendance counts, the teams list and every
 -- member's profile row. It also passes the feedback insert policy,
 -- which requires only club membership. That is a full read compromise
--- of club data by an unauthenticated stranger, plus the admin display
--- role in the UI.
+-- of club data, plus the admin display role in the UI; its severity
+-- depends on whether public signup is enabled, and this migration
+-- removes the metadata trust either way.
 --
 -- The boundary after this migration. Nothing that authorises anything
 -- is ever read from raw_user_meta_data. A new auth user, however
@@ -50,12 +52,12 @@
 -- Compatibility. Existing rows are untouched: every invited member
 -- keeps their profile, club, roles and teams, and nothing here edits
 -- data. The trigger change affects only auth users created after the
--- apply. The invite-user function must be redeployed together with
--- this migration: until then it still writes club_id and role through
--- invite metadata, which the new trigger ignores, so an invite sent in
--- the window between apply and redeploy would create a quarantined
--- member (fails closed, visible, repaired by re-running the reworked
--- invite or by grant_club_membership from the connector).
+-- apply. The invite-user function must be redeployed immediately after
+-- this migration, under a paused-invitations rollout (pause, apply,
+-- deploy, verify a real invite, resume). An invite sent in the gap lands
+-- quarantined (fails closed) and is repaired by deleting the auth user
+-- and re-inviting, never by re-inviting the same email, which returns
+-- 409 for a duplicate. See docs/security/auth-membership-boundary.md.
 --
 -- Rollback. Restore the 0001 trigger body and drop
 -- grant_club_membership(). Doing so reopens the metadata hole, so the
@@ -99,27 +101,48 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------
--- grant_club_membership: the single trusted path onto a club. Called
--- by the invite-user Edge Function with the service role after
--- inviteUserByEmail creates the auth user. One transaction covers the
--- profile update, the role assignments and the team assignments, so a
--- member is either fully provisioned or left quarantined; there is no
--- partial state.
+-- grant_club_membership: the single trusted path that provisions an
+-- invited member onto a club. Called by the invite-user Edge Function
+-- with the service role after inviteUserByEmail creates the auth user.
+-- One transaction covers the profile, the role assignments and the team
+-- assignments, so a member is either fully provisioned or left
+-- quarantined; there is no partial state.
+--
+-- This is a provisioning function, not a role editor. It moves a member
+-- from quarantined to provisioned, and it is idempotent for a retried
+-- invite; it never re-shapes an already-provisioned member. Role and
+-- team changes on an existing member go through the user-role editor
+-- (member_roles / member_teams under the users.manage policies), never
+-- here.
+--
+-- The display role is derived from the validated role ids, not passed
+-- in: the highest precedence system role among them (admin, manager,
+-- coach, parent), or coach when only custom roles are assigned. The
+-- caller cannot therefore state a display role that disagrees with the
+-- assigned roles.
 --
 -- Fail closed contract, enforced here whatever the caller sends:
 --   * the member must already exist as a profile (the invite created
 --     it); a missing profile raises.
---   * a member already in a different club is refused, so an invite
---     for club A can never be claimed into club B, and a member can
---     never be moved between clubs through this path.
---   * every role id must be a role of the target club; every team id
---     and the primary team must be a team of the target club, and the
+--   * a member already in a different club is refused, so an invite for
+--     club A can never be claimed into club B.
+--   * a member already in the target club is accepted only when the
+--     requested state (display role, primary team, all-teams flag, the
+--     role-id set and the team-id set) exactly matches what the member
+--     already holds; that makes a retried invite a safe no-op. Any
+--     difference is refused (fail closed) and must go through the user
+--     role editor: this closes the privilege-accumulation hole where a
+--     second grant would otherwise add roles alongside the existing
+--     ones.
+--   * every role id must be a role of the target club; every team id and
+--     the primary team must be a team of the target club, and the
 --     primary team must be one of the assigned teams.
---   * at least one role is required; an invite that assigns nothing
---     is meaningless and refused.
---   * re-running with the same arguments converges to the same state
---     (idempotent), so a retried invite repairs a quarantined member
---     instead of erroring or duplicating rows.
+--   * at least one role is required; null role and team arrays are
+--     normalised to empty first, so a null role array is refused as
+--     empty and a primary team with a null or empty team set is refused.
+--   * provisioning replaces the member's role and team sets wholesale
+--     (delete then insert), so no stale member_roles or member_teams row
+--     from an earlier state stays silently active.
 --
 -- Execution is reserved to the service role two ways, belt and braces:
 --   1. an in-body guard rejects any caller whose JWT role is not
@@ -133,12 +156,13 @@ $$;
 -- SECURITY DEFINER so the definer's ownership, not the caller's RLS,
 -- performs the writes, matching the other privileged helpers; the guard
 -- is what makes SECURITY DEFINER safe against a re-added EXECUTE grant.
+-- The search_path is empty and every object is schema qualified, so no
+-- caller-set search_path can redirect a reference.
 -- ---------------------------------------------------------------------
 create or replace function public.grant_club_membership(
   target_member    uuid,
   target_club      uuid,
   role_ids         uuid[],
-  display_role     role_kind,
   primary_team     uuid default null,
   member_team_ids  uuid[] default '{}',
   set_all_teams    boolean default false,
@@ -147,11 +171,20 @@ create or replace function public.grant_club_membership(
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
-  current_club uuid;
-  bad_count    int;
+  existing_club      uuid;
+  existing_role      public.role_kind;
+  existing_team      uuid;
+  existing_all_teams boolean;
+  bad_count          int;
+  system_keys        text[];
+  derived_display    text;
+  requested_roles    uuid[];
+  current_roles      uuid[];
+  requested_teams    uuid[];
+  current_teams      uuid[];
 begin
   -- Service role only. auth.role() returns the verified JWT role claim
   -- of the caller; the Edge Functions reach this through the service
@@ -161,23 +194,31 @@ begin
     raise exception 'grant_club_membership is restricted to the service role';
   end if;
 
+  -- Normalise null arrays to empty before any validation, so a null role
+  -- array reads as empty (refused below) and a null team array reads as
+  -- no teams (a primary team then has nothing to belong to).
+  role_ids := coalesce(role_ids, '{}');
+  member_team_ids := coalesce(member_team_ids, '{}');
+
   if target_member is null or target_club is null then
     raise exception 'grant_club_membership: member and club are required';
   end if;
-  if role_ids is null or coalesce(array_length(role_ids, 1), 0) = 0 then
+  if coalesce(array_length(role_ids, 1), 0) = 0 then
     raise exception 'grant_club_membership: at least one role is required';
   end if;
 
-  select p.club_id into current_club
+  select p.club_id, p.role, p.team_id, p.all_teams
+    into existing_club, existing_role, existing_team, existing_all_teams
   from public.profiles p
   where p.id = target_member;
   if not found then
     raise exception 'grant_club_membership: no profile exists for the member';
   end if;
-  if current_club is not null and current_club <> target_club then
+  if existing_club is not null and existing_club <> target_club then
     raise exception 'grant_club_membership: the member already belongs to a different club';
   end if;
 
+  -- Every role must belong to the target club.
   select count(*) into bad_count
   from unnest(role_ids) as rid
   left join public.roles r on r.id = rid and r.club_id = target_club
@@ -186,8 +227,8 @@ begin
     raise exception 'grant_club_membership: every role must belong to the target club';
   end if;
 
-  -- While the all teams flag is on, specific teams are moot and the
-  -- primary stays empty, exactly as invite-user has always written it.
+  -- While the all-teams flag is on, specific teams are moot and the
+  -- primary stays empty, exactly as invite-user writes it.
   if set_all_teams then
     member_team_ids := '{}';
     primary_team := null;
@@ -205,26 +246,67 @@ begin
     raise exception 'grant_club_membership: the primary team must be one of the assigned teams';
   end if;
 
+  -- Derive the display role from the validated roles: the highest
+  -- precedence system role, or coach when only custom roles are held.
+  select array_agg(r.key) into system_keys
+  from public.roles r
+  where r.id = any (role_ids) and r.system;
+  system_keys := coalesce(system_keys, '{}');
+  derived_display := case
+    when 'admin'   = any (system_keys) then 'admin'
+    when 'manager' = any (system_keys) then 'manager'
+    when 'coach'   = any (system_keys) then 'coach'
+    when 'parent'  = any (system_keys) then 'parent'
+    else 'coach'
+  end;
+
+  -- Distinct, sorted role and team sets: the requested ones, and the
+  -- ones the member already holds. Sorting makes the comparison
+  -- order-independent.
+  requested_roles := (select array(select distinct x from unnest(role_ids) as x order by x));
+  requested_teams := (select array(select distinct x from unnest(member_team_ids) as x order by x));
+  current_roles := (select array(select mr.role_id from public.member_roles mr where mr.member_id = target_member order by mr.role_id));
+  current_teams := (select array(select mt.team_id from public.member_teams mt where mt.member_id = target_member order by mt.team_id));
+
+  -- An already-provisioned member is only ever a no-op: accept it when
+  -- the whole requested state matches, refuse any change. Provisioning
+  -- writes happen only on the quarantined (null club) path below.
+  if existing_club is not null then
+    if existing_role = derived_display::public.role_kind
+       and existing_team is not distinct from primary_team
+       and existing_all_teams = set_all_teams
+       and requested_roles = current_roles
+       and requested_teams = current_teams
+    then
+      return;
+    end if;
+    raise exception
+      'grant_club_membership: the member is already provisioned; change roles or teams through the user role editor';
+  end if;
+
+  -- Provisioning path: the member is quarantined (null club). Set the
+  -- profile and replace the role and team sets wholesale, so no earlier
+  -- assignment survives.
   update public.profiles
   set club_id   = target_club,
-      role      = display_role,
+      role      = derived_display::public.role_kind,
       full_name = coalesce(nullif(trim(member_full_name), ''), full_name),
       team_id   = primary_team,
       all_teams = set_all_teams
   where id = target_member;
 
+  delete from public.member_roles where member_id = target_member;
   insert into public.member_roles (member_id, role_id)
-  select target_member, rid from unnest(role_ids) as rid
-  on conflict do nothing;
+  select target_member, rid from unnest(role_ids) as rid;
 
+  delete from public.member_teams where member_id = target_member;
   insert into public.member_teams (member_id, team_id)
-  select target_member, tid from unnest(member_team_ids) as tid
-  on conflict do nothing;
+  select target_member, tid from unnest(member_team_ids) as tid;
 end;
 $$;
 
 -- Functions are executable by PUBLIC on creation; this one is service
 -- role only. The revoke is the boundary; the grant makes it reachable
 -- for the Edge Functions' service role client.
-revoke execute on function public.grant_club_membership(uuid, uuid, uuid[], role_kind, uuid, uuid[], boolean, text) from public, anon, authenticated;
-grant execute on function public.grant_club_membership(uuid, uuid, uuid[], role_kind, uuid, uuid[], boolean, text) to service_role;
+revoke execute on function public.grant_club_membership(uuid, uuid, uuid[], uuid, uuid[], boolean, text) from public, anon, authenticated;
+grant execute on function public.grant_club_membership(uuid, uuid, uuid[], uuid, uuid[], boolean, text) to service_role;

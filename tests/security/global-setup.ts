@@ -173,7 +173,6 @@ export default async function setup(): Promise<void> {
       target_member: user.id,
       target_club: spec.clubId,
       role_ids: [role.id],
-      display_role: spec.role,
       member_full_name: spec.fullName,
     })
     if (grantErr) {

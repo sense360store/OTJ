@@ -187,12 +187,10 @@ Deno.serve(async (req) => {
       : systemKeys.includes('admin') || systemKeys.includes('manager')
   if (allTeams) teamIds = []
 
-  // The display primary role_kind value written onto the profile: the
-  // highest precedence system role assigned, or coach when only custom
-  // roles are assigned. Capabilities never flow from it; they flow from
-  // the member_roles rows grant_club_membership writes below.
-  const precedence = ['admin', 'manager', 'coach', 'parent']
-  const primaryRole = precedence.find((k) => systemKeys.includes(k)) ?? 'coach'
+  // The display primary role_kind is derived inside grant_club_membership
+  // from the assigned role ids (same admin > manager > coach > parent
+  // precedence), so nothing here needs to compute or pass it; capabilities
+  // flow from the member_roles rows the grant writes.
 
   // Invite. The metadata carries the full_name display string only; the
   // hardened handle_new_user reads nothing membership shaped, so the
@@ -222,7 +220,6 @@ Deno.serve(async (req) => {
     target_member: memberId,
     target_club: caller.club_id,
     role_ids: [...assigned.keys()],
-    display_role: primaryRole,
     primary_team: teamIds[0] ?? null,
     member_team_ids: teamIds,
     set_all_teams: allTeams,

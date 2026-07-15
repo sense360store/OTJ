@@ -97,7 +97,6 @@ async function createInvitedMember(roleKey: 'coach' | 'parent'): Promise<{
     target_member: data.user.id,
     target_club: CLUB_A,
     role_ids: [role!.id],
-    display_role: roleKey,
   })
   if (grantError) throw new Error(`grant_club_membership failed: ${grantError.message}`)
   const client = anonClient()
@@ -236,17 +235,95 @@ describe('the trusted invite path', () => {
     expectRlsInsertRefusal(insertError)
   })
 
-  it('granting membership is idempotent: a repeat converges without duplicates', async () => {
+  it('granting membership is idempotent: an identical repeat is a no-op', async () => {
     const { userId, roleId } = await createInvitedMember('coach')
     const { error } = await service.rpc('grant_club_membership', {
       target_member: userId,
       target_club: CLUB_A,
       role_ids: [roleId],
-      display_role: 'coach',
     })
     expect(error).toBeNull()
     const { data: roles } = await service.from('member_roles').select('role_id').eq('member_id', userId)
     expect(roles?.length).toBe(1)
+  })
+
+  it('a role change on an already-provisioned member is refused: use the role editor', async () => {
+    // A coach re-grant that asks for the admin role instead must fail
+    // closed, not accumulate or swap the role. This is the provisioning
+    // versus role-editor boundary.
+    const { userId } = await createInvitedMember('coach')
+    const { data: adminRole } = await service
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'admin')
+      .single()
+    const { error } = await service.rpc('grant_club_membership', {
+      target_member: userId,
+      target_club: CLUB_A,
+      role_ids: [adminRole!.id],
+    })
+    expect(error).not.toBeNull()
+    expect(error?.message ?? '').toContain('already provisioned')
+    // The member still holds coach only; no admin crept in.
+    const { data: roles } = await service
+      .from('member_roles')
+      .select('roles!inner(key)')
+      .eq('member_id', userId)
+    const keys = (roles ?? []).map((r) => (r as unknown as { roles: { key: string } }).roles.key)
+    expect(keys).toEqual(['coach'])
+  })
+
+  it('an admin role cannot survive a later parent-only grant on the provisioning path', async () => {
+    // A quarantined member that somehow carries a stale admin assignment
+    // (club still null) must not keep it once provisioned: the
+    // provisioning path replaces the role set wholesale, it does not add
+    // to it.
+    const email = testEmail('stale-admin')
+    const { data } = await service.auth.admin.createUser({
+      email,
+      password: TEST_PASSWORD,
+      email_confirm: true,
+    })
+    disposable.push(data.user!.id)
+    const { data: adminRole } = await service
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'admin')
+      .single()
+    const { data: parentRole } = await service
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'parent')
+      .single()
+    // Plant the stale admin assignment on the still-quarantined member.
+    const { error: plantError } = await service
+      .from('member_roles')
+      .insert({ member_id: data.user!.id, role_id: adminRole!.id })
+    expect(plantError).toBeNull()
+
+    // Provision as parent only.
+    const { error } = await service.rpc('grant_club_membership', {
+      target_member: data.user!.id,
+      target_club: CLUB_A,
+      role_ids: [parentRole!.id],
+    })
+    expect(error).toBeNull()
+
+    const { data: roles } = await service
+      .from('member_roles')
+      .select('roles!inner(key)')
+      .eq('member_id', data.user!.id)
+    const keys = (roles ?? []).map((r) => (r as unknown as { roles: { key: string } }).roles.key)
+    expect(keys).toEqual(['parent'])
+    const { data: profile } = await service
+      .from('profiles')
+      .select('role')
+      .eq('id', data.user!.id)
+      .single()
+    expect(profile?.role).toBe('parent')
   })
 
   it('an invite for club A cannot be claimed into club B', async () => {
@@ -261,7 +338,6 @@ describe('the trusted invite path', () => {
       target_member: userId,
       target_club: CLUB_B,
       role_ids: [clubBCoach!.id],
-      display_role: 'coach',
     })
     expect(error).not.toBeNull()
     expect(error?.message ?? '').toContain('already belongs to a different club')
@@ -287,7 +363,6 @@ describe('the trusted invite path', () => {
       target_member: data.user!.id,
       target_club: CLUB_A,
       role_ids: [clubBCoach!.id],
-      display_role: 'coach',
     })
     expect(roleMismatch?.message ?? '').toContain('every role must belong to the target club')
 
@@ -301,7 +376,6 @@ describe('the trusted invite path', () => {
       target_member: data.user!.id,
       target_club: CLUB_B,
       role_ids: [clubACoach!.id],
-      display_role: 'coach',
       primary_team: TEST_TEAM,
       member_team_ids: [TEST_TEAM],
     })
@@ -316,6 +390,45 @@ describe('the trusted invite path', () => {
     expect(profile?.role).toBe('parent')
   })
 
+  it('a primary team with a null or empty team set is refused', async () => {
+    const { data: clubACoach } = await service
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'coach')
+      .single()
+    // Empty team set but a primary team named: the primary belongs to no
+    // assigned team, so it is refused.
+    const empty = await createDirectSignup({})
+    const { error: emptyTeams } = await service.rpc('grant_club_membership', {
+      target_member: empty.userId,
+      target_club: CLUB_A,
+      role_ids: [clubACoach!.id],
+      primary_team: TEST_TEAM,
+      member_team_ids: [],
+    })
+    expect(emptyTeams).not.toBeNull()
+    expect(emptyTeams?.message ?? '').toContain('primary team must be one of the assigned teams')
+
+    // Null team set (member_team_ids omitted) with a primary team named:
+    // the null normalises to empty and is refused the same way.
+    const nullSet = await createDirectSignup({})
+    const { error: nullTeams } = await service.rpc('grant_club_membership', {
+      target_member: nullSet.userId,
+      target_club: CLUB_A,
+      role_ids: [clubACoach!.id],
+      primary_team: TEST_TEAM,
+    })
+    expect(nullTeams).not.toBeNull()
+    expect(nullTeams?.message ?? '').toContain('primary team must be one of the assigned teams')
+
+    // Both members stay quarantined.
+    for (const id of [empty.userId, nullSet.userId]) {
+      const { data: profile } = await service.from('profiles').select('club_id').eq('id', id).single()
+      expect(profile?.club_id).toBeNull()
+    }
+  })
+
   it('an unknown member and an empty role set both fail closed', async () => {
     const { data: clubACoach } = await service
       .from('roles')
@@ -327,7 +440,6 @@ describe('the trusted invite path', () => {
       target_member: crypto.randomUUID(),
       target_club: CLUB_A,
       role_ids: [clubACoach!.id],
-      display_role: 'coach',
     })
     expect(missing?.message ?? '').toContain('no profile exists')
 
@@ -336,7 +448,6 @@ describe('the trusted invite path', () => {
       target_member: userId,
       target_club: CLUB_A,
       role_ids: [],
-      display_role: 'coach',
     })
     expect(empty?.message ?? '').toContain('at least one role is required')
   })
@@ -353,7 +464,6 @@ describe('the trusted invite path', () => {
       target_member: coach.userId,
       target_club: CLUB_A,
       role_ids: [coachRole!.id],
-      display_role: 'admin',
     }
     // Refused either by the revoked EXECUTE grant (42501, as the hosted
     // project holds it) or by the in-body service role guard (P0001, the

@@ -27,8 +27,9 @@ anon key ships in the browser bundle by design. It can also be rewritten
 later by the account holder through `auth.updateUser`. So the metadata is
 attacker chosen input, and the trigger treated it as authorisation data.
 
-While the hosted project accepts public email signups, anyone could
-therefore:
+If public email signup is enabled on the hosted project (its current
+state is pending confirmation, see Hosted configuration findings below),
+anyone could therefore:
 
 - create an auth user with `club_id` set to the club's UUID and land a
   profile row inside the club, and
@@ -50,9 +51,11 @@ design and every select policy is `club_id = public.my_club()`:
 
 `member_roles` stayed empty for such an account, so no write capability
 on content followed (writes go through `has_perm()`, which reads
-`member_roles`). But the read compromise of all club data by an
-unauthenticated stranger, plus the admin display role in the UI, is the
-confirmed concern this work closes.
+`member_roles`). But the read compromise of all club data, plus the admin
+display role in the UI, is the confirmed concern this work closes. The
+severity depends on whether public signup is enabled on the hosted
+project; the fix removes the metadata trust regardless, so the boundary
+no longer depends on that setting.
 
 ## The chosen trust boundary
 
@@ -78,21 +81,39 @@ Membership is granted only inside a trusted server-side transaction.
    cannot self-escalate.
 
 3. **`grant_club_membership()` is the single trusted path onto a club.**
-   A `SECURITY DEFINER` function whose `EXECUTE` is revoked from
+   A `SECURITY DEFINER` function, restricted to the service role two
+   ways: an in-body guard rejects any caller whose verified JWT role
+   (`auth.role()`) is not `service_role`, and `EXECUTE` is revoked from
    `public`, `anon` and `authenticated` and granted only to
-   `service_role`. It updates the profile's club, display role, primary
-   team and all-teams flag, and inserts the `member_roles` and
-   `member_teams` rows, all in one transaction. It enforces:
+   `service_role`. It runs with an empty `search_path` and fully schema
+   qualified references. It is a **provisioning** function, not a role
+   editor: it moves a member from quarantined to provisioned, and it is
+   idempotent for a retried invite, but it never re-shapes an
+   already-provisioned member. The display role is **derived inside the
+   function** from the assigned role ids (admin > manager > coach >
+   parent precedence, coach for custom-only roles), so the caller cannot
+   state a display role that disagrees with the roles. It enforces, in
+   one transaction:
    - the member must already exist (the invite created the profile);
    - a member already in a different club is refused, so an invite for
      club A can never be claimed into club B;
+   - a member already in the target club is accepted only when the whole
+     requested state (display role, primary team, all-teams flag, role-id
+     set, team-id set) exactly matches what the member already holds,
+     making a retried invite a safe no-op; any difference is refused and
+     must go through the user-role editor. This closes the
+     privilege-accumulation hole where a second grant would otherwise add
+     roles alongside the existing ones;
+   - null role and team arrays are normalised to empty before validation,
+     so a null role array is refused as empty and a primary team with a
+     null or empty team set is refused;
    - every role id must belong to the target club; every team id and the
      primary team must belong to the target club; the primary team must
      be one of the assigned teams;
    - at least one role is required;
-   - re-running with the same arguments converges to the same state
-     (idempotent), so a retried invite repairs a quarantined member
-     rather than erroring or duplicating rows.
+   - on the provisioning path the role and team sets are replaced
+     wholesale (delete then insert), so no stale `member_roles` or
+     `member_teams` row from an earlier state stays silently active.
 
 4. **`invite-user` provisions through that path.** It authenticates the
    caller, requires `users.manage`, validates the roles and teams against
@@ -121,12 +142,36 @@ which is the intended fail-closed outcome rather than an error.
   data and changes only the trigger body, the `role` default, and adds
   the new function.
 - The trigger change affects only auth users created after the apply.
-- `invite-user` must be redeployed together with the migration. In the
-  window between applying the migration and redeploying the function, an
-  invite sent by the old function would create a quarantined member
-  (fails closed, visible on the Users screen, repaired by re-inviting or
-  by calling `grant_club_membership` from the connector). No access is
-  granted incorrectly in that window.
+- `invite-user` must be redeployed immediately after the migration is
+  applied. Between the apply and the redeploy the old function is still
+  live and its invites land as quarantined members (it wrote club and
+  role through the invite metadata the new trigger now ignores), which
+  fails closed but is not a usable account. A duplicate email invite
+  returns 409, so such a half-provisioned account **cannot** be repaired
+  by simply re-inviting; it is repaired by deleting the auth user in the
+  Supabase dashboard and inviting again, or by calling
+  `grant_club_membership` from the connector. The rollout below removes
+  this window by pausing invitations across it.
+
+## Rollout order
+
+Apply this change in one controlled sequence so no invite is sent while
+the trigger and the function are out of step:
+
+1. **Pause invitations.** Tell admins not to send invites, or take the
+   Users screen invite action offline, until step 5.
+2. **Apply migration 0029** to the hosted database.
+3. **Deploy `invite-user` immediately** after the migration, and verify
+   the deployed source byte for byte (per the Edge Function deploy rule
+   in `CLAUDE.md`).
+4. **Verify a real invite:** send one invite and confirm the new member
+   lands with the intended club and role (and, for a parent invite, with
+   no capabilities).
+5. **Resume invitations.**
+
+If an invite was sent in the gap despite the pause, delete that auth user
+in the dashboard and re-invite; do not rely on re-inviting the same email
+to fix it, because the duplicate returns 409.
 
 ## Rollback
 
@@ -149,10 +194,15 @@ stack and proves:
 - an invited coach receives exactly the intended club, role and
   capabilities and can perform coach writes;
 - an invited parent reads club content but holds no capability;
-- granting membership is idempotent;
+- granting membership is idempotent (an identical repeat is a no-op);
+- a role change on an already-provisioned member is refused (use the role
+  editor), and no admin role creeps in;
+- an admin role cannot survive a later parent-only grant on the
+  provisioning path (the role set is replaced, not accumulated);
 - an invite for club A cannot be claimed into club B;
 - roles and teams from the wrong club are refused and the member stays
   quarantined;
+- a primary team with a null or empty team set is refused;
 - an unknown member and an empty role set both fail closed;
 - `grant_club_membership` is not executable by anon or authenticated
   callers;
