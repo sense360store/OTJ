@@ -12,14 +12,22 @@
 //
 // RBAC v2: an invite assigns one or more roles (by role key or id,
 // validated against the club's roles table) and either a set of teams
-// or the all teams flag. The function writes member_roles and
-// member_teams itself with the service role after the invite, and keeps
-// the denormalised primaries on profiles coherent: profiles.role is the
-// highest precedence system role assigned (admin, manager, coach,
-// parent, defaulting to coach when only custom roles are assigned) and
-// goes in through the invite metadata that handle_new_user reads;
-// profiles.team_id is the first assigned team. Admin and manager
-// default to all teams unless the payload says otherwise.
+// or the all teams flag. Admin and manager default to all teams unless
+// the payload says otherwise. profiles.role is the display primary:
+// the highest precedence system role assigned (admin, manager, coach,
+// parent, defaulting to coach when only custom roles are assigned);
+// profiles.team_id is the first assigned team.
+//
+// Signup hardening (0029): handle_new_user ignores client metadata, so
+// nothing membership shaped goes through the invite metadata any more;
+// only the full_name display string rides along for the email
+// template. After inviteUserByEmail creates the quarantined auth user,
+// this function grants the club, the roles and the teams in one call
+// to grant_club_membership(), a service role only database function
+// that validates club scoping and applies everything in a single
+// transaction. If that grant fails the invite is rolled back by
+// deleting the just created auth user, so no half provisioned member
+// is left behind.
 //
 // The caller check is unchanged in meaning: inviting, and assigning any
 // role on invite (the admin role included), is a users.manage action.
@@ -179,16 +187,16 @@ Deno.serve(async (req) => {
       : systemKeys.includes('admin') || systemKeys.includes('manager')
   if (allTeams) teamIds = []
 
-  // The display primary role_kind value handle_new_user writes onto the
-  // profile: the highest precedence system role assigned, or coach when
-  // only custom roles are assigned. Capabilities never flow from it;
-  // they flow from the member_roles rows written below.
-  const precedence = ['admin', 'manager', 'coach', 'parent']
-  const primaryRole = precedence.find((k) => systemKeys.includes(k)) ?? 'coach'
+  // The display primary role_kind is derived inside grant_club_membership
+  // from the assigned role ids (same admin > manager > coach > parent
+  // precedence), so nothing here needs to compute or pass it; capabilities
+  // flow from the member_roles rows the grant writes.
 
-  // Invite. handle_new_user reads exactly these metadata keys.
+  // Invite. The metadata carries the full_name display string only; the
+  // hardened handle_new_user reads nothing membership shaped, so the
+  // auth user starts quarantined (no club, no role, no capability).
   const { data: invited, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
-    data: { full_name: fullName, role: primaryRole, club_id: caller.club_id },
+    data: { full_name: fullName },
     redirectTo: APP_ORIGIN || undefined,
   })
   if (inviteError || !invited?.user) {
@@ -200,33 +208,35 @@ Deno.serve(async (req) => {
     return reply(500, { error: 'Could not send the invite. Try again.' })
   }
 
-  // The trigger created the profile with the display primary; assign the
-  // roles and teams afterwards. A failure here leaves the member with no
-  // member_roles row and so no capabilities at all, which fails closed
-  // and is fixable from the Users screen, so the invite still counts.
-  const warnings: string[] = []
+  // The trigger created a quarantined profile; grant the club, the
+  // roles and the teams in one database transaction. The function
+  // re-validates that every role and team belongs to the caller's club
+  // and refuses a member already in another club, so the trust boundary
+  // holds even against a compromised payload. On failure the just
+  // created auth user is deleted again: the invite either provisions
+  // the member completely or leaves nothing behind.
   const memberId = invited.user.id
-
-  const { error: rolesError } = await admin
-    .from('member_roles')
-    .insert([...assigned.keys()].map((roleId) => ({ member_id: memberId, role_id: roleId })))
-  if (rolesError) warnings.push('the roles could not be assigned')
-
-  const { error: profileError } = await admin
-    .from('profiles')
-    .update({ team_id: teamIds[0] ?? null, all_teams: allTeams })
-    .eq('id', memberId)
-  if (profileError) warnings.push('the team settings could not be saved')
-
-  if (teamIds.length > 0) {
-    const { error: teamsError } = await admin
-      .from('member_teams')
-      .insert(teamIds.map((teamId) => ({ member_id: memberId, team_id: teamId })))
-    if (teamsError) warnings.push('the teams could not be assigned')
+  const { error: grantError } = await admin.rpc('grant_club_membership', {
+    target_member: memberId,
+    target_club: caller.club_id,
+    role_ids: [...assigned.keys()],
+    primary_team: teamIds[0] ?? null,
+    member_team_ids: teamIds,
+    set_all_teams: allTeams,
+    member_full_name: fullName,
+  })
+  if (grantError) {
+    console.error('grant_club_membership failed:', grantError.message)
+    const { error: undoError } = await admin.auth.admin.deleteUser(memberId)
+    if (undoError) {
+      console.error('rollback deleteUser failed:', undoError.message)
+      return reply(500, {
+        error:
+          'The invite could not be completed. The account has no club access. An admin must delete the auth user in the Supabase dashboard before this email can be invited again.',
+      })
+    }
+    return reply(500, { error: 'Could not send the invite. Try again.' })
   }
 
-  if (warnings.length > 0) {
-    return reply(200, { ok: true, warning: `Invited, but ${warnings.join(' and ')}. Fix it from the Users screen.` })
-  }
   return reply(200, { ok: true })
 })

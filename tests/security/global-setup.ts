@@ -5,11 +5,12 @@
 //     been applied (fails with instructions otherwise);
 //   * creates the disposable test users (admin, two coaches, a parent, and
 //     an outsider coach in a second club) through the auth admin API, so the
-//     handle_new_user trigger builds their profiles exactly as production
-//     sign-up would;
-//   * gives each user the member_roles row the invite-user Edge Function
-//     would create, because handle_new_user alone sets only the display
-//     role and capabilities flow from member_roles (0015_rbac_roles);
+//     hardened handle_new_user trigger (0029) builds each profile
+//     quarantined exactly as production sign-up would;
+//   * grants each user their club, role and display primary through
+//     grant_club_membership, the same service role only function the
+//     invite-user Edge Function calls, so the fixtures walk the real
+//     trusted invite path;
 //   * creates a second club with its system roles so the club isolation
 //     contract is executable while the real seed has a single club;
 //   * creates one synthetic team in the seeded club so roster rows can be
@@ -138,9 +139,11 @@ export default async function setup(): Promise<void> {
     )
   if (teamErr) throw new Error(`could not ensure the test team: ${teamErr.message}`)
 
-  // The test users. Created through the auth admin API so handle_new_user
-  // builds the profile from the same metadata production sign-up carries,
-  // then given the member_roles row invite-user would create.
+  // The test users. Created through the auth admin API, where the hardened
+  // handle_new_user trigger (0029) builds a quarantined profile, then
+  // granted club, role and display primary through grant_club_membership,
+  // exactly as the invite-user Edge Function provisions a real invite. The
+  // grant is idempotent, so repeated runs converge on the same state.
   for (const spec of Object.values(TEST_USERS)) {
     let user = await findUserByEmail(service, spec.email)
     if (!user) {
@@ -148,31 +151,13 @@ export default async function setup(): Promise<void> {
         email: spec.email,
         password: TEST_PASSWORD,
         email_confirm: true,
-        user_metadata: {
-          full_name: spec.fullName,
-          club_id: spec.clubId,
-          role: spec.role,
-        },
+        user_metadata: { full_name: spec.fullName },
       })
       if (error || !data.user) {
         throw new Error(`could not create test user ${spec.email}: ${error?.message ?? 'no user'}`)
       }
       user = data.user
     }
-
-    // Pin the profile in case an earlier partial run drifted it.
-    const { error: profileErr } = await service
-      .from('profiles')
-      .upsert(
-        {
-          id: user.id,
-          club_id: spec.clubId,
-          full_name: spec.fullName,
-          role: spec.role,
-        },
-        { onConflict: 'id' },
-      )
-    if (profileErr) throw new Error(`could not pin profile for ${spec.email}: ${profileErr.message}`)
 
     const { data: role, error: roleErr } = await service
       .from('roles')
@@ -184,14 +169,17 @@ export default async function setup(): Promise<void> {
     if (roleErr || !role) {
       throw new Error(`could not find the ${spec.role} system role in club ${spec.clubId}`)
     }
-    const { error: memberRoleErr } = await service
-      .from('member_roles')
-      .upsert(
-        { member_id: user.id, role_id: role.id },
-        { onConflict: 'member_id,role_id', ignoreDuplicates: true },
+    const { error: grantErr } = await service.rpc('grant_club_membership', {
+      target_member: user.id,
+      target_club: spec.clubId,
+      role_ids: [role.id],
+      member_full_name: spec.fullName,
+    })
+    if (grantErr) {
+      throw new Error(
+        `could not grant ${spec.role} membership to ${spec.email}: ${grantErr.message}. ` +
+          'Is migration 0029_signup_hardening applied? Run `npx supabase db reset`.',
       )
-    if (memberRoleErr) {
-      throw new Error(`could not assign ${spec.role} to ${spec.email}: ${memberRoleErr.message}`)
     }
   }
 }

@@ -37,12 +37,14 @@ reserved test email domain, one throwaway local password, no real data):
 | parent | parent | A |
 | outsider | coach | fixture club B |
 
-Users are created through the auth admin API so the `handle_new_user`
-trigger builds their profiles exactly as production sign-up would, then
-given the `member_roles` row the invite-user function would create (the
-trigger alone sets only the display role; capabilities flow from
-`member_roles` since `0015_rbac_roles`). Club B exists so the club
-isolation contract is executable while the real seed has one club. Every
+Users are created through the auth admin API so the hardened
+`handle_new_user` trigger (`0029_signup_hardening`) builds each profile
+quarantined exactly as production sign-up would, then granted their club,
+role and display primary through `grant_club_membership`, the same
+service role only function the invite-user Edge Function calls (the
+trigger sets no club and no role; membership flows only through the
+trusted grant). Club B exists so the club isolation contract is
+executable while the real seed has one club. Every
 test authenticates with a real JWT via the password grant and exercises
 PostgREST or the Storage API, the same path production clients use; the
 service role key is used only for fixture setup and out-of-band
@@ -52,7 +54,24 @@ verification, never as the subject of an assertion.
 
 `drills`, `media` (rows), `sessions`, `players`, `boards`, `feedback`,
 plus `capabilities` / `role_capabilities` / `member_roles` for the
-capability consistency checks.
+capability consistency checks, and `profiles` / `member_roles` /
+`member_teams` for the signup membership boundary.
+
+## Signup membership boundary
+
+`tests/security/signup.test.ts` proves the auth membership boundary from
+`0029_signup_hardening` (full design in
+`docs/security/auth-membership-boundary.md` and
+`docs/adr/ADR-0003-invite-only-membership.md`): a direct `auth.signUp`
+carrying `club_id`, `role` and `team_id` metadata is quarantined (no club,
+parent role, no roles or teams) and reads nothing club scoped, holds zero
+capabilities and passes no write policy; the trusted `grant_club_membership`
+path provisions an invited coach and parent correctly, is idempotent,
+refuses cross-club claims, wrong-club roles or teams, unknown members and
+empty role sets, and is not executable by anon or authenticated callers;
+duplicate invites and forged invite tokens fail closed; and the standing
+fixtures keep their access. Disposable accounts use the reserved test
+domain and are deleted in `afterAll`.
 
 ## Storage operations tested
 
