@@ -326,6 +326,68 @@ describe('the trusted invite path', () => {
     expect(profile?.role).toBe('parent')
   })
 
+  it('concurrent provisioning of one quarantined member cannot diverge', async () => {
+    // Two service-role grants for different states fire at once against a
+    // freshly quarantined member. The SELECT ... FOR UPDATE row lock
+    // serialises them: exactly one provisions, the other blocks, re-reads
+    // the committed state and fails closed with "already provisioned".
+    // The member ends with a single role, never both.
+    const email = testEmail('race')
+    const { data } = await service.auth.admin.createUser({
+      email,
+      password: TEST_PASSWORD,
+      email_confirm: true,
+    })
+    disposable.push(data.user!.id)
+    const { data: coachRole } = await service
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'coach')
+      .single()
+    const { data: parentRole } = await service
+      .from('roles')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('key', 'parent')
+      .single()
+
+    const [asCoach, asParent] = await Promise.all([
+      service.rpc('grant_club_membership', {
+        target_member: data.user!.id,
+        target_club: CLUB_A,
+        role_ids: [coachRole!.id],
+      }),
+      service.rpc('grant_club_membership', {
+        target_member: data.user!.id,
+        target_club: CLUB_A,
+        role_ids: [parentRole!.id],
+      }),
+    ])
+
+    const errors = [asCoach.error, asParent.error]
+    const succeeded = errors.filter((e) => e === null)
+    const refused = errors.filter((e) => e !== null)
+    expect(succeeded).toHaveLength(1)
+    expect(refused).toHaveLength(1)
+    expect(refused[0]?.message ?? '').toContain('already provisioned')
+
+    // Exactly one role, the winner's, and the profile role agrees.
+    const { data: roles } = await service
+      .from('member_roles')
+      .select('roles!inner(key)')
+      .eq('member_id', data.user!.id)
+    const keys = (roles ?? []).map((r) => (r as unknown as { roles: { key: string } }).roles.key)
+    expect(keys).toHaveLength(1)
+    expect(['coach', 'parent']).toContain(keys[0])
+    const { data: profile } = await service
+      .from('profiles')
+      .select('role')
+      .eq('id', data.user!.id)
+      .single()
+    expect(profile?.role).toBe(keys[0])
+  })
+
   it('an invite for club A cannot be claimed into club B', async () => {
     const { userId } = await createInvitedMember('coach')
     const { data: clubBCoach } = await service

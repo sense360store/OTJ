@@ -207,10 +207,16 @@ begin
     raise exception 'grant_club_membership: at least one role is required';
   end if;
 
+  -- for update locks the profile row for the length of this transaction,
+  -- so two concurrent service-role calls cannot both observe the member
+  -- quarantined and provision divergent states: the second blocks here,
+  -- then re-reads the row the first one committed and takes the
+  -- exact-match no-op or the fail-closed refusal.
   select p.club_id, p.role, p.team_id, p.all_teams
     into existing_club, existing_role, existing_team, existing_all_teams
   from public.profiles p
-  where p.id = target_member;
+  where p.id = target_member
+  for update;
   if not found then
     raise exception 'grant_club_membership: no profile exists for the member';
   end if;
