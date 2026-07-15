@@ -50,13 +50,32 @@
 -- a regression that tries to persist a name fails at the database whatever
 -- client wrote it, service role included (check constraints are not RLS).
 --
+-- APPLY ORDER, not optional. Apply this migration ONLY AFTER the new
+-- frontend from the same change is live in production and verified. The
+-- OLD client's serializeTokens writes a label key on EVERY token it saves,
+-- including hand placed tokens with an empty label, so with the old client
+-- still live the constraint below would refuse every board save in the
+-- club. The NEW client reads pre-migration rows fine (it drops legacy
+-- labels on load) and writes only the six field shape, so the safe order
+-- is: merge, deploy and verify the frontend, then apply this migration,
+-- then run the post-apply verification. Never the other way round.
+--
+-- PREFLIGHT, before applying. Run the read-only aggregate preflight in
+-- docs/security/board-data-boundary.md (counts only: total boards, boards
+-- with labels, uniquely matched, ambiguous and unmatched labels, boards
+-- that will change; it never outputs a name or a label value) and record
+-- the counts against the post-apply verification. The backfill below is
+-- destructive by design (labels are removed and not recoverable by
+-- rollback), so confirm a usable backup or point in time restore window
+-- for the project BEFORE applying.
+--
 -- ROLLBACK. Structurally: drop the constraint, then the two functions
 -- (alter table public.boards drop constraint boards_tokens_minimal_shape;
 -- drop function public.board_tokens_without_names(jsonb, uuid);
 -- drop function public.board_tokens_are_minimal(jsonb);). The removed
 -- labels are NOT recoverable by rollback, by design: eliminating the
--- duplicated names is the point. Recovery, were it ever needed, is a
--- point in time restore, not this migration.
+-- duplicated names is the point. Recovery, were it ever needed, is the
+-- point in time restore confirmed in the preflight, not this migration.
 --
 -- Numbering: the live ledger ends at 0027_storage_boundary (checked
 -- 2026-07-14), so this is 0028.
@@ -90,16 +109,23 @@ comment on function public.board_tokens_are_minimal(jsonb) is
   $$True when a boards.tokens value is an array of objects carrying only the six allowed token fields (id, number, side, x, y, playerId). Backs the boards_tokens_minimal_shape check constraint: no label, and so no player name, can be persisted in a board token. See 0028_board_player_boundary.sql.$$;
 
 -- ---------------------------------------------------------------------
--- The backfill transform, kept as a function so the security harness can
--- exercise the exact semantics the migration ran with (tests/security/
--- boards.test.ts). For each token: keep only the six allowed fields; if
--- the token had a label that exactly matches (trimmed) the display_name of
--- exactly one player in the given club, and it does not already carry a
--- playerId, add that player's id as playerId. Token order is preserved.
--- Non object entries are dropped, matching the client's defensive loader.
--- Runs with invoker rights: resolving a label needs read on players, which
--- RLS grants to sessions.create holders and the service role only, and the
--- function never returns a name either way.
+-- The backfill transform. For each token: keep only the six allowed
+-- fields; if the token had a label that exactly matches (trimmed) the
+-- display_name of exactly one player in the given club, and it does not
+-- already carry a playerId, add that player's id as playerId. Token order
+-- is preserved. Non object entries are dropped, matching the client's
+-- defensive loader.
+--
+-- WHY THE FUNCTION REMAINS AFTER THE BACKFILL, AND WHO CAN RUN IT. It is
+-- retained for exactly two purposes: (1) the security harness executes it
+-- against the LOCAL stack to prove the precise semantics this migration
+-- applied with, without needing pre-constraint rows to exist; (2) it is
+-- the sanctioned cleanup for board data arriving from a restore or an
+-- import, run by an operator. It is NOT an application RPC: EXECUTE is
+-- revoked below from PUBLIC, anon and authenticated, so no signed-in
+-- client (coach, admin or parent) can call it through PostgREST; only
+-- service_role (and superusers) can. It reads players with invoker
+-- rights and never returns a name either way.
 -- ---------------------------------------------------------------------
 create or replace function public.board_tokens_without_names(p_tokens jsonb, p_club uuid)
 returns jsonb
@@ -138,7 +164,16 @@ as $$
 $$;
 
 comment on function public.board_tokens_without_names(jsonb, uuid) is
-  $$The 0028 backfill transform: reduces each board token to the six allowed fields, converting a label that exactly matches one club player's display_name into a playerId reference and dropping every label. Kept so the security harness can prove the migration's semantics. Never returns a name.$$;
+  $$The 0028 backfill transform: reduces each board token to the six allowed fields, converting a label that exactly matches one club player's display_name into a playerId reference and dropping every label. Retained only for the local security harness (which proves the applied semantics) and as the operator cleanup for restored or imported board data. Not an application RPC: EXECUTE is revoked from PUBLIC, anon and authenticated; only service_role may call it. Never returns a name.$$;
+
+-- Not callable by any application role: PostgREST exposes public functions
+-- as RPC to anon and authenticated, so those grants (and the PUBLIC
+-- default) are revoked. service_role keeps EXECUTE for the harness and for
+-- operator cleanup. board_tokens_are_minimal keeps its default grants: it
+-- is a pure shape predicate over its argument, reads no table, and the
+-- check constraint evaluates it for every writing role.
+revoke execute on function public.board_tokens_without_names(jsonb, uuid) from public, anon, authenticated;
+grant execute on function public.board_tokens_without_names(jsonb, uuid) to service_role;
 
 -- ---------------------------------------------------------------------
 -- Backfill every board whose tokens are not already minimal.

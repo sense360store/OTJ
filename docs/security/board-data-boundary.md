@@ -105,18 +105,113 @@ query `players`.
    whole migration otherwise, and only then is the constraint added.
 
 The transform is preserved as `public.board_tokens_without_names(jsonb,
-uuid)` so the security harness proves the exact semantics the migration
-ran with, without needing pre-migration rows.
+uuid)` for exactly two purposes: the local security harness executes it to
+prove the semantics the migration applied with, and it is the sanctioned
+operator cleanup for board data arriving from a restore or an import. It
+is not an application RPC: the migration revokes EXECUTE from PUBLIC,
+`anon` and `authenticated`, so no signed-in client can call it through
+PostgREST; only `service_role` (and superusers) can, and the harness
+asserts that refusal. `board_tokens_are_minimal` keeps its default
+grants because the check constraint evaluates it for every writing role
+and it is a pure shape predicate reading no table.
 
 Positions, shirt numbers, token ids and manually placed tactical tokens
 all survive the backfill unchanged.
+
+### Production apply order (mandatory)
+
+1. **Merge and deploy the frontend first**, and verify the new build is
+   live (a board save from the new client writes only six field tokens).
+2. **Then apply migration 0028** by hand via the connector.
+3. **Then run the post-apply verification** below.
+
+Applying 0028 before the new frontend is live is NOT safe: the old
+client's `serializeTokens` writes a `label` key on every token it saves,
+including hand placed tokens with an empty label, so the new constraint
+would refuse every board save in the club until the frontend caught up.
+The reverse direction is safe: the new client reads pre-migration rows
+(dropping legacy labels on load) and writes tokens that pass with or
+without the constraint.
+
+### Preflight (before applying, read-only)
+
+Run this aggregate preflight against production immediately before the
+apply and record the counts. It is read-only and returns COUNTS ONLY: it
+never outputs a player name, a label value or any row content. Do not
+"improve" it into anything that selects labels or names.
+
+```sql
+with labelled as (
+  select b.id as board_id, b.club_id, btrim(e.tok ->> 'label') as label
+  from public.boards b,
+       jsonb_array_elements(b.tokens) as e(tok)
+  where jsonb_typeof(b.tokens) = 'array'
+    and jsonb_typeof(e.tok) = 'object'
+    and btrim(coalesce(e.tok ->> 'label', '')) <> ''
+),
+matched as (
+  select l.board_id,
+         (select count(*)
+          from public.players p
+          where p.club_id = l.club_id
+            and p.display_name = l.label) as match_count
+  from labelled l
+)
+select
+  (select count(*) from public.boards) as total_boards,
+  (select count(distinct board_id) from matched) as boards_with_labels,
+  count(*) filter (where match_count = 1) as uniquely_matched_labels,
+  count(*) filter (where match_count > 1) as ambiguous_labels,
+  count(*) filter (where match_count = 0) as unmatched_labels,
+  (select count(*)
+   from public.boards b
+   where jsonb_typeof(b.tokens) <> 'array'
+      or exists (
+           select 1
+           from jsonb_array_elements(b.tokens) as e(tok)
+           where jsonb_typeof(e.tok) <> 'object'
+              or exists (
+                   select 1
+                   from jsonb_object_keys(e.tok) as k(key)
+                   where k.key not in ('id', 'number', 'side', 'x', 'y', 'playerId')
+                 )
+         )) as boards_that_will_change
+from matched;
+```
+
+Reading it: `uniquely_matched_labels` will become `playerId` references;
+`ambiguous_labels` and `unmatched_labels` will be stripped without a
+link (expected for deleted players, shared names and pre-history hand
+typed labels); `boards_that_will_change` is the exact row count the
+backfill UPDATE will touch. Expect `boards_that_will_change` to exceed
+`boards_with_labels`: the old client wrote a `label` key on every token,
+empty ones included, and an empty label key still needs stripping while
+counting as no label. If the counts look surprising (for example far
+more unmatched labels than the roster's history explains), stop and
+investigate before applying.
+
+The backfill is destructive by design (stripped labels are not
+recoverable by rollback), so **confirm a usable backup or point in time
+restore window for the project before applying**.
+
+### Post-apply verification
+
+1. `select count(*) from public.boards where not
+   public.board_tokens_are_minimal(tokens);` must return 0.
+2. An insert with a `label` bearing token must fail with
+   `boards_tokens_minimal_shape` (roll it back or use a throwaway row).
+3. The number of rows the backfill reported updating matches the
+   preflight's `boards_that_will_change`.
+4. Spot check as a coach that a roster seeded board resolves names, and
+   as a parent that the session day embed shows numbers only.
 
 ### Rollback
 
 Structural rollback drops the constraint and the two functions (statements
 in the migration header). The stripped labels are deliberately not
 recoverable by rollback: removing the duplicated names is the point.
-Recovery, were it ever required, is a point in time restore.
+Recovery, were it ever required, is the point in time restore confirmed
+in the preflight.
 
 ## Executable proof
 
@@ -133,7 +228,9 @@ pins each guarantee:
 - the constraint refuses labels and stray fields for coaches AND for the
   service role;
 - the preserved backfill transform strips names with the exact unique
-  match, ambiguity and manual token rules described above.
+  match, ambiguity and manual token rules described above;
+- no application role can execute the backfill transform: coach and
+  parent RPC calls are refused (EXECUTE is service_role only).
 
 Unit tests (`src/lib/tacticsBoard.test.ts` and the component suites) prove
 seeding never sees a name, serialisation has no field to hold one, legacy

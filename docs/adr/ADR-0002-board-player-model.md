@@ -130,10 +130,26 @@ See `0028_board_player_boundary.sql` and
 `docs/security/board-data-boundary.md`. Key properties: single gated
 migration; certain rules only (exact unique match links, everything else
 strips — no name detection heuristics); self verifying before the
-constraint lands; transform preserved as a SQL function so the security
-harness proves the applied semantics; rollback restores structure but
-deliberately not the stripped labels (point in time restore is the
-recovery path).
+constraint lands; rollback restores structure but deliberately not the
+stripped labels (point in time restore is the recovery path).
+
+Production apply order is mandatory and one directional: merge and
+verify the NEW FRONTEND live first, THEN apply the migration, then run
+the post-apply verification. The old client writes a `label` key on
+every token it saves (even empty), so applying the constraint under the
+old client would refuse every board save; the new client is backward
+compatible with pre-migration rows, so frontend-first is safe. A
+read-only, counts-only preflight (in the boundary document) sizes the
+backfill before it runs, and a confirmed backup or point in time restore
+window is required because the label strip is irreversible.
+
+The backfill transform survives as
+`public.board_tokens_without_names(jsonb, uuid)`, but not as an
+application RPC: EXECUTE is revoked from PUBLIC, `anon` and
+`authenticated` and granted to `service_role` only. It remains for the
+local security harness (executable proof of the applied semantics) and
+as the operator cleanup for restored or imported board data; the
+harness asserts that coach and parent calls are refused.
 
 ## Future implications
 
@@ -151,6 +167,6 @@ recovery path).
   a players RLS change (a parent-child link the schema deliberately does
   not have today), not a boards change; the board model already supports
   it without modification.
-- The `board_tokens_without_names` function can be dropped in a later
-  migration once the harness no longer needs it, or kept as the
-  sanctioned cleanup tool for imported or restored board data.
+- The `board_tokens_without_names` function (service_role execute only)
+  can be dropped in a later migration once the harness no longer needs
+  it; until then it stays locked away from every application role.

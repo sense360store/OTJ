@@ -10,7 +10,9 @@
 // The boards_tokens_minimal_shape check constraint enforces the shape below
 // RLS, for every caller including the service role, and the
 // board_tokens_without_names function preserved from the migration lets this
-// suite prove the exact backfill semantics the migration ran with.
+// suite prove the exact backfill semantics the migration ran with. That
+// function is not an application RPC: EXECUTE is service_role only, and this
+// suite asserts the refusal for the app roles.
 //
 // All names here are synthetic fixtures, never real children.
 
@@ -289,6 +291,21 @@ describe('boards row level security and the board data boundary', () => {
     // And the cleaned output satisfies the constraint's shape test.
     const { data: minimal } = await service.rpc('board_tokens_are_minimal', { p_tokens: cleaned })
     expect(minimal).toBe(true)
+  })
+
+  it('no application role can execute the backfill transform: EXECUTE is service_role only', async () => {
+    // The function is retained for the harness and for operator cleanup, not
+    // as an app RPC. PostgREST would expose it to any signed-in caller, so
+    // the migration revokes EXECUTE from PUBLIC, anon and authenticated;
+    // a coach and a parent alike are refused with insufficient privilege.
+    for (const client of [coachOne, parent]) {
+      const { error } = await client.rpc('board_tokens_without_names', {
+        p_tokens: [{ id: 'home-7', number: 7, side: 'home', x: 0.5, y: 0.5 }],
+        p_club: CLUB_A,
+      })
+      expect(error, 'expected the RPC to be refused for application roles').not.toBeNull()
+      expect(error?.code).toBe('42501')
+    }
   })
 
   it('parent cannot create a board', async () => {

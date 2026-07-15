@@ -125,7 +125,9 @@ The former `it.fails` expected failure in `boards.test.ts` is now a plain
 passing assertion and a permanent regression guard, alongside new tests
 covering coach name resolution, rename and delete behaviour, manual token
 survival, the constraint, and the exact backfill semantics of the
-migration (through the preserved `board_tokens_without_names` function).
+migration (through the preserved `board_tokens_without_names` function,
+whose EXECUTE is service_role only; the suite also asserts coach and
+parent RPC calls to it are refused).
 The full design is in `docs/security/board-data-boundary.md` and
 `docs/adr/ADR-0002-board-player-model.md`.
 
@@ -148,7 +150,10 @@ timeouts).
 - `tests/security/local-grants.sql` reproduces the legacy Data API grants
   on the local database (the hosted project predates Supabase's revoked
   auto-grants; a fresh local stack does not), so the suite exercises RLS
-  the way production does. It is applied by the test setup through the
+  the way production does, and then restates the deliberate revokes that
+  migrations carve out of those legacy grants (currently the 0028
+  service_role-only backfill transform) so the blanket grant cannot
+  resurrect them locally. It is applied by the test setup through the
   local Docker container only and must never be applied to a hosted
   project.
 - The frontend capability scan is a static string scan; a capability name
