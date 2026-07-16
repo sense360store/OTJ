@@ -1619,9 +1619,57 @@ export function useCopyTemplateToWeek() {
 // club_id are set from the signed-in user, which the RLS insert check requires.
 // On update, neither is sent, so ownership and club never change.
 
+// The optimistic cache pieces, kept pure so the rollback rules are testable.
+// applySessionUpsert writes one session into the list; revertSessionUpsert
+// undoes exactly that one entry (removing an inserted row, restoring an
+// updated one) and leaves every other session alone, so rolling back one
+// failed write cannot wipe another session's newer optimistic entry.
+
+export function applySessionUpsert(list: Session[] | undefined, s: Session): Session[] {
+  const l = list ?? []
+  const i = l.findIndex((x) => x.id === s.id)
+  if (i === -1) return [...l, s]
+  const copy = [...l]
+  copy[i] = s
+  return copy
+}
+
+export function revertSessionUpsert(
+  list: Session[] | undefined,
+  prevEntry: Session | undefined,
+  id: string,
+): Session[] | undefined {
+  if (!list) return list
+  if (!prevEntry) return list.filter((s) => s.id !== id)
+  return list.map((s) => (s.id === id ? prevEntry : s))
+}
+
+// Tracks the newest write attempt per session id, so an older attempt that
+// fails after a newer one has already run cannot roll the cache back over the
+// newer state. The UI serialises submissions per flow, but the cache layer
+// does not rely on that.
+export function createAttemptTracker() {
+  let seq = 0
+  const latest = new Map<string, number>()
+  return {
+    begin(id: string): number {
+      const attempt = ++seq
+      latest.set(id, attempt)
+      return attempt
+    },
+    isLatest(id: string, attempt: number): boolean {
+      return latest.get(id) === attempt
+    },
+    end(id: string, attempt: number): void {
+      if (latest.get(id) === attempt) latest.delete(id)
+    },
+  }
+}
+
 interface UpsertCtx {
-  prevList?: Session[]
+  prevEntry?: Session
   prevOne?: Session
+  attempt: number
 }
 
 export function useUpsertSession() {
@@ -1631,6 +1679,9 @@ export function useUpsertSession() {
   // cache write, so the mutation can choose insert versus update without
   // re-reading the cache that onMutate has just changed.
   const existed = useRef(new Map<string, boolean>())
+  // attempts guards the rollback: only the newest attempt per id may revert
+  // the optimistic entry, so an older failure cannot undo a newer success.
+  const attempts = useRef(createAttemptTracker())
 
   return useMutation<Session, Error, Session, UpsertCtx>({
     mutationFn: async (input) => {
@@ -1704,26 +1755,27 @@ export function useUpsertSession() {
     // straight after saving it) finds the record without waiting for the round
     // trip. The list and the per-id cache are both seeded.
     onMutate: (input) => {
-      const prevList = qc.getQueryData<Session[]>(['sessions'])
-      existed.current.set(input.id, (prevList ?? []).some((s) => s.id === input.id))
+      const list = qc.getQueryData<Session[]>(['sessions'])
+      existed.current.set(input.id, (list ?? []).some((s) => s.id === input.id))
+      const attempt = attempts.current.begin(input.id)
+      const prevEntry = list?.find((s) => s.id === input.id)
       const prevOne = qc.getQueryData<Session>(['sessions', input.id])
-      qc.setQueryData<Session[]>(['sessions'], (old) => {
-        const list = old ?? []
-        const i = list.findIndex((s) => s.id === input.id)
-        if (i === -1) return [...list, input]
-        const copy = [...list]
-        copy[i] = input
-        return copy
-      })
+      qc.setQueryData<Session[]>(['sessions'], (old) => applySessionUpsert(old, input))
       qc.setQueryData<Session>(['sessions', input.id], input)
-      return { prevList, prevOne }
+      return { prevEntry, prevOne, attempt }
     },
     onError: (_err, input, ctx) => {
-      qc.setQueryData(['sessions'], ctx?.prevList)
-      qc.setQueryData(['sessions', input.id], ctx?.prevOne)
+      // Roll back only this session's entry, and only while this attempt is
+      // still the newest for the id: restoring an older snapshot after a newer
+      // attempt has run would overwrite the newer state. The settled
+      // invalidation refetches the server truth either way.
+      if (!ctx || !attempts.current.isLatest(input.id, ctx.attempt)) return
+      qc.setQueryData<Session[]>(['sessions'], (old) => revertSessionUpsert(old, ctx.prevEntry, input.id))
+      qc.setQueryData(['sessions', input.id], ctx.prevOne)
     },
-    onSettled: (_data, _err, input) => {
+    onSettled: (_data, _err, input, ctx) => {
       existed.current.delete(input.id)
+      if (ctx) attempts.current.end(input.id, ctx.attempt)
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
   })

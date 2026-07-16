@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   alreadyImportedFrom,
+  applySessionUpsert,
+  createAttemptTracker,
   faImportBody,
   MEDIA_MAX_BYTES,
   oversizeMessage,
   partitionDrillsByUsage,
+  revertSessionUpsert,
   toActivity,
   toActivityRow,
   toDrill,
@@ -262,5 +265,67 @@ describe('programme list ordering (useProgrammes transformation)', () => {
     expect(toProgrammeList(rows).map((p) => p.id)).toEqual(['p-zzz', 'p-mmm', 'p-aaa'])
     // The same rows arriving in any other order give the same list.
     expect(toProgrammeList([rows[1], rows[2], rows[0]]).map((p) => p.id)).toEqual(['p-zzz', 'p-mmm', 'p-aaa'])
+  })
+})
+
+// The optimistic session upsert, exercised through its pure pieces: the list
+// apply and revert, and the per-id attempt tracker that stops an older failed
+// attempt rolling the cache back over a newer one. The useUpsertSession
+// callbacks are thin wiring over exactly these calls.
+describe('optimistic session upsert cache behaviour', () => {
+  const s = (id: string, name: string) => {
+    const base = toSession(sessionRow({ id, name }))
+    return base
+  }
+
+  it('inserts a new session and updates an existing one in the list', () => {
+    const a = s('a', 'First')
+    expect(applySessionUpsert(undefined, a)).toEqual([a])
+    const list = applySessionUpsert([a], s('b', 'Second'))
+    expect(list.map((x) => x.id)).toEqual(['a', 'b'])
+    const edited = applySessionUpsert(list, s('a', 'First edited'))
+    expect(edited.map((x) => x.name)).toEqual(['First edited', 'Second'])
+    // Position is preserved on update, so the list does not jump around.
+    expect(edited[0].id).toBe('a')
+  })
+
+  it('reverts an insert by removing the entry and an update by restoring it', () => {
+    const a = s('a', 'Original')
+    const list = applySessionUpsert([a], s('b', 'Inserted'))
+    // Insert rollback: no previous entry, so the row goes away.
+    expect(revertSessionUpsert(list, undefined, 'b')).toEqual([a])
+    // Update rollback: the previous entry comes back in place.
+    const edited = applySessionUpsert([a], s('a', 'Edited'))
+    expect(revertSessionUpsert(edited, a, 'a')).toEqual([a])
+  })
+
+  it('rolls back only the failed entry, leaving other sessions untouched', () => {
+    const a = s('a', 'Mine')
+    const b = s('b', 'Someone else, newer optimistic write')
+    const list = applySessionUpsert(applySessionUpsert([a], b), s('c', 'Failed insert'))
+    expect(revertSessionUpsert(list, undefined, 'c')).toEqual([a, b])
+  })
+
+  it('an older failed attempt cannot replace a newer attempt state', () => {
+    const tracker = createAttemptTracker()
+    const first = tracker.begin('s1')
+    const second = tracker.begin('s1')
+    // The scenario: attempt one fails after attempt two has already run. The
+    // onError guard asks isLatest and must decline the rollback.
+    expect(tracker.isLatest('s1', first)).toBe(false)
+    expect(tracker.isLatest('s1', second)).toBe(true)
+    // The older attempt settling does not disturb the newer one's claim.
+    tracker.end('s1', first)
+    expect(tracker.isLatest('s1', second)).toBe(true)
+    tracker.end('s1', second)
+    expect(tracker.isLatest('s1', second)).toBe(false)
+  })
+
+  it('tracks attempts per session id, not globally', () => {
+    const tracker = createAttemptTracker()
+    const a = tracker.begin('a')
+    const b = tracker.begin('b')
+    expect(tracker.isLatest('a', a)).toBe(true)
+    expect(tracker.isLatest('b', b)).toBe(true)
   })
 })

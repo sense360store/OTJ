@@ -6,7 +6,8 @@ import { useDeleteTemplate, useMyCapabilities, useProgrammes, useTemplates } fro
 import { FA_IMPORT_CAPS, hasAllCaps } from '../lib/data'
 import type { Template } from '../lib/data'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { ActionError, ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { TemplateFormModal } from '../components/TemplateFormModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 
@@ -20,7 +21,7 @@ function TemplateCard({
   onDelete: ((t: Template) => void) | null
 }) {
   const { caps } = useMyCapabilities()
-  const startFromTemplate = useStartFromTemplate()
+  const { start: startFromTemplate, pending: creating, failed: createFailed } = useStartFromTemplate()
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
   // Using a template creates a session, so it follows sessions.create; for
   // members without it the card is read-only. The session built from a
@@ -61,12 +62,13 @@ function TemplateCard({
           <div key={i} style={{ flex: a.duration, background: PHASE_COLOR[a.phase] }} title={a.phase}></div>
         ))}
       </div>
+      {coaching && createFailed && <ActionError>{SESSION_CREATE_ERROR}</ActionError>}
       {(coaching || onEdit || onDelete) && (
         <div className="row" style={{ gap: 9 }}>
           {coaching && (
-            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => startFromTemplate(t)}>
+            <button className="btn btn-primary" style={{ flex: 1 }} disabled={creating} onClick={() => startFromTemplate(t)}>
               <Icon.copy />
-              Use template
+              {creating ? 'Creating…' : 'Use template'}
             </button>
           )}
           {onEdit && (

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DragEventHandler, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
@@ -19,7 +19,19 @@ import type { Activity, Drill, MediaItem, Phase, Session } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
-import { Empty, ErrorNote, ListInput, Loading, MediaAttribution, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
+import {
+  ActionError,
+  Empty,
+  ErrorNote,
+  ListInput,
+  Loading,
+  MediaAttribution,
+  MediaThumb,
+  PHASE_COLOR,
+  SourceLink,
+} from '../components/ui'
+import { createPlannerActions, logSessionWriteError, SESSION_SAVE_ERROR, SESSION_START_ERROR } from '../lib/sessionSubmit'
+import type { PlannerAction, PlannerActions } from '../lib/sessionSubmit'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
@@ -361,6 +373,85 @@ function ActivityRow({
   )
 }
 
+// The planner's action card pulled out as a presentational component, so the
+// static renderer covers the pending labels, the disabled states and the
+// failure note without a query client. The editor resolves the submit state
+// and feeds plain props in.
+export function PlannerActionsView({
+  readOnly,
+  isExisting,
+  canStart,
+  pending,
+  failed,
+  onStart,
+  onSave,
+  onSessionDay,
+  onCalendar,
+  onLoadTemplate,
+  onDelete,
+}: {
+  readOnly: boolean
+  isExisting: boolean
+  canStart: boolean
+  pending: PlannerAction | null
+  failed: PlannerAction | null
+  onStart: () => void
+  onSave: () => void
+  onSessionDay: () => void
+  onCalendar: () => void
+  onLoadTemplate: () => void
+  onDelete: () => void
+}) {
+  // A read-only viewer only watches, which writes nothing, so the pending and
+  // failed states never apply to them.
+  const busy = pending !== null
+  return (
+    <div className="card side-card" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <button className="btn btn-gold btn-block" disabled={!canStart || (!readOnly && busy)} onClick={onStart}>
+        {readOnly ? <Icon.eye /> : <Icon.play />}
+        {readOnly ? 'Watch live' : pending === 'start' ? 'Starting…' : 'Start session'}
+      </button>
+      {isExisting && (
+        <button className="btn btn-primary btn-block" onClick={onSessionDay}>
+          <Icon.cone />
+          Session day
+        </button>
+      )}
+      {isExisting && (
+        <button className="btn btn-ghost btn-block" onClick={onCalendar}>
+          <Icon.calendar />
+          Add to calendar
+        </button>
+      )}
+      {!readOnly && (
+        <>
+          <button className="btn btn-primary btn-block" disabled={busy} onClick={onSave}>
+            <Icon.check />
+            {pending === 'save' ? 'Saving…' : 'Save session'}
+          </button>
+          {failed && (
+            <ActionError onRetry={failed === 'save' ? onSave : onStart}>
+              {failed === 'save' ? SESSION_SAVE_ERROR : SESSION_START_ERROR}
+            </ActionError>
+          )}
+          <button className="btn btn-ghost btn-block" onClick={onLoadTemplate}>
+            <Icon.book />
+            Load a template
+          </button>
+        </>
+      )}
+      {/* Delete is owner or admin, the same rule the sessions delete RLS
+          enforces; a new unsaved session has nothing to delete yet. */}
+      {isExisting && !readOnly && (
+        <button className="btn btn-ghost btn-block" onClick={onDelete}>
+          <Icon.trash />
+          Delete session
+        </button>
+      )}
+    </div>
+  )
+}
+
 function PlannerEditor({
   existing,
   newDefaults,
@@ -439,14 +530,44 @@ function PlannerEditor({
     dragFrom.current = to
   }
 
-  const save = () => {
-    upsertSession(session)
-    nav('sessions')
-  }
-  const start = () => {
-    if (!readOnly) upsertSession(session)
-    nav('live', { sessionId: session.id })
-  }
+  // Save and Start await the database write and navigate only on success; a
+  // failure keeps the coach here with every edit intact, an inline error and
+  // a retry. The two share one in-flight guard, so rapid clicks or crossing
+  // actions cannot double-submit even before the buttons disable. Which
+  // action is pending or failed drives the button labels and the error note.
+  const [pendingAction, setPendingAction] = useState<PlannerAction | null>(null)
+  const [failedAction, setFailedAction] = useState<PlannerAction | null>(null)
+  // Constructed once so the shared in-flight guard survives re-renders. The
+  // captured upsert delegates to the mutation's stable mutateAsync and the
+  // captured nav only pushes absolute routes, so first-render captures stay
+  // correct for the life of the editor.
+  const [actions] = useState<PlannerActions>(() =>
+    createPlannerActions({
+      upsert: (draft) => upsertSession(draft),
+      navSessions: () => nav('sessions'),
+      navLive: (id) => nav('live', { sessionId: id }),
+      onPending: (action) => {
+        setPendingAction(action)
+        // A new attempt clears the previous attempt's error.
+        if (action) setFailedAction(null)
+      },
+      onFailure: (action, err) => {
+        logSessionWriteError(`planner ${action}`, err)
+        setFailedAction(action)
+      },
+    }),
+  )
+  // While unmounted the actions still settle (and log) but never navigate, so
+  // a slow save cannot yank the coach to another screen after they have left.
+  useEffect(() => {
+    actions.setActive(true)
+    return () => actions.setActive(false)
+  }, [actions])
+
+  // Both submit the draft as currently visible, so a retry after more edits
+  // carries the latest state, never a payload captured by the failed attempt.
+  const save = () => void actions.save(session)
+  const start = () => void actions.start(session, readOnly)
 
   return (
     <div>
@@ -702,44 +823,19 @@ function PlannerEditor({
             onLink={(id) => setSession((s) => ({ ...s, spondEventId: id }))}
           />
 
-          <div className="card side-card" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-            <button className="btn btn-gold btn-block" disabled={!session.activities.length} onClick={start}>
-              {readOnly ? <Icon.eye /> : <Icon.play />}
-              {readOnly ? 'Watch live' : 'Start session'}
-            </button>
-            {existing && (
-              <button className="btn btn-primary btn-block" onClick={() => nav('sessionDay', { sessionId: session.id })}>
-                <Icon.cone />
-                Session day
-              </button>
-            )}
-            {existing && (
-              <button className="btn btn-ghost btn-block" onClick={() => downloadSessionIcs(session)}>
-                <Icon.calendar />
-                Add to calendar
-              </button>
-            )}
-            {!readOnly && (
-              <>
-                <button className="btn btn-primary btn-block" onClick={save}>
-                  <Icon.check />
-                  Save session
-                </button>
-                <button className="btn btn-ghost btn-block" onClick={() => nav('templates')}>
-                  <Icon.book />
-                  Load a template
-                </button>
-              </>
-            )}
-            {/* Delete is owner or admin, the same rule the sessions delete RLS
-                enforces; a new unsaved session has nothing to delete yet. */}
-            {existing && !readOnly && (
-              <button className="btn btn-ghost btn-block" onClick={() => setDeleteOpen(true)}>
-                <Icon.trash />
-                Delete session
-              </button>
-            )}
-          </div>
+          <PlannerActionsView
+            readOnly={readOnly}
+            isExisting={!!existing}
+            canStart={session.activities.length > 0}
+            pending={pendingAction}
+            failed={failedAction}
+            onStart={start}
+            onSave={save}
+            onSessionDay={() => nav('sessionDay', { sessionId: session.id })}
+            onCalendar={() => downloadSessionIcs(session)}
+            onLoadTemplate={() => nav('templates')}
+            onDelete={() => setDeleteOpen(true)}
+          />
         </div>
       </div>
 

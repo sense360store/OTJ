@@ -453,6 +453,36 @@ export function ErrorNote({ children }: { children?: ReactNode }) {
   )
 }
 
+// Inline failure note for a write action, rendered next to the control that
+// started it. role="alert" announces it when it appears. The wording stays
+// calm and generic; the raw error is logged by the caller for debugging,
+// never rendered. Pass onRetry to offer a retry button; leave it off where
+// the original control doubles as the retry.
+export function ActionError({ children, onRetry, style }: { children: ReactNode; onRetry?: () => void; style?: CSSProperties }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        fontSize: 13.5,
+        fontWeight: 600,
+        lineHeight: 1.45,
+        color: 'var(--m-pdf)',
+        ...style,
+      }}
+    >
+      <span style={{ flex: 1 }}>{children}</span>
+      {onRetry && (
+        <button type="button" className="btn btn-ghost btn-sm" style={{ flex: '0 0 auto' }} onClick={onRetry}>
+          Retry
+        </button>
+      )}
+    </div>
+  )
+}
+
 /* ---- upload progress ------------------------------------------- */
 // The wall clock, read defensively so the static renderer (which has no DOM but
 // does run render) and any odd environment still get a number.

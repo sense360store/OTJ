@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { ActivityCardView } from './Planner'
+import { ActivityCardView, PlannerActionsView } from './Planner'
+import type { PlannerAction } from '../lib/sessionSubmit'
 import type { Activity, Drill } from '../lib/data'
 
 // ActivityCardView is the planner's drill row pulled out as a presentational
@@ -122,5 +123,105 @@ describe('ActivityCardView', () => {
     // the phase select is disabled rather than removed.
     expect(html).toContain('Open your body')
     expect(html).toContain('disabled')
+  })
+})
+
+// The action card pulled out as a presentational component, so the static
+// renderer covers the pending labels, the disabled states and the accessible
+// failure note. The editor's awaited submit flow itself is covered in
+// src/lib/sessionSubmit.test.ts; these tests pin what the coach sees in each
+// submit state.
+function renderActions(over: Partial<Parameters<typeof PlannerActionsView>[0]> = {}): string {
+  return renderToStaticMarkup(
+    <PlannerActionsView
+      readOnly={false}
+      isExisting
+      canStart
+      pending={null}
+      failed={null}
+      onStart={noop}
+      onSave={noop}
+      onSessionDay={noop}
+      onCalendar={noop}
+      onLoadTemplate={noop}
+      onDelete={noop}
+      {...over}
+    />,
+  )
+}
+
+// The buttons in document order, with their disabled state, so assertions can
+// target one button rather than the whole markup string.
+function buttons(html: string): { label: string; disabled: boolean }[] {
+  return [...html.matchAll(/<button[^>]*>.*?<\/button>/gs)].map((m) => ({
+    label: m[0].replace(/<[^>]+>/g, ''),
+    disabled: m[0].includes('disabled'),
+  }))
+}
+
+describe('PlannerActionsView', () => {
+  it('offers Start, Save and the secondary actions enabled when idle', () => {
+    const all = buttons(renderActions())
+    expect(all.map((b) => b.label)).toEqual([
+      'Start session',
+      'Session day',
+      'Add to calendar',
+      'Save session',
+      'Load a template',
+      'Delete session',
+    ])
+    expect(all.every((b) => !b.disabled)).toBe(true)
+  })
+
+  it('shows Saving… and disables both Save and Start while a save is in flight', () => {
+    const html = renderActions({ pending: 'save' as PlannerAction })
+    const all = buttons(html)
+    expect(all.find((b) => b.label === 'Saving…')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Start session')?.disabled).toBe(true)
+    expect(html).not.toContain('role="alert"')
+  })
+
+  it('shows Starting… and disables both actions while a start is in flight', () => {
+    const all = buttons(renderActions({ pending: 'start' as PlannerAction }))
+    expect(all.find((b) => b.label === 'Starting…')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Save session')?.disabled).toBe(true)
+  })
+
+  it('announces a failed save calmly, with a Retry, and re-enables the buttons', () => {
+    const html = renderActions({ failed: 'save' as PlannerAction })
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('We couldn&#x27;t save this session. Check your connection and try again.')
+    // Calm wording only: no raw error internals reach the markup.
+    expect(html).not.toMatch(/supabase|postgres|fetch/i)
+    const all = buttons(html)
+    expect(all.find((b) => b.label === 'Retry')?.disabled).toBe(false)
+    expect(all.find((b) => b.label === 'Save session')?.disabled).toBe(false)
+    expect(all.find((b) => b.label === 'Start session')?.disabled).toBe(false)
+  })
+
+  it('words a failed start as a save-before-start failure', () => {
+    const html = renderActions({ failed: 'start' as PlannerAction })
+    expect(html).toContain('save this session before starting it')
+    expect(html).toContain('Retry')
+  })
+
+  it('renders read-only as Watch live with no save affordances and no error slot', () => {
+    const html = renderActions({ readOnly: true })
+    expect(html).toContain('Watch live')
+    expect(html).not.toContain('Save session')
+    expect(html).not.toContain('Delete session')
+    expect(html).not.toContain('role="alert"')
+    expect(buttons(html).find((b) => b.label === 'Watch live')?.disabled).toBe(false)
+  })
+
+  it('holds Start closed on an empty session but leaves Save available', () => {
+    const all = buttons(renderActions({ canStart: false }))
+    expect(all.find((b) => b.label === 'Start session')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Save session')?.disabled).toBe(false)
+  })
+
+  it('hides Session day, calendar and delete for a session not yet saved', () => {
+    const labels = buttons(renderActions({ isExisting: false })).map((b) => b.label)
+    expect(labels).toEqual(['Start session', 'Save session', 'Load a template'])
   })
 })

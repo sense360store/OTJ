@@ -16,11 +16,12 @@ import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useMyCapabilities, useMyTeams, useSpondEvents, useTeamMap } from '../lib/queries'
 import { memberTeamIds } from '../lib/data'
-import type { SpondEvent } from '../lib/data'
+import type { Session, SpondEvent } from '../lib/data'
+import { createGuardedSubmit, logSessionWriteError, SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { sessionFromSpondEvent, SPOND_COUNT_LABELS, spondEventWhen, spondPlanSuggestions, spondTeamLabel } from '../lib/spond'
 import { Icon } from './icons'
 import { CancelledBadge, MatchBadge } from './SpondAttendance'
-import { Chip } from './ui'
+import { ActionError, Chip } from './ui'
 
 // Presentational, so the static renderer covers the rows and toggles without a
 // query client, the same style as the rest of the suite. The container
@@ -36,6 +37,8 @@ export function PlanFromSpondView({
   onPlan,
   loading,
   error,
+  planPendingId = null,
+  planFailed = false,
 }: {
   rows: SpondEvent[]
   eventsExist: boolean
@@ -47,6 +50,11 @@ export function PlanFromSpondView({
   onPlan: (event: SpondEvent) => void
   loading: boolean
   error: boolean
+  // The event whose session create is in flight; every Plan this control
+  // disables while one runs, so a second event cannot be planned in parallel.
+  planPendingId?: string | null
+  // The last create failed; the row's button doubles as the retry.
+  planFailed?: boolean
 }) {
   return (
     <div className="card" style={{ padding: 18, marginBottom: 18 }}>
@@ -103,13 +111,14 @@ export function PlanFromSpondView({
                 ))}
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={() => onPlan(e)}>
+            <button className="btn btn-primary btn-sm" disabled={planPendingId !== null} onClick={() => onPlan(e)}>
               <Icon.plus />
-              Plan this
+              {planPendingId === e.id ? 'Planning…' : 'Plan this'}
             </button>
           </div>
         ))
       )}
+      {planFailed && <ActionError style={{ marginTop: 10 }}>{SESSION_CREATE_ERROR}</ActionError>}
     </div>
   )
 }
@@ -124,6 +133,27 @@ export function PlanFromSpond({ hideWhenEmpty = false }: { hideWhenEmpty?: boole
   const teamById = useTeamMap()
   const [trainingOnly, setTrainingOnly] = useState(false)
   const [showAll, setShowAll] = useState(false)
+  const [planPendingId, setPlanPendingId] = useState<string | null>(null)
+  const [planFailed, setPlanFailed] = useState(false)
+  // The create is awaited: the planner opens only once the session lands, and
+  // a failure keeps this surface up with a calm note; the row's button is the
+  // retry. Constructed once so the duplicate-click guard survives re-renders;
+  // the session is built per call. The pre filled session carries the event id
+  // in spondEventId, which keys the row's pending label.
+  const [submit] = useState(() =>
+    createGuardedSubmit<Session, Session>({
+      perform: (s) => upsertSession(s),
+      onPending: (p, s) => {
+        setPlanPendingId(p ? s.spondEventId : null)
+        if (p) setPlanFailed(false)
+      },
+      onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
+      onFailure: (err) => {
+        logSessionWriteError('plan from spond event', err)
+        setPlanFailed(true)
+      },
+    }),
+  )
 
   // Coaches plan; parents never see this. The planner route already redirects
   // parents, so this is belt and braces and keeps the surface safe to drop on
@@ -155,8 +185,7 @@ export function PlanFromSpond({ hideWhenEmpty = false }: { hideWhenEmpty?: boole
 
   const plan = (event: SpondEvent) => {
     const session = sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null)
-    upsertSession(session)
-    nav('planner', { sessionId: session.id })
+    void submit(session)
   }
 
   return (
@@ -171,6 +200,8 @@ export function PlanFromSpond({ hideWhenEmpty = false }: { hideWhenEmpty?: boole
       onPlan={plan}
       loading={isLoading}
       error={isError}
+      planPendingId={planPendingId}
+      planFailed={planFailed}
     />
   )
 }

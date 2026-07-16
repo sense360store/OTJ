@@ -7,10 +7,12 @@ import { useDrill, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl 
 import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import { relatedDrills } from '../lib/contentOrder'
 import { isFaVideo } from '../lib/fa'
-import type { Drill, Phase } from '../lib/data'
+import { createGuardedSubmit, DRILL_ADD_ERROR, logSessionWriteError } from '../lib/sessionSubmit'
+import type { Drill, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import {
+  ActionError,
   CornerTag,
   MediaThumb,
   MediaAttribution,
@@ -95,13 +97,34 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
   const sessions = allSessions.filter((s) => caps.has('sessions.manage') || s.coachId === user?.id)
   const [phase, setPhase] = useState<Phase>('Skill')
   const [target, setTarget] = useState(sessions[0]?.id || '')
+  const [pending, setPending] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // The write is awaited: the modal closes and the planner opens only after
+  // the session lands. A failure keeps the modal open with the choices intact
+  // and a calm note; Add drill doubles as the retry. Constructed once so the
+  // duplicate-click guard survives re-renders; everything dynamic arrives
+  // through the submitted session.
+  const [submit] = useState(() =>
+    createGuardedSubmit<Session, Session>({
+      perform: (updated) => upsertSession(updated),
+      onPending: (p) => {
+        setPending(p)
+        if (p) setFailed(false)
+      },
+      onSuccess: (saved) => {
+        onClose()
+        nav('planner', { sessionId: saved.id })
+      },
+      onFailure: (err) => {
+        logSessionWriteError('add drill to session', err)
+        setFailed(true)
+      },
+    }),
+  )
   const add = () => {
     const s = sessions.find((x) => x.id === target)
     if (!s) return
-    const updated = { ...s, activities: [...s.activities, { phase, drillId: drill.id, duration: drill.duration }] }
-    upsertSession(updated)
-    onClose()
-    nav('planner', { sessionId: s.id })
+    void submit({ ...s, activities: [...s.activities, { phase, drillId: drill.id, duration: drill.duration }] })
   }
   return (
     <Modal
@@ -110,12 +133,12 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={pending}>
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={add} disabled={!target}>
+          <button className="btn btn-primary" onClick={add} disabled={!target || pending}>
             <Icon.plus />
-            Add drill
+            {pending ? 'Adding…' : 'Add drill'}
           </button>
         </>
       }
@@ -143,6 +166,7 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
       <div className="muted" style={{ fontSize: 13.5 }}>
         Adds <b style={{ color: 'var(--ink)' }}>{drill.duration} min</b> to the session.
       </div>
+      {failed && <ActionError style={{ marginTop: 10 }}>{DRILL_ADD_ERROR}</ActionError>}
     </Modal>
   )
 }

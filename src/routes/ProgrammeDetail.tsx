@@ -27,7 +27,8 @@ import { sessionMinutes } from '../lib/data'
 import { oldestFirst } from '../lib/contentOrder'
 import type { Programme, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR, SourceLink } from '../components/ui'
+import { ActionError, Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR, SourceLink } from '../components/ui'
+import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
 import { TemplateFormModal } from '../components/TemplateFormModal'
 import { ApplyProgrammeModal } from '../components/ApplyProgrammeModal'
@@ -53,7 +54,7 @@ function WeekRow({
   // for admins; null hides the affordance for everyone else.
   onEditTemplate: ((t: Template) => void) | null
 }) {
-  const startFromTemplate = useStartFromTemplate()
+  const { start: startFromTemplate, pending: creating, failed: createFailed } = useStartFromTemplate()
   const teamById = useTeamMap()
   return (
     <div className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -117,10 +118,11 @@ function WeekRow({
           })}
         </div>
       )}
+      {template && coaching && createFailed && <ActionError>{SESSION_CREATE_ERROR}</ActionError>}
       {template && coaching && (
-        <button className="btn btn-primary" style={{ minHeight: 44 }} onClick={() => startFromTemplate(template)}>
+        <button className="btn btn-primary" style={{ minHeight: 44 }} disabled={creating} onClick={() => startFromTemplate(template)}>
           <Icon.copy />
-          Use this week
+          {creating ? 'Creating…' : 'Use this week'}
         </button>
       )}
     </div>
