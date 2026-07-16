@@ -8,11 +8,12 @@
 // nothing realtime or notification-shaped happens.
 //
 // Coaching roles only; the sessions insert RLS enforces the same boundary.
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useTeams, useUpsertSession } from '../lib/queries'
+import { logSessionWriteError } from '../lib/sessionSubmit'
 import { Icon } from './icons'
 import { Modal } from './ui'
 import type { Activity, Programme, Session, Template } from '../lib/data'
@@ -86,6 +87,10 @@ export function ApplyProgrammeModal({
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [created, setCreated] = useState<number | null>(null)
+  // Each week's session id is minted once per modal and reused on a retry,
+  // so Create pressed again after a partial failure updates the weeks that
+  // already landed instead of inserting duplicates under fresh ids.
+  const weekIds = useRef(new Map<number, string>())
 
   const firstDate = useMemo(() => alignToWeekday(startDate, weekday), [startDate, weekday])
   const dateFor = (week: number) => overrides[week] ?? isoAddDays(firstDate, (week - 1) * 7)
@@ -126,8 +131,13 @@ export function ApplyProgrammeModal({
     try {
       for (const week of plannable) {
         const t = weekTemplates[week]
+        let id = weekIds.current.get(week)
+        if (!id) {
+          id = crypto.randomUUID()
+          weekIds.current.set(week, id)
+        }
         const s: Session = {
-          id: crypto.randomUUID(),
+          id,
           name: `${programme.name} · Week ${week}`,
           date: dateFor(week),
           time,
@@ -153,7 +163,11 @@ export function ApplyProgrammeModal({
       }
       setCreated(plannable.length)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not create the sessions. Try again.')
+      // Calm wording only; the raw error goes to the log. A retry reuses the
+      // per-week ids above, so it completes the series without duplicating
+      // the weeks that already landed.
+      logSessionWriteError('apply programme to team', e)
+      setError("We couldn't create all the sessions. Check your connection and try again.")
     } finally {
       setSaving(false)
     }
