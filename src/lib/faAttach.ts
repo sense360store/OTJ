@@ -269,8 +269,10 @@ export function planAttach<F extends AttachFile>(
   }
 
   // Session groups for the fallback, keyed by source page. Rows keep the
-  // given order: the import wrote the parts in page order and the media read
-  // returns creation order, so position is part order.
+  // given order: the import wrote the parts in page order, so with the media
+  // in creation order position is part order. The list reads return newest
+  // first, so the caller restores creation order (oldestFirst) before
+  // planning.
   const sessions = new Map<string, SessionGroup>()
   for (const t of targets) {
     if (!t.sourceUrl) continue

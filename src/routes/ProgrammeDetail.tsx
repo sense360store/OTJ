@@ -24,6 +24,7 @@ import {
   useTemplates,
 } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
+import { oldestFirst } from '../lib/contentOrder'
 import type { Programme, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR, SourceLink } from '../components/ui'
@@ -208,8 +209,11 @@ function ProgrammeView({ p }: { p: Programme }) {
   const canManage =
     caps.has('programmes.manage') || (caps.has('programmes.create') && !!p.createdBy && p.createdBy === user?.id)
 
+  // The first template found claims each week. The templates read returns
+  // newest first, so creation order is restored here to keep the earliest
+  // template winning when a week somehow holds more than one.
   const weekTemplates: Record<number, Template> = {}
-  for (const t of templates) {
+  for (const t of oldestFirst(templates)) {
     if (t.programmeId === p.id && t.programmeWeek != null && !weekTemplates[t.programmeWeek]) {
       weekTemplates[t.programmeWeek] = t
     }
