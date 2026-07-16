@@ -226,11 +226,16 @@ export function ListInput({
   onChange,
   placeholder,
   numbered,
+  disabled,
 }: {
   value: string[]
   onChange: (v: string[]) => void
   placeholder: string
   numbered?: boolean
+  // While disabled the field and its remove controls are frozen: adding or
+  // removing an item edits the draft, so a caller freezing a pending write
+  // passes this to lock the list without unmounting it.
+  disabled?: boolean
 }) {
   const [draft, setDraft] = useState('')
   const commit = (text: string) => {
@@ -255,7 +260,13 @@ export function ListInput({
               <div key={i} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
                 <span className="cp-num">{i + 1}</span>
                 <span style={{ flex: 1, fontSize: 14, lineHeight: 1.45 }}>{v}</span>
-                <button className="icon-btn" style={{ width: 26, height: 26 }} aria-label="Remove" onClick={() => remove(i)}>
+                <button
+                  className="icon-btn"
+                  style={{ width: 26, height: 26 }}
+                  aria-label="Remove"
+                  disabled={disabled}
+                  onClick={() => remove(i)}
+                >
                   <Icon.x style={{ width: 13, height: 13 }} />
                 </button>
               </div>
@@ -268,6 +279,7 @@ export function ListInput({
                 {v}
                 <button
                   aria-label={'Remove ' + v}
+                  disabled={disabled}
                   onClick={() => remove(i)}
                   style={{ display: 'inline-flex', border: 0, background: 'none', cursor: 'pointer', color: 'inherit', padding: 0 }}
                 >
@@ -280,6 +292,7 @@ export function ListInput({
       <input
         value={draft}
         placeholder={placeholder}
+        disabled={disabled}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={onKey}
         onBlur={() => draft.trim() && commit(draft)}

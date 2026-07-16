@@ -92,6 +92,25 @@ describe('planner save', () => {
     expect(h.pendings).toEqual(['save', null])
   })
 
+  it('never mutates the draft it submits, so a failed write leaves the visible draft unchanged', async () => {
+    // With editing frozen during a pending write, the visible draft is the one
+    // submitted. Prove the seam does not alter it: after a failure the draft
+    // object is byte-for-byte unchanged and is exactly what a retry resubmits,
+    // so nothing the failed attempt captured can displace the coach's draft.
+    const h = plannerHarness()
+    const draft = session({ name: 'Monday training' })
+    const before = JSON.stringify(draft)
+    const done = h.actions.save(draft)
+    h.waiting[0].reject(new Error('network down'))
+    await done
+    expect(h.cb.navSessions).not.toHaveBeenCalled()
+    expect(JSON.stringify(draft)).toBe(before)
+    const retry = h.actions.save(draft)
+    h.waiting[1].resolve(session())
+    await retry
+    expect(h.upsert.mock.calls[1][0]).toBe(draft)
+  })
+
   it('submits the draft it is given, so a retry after edits carries the latest draft', async () => {
     const h = plannerHarness()
     const first = h.actions.save(session({ name: 'Before the edit' }))

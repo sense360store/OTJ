@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { ActivityCardView, PlannerActionsView } from './Planner'
+import { ActivityCardView, AddActivityBar, PlannerActionsView, PlannerHeaderView, SessionFieldsView } from './Planner'
 import type { PlannerAction } from '../lib/sessionSubmit'
-import type { Activity, Drill } from '../lib/data'
+import type { Activity, Drill, Session, Team } from '../lib/data'
 
 // ActivityCardView is the planner's drill row pulled out as a presentational
 // component, so the static renderer covers expand and collapse and the row
@@ -41,7 +41,7 @@ const act: Activity = { phase: 'Skill', drillId: 'd1', duration: 15 }
 
 const noop = () => {}
 
-function render(expanded: boolean, opts: { readOnly?: boolean; drill?: Drill | null } = {}): string {
+function render(expanded: boolean, opts: { readOnly?: boolean; busy?: boolean; drill?: Drill | null } = {}): string {
   const rowDrill = 'drill' in opts ? opts.drill! : drill
   return renderToStaticMarkup(
     <MemoryRouter>
@@ -61,9 +61,19 @@ function render(expanded: boolean, opts: { readOnly?: boolean; drill?: Drill | n
         dragHandlers={{ onDragStart: noop, onDragEnter: noop, onDragEnd: noop, onDragOver: noop }}
         dragging={false}
         readOnly={opts.readOnly ?? false}
+        busy={opts.busy ?? false}
       />
     </MemoryRouter>,
   )
+}
+
+// A helper that pulls every field control out of a markup string with its
+// disabled state, so a freeze assertion can target the whole set at once.
+function fieldControls(html: string): { tag: string; disabled: boolean }[] {
+  return [...html.matchAll(/<(input|select|textarea)\b[^>]*>/g)].map((m) => ({
+    tag: m[0],
+    disabled: /\bdisabled\b/.test(m[0]),
+  }))
 }
 
 describe('ActivityCardView', () => {
@@ -124,6 +134,48 @@ describe('ActivityCardView', () => {
     expect(html).toContain('Open your body')
     expect(html).toContain('disabled')
   })
+
+  it('freezes the phase, duration, remove and drag controls while a write is pending', () => {
+    // busy is the editor's flag while a Save or Start is in flight. The row's
+    // editing controls all change the draft, so they disable; the remove
+    // control stays present (unlike read-only) but disabled, ready to work
+    // again once the write settles.
+    const html = render(false, { busy: true })
+    // The phase select and the duration input are both frozen.
+    for (const f of fieldControls(html)) {
+      expect(f.disabled).toBe(true)
+    }
+    // The remove control is present but disabled.
+    expect(html).toContain('aria-label="Remove activity"')
+    expect(/<button class="act-x"[^>]*disabled/.test(html)).toBe(true)
+    // The card is no longer draggable while frozen.
+    expect(html).toContain('draggable="false"')
+    expect(html).not.toContain('draggable="true"')
+  })
+
+  it('leaves the row editable again once the write settles', () => {
+    // busy back to false is the post-failure (or idle) state: every editing
+    // control is live so the coach can adjust and retry.
+    const html = render(false, { busy: false })
+    for (const f of fieldControls(html)) {
+      expect(f.disabled).toBe(false)
+    }
+    expect(/<button class="act-x"[^>]*disabled/.test(html)).toBe(false)
+    expect(html).toContain('draggable="true"')
+  })
+
+  it('keeps expand and collapse live while a write is pending (passive viewing)', () => {
+    // Expanding a drill to read its detail changes nothing about the draft, so
+    // the toggle stays interactive even while busy.
+    const html = render(true, { busy: true })
+    expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain('Open your body')
+    // The toggle button itself is not disabled (attribute order in the static
+    // markup puts type before class, so match the whole opening tag).
+    const toggleTag = html.match(/<button\b[^>]*class="ac-toggle"[^>]*>/)?.[0] ?? ''
+    expect(toggleTag).toContain('aria-expanded="true"')
+    expect(toggleTag).not.toContain('disabled')
+  })
 })
 
 // The action card pulled out as a presentational component, so the static
@@ -173,18 +225,31 @@ describe('PlannerActionsView', () => {
     expect(all.every((b) => !b.disabled)).toBe(true)
   })
 
-  it('shows Saving… and disables both Save and Start while a save is in flight', () => {
+  it('shows Saving… and freezes every side-card control while a save is in flight', () => {
     const html = renderActions({ pending: 'save' as PlannerAction })
     const all = buttons(html)
     expect(all.find((b) => b.label === 'Saving…')?.disabled).toBe(true)
     expect(all.find((b) => b.label === 'Start session')?.disabled).toBe(true)
+    // The navigation and destructive controls that would abandon the draft
+    // freeze too: Session day and Load a template navigate away, Delete opens a
+    // destructive modal.
+    expect(all.find((b) => b.label === 'Session day')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Load a template')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Delete session')?.disabled).toBe(true)
+    // Add to calendar only exports the current draft, so it stays available.
+    expect(all.find((b) => b.label === 'Add to calendar')?.disabled).toBe(false)
     expect(html).not.toContain('role="alert"')
   })
 
-  it('shows Starting… and disables both actions while a start is in flight', () => {
+  it('shows Starting… and freezes the same controls while a start is in flight', () => {
     const all = buttons(renderActions({ pending: 'start' as PlannerAction }))
     expect(all.find((b) => b.label === 'Starting…')?.disabled).toBe(true)
     expect(all.find((b) => b.label === 'Save session')?.disabled).toBe(true)
+    // The freeze is driven by the shared pending flag, so a pending Start locks
+    // the navigation and destructive controls exactly as a pending Save does.
+    expect(all.find((b) => b.label === 'Session day')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Load a template')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Delete session')?.disabled).toBe(true)
   })
 
   it('announces a failed save calmly, with a Retry, and re-enables the buttons', () => {
@@ -197,6 +262,11 @@ describe('PlannerActionsView', () => {
     expect(all.find((b) => b.label === 'Retry')?.disabled).toBe(false)
     expect(all.find((b) => b.label === 'Save session')?.disabled).toBe(false)
     expect(all.find((b) => b.label === 'Start session')?.disabled).toBe(false)
+    // Failure clears the pending flag, so the navigation and destructive
+    // controls are live again for the coach to edit, retry or leave.
+    expect(all.find((b) => b.label === 'Session day')?.disabled).toBe(false)
+    expect(all.find((b) => b.label === 'Load a template')?.disabled).toBe(false)
+    expect(all.find((b) => b.label === 'Delete session')?.disabled).toBe(false)
   })
 
   it('words a failed start as a save-before-start failure', () => {
@@ -235,5 +305,151 @@ describe('PlannerActionsView', () => {
   it('hides Session day, calendar and delete for a session not yet saved', () => {
     const labels = buttons(renderActions({ isExisting: false })).map((b) => b.label)
     expect(labels).toEqual(['Start session', 'Save session', 'Load a template'])
+  })
+})
+
+// SessionFieldsView is the planner's session details card pulled out as a
+// presentational component. busy is the editor's flag while a Save or Start is
+// in flight; every field here edits the draft, so busy must freeze the lot
+// without unmounting them (a failure re-enables them for a retry). readOnly is
+// the separate viewer state, unchanged by this work.
+const teams: Team[] = [
+  { id: 't1', name: 'Titans' },
+  { id: 't2', name: 'Trojans' },
+]
+
+function sessionFixture(over: Partial<Session> = {}): Session {
+  return {
+    id: 's1',
+    name: 'Monday training',
+    date: '2026-06-10',
+    time: '17:30',
+    ageGroup: 'U8s',
+    venue: 'Springmill 3G',
+    focus: 'Passing',
+    status: 'upcoming',
+    activities: [{ phase: 'Skill', drillId: 'd1', duration: 15 }],
+    coachId: 'coach1',
+    teamId: 't1',
+    intentions: ['Play out from the back'],
+    space: 'Third of a pitch',
+    sourceUrl: '',
+    sourceLabel: '',
+    programmeId: null,
+    programmeWeek: null,
+    liveActivityIndex: null,
+    liveActivityStartedAt: null,
+    spondEventId: null,
+    boardId: 'b1',
+    ...over,
+  }
+}
+
+function renderFields(over: Partial<Parameters<typeof SessionFieldsView>[0]> = {}): string {
+  return renderToStaticMarkup(
+    <SessionFieldsView
+      session={sessionFixture()}
+      readOnly={false}
+      busy={false}
+      teams={teams}
+      attachedBoardName="4-3-3 shape"
+      onField={noop}
+      onIntentions={noop}
+      onTeam={noop}
+      onRemoveBoard={noop}
+      onOpenBoardPicker={noop}
+      {...over}
+    />,
+  )
+}
+
+describe('SessionFieldsView', () => {
+  it('freezes every session field, the intentions input and the board controls while a write is pending', () => {
+    const html = renderFields({ busy: true })
+    const controls = fieldControls(html)
+    // Name, date, time, age group, venue, team, focus, space, the intentions
+    // input and the source link: every field control is present and disabled.
+    expect(controls.length).toBeGreaterThanOrEqual(10)
+    expect(controls.every((c) => c.disabled)).toBe(true)
+    // The tactics board Change and Remove controls edit the draft too.
+    expect(buttons(html).find((b) => b.label === 'Change')?.disabled).toBe(true)
+    const removeBoardTag = html.match(/<button\b[^>]*aria-label="Remove board"[^>]*>/)?.[0] ?? ''
+    expect(removeBoardTag).toContain('disabled')
+    // Removing an intention edits the draft, so its remove control freezes.
+    const removeIntentTag = html.match(/<button\b[^>]*aria-label="Remove Play out from the back"[^>]*>/)?.[0] ?? ''
+    expect(removeIntentTag).toContain('disabled')
+  })
+
+  it('keeps every field editable when idle, so a coach can edit and retry after a failure', () => {
+    const html = renderFields({ busy: false })
+    const controls = fieldControls(html)
+    expect(controls.length).toBeGreaterThanOrEqual(10)
+    expect(controls.every((c) => !c.disabled)).toBe(true)
+    expect(buttons(html).find((b) => b.label === 'Change')?.disabled).toBe(false)
+    const removeBoardTag = html.match(/<button\b[^>]*aria-label="Remove board"[^>]*>/)?.[0] ?? ''
+    expect(removeBoardTag).not.toContain('disabled')
+  })
+
+  it('renders a read-only viewer unchanged: disabled fields, pill intentions, no board controls', () => {
+    const html = renderFields({ readOnly: true })
+    // The base fields stay disabled exactly as a viewer always saw them.
+    expect(fieldControls(html).every((c) => c.disabled)).toBe(true)
+    // Intentions render as read-only pills, not an editable list input.
+    expect(html).toContain('Play out from the back')
+    expect(html).not.toContain('Type an intention and press enter')
+    // No edit affordances on the board for a viewer.
+    expect(html).not.toContain('>Change<')
+    expect(html).not.toContain('aria-label="Remove board"')
+    expect(html).toContain('4-3-3 shape')
+  })
+})
+
+describe('PlannerHeaderView', () => {
+  function renderHeader(over: Partial<Parameters<typeof PlannerHeaderView>[0]> = {}): string {
+    return renderToStaticMarkup(
+      <PlannerHeaderView readOnly={false} isExisting busy={false} ownerName={undefined} onBack={noop} {...over} />,
+    )
+  }
+
+  it('freezes the back link to the sessions list while a write is pending', () => {
+    const all = buttons(renderHeader({ busy: true }))
+    expect(all.find((b) => b.label === 'Sessions')?.disabled).toBe(true)
+  })
+
+  it('keeps the back link live when idle', () => {
+    const all = buttons(renderHeader({ busy: false }))
+    expect(all.find((b) => b.label === 'Sessions')?.disabled).toBe(false)
+  })
+
+  it('keeps the back link live for a read-only viewer, who starts no write', () => {
+    const html = renderHeader({ readOnly: true, busy: false, ownerName: 'Sam Coach' })
+    expect(html).toContain('View session')
+    // The apostrophe is HTML-escaped in the static markup, as elsewhere.
+    expect(html).toContain('Sam Coach&#x27;s session')
+    expect(buttons(html).find((b) => b.label === 'Sessions')?.disabled).toBe(false)
+  })
+
+  it('titles a new plan, an edit and a view distinctly', () => {
+    expect(renderHeader({ isExisting: false })).toContain('Plan a session')
+    expect(renderHeader({ isExisting: true })).toContain('Edit session')
+    expect(renderHeader({ readOnly: true })).toContain('View session')
+  })
+})
+
+describe('AddActivityBar', () => {
+  function renderBar(busy: boolean): string {
+    return renderToStaticMarkup(<AddActivityBar busy={busy} onAddLibrary={noop} onAddCustom={noop} />)
+  }
+
+  it('freezes both add controls while a write is pending', () => {
+    const all = buttons(renderBar(true))
+    expect(all.find((b) => b.label === 'Add from library')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Add custom')?.disabled).toBe(true)
+  })
+
+  it('leaves both add controls live when idle', () => {
+    const all = buttons(renderBar(false))
+    expect(all.find((b) => b.label === 'Add from library')?.disabled).toBe(false)
+    expect(all.find((b) => b.label === 'Add custom')?.disabled).toBe(false)
   })
 })

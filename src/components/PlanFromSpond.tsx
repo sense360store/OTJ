@@ -40,6 +40,7 @@ export function PlanFromSpondView({
   error,
   planPendingId = null,
   planFailed = false,
+  frozen = false,
 }: {
   rows: SpondEvent[]
   eventsExist: boolean
@@ -56,6 +57,10 @@ export function PlanFromSpondView({
   planPendingId?: string | null
   // The last create failed; the row's button doubles as the retry.
   planFailed?: boolean
+  // An outer write is in flight (the planner's Save or Start on the draft this
+  // surface sits above). Planning an event abandons that draft, so every Plan
+  // this control freezes until the outer write settles.
+  frozen?: boolean
 }) {
   return (
     <div className="card" style={{ padding: 18, marginBottom: 18 }}>
@@ -112,7 +117,7 @@ export function PlanFromSpondView({
                 ))}
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" disabled={planPendingId !== null} onClick={() => onPlan(e)}>
+            <button className="btn btn-primary btn-sm" disabled={planPendingId !== null || frozen} onClick={() => onPlan(e)}>
               <Icon.plus />
               {planPendingId === e.id ? 'Planning…' : 'Plan this'}
             </button>
@@ -124,7 +129,7 @@ export function PlanFromSpondView({
   )
 }
 
-export function PlanFromSpond({ hideWhenEmpty = false }: { hideWhenEmpty?: boolean }) {
+export function PlanFromSpond({ hideWhenEmpty = false, frozen = false }: { hideWhenEmpty?: boolean; frozen?: boolean }) {
   const nav = useNav()
   const { user, profile } = useAuth()
   const { caps } = useMyCapabilities()
@@ -192,6 +197,7 @@ export function PlanFromSpond({ hideWhenEmpty = false }: { hideWhenEmpty?: boole
       error={isError}
       planPendingId={planPendingId}
       planFailed={planFailed}
+      frozen={frozen}
     />
   )
 }
