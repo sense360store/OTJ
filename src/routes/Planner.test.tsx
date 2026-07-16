@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { ActivityCardView, AddActivityBar, PlannerActionsView, PlannerHeaderView, SessionFieldsView } from './Planner'
+import {
+  ActivityCardView,
+  AddActivityBar,
+  PlannerActionsView,
+  PlannerHeaderView,
+  PlannerWorkspace,
+  SessionFieldsView,
+} from './Planner'
 import type { PlannerAction } from '../lib/sessionSubmit'
 import type { Activity, Drill, Session, Team } from '../lib/data'
 
@@ -175,6 +182,18 @@ describe('ActivityCardView', () => {
     const toggleTag = html.match(/<button\b[^>]*class="ac-toggle"[^>]*>/)?.[0] ?? ''
     expect(toggleTag).toContain('aria-expanded="true"')
     expect(toggleTag).not.toContain('disabled')
+  })
+
+  it('freezes the Open full drill navigation while a write is pending', () => {
+    // Reading the detail is passive, but the link OUT to the full drill leaves
+    // the planner and would abandon the draft, so it becomes a disabled button
+    // with no navigable href while busy.
+    const busyHtml = render(true, { busy: true })
+    expect(busyHtml).toContain('Open full drill')
+    expect(busyHtml).not.toContain('href="/drill/d1"')
+    // Idle (and read-only, who are never busy) keep the live link.
+    const idleHtml = render(true, { busy: false })
+    expect(idleHtml).toContain('href="/drill/d1"')
   })
 })
 
@@ -451,5 +470,28 @@ describe('AddActivityBar', () => {
     const all = buttons(renderBar(false))
     expect(all.find((b) => b.label === 'Add from library')?.disabled).toBe(false)
     expect(all.find((b) => b.label === 'Add custom')?.disabled).toBe(false)
+  })
+})
+
+describe('PlannerWorkspace', () => {
+  function renderWorkspace(busy: boolean): string {
+    return renderToStaticMarkup(
+      <PlannerWorkspace busy={busy}>
+        <span>content</span>
+      </PlannerWorkspace>,
+    )
+  }
+
+  it('marks the working region aria-busy while a write is pending', () => {
+    const html = renderWorkspace(true)
+    expect(html).toContain('class="planner"')
+    expect(html).toContain('aria-busy="true"')
+    expect(html).toContain('content')
+  })
+
+  it('clears aria-busy once the write settles, so the failure alert still announces', () => {
+    // The editor clears the pending flag before mounting the alert, so the
+    // region is not aria-busy when the alert appears.
+    expect(renderWorkspace(false)).toContain('aria-busy="false"')
   })
 })

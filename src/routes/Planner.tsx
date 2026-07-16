@@ -317,10 +317,22 @@ export function ActivityCardView({
           <PanelList icon={Icon.whistle} label="Coaching points" items={drill.points} />
           <PanelList icon={Icon.chevDown} label="Make it easier" items={drill.easier} />
           <PanelList icon={Icon.bolt} label="Make it harder" items={drill.harder} />
-          <Link className="btn btn-ghost btn-sm act-panel-link" to={drillHref}>
-            <Icon.external />
-            Open full drill
-          </Link>
+          {/* Reading the detail is passive viewing and stays live, but the link
+              OUT to the full drill leaves the planner and would abandon the
+              draft, so it freezes with the other navigation controls while a
+              write is in flight. A read-only viewer is never busy, so their
+              link stays live. */}
+          {busy ? (
+            <button type="button" className="btn btn-ghost btn-sm act-panel-link" disabled>
+              <Icon.external />
+              Open full drill
+            </button>
+          ) : (
+            <Link className="btn btn-ghost btn-sm act-panel-link" to={drillHref}>
+              <Icon.external />
+              Open full drill
+            </Link>
+          )}
         </div>
       )}
     </div>
@@ -706,6 +718,20 @@ export function SessionFieldsView({
   )
 }
 
+// The planner's editable working region (the timeline and the side panel).
+// aria-busy marks it while a write settles, so assistive tech can defer the
+// in-region label changes; it clears before the failure alert renders (the
+// pending flag is cleared first and React batches the two updates into one
+// commit), so the alert still announces. Pulled out so the static renderer can
+// assert the aria-busy binding without mounting the whole editor.
+export function PlannerWorkspace({ busy, children }: { busy: boolean; children: ReactNode }) {
+  return (
+    <div className="planner" aria-busy={busy}>
+      {children}
+    </div>
+  )
+}
+
 function PlannerEditor({
   existing,
   newDefaults,
@@ -843,11 +869,7 @@ function PlannerEditor({
         onBack={() => nav('sessions')}
       />
 
-      {/* aria-busy marks the editable working region while a write settles, so
-          assistive tech can defer the in-region label changes; it flips back
-          before the failure alert renders (pending clears first), so the alert
-          still announces. */}
-      <div className="planner" aria-busy={busy}>
+      <PlannerWorkspace busy={busy}>
         <div className="timeline-wrap">
           {/* A new session can start from a synced Spond event: picking one
               creates its own pre filled session and navigates there, so the
@@ -970,7 +992,7 @@ function PlannerEditor({
             onDelete={() => setDeleteOpen(true)}
           />
         </div>
-      </div>
+      </PlannerWorkspace>
 
       {addOpen && (
         <AddDrillModal
