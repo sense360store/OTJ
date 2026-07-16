@@ -1625,6 +1625,16 @@ export function useCopyTemplateToWeek() {
 // updated one) and leaves every other session alone, so rolling back one
 // failed write cannot wipe another session's newer optimistic entry.
 
+// Whether either cache already holds the row: the hint useUpsertSession uses to
+// prefer the update fast path. The per-id cache (oneEntry) matters because the
+// planner loads an existing session through useSession, keyed by id, even when
+// the sessions list has not loaded, so an edit before the list arrives no
+// longer misfires as an insert. It is only a hint; the server stays the
+// authority through upsertSessionWrite's duplicate-key recovery.
+export function sessionExistsInCache(listEntry: Session | undefined, oneEntry: Session | undefined): boolean {
+  return listEntry !== undefined || oneEntry !== undefined
+}
+
 export function applySessionUpsert(list: Session[] | undefined, s: Session): Session[] {
   const l = list ?? []
   const i = l.findIndex((x) => x.id === s.id)
@@ -1794,12 +1804,9 @@ export function useUpsertSession() {
       const prevEntry = list?.find((s) => s.id === input.id)
       const prevOne = qc.getQueryData<Session>(['sessions', input.id])
       // Prefer the update fast path when either cache already holds the row.
-      // The per-id cache matters because the planner edits a session it loaded
-      // through useSession (which keys ['sessions', id]) even when the sessions
-      // list has not loaded, so an edit no longer misfires as an insert. When
-      // both caches are absent the write still self-corrects: an insert that
-      // collides recovers into an update.
-      existed.current.set(input.id, prevEntry !== undefined || prevOne !== undefined)
+      // When both are absent the write still self-corrects: an insert that
+      // collides recovers into an update (see upsertSessionWrite).
+      existed.current.set(input.id, sessionExistsInCache(prevEntry, prevOne))
       const attempt = attempts.current.begin(input.id)
       qc.setQueryData<Session[]>(['sessions'], (old) => applySessionUpsert(old, input))
       qc.setQueryData<Session>(['sessions', input.id], input)

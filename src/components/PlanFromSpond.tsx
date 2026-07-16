@@ -10,7 +10,7 @@
 // Spond; the surface reads the synced mirror and writes only a session through
 // the existing create path and its RLS. Nothing is created automatically and
 // nothing flows toward Spond.
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
@@ -158,17 +158,16 @@ export function PlanFromSpond({
   // The create is awaited: the planner opens only once the session lands, and
   // a failure keeps this surface up with a calm note; the row's button is the
   // retry. The pre filled session carries the event id in spondEventId, which
-  // keys the row's pending label.
+  // keys the row's pending label. onPendingChange reports the transition up
+  // synchronously (inside submit), so the outer planner freezes Save and Start
+  // in the same tick the create starts, not a render later.
   const { submit, pending, failed: planFailed } = useGuardedSubmit<Session, Session>({
     operation: 'plan from spond event',
     perform: (s) => upsertSession(s),
     onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
+    onPendingChange,
   })
   const planPendingId = pending?.spondEventId ?? null
-  // Report the pending transition up so the outer planner can freeze alongside.
-  useEffect(() => {
-    onPendingChange?.(pending !== null)
-  }, [pending, onPendingChange])
 
   // Coaches plan; parents never see this. The planner route already redirects
   // parents, so this is belt and braces and keeps the surface safe to drop on

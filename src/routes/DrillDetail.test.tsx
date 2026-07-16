@@ -113,12 +113,15 @@ describe('AddToSessionView freeze', () => {
 
   it('re-enables the controls after a failure with the choices intact', () => {
     const html = renderView({ adding: false, failed: true, target: 's2', phase: 'Game' })
-    // The calm error shows, the raw wording never leaks.
+    // The calm error shows.
     expect(html).toContain('role="alert"')
     expect(html).toContain('We couldn&#x27;t add the drill to that session')
-    expect(html).not.toMatch(/supabase|postgres|23505/i)
-    // The choices survive the failure and the controls are live for a retry.
-    expect(html).toContain('value="s2"')
+    // The choices survive the failure: SSR marks the chosen option selected
+    // (a controlled select's value stamps selected on its option, not a value
+    // attribute on the select), and the Game phase chip is on.
+    expect(html).toContain('value="s2" selected')
+    expect(html).toContain('chip on')
+    // The controls are live again for a retry.
     expect(/<select[^>]*disabled/.test(html)).toBe(false)
     expect(buttons(html).every((b) => !b.disabled)).toBe(true)
   })

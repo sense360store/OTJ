@@ -18,6 +18,7 @@ export function useGuardedSubmit<T, R>({
   operation,
   perform,
   onSuccess,
+  onPendingChange,
 }: {
   // Names the flow in the diagnostic log; never carries session content.
   operation: string
@@ -25,6 +26,12 @@ export function useGuardedSubmit<T, R>({
   // Navigate or close here. Runs only after the write resolves, and only
   // while the surface is still mounted.
   onSuccess: (result: R, input: T) => void
+  // Fires synchronously as the attempt starts (true) and settles (false),
+  // inside the submit call rather than a render later, so a parent composing
+  // this pending state into its own busy flag freezes in the same tick the
+  // create begins. Captured once, so callers pass a stable function (a
+  // useState dispatcher).
+  onPendingChange?: (pending: boolean) => void
 }): {
   submit: (input: T) => Promise<void>
   // The in-flight input, null when idle. Callers derive their pending flag or
@@ -41,6 +48,7 @@ export function useGuardedSubmit<T, R>({
         setPending(p ? input : null)
         // A new attempt clears the previous attempt's error.
         if (p) setFailed(false)
+        onPendingChange?.(p)
       },
       onSuccess,
       onFailure: (err) => {

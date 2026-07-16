@@ -9,6 +9,7 @@ import {
   oversizeMessage,
   partitionDrillsByUsage,
   revertSessionUpsert,
+  sessionExistsInCache,
   toActivity,
   toActivityRow,
   toDrill,
@@ -402,5 +403,20 @@ describe('upsertSessionWrite server-safe insert versus update', () => {
     })
     await expect(upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })).rejects.toBe(rlsError)
     expect(update).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('sessionExistsInCache exists hint', () => {
+  const s = () => toSession(sessionRow())
+  it('is true when the list holds the row, so an existing-session save updates', () => {
+    expect(sessionExistsInCache(s(), undefined)).toBe(true)
+  })
+  it('is true when only the per-id cache holds the row (the planner edit before the list loads)', () => {
+    // useSession keys ['sessions', id], so an edit finds the row here even with
+    // the list unloaded; this is the case that previously misfired as an insert.
+    expect(sessionExistsInCache(undefined, s())).toBe(true)
+  })
+  it('is false only when both caches are absent, where the write self-corrects via recovery', () => {
+    expect(sessionExistsInCache(undefined, undefined)).toBe(false)
   })
 })

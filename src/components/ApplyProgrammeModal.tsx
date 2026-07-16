@@ -16,7 +16,7 @@ import { useTeams, useUpsertSession } from '../lib/queries'
 import { logSessionWriteError, stableCreateId } from '../lib/sessionSubmit'
 import { Icon } from './icons'
 import { Modal } from './ui'
-import type { Activity, Programme, Session, Template } from '../lib/data'
+import type { Activity, Programme, Session, Team, Template } from '../lib/data'
 
 const AGE_GROUPS = ['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s']
 // Monday-first display order over Date.getDay() numbering.
@@ -55,6 +55,187 @@ function todayIso(): string {
 function alignToWeekday(start: string, weekday: number): string {
   const diff = (weekday - weekdayOf(start) + 7) % 7
   return isoAddDays(start, diff)
+}
+
+// One preview row per programme week. A null templateName is a week with no
+// template (skipped, no date input); a real name gets the editable date.
+export interface ApplyWeekRow {
+  week: number
+  templateName: string | null
+  date: string
+  clash: boolean
+}
+
+// The form body pulled out as a presentational component, so the static
+// renderer can prove that while the sessions are being created the surface is
+// not dismissible (the X is disabled through Modal, and Escape and the overlay
+// are frozen there too) and every input that shapes the write is disabled,
+// then re-enabled with the entries intact on failure. The container owns all
+// the date arithmetic and the write loop and feeds plain props in.
+export function ApplyProgrammeFormView({
+  sub,
+  saving,
+  plannableCount,
+  teams,
+  teamId,
+  onTeamId,
+  ageGroup,
+  onAgeGroup,
+  startDate,
+  onStartDate,
+  weekday,
+  onWeekday,
+  time,
+  onTime,
+  venue,
+  onVenue,
+  weekRows,
+  teamName,
+  onWeekDate,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  sub: string
+  saving: boolean
+  plannableCount: number
+  teams: Team[]
+  teamId: string
+  onTeamId: (v: string) => void
+  ageGroup: string
+  onAgeGroup: (v: string) => void
+  startDate: string
+  onStartDate: (v: string) => void
+  weekday: number
+  onWeekday: (v: number) => void
+  time: string
+  onTime: (v: string) => void
+  venue: string
+  onVenue: (v: string) => void
+  weekRows: ApplyWeekRow[]
+  teamName: string
+  onWeekDate: (week: number, iso: string) => void
+  error: string | null
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <Modal
+      title="Apply to team"
+      sub={sub}
+      onClose={onClose}
+      dismissible={!saving}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={onConfirm} disabled={saving || !teamId}>
+            <Icon.check />
+            {saving ? 'Creating…' : `Create ${plannableCount} session${plannableCount !== 1 ? 's' : ''}`}
+          </button>
+        </>
+      }
+    >
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+        <div className="field" style={{ flex: 1, minWidth: 140 }}>
+          <label>Team</label>
+          <select value={teamId} disabled={saving} onChange={(e) => onTeamId(e.target.value)}>
+            <option value="">Pick a team…</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ flex: 1, minWidth: 130 }}>
+          <label>Age group</label>
+          <select value={ageGroup} disabled={saving} onChange={(e) => onAgeGroup(e.target.value)}>
+            {AGE_GROUPS.map((a) => (
+              <option key={a}>{a}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+        <div className="field" style={{ flex: 1, minWidth: 140 }}>
+          <label>Start date</label>
+          <input type="date" value={startDate} disabled={saving} onChange={(e) => onStartDate(e.target.value)} />
+        </div>
+        <div className="field" style={{ flex: 1, minWidth: 130 }}>
+          <label>Weekday</label>
+          <select value={weekday} disabled={saving} onChange={(e) => onWeekday(parseInt(e.target.value, 10))}>
+            {WEEKDAYS.map((d) => (
+              <option key={d.value} value={d.value}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ width: 110 }}>
+          <label>Time</label>
+          <input type="time" value={time} disabled={saving} onChange={(e) => onTime(e.target.value)} />
+        </div>
+      </div>
+      <div className="field">
+        <label>Venue</label>
+        <input value={venue} disabled={saving} onChange={(e) => onVenue(e.target.value)} />
+      </div>
+
+      <div className="field">
+        <label>Dates</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {weekRows.map((row) => (
+            <div
+              key={row.week}
+              style={{ padding: '8px 10px', borderRadius: 12, border: '1px solid var(--line)', background: 'var(--card)' }}
+            >
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <span className="role-badge" style={{ fontSize: 12, flex: '0 0 auto' }}>
+                  Week {row.week}
+                </span>
+                <span
+                  style={{
+                    flex: '1 1 140px',
+                    minWidth: 0,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    alignSelf: 'center',
+                  }}
+                  className={row.templateName ? undefined : 'muted'}
+                >
+                  {row.templateName ?? 'No template assigned, skipped'}
+                </span>
+                {row.templateName && (
+                  <input
+                    type="date"
+                    value={row.date}
+                    disabled={saving}
+                    onChange={(e) => e.target.value && onWeekDate(row.week, e.target.value)}
+                    style={{ width: 150, height: 44 }}
+                  />
+                )}
+              </div>
+              {row.templateName && row.clash && (
+                <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
+                  {teamName} already have a session on this evening.
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      {error && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+          {error}
+        </p>
+      )}
+    </Modal>
+  )
 }
 
 export function ApplyProgrammeModal({
@@ -207,124 +388,40 @@ export function ApplyProgrammeModal({
     )
   }
 
-  return (
-    <Modal
-      title="Apply to team"
-      sub={programme.name}
-      onClose={onClose}
-      dismissible={!saving}
-      footer={
-        <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" onClick={() => void confirm()} disabled={saving || !teamId}>
-            <Icon.check />
-            {saving ? 'Creating…' : `Create ${plannable.length} session${plannable.length !== 1 ? 's' : ''}`}
-          </button>
-        </>
-      }
-    >
-      <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-        <div className="field" style={{ flex: 1, minWidth: 140 }}>
-          <label>Team</label>
-          <select value={teamId} disabled={saving} onChange={(e) => setTeamId(e.target.value)}>
-            <option value="">Pick a team…</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field" style={{ flex: 1, minWidth: 130 }}>
-          <label>Age group</label>
-          <select value={ageGroup} disabled={saving} onChange={(e) => setAgeGroup(e.target.value)}>
-            {AGE_GROUPS.map((a) => (
-              <option key={a}>{a}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-        <div className="field" style={{ flex: 1, minWidth: 140 }}>
-          <label>Start date</label>
-          <input type="date" value={startDate} disabled={saving} onChange={(e) => pickStart(e.target.value)} />
-        </div>
-        <div className="field" style={{ flex: 1, minWidth: 130 }}>
-          <label>Weekday</label>
-          <select value={weekday} disabled={saving} onChange={(e) => pickWeekday(parseInt(e.target.value, 10))}>
-            {WEEKDAYS.map((d) => (
-              <option key={d.value} value={d.value}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field" style={{ width: 110 }}>
-          <label>Time</label>
-          <input type="time" value={time} disabled={saving} onChange={(e) => setTime(e.target.value)} />
-        </div>
-      </div>
-      <div className="field">
-        <label>Venue</label>
-        <input value={venue} disabled={saving} onChange={(e) => setVenue(e.target.value)} />
-      </div>
+  const weekRows: ApplyWeekRow[] = weeks.map((week) => {
+    const t = weekTemplates[week]
+    return {
+      week,
+      templateName: t ? t.name : null,
+      date: t ? dateFor(week) : '',
+      clash: !!(t && teamId && clash(week)),
+    }
+  })
 
-      <div className="field">
-        <label>Dates</label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {weeks.map((week) => {
-            const t = weekTemplates[week]
-            return (
-              <div
-                key={week}
-                style={{ padding: '8px 10px', borderRadius: 12, border: '1px solid var(--line)', background: 'var(--card)' }}
-              >
-                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  <span className="role-badge" style={{ fontSize: 12, flex: '0 0 auto' }}>
-                    Week {week}
-                  </span>
-                  <span
-                    style={{
-                      flex: '1 1 140px',
-                      minWidth: 0,
-                      fontWeight: 700,
-                      fontSize: 13,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      alignSelf: 'center',
-                    }}
-                    className={t ? undefined : 'muted'}
-                  >
-                    {t ? t.name : 'No template assigned, skipped'}
-                  </span>
-                  {t && (
-                    <input
-                      type="date"
-                      value={dateFor(week)}
-                      disabled={saving}
-                      onChange={(e) => e.target.value && setOverrides((o) => ({ ...o, [week]: e.target.value }))}
-                      style={{ width: 150, height: 44 }}
-                    />
-                  )}
-                </div>
-                {t && teamId && clash(week) && (
-                  <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
-                    {teamName} already have a session on this evening.
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
-      {error && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
-          {error}
-        </p>
-      )}
-    </Modal>
+  return (
+    <ApplyProgrammeFormView
+      sub={programme.name}
+      saving={saving}
+      plannableCount={plannable.length}
+      teams={teams}
+      teamId={teamId}
+      onTeamId={setTeamId}
+      ageGroup={ageGroup}
+      onAgeGroup={setAgeGroup}
+      startDate={startDate}
+      onStartDate={pickStart}
+      weekday={weekday}
+      onWeekday={pickWeekday}
+      time={time}
+      onTime={setTime}
+      venue={venue}
+      onVenue={setVenue}
+      weekRows={weekRows}
+      teamName={teamName}
+      onWeekDate={(week, iso) => setOverrides((o) => ({ ...o, [week]: iso }))}
+      error={error}
+      onClose={onClose}
+      onConfirm={() => void confirm()}
+    />
   )
 }
