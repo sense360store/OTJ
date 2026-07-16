@@ -1751,9 +1751,11 @@ export function useUpsertSession() {
       if (error) throw error
       return toSession(data as unknown as SessionRow)
     },
-    // Optimistic and synchronous, so navigation by session id (start a session
-    // straight after saving it) finds the record without waiting for the round
-    // trip. The list and the per-id cache are both seeded.
+    // Optimistic and synchronous: the list and the per-id cache are both
+    // seeded, so a screen arriving by session id straight after a successful
+    // save (the live view after Start) renders at once instead of waiting for
+    // the settled invalidation refetch. Navigation itself waits for the write
+    // through the guarded submit seam.
     onMutate: (input) => {
       const list = qc.getQueryData<Session[]>(['sessions'])
       const prevEntry = list?.find((s) => s.id === input.id)
