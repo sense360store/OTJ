@@ -8,8 +8,11 @@ import {
   toActivity,
   toActivityRow,
   toDrill,
+  toProgramme,
+  toProgrammeList,
   toSession,
   type DrillRow,
+  type ProgrammeRow,
   type SessionRow,
 } from './queries'
 
@@ -221,5 +224,43 @@ describe('media upload size cap', () => {
   it('still accepts a file at the old 300 MB level, which is now well under', () => {
     expect(oversizeMessage(sized(300 * 1024 * 1024))).toBeNull()
     expect(oversizeMessage(sized(273 * 1024 * 1024))).toBeNull()
+  })
+})
+
+describe('programme list ordering (useProgrammes transformation)', () => {
+  // The exact rows-to-list transformation the useProgrammes queryFn applies.
+  // The id order deliberately conflicts with the date order, so a sort that
+  // fell back to id (a created_at that never got mapped) would fail here.
+  function programmeRow(overrides: Partial<ProgrammeRow> = {}): ProgrammeRow {
+    return {
+      id: 'p1',
+      club_id: 'c1',
+      name: 'Ball mastery',
+      focus: null,
+      summary: null,
+      intentions: null,
+      weeks: 6,
+      pdf_media_id: null,
+      source_url: null,
+      source_label: null,
+      created_by: null,
+      created_at: '2026-01-01T00:00:00Z',
+      ...overrides,
+    }
+  }
+
+  it('maps created_at onto the programme', () => {
+    expect(toProgramme(programmeRow()).createdAt).toBe('2026-01-01T00:00:00Z')
+  })
+
+  it('returns newest first by created_at even when the id order disagrees', () => {
+    const rows = [
+      programmeRow({ id: 'p-aaa', name: 'Oldest, first id', created_at: '2025-09-01T00:00:00Z' }),
+      programmeRow({ id: 'p-zzz', name: 'Newest, last id', created_at: '2026-06-01T00:00:00Z' }),
+      programmeRow({ id: 'p-mmm', name: 'Middle', created_at: '2026-02-01T00:00:00Z' }),
+    ]
+    expect(toProgrammeList(rows).map((p) => p.id)).toEqual(['p-zzz', 'p-mmm', 'p-aaa'])
+    // The same rows arriving in any other order give the same list.
+    expect(toProgrammeList([rows[1], rows[2], rows[0]]).map((p) => p.id)).toEqual(['p-zzz', 'p-mmm', 'p-aaa'])
   })
 })

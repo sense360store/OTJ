@@ -6,10 +6,12 @@ import {
   memberTeamIds,
   nextPrimaryTeamId,
   primaryRoleKey,
+  relatedDrills,
   roleKeyFromLabel,
   sessionMinutes,
   sortRoles,
 } from './data'
+import type { Drill } from './data'
 
 describe('sessionMinutes', () => {
   it('sums the activity durations', () => {
@@ -177,5 +179,62 @@ describe('hasAllCaps', () => {
     expect(hasAllCaps(caps, ['drills.create', 'media.create'])).toBe(true)
     expect(hasAllCaps(caps, ['drills.create', 'programmes.create'])).toBe(false)
     expect(hasAllCaps(caps, [])).toBe(true)
+  })
+})
+
+describe('relatedDrills', () => {
+  // Related drills stay in creation order: the list reads flipped to newest
+  // first, but the three related drills a page shows must not change with
+  // them. Four candidates share the drill's corner, so oldest first and
+  // newest first would pick different threes.
+  function drill(overrides: Partial<Drill> & { id: string; createdAt: string }): Drill {
+    return {
+      title: overrides.id,
+      corner: 'technical',
+      skill: '',
+      ages: [],
+      level: 'Foundation',
+      duration: 10,
+      players: '',
+      area: '',
+      equipment: [],
+      mediaId: null,
+      summary: '',
+      points: [],
+      tags: [],
+      setupNotes: '',
+      easier: [],
+      harder: [],
+      theme: '',
+      format: '',
+      sourceUrl: '',
+      sourceLabel: '',
+      ...overrides,
+    }
+  }
+
+  const subject = drill({ id: 'subject', createdAt: '2026-01-01T00:00:00Z' })
+  const r1 = drill({ id: 'r1', createdAt: '2026-01-02T00:00:00Z' })
+  const r2 = drill({ id: 'r2', createdAt: '2026-02-02T00:00:00Z' })
+  const r3 = drill({ id: 'r3', createdAt: '2026-03-02T00:00:00Z' })
+  const r4 = drill({ id: 'r4', createdAt: '2026-04-02T00:00:00Z' })
+
+  it('picks the three oldest matches even from a newest first list', () => {
+    // The list arrives newest first, the order useDrills now returns; a
+    // pass-through slice would pick r4, r3, r2.
+    const newestFirstList = [r4, r3, r2, r1, subject]
+    expect(relatedDrills(subject, newestFirstList).map((d) => d.id)).toEqual(['r1', 'r2', 'r3'])
+  })
+
+  it('never relates through a missing corner or skill', () => {
+    const bare = drill({ id: 'bare', createdAt: '2026-01-05T00:00:00Z', corner: null })
+    const other = drill({ id: 'other', createdAt: '2026-01-06T00:00:00Z', corner: null })
+    expect(relatedDrills(bare, [other, bare])).toEqual([])
+  })
+
+  it('relates FA drills through overlapping topic tags', () => {
+    const fa = drill({ id: 'fa', createdAt: '2026-01-05T00:00:00Z', corner: null, tags: ['Defending'] })
+    const match = drill({ id: 'match', createdAt: '2026-01-06T00:00:00Z', corner: null, tags: ['Defending'] })
+    expect(relatedDrills(fa, [match, fa]).map((d) => d.id)).toEqual(['match'])
   })
 })

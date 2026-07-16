@@ -132,7 +132,7 @@ interface TemplateRow {
   source_label: string | null
 }
 
-interface ProgrammeRow {
+export interface ProgrammeRow {
   id: string
   club_id: string
   name: string
@@ -340,7 +340,7 @@ function toTemplate(r: TemplateRow): Template {
   }
 }
 
-function toProgramme(r: ProgrammeRow): Programme {
+export function toProgramme(r: ProgrammeRow): Programme {
   return {
     id: r.id,
     name: r.name,
@@ -352,7 +352,15 @@ function toProgramme(r: ProgrammeRow): Programme {
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
     createdBy: r.created_by ?? undefined,
+    createdAt: r.created_at,
   }
+}
+
+// The whole transformation useProgrammes applies to the rows a read returns,
+// exported so the ordering regression test exercises exactly what the hook
+// does.
+export function toProgrammeList(rows: ProgrammeRow[]): Programme[] {
+  return newestFirst(rows.map(toProgramme))
 }
 
 export function toSession(r: SessionRow): Session {
@@ -486,7 +494,7 @@ export function useProgrammes() {
         .order('created_at', { ascending: false })
         .order('id', { ascending: true })
       if (error) throw error
-      return newestFirst((data as unknown as ProgrammeRow[]).map(toProgramme))
+      return toProgrammeList(data as unknown as ProgrammeRow[])
     },
   })
 }
