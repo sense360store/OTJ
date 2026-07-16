@@ -5,8 +5,6 @@
 // into these types. Taxonomy constants and sessionMinutes stay here because
 // they are static and shared, not server data.
 
-import { oldestFirst } from './contentOrder'
-
 export type CornerKey = 'technical' | 'physical' | 'social' | 'psychological'
 export type Phase = 'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'
 export type Level = 'Foundation' | 'Developing' | 'Advanced'
@@ -400,24 +398,6 @@ export const LEVELS: Level[] = ['Foundation', 'Developing', 'Advanced']
 
 export function sessionMinutes(s: { activities: Activity[] }): number {
   return s.activities.reduce((a, x) => a + (x.duration || 0), 0)
-}
-
-// The related drills for a drill page. Relatedness needs a real shared value:
-// a missing corner or skill is not a match key (two unclassified drills have
-// nothing in common), and FA drills relate through overlapping topic tags
-// instead. Candidates are considered in creation order, the behaviour the
-// page has always had, so the list reads flipping to newest first does not
-// change which three surface.
-export function relatedDrills(drill: Drill, all: Drill[]): Drill[] {
-  return oldestFirst(all)
-    .filter(
-      (d) =>
-        d.id !== drill.id &&
-        ((!!drill.corner && d.corner === drill.corner) ||
-          (!!drill.skill && d.skill === drill.skill) ||
-          d.tags.some((t) => drill.tags.includes(t))),
-    )
-    .slice(0, 3)
 }
 
 // A new session belongs to the signed-in coach and defaults to their team

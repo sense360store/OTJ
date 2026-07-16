@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareNewestFirst, newestFirst, oldestFirst, sortLibraryDrills } from './contentOrder'
+import { compareNewestFirst, newestFirst, oldestFirst, relatedDrills, sortLibraryDrills } from './contentOrder'
 
 // Minimal drill-shaped rows: the sorts only read id, createdAt, title and
 // duration. Built oldest first so a pass-through would look like the old
@@ -102,5 +102,76 @@ describe('compareNewestFirst', () => {
     expect([...media].sort(compareNewestFirst)[0].id).toBe('m-new')
     expect([...templates].sort(compareNewestFirst)[0].id).toBe('t-new')
     expect([...programmes].sort(compareNewestFirst)[0].id).toBe('p-new')
+  })
+})
+
+describe('full precision tie-breaks', () => {
+  // Date.parse truncates the database's microsecond timestamps to
+  // milliseconds. Rows written in one burst tie on the parsed value, so the
+  // comparator must fall to the raw strings, which sort chronologically at
+  // full precision, before it ever reaches the id. The ids here deliberately
+  // disagree with the microsecond order.
+  const early = { id: 'zzz', createdAt: '2026-06-01T09:00:00.123456+00:00' }
+  const late = { id: 'aaa', createdAt: '2026-06-01T09:00:00.123789+00:00' }
+
+  it('newestFirst orders same-millisecond rows by the raw timestamp, not the id', () => {
+    expect(newestFirst([early, late]).map((d) => d.id)).toEqual(['aaa', 'zzz'])
+    expect(newestFirst([late, early]).map((d) => d.id)).toEqual(['aaa', 'zzz'])
+  })
+
+  it('oldestFirst restores true creation order for same-millisecond rows', () => {
+    expect(oldestFirst([late, early]).map((d) => d.id)).toEqual(['zzz', 'aaa'])
+  })
+})
+
+describe('library tie order', () => {
+  // Equal primary keys keep creation order, oldest first, whatever order the
+  // read returned: the tie order the screen had when the reads were
+  // ascending, held steady as new drills arrive.
+  const oldTen = { id: 'd-old', createdAt: '2026-01-01T00:00:00Z', title: 'Same title', duration: 10 }
+  const newTen = { id: 'd-new', createdAt: '2026-05-01T00:00:00Z', title: 'Same title', duration: 10 }
+
+  it('equal durations list oldest first under Shortest', () => {
+    expect(sortLibraryDrills([newTen, oldTen], 'duration').map((d) => d.id)).toEqual(['d-old', 'd-new'])
+    expect(sortLibraryDrills([oldTen, newTen], 'duration').map((d) => d.id)).toEqual(['d-old', 'd-new'])
+  })
+
+  it('identical titles list oldest first under A to Z', () => {
+    expect(sortLibraryDrills([newTen, oldTen], 'az').map((d) => d.id)).toEqual(['d-old', 'd-new'])
+  })
+})
+
+describe('relatedDrills', () => {
+  // Related drills stay in creation order: the list reads flipped to newest
+  // first, but the three related drills a page shows must not change with
+  // them. Four candidates share the drill's corner, so oldest first and
+  // newest first would pick different threes.
+  function drill(id: string, createdAt: string, over: Partial<{ corner: string | null; skill: string; tags: string[] }> = {}) {
+    return { id, createdAt, corner: 'technical' as string | null, skill: '', tags: [] as string[], ...over }
+  }
+
+  const subject = drill('subject', '2026-01-01T00:00:00Z')
+  const r1 = drill('r1', '2026-01-02T00:00:00Z')
+  const r2 = drill('r2', '2026-02-02T00:00:00Z')
+  const r3 = drill('r3', '2026-03-02T00:00:00Z')
+  const r4 = drill('r4', '2026-04-02T00:00:00Z')
+
+  it('picks the three oldest matches even from a newest first list', () => {
+    // The list arrives newest first, the order useDrills now returns; a
+    // pass-through slice would pick r4, r3, r2.
+    const newestFirstList = [r4, r3, r2, r1, subject]
+    expect(relatedDrills(subject, newestFirstList).map((d) => d.id)).toEqual(['r1', 'r2', 'r3'])
+  })
+
+  it('never relates through a missing corner or skill', () => {
+    const bare = drill('bare', '2026-01-05T00:00:00Z', { corner: null })
+    const other = drill('other', '2026-01-06T00:00:00Z', { corner: null })
+    expect(relatedDrills(bare, [other, bare])).toEqual([])
+  })
+
+  it('relates FA drills through overlapping topic tags', () => {
+    const fa = drill('fa', '2026-01-05T00:00:00Z', { corner: null, tags: ['Defending'] })
+    const match = drill('match', '2026-01-06T00:00:00Z', { corner: null, tags: ['Defending'] })
+    expect(relatedDrills(fa, [match, fa]).map((d) => d.id)).toEqual(['match'])
   })
 })

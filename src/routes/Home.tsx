@@ -17,6 +17,7 @@ import { useSessions } from '../context/SessionsContext'
 import { useAuth } from '../hooks/useAuth'
 import { useDrillMap, useDrills, useMediaMap, useMemberMap, useMyCapabilities, useTeamMap, useTemplates } from '../lib/queries'
 import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
+import { compareNewestFirst } from '../lib/contentOrder'
 import type { Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -337,12 +338,13 @@ function CoachHome() {
 
   const teamName = (s: Session) => (s.teamId ? (teamById[s.teamId]?.name ?? 'Team') : 'Club')
 
-  // The latest drills and templates together, newest first.
+  // The latest drills and templates together, newest first through the same
+  // comparator as the content lists, so Home and the Library agree on ties.
   const whatsNew = [
-    ...drills.map((d) => ({ kind: 'drill' as const, when: d.createdAt, drill: d })),
-    ...templates.map((t) => ({ kind: 'template' as const, when: t.createdAt, template: t })),
+    ...drills.map((d) => ({ kind: 'drill' as const, id: d.id, createdAt: d.createdAt, drill: d })),
+    ...templates.map((t) => ({ kind: 'template' as const, id: t.id, createdAt: t.createdAt, template: t })),
   ]
-    .sort((a, b) => (a.when < b.when ? 1 : -1))
+    .sort(compareNewestFirst)
     .slice(0, 6)
 
   // Each quick action follows the capability that backs it.

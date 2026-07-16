@@ -19,7 +19,6 @@ import {
   type AttachPlanStatus,
   type ParsedManifest,
 } from '../lib/faAttach'
-import { oldestFirst } from '../lib/contentOrder'
 import { MEDIA_MAX_BYTES, useAttachFAVideoFiles, useMedia } from '../lib/queries'
 import type { AttachFAFilesOutcome } from '../lib/queries'
 import { Icon } from './icons'
@@ -85,13 +84,10 @@ export function AttachFAVideosModal({ onClose }: { onClose: () => void }) {
     setManifest(parsed.length > 0 ? mergeManifests(parsed) : null)
   }
 
-  // planAttach matches a session's files to its parts by row position, so it
-  // needs the rows in creation order. The media read returns newest first, so
-  // the creation order is restored here before planning.
   const plan: AttachPlan<File> | null = useMemo(
     () =>
       videoFiles.length > 0
-        ? planAttach(videoFiles, oldestFirst(mediaItems), { maxBytes: MEDIA_MAX_BYTES, manifest: manifest ?? undefined })
+        ? planAttach(videoFiles, mediaItems, { maxBytes: MEDIA_MAX_BYTES, manifest: manifest ?? undefined })
         : null,
     [videoFiles, mediaItems, manifest],
   )

@@ -4,7 +4,8 @@ import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useDrill, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl } from '../lib/queries'
-import { embedSrc, isSampleMedia, PHASES, relatedDrills } from '../lib/data'
+import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
+import { relatedDrills } from '../lib/contentOrder'
 import { isFaVideo } from '../lib/fa'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -173,8 +174,9 @@ export function DrillDetail() {
         It may have been removed.
       </Empty>
     )
-  // Match keys and creation ordering live in relatedDrills (src/lib/data.ts),
-  // kept out of the newest first change to the list reads.
+  // Match keys and creation ordering live in relatedDrills
+  // (src/lib/contentOrder.ts), kept out of the newest first change to the
+  // list reads.
   const related = relatedDrills(drill, allDrills)
   const MediaIcon = media ? MEDIA_META[media.type].icon : null
   // A sample (a seeded row with no file or playable link behind it) offers no
