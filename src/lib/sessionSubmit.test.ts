@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createGuardedSubmit, createPlannerActions } from './sessionSubmit'
+import { createGuardedSubmit, createPlannerActions, plannerBusy, stableCreateId } from './sessionSubmit'
 import type { PlannerAction, PlannerActionCallbacks } from './sessionSubmit'
 import type { Session } from './data'
 
@@ -316,5 +316,54 @@ describe('guarded submit (the shape every other session-writing flow uses)', () 
     d.reject(boom)
     await done
     expect(onFailure).toHaveBeenCalledWith(boom, 1)
+  })
+})
+
+describe('stableCreateId', () => {
+  it('mints once per key and reuses it, so a retry targets the same row', () => {
+    const store = new Map<string, string>()
+    let n = 0
+    const mint = () => `id-${++n}`
+    const first = stableCreateId(store, 'week-1', mint)
+    const retry = stableCreateId(store, 'week-1', mint)
+    expect(first).toBe('id-1')
+    expect(retry).toBe('id-1')
+    expect(n).toBe(1)
+  })
+
+  it('mints a distinct id for each new key', () => {
+    const store = new Map<string, string>()
+    let n = 0
+    const mint = () => `id-${++n}`
+    expect(stableCreateId(store, 'a', mint)).toBe('id-1')
+    expect(stableCreateId(store, 'b', mint)).toBe('id-2')
+    // The first key still returns its original id after another key minted one.
+    expect(stableCreateId(store, 'a', mint)).toBe('id-1')
+  })
+
+  it('a fresh store starts over, mirroring a surface that unmounted after success', () => {
+    const mint = () => 'x'
+    const before = new Map<string, string>()
+    stableCreateId(before, 'week-1', () => 'first')
+    // A new store (a remounted surface) mints a new id for the same key.
+    const after = new Map<string, string>()
+    expect(stableCreateId(after, 'week-1', mint)).toBe('x')
+  })
+})
+
+describe('plannerBusy composition', () => {
+  it('is busy for a pending Save or Start', () => {
+    expect(plannerBusy('save', false)).toBe(true)
+    expect(plannerBusy('start', false)).toBe(true)
+  })
+
+  it('is busy while a Plan from Spond create runs, even with no Save or Start', () => {
+    // The composition is what stops the two create paths on one planner from
+    // running at once: a Spond create freezes Save and Start (and the fields).
+    expect(plannerBusy(null, true)).toBe(true)
+  })
+
+  it('is idle only when nothing is pending', () => {
+    expect(plannerBusy(null, false)).toBe(false)
   })
 })

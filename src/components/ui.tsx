@@ -200,15 +200,17 @@ export function Chip({
   dot,
   icon: Ico,
   children,
+  disabled,
 }: {
   on?: boolean
   onClick?: () => void
   dot?: string
   icon?: IconComponent
   children: ReactNode
+  disabled?: boolean
 }) {
   return (
-    <button className={'chip' + (on ? ' on' : '')} onClick={onClick}>
+    <button className={'chip' + (on ? ' on' : '')} onClick={onClick} disabled={disabled}>
       {dot && <span className="chip-dot" style={{ background: dot }}></span>}
       {Ico && <Ico />}
       {children}
@@ -389,6 +391,25 @@ export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: 
 }
 
 /* ---- modal shell ----------------------------------------------- */
+// The dismissal contract, kept pure so the three routes are provable without a
+// DOM. A modal that is not dismissible (a write is in flight) closes on none of
+// them: Escape is inert, the overlay has no close handler, and the X is
+// disabled. So a pending write can never be hidden behind a dismissed surface
+// and then encourage a duplicate retry. The footer Cancel is the consumer's
+// own button and disables alongside these.
+export function modalDismissControls(
+  dismissible: boolean,
+  onClose: () => void,
+): { onEscapeKey: (key: string) => void; onOverlayClick: (() => void) | undefined; closeDisabled: boolean } {
+  return {
+    onEscapeKey: (key) => {
+      if (dismissible && key === 'Escape') onClose()
+    },
+    onOverlayClick: dismissible ? onClose : undefined,
+    closeDisabled: !dismissible,
+  }
+}
+
 export function Modal({
   title,
   sub,
@@ -396,6 +417,7 @@ export function Modal({
   children,
   footer,
   wide,
+  dismissible = true,
 }: {
   title: ReactNode
   sub?: ReactNode
@@ -403,23 +425,25 @@ export function Modal({
   children: ReactNode
   footer?: ReactNode
   wide?: boolean
+  // Defaults to true (unchanged for every existing caller). A caller passes
+  // false while a write it owns is in flight, freezing every dismissal route.
+  dismissible?: boolean
 }) {
+  const { onEscapeKey, onOverlayClick, closeDisabled } = modalDismissControls(dismissible, onClose)
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
+    const h = (e: KeyboardEvent) => onEscapeKey(e.key)
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [onClose])
+  }, [onEscapeKey])
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={onOverlayClick}>
       <div className="modal" style={wide ? { maxWidth: 860 } : undefined} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>
             <h3>{title}</h3>
             {sub && <p>{sub}</p>}
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" onClick={onClose} disabled={closeDisabled}>
             <Icon.x />
           </button>
         </div>

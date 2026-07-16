@@ -10,7 +10,7 @@
 // Spond; the surface reads the synced mirror and writes only a session through
 // the existing create path and its RLS. Nothing is created automatically and
 // nothing flows toward Spond.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
@@ -18,7 +18,7 @@ import { useSessions } from '../context/SessionsContext'
 import { useMyCapabilities, useMyTeams, useSpondEvents, useTeamMap } from '../lib/queries'
 import { memberTeamIds } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
-import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
+import { SESSION_CREATE_ERROR, stableCreateId } from '../lib/sessionSubmit'
 import { sessionFromSpondEvent, SPOND_COUNT_LABELS, spondEventWhen, spondPlanSuggestions, spondTeamLabel } from '../lib/spond'
 import { Icon } from './icons'
 import { CancelledBadge, MatchBadge } from './SpondAttendance'
@@ -129,7 +129,19 @@ export function PlanFromSpondView({
   )
 }
 
-export function PlanFromSpond({ hideWhenEmpty = false, frozen = false }: { hideWhenEmpty?: boolean; frozen?: boolean }) {
+export function PlanFromSpond({
+  hideWhenEmpty = false,
+  frozen = false,
+  onPendingChange,
+}: {
+  hideWhenEmpty?: boolean
+  frozen?: boolean
+  // Reports whether a Spond-derived create is in flight, so the planner it
+  // sits inside can compose that into its own busy state and freeze Save,
+  // Start, the fields and its navigation while this create runs. The two
+  // surfaces then never create sessions concurrently from one planner.
+  onPendingChange?: (pending: boolean) => void
+}) {
   const nav = useNav()
   const { user, profile } = useAuth()
   const { caps } = useMyCapabilities()
@@ -139,6 +151,10 @@ export function PlanFromSpond({ hideWhenEmpty = false, frozen = false }: { hideW
   const teamById = useTeamMap()
   const [trainingOnly, setTrainingOnly] = useState(false)
   const [showAll, setShowAll] = useState(false)
+  // One id per Spond event for the life of this surface, so a retry after an
+  // ambiguous failure reuses it and the server-safe write recovers into an
+  // update instead of duplicating; a success navigates away and unmounts.
+  const ids = useRef(new Map<string, string>())
   // The create is awaited: the planner opens only once the session lands, and
   // a failure keeps this surface up with a calm note; the row's button is the
   // retry. The pre filled session carries the event id in spondEventId, which
@@ -149,6 +165,10 @@ export function PlanFromSpond({ hideWhenEmpty = false, frozen = false }: { hideW
     onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
   })
   const planPendingId = pending?.spondEventId ?? null
+  // Report the pending transition up so the outer planner can freeze alongside.
+  useEffect(() => {
+    onPendingChange?.(pending !== null)
+  }, [pending, onPendingChange])
 
   // Coaches plan; parents never see this. The planner route already redirects
   // parents, so this is belt and braces and keeps the surface safe to drop on
@@ -179,7 +199,10 @@ export function PlanFromSpond({ hideWhenEmpty = false, frozen = false }: { hideW
   if (hideWhenEmpty && !isLoading && !isError && rows.length === 0) return null
 
   const plan = (event: SpondEvent) => {
-    const session = sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null)
+    const session = {
+      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null),
+      id: stableCreateId(ids.current, event.id),
+    }
     void submit(session)
   }
 

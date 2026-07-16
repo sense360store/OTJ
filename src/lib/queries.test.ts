@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   alreadyImportedFrom,
   applySessionUpsert,
   createAttemptTracker,
   faImportBody,
+  isUniqueViolation,
   MEDIA_MAX_BYTES,
   oversizeMessage,
   partitionDrillsByUsage,
@@ -14,6 +15,7 @@ import {
   toProgramme,
   toProgrammeList,
   toSession,
+  upsertSessionWrite,
   type DrillRow,
   type ProgrammeRow,
   type SessionRow,
@@ -327,5 +329,78 @@ describe('optimistic session upsert cache behaviour', () => {
     const b = tracker.begin('b')
     expect(tracker.isLatest('a', a)).toBe(true)
     expect(tracker.isLatest('b', b)).toBe(true)
+  })
+})
+
+describe('isUniqueViolation', () => {
+  it('recognises the Postgres unique_violation code and nothing else', () => {
+    expect(isUniqueViolation({ code: '23505', message: 'duplicate key value violates unique constraint' })).toBe(true)
+    expect(isUniqueViolation({ code: '23503' })).toBe(false)
+    expect(isUniqueViolation({ message: 'network error' })).toBe(false)
+    expect(isUniqueViolation(new Error('boom'))).toBe(false)
+    expect(isUniqueViolation(null)).toBe(false)
+    expect(isUniqueViolation('23505')).toBe(false)
+  })
+})
+
+describe('upsertSessionWrite server-safe insert versus update', () => {
+  const row = () => toSession(sessionRow())
+
+  it('updates directly when the row is known to exist, never inserting', async () => {
+    const insert = vi.fn()
+    const update = vi.fn(async () => row())
+    const out = await upsertSessionWrite({ exists: true, insert, update, isUniqueViolation })
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(insert).not.toHaveBeenCalled()
+    expect(out.id).toBe('s1')
+  })
+
+  it('inserts a genuinely new row and returns it, without touching update', async () => {
+    const insert = vi.fn(async () => row())
+    const update = vi.fn()
+    const out = await upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })
+    expect(insert).toHaveBeenCalledTimes(1)
+    expect(update).not.toHaveBeenCalled()
+    expect(out.id).toBe('s1')
+  })
+
+  it('recovers a lost-response insert into an update on retry, resolving to the existing row', async () => {
+    // The scenario the requirement names: the first insert committed
+    // server-side but the client saw a failure, so the cache holds no row and
+    // the retry still chooses insert. That insert now collides on the primary
+    // key (23505); recovery updates the same id and resolves rather than
+    // duplicating or sticking on the duplicate key.
+    const insert = vi.fn(async () => {
+      throw { code: '23505', message: 'duplicate key value violates unique constraint "sessions_pkey"' }
+    })
+    const update = vi.fn(async () => row())
+    const out = await upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })
+    expect(insert).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(out.id).toBe('s1')
+  })
+
+  it('does not recover a non-unique-violation insert error, so a real failure surfaces', async () => {
+    const boom = { code: '08006', message: 'connection failure' }
+    const insert = vi.fn(async () => {
+      throw boom
+    })
+    const update = vi.fn()
+    await expect(upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })).rejects.toBe(boom)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the recovery update is not authorised', async () => {
+    // A duplicate key whose recovery update touches no row (RLS blocked, the
+    // row is another coach's) surfaces the update error rather than resolving.
+    const insert = vi.fn(async () => {
+      throw { code: '23505' }
+    })
+    const rlsError = new Error('no rows updated')
+    const update = vi.fn(async () => {
+      throw rlsError
+    })
+    await expect(upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })).rejects.toBe(rlsError)
+    expect(update).toHaveBeenCalledTimes(1)
   })
 })

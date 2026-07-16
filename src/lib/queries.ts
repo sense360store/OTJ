@@ -1666,6 +1666,42 @@ export function createAttemptTracker() {
   }
 }
 
+// A Postgres unique_violation, surfaced by PostgREST as code 23505. On the
+// sessions insert it means the primary key already exists: a prior attempt
+// committed even though its response was lost, or the row already existed.
+export function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505'
+}
+
+// The server-safe insert-versus-update decision, kept pure so its idempotency
+// is provable without a database. The cache is only a hint for the fast path;
+// the server is the authority on whether a row exists:
+//
+// - A known-existing row updates directly (updates are naturally idempotent).
+// - Otherwise it inserts. If the insert collides on the primary key, a prior
+//   attempt's insert committed but its response was lost (or the row already
+//   existed under a stale or absent cache), so it recovers into an update of
+//   the same id. A retry then resolves to the existing row rather than
+//   duplicating it or sticking on the duplicate key.
+//
+// The update never sends coach_id or club_id (the callers below build it that
+// way), so recovery cannot change ownership or club, and an unauthorised
+// recovery updates no rows and surfaces its error, failing closed.
+export async function upsertSessionWrite(opts: {
+  exists: boolean
+  insert: () => Promise<Session>
+  update: () => Promise<Session>
+  isUniqueViolation: (err: unknown) => boolean
+}): Promise<Session> {
+  if (opts.exists) return opts.update()
+  try {
+    return await opts.insert()
+  } catch (err) {
+    if (opts.isUniqueViolation(err)) return opts.update()
+    throw err
+  }
+}
+
 interface UpsertCtx {
   prevEntry?: Session
   prevOne?: Session
@@ -1685,7 +1721,6 @@ export function useUpsertSession() {
 
   return useMutation<Session, Error, Session, UpsertCtx>({
     mutationFn: async (input) => {
-      const isUpdate = existed.current.get(input.id) ?? false
       const activities = input.activities.map(toActivityRow)
 
       const faFields = {
@@ -1704,21 +1739,26 @@ export function useUpsertSession() {
         board_id: input.boardId,
       }
 
-      if (isUpdate) {
+      // The editable columns. Neither the update path nor the duplicate-key
+      // recovery below sends coach_id or club_id, so a save never changes
+      // ownership or club; only the insert sets them, from the signed-in user.
+      const editable = {
+        name: input.name,
+        focus: input.focus,
+        date: input.date || null,
+        start_time: input.time,
+        venue: input.venue,
+        age_group: input.ageGroup,
+        status: input.status,
+        team_id: input.teamId,
+        activities,
+        ...faFields,
+      }
+
+      const update = async (): Promise<Session> => {
         const { data, error } = await supabase
           .from('sessions')
-          .update({
-            name: input.name,
-            focus: input.focus,
-            date: input.date || null,
-            start_time: input.time,
-            venue: input.venue,
-            age_group: input.ageGroup,
-            status: input.status,
-            team_id: input.teamId,
-            activities,
-            ...faFields,
-          })
+          .update(editable)
           .eq('id', input.id)
           .select(SESSION_COLS)
           .single()
@@ -1726,30 +1766,23 @@ export function useUpsertSession() {
         return toSession(data as unknown as SessionRow)
       }
 
-      if (!user || !profile?.club_id) {
-        throw new Error('You must be signed in to save a session.')
+      const insert = async (): Promise<Session> => {
+        if (!user || !profile?.club_id) {
+          throw new Error('You must be signed in to save a session.')
+        }
+        const { data, error } = await supabase
+          .from('sessions')
+          .insert({ id: input.id, coach_id: user.id, club_id: profile.club_id, ...editable })
+          .select(SESSION_COLS)
+          .single()
+        if (error) throw error
+        return toSession(data as unknown as SessionRow)
       }
-      const { data, error } = await supabase
-        .from('sessions')
-        .insert({
-          id: input.id,
-          coach_id: user.id,
-          club_id: profile.club_id,
-          name: input.name,
-          focus: input.focus,
-          date: input.date || null,
-          start_time: input.time,
-          venue: input.venue,
-          age_group: input.ageGroup,
-          status: input.status,
-          team_id: input.teamId,
-          activities,
-          ...faFields,
-        })
-        .select(SESSION_COLS)
-        .single()
-      if (error) throw error
-      return toSession(data as unknown as SessionRow)
+
+      // exists is a cache-derived hint for the fast path only; the server is
+      // the authority through the duplicate-key recovery inside
+      // upsertSessionWrite.
+      return upsertSessionWrite({ exists: existed.current.get(input.id) ?? false, insert, update, isUniqueViolation })
     },
     // Optimistic and synchronous: the list and the per-id cache are both
     // seeded, so a screen arriving by session id straight after a successful
@@ -1759,9 +1792,15 @@ export function useUpsertSession() {
     onMutate: (input) => {
       const list = qc.getQueryData<Session[]>(['sessions'])
       const prevEntry = list?.find((s) => s.id === input.id)
-      existed.current.set(input.id, prevEntry !== undefined)
-      const attempt = attempts.current.begin(input.id)
       const prevOne = qc.getQueryData<Session>(['sessions', input.id])
+      // Prefer the update fast path when either cache already holds the row.
+      // The per-id cache matters because the planner edits a session it loaded
+      // through useSession (which keys ['sessions', id]) even when the sessions
+      // list has not loaded, so an edit no longer misfires as an insert. When
+      // both caches are absent the write still self-corrects: an insert that
+      // collides recovers into an update.
+      existed.current.set(input.id, prevEntry !== undefined || prevOne !== undefined)
+      const attempt = attempts.current.begin(input.id)
       qc.setQueryData<Session[]>(['sessions'], (old) => applySessionUpsert(old, input))
       qc.setQueryData<Session>(['sessions', input.id], input)
       return { prevEntry, prevOne, attempt }

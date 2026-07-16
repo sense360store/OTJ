@@ -13,7 +13,7 @@ import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useTeams, useUpsertSession } from '../lib/queries'
-import { logSessionWriteError } from '../lib/sessionSubmit'
+import { logSessionWriteError, stableCreateId } from '../lib/sessionSubmit'
 import { Icon } from './icons'
 import { Modal } from './ui'
 import type { Activity, Programme, Session, Template } from '../lib/data'
@@ -90,7 +90,7 @@ export function ApplyProgrammeModal({
   // Each week's session id is minted once per modal and reused on a retry,
   // so Create pressed again after a partial failure updates the weeks that
   // already landed instead of inserting duplicates under fresh ids.
-  const weekIds = useRef(new Map<number, string>())
+  const weekIds = useRef(new Map<string, string>())
 
   const firstDate = useMemo(() => alignToWeekday(startDate, weekday), [startDate, weekday])
   const dateFor = (week: number) => overrides[week] ?? isoAddDays(firstDate, (week - 1) * 7)
@@ -131,11 +131,7 @@ export function ApplyProgrammeModal({
     try {
       for (const week of plannable) {
         const t = weekTemplates[week]
-        let id = weekIds.current.get(week)
-        if (!id) {
-          id = crypto.randomUUID()
-          weekIds.current.set(week, id)
-        }
+        const id = stableCreateId(weekIds.current, String(week))
         const s: Session = {
           id,
           name: `${programme.name} · Week ${week}`,
@@ -216,6 +212,7 @@ export function ApplyProgrammeModal({
       title="Apply to team"
       sub={programme.name}
       onClose={onClose}
+      dismissible={!saving}
       footer={
         <>
           <button className="btn btn-ghost" onClick={onClose} disabled={saving}>
@@ -231,7 +228,7 @@ export function ApplyProgrammeModal({
       <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
         <div className="field" style={{ flex: 1, minWidth: 140 }}>
           <label>Team</label>
-          <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+          <select value={teamId} disabled={saving} onChange={(e) => setTeamId(e.target.value)}>
             <option value="">Pick a team…</option>
             {teams.map((t) => (
               <option key={t.id} value={t.id}>
@@ -242,7 +239,7 @@ export function ApplyProgrammeModal({
         </div>
         <div className="field" style={{ flex: 1, minWidth: 130 }}>
           <label>Age group</label>
-          <select value={ageGroup} onChange={(e) => setAgeGroup(e.target.value)}>
+          <select value={ageGroup} disabled={saving} onChange={(e) => setAgeGroup(e.target.value)}>
             {AGE_GROUPS.map((a) => (
               <option key={a}>{a}</option>
             ))}
@@ -252,11 +249,11 @@ export function ApplyProgrammeModal({
       <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
         <div className="field" style={{ flex: 1, minWidth: 140 }}>
           <label>Start date</label>
-          <input type="date" value={startDate} onChange={(e) => pickStart(e.target.value)} />
+          <input type="date" value={startDate} disabled={saving} onChange={(e) => pickStart(e.target.value)} />
         </div>
         <div className="field" style={{ flex: 1, minWidth: 130 }}>
           <label>Weekday</label>
-          <select value={weekday} onChange={(e) => pickWeekday(parseInt(e.target.value, 10))}>
+          <select value={weekday} disabled={saving} onChange={(e) => pickWeekday(parseInt(e.target.value, 10))}>
             {WEEKDAYS.map((d) => (
               <option key={d.value} value={d.value}>
                 {d.label}
@@ -266,12 +263,12 @@ export function ApplyProgrammeModal({
         </div>
         <div className="field" style={{ width: 110 }}>
           <label>Time</label>
-          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+          <input type="time" value={time} disabled={saving} onChange={(e) => setTime(e.target.value)} />
         </div>
       </div>
       <div className="field">
         <label>Venue</label>
-        <input value={venue} onChange={(e) => setVenue(e.target.value)} />
+        <input value={venue} disabled={saving} onChange={(e) => setVenue(e.target.value)} />
       </div>
 
       <div className="field">
@@ -307,6 +304,7 @@ export function ApplyProgrammeModal({
                     <input
                       type="date"
                       value={dateFor(week)}
+                      disabled={saving}
                       onChange={(e) => e.target.value && setOverrides((o) => ({ ...o, [week]: e.target.value }))}
                       style={{ width: 150, height: 44 }}
                     />

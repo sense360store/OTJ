@@ -9,16 +9,23 @@
 // The screen owning the hook holds one guard for all its cards, so only one
 // create can run at a time across them; pendingTemplateId names the card in
 // flight so the others can disable alongside it.
+import { useRef } from 'react'
 import { useAuth } from './useAuth'
 import { useNav } from './useNav'
 import { useGuardedSubmit } from './useGuardedSubmit'
 import { useSessions } from '../context/SessionsContext'
+import { stableCreateId } from '../lib/sessionSubmit'
 import type { Activity, Session, Template } from '../lib/data'
 
 export function useStartFromTemplate() {
   const nav = useNav()
   const { user, profile } = useAuth()
   const { upsertSession } = useSessions()
+  // One id per template for the life of this screen, so a retry after an
+  // ambiguous failure reuses it and cannot create a duplicate; a success
+  // navigates away and unmounts, so using the same template again later mints
+  // a fresh id.
+  const ids = useRef(new Map<string, string>())
   const { submit, pending, failed } = useGuardedSubmit<{ templateId: string; session: Session }, Session>({
     operation: 'start from template',
     perform: ({ session }) => upsertSession(session),
@@ -26,7 +33,7 @@ export function useStartFromTemplate() {
   })
   const start = (t: Template) => {
     const session: Session = {
-      id: crypto.randomUUID(),
+      id: stableCreateId(ids.current, t.id),
       name: t.name,
       date: '2026-06-16',
       time: '17:30',

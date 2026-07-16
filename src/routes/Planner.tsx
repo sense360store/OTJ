@@ -30,7 +30,7 @@ import {
   PHASE_COLOR,
   SourceLink,
 } from '../components/ui'
-import { createPlannerActions, logSessionWriteError, SESSION_SAVE_ERROR, SESSION_START_ERROR } from '../lib/sessionSubmit'
+import { createPlannerActions, logSessionWriteError, plannerBusy, SESSION_SAVE_ERROR, SESSION_START_ERROR } from '../lib/sessionSubmit'
 import type { PlannerAction, PlannerActions } from '../lib/sessionSubmit'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { BoardPickerModal } from '../components/BoardPicker'
@@ -815,6 +815,13 @@ function PlannerEditor({
   // action is pending or failed drives the button labels and the error note.
   const [pendingAction, setPendingAction] = useState<PlannerAction | null>(null)
   const [failedAction, setFailedAction] = useState<PlannerAction | null>(null)
+  // A Plan from Spond create (shown only for a new session) runs its own
+  // guarded submit and reports its pending state here, so it composes into the
+  // planner's busy state below. That freezes Save, Start, the fields and the
+  // navigation while a Spond-derived session is being created, and blocks a
+  // second create from starting, so the two flows never write concurrently
+  // from one planner screen.
+  const [spondPending, setSpondPending] = useState(false)
   // Constructed once so the shared in-flight guard survives re-renders. The
   // captured upsert delegates to the mutation's stable mutateAsync and the
   // captured nav only pushes absolute routes, so first-render captures stay
@@ -842,22 +849,33 @@ function PlannerEditor({
     return () => actions.setActive(false)
   }, [actions])
 
+  // While an editable Save or Start is in flight, or a Plan from Spond create
+  // is running on this screen, freeze every control that could change or
+  // abandon the draft, so the visible draft cannot drift from the one being
+  // written: an older attempt resolving must not navigate away over newer,
+  // unwritten edits. Save and Start stay disabled (as before); this extends the
+  // freeze to the fields, the activity controls, template loading, board
+  // changes, Spond linking, delete and the back and Session day navigation.
+  // Passive viewing (expanding a drill, watching a preview) and the read-only
+  // Watch live path are untouched. A read-only viewer starts no write and never
+  // sees Plan from Spond, so busy stays false for them; the failure path clears
+  // pendingAction, re-enabling everything for a retry.
+  const busy = plannerBusy(pendingAction, spondPending)
+
   // Both submit the draft as currently visible, so a retry after more edits
   // carries the latest state, never a payload captured by the failed attempt.
-  const save = () => void actions.save(session)
-  const start = () => void actions.start(session, readOnly)
-
-  // While an editable Save or Start is in flight, freeze every control that
-  // could change or abandon the draft, so the visible draft cannot drift from
-  // the one being written: an older attempt resolving must not navigate away
-  // over newer, unwritten edits. Save and Start stay disabled (as before);
-  // this extends the freeze to the fields, the activity controls, template
-  // loading, board changes, Spond linking, delete and the back and Session day
-  // navigation. Passive viewing (expanding a drill, watching a preview) and the
-  // read-only Watch live path are untouched. A read-only viewer starts no
-  // write, so pendingAction stays null and busy stays false for them; the
-  // failure path clears pendingAction, re-enabling everything for a retry.
-  const busy = pendingAction !== null
+  // The busy guard also blocks a Save or Start from starting while a Spond
+  // create is in flight (belt and braces beyond the disabled buttons), so the
+  // two create paths on this screen cannot run at once. A read-only viewer is
+  // never busy, so Watch live still navigates immediately.
+  const save = () => {
+    if (busy) return
+    void actions.save(session)
+  }
+  const start = () => {
+    if (busy && !readOnly) return
+    void actions.start(session, readOnly)
+  }
 
   return (
     <div>
@@ -874,7 +892,7 @@ function PlannerEditor({
           {/* A new session can start from a synced Spond event: picking one
               creates its own pre filled session and navigates there, so the
               surface shows only while building a fresh plan. */}
-          {!existing && <PlanFromSpond frozen={busy} />}
+          {!existing && <PlanFromSpond frozen={busy} onPendingChange={setSpondPending} />}
           {session.intentions.length > 0 && (
             <div className="card" style={{ padding: '16px 18px', marginBottom: 14 }}>
               <div className="eyebrow" style={{ marginBottom: 8 }}>

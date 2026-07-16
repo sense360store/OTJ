@@ -26,6 +26,22 @@ export function logSessionWriteError(operation: string, err: unknown): void {
   console.error(`session write failed: ${operation}`, err)
 }
 
+// A create flow that mints a fresh id on every attempt turns a retry after an
+// ambiguous network outcome into a duplicate session. stableCreateId mints an
+// id once per logical create (keyed by, for example, the template, week or
+// Spond event) and reuses it on a retry, so the retry targets the same row,
+// which the server-safe write (upsertSessionWrite) recovers into an update
+// rather than a second insert. The store is held in a ref for the life of the
+// surface; a success navigates away and discards it, so a later, separate
+// create of the same key starts fresh.
+export function stableCreateId(store: Map<string, string>, key: string, mint: () => string = () => crypto.randomUUID()): string {
+  const existing = store.get(key)
+  if (existing) return existing
+  const id = mint()
+  store.set(key, id)
+  return id
+}
+
 export interface GuardedSubmitCallbacks<T, R> {
   // The awaited write.
   perform: (input: T) => Promise<R>
@@ -78,6 +94,14 @@ export function createGuardedSubmit<T, R>(cb: GuardedSubmitCallbacks<T, R>): Gua
 }
 
 export type PlannerAction = 'save' | 'start'
+
+// The planner's busy state composes its own Save or Start pending action with a
+// Plan from Spond create running on the same screen (reported up from that
+// surface). Either one freezes the whole editable planner, and because both
+// feed one flag, neither create path can start while the other runs.
+export function plannerBusy(pendingAction: PlannerAction | null, spondPending: boolean): boolean {
+  return pendingAction !== null || spondPending
+}
 
 export interface PlannerActionCallbacks {
   // The awaited session write; the draft passed in is the one submitted.
