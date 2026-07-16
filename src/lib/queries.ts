@@ -47,6 +47,7 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, sortRoles, youtubeId } from './data'
+import { newestFirst } from './contentOrder'
 import type { Board, Token } from './tacticsBoard'
 import { deserializeTokens, serializeTokens } from './tacticsBoard'
 import { sourceLabelForUrl } from './fa'
@@ -131,7 +132,7 @@ interface TemplateRow {
   source_label: string | null
 }
 
-interface ProgrammeRow {
+export interface ProgrammeRow {
   id: string
   club_id: string
   name: string
@@ -316,6 +317,7 @@ function toMedia(r: MediaRow): MediaItem {
     createdBy: r.created_by ?? undefined,
     sourceUrl: r.source_url ?? undefined,
     sourceLabel: r.source_label ?? undefined,
+    createdAt: r.created_at,
   }
 }
 
@@ -338,7 +340,7 @@ function toTemplate(r: TemplateRow): Template {
   }
 }
 
-function toProgramme(r: ProgrammeRow): Programme {
+export function toProgramme(r: ProgrammeRow): Programme {
   return {
     id: r.id,
     name: r.name,
@@ -350,7 +352,15 @@ function toProgramme(r: ProgrammeRow): Programme {
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
     createdBy: r.created_by ?? undefined,
+    createdAt: r.created_at,
   }
+}
+
+// The whole transformation useProgrammes applies to the rows a read returns,
+// exported so the ordering regression test exercises exactly what the hook
+// does.
+export function toProgrammeList(rows: ProgrammeRow[]): Programme[] {
+  return newestFirst(rows.map(toProgramme))
 }
 
 export function toSession(r: SessionRow): Session {
@@ -410,6 +420,11 @@ function toClub(r: ClubRow): Club {
 
 // ---- Reads -------------------------------------------------------------
 
+// The content list reads return newest first. The order is asked of the
+// database and then re-applied client side (src/lib/contentOrder.ts), so no
+// consumer depends on the order the wire happened to return. A caller that
+// needs creation order (the FA attach fallback, a programme week's earliest
+// template) re-sorts locally with oldestFirst.
 export function useDrills() {
   return useQuery({
     queryKey: ['drills'],
@@ -417,10 +432,10 @@ export function useDrills() {
       const { data, error } = await supabase
         .from('drills')
         .select(DRILL_COLS)
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false })
         .order('id', { ascending: true })
       if (error) throw error
-      return (data as unknown as DrillRow[]).map(toDrill)
+      return newestFirst((data as unknown as DrillRow[]).map(toDrill))
     },
   })
 }
@@ -444,10 +459,10 @@ export function useMedia() {
       const { data, error } = await supabase
         .from('media')
         .select(MEDIA_COLS)
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false })
         .order('id', { ascending: true })
       if (error) throw error
-      return (data as unknown as MediaRow[]).map(toMedia)
+      return newestFirst((data as unknown as MediaRow[]).map(toMedia))
     },
   })
 }
@@ -459,10 +474,10 @@ export function useTemplates() {
       const { data, error } = await supabase
         .from('templates')
         .select(TEMPLATE_COLS)
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false })
         .order('id', { ascending: true })
       if (error) throw error
-      return (data as unknown as TemplateRow[]).map(toTemplate)
+      return newestFirst((data as unknown as TemplateRow[]).map(toTemplate))
     },
   })
 }
@@ -476,10 +491,10 @@ export function useProgrammes() {
       const { data, error } = await supabase
         .from('programmes')
         .select(PROGRAMME_COLS)
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false })
         .order('id', { ascending: true })
       if (error) throw error
-      return (data as unknown as ProgrammeRow[]).map(toProgramme)
+      return toProgrammeList(data as unknown as ProgrammeRow[])
     },
   })
 }

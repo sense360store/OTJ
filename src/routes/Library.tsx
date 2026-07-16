@@ -6,6 +6,8 @@ import { useDrills, useMyCapabilities } from '../lib/queries'
 import { AGES, CORNERS, FA_IMPORT_CAPS, hasAllCaps, LEVELS } from '../lib/data'
 import type { CornerKey, Drill } from '../lib/data'
 import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
+import { sortLibraryDrills } from '../lib/contentOrder'
+import type { LibrarySort } from '../lib/contentOrder'
 import { Icon } from '../components/icons'
 import { Chip, DrillCard, Empty, ErrorNote, Loading } from '../components/ui'
 import { DrillFormModal } from '../components/DrillFormModal'
@@ -39,7 +41,7 @@ export function Library() {
   const [format, setFormat] = useState('')
   const [age, setAge] = useState('')
   const [level, setLevel] = useState('')
-  const [sort, setSort] = useState('recent')
+  const [sort, setSort] = useState<LibrarySort>('recent')
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [editing, setEditing] = useState<Drill | null>(null)
@@ -90,9 +92,9 @@ export function Library() {
     refined.forEach((d) => {
       if (d.corner) counts[d.corner]++
     })
-    let r = corner ? refined.filter((d) => d.corner === corner) : refined
-    if (sort === 'duration') r = [...r].sort((a, b) => a.duration - b.duration)
-    if (sort === 'az') r = [...r].sort((a, b) => a.title.localeCompare(b.title))
+    // Every sort is explicit, Recent included: newest first by created_at
+    // with an id tie-break, never the order the read happened to return.
+    const r = sortLibraryDrills(corner ? refined.filter((d) => d.corner === corner) : refined, sort)
     return { results: r, cornerCounts: counts }
   }, [drills, q, corner, skill, theme, format, age, level, sort])
   const cornerTotal = Object.values(cornerCounts).reduce((a, b) => a + b, 0)
@@ -139,7 +141,7 @@ export function Library() {
             <Icon.search />
             <input placeholder="Search drills, skills or tags…" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          <select className="select" value={sort} onChange={(e) => setSort(e.target.value)}>
+          <select className="select" value={sort} onChange={(e) => setSort(e.target.value as LibrarySort)}>
             <option value="recent">Sort: Recent</option>
             <option value="az">Sort: A–Z</option>
             <option value="duration">Sort: Shortest</option>

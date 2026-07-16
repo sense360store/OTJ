@@ -148,6 +148,9 @@ export interface MediaItem {
   // Shown as a small line wherever the image renders large.
   sourceUrl?: string
   sourceLabel?: string
+  // Drives the newest first list order. Optional because older fixtures and
+  // derived items may not carry it; the sort treats a missing value as oldest.
+  createdAt?: string
 }
 
 export interface Drill {
@@ -232,6 +235,8 @@ export interface Programme {
   sourceUrl: string
   sourceLabel: string
   createdBy?: string
+  // Drives the newest first list order.
+  createdAt: string
 }
 
 export interface Session {

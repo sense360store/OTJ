@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useDrill, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl } from '../lib/queries'
 import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
+import { relatedDrills } from '../lib/contentOrder'
 import { isFaVideo } from '../lib/fa'
 import type { Drill, Phase } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -173,18 +174,10 @@ export function DrillDetail() {
         It may have been removed.
       </Empty>
     )
-  // Relatedness needs a real shared value: a missing corner or skill is not a
-  // match key (two unclassified drills have nothing in common), and FA drills
-  // relate through overlapping topic tags instead.
-  const related = allDrills
-    .filter(
-      (d) =>
-        d.id !== drill.id &&
-        ((!!drill.corner && d.corner === drill.corner) ||
-          (!!drill.skill && d.skill === drill.skill) ||
-          d.tags.some((t) => drill.tags.includes(t))),
-    )
-    .slice(0, 3)
+  // Match keys and creation ordering live in relatedDrills
+  // (src/lib/contentOrder.ts), kept out of the newest first change to the
+  // list reads.
+  const related = relatedDrills(drill, allDrills)
   const MediaIcon = media ? MEDIA_META[media.type].icon : null
   // A sample (a seeded row with no file or playable link behind it) offers no
   // Play or Open here; it is labelled for what it is instead.

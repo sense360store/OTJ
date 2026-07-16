@@ -221,6 +221,39 @@ describe('planAttach, session and part fallback', () => {
     expect(p.entries[1]).toMatchObject({ status: 'store', mediaId: 'm3' })
   })
 
+  it('restores creation order itself when the media list arrives newest first', () => {
+    // The media read returns newest first, and part order is creation order.
+    // planAttach owns that invariant: given the same rows reversed and dated,
+    // part 1 still lands on the earliest row. The ids deliberately disagree
+    // with the timestamps so an id fallback would fail this.
+    const dated = [
+      target({
+        id: 'm9',
+        name: 'Goalkeeping session: the basics · Warm up',
+        embedUrl: 'https://player.vimeo.com/video/900000001',
+        createdAt: '2026-05-01T10:00:00.000123+00:00',
+      }),
+      target({
+        id: 'm5',
+        name: 'Goalkeeping session: the basics · Shot-stopping 1',
+        embedUrl: 'https://player.vimeo.com/video/900000002',
+        createdAt: '2026-05-01T10:00:00.000456+00:00',
+      }),
+      target({
+        id: 'm1',
+        name: 'Goalkeeping session: the basics · Shot-stopping 2',
+        embedUrl: 'https://player.vimeo.com/video/900000003',
+        createdAt: '2026-05-01T10:00:00.000789+00:00',
+      }),
+    ]
+    const p = plan(
+      [file('Goalkeeping-session-the-basics-part-1.mp4'), file('Goalkeeping-session-the-basics-part-3.mp4')],
+      [...dated].reverse(),
+    )
+    expect(p.entries[0]).toMatchObject({ status: 'store', mediaId: 'm9' })
+    expect(p.entries[1]).toMatchObject({ status: 'store', mediaId: 'm1' })
+  })
+
   it('matches a unique heading even without the session slug', () => {
     const p = plan([file('warm-up.mp4')])
     expect(p.entries[0]).toMatchObject({ status: 'store', mediaId: 'm1' })

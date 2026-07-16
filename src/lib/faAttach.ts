@@ -11,6 +11,7 @@
 // content. The upload and row update live in useAttachFAVideoFiles in
 // queries.ts; everything in this module is pure and synchronous.
 import type { MediaItem } from './data'
+import { oldestFirst } from './contentOrder'
 import { isFaVideo } from './fa'
 
 // ---- Vimeo ids -----------------------------------------------------------
@@ -178,7 +179,7 @@ export interface AttachPlan<F extends AttachFile = AttachFile> {
 }
 
 // The columns the matcher needs from a media row.
-export type AttachTarget = Pick<MediaItem, 'id' | 'name' | 'type' | 'storagePath' | 'embedUrl' | 'sourceUrl'>
+export type AttachTarget = Pick<MediaItem, 'id' | 'name' | 'type' | 'storagePath' | 'embedUrl' | 'sourceUrl' | 'createdAt'>
 
 // MP4 only (m4v is the same container). H.264 video with AAC audio plays in
 // every browser; another container or codec is a transcoding decision taken
@@ -259,8 +260,11 @@ export function planAttach<F extends AttachFile>(
   options: { maxBytes: number; manifest?: ParsedManifest },
 ): AttachPlan<F> {
   // Only FA video rows are targets; uploaded clips, YouTube links and non FA
-  // embeds never take a file from this pipeline.
-  const targets = media.filter((m) => isFaVideo(m))
+  // embeds never take a file from this pipeline. Creation order is this
+  // function's own invariant, applied here rather than trusted from the
+  // caller: the positional fallback below reads position as part order, and
+  // the list reads return newest first.
+  const targets = oldestFirst(media.filter((m) => isFaVideo(m)))
 
   const byVimeoId = new Map<string, AttachTarget>()
   for (const t of targets) {
@@ -269,8 +273,8 @@ export function planAttach<F extends AttachFile>(
   }
 
   // Session groups for the fallback, keyed by source page. Rows keep the
-  // given order: the import wrote the parts in page order and the media read
-  // returns creation order, so position is part order.
+  // targets' creation order: the import wrote the parts in page order, so
+  // position is part order.
   const sessions = new Map<string, SessionGroup>()
   for (const t of targets) {
     if (!t.sourceUrl) continue
