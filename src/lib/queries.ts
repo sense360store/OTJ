@@ -1619,9 +1619,103 @@ export function useCopyTemplateToWeek() {
 // club_id are set from the signed-in user, which the RLS insert check requires.
 // On update, neither is sent, so ownership and club never change.
 
+// The optimistic cache pieces, kept pure so the rollback rules are testable.
+// applySessionUpsert writes one session into the list; revertSessionUpsert
+// undoes exactly that one entry (removing an inserted row, restoring an
+// updated one) and leaves every other session alone, so rolling back one
+// failed write cannot wipe another session's newer optimistic entry.
+
+// Whether either cache already holds the row: the hint useUpsertSession uses to
+// prefer the update fast path. The per-id cache (oneEntry) matters because the
+// planner loads an existing session through useSession, keyed by id, even when
+// the sessions list has not loaded, so an edit before the list arrives no
+// longer misfires as an insert. It is only a hint; the server stays the
+// authority through upsertSessionWrite's duplicate-key recovery.
+export function sessionExistsInCache(listEntry: Session | undefined, oneEntry: Session | undefined): boolean {
+  return listEntry !== undefined || oneEntry !== undefined
+}
+
+export function applySessionUpsert(list: Session[] | undefined, s: Session): Session[] {
+  const l = list ?? []
+  const i = l.findIndex((x) => x.id === s.id)
+  if (i === -1) return [...l, s]
+  const copy = [...l]
+  copy[i] = s
+  return copy
+}
+
+export function revertSessionUpsert(
+  list: Session[] | undefined,
+  prevEntry: Session | undefined,
+  id: string,
+): Session[] | undefined {
+  if (!list) return list
+  if (!prevEntry) return list.filter((s) => s.id !== id)
+  return list.map((s) => (s.id === id ? prevEntry : s))
+}
+
+// Tracks the newest write attempt per session id, so an older attempt that
+// fails after a newer one has already run cannot roll the cache back over the
+// newer state. The UI serialises submissions per flow, but the cache layer
+// does not rely on that.
+export function createAttemptTracker() {
+  let seq = 0
+  const latest = new Map<string, number>()
+  return {
+    begin(id: string): number {
+      const attempt = ++seq
+      latest.set(id, attempt)
+      return attempt
+    },
+    isLatest(id: string, attempt: number): boolean {
+      return latest.get(id) === attempt
+    },
+    end(id: string, attempt: number): void {
+      if (latest.get(id) === attempt) latest.delete(id)
+    },
+  }
+}
+
+// A Postgres unique_violation, surfaced by PostgREST as code 23505. On the
+// sessions insert it means the primary key already exists: a prior attempt
+// committed even though its response was lost, or the row already existed.
+export function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505'
+}
+
+// The server-safe insert-versus-update decision, kept pure so its idempotency
+// is provable without a database. The cache is only a hint for the fast path;
+// the server is the authority on whether a row exists:
+//
+// - A known-existing row updates directly (updates are naturally idempotent).
+// - Otherwise it inserts. If the insert collides on the primary key, a prior
+//   attempt's insert committed but its response was lost (or the row already
+//   existed under a stale or absent cache), so it recovers into an update of
+//   the same id. A retry then resolves to the existing row rather than
+//   duplicating it or sticking on the duplicate key.
+//
+// The update never sends coach_id or club_id (the callers below build it that
+// way), so recovery cannot change ownership or club, and an unauthorised
+// recovery updates no rows and surfaces its error, failing closed.
+export async function upsertSessionWrite(opts: {
+  exists: boolean
+  insert: () => Promise<Session>
+  update: () => Promise<Session>
+  isUniqueViolation: (err: unknown) => boolean
+}): Promise<Session> {
+  if (opts.exists) return opts.update()
+  try {
+    return await opts.insert()
+  } catch (err) {
+    if (opts.isUniqueViolation(err)) return opts.update()
+    throw err
+  }
+}
+
 interface UpsertCtx {
-  prevList?: Session[]
+  prevEntry?: Session
   prevOne?: Session
+  attempt: number
 }
 
 export function useUpsertSession() {
@@ -1631,10 +1725,12 @@ export function useUpsertSession() {
   // cache write, so the mutation can choose insert versus update without
   // re-reading the cache that onMutate has just changed.
   const existed = useRef(new Map<string, boolean>())
+  // attempts guards the rollback: only the newest attempt per id may revert
+  // the optimistic entry, so an older failure cannot undo a newer success.
+  const attempts = useRef(createAttemptTracker())
 
   return useMutation<Session, Error, Session, UpsertCtx>({
     mutationFn: async (input) => {
-      const isUpdate = existed.current.get(input.id) ?? false
       const activities = input.activities.map(toActivityRow)
 
       const faFields = {
@@ -1653,21 +1749,26 @@ export function useUpsertSession() {
         board_id: input.boardId,
       }
 
-      if (isUpdate) {
+      // The editable columns. Neither the update path nor the duplicate-key
+      // recovery below sends coach_id or club_id, so a save never changes
+      // ownership or club; only the insert sets them, from the signed-in user.
+      const editable = {
+        name: input.name,
+        focus: input.focus,
+        date: input.date || null,
+        start_time: input.time,
+        venue: input.venue,
+        age_group: input.ageGroup,
+        status: input.status,
+        team_id: input.teamId,
+        activities,
+        ...faFields,
+      }
+
+      const update = async (): Promise<Session> => {
         const { data, error } = await supabase
           .from('sessions')
-          .update({
-            name: input.name,
-            focus: input.focus,
-            date: input.date || null,
-            start_time: input.time,
-            venue: input.venue,
-            age_group: input.ageGroup,
-            status: input.status,
-            team_id: input.teamId,
-            activities,
-            ...faFields,
-          })
+          .update(editable)
           .eq('id', input.id)
           .select(SESSION_COLS)
           .single()
@@ -1675,55 +1776,61 @@ export function useUpsertSession() {
         return toSession(data as unknown as SessionRow)
       }
 
-      if (!user || !profile?.club_id) {
-        throw new Error('You must be signed in to save a session.')
+      const insert = async (): Promise<Session> => {
+        if (!user || !profile?.club_id) {
+          throw new Error('You must be signed in to save a session.')
+        }
+        const { data, error } = await supabase
+          .from('sessions')
+          .insert({ id: input.id, coach_id: user.id, club_id: profile.club_id, ...editable })
+          .select(SESSION_COLS)
+          .single()
+        if (error) throw error
+        return toSession(data as unknown as SessionRow)
       }
-      const { data, error } = await supabase
-        .from('sessions')
-        .insert({
-          id: input.id,
-          coach_id: user.id,
-          club_id: profile.club_id,
-          name: input.name,
-          focus: input.focus,
-          date: input.date || null,
-          start_time: input.time,
-          venue: input.venue,
-          age_group: input.ageGroup,
-          status: input.status,
-          team_id: input.teamId,
-          activities,
-          ...faFields,
-        })
-        .select(SESSION_COLS)
-        .single()
-      if (error) throw error
-      return toSession(data as unknown as SessionRow)
+
+      // exists is a cache-derived hint for the fast path only; the server is
+      // the authority through the duplicate-key recovery inside
+      // upsertSessionWrite.
+      return upsertSessionWrite({ exists: existed.current.get(input.id) ?? false, insert, update, isUniqueViolation })
     },
-    // Optimistic and synchronous, so navigation by session id (start a session
-    // straight after saving it) finds the record without waiting for the round
-    // trip. The list and the per-id cache are both seeded.
+    // Optimistic and synchronous: the list and the per-id cache are both
+    // seeded, so a screen arriving by session id straight after a successful
+    // save (the live view after Start) renders at once instead of waiting for
+    // the settled invalidation refetch. Navigation itself waits for the write
+    // through the guarded submit seam.
     onMutate: (input) => {
-      const prevList = qc.getQueryData<Session[]>(['sessions'])
-      existed.current.set(input.id, (prevList ?? []).some((s) => s.id === input.id))
+      const list = qc.getQueryData<Session[]>(['sessions'])
+      const prevEntry = list?.find((s) => s.id === input.id)
       const prevOne = qc.getQueryData<Session>(['sessions', input.id])
-      qc.setQueryData<Session[]>(['sessions'], (old) => {
-        const list = old ?? []
-        const i = list.findIndex((s) => s.id === input.id)
-        if (i === -1) return [...list, input]
-        const copy = [...list]
-        copy[i] = input
-        return copy
-      })
+      // Prefer the update fast path when either cache already holds the row.
+      // When both are absent the write still self-corrects: an insert that
+      // collides recovers into an update (see upsertSessionWrite).
+      existed.current.set(input.id, sessionExistsInCache(prevEntry, prevOne))
+      const attempt = attempts.current.begin(input.id)
+      qc.setQueryData<Session[]>(['sessions'], (old) => applySessionUpsert(old, input))
       qc.setQueryData<Session>(['sessions', input.id], input)
-      return { prevList, prevOne }
+      return { prevEntry, prevOne, attempt }
     },
     onError: (_err, input, ctx) => {
-      qc.setQueryData(['sessions'], ctx?.prevList)
-      qc.setQueryData(['sessions', input.id], ctx?.prevOne)
+      // Roll back only this session's entry, and only while this attempt is
+      // still the newest for the id: restoring an older snapshot after a newer
+      // attempt has run would overwrite the newer state. The settled
+      // invalidation refetches the server truth either way, which also covers
+      // the pathological overlap this snapshot cannot: two concurrent
+      // attempts for the same id both failing leaves the first attempt's
+      // optimistic entry until that refetch lands.
+      if (!ctx || !attempts.current.isLatest(input.id, ctx.attempt)) return
+      qc.setQueryData<Session[]>(['sessions'], (old) => revertSessionUpsert(old, ctx.prevEntry, input.id))
+      // A failed insert has no previous per-id value, and setQueryData with
+      // undefined is a no-op, so drop the optimistic entry instead: nothing
+      // may keep serving a session the database refused.
+      if (ctx.prevOne === undefined) qc.removeQueries({ queryKey: ['sessions', input.id], exact: true })
+      else qc.setQueryData(['sessions', input.id], ctx.prevOne)
     },
-    onSettled: (_data, _err, input) => {
+    onSettled: (_data, _err, input, ctx) => {
       existed.current.delete(input.id)
+      if (ctx) attempts.current.end(input.id, ctx.attempt)
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
   })

@@ -7,10 +7,13 @@ import { useDrill, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl 
 import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import { relatedDrills } from '../lib/contentOrder'
 import { isFaVideo } from '../lib/fa'
-import type { Drill, Phase } from '../lib/data'
+import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
+import { DRILL_ADD_ERROR } from '../lib/sessionSubmit'
+import type { Drill, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import {
+  ActionError,
   CornerTag,
   MediaThumb,
   MediaAttribution,
@@ -84,45 +87,55 @@ function NumberedList({ items, size = 15 }: { items: string[]; size?: number }) 
   )
 }
 
-function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
-  const nav = useNav()
-  const { user } = useAuth()
-  const { caps } = useMyCapabilities()
-  const { sessions: allSessions, upsertSession } = useSessions()
-  // The sessions read is club-wide, but adding a drill writes the session, so
-  // only sessions the signed-in user can edit are offered: any with
-  // sessions.manage, their own otherwise.
-  const sessions = allSessions.filter((s) => caps.has('sessions.manage') || s.coachId === user?.id)
-  const [phase, setPhase] = useState<Phase>('Skill')
-  const [target, setTarget] = useState(sessions[0]?.id || '')
-  const add = () => {
-    const s = sessions.find((x) => x.id === target)
-    if (!s) return
-    const updated = { ...s, activities: [...s.activities, { phase, drillId: drill.id, duration: drill.duration }] }
-    upsertSession(updated)
-    onClose()
-    nav('planner', { sessionId: s.id })
-  }
+// The modal body pulled out as a presentational component, so the static
+// renderer can prove that while a write is in flight the surface is not
+// dismissible (Escape, overlay and X frozen via Modal) and every control that
+// shapes the write (the session choice and the phase) is disabled, alongside
+// Cancel and Add drill. A failure re-enables them with the choices intact.
+export function AddToSessionView({
+  drill,
+  sessions,
+  target,
+  phase,
+  adding,
+  failed,
+  onClose,
+  onTarget,
+  onPhase,
+  onAdd,
+}: {
+  drill: Drill
+  sessions: Session[]
+  target: string
+  phase: Phase
+  adding: boolean
+  failed: boolean
+  onClose: () => void
+  onTarget: (id: string) => void
+  onPhase: (p: Phase) => void
+  onAdd: () => void
+}) {
   return (
     <Modal
       title="Add to session"
       sub={drill.title}
       onClose={onClose}
+      dismissible={!adding}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={adding}>
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={add} disabled={!target}>
+          <button className="btn btn-primary" onClick={onAdd} disabled={!target || adding}>
             <Icon.plus />
-            Add drill
+            {adding ? 'Adding…' : 'Add drill'}
           </button>
         </>
       }
     >
       <div className="field">
         <label>Choose a session</label>
-        <select value={target} onChange={(e) => setTarget(e.target.value)}>
+        <select value={target} disabled={adding} onChange={(e) => onTarget(e.target.value)}>
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name} · {new Date(s.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
@@ -134,7 +147,7 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
         <label>Add to phase</label>
         <div className="row wrap" style={{ gap: 8 }}>
           {PHASES.map((p) => (
-            <Chip key={p} on={phase === p} dot={PHASE_COLOR[p]} onClick={() => setPhase(p)}>
+            <Chip key={p} on={phase === p} dot={PHASE_COLOR[p]} disabled={adding} onClick={() => onPhase(p)}>
               {p}
             </Chip>
           ))}
@@ -143,7 +156,54 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
       <div className="muted" style={{ fontSize: 13.5 }}>
         Adds <b style={{ color: 'var(--ink)' }}>{drill.duration} min</b> to the session.
       </div>
+      {failed && <ActionError style={{ marginTop: 10 }}>{DRILL_ADD_ERROR}</ActionError>}
     </Modal>
+  )
+}
+
+function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
+  const nav = useNav()
+  const { user } = useAuth()
+  const { caps } = useMyCapabilities()
+  const { sessions: allSessions, upsertSession } = useSessions()
+  // The sessions read is club-wide, but adding a drill writes the session, so
+  // only sessions the signed-in user can edit are offered: any with
+  // sessions.manage, their own otherwise.
+  const sessions = allSessions.filter((s) => caps.has('sessions.manage') || s.coachId === user?.id)
+  const [phase, setPhase] = useState<Phase>('Skill')
+  const [target, setTarget] = useState(sessions[0]?.id || '')
+  // The write is awaited: the modal closes and the planner opens only after
+  // the session lands. A failure keeps the modal open with the choices intact
+  // and a calm note; Add drill doubles as the retry. While the write is in
+  // flight the modal is not dismissible, so it can never be closed to hide the
+  // pending write and then encourage a duplicate retry.
+  const { submit, pending, failed } = useGuardedSubmit<Session, Session>({
+    operation: 'add drill to session',
+    perform: (updated) => upsertSession(updated),
+    onSuccess: (saved) => {
+      onClose()
+      nav('planner', { sessionId: saved.id })
+    },
+  })
+  const adding = pending !== null
+  const add = () => {
+    const s = sessions.find((x) => x.id === target)
+    if (!s) return
+    void submit({ ...s, activities: [...s.activities, { phase, drillId: drill.id, duration: drill.duration }] })
+  }
+  return (
+    <AddToSessionView
+      drill={drill}
+      sessions={sessions}
+      target={target}
+      phase={phase}
+      adding={adding}
+      failed={failed}
+      onClose={onClose}
+      onTarget={setTarget}
+      onPhase={setPhase}
+      onAdd={add}
+    />
   )
 }
 

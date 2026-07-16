@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DragEventHandler, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
@@ -15,11 +15,23 @@ import {
   useTeams,
 } from '../lib/queries'
 import { blankSession, embedSrc, isSampleMedia, PHASES } from '../lib/data'
-import type { Activity, Drill, MediaItem, Phase, Session } from '../lib/data'
+import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
-import { Empty, ErrorNote, ListInput, Loading, MediaAttribution, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
+import {
+  ActionError,
+  Empty,
+  ErrorNote,
+  ListInput,
+  Loading,
+  MediaAttribution,
+  MediaThumb,
+  PHASE_COLOR,
+  SourceLink,
+} from '../components/ui'
+import { createPlannerActions, logSessionWriteError, plannerBusy, SESSION_SAVE_ERROR, SESSION_START_ERROR } from '../lib/sessionSubmit'
+import type { PlannerAction, PlannerActions } from '../lib/sessionSubmit'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
@@ -142,6 +154,7 @@ export function ActivityCardView({
   dragHandlers,
   dragging,
   readOnly,
+  busy = false,
 }: {
   act: Activity
   idx: number
@@ -158,15 +171,21 @@ export function ActivityCardView({
   dragHandlers: DragHandlers
   dragging: boolean
   readOnly: boolean
+  // A Save or Start is in flight on the whole draft; reordering, changing a
+  // phase or duration, or removing a row all edit that draft, so they freeze
+  // until the write settles. Expanding the detail panel is passive viewing and
+  // stays live. readOnly rows are never busy (a viewer starts no write).
+  busy?: boolean
 }) {
   const panelId = `act-panel-${idx}`
+  const frozen = readOnly || busy
   return (
     <div className="act-item">
       <div
         className="act-card"
         style={dragging ? { opacity: 0.4 } : undefined}
-        draggable={!readOnly}
-        {...(readOnly ? {} : dragHandlers)}
+        draggable={!frozen}
+        {...(frozen ? {} : dragHandlers)}
       >
         {!readOnly && (
           <span className="act-grip">
@@ -216,7 +235,7 @@ export function ActivityCardView({
         )}
         <select
           value={act.phase}
-          disabled={readOnly}
+          disabled={frozen}
           onChange={(e) => onPhase(idx, e.target.value as Phase)}
           style={{
             height: 34,
@@ -241,7 +260,7 @@ export function ActivityCardView({
             value={act.duration}
             min="1"
             max="90"
-            disabled={readOnly}
+            disabled={frozen}
             onChange={(e) => onDur(idx, parseInt(e.target.value) || 0)}
             style={{
               width: 52,
@@ -260,7 +279,7 @@ export function ActivityCardView({
           </span>
         </div>
         {!readOnly && (
-          <button className="act-x" onClick={() => onRemove(idx)} aria-label="Remove activity">
+          <button className="act-x" disabled={busy} onClick={() => onRemove(idx)} aria-label="Remove activity">
             <Icon.trash />
           </button>
         )}
@@ -298,10 +317,22 @@ export function ActivityCardView({
           <PanelList icon={Icon.whistle} label="Coaching points" items={drill.points} />
           <PanelList icon={Icon.chevDown} label="Make it easier" items={drill.easier} />
           <PanelList icon={Icon.bolt} label="Make it harder" items={drill.harder} />
-          <Link className="btn btn-ghost btn-sm act-panel-link" to={drillHref}>
-            <Icon.external />
-            Open full drill
-          </Link>
+          {/* Reading the detail is passive viewing and stays live, but the link
+              OUT to the full drill leaves the planner and would abandon the
+              draft, so it freezes with the other navigation controls while a
+              write is in flight. A read-only viewer is never busy, so their
+              link stays live. */}
+          {busy ? (
+            <button type="button" className="btn btn-ghost btn-sm act-panel-link" disabled>
+              <Icon.external />
+              Open full drill
+            </button>
+          ) : (
+            <Link className="btn btn-ghost btn-sm act-panel-link" to={drillHref}>
+              <Icon.external />
+              Open full drill
+            </Link>
+          )}
         </div>
       )}
     </div>
@@ -317,6 +348,7 @@ function ActivityRow({
   dragHandlers,
   dragging,
   readOnly,
+  busy,
   expanded,
   onToggle,
 }: {
@@ -328,6 +360,7 @@ function ActivityRow({
   dragHandlers: DragHandlers
   dragging: boolean
   readOnly: boolean
+  busy: boolean
   expanded: boolean
   onToggle: () => void
 }) {
@@ -357,7 +390,345 @@ function ActivityRow({
       dragHandlers={dragHandlers}
       dragging={dragging}
       readOnly={readOnly}
+      busy={busy}
     />
+  )
+}
+
+// The planner's action card pulled out as a presentational component, so the
+// static renderer covers the pending labels, the disabled states and the
+// failure note without a query client. The editor resolves the submit state
+// and feeds plain props in.
+export function PlannerActionsView({
+  readOnly,
+  isExisting,
+  canStart,
+  pending,
+  failed,
+  onStart,
+  onSave,
+  onSessionDay,
+  onCalendar,
+  onLoadTemplate,
+  onDelete,
+}: {
+  readOnly: boolean
+  isExisting: boolean
+  canStart: boolean
+  pending: PlannerAction | null
+  failed: PlannerAction | null
+  onStart: () => void
+  onSave: () => void
+  onSessionDay: () => void
+  onCalendar: () => void
+  onLoadTemplate: () => void
+  onDelete: () => void
+}) {
+  // A read-only viewer only watches, which writes nothing, so the pending and
+  // failed states never apply to them.
+  const busy = pending !== null
+  return (
+    <div className="card side-card" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+      <button className="btn btn-gold btn-block" disabled={!canStart || (!readOnly && busy)} onClick={onStart}>
+        {readOnly ? <Icon.eye /> : <Icon.play />}
+        {readOnly ? 'Watch live' : pending === 'start' ? 'Starting…' : 'Start session'}
+      </button>
+      {isExisting && (
+        // Session day navigates off the planner, abandoning the draft, so it
+        // freezes while a write is in flight.
+        <button className="btn btn-primary btn-block" disabled={busy} onClick={onSessionDay}>
+          <Icon.cone />
+          Session day
+        </button>
+      )}
+      {isExisting && (
+        // Add to calendar exports the current draft as an .ics; it neither
+        // edits nor abandons it, so it stays available (passive action).
+        <button className="btn btn-ghost btn-block" onClick={onCalendar}>
+          <Icon.calendar />
+          Add to calendar
+        </button>
+      )}
+      {!readOnly && (
+        <>
+          <button className="btn btn-primary btn-block" disabled={busy} onClick={onSave}>
+            <Icon.check />
+            {pending === 'save' ? 'Saving…' : 'Save session'}
+          </button>
+          {failed && (
+            // Retrying a failed start honours the same empty-session gate as
+            // the Start button; with no activities left the error stays but
+            // the retry affordance goes.
+            <ActionError onRetry={failed === 'save' ? onSave : canStart ? onStart : undefined}>
+              {failed === 'save' ? SESSION_SAVE_ERROR : SESSION_START_ERROR}
+            </ActionError>
+          )}
+          {/* Loading a template navigates to the templates screen, abandoning
+              the draft, so it freezes while a write is in flight. */}
+          <button className="btn btn-ghost btn-block" disabled={busy} onClick={onLoadTemplate}>
+            <Icon.book />
+            Load a template
+          </button>
+        </>
+      )}
+      {/* Delete is owner or admin, the same rule the sessions delete RLS
+          enforces; a new unsaved session has nothing to delete yet. It opens a
+          destructive modal, so it freezes while a write is in flight. */}
+      {isExisting && !readOnly && (
+        <button className="btn btn-ghost btn-block" disabled={busy} onClick={onDelete}>
+          <Icon.trash />
+          Delete session
+        </button>
+      )}
+    </div>
+  )
+}
+
+// The planner's page header: the back link to the sessions list, the title
+// and the sub. Pulled out so the static renderer covers the back link freezing
+// while a write is in flight (leaving the planner would abandon the draft).
+// readOnly viewers write nothing, so busy never applies to them and the back
+// link stays live.
+export function PlannerHeaderView({
+  readOnly,
+  isExisting,
+  ownerName,
+  busy,
+  onBack,
+}: {
+  readOnly: boolean
+  isExisting: boolean
+  ownerName?: string
+  busy: boolean
+  onBack: () => void
+}) {
+  return (
+    <div className="page-head">
+      <div>
+        <button className="btn btn-quiet btn-sm" style={{ marginBottom: 8, marginLeft: -8 }} disabled={busy} onClick={onBack}>
+          <Icon.chevL />
+          Sessions
+        </button>
+        <h2>{readOnly ? 'View session' : isExisting ? 'Edit session' : 'Plan a session'}</h2>
+        <div className="sub">
+          {readOnly
+            ? `${ownerName || 'Another coach'}'s session. You can view it and watch it live, but only the owner or an admin can change or drive it.`
+            : 'Drag to reorder · pull drills from the library or start from a template.'}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// The two "add an activity" buttons under the timeline. Adding a drill or a
+// custom activity edits the draft, so both freeze while a write is in flight.
+export function AddActivityBar({
+  busy,
+  onAddLibrary,
+  onAddCustom,
+}: {
+  busy: boolean
+  onAddLibrary: () => void
+  onAddCustom: () => void
+}) {
+  return (
+    <div className="row" style={{ gap: 10, marginTop: 4 }}>
+      <button className="add-slot" style={{ marginBottom: 0 }} disabled={busy} onClick={onAddLibrary}>
+        <Icon.plus />
+        Add from library
+      </button>
+      <button className="add-slot" style={{ marginBottom: 0 }} disabled={busy} onClick={onAddCustom}>
+        <Icon.edit />
+        Add custom
+      </button>
+    </div>
+  )
+}
+
+type SessionFieldKey = 'name' | 'date' | 'time' | 'ageGroup' | 'venue' | 'focus' | 'space' | 'sourceUrl'
+
+// The planner's session details card: the totals header, every session field
+// and the tactics board control. Pulled out as a presentational component so
+// the static renderer can prove a pending Save or Start freezes every field
+// (each edits the draft), while a read-only viewer keeps the same disabled
+// fields it always had. readOnly renders the intentions and board read-only;
+// busy only ever applies to an editable planner, so frozen is readOnly-or-busy.
+export function SessionFieldsView({
+  session,
+  readOnly,
+  busy,
+  teams,
+  attachedBoardName,
+  onField,
+  onIntentions,
+  onTeam,
+  onRemoveBoard,
+  onOpenBoardPicker,
+}: {
+  session: Session
+  readOnly: boolean
+  busy: boolean
+  teams: Team[]
+  attachedBoardName?: string
+  onField: (k: SessionFieldKey, v: string) => void
+  onIntentions: (v: string[]) => void
+  onTeam: (v: string) => void
+  onRemoveBoard: () => void
+  onOpenBoardPicker: () => void
+}) {
+  const frozen = readOnly || busy
+  const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
+  return (
+    <div className="card side-card">
+      <div className="total-time" style={{ marginBottom: 4 }}>
+        <span className="big">{mins}</span>
+        <span className="muted" style={{ fontWeight: 700 }}>
+          min total
+        </span>
+      </div>
+      <div className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+        {session.activities.length} activities
+      </div>
+      <div className="field">
+        <label>Session name</label>
+        <input value={session.name} disabled={frozen} onChange={(e) => onField('name', e.target.value)} />
+      </div>
+      <div className="row" style={{ gap: 10 }}>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Date</label>
+          <input type="date" value={session.date} disabled={frozen} onChange={(e) => onField('date', e.target.value)} />
+        </div>
+        <div className="field" style={{ width: 110 }}>
+          <label>Time</label>
+          <input type="time" value={session.time} disabled={frozen} onChange={(e) => onField('time', e.target.value)} />
+        </div>
+      </div>
+      <div className="row" style={{ gap: 10 }}>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Age group</label>
+          <select value={session.ageGroup} disabled={frozen} onChange={(e) => onField('ageGroup', e.target.value)}>
+            {['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s'].map((a) => (
+              <option key={a}>{a}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Venue</label>
+          <input value={session.venue} disabled={frozen} onChange={(e) => onField('venue', e.target.value)} />
+        </div>
+      </div>
+      <div className="row" style={{ gap: 10 }}>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Team</label>
+          <select value={session.teamId ?? ''} disabled={frozen} onChange={(e) => onTeam(e.target.value)}>
+            <option value="">Club (no team)</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Focus</label>
+          <input value={session.focus} disabled={frozen} onChange={(e) => onField('focus', e.target.value)} />
+        </div>
+      </div>
+      <div className="field">
+        <label>Space</label>
+        <input
+          value={session.space}
+          placeholder="e.g. Third of a pitch"
+          disabled={frozen}
+          onChange={(e) => onField('space', e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label>Session intentions</label>
+        {readOnly ? (
+          session.intentions.length ? (
+            <div className="row wrap" style={{ gap: 6 }}>
+              {session.intentions.map((x, i) => (
+                <span key={i} className="pill">
+                  {x}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span className="muted" style={{ fontSize: 13 }}>
+              None set
+            </span>
+          )
+        ) : (
+          <ListInput
+            value={session.intentions}
+            onChange={onIntentions}
+            placeholder="Type an intention and press enter"
+            disabled={busy}
+          />
+        )}
+      </div>
+      <div className="field">
+        <label>Source link</label>
+        <input
+          type="url"
+          value={session.sourceUrl}
+          placeholder="https://… where this session came from"
+          disabled={frozen}
+          onChange={(e) => onField('sourceUrl', e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label>Tactics board</label>
+        {session.boardId ? (
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <span className="pill" style={{ flex: 1, minWidth: 0 }}>
+              <Icon.layers />
+              {attachedBoardName ?? 'Attached board'}
+            </span>
+            {!readOnly && (
+              <>
+                <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onOpenBoardPicker}>
+                  Change
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-sm icon-only"
+                  aria-label="Remove board"
+                  disabled={busy}
+                  onClick={onRemoveBoard}
+                >
+                  <Icon.x />
+                </button>
+              </>
+            )}
+          </div>
+        ) : readOnly ? (
+          <span className="muted" style={{ fontSize: 13 }}>
+            None attached
+          </span>
+        ) : (
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onOpenBoardPicker}>
+            <Icon.plus />
+            Attach a board
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// The planner's editable working region (the timeline and the side panel).
+// aria-busy marks it while a write settles, so assistive tech can defer the
+// in-region label changes; it clears before the failure alert renders (the
+// pending flag is cleared first and React batches the two updates into one
+// commit), so the alert still announces. Pulled out so the static renderer can
+// assert the aria-busy binding without mounting the whole editor.
+export function PlannerWorkspace({ busy, children }: { busy: boolean; children: ReactNode }) {
+  return (
+    <div className="planner" aria-busy={busy}>
+      {children}
+    </div>
   )
 }
 
@@ -399,9 +770,7 @@ function PlannerEditor({
   const readOnly = !!existing && existing.coachId !== user?.id && !caps.has('sessions.manage')
   const owner = existing ? memberById[existing.coachId] : undefined
 
-  const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
-  const setField = (k: 'name' | 'date' | 'time' | 'ageGroup' | 'venue' | 'focus' | 'space' | 'sourceUrl', v: string) =>
-    setSession((s) => ({ ...s, [k]: v }))
+  const setField = (k: SessionFieldKey, v: string) => setSession((s) => ({ ...s, [k]: v }))
   const setIntentions = (v: string[]) => setSession((s) => ({ ...s, intentions: v }))
   const setTeam = (v: string) => setSession((s) => ({ ...s, teamId: v || null }))
   const setBoard = (id: string | null) => setSession((s) => ({ ...s, boardId: id }))
@@ -439,38 +808,91 @@ function PlannerEditor({
     dragFrom.current = to
   }
 
+  // Save and Start await the database write and navigate only on success; a
+  // failure keeps the coach here with every edit intact, an inline error and
+  // a retry. The two share one in-flight guard, so rapid clicks or crossing
+  // actions cannot double-submit even before the buttons disable. Which
+  // action is pending or failed drives the button labels and the error note.
+  const [pendingAction, setPendingAction] = useState<PlannerAction | null>(null)
+  const [failedAction, setFailedAction] = useState<PlannerAction | null>(null)
+  // A Plan from Spond create (shown only for a new session) runs its own
+  // guarded submit and reports its pending state here, so it composes into the
+  // planner's busy state below. That freezes Save, Start, the fields and the
+  // navigation while a Spond-derived session is being created, and blocks a
+  // second create from starting, so the two flows never write concurrently
+  // from one planner screen.
+  const [spondPending, setSpondPending] = useState(false)
+  // Constructed once so the shared in-flight guard survives re-renders. The
+  // captured upsert delegates to the mutation's stable mutateAsync and the
+  // captured nav only pushes absolute routes, so first-render captures stay
+  // correct for the life of the editor.
+  const [actions] = useState<PlannerActions>(() =>
+    createPlannerActions({
+      upsert: (draft) => upsertSession(draft),
+      navSessions: () => nav('sessions'),
+      navLive: (id) => nav('live', { sessionId: id }),
+      onPending: (action) => {
+        setPendingAction(action)
+        // A new attempt clears the previous attempt's error.
+        if (action) setFailedAction(null)
+      },
+      onFailure: (action, err) => {
+        logSessionWriteError(`planner ${action}`, err)
+        setFailedAction(action)
+      },
+    }),
+  )
+  // While unmounted the actions still settle (and log) but never navigate, so
+  // a slow save cannot yank the coach to another screen after they have left.
+  useEffect(() => {
+    actions.setActive(true)
+    return () => actions.setActive(false)
+  }, [actions])
+
+  // While an editable Save or Start is in flight, or a Plan from Spond create
+  // is running on this screen, freeze every control that could change or
+  // abandon the draft, so the visible draft cannot drift from the one being
+  // written: an older attempt resolving must not navigate away over newer,
+  // unwritten edits. Save and Start stay disabled (as before); this extends the
+  // freeze to the fields, the activity controls, template loading, board
+  // changes, Spond linking, delete and the back and Session day navigation.
+  // Passive viewing (expanding a drill, watching a preview) and the read-only
+  // Watch live path are untouched. A read-only viewer starts no write and never
+  // sees Plan from Spond, so busy stays false for them; the failure path clears
+  // pendingAction, re-enabling everything for a retry.
+  const busy = plannerBusy(pendingAction, spondPending)
+
+  // Both submit the draft as currently visible, so a retry after more edits
+  // carries the latest state, never a payload captured by the failed attempt.
+  // The busy guard also blocks a Save or Start from starting while a Spond
+  // create is in flight (belt and braces beyond the disabled buttons), so the
+  // two create paths on this screen cannot run at once. A read-only viewer is
+  // never busy, so Watch live still navigates immediately.
   const save = () => {
-    upsertSession(session)
-    nav('sessions')
+    if (busy) return
+    void actions.save(session)
   }
   const start = () => {
-    if (!readOnly) upsertSession(session)
-    nav('live', { sessionId: session.id })
+    if (busy && !readOnly) return
+    void actions.start(session, readOnly)
   }
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <button className="btn btn-quiet btn-sm" style={{ marginBottom: 8, marginLeft: -8 }} onClick={() => nav('sessions')}>
-            <Icon.chevL />
-            Sessions
-          </button>
-          <h2>{readOnly ? 'View session' : existing ? 'Edit session' : 'Plan a session'}</h2>
-          <div className="sub">
-            {readOnly
-              ? `${owner?.fullName || 'Another coach'}'s session. You can view it and watch it live, but only the owner or an admin can change or drive it.`
-              : 'Drag to reorder · pull drills from the library or start from a template.'}
-          </div>
-        </div>
-      </div>
+      <PlannerHeaderView
+        readOnly={readOnly}
+        isExisting={!!existing}
+        ownerName={owner?.fullName}
+        busy={busy}
+        onBack={() => nav('sessions')}
+      />
 
-      <div className="planner">
+      <PlannerWorkspace busy={busy}>
         <div className="timeline-wrap">
           {/* A new session can start from a synced Spond event: picking one
               creates its own pre filled session and navigates there, so the
               surface shows only while building a fresh plan. */}
-          {!existing && <PlanFromSpond />}
+          {!existing && <PlanFromSpond frozen={busy} onPendingChange={setSpondPending} />}
           {session.intentions.length > 0 && (
             <div className="card" style={{ padding: '16px 18px', marginBottom: 14 }}>
               <div className="eyebrow" style={{ marginBottom: 8 }}>
@@ -517,6 +939,7 @@ function PlannerEditor({
                   onPhase={setPhase}
                   dragging={dragIdx === i}
                   readOnly={readOnly}
+                  busy={busy}
                   expanded={expandedIdx === i}
                   onToggle={() => setExpandedIdx((cur) => (cur === i ? null : i))}
                   dragHandlers={{
@@ -538,210 +961,56 @@ function PlannerEditor({
             </div>
           )}
           {!readOnly && (
-            <div className="row" style={{ gap: 10, marginTop: 4 }}>
-              <button className="add-slot" style={{ marginBottom: 0 }} onClick={() => setAddOpen(true)}>
-                <Icon.plus />
-                Add from library
-              </button>
-              <button
-                className="add-slot"
-                style={{ marginBottom: 0 }}
-                onClick={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
-              >
-                <Icon.edit />
-                Add custom
-              </button>
-            </div>
+            <AddActivityBar
+              busy={busy}
+              onAddLibrary={() => setAddOpen(true)}
+              onAddCustom={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
+            />
           )}
         </div>
 
         <div className="planner-side">
-          <div className="card side-card">
-            <div className="total-time" style={{ marginBottom: 4 }}>
-              <span className="big">{mins}</span>
-              <span className="muted" style={{ fontWeight: 700 }}>
-                min total
-              </span>
-            </div>
-            <div className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
-              {session.activities.length} activities
-            </div>
-            <div className="field">
-              <label>Session name</label>
-              <input value={session.name} disabled={readOnly} onChange={(e) => setField('name', e.target.value)} />
-            </div>
-            <div className="row" style={{ gap: 10 }}>
-              <div className="field" style={{ flex: 1 }}>
-                <label>Date</label>
-                <input type="date" value={session.date} disabled={readOnly} onChange={(e) => setField('date', e.target.value)} />
-              </div>
-              <div className="field" style={{ width: 110 }}>
-                <label>Time</label>
-                <input type="time" value={session.time} disabled={readOnly} onChange={(e) => setField('time', e.target.value)} />
-              </div>
-            </div>
-            <div className="row" style={{ gap: 10 }}>
-              <div className="field" style={{ flex: 1 }}>
-                <label>Age group</label>
-                <select value={session.ageGroup} disabled={readOnly} onChange={(e) => setField('ageGroup', e.target.value)}>
-                  {['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s'].map((a) => (
-                    <option key={a}>{a}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field" style={{ flex: 1 }}>
-                <label>Venue</label>
-                <input value={session.venue} disabled={readOnly} onChange={(e) => setField('venue', e.target.value)} />
-              </div>
-            </div>
-            <div className="row" style={{ gap: 10 }}>
-              <div className="field" style={{ flex: 1 }}>
-                <label>Team</label>
-                <select value={session.teamId ?? ''} disabled={readOnly} onChange={(e) => setTeam(e.target.value)}>
-                  <option value="">Club (no team)</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field" style={{ flex: 1 }}>
-                <label>Focus</label>
-                <input value={session.focus} disabled={readOnly} onChange={(e) => setField('focus', e.target.value)} />
-              </div>
-            </div>
-            <div className="field">
-              <label>Space</label>
-              <input
-                value={session.space}
-                placeholder="e.g. Third of a pitch"
-                disabled={readOnly}
-                onChange={(e) => setField('space', e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label>Session intentions</label>
-              {readOnly ? (
-                session.intentions.length ? (
-                  <div className="row wrap" style={{ gap: 6 }}>
-                    {session.intentions.map((x, i) => (
-                      <span key={i} className="pill">
-                        {x}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="muted" style={{ fontSize: 13 }}>
-                    None set
-                  </span>
-                )
-              ) : (
-                <ListInput
-                  value={session.intentions}
-                  onChange={setIntentions}
-                  placeholder="Type an intention and press enter"
-                />
-              )}
-            </div>
-            <div className="field">
-              <label>Source link</label>
-              <input
-                type="url"
-                value={session.sourceUrl}
-                placeholder="https://… where this session came from"
-                disabled={readOnly}
-                onChange={(e) => setField('sourceUrl', e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label>Tactics board</label>
-              {session.boardId ? (
-                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                  <span className="pill" style={{ flex: 1, minWidth: 0 }}>
-                    <Icon.layers />
-                    {attachedBoard?.name ?? 'Attached board'}
-                  </span>
-                  {!readOnly && (
-                    <>
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBoardPickerOpen(true)}>
-                        Change
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-quiet btn-sm icon-only"
-                        aria-label="Remove board"
-                        onClick={() => setBoard(null)}
-                      >
-                        <Icon.x />
-                      </button>
-                    </>
-                  )}
-                </div>
-              ) : readOnly ? (
-                <span className="muted" style={{ fontSize: 13 }}>
-                  None attached
-                </span>
-              ) : (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBoardPickerOpen(true)}>
-                  <Icon.plus />
-                  Attach a board
-                </button>
-              )}
-            </div>
-          </div>
+          <SessionFieldsView
+            session={session}
+            readOnly={readOnly}
+            busy={busy}
+            teams={teams}
+            attachedBoardName={attachedBoard?.name}
+            onField={setField}
+            onIntentions={setIntentions}
+            onTeam={setTeam}
+            onRemoveBoard={() => setBoard(null)}
+            onOpenBoardPicker={() => setBoardPickerOpen(true)}
+          />
 
           {/* Linking edits the draft like every other planner field; Save
-              writes it with the session. */}
+              writes it with the session. It freezes while a write is in
+              flight, so the draft cannot change under an in-flight save. */}
           <SpondAttendanceCard
             spondEventId={session.spondEventId}
             teamId={session.teamId}
             date={session.date}
             time={session.time}
             canEdit={!readOnly}
+            busy={busy}
             onLink={(id) => setSession((s) => ({ ...s, spondEventId: id }))}
           />
 
-          <div className="card side-card" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-            <button className="btn btn-gold btn-block" disabled={!session.activities.length} onClick={start}>
-              {readOnly ? <Icon.eye /> : <Icon.play />}
-              {readOnly ? 'Watch live' : 'Start session'}
-            </button>
-            {existing && (
-              <button className="btn btn-primary btn-block" onClick={() => nav('sessionDay', { sessionId: session.id })}>
-                <Icon.cone />
-                Session day
-              </button>
-            )}
-            {existing && (
-              <button className="btn btn-ghost btn-block" onClick={() => downloadSessionIcs(session)}>
-                <Icon.calendar />
-                Add to calendar
-              </button>
-            )}
-            {!readOnly && (
-              <>
-                <button className="btn btn-primary btn-block" onClick={save}>
-                  <Icon.check />
-                  Save session
-                </button>
-                <button className="btn btn-ghost btn-block" onClick={() => nav('templates')}>
-                  <Icon.book />
-                  Load a template
-                </button>
-              </>
-            )}
-            {/* Delete is owner or admin, the same rule the sessions delete RLS
-                enforces; a new unsaved session has nothing to delete yet. */}
-            {existing && !readOnly && (
-              <button className="btn btn-ghost btn-block" onClick={() => setDeleteOpen(true)}>
-                <Icon.trash />
-                Delete session
-              </button>
-            )}
-          </div>
+          <PlannerActionsView
+            readOnly={readOnly}
+            isExisting={!!existing}
+            canStart={session.activities.length > 0}
+            pending={pendingAction}
+            failed={failedAction}
+            onStart={start}
+            onSave={save}
+            onSessionDay={() => nav('sessionDay', { sessionId: session.id })}
+            onCalendar={() => downloadSessionIcs(session)}
+            onLoadTemplate={() => nav('templates')}
+            onDelete={() => setDeleteOpen(true)}
+          />
         </div>
-      </div>
+      </PlannerWorkspace>
 
       {addOpen && (
         <AddDrillModal

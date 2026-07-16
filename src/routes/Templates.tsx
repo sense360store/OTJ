@@ -6,21 +6,27 @@ import { useDeleteTemplate, useMyCapabilities, useProgrammes, useTemplates } fro
 import { FA_IMPORT_CAPS, hasAllCaps } from '../lib/data'
 import type { Template } from '../lib/data'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { ActionError, ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
+import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { TemplateFormModal } from '../components/TemplateFormModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 
 function TemplateCard({
   t,
+  onUse,
+  usePendingId,
   onEdit,
   onDelete,
 }: {
   t: Template
+  // The screen owns the create flow: one guard across every card, so a card
+  // in flight disables all Use buttons, not only its own.
+  onUse: (t: Template) => void
+  usePendingId: string | null
   onEdit: ((t: Template) => void) | null
   onDelete: ((t: Template) => void) | null
 }) {
   const { caps } = useMyCapabilities()
-  const startFromTemplate = useStartFromTemplate()
   const mins = t.activities.reduce((a, x) => a + (x.duration || 0), 0)
   // Using a template creates a session, so it follows sessions.create; for
   // members without it the card is read-only. The session built from a
@@ -64,9 +70,9 @@ function TemplateCard({
       {(coaching || onEdit || onDelete) && (
         <div className="row" style={{ gap: 9 }}>
           {coaching && (
-            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => startFromTemplate(t)}>
+            <button className="btn btn-primary" style={{ flex: 1 }} disabled={usePendingId !== null} onClick={() => onUse(t)}>
               <Icon.copy />
-              Use template
+              {usePendingId === t.id ? 'Creating…' : 'Use template'}
             </button>
           )}
           {onEdit && (
@@ -131,6 +137,7 @@ export function Templates() {
   const nav = useNav()
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
+  const { start: startFromTemplate, pendingTemplateId, failed: createFailed } = useStartFromTemplate()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Template | null>(null)
@@ -199,9 +206,17 @@ export function Templates() {
         <Icon.search />
         <input placeholder="Search templates…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
+      {createFailed && <ActionError style={{ marginBottom: 12 }}>{SESSION_CREATE_ERROR}</ActionError>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
         {list.map((t) => (
-          <TemplateCard key={t.id} t={t} onEdit={canManage(t) ? setEditing : null} onDelete={canManage(t) ? setDeleting : null} />
+          <TemplateCard
+            key={t.id}
+            t={t}
+            onUse={startFromTemplate}
+            usePendingId={pendingTemplateId}
+            onEdit={canManage(t) ? setEditing : null}
+            onDelete={canManage(t) ? setDeleting : null}
+          />
         ))}
       </div>
       {creating && <TemplateFormModal onClose={() => setCreating(false)} />}

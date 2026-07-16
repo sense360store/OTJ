@@ -84,4 +84,36 @@ describe('PlanFromSpondView', () => {
     const html = render({ rows: [], eventsExist: true })
     expect(html).toContain('No unplanned events match')
   })
+
+  it('labels the planning row and disables every plan control while a create is in flight', () => {
+    const html = render({
+      rows: [ev({ id: 'e1' }), ev({ id: 'e2', title: 'U8 Match' })],
+      planPendingId: 'e1',
+    })
+    expect(html).toContain('Planning…')
+    // Both rows' buttons are held closed, so a second event cannot be
+    // planned while the first create runs.
+    const disabled = [...html.matchAll(/<button[^>]*disabled[^>]*>/g)]
+    expect(disabled.length).toBe(2)
+  })
+
+  it('freezes every plan control while an outer write is in flight', () => {
+    // On the planner, this surface sits above a draft that is itself being
+    // saved; planning an event would abandon that draft, so frozen holds every
+    // Plan this closed even though no create of its own is running.
+    const html = render({
+      rows: [ev({ id: 'e1' }), ev({ id: 'e2', title: 'U8 Match' })],
+      frozen: true,
+    })
+    expect(html).not.toContain('Planning…')
+    const disabled = [...html.matchAll(/<button[^>]*disabled[^>]*>/g)]
+    expect(disabled.length).toBe(2)
+  })
+
+  it('announces a failed create calmly and leaves the buttons usable as the retry', () => {
+    const html = render({ planFailed: true })
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('We couldn&#x27;t create the session. Check your connection and try again.')
+    expect(html).not.toMatch(/<button[^>]*disabled/)
+  })
 })

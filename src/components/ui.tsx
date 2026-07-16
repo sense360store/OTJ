@@ -200,15 +200,17 @@ export function Chip({
   dot,
   icon: Ico,
   children,
+  disabled,
 }: {
   on?: boolean
   onClick?: () => void
   dot?: string
   icon?: IconComponent
   children: ReactNode
+  disabled?: boolean
 }) {
   return (
-    <button className={'chip' + (on ? ' on' : '')} onClick={onClick}>
+    <button className={'chip' + (on ? ' on' : '')} onClick={onClick} disabled={disabled}>
       {dot && <span className="chip-dot" style={{ background: dot }}></span>}
       {Ico && <Ico />}
       {children}
@@ -226,11 +228,16 @@ export function ListInput({
   onChange,
   placeholder,
   numbered,
+  disabled,
 }: {
   value: string[]
   onChange: (v: string[]) => void
   placeholder: string
   numbered?: boolean
+  // While disabled the field and its remove controls are frozen: adding or
+  // removing an item edits the draft, so a caller freezing a pending write
+  // passes this to lock the list without unmounting it.
+  disabled?: boolean
 }) {
   const [draft, setDraft] = useState('')
   const commit = (text: string) => {
@@ -255,7 +262,13 @@ export function ListInput({
               <div key={i} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
                 <span className="cp-num">{i + 1}</span>
                 <span style={{ flex: 1, fontSize: 14, lineHeight: 1.45 }}>{v}</span>
-                <button className="icon-btn" style={{ width: 26, height: 26 }} aria-label="Remove" onClick={() => remove(i)}>
+                <button
+                  className="icon-btn"
+                  style={{ width: 26, height: 26 }}
+                  aria-label="Remove"
+                  disabled={disabled}
+                  onClick={() => remove(i)}
+                >
                   <Icon.x style={{ width: 13, height: 13 }} />
                 </button>
               </div>
@@ -268,6 +281,7 @@ export function ListInput({
                 {v}
                 <button
                   aria-label={'Remove ' + v}
+                  disabled={disabled}
                   onClick={() => remove(i)}
                   style={{ display: 'inline-flex', border: 0, background: 'none', cursor: 'pointer', color: 'inherit', padding: 0 }}
                 >
@@ -280,6 +294,7 @@ export function ListInput({
       <input
         value={draft}
         placeholder={placeholder}
+        disabled={disabled}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={onKey}
         onBlur={() => draft.trim() && commit(draft)}
@@ -376,6 +391,25 @@ export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: 
 }
 
 /* ---- modal shell ----------------------------------------------- */
+// The dismissal contract, kept pure so the three routes are provable without a
+// DOM. A modal that is not dismissible (a write is in flight) closes on none of
+// them: Escape is inert, the overlay has no close handler, and the X is
+// disabled. So a pending write can never be hidden behind a dismissed surface
+// and then encourage a duplicate retry. The footer Cancel is the consumer's
+// own button and disables alongside these.
+export function modalDismissControls(
+  dismissible: boolean,
+  onClose: () => void,
+): { onEscapeKey: (key: string) => void; onOverlayClick: (() => void) | undefined; closeDisabled: boolean } {
+  return {
+    onEscapeKey: (key) => {
+      if (dismissible && key === 'Escape') onClose()
+    },
+    onOverlayClick: dismissible ? onClose : undefined,
+    closeDisabled: !dismissible,
+  }
+}
+
 export function Modal({
   title,
   sub,
@@ -383,6 +417,7 @@ export function Modal({
   children,
   footer,
   wide,
+  dismissible = true,
 }: {
   title: ReactNode
   sub?: ReactNode
@@ -390,23 +425,25 @@ export function Modal({
   children: ReactNode
   footer?: ReactNode
   wide?: boolean
+  // Defaults to true (unchanged for every existing caller). A caller passes
+  // false while a write it owns is in flight, freezing every dismissal route.
+  dismissible?: boolean
 }) {
+  const { onEscapeKey, onOverlayClick, closeDisabled } = modalDismissControls(dismissible, onClose)
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
+    const h = (e: KeyboardEvent) => onEscapeKey(e.key)
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [onClose])
+  }, [onEscapeKey])
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={onOverlayClick}>
       <div className="modal" style={wide ? { maxWidth: 860 } : undefined} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>
             <h3>{title}</h3>
             {sub && <p>{sub}</p>}
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" onClick={onClose} disabled={closeDisabled}>
             <Icon.x />
           </button>
         </div>
@@ -449,6 +486,36 @@ export function ErrorNote({ children }: { children?: ReactNode }) {
   return (
     <div className="muted" style={{ padding: '48px 0', textAlign: 'center', fontWeight: 600 }}>
       {children ?? 'Something went wrong loading this. Refresh to try again.'}
+    </div>
+  )
+}
+
+// Inline failure note for a write action, rendered next to the control that
+// started it. role="alert" announces it when it appears. The wording stays
+// calm and generic; the raw error is logged by the caller for debugging,
+// never rendered. Pass onRetry to offer a retry button; leave it off where
+// the original control doubles as the retry.
+export function ActionError({ children, onRetry, style }: { children: ReactNode; onRetry?: () => void; style?: CSSProperties }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        fontSize: 13.5,
+        fontWeight: 600,
+        lineHeight: 1.45,
+        color: 'var(--m-pdf)',
+        ...style,
+      }}
+    >
+      <span style={{ flex: 1 }}>{children}</span>
+      {onRetry && (
+        <button type="button" className="btn btn-ghost btn-sm" style={{ flex: '0 0 auto' }} onClick={onRetry}>
+          Retry
+        </button>
+      )}
     </div>
   )
 }

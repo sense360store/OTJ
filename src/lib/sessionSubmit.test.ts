@@ -1,0 +1,369 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createGuardedSubmit, createPlannerActions, plannerBusy, stableCreateId } from './sessionSubmit'
+import type { PlannerAction, PlannerActionCallbacks } from './sessionSubmit'
+import type { Session } from './data'
+
+// Behavioural coverage of the submit seam with controlled deferred promises:
+// the write resolves or rejects exactly when the test says so, so ordering
+// claims (no navigation before resolution, no success step after a failure)
+// are proven rather than timed.
+
+function deferred<R>() {
+  let resolve!: (value: R) => void
+  let reject!: (err: unknown) => void
+  const promise = new Promise<R>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function session(over: Partial<Session> = {}): Session {
+  return {
+    id: 's1',
+    name: 'Monday training',
+    date: '2026-06-10',
+    time: '17:30',
+    ageGroup: 'U8s',
+    venue: 'Springmill 3G',
+    focus: 'Passing',
+    status: 'upcoming',
+    activities: [],
+    coachId: 'coach1',
+    teamId: null,
+    intentions: [],
+    space: '',
+    sourceUrl: '',
+    sourceLabel: '',
+    programmeId: null,
+    programmeWeek: null,
+    liveActivityIndex: null,
+    liveActivityStartedAt: null,
+    spondEventId: null,
+    boardId: null,
+    ...over,
+  }
+}
+
+// A planner actions harness around one controllable upsert per attempt.
+function plannerHarness() {
+  const pendings: (PlannerAction | null)[] = []
+  const failures: PlannerAction[] = []
+  const waiting: Array<ReturnType<typeof deferred<Session>>> = []
+  const upsert = vi.fn((draft: Session) => {
+    const d = deferred<Session>()
+    waiting.push(d)
+    return d.promise.then(() => draft)
+  })
+  const cb: PlannerActionCallbacks = {
+    upsert,
+    navSessions: vi.fn(),
+    navLive: vi.fn(),
+    onPending: (a) => pendings.push(a),
+    onFailure: (a) => failures.push(a),
+  }
+  return { actions: createPlannerActions(cb), cb, upsert, waiting, pendings, failures }
+}
+
+// Lets promise callbacks queued by a resolve or reject run.
+const flush = () => new Promise<void>((r) => setTimeout(r, 0))
+
+describe('planner save', () => {
+  it('does not navigate before the write resolves, then navigates to sessions on success', async () => {
+    const h = plannerHarness()
+    const done = h.actions.save(session())
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    expect(h.cb.navSessions).not.toHaveBeenCalled()
+    expect(h.pendings).toEqual(['save'])
+    h.waiting[0].resolve(session())
+    await done
+    expect(h.cb.navSessions).toHaveBeenCalledTimes(1)
+    expect(h.pendings).toEqual(['save', null])
+  })
+
+  it('stays put on failure: no navigation, pending cleared, the failure reported', async () => {
+    const h = plannerHarness()
+    const done = h.actions.save(session())
+    h.waiting[0].reject(new Error('network down'))
+    await done
+    expect(h.cb.navSessions).not.toHaveBeenCalled()
+    expect(h.cb.navLive).not.toHaveBeenCalled()
+    expect(h.failures).toEqual(['save'])
+    expect(h.pendings).toEqual(['save', null])
+  })
+
+  it('never mutates the draft it submits, so a failed write leaves the visible draft unchanged', async () => {
+    // With editing frozen during a pending write, the visible draft is the one
+    // submitted. Prove the seam does not alter it: after a failure the draft
+    // object is byte-for-byte unchanged and is exactly what a retry resubmits,
+    // so nothing the failed attempt captured can displace the coach's draft.
+    const h = plannerHarness()
+    const draft = session({ name: 'Monday training' })
+    const before = JSON.stringify(draft)
+    const done = h.actions.save(draft)
+    h.waiting[0].reject(new Error('network down'))
+    await done
+    expect(h.cb.navSessions).not.toHaveBeenCalled()
+    expect(JSON.stringify(draft)).toBe(before)
+    const retry = h.actions.save(draft)
+    h.waiting[1].resolve(session())
+    await retry
+    expect(h.upsert.mock.calls[1][0]).toBe(draft)
+  })
+
+  it('submits the draft it is given, so a retry after edits carries the latest draft', async () => {
+    const h = plannerHarness()
+    const first = h.actions.save(session({ name: 'Before the edit' }))
+    h.waiting[0].reject(new Error('boom'))
+    await first
+    const second = h.actions.save(session({ name: 'After the edit' }))
+    h.waiting[1].resolve(session())
+    await second
+    expect(h.upsert).toHaveBeenCalledTimes(2)
+    expect(h.upsert.mock.calls[0][0].name).toBe('Before the edit')
+    expect(h.upsert.mock.calls[1][0].name).toBe('After the edit')
+    expect(h.cb.navSessions).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores rapid repeated clicks while an attempt is in flight: one write only', async () => {
+    const h = plannerHarness()
+    const first = h.actions.save(session())
+    void h.actions.save(session())
+    void h.actions.save(session())
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    h.waiting[0].resolve(session())
+    await first
+    await flush()
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    expect(h.cb.navSessions).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks Start while a Save is in flight; the shared guard serialises the two actions', async () => {
+    const h = plannerHarness()
+    const first = h.actions.save(session())
+    void h.actions.start(session(), false)
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    h.waiting[0].resolve(session())
+    await first
+    expect(h.cb.navLive).not.toHaveBeenCalled()
+  })
+})
+
+describe('planner start', () => {
+  it('does not open the live view before the save resolves', async () => {
+    const h = plannerHarness()
+    const done = h.actions.start(session(), false)
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    expect(h.cb.navLive).not.toHaveBeenCalled()
+    h.waiting[0].resolve(session())
+    await done
+    expect(h.cb.navLive).toHaveBeenCalledWith('s1')
+    expect(h.cb.navSessions).not.toHaveBeenCalled()
+  })
+
+  it('never opens the live view from a failed save, and a retry works', async () => {
+    const h = plannerHarness()
+    const first = h.actions.start(session(), false)
+    h.waiting[0].reject(new Error('boom'))
+    await first
+    expect(h.cb.navLive).not.toHaveBeenCalled()
+    expect(h.failures).toEqual(['start'])
+    const second = h.actions.start(session(), false)
+    h.waiting[1].resolve(session())
+    await second
+    expect(h.cb.navLive).toHaveBeenCalledWith('s1')
+  })
+
+  it('navigates to the saved session id returned by the write', async () => {
+    const h = plannerHarness()
+    const done = h.actions.start(session({ id: 'fresh-id' }), false)
+    h.waiting[0].resolve(session())
+    await done
+    expect(h.cb.navLive).toHaveBeenCalledWith('fresh-id')
+  })
+
+  it('never navigates from a write that settles after the editor has gone', async () => {
+    const h = plannerHarness()
+    const done = h.actions.save(session())
+    // The coach leaves the planner while the save is still in flight.
+    h.actions.setActive(false)
+    h.waiting[0].resolve(session())
+    await done
+    expect(h.cb.navSessions).not.toHaveBeenCalled()
+    // The attempt still settled cleanly: pending cleared, nothing failed.
+    expect(h.pendings).toEqual(['save', null])
+    expect(h.failures).toEqual([])
+  })
+
+  it('read-only Watch live performs no write and navigates straight away', async () => {
+    const h = plannerHarness()
+    await h.actions.start(session({ id: 's9' }), true)
+    expect(h.upsert).not.toHaveBeenCalled()
+    expect(h.pendings).toEqual([])
+    expect(h.cb.navLive).toHaveBeenCalledWith('s9')
+  })
+})
+
+describe('guarded submit (the shape every other session-writing flow uses)', () => {
+  it('runs the close-and-navigate step only after the write resolves', async () => {
+    const d = deferred<string>()
+    const onSuccess = vi.fn()
+    const onFailure = vi.fn()
+    const guard = createGuardedSubmit<number, string>({
+      perform: () => d.promise,
+      onPending: () => {},
+      onSuccess,
+      onFailure,
+    })
+    const done = guard.run(1)
+    expect(onSuccess).not.toHaveBeenCalled()
+    d.resolve('saved')
+    await done
+    expect(onSuccess).toHaveBeenCalledWith('saved', 1)
+    expect(onFailure).not.toHaveBeenCalled()
+  })
+
+  it('keeps the flow open on failure: onSuccess never runs, onFailure carries the error', async () => {
+    const d = deferred<string>()
+    const onSuccess = vi.fn()
+    const onFailure = vi.fn()
+    const guard = createGuardedSubmit<number, string>({
+      perform: () => d.promise,
+      onPending: () => {},
+      onSuccess,
+      onFailure,
+    })
+    const done = guard.run(1)
+    const boom = new Error('boom')
+    d.reject(boom)
+    await done
+    expect(onSuccess).not.toHaveBeenCalled()
+    expect(onFailure).toHaveBeenCalledWith(boom, 1)
+  })
+
+  it('brackets each attempt with pending true then false, before the outcome callback', async () => {
+    const order: string[] = []
+    const d = deferred<string>()
+    const guard = createGuardedSubmit<number, string>({
+      perform: () => d.promise,
+      onPending: (p) => order.push(`pending:${p}`),
+      onSuccess: () => order.push('success'),
+      onFailure: () => order.push('failure'),
+    })
+    const done = guard.run(1)
+    d.resolve('ok')
+    await done
+    expect(order).toEqual(['pending:true', 'pending:false', 'success'])
+  })
+
+  it('ignores calls while in flight and accepts a new attempt after settlement', async () => {
+    const waiting: Array<ReturnType<typeof deferred<string>>> = []
+    const perform = vi.fn(() => {
+      const d = deferred<string>()
+      waiting.push(d)
+      return d.promise
+    })
+    const guard = createGuardedSubmit<number, string>({
+      perform,
+      onPending: () => {},
+      onSuccess: () => {},
+      onFailure: () => {},
+    })
+    const first = guard.run(1)
+    void guard.run(2)
+    expect(perform).toHaveBeenCalledTimes(1)
+    waiting[0].reject(new Error('boom'))
+    await first
+    const second = guard.run(3)
+    expect(perform).toHaveBeenCalledTimes(2)
+    expect(perform).toHaveBeenLastCalledWith(3)
+    waiting[1].resolve('ok')
+    await second
+  })
+
+  it('skips the close-and-navigate step for a write that settles after the surface has gone', async () => {
+    const d = deferred<string>()
+    const onSuccess = vi.fn()
+    const pendings: boolean[] = []
+    const guard = createGuardedSubmit<number, string>({
+      perform: () => d.promise,
+      onPending: (p) => pendings.push(p),
+      onSuccess,
+      onFailure: () => {},
+    })
+    const done = guard.run(1)
+    // The modal is dismissed, or the screen unmounts, while in flight.
+    guard.setActive(false)
+    d.resolve('saved')
+    await done
+    expect(onSuccess).not.toHaveBeenCalled()
+    // The attempt still settled: pending was cleared.
+    expect(pendings).toEqual([true, false])
+  })
+
+  it('still reports a failure that settles after the surface has gone', async () => {
+    const d = deferred<string>()
+    const onFailure = vi.fn()
+    const guard = createGuardedSubmit<number, string>({
+      perform: () => d.promise,
+      onPending: () => {},
+      onSuccess: () => {},
+      onFailure,
+    })
+    const done = guard.run(1)
+    guard.setActive(false)
+    const boom = new Error('boom')
+    d.reject(boom)
+    await done
+    expect(onFailure).toHaveBeenCalledWith(boom, 1)
+  })
+})
+
+describe('stableCreateId', () => {
+  it('mints once per key and reuses it, so a retry targets the same row', () => {
+    const store = new Map<string, string>()
+    let n = 0
+    const mint = () => `id-${++n}`
+    const first = stableCreateId(store, 'week-1', mint)
+    const retry = stableCreateId(store, 'week-1', mint)
+    expect(first).toBe('id-1')
+    expect(retry).toBe('id-1')
+    expect(n).toBe(1)
+  })
+
+  it('mints a distinct id for each new key', () => {
+    const store = new Map<string, string>()
+    let n = 0
+    const mint = () => `id-${++n}`
+    expect(stableCreateId(store, 'a', mint)).toBe('id-1')
+    expect(stableCreateId(store, 'b', mint)).toBe('id-2')
+    // The first key still returns its original id after another key minted one.
+    expect(stableCreateId(store, 'a', mint)).toBe('id-1')
+  })
+
+  it('a fresh store starts over, mirroring a surface that unmounted after success', () => {
+    const mint = () => 'x'
+    const before = new Map<string, string>()
+    stableCreateId(before, 'week-1', () => 'first')
+    // A new store (a remounted surface) mints a new id for the same key.
+    const after = new Map<string, string>()
+    expect(stableCreateId(after, 'week-1', mint)).toBe('x')
+  })
+})
+
+describe('plannerBusy composition', () => {
+  it('is busy for a pending Save or Start', () => {
+    expect(plannerBusy('save', false)).toBe(true)
+    expect(plannerBusy('start', false)).toBe(true)
+  })
+
+  it('is busy while a Plan from Spond create runs, even with no Save or Start', () => {
+    // The composition is what stops the two create paths on one planner from
+    // running at once: a Spond create freezes Save and Start (and the fields).
+    expect(plannerBusy(null, true)).toBe(true)
+  })
+
+  it('is idle only when nothing is pending', () => {
+    expect(plannerBusy(null, false)).toBe(false)
+  })
+})

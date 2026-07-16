@@ -1,16 +1,22 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   alreadyImportedFrom,
+  applySessionUpsert,
+  createAttemptTracker,
   faImportBody,
+  isUniqueViolation,
   MEDIA_MAX_BYTES,
   oversizeMessage,
   partitionDrillsByUsage,
+  revertSessionUpsert,
+  sessionExistsInCache,
   toActivity,
   toActivityRow,
   toDrill,
   toProgramme,
   toProgrammeList,
   toSession,
+  upsertSessionWrite,
   type DrillRow,
   type ProgrammeRow,
   type SessionRow,
@@ -262,5 +268,155 @@ describe('programme list ordering (useProgrammes transformation)', () => {
     expect(toProgrammeList(rows).map((p) => p.id)).toEqual(['p-zzz', 'p-mmm', 'p-aaa'])
     // The same rows arriving in any other order give the same list.
     expect(toProgrammeList([rows[1], rows[2], rows[0]]).map((p) => p.id)).toEqual(['p-zzz', 'p-mmm', 'p-aaa'])
+  })
+})
+
+// The optimistic session upsert, exercised through its pure pieces: the list
+// apply and revert, and the per-id attempt tracker that stops an older failed
+// attempt rolling the cache back over a newer one. The useUpsertSession
+// callbacks are thin wiring over exactly these calls.
+describe('optimistic session upsert cache behaviour', () => {
+  const s = (id: string, name: string) => {
+    const base = toSession(sessionRow({ id, name }))
+    return base
+  }
+
+  it('inserts a new session and updates an existing one in the list', () => {
+    const a = s('a', 'First')
+    expect(applySessionUpsert(undefined, a)).toEqual([a])
+    const list = applySessionUpsert([a], s('b', 'Second'))
+    expect(list.map((x) => x.id)).toEqual(['a', 'b'])
+    const edited = applySessionUpsert(list, s('a', 'First edited'))
+    expect(edited.map((x) => x.name)).toEqual(['First edited', 'Second'])
+    // Position is preserved on update, so the list does not jump around.
+    expect(edited[0].id).toBe('a')
+  })
+
+  it('reverts an insert by removing the entry and an update by restoring it', () => {
+    const a = s('a', 'Original')
+    const list = applySessionUpsert([a], s('b', 'Inserted'))
+    // Insert rollback: no previous entry, so the row goes away.
+    expect(revertSessionUpsert(list, undefined, 'b')).toEqual([a])
+    // Update rollback: the previous entry comes back in place.
+    const edited = applySessionUpsert([a], s('a', 'Edited'))
+    expect(revertSessionUpsert(edited, a, 'a')).toEqual([a])
+  })
+
+  it('rolls back only the failed entry, leaving other sessions untouched', () => {
+    const a = s('a', 'Mine')
+    const b = s('b', 'Someone else, newer optimistic write')
+    const list = applySessionUpsert(applySessionUpsert([a], b), s('c', 'Failed insert'))
+    expect(revertSessionUpsert(list, undefined, 'c')).toEqual([a, b])
+  })
+
+  it('an older failed attempt cannot replace a newer attempt state', () => {
+    const tracker = createAttemptTracker()
+    const first = tracker.begin('s1')
+    const second = tracker.begin('s1')
+    // The scenario: attempt one fails after attempt two has already run. The
+    // onError guard asks isLatest and must decline the rollback.
+    expect(tracker.isLatest('s1', first)).toBe(false)
+    expect(tracker.isLatest('s1', second)).toBe(true)
+    // The older attempt settling does not disturb the newer one's claim.
+    tracker.end('s1', first)
+    expect(tracker.isLatest('s1', second)).toBe(true)
+    tracker.end('s1', second)
+    expect(tracker.isLatest('s1', second)).toBe(false)
+  })
+
+  it('tracks attempts per session id, not globally', () => {
+    const tracker = createAttemptTracker()
+    const a = tracker.begin('a')
+    const b = tracker.begin('b')
+    expect(tracker.isLatest('a', a)).toBe(true)
+    expect(tracker.isLatest('b', b)).toBe(true)
+  })
+})
+
+describe('isUniqueViolation', () => {
+  it('recognises the Postgres unique_violation code and nothing else', () => {
+    expect(isUniqueViolation({ code: '23505', message: 'duplicate key value violates unique constraint' })).toBe(true)
+    expect(isUniqueViolation({ code: '23503' })).toBe(false)
+    expect(isUniqueViolation({ message: 'network error' })).toBe(false)
+    expect(isUniqueViolation(new Error('boom'))).toBe(false)
+    expect(isUniqueViolation(null)).toBe(false)
+    expect(isUniqueViolation('23505')).toBe(false)
+  })
+})
+
+describe('upsertSessionWrite server-safe insert versus update', () => {
+  const row = () => toSession(sessionRow())
+
+  it('updates directly when the row is known to exist, never inserting', async () => {
+    const insert = vi.fn()
+    const update = vi.fn(async () => row())
+    const out = await upsertSessionWrite({ exists: true, insert, update, isUniqueViolation })
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(insert).not.toHaveBeenCalled()
+    expect(out.id).toBe('s1')
+  })
+
+  it('inserts a genuinely new row and returns it, without touching update', async () => {
+    const insert = vi.fn(async () => row())
+    const update = vi.fn()
+    const out = await upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })
+    expect(insert).toHaveBeenCalledTimes(1)
+    expect(update).not.toHaveBeenCalled()
+    expect(out.id).toBe('s1')
+  })
+
+  it('recovers a lost-response insert into an update on retry, resolving to the existing row', async () => {
+    // The scenario the requirement names: the first insert committed
+    // server-side but the client saw a failure, so the cache holds no row and
+    // the retry still chooses insert. That insert now collides on the primary
+    // key (23505); recovery updates the same id and resolves rather than
+    // duplicating or sticking on the duplicate key.
+    const insert = vi.fn(async () => {
+      throw { code: '23505', message: 'duplicate key value violates unique constraint "sessions_pkey"' }
+    })
+    const update = vi.fn(async () => row())
+    const out = await upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })
+    expect(insert).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(out.id).toBe('s1')
+  })
+
+  it('does not recover a non-unique-violation insert error, so a real failure surfaces', async () => {
+    const boom = { code: '08006', message: 'connection failure' }
+    const insert = vi.fn(async () => {
+      throw boom
+    })
+    const update = vi.fn()
+    await expect(upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })).rejects.toBe(boom)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the recovery update is not authorised', async () => {
+    // A duplicate key whose recovery update touches no row (RLS blocked, the
+    // row is another coach's) surfaces the update error rather than resolving.
+    const insert = vi.fn(async () => {
+      throw { code: '23505' }
+    })
+    const rlsError = new Error('no rows updated')
+    const update = vi.fn(async () => {
+      throw rlsError
+    })
+    await expect(upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })).rejects.toBe(rlsError)
+    expect(update).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('sessionExistsInCache exists hint', () => {
+  const s = () => toSession(sessionRow())
+  it('is true when the list holds the row, so an existing-session save updates', () => {
+    expect(sessionExistsInCache(s(), undefined)).toBe(true)
+  })
+  it('is true when only the per-id cache holds the row (the planner edit before the list loads)', () => {
+    // useSession keys ['sessions', id], so an edit finds the row here even with
+    // the list unloaded; this is the case that previously misfired as an insert.
+    expect(sessionExistsInCache(undefined, s())).toBe(true)
+  })
+  it('is false only when both caches are absent, where the write self-corrects via recovery', () => {
+    expect(sessionExistsInCache(undefined, undefined)).toBe(false)
   })
 })
