@@ -19,9 +19,12 @@ technical detail:
 
 ## Original risks discovered
 
-Three confirmed defects, all present since early migrations and all
-independently reachable with nothing more than the anon key or an ordinary
-club login:
+Three confirmed defects, all present since early migrations. Their
+preconditions differed and are worth distinguishing: the Storage defect was
+reachable by any authenticated account of any club; the board leakage
+occurred when a roster seeded board persisted names into a saved row; and
+the signup defect was exploitable by an outsider only if public email
+signup was enabled on the hosted project.
 
 1. **Storage was authenticated-only, not authorised.** The three `media`
    bucket policies from `0001_init.sql` distinguished only unauthenticated
@@ -37,10 +40,12 @@ club login:
    Roster seeding broke that boundary by copying each child's
    `display_name` into `boards.tokens[].label`, and saved boards are club
    readable by design. The parent UI masked the labels with a `numberOnly`
-   prop, but that was presentation only: the database returned the names in
-   the `tokens` jsonb to every club member, parents included. A confirmed
-   safeguarding issue and a data minimisation failure, with the names
-   present in production rows.
+   prop, but that was presentation only: the database returned whatever the
+   `tokens` jsonb held to every club member, parents included. A confirmed
+   safeguarding defect in the code path and a data minimisation failure,
+   proven by a failing test; the later production preflight showed the
+   leak had not materialised in stored data (see the findings section
+   below).
 
 3. **Client controlled metadata granted club membership.** The
    `handle_new_user` trigger from `0001_init.sql` copied `club_id` and
@@ -97,8 +102,12 @@ avatars (`avatars/{user_id}/…`). Reads are scoped to the caller's club.
 Writes require the matching capability (`media.create`, `club.manage`) or
 ownership, where ownership is `storage.objects.owner_id`, set by the Storage
 service from the JWT and not client controllable. There is deliberately no
-UPDATE policy for anyone, so an object can never be replaced in place and a
-signed URL can never silently start serving different bytes. The same PR
+UPDATE policy for anyone, so replacement through UPDATE or upsert is
+refused for every caller. This does not make paths immutable: an authorised
+owner or manager can still delete an object and recreate one at the same
+path, after which an existing signed URL for that path serves the new
+bytes. That delete and recreate route is recorded as an accepted
+limitation, not a prevented one (see the accepted risks). The same PR
 moved crest uploads from the unscoped `club/…` prefix to
 `{club_id}/crest/…`. The four red harness tests now pass and the Storage
 suite grew to 27 tests.
@@ -150,9 +159,10 @@ user. ADR-0003 records the decision.
 
 ## Production verification completed
 
-The programme's rule was that nothing merges on trust: every claim about the
-hosted project was checked read only, and every applied change was verified
-after apply.
+The programme's rule was that nothing merges on trust: claims about the
+hosted project were checked read only where the tooling allowed, anything
+unreadable was recorded as pending rather than asserted, and every applied
+change was verified after apply.
 
 - **Hosted bucket inspection (before the Storage design was chosen).** Every
   object in the hosted `media` bucket was enumerated read only: 108 club
@@ -160,15 +170,28 @@ after apply.
   objects matching their owners, and zero objects under the legacy `club/`
   crest prefix. That inspection is what justified shipping no legacy
   compatibility arm in the policies.
-- **Hosted auth configuration inspection.** The hosted Auth settings were
-  read during PR #100; the readable items were recorded in
-  `docs/security/auth-membership-boundary.md` and the items the connector
-  could not read were explicitly marked pending confirmation rather than
-  asserted. Nothing was changed.
+- **Hosted Auth configuration inspection was attempted but blocked.** The
+  connector approval needed to read the hosted Auth settings was not
+  granted during PR #100, so none of the settings could be read. All five
+  hosted configuration checks (public email signup, anonymous sign-in,
+  leaked-password protection, the redirect allow-list, and the official
+  security advisors) therefore remain pending dashboard confirmation, as
+  listed under the operational follow-ups. Nothing was changed and nothing
+  about these settings was asserted.
+- **Hosted auth boundary behaviour verified.** Separate from the unread
+  settings, the boundary itself was verified against the hosted project:
+  a direct signup lands quarantined (null club, parent role, no reads),
+  a real invitation provisions correctly through `grant_club_membership`,
+  the deployed function definitions and their ACLs were read back and
+  checked against the migration, and database level advisor equivalent
+  SQL checks ran clean.
 - **Board data preflight.** The counts only preflight (total boards, boards
   with labels, uniquely matched, ambiguous, unmatched) ran against
-  production data without outputting a single name or label value, and the
-  backfill's own verification block re-checked every row at apply time.
+  production data without outputting a single name or label value. It
+  found one board in total, holding an empty tokens array: zero boards
+  with labels, and zero rows for the backfill to change. Migration 0028
+  accordingly changed no rows on apply, and its verification block
+  re-checked the shape of every row at apply time.
 - **Migrations applied and confirmed in the live ledger.** The hosted
   migration ledger now records all three remediation migrations:
   `storage_boundary` applied 14 July 2026, `board_player_boundary` and
@@ -192,8 +215,9 @@ after apply.
    fixes.
 2. **Authorisation is class based on Storage paths.** Three path shapes
    (club content, crest, avatars) with capability and ownership arms, and
-   no UPDATE policy for anyone: replacement is delete plus create, so
-   content behind a signed URL is immutable per path.
+   no UPDATE policy for anyone, so in place replacement through UPDATE or
+   upsert is refused. Delete and recreate at the same path remains open to
+   authorised callers and is the accepted limitation.
 3. **Boards persist references, never names.** Child names live in exactly
    one table, gated by RLS; every other surface resolves them at render
    time with the caller's own authority. The shape is enforced below RLS by
@@ -231,12 +255,15 @@ after apply.
 
 ## Incidents avoided and production data findings
 
-- **Children's names were present in production board rows** readable by
-  every club member. The backfill removed them; the preflight and the
-  migration's verification block confirmed the result without ever printing
-  a name. No evidence existed either way about whether any parent account
-  had read them; at the time of remediation no parent account had been
-  invited, which is why the parent smoke test below remains open.
+- **The board name leak was confirmed in code and tests but had not
+  materialised in stored production data.** The leaking path (roster
+  seeding copying names into club readable token labels) was real and
+  proven by the harness, but the verified production preflight found one
+  board in total with an empty tokens array, zero boards with labels, and
+  zero rows changed by migration 0028. No child's name was ever stored in
+  a production board row. The constraint now makes the recurrence
+  impossible rather than merely unexercised; the parent smoke test below
+  remains open as belt and braces once the first parent account exists.
 - **The Storage bucket held 108 objects writable and deletable by any
   authenticated user.** Six were orphans unreferenced by any media row, and
   three admin replaced objects carry an `owner_id` that is not their media
@@ -259,9 +286,13 @@ Accepted knowingly, with rationale, and recorded in the boundary documents:
   Accepted as harmless history.
 - **Six orphaned Storage objects.** Club readable, referenced by nothing.
   Cleanup is optional housekeeping, not a security task.
-- **Owner delete then recreate.** An owner can delete their own object and
-  upload different bytes under a fresh path. This grants no more power than
-  editing their own media row and is accepted.
+- **Delete and recreate at the same path.** An authorised owner or manager
+  can delete an object and upload different bytes under the same path,
+  after which an existing signed URL for that path serves the new bytes.
+  The missing UPDATE policy blocks only in place replacement through
+  UPDATE and upsert; nothing enforces that recreation use a fresh path.
+  This is the precise accepted limitation, and it grants an owner no more
+  power than editing their own media row.
 - **Avatar folders as personal storage.** A user can put arbitrary files
   under their own `avatars/{user_id}/` prefix; content type and size are
   enforced client side only. Bounded blast radius (own folder, same club
@@ -289,15 +320,17 @@ routine hygiene on the Supabase project settings.
    quarantine makes a self signed account inert, but public signup off
    removes the noise of stranger accounts entirely. Recorded as pending
    confirmation in `docs/security/auth-membership-boundary.md`.
-2. **Confirm anonymous sign-in is disabled.** Believed off; confirm in the
-   hosted Auth settings.
+2. **Confirm anonymous sign-in is disabled.** Not readable during the
+   programme; confirm in the hosted Auth settings.
 3. **Enable leaked-password protection** in hosted Auth so known
    compromised passwords are rejected at signup and password change.
 4. **Confirm the Auth redirect allow-list** contains only the production
    and preview origins the app actually uses.
 5. **Run the official Supabase security advisors** against the hosted
    project and review the report, now that the three remediation
-   migrations are applied.
+   migrations are applied. Database level SQL checks equivalent to the
+   advisors ran clean during the programme; the official dashboard run is
+   what remains.
 6. **Perform a live parent board-view smoke test when the first parent
    account is invited**: sign in as the parent, open a board seeded from a
    roster, and confirm the client receives shape and numbers only. The
