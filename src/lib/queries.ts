@@ -1756,9 +1756,9 @@ export function useUpsertSession() {
     // trip. The list and the per-id cache are both seeded.
     onMutate: (input) => {
       const list = qc.getQueryData<Session[]>(['sessions'])
-      existed.current.set(input.id, (list ?? []).some((s) => s.id === input.id))
-      const attempt = attempts.current.begin(input.id)
       const prevEntry = list?.find((s) => s.id === input.id)
+      existed.current.set(input.id, prevEntry !== undefined)
+      const attempt = attempts.current.begin(input.id)
       const prevOne = qc.getQueryData<Session>(['sessions', input.id])
       qc.setQueryData<Session[]>(['sessions'], (old) => applySessionUpsert(old, input))
       qc.setQueryData<Session>(['sessions', input.id], input)
@@ -1768,10 +1768,17 @@ export function useUpsertSession() {
       // Roll back only this session's entry, and only while this attempt is
       // still the newest for the id: restoring an older snapshot after a newer
       // attempt has run would overwrite the newer state. The settled
-      // invalidation refetches the server truth either way.
+      // invalidation refetches the server truth either way, which also covers
+      // the pathological overlap this snapshot cannot: two concurrent
+      // attempts for the same id both failing leaves the first attempt's
+      // optimistic entry until that refetch lands.
       if (!ctx || !attempts.current.isLatest(input.id, ctx.attempt)) return
       qc.setQueryData<Session[]>(['sessions'], (old) => revertSessionUpsert(old, ctx.prevEntry, input.id))
-      qc.setQueryData(['sessions', input.id], ctx.prevOne)
+      // A failed insert has no previous per-id value, and setQueryData with
+      // undefined is a no-op, so drop the optimistic entry instead: nothing
+      // may keep serving a session the database refused.
+      if (ctx.prevOne === undefined) qc.removeQueries({ queryKey: ['sessions', input.id], exact: true })
+      else qc.setQueryData(['sessions', input.id], ctx.prevOne)
     },
     onSettled: (_data, _err, input, ctx) => {
       existed.current.delete(input.id)

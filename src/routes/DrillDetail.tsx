@@ -7,7 +7,8 @@ import { useDrill, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl 
 import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import { relatedDrills } from '../lib/contentOrder'
 import { isFaVideo } from '../lib/fa'
-import { createGuardedSubmit, DRILL_ADD_ERROR, logSessionWriteError } from '../lib/sessionSubmit'
+import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
+import { DRILL_ADD_ERROR } from '../lib/sessionSubmit'
 import type { Drill, Phase, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -97,30 +98,20 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
   const sessions = allSessions.filter((s) => caps.has('sessions.manage') || s.coachId === user?.id)
   const [phase, setPhase] = useState<Phase>('Skill')
   const [target, setTarget] = useState(sessions[0]?.id || '')
-  const [pending, setPending] = useState(false)
-  const [failed, setFailed] = useState(false)
   // The write is awaited: the modal closes and the planner opens only after
   // the session lands. A failure keeps the modal open with the choices intact
-  // and a calm note; Add drill doubles as the retry. Constructed once so the
-  // duplicate-click guard survives re-renders; everything dynamic arrives
-  // through the submitted session.
-  const [submit] = useState(() =>
-    createGuardedSubmit<Session, Session>({
-      perform: (updated) => upsertSession(updated),
-      onPending: (p) => {
-        setPending(p)
-        if (p) setFailed(false)
-      },
-      onSuccess: (saved) => {
-        onClose()
-        nav('planner', { sessionId: saved.id })
-      },
-      onFailure: (err) => {
-        logSessionWriteError('add drill to session', err)
-        setFailed(true)
-      },
-    }),
-  )
+  // and a calm note; Add drill doubles as the retry. Dismissing the modal
+  // while the write is in flight unmounts it, and the hook's unmount gate
+  // stops the late success from navigating anywhere.
+  const { submit, pending, failed } = useGuardedSubmit<Session, Session>({
+    operation: 'add drill to session',
+    perform: (updated) => upsertSession(updated),
+    onSuccess: (saved) => {
+      onClose()
+      nav('planner', { sessionId: saved.id })
+    },
+  })
+  const adding = pending !== null
   const add = () => {
     const s = sessions.find((x) => x.id === target)
     if (!s) return
@@ -133,12 +124,12 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={pending}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={adding}>
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={add} disabled={!target || pending}>
+          <button className="btn btn-primary" onClick={add} disabled={!target || adding}>
             <Icon.plus />
-            {pending ? 'Adding…' : 'Add drill'}
+            {adding ? 'Adding…' : 'Add drill'}
           </button>
         </>
       }

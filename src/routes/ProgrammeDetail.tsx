@@ -42,6 +42,8 @@ function WeekRow({
   coaching,
   manyTeams,
   nav,
+  onUse,
+  usePendingId,
   onEditTemplate,
 }: {
   week: number
@@ -50,11 +52,14 @@ function WeekRow({
   coaching: boolean
   manyTeams: boolean
   nav: NavFn
+  // The screen owns the create flow: one guard across every week, so a week
+  // in flight disables all Use buttons, not only its own.
+  onUse: (t: Template) => void
+  usePendingId: string | null
   // Editing a week's template is a templates update, which the RLS reserves
   // for admins; null hides the affordance for everyone else.
   onEditTemplate: ((t: Template) => void) | null
 }) {
-  const { start: startFromTemplate, pending: creating, failed: createFailed } = useStartFromTemplate()
   const teamById = useTeamMap()
   return (
     <div className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -118,11 +123,10 @@ function WeekRow({
           })}
         </div>
       )}
-      {template && coaching && createFailed && <ActionError>{SESSION_CREATE_ERROR}</ActionError>}
       {template && coaching && (
-        <button className="btn btn-primary" style={{ minHeight: 44 }} disabled={creating} onClick={() => startFromTemplate(template)}>
+        <button className="btn btn-primary" style={{ minHeight: 44 }} disabled={usePendingId !== null} onClick={() => onUse(template)}>
           <Icon.copy />
-          {creating ? 'Creating…' : 'Use this week'}
+          {usePendingId === template.id ? 'Creating…' : 'Use this week'}
         </button>
       )}
     </div>
@@ -194,6 +198,7 @@ function ProgrammeView({ p }: { p: Programme }) {
   const nav = useNav()
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
+  const { start: startFromTemplate, pendingTemplateId, failed: createFailed } = useStartFromTemplate()
   const { data: templates = [] } = useTemplates()
   const { sessions } = useSessions()
   const teamById = useTeamMap()
@@ -301,6 +306,7 @@ function ProgrammeView({ p }: { p: Programme }) {
         </div>
       )}
 
+      {createFailed && <ActionError style={{ marginBottom: 12, maxWidth: 720 }}>{SESSION_CREATE_ERROR}</ActionError>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 720 }}>
         {weeks.map((w) => (
           <WeekRow
@@ -311,6 +317,8 @@ function ProgrammeView({ p }: { p: Programme }) {
             coaching={coaching}
             manyTeams={manyTeams}
             nav={nav}
+            onUse={startFromTemplate}
+            usePendingId={pendingTemplateId}
             onEditTemplate={caps.has('templates.manage') ? setEditingTemplate : null}
           />
         ))}

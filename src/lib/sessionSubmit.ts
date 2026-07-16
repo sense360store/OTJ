@@ -33,29 +33,47 @@ export interface GuardedSubmitCallbacks<T, R> {
   // onSuccess or onFailure. Starting a new attempt is the moment to clear a
   // previous attempt's error.
   onPending: (pending: boolean, input: T) => void
-  // Runs only after the write resolves; this is where a caller navigates or
-  // closes. A failed write never reaches it.
+  // Runs only after the write resolves, and only while the guard is active;
+  // this is where a caller navigates or closes. A failed write never reaches
+  // it, and neither does a write that settles after the caller has gone.
   onSuccess: (result: R, input: T) => void
   onFailure: (err: unknown, input: T) => void
 }
 
-// The returned function never rejects; failures land in onFailure.
-export function createGuardedSubmit<T, R>(cb: GuardedSubmitCallbacks<T, R>): (input: T) => Promise<void> {
+export interface GuardedSubmit<T> {
+  // Never rejects; failures land in onFailure.
+  run: (input: T) => Promise<void>
+  // The caller's lifecycle switch. While inactive, a settling write still
+  // reports pending and failure (so nothing is lost from the log), but
+  // onSuccess is skipped: a write that resolves after the user has dismissed
+  // the surface or navigated away must not close anything or yank them to
+  // another screen. The write itself still lands and the sessions cache
+  // picks it up on the settled invalidation.
+  setActive: (active: boolean) => void
+}
+
+export function createGuardedSubmit<T, R>(cb: GuardedSubmitCallbacks<T, R>): GuardedSubmit<T> {
   let inFlight = false
-  return async (input: T) => {
-    if (inFlight) return
-    inFlight = true
-    cb.onPending(true, input)
-    try {
-      const result = await cb.perform(input)
-      inFlight = false
-      cb.onPending(false, input)
-      cb.onSuccess(result, input)
-    } catch (err) {
-      inFlight = false
-      cb.onPending(false, input)
-      cb.onFailure(err, input)
-    }
+  let active = true
+  return {
+    run: async (input: T) => {
+      if (inFlight) return
+      inFlight = true
+      cb.onPending(true, input)
+      try {
+        const result = await cb.perform(input)
+        inFlight = false
+        cb.onPending(false, input)
+        if (active) cb.onSuccess(result, input)
+      } catch (err) {
+        inFlight = false
+        cb.onPending(false, input)
+        cb.onFailure(err, input)
+      }
+    },
+    setActive: (v) => {
+      active = v
+    },
   }
 }
 
@@ -76,11 +94,8 @@ export interface PlannerActions {
   // A read-only viewer never writes: Watch live navigates straight to the
   // live screen, exactly as before this seam existed.
   start: (draft: Session, readOnly: boolean) => Promise<void>
-  // The editor's lifecycle switch. While inactive, a settling write still
-  // reports pending and failure (so nothing is lost from the log), but never
-  // navigates: a save that resolves after the coach has already left the
-  // planner must not yank them to another screen. The write itself still
-  // lands and the sessions cache picks it up.
+  // The guard's lifecycle switch (see GuardedSubmit.setActive): while the
+  // editor is unmounted a settling save never navigates.
   setActive: (active: boolean) => void
 }
 
@@ -89,28 +104,24 @@ export interface PlannerActions {
 // component naturally carries the latest visible draft, not a payload
 // captured by the failed attempt.
 export function createPlannerActions(cb: PlannerActionCallbacks): PlannerActions {
-  let active = true
-  const submit = createGuardedSubmit<{ action: PlannerAction; draft: Session }, Session>({
+  const guard = createGuardedSubmit<{ action: PlannerAction; draft: Session }, Session>({
     perform: ({ draft }) => cb.upsert(draft),
     onPending: (pending, { action }) => cb.onPending(pending ? action : null),
     onSuccess: (saved, { action }) => {
-      if (!active) return
       if (action === 'save') cb.navSessions()
       else cb.navLive(saved.id)
     },
     onFailure: (err, { action }) => cb.onFailure(action, err),
   })
   return {
-    save: (draft) => submit({ action: 'save', draft }),
+    save: (draft) => guard.run({ action: 'save', draft }),
     start: (draft, readOnly) => {
       if (readOnly) {
         cb.navLive(draft.id)
         return Promise.resolve()
       }
-      return submit({ action: 'start', draft })
+      return guard.run({ action: 'start', draft })
     },
-    setActive: (v) => {
-      active = v
-    },
+    setActive: guard.setActive,
   }
 }

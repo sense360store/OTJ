@@ -205,6 +205,18 @@ describe('PlannerActionsView', () => {
     expect(html).toContain('Retry')
   })
 
+  it('withholds Retry for a failed start once the session has no activities left', () => {
+    // Retrying a start must honour the same empty-session gate as the Start
+    // button, or Retry would open the live view on an empty session.
+    const html = renderActions({ failed: 'start' as PlannerAction, canStart: false })
+    expect(html).toContain('role="alert"')
+    expect(html).not.toContain('Retry')
+    // A failed save keeps its Retry regardless: saving an empty session is
+    // allowed, only starting one is not.
+    const saveHtml = renderActions({ failed: 'save' as PlannerAction, canStart: false })
+    expect(saveHtml).toContain('Retry')
+  })
+
   it('renders read-only as Watch live with no save affordances and no error slot', () => {
     const html = renderActions({ readOnly: true })
     expect(html).toContain('Watch live')

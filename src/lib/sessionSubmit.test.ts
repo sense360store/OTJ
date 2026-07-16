@@ -190,13 +190,13 @@ describe('guarded submit (the shape every other session-writing flow uses)', () 
     const d = deferred<string>()
     const onSuccess = vi.fn()
     const onFailure = vi.fn()
-    const submit = createGuardedSubmit<number, string>({
+    const guard = createGuardedSubmit<number, string>({
       perform: () => d.promise,
       onPending: () => {},
       onSuccess,
       onFailure,
     })
-    const done = submit(1)
+    const done = guard.run(1)
     expect(onSuccess).not.toHaveBeenCalled()
     d.resolve('saved')
     await done
@@ -208,13 +208,13 @@ describe('guarded submit (the shape every other session-writing flow uses)', () 
     const d = deferred<string>()
     const onSuccess = vi.fn()
     const onFailure = vi.fn()
-    const submit = createGuardedSubmit<number, string>({
+    const guard = createGuardedSubmit<number, string>({
       perform: () => d.promise,
       onPending: () => {},
       onSuccess,
       onFailure,
     })
-    const done = submit(1)
+    const done = guard.run(1)
     const boom = new Error('boom')
     d.reject(boom)
     await done
@@ -225,13 +225,13 @@ describe('guarded submit (the shape every other session-writing flow uses)', () 
   it('brackets each attempt with pending true then false, before the outcome callback', async () => {
     const order: string[] = []
     const d = deferred<string>()
-    const submit = createGuardedSubmit<number, string>({
+    const guard = createGuardedSubmit<number, string>({
       perform: () => d.promise,
       onPending: (p) => order.push(`pending:${p}`),
       onSuccess: () => order.push('success'),
       onFailure: () => order.push('failure'),
     })
-    const done = submit(1)
+    const done = guard.run(1)
     d.resolve('ok')
     await done
     expect(order).toEqual(['pending:true', 'pending:false', 'success'])
@@ -244,21 +244,58 @@ describe('guarded submit (the shape every other session-writing flow uses)', () 
       waiting.push(d)
       return d.promise
     })
-    const submit = createGuardedSubmit<number, string>({
+    const guard = createGuardedSubmit<number, string>({
       perform,
       onPending: () => {},
       onSuccess: () => {},
       onFailure: () => {},
     })
-    const first = submit(1)
-    void submit(2)
+    const first = guard.run(1)
+    void guard.run(2)
     expect(perform).toHaveBeenCalledTimes(1)
     waiting[0].reject(new Error('boom'))
     await first
-    const second = submit(3)
+    const second = guard.run(3)
     expect(perform).toHaveBeenCalledTimes(2)
     expect(perform).toHaveBeenLastCalledWith(3)
     waiting[1].resolve('ok')
     await second
+  })
+
+  it('skips the close-and-navigate step for a write that settles after the surface has gone', async () => {
+    const d = deferred<string>()
+    const onSuccess = vi.fn()
+    const pendings: boolean[] = []
+    const guard = createGuardedSubmit<number, string>({
+      perform: () => d.promise,
+      onPending: (p) => pendings.push(p),
+      onSuccess,
+      onFailure: () => {},
+    })
+    const done = guard.run(1)
+    // The modal is dismissed, or the screen unmounts, while in flight.
+    guard.setActive(false)
+    d.resolve('saved')
+    await done
+    expect(onSuccess).not.toHaveBeenCalled()
+    // The attempt still settled: pending was cleared.
+    expect(pendings).toEqual([true, false])
+  })
+
+  it('still reports a failure that settles after the surface has gone', async () => {
+    const d = deferred<string>()
+    const onFailure = vi.fn()
+    const guard = createGuardedSubmit<number, string>({
+      perform: () => d.promise,
+      onPending: () => {},
+      onSuccess: () => {},
+      onFailure,
+    })
+    const done = guard.run(1)
+    guard.setActive(false)
+    const boom = new Error('boom')
+    d.reject(boom)
+    await done
+    expect(onFailure).toHaveBeenCalledWith(boom, 1)
   })
 })

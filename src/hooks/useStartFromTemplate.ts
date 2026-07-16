@@ -5,39 +5,27 @@
 // template's activities and intentions copied on.
 //
 // The create is awaited: the planner opens only after the session lands, and
-// a failure leaves the caller on its screen with pending and failed state to
-// show. Each hook instance guards its own duplicate clicks.
-import { useState } from 'react'
-import { useNav } from './useNav'
+// a failure leaves the caller on its screen with the failed flag to show.
+// The screen owning the hook holds one guard for all its cards, so only one
+// create can run at a time across them; pendingTemplateId names the card in
+// flight so the others can disable alongside it.
 import { useAuth } from './useAuth'
+import { useNav } from './useNav'
+import { useGuardedSubmit } from './useGuardedSubmit'
 import { useSessions } from '../context/SessionsContext'
-import { createGuardedSubmit, logSessionWriteError } from '../lib/sessionSubmit'
 import type { Activity, Session, Template } from '../lib/data'
 
 export function useStartFromTemplate() {
   const nav = useNav()
   const { user, profile } = useAuth()
   const { upsertSession } = useSessions()
-  const [pending, setPending] = useState(false)
-  const [failed, setFailed] = useState(false)
-  // Constructed once so the duplicate-click guard survives re-renders; the
-  // session itself is built per call, so nothing dynamic is captured.
-  const [submit] = useState(() =>
-    createGuardedSubmit<Session, Session>({
-      perform: (s) => upsertSession(s),
-      onPending: (p) => {
-        setPending(p)
-        if (p) setFailed(false)
-      },
-      onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
-      onFailure: (err) => {
-        logSessionWriteError('start from template', err)
-        setFailed(true)
-      },
-    }),
-  )
+  const { submit, pending, failed } = useGuardedSubmit<{ templateId: string; session: Session }, Session>({
+    operation: 'start from template',
+    perform: ({ session }) => upsertSession(session),
+    onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
+  })
   const start = (t: Template) => {
-    const s: Session = {
+    const session: Session = {
       id: crypto.randomUUID(),
       name: t.name,
       date: '2026-06-16',
@@ -60,7 +48,7 @@ export function useStartFromTemplate() {
       spondEventId: null,
       boardId: null,
     }
-    void submit(s)
+    void submit({ templateId: t.id, session })
   }
-  return { start, pending, failed }
+  return { start, pendingTemplateId: pending?.templateId ?? null, failed }
 }

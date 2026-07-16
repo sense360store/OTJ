@@ -430,7 +430,10 @@ export function PlannerActionsView({
             {pending === 'save' ? 'Saving…' : 'Save session'}
           </button>
           {failed && (
-            <ActionError onRetry={failed === 'save' ? onSave : onStart}>
+            // Retrying a failed start honours the same empty-session gate as
+            // the Start button; with no activities left the error stays but
+            // the retry affordance goes.
+            <ActionError onRetry={failed === 'save' ? onSave : canStart ? onStart : undefined}>
               {failed === 'save' ? SESSION_SAVE_ERROR : SESSION_START_ERROR}
             </ActionError>
           )}

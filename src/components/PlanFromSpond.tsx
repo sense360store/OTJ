@@ -13,11 +13,12 @@
 import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
+import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
 import { useSessions } from '../context/SessionsContext'
 import { useMyCapabilities, useMyTeams, useSpondEvents, useTeamMap } from '../lib/queries'
 import { memberTeamIds } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
-import { createGuardedSubmit, logSessionWriteError, SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
+import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { sessionFromSpondEvent, SPOND_COUNT_LABELS, spondEventWhen, spondPlanSuggestions, spondTeamLabel } from '../lib/spond'
 import { Icon } from './icons'
 import { CancelledBadge, MatchBadge } from './SpondAttendance'
@@ -133,27 +134,16 @@ export function PlanFromSpond({ hideWhenEmpty = false }: { hideWhenEmpty?: boole
   const teamById = useTeamMap()
   const [trainingOnly, setTrainingOnly] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  const [planPendingId, setPlanPendingId] = useState<string | null>(null)
-  const [planFailed, setPlanFailed] = useState(false)
   // The create is awaited: the planner opens only once the session lands, and
   // a failure keeps this surface up with a calm note; the row's button is the
-  // retry. Constructed once so the duplicate-click guard survives re-renders;
-  // the session is built per call. The pre filled session carries the event id
-  // in spondEventId, which keys the row's pending label.
-  const [submit] = useState(() =>
-    createGuardedSubmit<Session, Session>({
-      perform: (s) => upsertSession(s),
-      onPending: (p, s) => {
-        setPlanPendingId(p ? s.spondEventId : null)
-        if (p) setPlanFailed(false)
-      },
-      onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
-      onFailure: (err) => {
-        logSessionWriteError('plan from spond event', err)
-        setPlanFailed(true)
-      },
-    }),
-  )
+  // retry. The pre filled session carries the event id in spondEventId, which
+  // keys the row's pending label.
+  const { submit, pending, failed: planFailed } = useGuardedSubmit<Session, Session>({
+    operation: 'plan from spond event',
+    perform: (s) => upsertSession(s),
+    onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
+  })
+  const planPendingId = pending?.spondEventId ?? null
 
   // Coaches plan; parents never see this. The planner route already redirects
   // parents, so this is belt and braces and keeps the surface safe to drop on
