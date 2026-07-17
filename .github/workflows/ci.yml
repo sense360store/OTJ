@@ -50,6 +50,35 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # The database and Storage policy suite (tests/security), run against a
+  # LOCAL Supabase stack only. The suite's helpers refuse any non-local URL
+  # (assertLocal in tests/security/stack.ts), and the stack uses the CLI's
+  # built in local demo keys, so no service-role or hosted-project credential
+  # is ever needed or exposed here. A failure of this job fails CI. npm is
+  # cached; Docker image caching and health-check reliability are why this
+  # job may stay out of the required checks (a branch-protection decision)
+  # until it has proven stable, per docs/security/policy-test-matrix.md.
+  security:
+    name: security policy suite
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Start the local Supabase stack
+        run: npx supabase start
+      - name: Apply migrations and seed
+        run: npx supabase db reset
+      - name: Run the security policy suite
+        run: npm run test:security
+      - name: Stop the local Supabase stack
+        if: always()
+        run: npx supabase stop --no-backup
+
   # The Edge Function parser tests are hermetic Deno tests pinned against
   # real FA fixture pages; npm ci first because Deno resolves the npm
   # specifiers in fa.ts from node_modules. deno check covers the functions

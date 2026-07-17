@@ -35,17 +35,33 @@ const EXPECTED_CATALOGUE = [
   'templates.create',
   'templates.manage',
   'users.manage',
+  // 0030 audit foundation: the seven Registered Players and seasons keys.
+  'players.view',
+  'players.manage',
+  'players.import',
+  'players.export',
+  'players.delete',
+  'seasons.manage',
+  'audit.view',
 ].sort()
 
+// Coach default grants: the five create capabilities (0012) plus players.view
+// (0030), the club wide read of the register coaches keep. Coaches receive no
+// other new key, and in particular not audit.view.
 const COACH_CAPS = [
   'drills.create',
   'media.create',
   'programmes.create',
   'sessions.create',
   'templates.create',
+  'players.view',
 ].sort()
 
-const CAPABILITY_PATTERN = /\b(?:drills|media|templates|programmes|sessions|teams|users|club)\.(?:create|manage)\b/g
+// Extended for 0030 to the players, seasons and audit prefixes and the view,
+// import, export and delete verbs, so the frontend drift scan sees the new
+// family. Without this the scan is blind to any new capability string.
+const CAPABILITY_PATTERN =
+  /\b(?:drills|media|templates|programmes|sessions|teams|users|club|players|seasons|audit)\.(?:create|manage|view|import|export|delete)\b/g
 
 function scanFrontendCapabilityStrings(): Set<string> {
   const found = new Set<string>()

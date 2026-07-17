@@ -26,12 +26,12 @@ export const SEEDED_DRILL = 'd000000d-0000-0000-0000-000000000001'
 // it authenticates disposable accounts on a throwaway local stack only.
 export const TEST_PASSWORD = 'otj-local-security-tests-only'
 
-export type TestUserName = 'admin' | 'coachOne' | 'coachTwo' | 'parent' | 'outsider'
+export type TestUserName = 'admin' | 'manager' | 'coachOne' | 'coachTwo' | 'parent' | 'outsider'
 
 export interface TestUserSpec {
   email: string
   fullName: string
-  role: 'admin' | 'coach' | 'parent'
+  role: 'admin' | 'manager' | 'coach' | 'parent'
   clubId: string
 }
 
@@ -40,6 +40,15 @@ export const TEST_USERS: Record<TestUserName, TestUserSpec> = {
     email: 'sec-admin@otj-security-tests.local',
     fullName: 'Security Test Admin',
     role: 'admin',
+    clubId: CLUB_A,
+  },
+  // A club A manager, for the capability cells that separate manager from
+  // coach: the manager holds audit.view (and the players write and import
+  // and export keys), the coach does not.
+  manager: {
+    email: 'sec-manager@otj-security-tests.local',
+    fullName: 'Security Test Manager',
+    role: 'manager',
     clubId: CLUB_A,
   },
   coachOne: {

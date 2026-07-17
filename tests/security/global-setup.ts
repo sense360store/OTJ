@@ -116,15 +116,21 @@ export default async function setup(): Promise<void> {
     .eq('key', 'coach')
     .single()
   if (clubBCoach) {
-    const createCaps = [
+    // The five create capabilities as club A's coach holds, plus audit.view.
+    // Granting the club B coach audit.view lets the outsider fixture prove
+    // the audit read is club scoped: it holds the capability in its own club
+    // yet reads zero rows of club A's audit trail (cross club isolation is
+    // the club_id arm, not the absence of the capability).
+    const clubBCoachCaps = [
       'drills.create',
       'media.create',
       'templates.create',
       'programmes.create',
       'sessions.create',
+      'audit.view',
     ]
     const { error } = await service.from('role_capabilities').upsert(
-      createCaps.map((capability) => ({ role_id: clubBCoach.id, capability })),
+      clubBCoachCaps.map((capability) => ({ role_id: clubBCoach.id, capability })),
       { onConflict: 'role_id,capability', ignoreDuplicates: true },
     )
     if (error) throw new Error(`could not ensure club B coach capabilities: ${error.message}`)

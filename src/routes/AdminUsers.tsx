@@ -697,18 +697,41 @@ function RolesCard({ roles, members }: { roles: RoleInfo[]; members: Member[] })
 
 // ---- The role to capability grid ------------------------------------------
 
-// Render order: content entities first, administration last, create before
-// manage within an entity. Unknown entities sort last so a future capability
-// still shows.
-const ENTITY_ORDER = ['drills', 'media', 'templates', 'programmes', 'sessions', 'teams', 'users', 'club']
+// Render order: content entities first, then the registered players domain,
+// then club administration, with the audit oversight capability last.
+// Unknown entities sort after these so a future capability still shows.
+const ENTITY_ORDER = [
+  'drills',
+  'media',
+  'templates',
+  'programmes',
+  'sessions',
+  'players',
+  'seasons',
+  'teams',
+  'users',
+  'club',
+  'audit',
+]
+
+// Within an entity, order by increasing scope and impact rather than
+// alphabetically, so a family with several verbs (players) reads coherently:
+// read, then the write verbs, then the destructive one. create stays before
+// manage as before. Unknown verbs sort last.
+const ACTION_ORDER = ['view', 'create', 'manage', 'import', 'export', 'delete']
+
+function rankIn(order: string[], value: string): number {
+  const i = order.indexOf(value)
+  return i === -1 ? order.length : i
+}
 
 function capabilityOrder(a: Capability, b: Capability): number {
   const [entA, actA = ''] = a.key.split('.')
   const [entB, actB = ''] = b.key.split('.')
-  const iA = ENTITY_ORDER.indexOf(entA)
-  const iB = ENTITY_ORDER.indexOf(entB)
-  const d = (iA === -1 ? ENTITY_ORDER.length : iA) - (iB === -1 ? ENTITY_ORDER.length : iB)
-  return d !== 0 ? d : actA.localeCompare(actB)
+  const d = rankIn(ENTITY_ORDER, entA) - rankIn(ENTITY_ORDER, entB)
+  if (d !== 0) return d
+  const e = rankIn(ACTION_ORDER, actA) - rankIn(ACTION_ORDER, actB)
+  return e !== 0 ? e : actA.localeCompare(actB)
 }
 
 const tickKey = (roleId: string, capability: string) => `${roleId}:${capability}`
