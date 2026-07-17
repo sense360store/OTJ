@@ -42,12 +42,44 @@ export interface Team {
 // 0023_players_fullname.sql, for the full child data boundary). The
 // roster is readable and writable only by holders of sessions.create, never
 // parents.
+// The adapted client Player shape, kept stable so the temporary Roster and
+// the tactics board keep working across the PR 2 schema split. It is now
+// assembled from a stable identity (public.players) plus that child's current
+// season registration (public.player_registrations): id, displayName and
+// createdBy come from the identity, teamId and shirtNumber from the current
+// season registration. teamId is nullable because a registration can be
+// Unassigned (null team), for example after its team is deleted.
 export interface Player {
   id: string
-  teamId: string
+  teamId: string | null
   displayName: string
   shirtNumber: number | null
-  createdBy: string
+  createdBy: string | null
+}
+
+// A registration season (public.seasons). name is the label ("2026/27"); at
+// most one season per club is current, exactly one after setup.
+export interface Season {
+  id: string
+  name: string
+  startsOn: string
+  endsOn: string
+  isCurrent: boolean
+  archivedAt: string | null
+}
+
+// One child's registration for one season (public.player_registrations). The
+// name is never here; it lives once on the identity and resolves by id. Held
+// for the data layer and future Registered Players work; the temporary Roster
+// consumes the flattened Player shape above.
+export interface PlayerRegistration {
+  id: string
+  playerId: string
+  seasonId: string
+  teamId: string | null
+  status: 'pending' | 'registered' | 'withdrawn'
+  shirtNumber: number | null
+  registeredDate: string | null
 }
 
 // A role as a row in the roles table: the four seeded system roles plus any

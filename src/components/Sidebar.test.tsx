@@ -32,10 +32,11 @@ describe('Sidebar navigation', () => {
   })
 
   it('shows a coach the Roster entry but never a parent', () => {
-    // The Roster manager sits in the Plan group behind sessions.create, so a
-    // coach sees it and a parent does not; the route guard and players RLS
-    // enforce the same boundary.
-    expect(ids(new Set(['sessions.create']))).toContain('roster')
+    // The Roster sits in the Plan group (sessions.create) and additionally
+    // gates on players.view since PR 2, so a coach holding both sees it and a
+    // parent holding neither does not; the route guard and players RLS enforce
+    // the same boundary.
+    expect(ids(new Set(['sessions.create', 'players.view']))).toContain('roster')
     expect(ids(new Set())).not.toContain('roster')
   })
 

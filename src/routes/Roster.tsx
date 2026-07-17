@@ -1,11 +1,13 @@
-// The team roster manager, behind sessions.create (coaches and admins, never
-// parents), backed by the players RLS. A roster is the optional, opt in source
-// the tactics board can seed from instead of a formation. It holds the first
-// child data the app stores, so it stays minimal: a display name, an optional
-// shirt number, and the team. There is no date of birth, contact, medical or
-// any other field, and parents never reach this screen (see 0021_players.sql).
-// REVIEW: child data surface.
-import { useMemo, useState } from 'react'
+// The team roster manager, the temporary Registered Players surface until PR 3.
+// Read is behind players.view (coaches and admins read the whole club register,
+// never parents); adding and editing require players.manage (managers and
+// admins); the permanent Remove requires players.delete (admin only). It is
+// backed by the players and player_registrations RLS. A roster is also the
+// optional source the tactics board can seed from instead of a formation. It
+// holds child data, so it stays minimal: a display name, an optional shirt
+// number, and the team, and parents never reach this screen (see
+// 0021_players.sql, 0032_registered_players.sql). REVIEW: child data surface.
+import { useMemo, useRef, useState } from 'react'
 import {
   useDeletePlayer,
   useInsertPlayer,
@@ -16,6 +18,7 @@ import {
   useTeams,
   useUpdatePlayer,
 } from '../lib/queries'
+import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
 import { mappingForTeam } from '../lib/spond'
 import type { Player, SpondMapping, Team } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -65,7 +68,17 @@ function DeletePlayerModal({ player, onClose }: { player: Player; onClose: () =>
   )
 }
 
-function PlayerRow({ player, onDelete }: { player: Player; onDelete: () => void }) {
+function PlayerRow({
+  player,
+  canManage,
+  canDelete,
+  onDelete,
+}: {
+  player: Player
+  canManage: boolean
+  canDelete: boolean
+  onDelete: () => void
+}) {
   const update = useUpdatePlayer()
   const [name, setName] = useState(player.displayName)
   const [shirt, setShirt] = useState(player.shirtNumber == null ? '' : String(player.shirtNumber))
@@ -77,7 +90,7 @@ function PlayerRow({ player, onDelete }: { player: Player; onDelete: () => void 
   const changed = (nameChanged || shirtChanged) && !shirtInvalid
 
   const save = () => {
-    if (!changed) return
+    if (!changed || !canManage) return
     update.mutate({
       id: player.id,
       displayName: nameChanged ? name.trim() : undefined,
@@ -88,7 +101,14 @@ function PlayerRow({ player, onDelete }: { player: Player; onDelete: () => void 
   return (
     <div className="row" style={{ gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)' }}>
       <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} aria-label="Player name" />
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={40}
+          aria-label="Player name"
+          readOnly={!canManage}
+          disabled={!canManage}
+        />
       </div>
       <div className="field" style={{ width: 76, marginBottom: 0 }}>
         <input
@@ -98,20 +118,26 @@ function PlayerRow({ player, onDelete }: { player: Player; onDelete: () => void 
           placeholder="No."
           aria-label="Shirt number"
           aria-invalid={shirtInvalid}
+          readOnly={!canManage}
+          disabled={!canManage}
         />
       </div>
-      <button className="btn btn-ghost btn-sm" disabled={!changed || update.isPending} onClick={save}>
-        <Icon.check />
-        Save
-      </button>
-      <button
-        className="btn btn-ghost btn-sm icon-only"
-        style={{ width: 38, padding: 0 }}
-        aria-label={'Remove ' + player.displayName}
-        onClick={onDelete}
-      >
-        <Icon.trash />
-      </button>
+      {canManage && (
+        <button className="btn btn-ghost btn-sm" disabled={!changed || update.isPending} onClick={save}>
+          <Icon.check />
+          Save
+        </button>
+      )}
+      {canDelete && (
+        <button
+          className="btn btn-ghost btn-sm icon-only"
+          style={{ width: 38, padding: 0 }}
+          aria-label={'Remove ' + player.displayName}
+          onClick={onDelete}
+        >
+          <Icon.trash />
+        </button>
+      )}
     </div>
   )
 }
@@ -205,32 +231,53 @@ export function Roster() {
   const [removing, setRemoving] = useState<Player | null>(null)
   const [importing, setImporting] = useState(false)
 
+  // A client minted stable id per add, so an ambiguous lost response retry
+  // reuses the same identity (add_player is idempotent on it) rather than
+  // duplicating the child. Cleared on success; kept on failure for the retry.
+  const addId = useRef<string | null>(null)
+  const { submit: submitAdd, pending: addPending, failed: addFailed } = useGuardedSubmit<
+    { id: string; teamId: string; displayName: string; shirtNumber: number | null },
+    Player
+  >({
+    operation: 'add player',
+    perform: (input) => insert.mutateAsync(input),
+    onSuccess: () => {
+      addId.current = null
+      setNewName('')
+      setNewShirt('')
+    },
+  })
+
   const teamPlayers = useMemo(() => players.filter((p) => p.teamId === selectedTeam), [players, selectedTeam])
   const spondMapping = mappingForTeam(mappings, selectedTeam)
   const selectedTeamObj = teams.find((t) => t.id === selectedTeam) ?? null
 
   if (teamsLoading || playersLoading) return <Loading />
   if (teamsError || playersError) return <ErrorNote />
-  // The route guard already keeps members without sessions.create out; this is
+  // The route guard already keeps members without players.view out; this is
   // belt and braces for the brief render before a redirect, and it matches the
   // players RLS so a parent never sees a name even mid-render.
-  if (!caps.has('sessions.create')) return null
+  if (!caps.has('players.view')) return null
+
+  // Read is club wide (players.view); writing is capability gated. A coach with
+  // players.view sees a read only roster: no add, edit, remove or Spond import.
+  const canManage = caps.has('players.manage')
+  const canDelete = caps.has('players.delete')
 
   const parsedNewShirt = parseShirt(newShirt)
   const newShirtInvalid = parsedNewShirt === undefined
-  const canAdd = !!newName.trim() && !newShirtInvalid && !!selectedTeam && !insert.isPending
+  const adding = addPending !== null
+  const canAdd = canManage && !!newName.trim() && !newShirtInvalid && !!selectedTeam && !adding
 
   const add = () => {
     if (!canAdd) return
-    insert.mutate(
-      { teamId: selectedTeam, displayName: newName.trim(), shirtNumber: parsedNewShirt ?? null },
-      {
-        onSuccess: () => {
-          setNewName('')
-          setNewShirt('')
-        },
-      },
-    )
+    if (!addId.current) addId.current = crypto.randomUUID()
+    void submitAdd({
+      id: addId.current,
+      teamId: selectedTeam,
+      displayName: newName.trim(),
+      shirtNumber: parsedNewShirt ?? null,
+    })
   }
 
   return (
@@ -257,7 +304,7 @@ export function Roster() {
               ))}
             </select>
           </div>
-          {spondMapping && (
+          {canManage && spondMapping && (
             <button className="btn btn-ghost" onClick={() => setImporting(true)}>
               <Icon.rotate />
               Import from Spond
@@ -265,51 +312,63 @@ export function Roster() {
           )}
         </div>
 
-        <div className="row" style={{ gap: 10, marginTop: 14, alignItems: 'flex-end' }}>
-          <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-            <label>New player</label>
-            <input
-              placeholder="Full name"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              maxLength={40}
-              onKeyDown={(e) => e.key === 'Enter' && add()}
-            />
-          </div>
-          <div className="field" style={{ width: 90, marginBottom: 0 }}>
-            <label>Number</label>
-            <input
-              placeholder="Optional"
-              value={newShirt}
-              onChange={(e) => setNewShirt(e.target.value)}
-              inputMode="numeric"
-              aria-invalid={newShirtInvalid}
-              onKeyDown={(e) => e.key === 'Enter' && add()}
-            />
-          </div>
-          <button className="btn btn-primary" disabled={!canAdd} onClick={add}>
-            <Icon.plus />
-            Add
-          </button>
-        </div>
-        {newShirtInvalid && (
-          <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 8, marginBottom: 0 }}>
-            Shirt number must be a whole number from 1 to 99.
-          </p>
-        )}
-        {insert.isError && (
-          <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 8, marginBottom: 0 }}>
-            Could not add the player. Try again.
-          </p>
+        {canManage && (
+          <>
+            <div className="row" style={{ gap: 10, marginTop: 14, alignItems: 'flex-end' }}>
+              <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                <label>New player</label>
+                <input
+                  placeholder="Full name"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  maxLength={40}
+                  onKeyDown={(e) => e.key === 'Enter' && add()}
+                />
+              </div>
+              <div className="field" style={{ width: 90, marginBottom: 0 }}>
+                <label>Number</label>
+                <input
+                  placeholder="Optional"
+                  value={newShirt}
+                  onChange={(e) => setNewShirt(e.target.value)}
+                  inputMode="numeric"
+                  aria-invalid={newShirtInvalid}
+                  onKeyDown={(e) => e.key === 'Enter' && add()}
+                />
+              </div>
+              <button className="btn btn-primary" disabled={!canAdd} onClick={add}>
+                <Icon.plus />
+                Add
+              </button>
+            </div>
+            {newShirtInvalid && (
+              <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 8, marginBottom: 0 }}>
+                Shirt number must be a whole number from 1 to 99.
+              </p>
+            )}
+            {addFailed && (
+              <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 8, marginBottom: 0 }}>
+                Could not add the player. Try again.
+              </p>
+            )}
+          </>
         )}
 
         <div style={{ marginTop: 14 }}>
           {teamPlayers.map((p) => (
-            <PlayerRow key={p.id} player={p} onDelete={() => setRemoving(p)} />
+            <PlayerRow
+              key={p.id}
+              player={p}
+              canManage={canManage}
+              canDelete={canDelete}
+              onDelete={() => setRemoving(p)}
+            />
           ))}
           {teamPlayers.length === 0 && (
             <p className="muted" style={{ fontSize: 13.5 }}>
-              No players on this team's roster yet. Add the first one above, or seed the board from a formation instead.
+              {canManage
+                ? "No players on this team's roster yet. Add the first one above, or seed the board from a formation instead."
+                : "No players on this team's roster yet."}
             </p>
           )}
         </div>

@@ -458,11 +458,11 @@ function SessionBoardCard({
 }) {
   const { caps } = useMyCapabilities()
   const { data: board } = useBoard(session.boardId ?? undefined)
-  // Name resolution runs only for a sessions.create holder, mirroring the
-  // players RLS: a coach or admin fetches the roster and sees names on the
+  // Name resolution runs only for a players.view holder, mirroring the players
+  // RLS since PR 2: a coach or admin fetches the roster and sees names on the
   // embedded board; a parent never issues the query, and the board row they
   // did read holds ids and numbers only.
-  const canResolveNames = caps.has('sessions.create')
+  const canResolveNames = caps.has('players.view')
   const { data: players = [] } = usePlayers(canResolveNames)
   const names = useMemo(() => playerNameMap(players), [players])
   const link = useLinkSessionBoard()
