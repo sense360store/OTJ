@@ -97,6 +97,11 @@ from (values
 ) as v(key, label)
 on conflict (club_id, key) do nothing;
 
+-- The original thirteen keys (0012, 0015). The players, seasons and audit
+-- families (0030) are excluded from these broad patterns and seeded
+-- explicitly below, because the manager pattern would otherwise over-grant
+-- players.delete and seasons.manage and the coach pattern would miss
+-- players.view.
 insert into public.role_capabilities (role_id, capability)
 select r.id, c.key
 from public.roles r
@@ -105,6 +110,35 @@ join public.capabilities c on (
   or (r.key = 'manager' and c.key not in ('users.manage', 'club.manage'))
   or (r.key = 'coach' and c.key like '%.create')
 )
+where r.club_id = '11111111-1111-1111-1111-111111111111' and r.system
+  and c.key not in (
+    'players.view', 'players.manage', 'players.import', 'players.export',
+    'players.delete', 'seasons.manage', 'audit.view'
+  )
+on conflict do nothing;
+
+-- 0030 audit foundation default grants, mirroring the migration seed
+-- exactly (admin all seven; manager view/manage/import/export and
+-- audit.view, not delete and not seasons.manage; coach players.view only;
+-- parent none).
+insert into public.role_capabilities (role_id, capability)
+select r.id, g.capability
+from public.roles r
+join (values
+  ('admin',   'players.view'),
+  ('admin',   'players.manage'),
+  ('admin',   'players.import'),
+  ('admin',   'players.export'),
+  ('admin',   'players.delete'),
+  ('admin',   'seasons.manage'),
+  ('admin',   'audit.view'),
+  ('manager', 'players.view'),
+  ('manager', 'players.manage'),
+  ('manager', 'players.import'),
+  ('manager', 'players.export'),
+  ('manager', 'audit.view'),
+  ('coach',   'players.view')
+) as g(role_key, capability) on g.role_key = r.key
 where r.club_id = '11111111-1111-1111-1111-111111111111' and r.system
 on conflict do nothing;
 

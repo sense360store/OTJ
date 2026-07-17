@@ -32,10 +32,17 @@ reserved test email domain, one throwaway local password, no real data):
 | Fixture | Role | Club |
 |---|---|---|
 | admin | admin | seeded club (A) |
+| manager | manager | A |
 | coachOne | coach | A |
 | coachTwo | coach (non-owner foil) | A |
 | parent | parent | A |
 | outsider | coach | fixture club B |
+
+The `manager` fixture (0030) separates manager from coach for the capability
+cells: it holds `audit.view` (and the players write, import and export keys),
+the coach does not. The club B coach role is granted `audit.view` in the
+global setup so the `outsider` fixture proves the audit read is club scoped
+(it holds the capability in its own club yet reads zero rows of club A).
 
 Users are created through the auth admin API so the hardened
 `handle_new_user` trigger (`0029_signup_hardening`) builds each profile
@@ -53,8 +60,8 @@ verification, never as the subject of an assertion.
 ## Tables tested
 
 `drills`, `media` (rows), `sessions`, `players`, `boards`, `feedback`,
-plus `capabilities` / `role_capabilities` / `member_roles` for the
-capability consistency checks, and `profiles` / `member_roles` /
+`audit_events`, plus `capabilities` / `role_capabilities` / `member_roles`
+for the capability consistency checks, and `profiles` / `member_roles` /
 `member_teams` for the signup membership boundary.
 
 ## Signup membership boundary
@@ -150,16 +157,37 @@ parent RPC calls to it are refused).
 The full design is in `docs/security/board-data-boundary.md` and
 `docs/adr/ADR-0002-board-player-model.md`.
 
+### audit_events (0030_audit_foundation)
+
+The append only audit substrate (`tests/security/audit.test.ts`). Contract:
+reads require `club_id = my_club()` and `has_perm('audit.view')`, so admin and
+manager read the club's events, coach and parent read zero, and an outsider
+holding `audit.view` in club B still reads zero rows of club A (the club arm,
+not the capability, isolates). The table is append only for every client role:
+`authenticated` holds `SELECT` only, so insert, update and delete are refused
+at the grant with `42501` (a deliberate deviation from the RLS zero-rows
+convention, because there is no write grant to filter under), and there are no
+write policies; `anon` holds nothing. The private writer `log_audit_event` is
+service_role only (`EXECUTE` revoked from anon and authenticated, the 0028
+precedent), derives actor, actor name, club and timestamp server side, and
+validates action, entity type, source and metadata against explicit allow
+lists; a name shaped value cannot enter `safe_changes` (a check constraint
+allow list) or `metadata` (the writer's allow list). The same transaction
+guarantee is proven by a rolled back writer call leaving no row. No player or
+season trigger exists yet (they attach in PR 2), so every event in the file is
+a synthetic service role or writer fixture. Full design:
+`docs/security/app-audit-boundary.md` and `docs/adr/ADR-0006-app-audit-events.md`.
+
 ## CI
 
-Not wired into CI yet. With the Storage and board remediations landed the
-suite is fully green, so the original blocker is gone; what remains
-is that it needs `supabase start` (Docker image pulls), which is slow and
-unverified in this repo's Actions setup. Follow-up requirement: add a
-workflow job that runs `npx supabase start`, `npx supabase db reset`, then
-`npm run test:security`, and gate merges on it; keep it out of the
-required checks until it has proven reliable (image caching, health-check
-timeouts).
+Wired into CI (`.github/workflows/ci.yml`, the `security` job): it runs
+`npx supabase start`, `npx supabase db reset`, then `npm run test:security`
+against a LOCAL stack only, and a failure fails CI. The stack uses the CLI's
+built in local demo keys, so no service-role or hosted-project credential is
+needed or exposed; `assertLocal` still refuses any non-local URL. `npm test`
+stays independent and needs no database. The job may remain out of the
+required checks (a branch-protection decision, not a workflow setting) until
+the Docker image pulls and health checks have proven reliable in Actions.
 
 ## Limitations
 
