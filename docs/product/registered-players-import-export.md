@@ -54,15 +54,22 @@ elsewhere in this document are proposals unless marked otherwise.
   `src/components/AttachFAVideosModal.tsx`: every picked file resolves to a
   per item status with a reason before any bytes move, and the confirm button
   carries the plan count. The import preview below extends this house style.
-- **Modals cannot currently be made non dismissible.** The shared `Modal`
-  (`src/components/ui.tsx:379-418`) always closes on Escape, overlay click and
-  the header X. The locked pending state the import confirm needs is new UI
-  work, specified in `docs/product/registered-players-ux.md`.
-- **No idempotency framework exists.** Retry and dedupe behaviour today is per
-  feature (FA import 409 refusal, programme upsert, spond-sync upsert, roster
-  name dedupe); there is no generic batch or idempotency key mechanism, and
-  the only database RPC the client calls today is `member_states`
-  (`src/lib/queries.ts:3219`).
+- **Modals can already be made non dismissible.** PR #103 added a `dismissible`
+  prop to the shared `Modal` (`src/components/ui.tsx`, `modalDismissControls`,
+  tested in `src/components/ui.test.tsx`): `dismissible={false}` makes Escape
+  inert, the overlay non closing and the X disabled. The import confirm REUSES
+  this; it is not new work. The one Modal gap that remains is dialog and focus
+  semantics (`role="dialog"`, `aria-modal`, focus trap and restore), which the
+  accessibility work adds (`docs/product/registered-players-ux.md`).
+- **No persisted generic batch idempotency framework exists.** Retry and dedupe
+  today is per feature (FA import 409 refusal, programme upsert, spond-sync
+  upsert, roster name dedupe). PR #103 did add the client stable id plus server
+  duplicate key recovery pattern for session creates (`stableCreateId` and
+  `upsertSessionWrite`, `src/lib/sessionSubmit.ts` and `src/lib/queries.ts`): a
+  create mints its id once and reuses it on retry, and the server recovers a
+  duplicate key into an update. The persisted `import_batches` table extends
+  exactly that pattern to a durable, replayable batch record. The only database
+  RPC the client calls today is `member_states` (`src/lib/queries.ts`).
 - **The Spond squad import today** (`supabase/functions/spond-roster-import/index.ts`)
   is gated on `has_perm('sessions.create')` checked by RPC before Spond is
   contacted, reads only each child's full name and an optional shirt number,
@@ -135,17 +142,20 @@ Column rules:
 - **Player Name**: required, 1 to 40 characters after trimming, the child's
   full name. The only required column.
 - **Season**: informational cross check only. The import screen's selected
-  season is authoritative, and import always targets the current season: the
-  commit RPC refuses any other target, so the Import and Import from Spond
-  affordances render only when the selected season is the current season
-  (`docs/product/registered-players-ux.md`). Import is deliberately stricter
-  than manual Add here: a manual Add is refused only on archived seasons, so
-  a created but not yet activated season accepts individual adds and never
-  bulk imports. A non empty Season cell that does not match the selected
-  season is a row error; this prevents importing last season's file by
-  accident without noticing. A blank Season cell is accepted, and the error
-  copy hints at the renewal path: "If you are bringing last season's list
-  forward, clear the Season column." The renewal procedure is below.
+  season is authoritative. Import may target ANY season of the caller's club
+  that is not archived and that the caller's capability permits; the selected
+  season defaults to the current season but is not the only importable one, so
+  a manager can prepare next season while the current season is still active.
+  The commit RPC validates the target season as the club's, not archived, and
+  within capability, and refuses an archived or cross club season. The spread
+  sheet Import affordance renders whenever a non archived season is selected
+  (`docs/product/registered-players-ux.md`). Import from Spond is the exception:
+  it stays current-season-only (server chosen). A non empty Season cell that
+  does not match the SELECTED season is a row error; this prevents importing
+  the wrong season's file by accident. A blank Season cell is accepted, and the
+  error copy hints at the renewal path: "If you are bringing another season's
+  list forward, clear the Season column, then select the season to import
+  into." The renewal procedure is below.
 - **Team**: matched by exact name after trim and case fold within the club.
   An unknown team name is a row error. A blank cell means Unassigned.
 - **Registration Status**: Pending, Registered or Withdrawn, matched case
@@ -163,8 +173,10 @@ Column rules:
   because no transition occurred.
 - **Shirt Number**: optional integer 1 to 99. Out of range or non numeric is a
   row error.
-- **Registered Date**: ISO 8601 (`YYYY-MM-DD`) required; `DD/MM/YYYY` is
-  accepted with a warning. Anything else is a row error.
+- **Registered Date**: optional. A blank cell is always valid. Only the FORMAT
+  is constrained when a value is supplied: ISO 8601 (`YYYY-MM-DD`), or
+  `DD/MM/YYYY` accepted with a warning. A non empty value in any other format is
+  a row error.
 
 #### Season renewal round trip
 
@@ -187,9 +199,11 @@ the season renewal mechanism
    registration's date, and because the automatic date fills only when the
    field is empty, that stale date persists even after the player is later
    marked registered.
-4. Switch the page to the new current season and import. Player IDs make
-   every row an update that creates that player's registration in the new
-   season, with team and shirt number taken from the file.
+4. Select the new season (it need not be the current season; any non archived
+   season is importable) and import. Player IDs make every row an update that
+   creates that player's registration in the new season, with team and shirt
+   number taken from the file. Because renewal is keyed on Player ID, it never
+   merges children by name and never depends on name matching.
 
 ### Import formats and file rules
 
@@ -266,19 +280,22 @@ Two stages, strictly separated:
    never writes anything. The preview classifies every row and shows counts.
 2. **Explicit Confirm**, which calls the transactional commit RPC (below).
 
-The preview reports the following categories. The five primary classes and
-Warnings are each a count plus a filterable row list with a per row reason
-sentence; these six are the preview's category filter chips in
-`docs/product/registered-players-ux.md`, which adds an All chip. The
-remaining categories surface as
-per row detail lines and sub counts within their primary class, not as
-separate filters, with one addition: the Unassigned count is also shown as a
-preview summary line ("n rows have no team and will be Unassigned",
-mirroring the blank rows note), so the number of rows landing without a team
-is visible before Confirm. The partition is authoritative: every data row
-lands in exactly one of five primary classes, valid new, valid updates,
-already present, held back or invalid, and those five counts sum to the
-total.
+The preview reports the following categories. The partition is authoritative:
+every data row lands in exactly one of five primary classes, valid new, valid
+updates, already present, needs your choice or invalid, and those five counts
+sum to the total. Warnings are an overlay, not a sixth class. The five classes
+plus Warnings are the preview's filter chips in
+`docs/product/registered-players-ux.md`, which adds an All chip. The Unassigned
+count is also shown as a preview summary line ("n rows have no team and will be
+Unassigned"), so the number of rows landing without a team is visible before
+Confirm.
+
+The single most important rule: a child is NEVER automatically merged,
+updated or skipped from a name match. The only deterministic record update key
+is a valid Player ID belonging to the caller's club. A row with no Player ID
+whose name collides with an existing registration is never auto classified; it
+is presented as "needs your choice" and the user chooses, per row, Skip or
+Import as new.
 
 Classification order is fixed, so the partition is deterministic across
 implementations:
@@ -286,55 +303,58 @@ implementations:
 1. Per row field validation runs first: name bounds, status vocabulary,
    shirt bounds, date format, the Season cross check, team name resolution,
    and Player ID syntax and ownership. Any failure classifies the row
-   invalid, regardless of any duplicate or match it might also have.
-2. File wide duplicate detection runs next, over the rows that passed field
-   validation only: duplicate Player IDs and in-file duplicate names
-   classify those rows held back.
-3. The matching decision table (below) then resolves each remaining row to
-   already present, ambiguous (held back), a warning carrying import, or
-   valid new or valid update.
-4. Status transition validation runs last, on otherwise valid update rows,
-   because it needs the resolved match's stored status; a refused transition
-   classifies the row invalid.
+   invalid, regardless of any match it might also have. A Player ID that
+   appears on more than one row in the file is a malformed input and
+   classifies every such row invalid (the file is corrected, not resolved
+   inline).
+2. Rows carrying a valid Player ID in the caller's club resolve by ID: values
+   differing from the stored registration are valid updates; values all equal
+   are already present (no write). This is the only path to already present,
+   and it is deterministic by ID, never by name, which is what makes
+   re importing an exported file idempotent.
+3. Rows with no Player ID resolve by name only to surface possibilities, never
+   to act: a normalised name that collides with any existing registration in
+   the selected season (same team, another team, or Unassigned against a
+   named team), or a normalised name that appears more than once in the file
+   without a Player ID, classifies the row needs your choice. The row is held
+   back from the Confirm count until the user picks Skip or Import as new.
+4. A row with no Player ID and no name collision is valid new.
+5. Status transition validation runs last on valid update rows, because it
+   needs the resolved match's stored status; a refused transition classifies
+   the row invalid.
 
-The remaining categories are overlays or sub counts and never add to the
-total: warnings attach to importable rows (valid new and valid updates),
-with one exception, the stored name mismatch warning on a Player ID row,
-which also attaches when that row is already present, so an attempted rename
-in the file is surfaced rather than silently swallowed; unknown teams sit
-within invalid rows; status or date problems sit within invalid rows, or
-within warnings for the accepted `DD/MM/YYYY` case; Unassigned rows sit
-within the two valid classes; and ambiguous matches, in-file duplicates and
-duplicate Player IDs are the constituents of held back.
+Warnings are overlays on importable rows and never add to the total: a
+`DD/MM/YYYY` date accepted with a warning, or a Player ID row whose Player Name
+cell differs from the stored name (import never renames; see matching), so an
+attempted rename is surfaced rather than silently swallowed.
 
 | Category | Exact meaning | What the user can do |
 |---|---|---|
 | Total rows | Data rows read after blank rows are skipped (the blank row count is shown alongside) | Sanity check against the source file |
-| Valid new | Rows with no Player ID and no match: a new identity and registration will be created | Confirm |
-| Valid updates | Rows with a valid Player ID in the caller's club whose values differ from the stored registration: the existing player's registration in the selected season will be updated or created | Confirm |
-| Already present | No Player ID, but the exact normalised name already has a registration in the selected season on the same team (a blank Team cell and an Unassigned registration count as the same team allocation); or a Player ID row whose values all equal the stored registration. Skipped, with no write and no audit event, making re import idempotent. A differing Player Name cell on such a row still raises its warning | Nothing required; this is the expected result of importing the same file twice |
-| Warnings | Rows that deserve a look: a possible duplicate name on another team, a `DD/MM/YYYY` date accepted with a warning, or a Player ID row whose Player Name cell differs from the stored name (import never renames; see matching). The name mismatch warning is the one warning that can also attach to an already present row, so an attempted rename is never silently swallowed | Review, and either proceed or fix the file and upload again |
-| Ambiguous matches | Rows the import refuses to guess about: a name matching an Unassigned registration while the row states a team (or the reverse); held back, not imported | Resolve manually in the app or the file, then import again |
-| Invalid rows | Rows failing validation: name bounds, unknown status, an invalid status transition, shirt out of range, bad date, Season mismatch, unknown Player ID | Download the rejected row report, correct, upload again |
-| Unknown teams | The Team cell matched no club team after trim and case fold; a row error within Invalid rows, counted separately because the fix differs | Fix the spelling, or have a `teams.manage` holder create the team first |
+| Valid new | No Player ID and no name collision: a new identity and registration will be created | Confirm |
+| Valid updates | A valid Player ID in the caller's club whose values differ from the stored registration: that player's registration in the selected season will be updated or created | Confirm |
+| Already present | A valid Player ID in the caller's club whose values all equal the stored registration: no write, no audit event. Deterministic by Player ID only, never from a name; this is the expected result of re importing an exported file. A differing Player Name cell still raises its warning | Nothing required |
+| Needs your choice | No Player ID, and the name collides with an existing registration (same team, another team, or Unassigned against a named team) or appears more than once in the file: the app shows the possible matches and the user picks, per row, Skip (write nothing) or Import as new (create a distinct identity and registration). Never auto merged, never auto skipped. Unresolved rows are held back from Confirm | Choose Skip or Import as new per row, or fix the file and upload again |
+| Invalid rows | Rows failing validation: name bounds, unknown status, an invalid status transition, shirt out of range, bad date, Season mismatch, unknown or malformed or cross club Player ID, or a Player ID duplicated in the file | Download the rejected row report, correct, upload again |
+| Warnings (overlay) | A `DD/MM/YYYY` date accepted with a warning, or a Player ID row whose Player Name cell differs from the stored name | Review, and either proceed or fix the file and upload again |
+| Unknown teams | The Team cell matched no club team; a row error within Invalid rows, counted separately because the fix differs | Fix the spelling, or have a `teams.manage` holder create the team first |
 | Unassigned rows | Valid rows with a blank Team cell, importing as Unassigned | Nothing required; assign teams later in the app |
-| In-file duplicates | The same normalised name appears twice in the file on rows without a Player ID; those rows are held back pending manual resolution. Rows carrying distinct valid Player IDs import normally even when their names collide; namesakes with identities are real players and the round trip keeps them | Remove or disambiguate one row and import again |
-| Duplicate Player IDs | The same Player ID appears on more than one row; all such rows are held back | Keep one row per player and import again |
-| Status or date problems | The specific validation failures on Registration Status and Registered Date, surfaced with the offending value's column named | Correct the values and upload again |
-| Rows to skip | The total that will not be sent: already present plus held back plus invalid rows (ambiguous rows, in-file duplicates and duplicate Player IDs are held back, so each row is counted once) | Review before confirming; the Confirm button states exactly what will be written |
+| Rows to skip | The total that will not be sent: already present, invalid, and any needs your choice rows resolved to Skip or still unresolved | Review before confirming; the Confirm button states exactly what will be written |
 
-The user can filter the preview by primary class and by warnings, inspect
-each row's problem,
-cancel safely at any point before Confirm (nothing has been written), and
-download the rejected and warning rows as a report (below). Confirm is enabled
-only when at least one valid new or valid update row exists.
+The user can filter the preview by class and by warnings, inspect each row's
+problem, resolve each needs your choice row inline, cancel safely at any point
+before Confirm (nothing has been written), and download the rejected and
+warning rows as a report (below). Confirm is enabled only when at least one
+valid new, valid update, or needs your choice row resolved to Import as new
+exists, and it writes only those actionable rows.
 
-While the confirm is in flight the modal is not dismissible: the X is not
-rendered while locked, Escape, overlay clicks and Cancel are inert, all
-controls are frozen, progress is visible, and the result is explicit success
-or explicit failure. This requires extending the shared Modal with a locked
-mode; the behaviour, its focus handling and its accessibility requirements
-are owned by `docs/product/registered-players-ux.md` (section 7).
+While the confirm is in flight the modal is not dismissible. This REUSES the
+existing Modal `dismissible={false}` contract shipped in PR #103
+(`src/components/ui.tsx`, `modalDismissControls`): the X is disabled, Escape,
+overlay clicks and Cancel are inert, all controls are frozen, progress is
+visible, and the result is explicit success or explicit failure. It is not new
+Modal work; the only new accessibility work is dialog and focus semantics,
+owned by `docs/product/registered-players-ux.md` (section 7).
 
 ### Import matching and duplicates
 
@@ -356,15 +376,15 @@ any other.
 
 | Row situation | Outcome |
 |---|---|
-| Player ID present but unknown, malformed, or belonging to another club | Row error; the row is invalid and never sent (field validation, before duplicate detection and matching) |
-| The same Player ID on more than one row in the file | All such rows held back as duplicates pending manual resolution; file wide, checked before any per row Player ID match resolves |
-| No Player ID; the same normalised name appears more than once inside the file | All such rows flagged ambiguous and held back pending manual resolution; file wide, checked before any per row name match resolves |
-| Player ID present, valid, belongs to the caller's club | Update: the row targets that player identity and its registration in the selected season (creating the registration if the season has none). A row whose values all equal the stored registration is classified already present instead: no write, no audit event, though a differing Player Name cell still raises the stored name mismatch warning |
-| No Player ID; exact normalised name matches a registration in the selected season on the same team, where a blank Team cell and an Unassigned registration count as the same team allocation | Already present: skipped, so re importing the same file is idempotent, exported Unassigned rows included. By precedence this wins even when the name also matches another team; the possible duplicate warning is not raised for a skipped row |
-| No Player ID; exact normalised name matches an Unassigned registration while the row names a team (or the reverse) | Ambiguous: not auto matched, held back pending manual resolution |
-| No Player ID; exact normalised name matches a registration in the selected season on a different team | Warning, "possible duplicate": imported as a new identity and registration, never auto merged; siblings and namesakes on different teams are real |
-| Near match, no Player ID: the row's name and a stored name with a registration in the selected season are equal after normalisation plus diacritic folding (Unicode NFKD with combining marks removed) but not after normalisation alone. This folding is the only near match rule in v1; no edit distance measure is applied | Warning only, never auto applied; the row imports as new with the warning attached |
-| No Player ID; no match | Valid new: a new identity and registration |
+| Player ID present but unknown, malformed, or belonging to another club | Row error; the row is invalid and never sent (field validation, before matching) |
+| The same Player ID on more than one row in the file | Malformed input: every such row is invalid; the file is corrected and re uploaded (no inline resolution) |
+| Player ID present, valid, belongs to the caller's club | Deterministic update by ID: the row targets that player identity and its registration in the selected season (creating the registration if the season has none). A row whose values all equal the stored registration is classified already present instead: no write, no audit event, though a differing Player Name cell still raises the stored name mismatch warning. This is the only deterministic key and the only path to already present |
+| No Player ID; the same normalised name appears more than once inside the file | Needs your choice on every such row: the app shows the collision and the user picks Skip or Import as new per row; never auto merged, never auto created |
+| No Player ID; exact normalised name matches a registration in the selected season on the same team (a blank Team cell and an Unassigned registration count as the same allocation) | Needs your choice: the row is NOT auto classified already present. The app shows the possible match and the user chooses Skip (treat as the existing registration, write nothing) or Import as new (a distinct child with the same name on the same team, a real possibility). A fresh batch never becomes already present from a name |
+| No Player ID; exact normalised name matches an Unassigned registration while the row names a team (or the reverse) | Needs your choice: the app shows the possible match and the user chooses Skip or Import as new |
+| No Player ID; exact normalised name matches a registration in the selected season on a different team | Needs your choice, shown as a possible duplicate on another team: the user chooses Skip or Import as new; siblings and namesakes on different teams are common, so nothing is auto decided |
+| Near match, no Player ID: the row's name and a stored name are equal after normalisation plus diacritic folding (Unicode NFKD with combining marks removed) but not after normalisation alone. This folding is the only near match rule in v1; no edit distance measure is applied | Needs your choice, shown as a possible near match; the user chooses Skip or Import as new |
+| No Player ID; no name collision | Valid new: a new identity and registration |
 
 Further rules:
 
@@ -376,13 +396,19 @@ Further rules:
   audit records a name correction without recording the values.
 - Because matching ignores status, restoring a withdrawn child needs the
   Player ID (a status update row) or the manual Restore action; a name only
-  row matching a Withdrawn registration on the same team is skipped as
-  already present, not restored.
+  row matching a Withdrawn registration is a needs your choice collision, never
+  an automatic action.
+- Two different children with the same name on the same team and season are
+  fully representable: manual Add of the second namesake succeeds (with a non
+  blocking possible duplicate warning), a hand made file naming the same child
+  twice is held as needs your choice and the user can Import as new for each,
+  and an exported file carrying both children (each with its own Player ID)
+  updates both by id and merges neither. Names never collapse two identities.
 - An update row whose supplied values all equal the stored registration
   applies no write and produces no audit event, and supplying the stored
   status again is not a transition and is never refused. Re importing an
   unchanged export therefore writes nothing and adds nothing to any player's
-  history.
+  history, matched deterministically by Player ID.
 - No cross club matching of any kind. The server verifies every Player ID and
   team id against the caller's own club.
 - Missing rows never withdraw or delete anyone. A file only adds and updates;
@@ -419,20 +445,29 @@ The contract, at product level (the architecture assessment is
   resolution by UUID within the club (the client resolves team names to ids
   at preview time; the server verifies the ids again), and Player ID
   ownership for updates.
-- Rows the preview marked invalid, ambiguous or already present are never
-  sent. Rows that fail server validation abort the whole transaction with a
-  structured error naming the row and reason. All or nothing, no partial
-  commit: partial imports are exactly the confusion the two stage flow exists
-  to prevent. This choice needs approval (Unresolved items).
-- Per row audit events are written by the base triggers in the same
-  transaction, enriched with the batch id and source through transaction
-  local settings, plus one batch summary event. See
-  `docs/security/app-audit-boundary.md`.
+- The rows sent to the server are the actionable rows only: valid new, valid
+  updates, and needs your choice rows the user resolved to Import as new. Rows
+  the preview marked invalid, already present, resolved to Skip, or left
+  unresolved are never sent. Rows that fail server validation abort the whole
+  transaction with a structured error naming the row and reason. All or
+  nothing, no partial commit: partial imports are exactly the confusion the two
+  stage flow exists to prevent. This choice needs approval (Unresolved items).
+- Business writes and their per row audit events run inside a PL/pgSQL
+  exception subtransaction, so any failure rolls them all back together; the
+  per row events are enriched with the batch id and source through transaction
+  local settings (`docs/security/app-audit-boundary.md`). The full failure
+  bookkeeping (claim, inner subtransaction, terminal state) is fixed in
+  `docs/adr/ADR-0007-player-import-export-architecture.md`.
 - The batch is recorded in `import_batches`: id (a client generated UUID v4,
-  unique), actor, club, counts, a SHA-256 fingerprint of the file bytes, and
-  the outcome. A repeated call with the same batch id returns the stored
-  result without re applying anything: the confirm is idempotent, safe to
-  retry after a lost response, and double click safe.
+  unique, the idempotency key), actor, club, season, format, state
+  (pending, succeeded or failed) and counts. There is no file fingerprint: the
+  browser parses the file and sends only parsed rows, so the server never
+  receives the bytes and cannot verify a client declared hash (C3 of the
+  corrections; `docs/security/app-audit-boundary.md`). A repeated call with the
+  same batch id returns the stored result without re applying anything: the
+  confirm is idempotent, safe to retry after a lost response, and double click
+  safe; a concurrent call with the same id blocks on the batch row lock and
+  then replays the committed result.
 
 Designed behaviour for every failure situation:
 
@@ -468,10 +503,13 @@ Designed behaviour for every failure situation:
 ### Import results
 
 After a successful commit the modal shows: added, updated, already present,
-skipped, rejected, warnings, the final outcome, the batch reference (rendered
-as "Import" plus a short batch reference, per the naming in
-`docs/product/registered-players-spec.md`), and the timestamp. After a failed
-commit it shows the structured error and the fact that nothing was written.
+skipped, rejected (invalid), warnings, the final outcome, the batch reference
+(rendered as "Import" plus a short batch reference, per the naming in
+`docs/product/registered-players-spec.md`), and the timestamp. Added counts
+valid new rows plus needs your choice rows resolved to Import as new; skipped
+counts already present and Skip resolved rows; rejected counts invalid rows.
+After a failed commit the batch state is failed and it shows the structured
+error and the fact that nothing was written.
 
 The rejected and warning row report is a client generated CSV containing: the
 original row number, Player Name, the offending column, and the reason
@@ -485,10 +523,10 @@ correction report without the name would be unusable. The file the user just
 uploaded already contains those names on the same device, so the report adds
 no new exposure beyond what the user already holds; it is a derivative of
 their own input. The secure handling guidance shown on export applies equally
-here. Nothing else is retained anywhere: the uploaded file is not stored, row
+here. Nothing else is retained anywhere: the uploaded file is not stored, no
+file fingerprint is stored (the server never receives the file bytes), row
 content never enters logs or audit metadata, and the original filename is
-never persisted (the batch fingerprint is a SHA-256 of the bytes, from which
-neither names nor the filename can be recovered).
+never persisted.
 
 ### Spond import
 
@@ -497,16 +535,30 @@ registrations and audit. Proposed changes to
 `supabase/functions/spond-roster-import`, shipped as its own gated function
 change per the delivery plan:
 
-- **Season**: imported players land in the club's current season, chosen
-  server side; the function refuses if the club has no current season. The
-  client cannot pick an arbitrary season.
+- **Season**: Spond import stays current-season-only. Imported players land in
+  the club's current season, chosen server side; the function refuses if the
+  club has no current season, and the client cannot pick an arbitrary season.
+  This differs from the spreadsheet import, which may target any non archived
+  season, because the Spond organiser account's live subgroup reflects the
+  current squad and importing it into a future season is ambiguous. Keeping
+  Spond current-season-only is a recommended operational decision; the
+  alternative (any non archived season) is an Unresolved item.
 - **Status**: registrations are created as Pending. Rationale: membership of
   a Spond subgroup proves squad membership in Spond, not completed club
   registration. The alternative, landing as Registered, is documented under
   Alternatives; the default needs approval (Unresolved items).
-- **Dedupe**: the key becomes the normalised name within (club, season, team)
-  against registrations, the same per team semantics as today. Repeat imports
-  remain idempotent and never update existing rows.
+- **Dedupe, and its unavoidable limitation**: the key is the normalised name
+  within (club, season, team) against registrations, the same per team
+  semantics as today. Repeat imports remain idempotent and never update
+  existing rows. Because Spond member ids are deliberately never persisted (the
+  child data boundary), Spond re import has no deterministic id key and can
+  only match by name. This has an unavoidable limitation: two different
+  children with the same name in the same Spond subgroup are treated as one on
+  import (the second is skipped). This is a documented, accepted trade off of
+  not persisting Spond member ids; the manual Add or the id keyed spreadsheet
+  import is how genuine namesakes are represented. The spreadsheet import's
+  needs your choice flow does not apply to Spond, which runs unattended against
+  the live subgroup.
 - **Audit**: each run gets a batch id. Every imported player writes one
   `player.created` row event through the registration insert trigger,
   carrying source `spond_import` and the batch id, and the run writes one
@@ -546,18 +598,19 @@ the same library as import) from data returned by a single RPC:
 export_players(p_season_id, p_filters)
 ```
 
-The RPC enforces `players.export`, applies the team scope defined in
-`docs/security/registered-players-boundary.md`, and writes the
-`players.exported` audit event in the same transaction as the read.
+The RPC enforces `players.export`, applies the club scope defined in
+`docs/security/registered-players-boundary.md` (read is club wide, no team
+arm), and writes the `players.exported` audit event in the same transaction as
+the read.
 
 Scope: the default export is the currently filtered list, exactly what is on
 screen; exports respect filters, so Withdrawn players are excluded whenever
 the active filters exclude them. A secondary, explicit option exports all
 records the caller is authorised to access ("Export all I can access"). Both
 scopes are bounded to the selected season: `export_players` takes a single
-season id, so "all" means every registration in the selected season that the
-caller's team scope allows. Exporting another season means switching the
-season selector first.
+season id, so "all" means every registration in the selected season the caller
+may read, which is every registration in the club (read is club wide).
+Exporting another season means switching the season selector first.
 
 The exact column order, and formatting per column:
 
@@ -638,13 +691,14 @@ is `docs/security/app-audit-boundary.md`, decided in
 
 Import records:
 
-- One `import_batches` row per confirmed import: the client generated batch
-  id, actor, club, counts (rows received, added, updated, already present,
-  skipped), the SHA-256 fingerprint of the file bytes, and the outcome. This
-  row is also the idempotency record. There is deliberately no rejected or
-  warnings count on the batch row: the server never sees rejected rows, so
-  those figures exist only in the client preview and the results screen and
-  never enter the batch record or any audit metadata
+- One `import_batches` row per import: the client generated batch id, actor,
+  club, season, format, state (pending, succeeded or failed) and counts (rows
+  received, added, updated, already present, skipped, invalid, all server
+  derived). There is deliberately NO file fingerprint: the browser parses the
+  file and sends only parsed rows, so the server never receives the bytes and
+  cannot verify a client declared hash, which would carry no integrity value
+  and is not stored. The batch UUID is the idempotency key and needs none. This
+  row is the idempotency record
   (`docs/adr/ADR-0007-player-import-export-architecture.md`,
   `docs/security/app-audit-boundary.md`).
 - Per row audit events written by the base triggers in the same transaction,
@@ -667,9 +721,11 @@ Export records:
   export failed action exists (`docs/security/app-audit-boundary.md`).
 - Never recorded: the dataset, any name list, the file, or a download URL.
 
-Spond import records the same shape: per row `player.created` events with
-source `spond_import` and the batch id, plus one `players.spond_imported`
-run summary per import.
+Spond import records the same shape: per row `player.created` events for new
+identities and `player.registration_created` events for the season
+registrations, with source `spond_import` and the batch id, plus one
+`players.spond_imported` run summary per import
+(`docs/security/app-audit-boundary.md`).
 
 ## Alternatives
 
@@ -755,13 +811,13 @@ as recommended defaults.
 The relevant numbered decisions from the canonical decision list, each with
 its recommended default:
 
-- **2. Coach team scope**: coaches read only registrations on their assigned
-  teams; managers and admins read all. This scope is applied by
-  `export_players`, so it bounds what a coach holding `players.export` could
-  ever export. Recommended: assigned teams only.
-- **3. Coach access reduction**: coaches drop from today's full
-  `sessions.create` roster powers to view only, which removes the Spond
-  import trigger from coaches. Recommended: reduce to view.
+- **2. Coach team scope**: club wide read via `players.view`; team is a
+  filter, not an access boundary, so `export_players` reads club wide and the
+  0016 standing rule is preserved. Recommended: club wide read (team scoped
+  read is the rejected alternative).
+- **3. Coach access change**: coaches keep club wide read and lose write (add,
+  edit, import), which removes the Spond import trigger from coaches.
+  Recommended: coach keeps read, loses write.
 - **4. Export capability holders**: who holds `players.export` by default.
   Recommended: managers and admins.
 - **5. Separate import and export capabilities**: `players.import` and
@@ -772,9 +828,14 @@ its recommended default:
   parsed. Recommended: the browser, with defensive caps.
 - **13. RPC versus Edge Function commit**: the commit architecture.
   Recommended: a transactional RPC, no Edge Function.
-- **All or nothing import commit** (supplementary to the numbered list): a
-  server side row failure aborts the whole transaction rather than skipping
-  the row and reporting. Recommended: all or nothing.
+- **All or nothing import commit** (supplementary): a server side row failure
+  aborts the whole transaction rather than skipping the row and reporting.
+  Recommended: all or nothing.
+- **Spond import season targeting** (supplementary): whether Spond may import
+  into a non archived season other than the current one. Recommended: current
+  season only, because the organiser account's live subgroup reflects the
+  current squad. The spreadsheet import already targets any non archived
+  season; this item is only about Spond.
 
 ## Implementation dependencies
 
@@ -794,9 +855,10 @@ its recommended default:
   needs it: PR 4, the export PR, which ships XLSX export and the XLSX
   template and evaluates the dependency there; the import parser in PR 5
   reuses it. Nothing is added by this scoping work.
-- The Modal locked mode and the import preview UI extend the existing plan
-  then confirm prior art (`src/lib/faAttach.ts`, `AttachFAVideosModal`), per
-  `docs/product/registered-players-ux.md`.
+- The import confirm REUSES the existing Modal `dismissible={false}` contract
+  (PR #103, `src/components/ui.tsx`); the import preview UI extends the existing
+  plan then confirm prior art (`src/lib/faAttach.ts`, `AttachFAVideosModal`),
+  per `docs/product/registered-players-ux.md`.
 - The Spond function changes (the PR 2 compatibility change and the PR 6
   rework) follow the repository's Edge Function deploy discipline: deployed
   from the files on disk and verified by reading the deployed source back,
