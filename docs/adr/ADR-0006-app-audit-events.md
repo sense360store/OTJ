@@ -44,7 +44,7 @@ Exact field list (types and constraints specified in full in docs/security/app-a
 | `actor_id` | uuid nullable, FK `profiles` ON DELETE SET NULL |
 | `actor_name` | text snapshot, resolved from `profiles` server side at write time; survives profile deletion |
 | `action` | text, from the documented action catalogue |
-| `entity_type` | text (for example player, registration, season, import batch) |
+| `entity_type` | text (for example `player`, `season`, `import_batch`). Registration row events anchor to the stable player identity id, so registration is not an entity type |
 | `entity_id` | uuid nullable |
 | `season_id` | uuid nullable |
 | `team_id` | uuid nullable |

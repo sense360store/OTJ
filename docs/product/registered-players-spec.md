@@ -165,12 +165,26 @@ Proposed product defaults (decision record in docs/adr/ADR-0005-registered-playe
 
 - Exactly one current season per club, database enforced. Name and dates are required and validated (name 1 to 20 characters unique per club, `ends_on` after `starts_on`); date ranges may overlap between seasons because adjacent grassroots seasons straddle in practice.
 - `seasons.manage` gates create, update, activate and archive. Recommended default holders: admin only, because activation reshapes the whole club's operational view; managers can be granted it through the capability grid. APPROVAL REQUIRED.
-- Activation is one transactional RPC (`activate_season`): clears `is_current` on the old row, sets it on the new, and writes the `season.activated` audit event (plus `season.archived` when the old season is archived in the same action). Activating does not create, copy or modify any registration.
-- Archiving the current season alone is refused: a club always has a current season after setup. Archive happens by activating a successor (the old season gains `archived_at`) or explicitly on a non current season.
+- Activation is one transactional RPC (`activate_season`): clears `is_current` on the old row, sets it on the new, and writes the `season.activated` audit event. Archiving the outgoing season is an explicit option on the call, never automatic; when the option is taken, the same transaction sets `archived_at` on the outgoing season and writes `season.archived` alongside `season.activated`. The proposed default does not take the option: the outgoing season stays open, non current but still writable, so late corrections during the changeover period need no unarchive round trip, and it is archived later by the explicit Archive action on a non current season (docs/adr/ADR-0005-registered-players-and-seasons.md). Activating does not create, copy or modify any registration.
+- Archiving the current season alone is refused: a club always has a current, unarchived season after setup. Archival happens through the explicit option on activation, or explicitly on a non current season.
 - Archived seasons are read only for registrations, enforced in the database, not the UI: registration write paths refuse when the season has `archived_at` set. The only override is unarchive (clear `archived_at`; `seasons.manage`; audited). APPROVAL REQUIRED on the absoluteness.
 - Renewal: moving into a new season creates new registration rows against the same identities. Recommended: an explicit bulk Renew action (`players.manage`) copying chosen registrations from a source season into the current season as status pending, team carried forward, shirt number carried forward, `registered_date` empty, run as one transactional RPC with a batch id and audit events (source `renewal`). The export and import round trip works day one without it; Renew ships late in the plan (the PR 6 window in docs/roadmaps/registered-players-delivery-plan.md). APPROVAL REQUIRED on the status reset to pending and the carry forward of team and shirt.
 - Current season defaults everywhere: the players page opens on it; board seeding uses it; the Spond import writes into it (chosen server side; the client cannot pick an arbitrary season); exports name the selected season in the filename and a column.
 - No current season (pre setup): the players page shows a setup prompt to admins and an empty state to everyone else; imports and board roster seeding are unavailable until a season exists. The migration creates the initial season, so this state occurs only for a hypothetical new club.
+
+#### Season management surface
+
+Season creation and activation do not live on the players page; they live on a dedicated admin surface. This is the surface docs/product/registered-players-ux.md points at from its season selector and its "No current season" state. Proposed product defaults:
+
+- An admin page at `/admin/seasons`, following the existing admin page pattern (`/admin/teams`, `src/App.tsx:119`). It is visible only to `seasons.manage` holders: the nav item is absent for everyone else and a direct URL hit follows the RequireCap pattern, rendering nothing gated before redirect.
+- The page lists every season newest first, showing name, date range, a Current marker and an Archived marker, with per row actions driven by state.
+- Create: a modal taking name (1 to 20 characters, unique per club) and the two dates (`ends_on` after `starts_on`, both required). Creating a season never changes the current season.
+- Activate: a per row action on a non current season calling the `activate_season` RPC, behind a confirmation dialog that names both seasons and states the consequence. The dialog carries the explicit archive option of docs/adr/ADR-0005-registered-players-and-seasons.md as an "Also archive 2026/27" checkbox, unticked by default, matching the RPC default of leaving the outgoing season open. Proposed copy: "Make 2027/28 the current season? The players page, board seeding, imports and exports switch to it. 2026/27 stays open until you archive it." With the checkbox ticked, the final sentence becomes "2026/27 is archived and becomes read only." Either way the whole change is one transaction.
+- Archive: a per row action on non current seasons only. Archiving the current season alone is refused, matching the rule above. Under the activation default this row action is the normal route by which an outgoing season is eventually archived.
+- Unarchive: the audited escape hatch, a per row action on an archived season with a confirmation stating that its registrations become editable again.
+- The "Set up season" call to action in the players page's no current season state links here.
+
+The surface performs no registration work of any kind; it only manages season rows, and every action on it is audited (`season.created`, `season.updated`, `season.activated`, `season.archived`). Layout, states and copy detail belong to docs/product/registered-players-ux.md; delivery sequencing to docs/roadmaps/registered-players-delivery-plan.md.
 
 ### Unassigned players
 
@@ -225,15 +239,15 @@ What each operation requires:
 |---|---|---|
 | View, search, filter, sort players; per player History | `players.view` | Coach: assigned teams (see Team scope). Manager and admin: all teams via `all_teams`. |
 | Add, edit, move team, change status, withdraw, restore, bulk assign, Renew | `players.manage` | Same scope arms as view; managers and admins effectively club wide. |
-| Upload and confirm a CSV or XLSX import; Import from Spond | `players.import` | Selected (current) season. |
-| Export filtered list or all accessible records; download template | `players.export` | The viewer's own visible scope, enforced server side. |
+| Upload and confirm a CSV or XLSX import; Import from Spond; download the blank template | `players.import` | Selected (current) season. |
+| Export filtered list or all accessible records | `players.export` | The viewer's own visible scope, enforced server side. |
 | Permanent deletion of a player | `players.delete` | Admin only by default, typed confirmation. |
 | Create, update, activate, archive, unarchive seasons | `seasons.manage` | Admin only by default. APPROVAL REQUIRED. |
 | Club wide Activity page | `audit.view` | Club wide feed. Per player History does not require it (separate access path, decision 15). |
 
 Parents hold none of these: no player records, no exports, no audit, and no transient read during loading (the RequireCap pattern already renders nothing until capabilities resolve, `src/components/RequireCap.tsx:35-38`, and RLS returns zero rows regardless). A custom Manager style role acquires any of this through the existing capability grid.
 
-**Coach access reduction: decision requiring approval.** Today, `sessions.create` gates the roster, so every coach can add, edit, hard delete and Spond import players club wide (`0021_players.sql:101-115`; `supabase/functions/spond-roster-import/index.ts:168-174`). Under the recommended defaults, `sessions.create` stops gating players once `players.view` exists, and coaches are reduced to viewing their assigned teams: no add, no edit, no import, no export. This is a deliberate, prominent reduction of coach access, not an oversight, and it also makes CLAUDE.md's "admin triggered" description of the Spond roster import real for the first time. If the club wants continuity instead, the fallback seed grants coach `players.manage` plus `players.import` and the scope stays club wide; both options are presented, the reduction is recommended. APPROVAL REQUIRED (Unresolved item 3).
+**Coach access reduction: decision requiring approval.** Today, `sessions.create` gates the roster, so every coach can add, edit, hard delete and Spond import players club wide (`0021_players.sql:101-115`; `supabase/functions/spond-roster-import/index.ts:168-174`). Under the recommended defaults, `sessions.create` stops gating players once `players.view` exists, and coaches are reduced to viewing their assigned teams: no add, no edit, no import, no export. This is a deliberate, prominent reduction of coach access, not an oversight, and it also makes CLAUDE.md's "admin triggered" description of the Spond roster import real for the first time. If the club wants continuity instead, the fallback seed grants coach `players.manage` plus `players.import`. That fallback is coupled to the team scope decision: under the recommended team scope (Unresolved item 2), the policy arms scope every holder without `all_teams` to their assigned teams regardless of which capabilities they hold, and the import RPC restates the same arms, so the fallback seed alone does not keep coach scope club wide. Club wide continuity requires also declining the team scope for coaches, or seeding coaches with `all_teams` true, an option that would need naming and assessing in its own right. Approving the team scope while taking the fallback yields coach manage and import scoped to their assigned teams, with Unassigned registrations invisible to them and import rows with a blank Team cell (which land as Unassigned) beyond their reach. Decisions 2 and 3 therefore interact and must be decided together (see Unresolved items). Both options are presented; the reduction is recommended. A middle option was also assessed: limited shirt number edits for a coach's own teams. Capabilities gate operations, not columns, so a shirt number only write would need a dedicated capability plus a column restricted write path (a dedicated RPC or a trigger guard), a third write grant shape carried for one field. It is rejected for v1 as disproportionate to the benefit (managers correct shirt numbers; coaches request changes) and remains available as a follow up capability if the reduction proves too tight in practice. APPROVAL REQUIRED (Unresolved item 3).
 
 ### Team scope
 
@@ -264,7 +278,7 @@ Behaviour level; exact modal copy in docs/product/registered-players-ux.md.
 - A duplicate name warning (same normalised name in the season) shows inline before save; save remains allowed, and nothing is ever auto merged.
 - Saves are confirmed writes only: standard mutation, button busy, the modal stays open on failure with the error and a retry; no optimistic update; success closes the modal and invalidates. No write may silently fail or navigate before confirmation.
 - Withdraw shows a confirm dialog stating the player stays in history and can be restored. Restore lets the actor choose Pending or Registered. Move team is an inline action or the edit modal, audited as `player.team_changed`.
-- Permanent deletion is admin only (`players.delete`): typed confirmation; consequence text explaining it removes the child's name from the club's records, that History keeps a neutral "Deleted player" tombstone, and that board discs fall back to numbers only; deletes the identity and its registrations by cascade; the `player.deleted` audit event is written before the row deletion in the same transaction (entity id retained, no name). Boards are structurally unaffected: there is no FK and the disc shows its number, the verified 0028 design. The anonymisation alternative (rename to "Player N") is documented; the recommended default is true deletion for data minimisation. APPROVAL REQUIRED (Unresolved item 9).
+- Permanent deletion is admin only (`players.delete`): typed confirmation; consequence text explaining it removes the child's name from the club's records, that History keeps a neutral "Deleted player" tombstone, and that board discs fall back to numbers only; deletes the identity and its registrations by cascade; the `player.deleted` audit event is raised by the AFTER DELETE trigger on the identity row and commits atomically with the deletion (entity id retained, no name), per docs/security/app-audit-boundary.md. Boards are structurally unaffected: there is no FK and the disc shows its number, the verified 0028 design. The anonymisation alternative (rename to "Player N") is documented; the recommended default is true deletion for data minimisation. APPROVAL REQUIRED (Unresolved item 9).
 
 ### Per player history and the Activity page
 
@@ -282,7 +296,7 @@ Realistic scale: one club, five teams, roughly 15 to 25 players per team (75 to 
 - Player list reads are one season's registrations joined to identities; filtering and search run client side over that set, matching the Library pattern. No pagination, no virtualisation.
 - Search is case insensitive substring match on the display name, with input trimmed; matching normalisation (trim, case fold, collapse spaces) is shared with import matching.
 - Deterministic sort everywhere: every ordering ends with an id tiebreak so lists never shuffle between refetches.
-- Indexes ride the migrations (registrations by club and season, by team, by player; the boundary document specifies them). Archived season reads are the same shaped query with a different `season_id` and stay cheap at this scale.
+- Indexes ride the migrations (registrations by club and season, by team and by player); the exact list lives in docs/roadmaps/registered-players-delivery-plan.md (Data migration plan, step 8), and the audit event indexes also in docs/security/app-audit-boundary.md. Archived season reads are the same shaped query with a different `season_id` and stay cheap at this scale.
 - Audit reads are server filtered and server paginated; the client never downloads the whole audit history.
 - Query caching follows the existing TanStack Query conventions; player mutations stay non optimistic with invalidation on settled, as today.
 
@@ -293,9 +307,13 @@ Realistic scale: one club, five teams, roughly 15 to 25 players per team (75 to 
 Summarised here; each is treated fully where indicated.
 
 - **One row per child per season** instead of the identity split: fewer tables, but every season mints a new id per child, fragmenting board references and duplicating names. Rejected. Full comparison in docs/adr/ADR-0005-registered-players-and-seasons.md.
-- **Coach continuity** instead of the access reduction: seed coach with `players.manage` plus `players.import`, scope club wide, preserving today's de facto powers. Presented as the fallback; the reduction is recommended.
+- **Coach continuity** instead of the access reduction: seed coach with `players.manage` plus `players.import`, preserving today's de facto powers. Its club wide scope holds only if the coach team scope of Unresolved item 2 is declined for coaches, or coaches are seeded `all_teams` true; with the team scope approved, this fallback yields coach manage and import limited to assigned teams (see Permissions and capabilities). Presented as the fallback; the reduction is recommended.
+- **Coach shirt number edits on own teams** as a middle option between view only and full continuity: assessed under Permissions and capabilities; rejected for v1 because a single column write path needs a dedicated RPC or trigger guard the capability model does not otherwise require, for marginal benefit.
 - **Own teams plus Unassigned** or **read all, edit assigned** instead of assigned teams only for coaches: documented under Team scope; assigned teams only is recommended.
+- **Coach export within team scope** instead of managers and admins only holding `players.export`: expressible (the export RPC already applies the viewer's scope), but rejected because export is the bulk exfiltration path for children's names and warrants the narrowest holder set. Full treatment in docs/product/registered-players-import-export.md.
 - **Anonymisation** ("Player N") instead of permanent deletion: keeps row shape at the cost of retaining a record of the child's existence; true deletion recommended for data minimisation.
+- **Fixed audit retention with scheduled pruning** instead of indefinite retention reviewed annually: rejected at the club's scale because audit rows carry no child names and pruning erases accountability for no privacy gain. Full treatment in docs/security/app-audit-boundary.md and docs/adr/ADR-0006-app-audit-events.md.
+- **Absolute archived seasons** (read only with no unarchive) or a softer admin override without unarchiving, instead of read only with an audited unarchive: absolute read only turns a mistaken archive into a migration, and a silent override weakens the read only guarantee. The audited unarchive is recommended; full treatment in docs/adr/ADR-0005-registered-players-and-seasons.md.
 - **Export and import round trip** instead of a dedicated Renew action: works day one, more manual; the bulk Renew RPC is recommended and ships late in the plan.
 - **Server side spreadsheet parsing** (Edge Function) instead of the browser, and **Edge Function commit** instead of a transactional RPC: both rejected as larger surfaces for no boundary gain; see docs/adr/ADR-0007-player-import-export-architecture.md.
 - **A player only history table** instead of the generic audit foundation: rejected; it would later compete with app wide audit. See docs/adr/ADR-0006-app-audit-events.md.
@@ -317,7 +335,7 @@ Adopt, subject to the approvals listed under Unresolved items: the stable identi
 
 ## Unresolved items
 
-The numbered decisions below require explicit approval. Each is written up above as the recommended default. This list matches section D14 of the decision brief and appears identically in every sibling document that carries it.
+The decisions below require explicit approval. Each is written up above as the recommended default. This table is the canonical in repo list of unresolved decisions for the whole document set; each sibling document carries the subset it owns, numbered consistently with this table, and refers back here.
 
 | # | Decision | Recommended default |
 |---|---|---|
@@ -336,9 +354,14 @@ The numbered decisions below require explicit approval. Each is written up above
 | 13 | RPC versus Edge Function import commit | Transactional RPC |
 | 14 | Archived season absoluteness | Read only, with an audited unarchive escape hatch |
 | 15 | `audit.view` versus per player history access | Separate paths: History rides `players.view`, Activity requires `audit.view` |
-| 16 | Backfill status and date values | Status `registered`, `registered_date = created_at::date` |
-| 17 | `seasons.manage` default holders | Admin only |
-| 18 | All or nothing import commit versus skip and report | All or nothing: any server side row failure aborts the whole transaction |
+
+Decisions 2 and 3 interact and must be decided together. The club wide scope named in decision 3's continuity fallback is achievable only if decision 2 is declined for coaches, or coaches are seeded `all_teams` true; approving decision 2 while taking the continuity fallback yields coach manage and import scoped to assigned teams, with Unassigned registrations and blank team import rows unavailable to coaches (see Permissions and capabilities).
+
+Three supplementary items are carried alongside the numbered list, unnumbered here and in the sibling documents, and require the same explicit approval:
+
+- Backfill status and date values: recommended status `registered` with `registered_date = created_at::date`.
+- `seasons.manage` default holders: recommended admin only.
+- All or nothing import commit versus skip and report: recommended all or nothing; any server side row failure aborts the whole transaction.
 
 ## Implementation dependencies
 
