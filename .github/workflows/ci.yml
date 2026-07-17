@@ -67,9 +67,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # Node 22, not 20: the suite creates real supabase-js clients, whose
+      # RealtimeClient needs a WebSocket implementation. Node 20 has no native
+      # WebSocket, so the client throws "Node.js 20 detected without native
+      # WebSocket support" during global setup; Node 22 provides it natively.
+      # This is the version the suite is developed and verified against.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - run: npm ci
       # edge-runtime is excluded: the security suite exercises the database,
