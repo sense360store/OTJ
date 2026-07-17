@@ -152,8 +152,12 @@ anywhere in the schema or the app.
 
 Classification: every row of `players` and `player_registrations` is child
 personal data, the most sensitive data class the app holds. `seasons` rows
-and `audit_events` rows carry no child data by design. The boundary
-statement, extending the one on 0021 and 0023:
+carry no child data. `audit_events` rows carry no child NAMES, but a child
+linked audit event (entity_type player) is pseudonymous child personal data:
+it holds a stable player_id and that child's attribute history
+(`docs/security/app-audit-boundary.md`, Data classification). It is protected
+accordingly, not treated as free of child data. The boundary statement,
+extending the one on 0021 and 0023:
 
 The register holds, for each child, exactly one bounded display name and,
 per season, one team reference, one status word, one optional shirt number
@@ -215,38 +219,44 @@ Default grants (seed, proposed):
 - parent (system): none. No player, import, export or audit access of any
   kind.
 
-`sessions.create` stops gating players once `players.view` exists. This is a
-deliberate reduction of coach access (today coaches add, edit and import club
-wide through `sessions.create`): COACH ACCESS REDUCTION, APPROVAL REQUIRED.
-The fallback, if the club wants continuity, seeds coach with players.manage
-and players.import and keeps the scope club wide; the recommendation is the
-reduction. Enforcement is always Postgres RLS through `has_perm`
-(`supabase/migrations/0015_rbac_roles.sql:407-421`); the UI only decides what
-to surface.
+`sessions.create` stops gating players once `players.view` exists. Coaches
+keep club wide READ of the register through `players.view`; they lose the
+WRITE powers `sessions.create` gives them today (add, edit, hard delete, Spond
+import). This is a WRITE reduction, not a read reduction: COACH WRITE
+REDUCTION, APPROVAL REQUIRED. The fallback, if the club wants coaches to keep
+writing, seeds coach with players.manage and players.import; with club wide
+read there is no team entanglement, so the fallback simply gives write back.
+The recommendation is the reduction. Enforcement is always Postgres RLS
+through `has_perm` (`supabase/migrations/0015_rbac_roles.sql:407-421`); the UI
+only decides what to surface.
 
-### 3. Team scope: the first team scoped RLS in the app
+### 3. Read is club wide; team is a filter, not an access boundary
 
-Recommended (APPROVAL REQUIRED, headline security decision): holders of
-`players.view` without `all_teams` read only the registrations on teams they
-belong to through `member_teams`, and the identity rows those registrations
-point at. Managers and admins (all_teams true) read all. Unassigned
-registrations (team_id null) are visible only to all_teams holders by
-default. Writes under `players.manage` carry the same scope arms.
+Recommended default: `players.view` grants CLUB-WIDE read of every registered
+player, all teams and Unassigned included, across the seasons the caller may
+view. There is no team scope arm on any select policy. Team is a filter and a
+management attribute in the UI and the data, never a row level security read
+boundary. This is the requested product outcome: authorised members see the
+registered player list and filter All teams or one team.
 
-This is the first team scoped row level security in the application and it
-explicitly changes the standing rule recorded at
+The standing rule recorded at
 `supabase/migrations/0016_member_teams.sql:22-25` ("teams scope no row level
-security") for the players domain only. Content tables are untouched and
-stay club wide. The change, and the precedent it sets, must be flagged for
-human review and must not be implemented before explicit approval.
+security") is therefore PRESERVED and unchanged. This is a reversal of an
+earlier draft of this document, which had proposed the first team scoped RLS
+in the app; that design is retained only as a clearly rejected alternative
+(see Alternatives) for four reasons: it makes cross season history incoherent
+when a coach or a player moves team; a team scoped custom role could rename or
+delete a stable identity that also belongs to other teams; Unassigned players
+would disappear from the coaches who must allocate them; and it is a large new
+access control precedent the feature request does not need. `member_teams` and
+`profiles.all_teams` remain what 0016 made them, UI filter and default drivers
+that scope no row level security.
 
-Consequence the rule change creates: `member_teams` and `profiles.all_teams`
-become access relevant for the first time. Their write paths are already
-closed (member_teams writes require `users.manage`, 0016:63-83; all_teams is
-users.manage territory and pinned against self service in
-`profiles_update_self`, 0016:121-129), so no self escalation path exists, but
-this newly load bearing role must be stated here, covered by security tests,
-and re-verified whenever those policies change.
+Mutations stay capability gated (`players.manage`), import and export stay
+capability gated (`players.import`, `players.export`), all club scoped, with
+no team arms anywhere. The board name resolution consequence noted in earlier
+drafts (a coach seeing numbered discs on another team's board) disappears:
+read is club wide, so names resolve club wide for every `players.view` holder.
 
 ### 4. Exact policy semantics (proposal, pseudo SQL)
 
@@ -256,13 +266,9 @@ Terms used below, all existing and confirmed:
   (`supabase/migrations/0001_init.sql:131-139`).
 - `public.has_perm(capability)`: true when any role the caller holds grants
   the capability (`0015_rbac_roles.sql:407-421`).
-- `public.my_all_teams()`: the caller's profiles.all_teams flag
-  (`0016_member_teams.sql:104-114`).
-- The member team set: `select mt.team_id from public.member_teams mt where
-  mt.member_id = auth.uid()`. In the pseudo SQL below, `<member team set>`
-  abbreviates exactly that subquery after its first full appearance, and
-  `<visible registration exists>` abbreviates the exists test shown in full
-  in `players_select_scoped`.
+
+There is no team term: reads and writes are club scoped and capability gated,
+with no `member_teams` or `all_teams` arm (section 3).
 
 Policy names are indicative; migration numbering is provisional (likely 0030
 onward) and the live ledger must be confirmed at apply time. New SQL follows
@@ -278,20 +284,10 @@ update` only (no delete policy exists, see the seasons notes);
 #### players (identity)
 
 ```sql
-create policy "players_select_scoped" on public.players
+create policy "players_select_view" on public.players
   for select using (
     club_id = public.my_club()
     and public.has_perm('players.view')
-    and (
-      public.my_all_teams()
-      or exists (
-        select 1 from public.player_registrations r
-        where r.player_id = players.id
-          and r.club_id = public.my_club()
-          and r.team_id in (select mt.team_id from public.member_teams mt
-                            where mt.member_id = auth.uid())
-      )
-    )
   );
 
 create policy "players_insert_manage" on public.players
@@ -301,11 +297,10 @@ create policy "players_insert_manage" on public.players
     and created_by = auth.uid()
   );
 
-create policy "players_update_scoped" on public.players
+create policy "players_update_manage" on public.players
   for update using (
     club_id = public.my_club()
     and public.has_perm('players.manage')
-    and (public.my_all_teams() or <visible registration exists>)
   )
   with check (
     club_id = public.my_club()
@@ -316,77 +311,58 @@ create policy "players_delete_admin" on public.players
   for delete using (
     club_id = public.my_club()
     and public.has_perm('players.delete')
-    and (public.my_all_teams() or <visible registration exists>)
   );
 ```
 
-Notes. A child with no visible registration is invisible to a team scoped
-reader, name included. The identity insert carries no team arm because the
-row carries no team; the team scope on creation bites on the registration
-insert, and a bare identity row with no registration is invisible and inert.
-The Add player flow writes the identity row and its registration together in
-one transactional RPC, mandatory rather than optional: two separate client
-inserts could leave an identity with no registration if the second failed, and
-every sibling document treats the paired write as atomic. Every insert arm pins
+Notes. Read is club wide for `players.view` holders: every registered child in
+the club is visible, name included, with no team arm (section 3). The Add
+player flow writes the identity row and its registration together in one
+transactional RPC, mandatory rather than optional: two separate client inserts
+could leave an identity with no registration if the second failed, and every
+sibling document treats the paired write as atomic. Every insert arm pins
 `created_by = auth.uid()`, closing the confirmed 0021 comment versus clause
 mismatch. `updated_by` and `updated_at` are never trusted from the client:
 the audit foundation's triggers set them server side (see
-`docs/security/app-audit-boundary.md`). The exists subquery evaluates under
-the caller's player_registrations select policy, which states the same
-visibility, so the two definitions cannot drift; implementation may factor
-the shared arm into a stable helper function following the has_perm
-conventions.
+`docs/security/app-audit-boundary.md`).
 
 #### player_registrations
 
 ```sql
-create policy "player_registrations_select_scoped" on public.player_registrations
+create policy "player_registrations_select_view" on public.player_registrations
   for select using (
     club_id = public.my_club()
     and public.has_perm('players.view')
-    and (
-      public.my_all_teams()
-      or team_id in (select mt.team_id from public.member_teams mt
-                     where mt.member_id = auth.uid())
-    )
   );
 
-create policy "player_registrations_insert_scoped" on public.player_registrations
+create policy "player_registrations_insert_manage" on public.player_registrations
   for insert with check (
     club_id = public.my_club()
     and public.has_perm('players.manage')
     and created_by = auth.uid()
-    and (public.my_all_teams() or team_id in <member team set>)
   );
 
-create policy "player_registrations_update_scoped" on public.player_registrations
+create policy "player_registrations_update_manage" on public.player_registrations
   for update using (
     club_id = public.my_club()
     and public.has_perm('players.manage')
-    and (public.my_all_teams() or team_id in <member team set>)
   )
   with check (
     club_id = public.my_club()
     and public.has_perm('players.manage')
-    and (public.my_all_teams() or team_id in <member team set>)
   );
 
 create policy "player_registrations_delete_admin" on public.player_registrations
   for delete using (
     club_id = public.my_club()
     and public.has_perm('players.delete')
-    and (public.my_all_teams() or team_id in <member team set>)
   );
 ```
 
-Notes. A null team_id makes the `in` term evaluate to null, which fails both
-using and with check for a non all_teams holder: Unassigned registrations are
-therefore readable and writable only by all_teams holders by default, exactly
-the D4 recommendation (the alternative, assigned teams plus Unassigned, is
-documented under Alternatives). The update policy carries the scope arm in
-both directions, so a team scoped manager can neither move a registration
-onto a team they do not hold nor pull one in from outside their scope. The
-denormalised club_id must equal the referenced player's club, enforced
+Notes. Read and write are club wide and capability gated, with no team arm
+(section 3). Unassigned registrations (team_id null) are read and managed like
+any other by `players.view` and `players.manage` holders, which keeps the
+coaches who must allocate them able to see them. The denormalised club_id must
+equal the referenced player's club, enforced
 structurally (composite foreign key on (player_id, club_id) against a unique
 (id, club_id) on players, or a trigger; decided at implementation, the
 invariant is fixed here). Registration rows are never deleted in normal
@@ -464,9 +440,11 @@ gated migration.
 
 The batch bookkeeping table (shape and idempotency contract in
 `docs/adr/ADR-0007-player-import-export-architecture.md`) records actor,
-club, season, counts, format, outcome and a sha256 file fingerprint; never
-names, rows or filenames. ADR-0007 and the threat model defer its access
-contract to this document, and this is that contract:
+club, season, counts, format and state; never a file fingerprint, names, rows
+or filenames. The browser parses the file and sends only parsed rows, so the
+server never receives the original bytes and stores no fingerprint (a client
+declared hash is unverifiable and is not kept). ADR-0007 and the threat model
+defer its access contract to this document, and this is that contract:
 
 ```sql
 create policy "import_batches_select_view" on public.import_batches
@@ -481,7 +459,7 @@ create policy "import_batches_select_view" on public.import_batches
   verbs. The table is written only from inside the `import_players` RPC,
   which runs as its owner and needs no client grant. Spreadsheet imports are
   the table's whole scope: its format vocabulary is csv and xlsx and its
-  fingerprint and count semantics describe an uploaded file (ADR-0007). The
+  count semantics describe an uploaded file (ADR-0007). The
   Spond commit RPC and `renew_registrations` record no import_batches row;
   their batch ids exist only on their audit events (the per row events plus
   the run summary, `docs/security/app-audit-boundary.md`), and Spond replay
@@ -496,8 +474,8 @@ create policy "import_batches_select_view" on public.import_batches
   permits: same club and `has_perm('players.import')`. It does not require
   `audit.view`. A batch id recorded for another club matches nothing and
   behaves as unknown, a refusal, never a replay (ADR-0007 step 3; threat
-  model T14). The stored result carries counts, outcome and the fingerprint
-  only, never row content or names.
+  model T14). The stored result carries counts and outcome only, never a file
+  fingerprint, row content or names.
 
 #### player_history
 
@@ -509,22 +487,20 @@ defers the exact semantics here):
   backed view), SECURITY DEFINER, `set search_path = ''` with schema
   qualified names, EXECUTE granted to authenticated and self gating in its
   body, the `member_states` shape, so refusal is a clean capability error.
-- Gate: the caller must be in the player's club (`my_club()`), hold
-  `players.view`, and pass the D4 scope: `my_all_teams()` true, or the
-  player has at least one registration on a team in the caller's member team
-  set. That is exactly the `players_select_scoped` visibility: a caller can
-  read the history of precisely the players whose identity row they can
-  already read. The two definitions must not drift; a shared helper and a
-  security test pin them together.
+- Gate: the caller must be in the player's club (`my_club()`) and hold
+  `players.view`. There is no team arm: read is club wide (section 3), so a
+  `players.view` holder may read any club player's history, exactly matching
+  `players_select_view` visibility. A child linked history row is pseudonymous
+  child personal data (`docs/security/app-audit-boundary.md`, Data
+  classification), so this gate is a real access control, not a formality.
 - Rows returned: the entity's `audit_events` rows, which carry no child
   names by construction (action, occurred_at, actor name, changed_fields,
-  safe_changes, source, batch reference, season and team ids).
-- Events referencing other teams: visibility follows the player, not the
-  event. Once the player is visible under the D4 scope, their full history
-  is returned across seasons, including events whose team_id is a team the
-  caller does not hold; a past team assignment is an operational fact held
-  in safe fields only, and filtering per event would present a partial
-  history as complete. Proposed default under decision 15.
+  safe_changes, source, batch reference, season and team ids). The stable
+  `player_id` and the attribute history they carry are pseudonymous child
+  personal data, which is why the read is capability gated.
+- The full history is returned across seasons, including events whose team_id
+  is a team other than the player's current one; a past team assignment is an
+  operational fact held in safe fields only.
 - Parents hold neither `players.view` nor `audit.view`; the RPC refuses and
   the underlying select policies return zero rows regardless.
 
@@ -557,10 +533,11 @@ The board boundary from 0028 is unchanged and is a design input here:
   would have minted new ids each season and orphaned board references; this
   is a core reason for the split
   (`docs/adr/ADR-0005-registered-players-and-seasons.md`).
-- Name resolution under team scoping: a coach viewing another team's board
-  sees numbered discs, not names, because the resolving players select
-  returns no row for a child with no visible registration. This is a
-  confirmed acceptable trade off and matches what a parent already sees.
+- Name resolution: read is club wide (section 3), so any `players.view`
+  holder resolves names on any board in the club. The earlier draft's coach
+  sees numbered discs on another team's board trade off no longer exists.
+  Parents, holding no `players.view`, still see numbers only, enforced by the
+  players select policy exactly as 0028 intends.
 - Deletion and withdrawal never corrupt boards. Deleting a player leaves the
   disc showing its number alone (0028 column comment; pinned by
   `tests/security/boards.test.ts`). Withdrawing changes board eligibility
@@ -602,10 +579,22 @@ no service role. What changes:
 - Season: chosen server side as the club's current season; the function
   refuses when the club has none. The client cannot pick an arbitrary
   season.
+- Season: Spond import stays current-season-only (recommended operational
+  decision; alternative any non archived season). Unlike the spreadsheet
+  import, which may target any non archived season (section 7 of
+  `docs/product/registered-players-import-export.md`), the Spond organiser
+  account's live subgroup reflects the current squad, so importing it into a
+  future season is ambiguous. The function chooses the current season server
+  side and refuses when the club has none.
 - Target: imported players land as registrations in the current season with
   status pending (recommended; APPROVAL REQUIRED, alternative registered),
   deduplicated by normalised name within (club, season, team) against
-  registrations, idempotent on re-run.
+  registrations, idempotent on re-run. This name only dedupe has an
+  unavoidable limitation, documented in
+  `docs/product/registered-players-import-export.md`: because Spond member ids
+  are deliberately never persisted, two different children with the same name
+  in the same subgroup are treated as one on import. The manual add or the id
+  keyed spreadsheet import represents genuine namesakes; Spond cannot.
 - Audit: each run gets a batch id and sets the same transaction local
   context the CSV import uses. Per row events are `player.created`, raised
   by the registration insert trigger with source `spond_import` and the
@@ -628,15 +617,14 @@ PR 6 rework, which supersedes the shim. The child data boundary is identical
 in both states.
 
 Scope enforcement. Through the shim the function writes through RLS as the
-caller, so the team scoped registration write policies in section 4 bind it
+caller, so the club scoped registration write policies in section 4 bind it
 directly. The PR 6 rework routes the commit through a transactional
 SECURITY DEFINER commit RPC, so the GUC context can stamp source and batch
 id (`docs/security/app-audit-boundary.md`, Writers), and RLS does not bind a
-definer function's writes; the commit RPC therefore re-checks club,
-`players.import` and the D4 team scope in its own body, exactly as
-`import_players` does (section 10), and the PR 6 test suite pins the
-refusal. In both states the guarantee is the same: a team scoped
-`players.import` holder can land Spond imports only on teams they hold.
+definer function's writes; the commit RPC therefore re-checks club and
+`players.import` in its own body, exactly as `import_players` does
+(section 10). There is no team scope arm to enforce: read and write are club
+wide (section 3).
 
 ### 8. Permanent deletion, retention and audit
 
@@ -656,21 +644,31 @@ recommended: true deletion, for data minimisation):
   and no name; history renders "Deleted player"); board tokens (no FK, discs fall back to numbers,
   structurally untouched); and files already exported to members' devices,
   which are outside the system boundary (see spreadsheet handling below).
-- Retention split, player rows versus audit rows: player and registration
+- Retention, player rows and audit rows both matter: player and registration
   rows live until withdrawn (kept, hidden by default) or permanently deleted.
   Audit rows carry no child names anywhere by design (changed_fields records
   the field name only for display_name changes; safe_changes is limited to
   the approved list: team_id, status, shirt_number, registered_date,
-  season_id), so a subject deletion request is satisfied entirely by the
-  players deletion path plus the tombstone rule, and audit retention
-  (recommended: indefinite at current scale, reviewed annually; APPROVAL
-  REQUIRED) is decoupled from child data retention. Actor name snapshots in
-  audit rows are adult operational data and persist after profile deletion
-  for accountability. No legal retention period is claimed.
-- Backups and restores: a database restore can resurrect deleted child rows;
-  after any restore, deletion requests actioned since the restore point must
-  be re-applied. Forward only migrations, no destructive down migrations for
-  child data, restore point documented per the 0028 precedent.
+  season_id). But a child linked audit row is still pseudonymous child
+  personal data: it holds a stable player_id and that child's attribute
+  history (`docs/security/app-audit-boundary.md`, Data classification). So a
+  subject deletion request is NOT satisfied by the players deletion path
+  alone: removing the identity row is necessary but not sufficient, because
+  child linked audit rows and backups still hold pseudonymous history keyed to
+  that child. The recommended handling (approval required alongside retention):
+  on a substantiated erasure request the child linked audit rows for that
+  entity are addressed explicitly (deletion or irreversible severing of the
+  identifier), and the obligation is recorded as re appliable after any
+  restore. Audit retention (recommended: indefinite at current scale, reviewed
+  annually; APPROVAL REQUIRED) is therefore a child personal data decision, not
+  decoupled from child data. Actor name snapshots in audit rows are adult
+  operational data and persist after profile deletion for accountability. No
+  legal retention period is claimed.
+- Backups and restores: a database restore can resurrect deleted child rows,
+  and child linked audit rows; after any restore, deletion and erasure
+  requests actioned since the restore point must be re-applied. Forward only
+  migrations, no destructive down migrations for child data, restore point
+  documented per the 0028 precedent.
 
 ### 9. Cross club isolation
 
@@ -679,8 +677,7 @@ Every policy above pins `club_id = public.my_club()`. A quarantined account
 outsider fixture (a coach in club B) must continue to read zero rows from
 players, player_registrations, seasons, import_batches and audit_events in
 club A. The import RPC re-verifies every supplied player_id as belonging to
-the caller's club and every team id as the club's own, and enforces the D4
-team scope in body for callers without all_teams (section 10); the export
+the caller's club and every team id as the club's own (section 10); the export
 RPC derives club and actor server side. No cross club matching, reading or writing exists on any
 path. Client supplied club_id, actor id, role, capability or count values
 are never trusted anywhere.
@@ -701,19 +698,13 @@ bounded:
   and every check lives in their bodies, failing closed: each re-checks its
   capability via `has_perm`, derives club and actor from `auth.uid()` and
   `my_club()`, and validates every row independently of the client preview
-  (`docs/adr/ADR-0007-player-import-export-architecture.md`). The three that
-  write registrations (`import_players`, `renew_registrations` and the Spond
-  commit RPC) additionally enforce the D4 team scope in body, mirroring the
-  player_registrations write policies: the caller holds all_teams, or every
-  written row's team_id is in the caller's member team set; a row with a
-  null team (Unassigned) requires all_teams; one out of scope row aborts the
-  whole transaction. Without these in body arms a custom team scoped role
-  holding `players.import` could write past the RLS scope through the RPC;
-  the security tests refuse exactly that (a team scoped import fixture
-  refused for an out of scope team and for a blank team row).
-  `export_players` applies the same scope to its read, and `player_history`
-  gates per section 4. Definer functions use `set search_path = ''` with
-  schema qualified names.
+  (`docs/adr/ADR-0007-player-import-export-architecture.md`). There is no team
+  scope arm to enforce in body, because read and write are club wide
+  (section 3): the RPCs check capability and club and validate that every
+  supplied player_id and team_id belongs to the caller's club, and that is the
+  whole scope. `export_players` applies the same club scope to its read, and
+  `player_history` gates on `players.view` per section 4. Definer functions
+  use `set search_path = ''` with schema qualified names.
 - The audit writer `log_audit_event` has EXECUTE revoked from public, anon
   and authenticated, following the 0028 revoke pattern proven for
   `board_tokens_without_names` (0028:175-176); it is callable only from
@@ -741,10 +732,10 @@ enumerated threat catalogue is in
 |---|---|
 | Child data classification, operational purpose, minimisation | Section 1 above |
 | Parent exclusion | Section 5 above |
-| Coach visibility | Section 3 above |
+| Coach visibility | Section 3 above (club wide read via players.view) |
 | Manager and admin export risk | `players.export` as a separate capability, export confirmation dialog, audited export, no player data in filenames: `docs/product/registered-players-import-export.md` |
 | Spreadsheet handling and local download risk | Parsing in the uploading manager's own browser session; exported and rejected row files exist only on the member's device and the confirmation copy says to store and share them securely: `docs/product/registered-players-import-export.md` |
-| No raw file retention | No uploaded file stored, filename never persisted, fingerprint is a sha256 of bytes: `docs/adr/ADR-0007-player-import-export-architecture.md` |
+| No raw file retention | No uploaded file stored, filename never persisted, no file fingerprint stored (the server never receives the file bytes): `docs/adr/ADR-0007-player-import-export-architecture.md` |
 | No personal data in logs | The Spond counts only precedent extends to every new path; the import RPC and audit rows never contain row content or names |
 | Audit minimisation | Field name only for display_name, safe_changes allow list, no snapshots: `docs/security/app-audit-boundary.md` |
 | Deletion and retention | Section 8 above |
@@ -758,21 +749,30 @@ enumerated threat catalogue is in
 
 ## Alternatives
 
-- Keep club wide reads for players (the status quo scope, no standing rule
-  change). Simplest, no precedent set, but every coach reads every child in
-  the club, which the safeguarding posture no longer justifies once the
-  register grows beyond a per team roster. Rejected in recommendation;
-  remains the fallback if approval is withheld.
-- Assigned teams plus Unassigned for coaches. Lets team scoped staff see the
-  pre allocation pool; widens exposure of exactly the children nobody has
-  claimed. Documented option on decision 2.
-- Read all, edit only assigned. Weakens the read boundary for no operational
-  need the club has stated.
+- Club wide read (RECOMMENDED, adopted). `players.view` reads every child in
+  the club; team is a filter, not a read boundary. This is the requested
+  product outcome and preserves the 0016 standing rule. Adopted.
+- Team scoped RLS for the players domain (the first team scoped RLS in the
+  app). REJECTED. Holders without `all_teams` would read only their
+  `member_teams` registrations, changing the 0016 standing rule. Rejected for
+  four reasons: it makes cross season history incoherent when a coach or a
+  child moves team; a team scoped custom role could rename or delete a stable
+  identity that also belongs to other teams; Unassigned players would
+  disappear from the coaches who must allocate them; and it is a large new
+  access control precedent the feature request does not need. Retained here
+  only as the rejected alternative.
+- Assigned teams plus Unassigned for coaches. A softer variant of the rejected
+  team scope; carries the same coherence and precedent problems and still
+  hides genuine club roster from coaches. Rejected with the team scope.
+- Read all, edit only assigned. Splits read from write scope for no operational
+  need the club has stated; adds complexity. Rejected.
 - Anonymisation instead of permanent deletion (rename to "Player N", keep
   rows). Preserves referential convenience but retains a child shaped record
   indefinitely; recommended default is true deletion.
-- Coach continuity capability seed (coach keeps manage and import club wide).
-  Documented fallback under decision 3; recommendation is the reduction.
+- Coach continuity capability seed (coach keeps manage and import). Documented
+  fallback under decision 3; with club wide read there is no team entanglement,
+  so this simply gives coaches write back. Recommendation is the write
+  reduction (coach keeps club wide read, loses write).
 - Enforcing scope in the UI only. Rejected outright: access is never
   enforced by filters; Postgres RLS is always the boundary (repo standing
   rule).
@@ -780,39 +780,45 @@ enumerated threat catalogue is in
 ## Decision
 
 This document records the recommended boundary design: the identity split,
-the seven capability catalogue additions with the stated default grants, team
-scoped RLS for the players domain only with the exact policy semantics in
-section 4, the preserved parent exclusion chain, the Spond gate move to
-`players.import`, admin only permanent deletion with an audit tombstone, and
-name free audit rows. Every item marked APPROVAL REQUIRED awaits sign off by
-the decision owners before any implementation PR proceeds; the team scope
-standing rule change, the coach access reduction and permanent deletion in
-particular must not be implemented before explicit approval. Nothing in this
-document changes code, schema or configuration.
+the seven capability catalogue additions with the stated default grants, club
+wide capability gated RLS for the players domain (no team scope, the 0016
+standing rule preserved) with the exact policy semantics in section 4, the
+preserved parent exclusion chain, the Spond gate move to `players.import`,
+admin only permanent deletion with an audit tombstone, and name free audit
+rows that are nonetheless classified as pseudonymous child personal data when
+child linked. Every item marked APPROVAL REQUIRED awaits sign off by the
+decision owners before any implementation PR proceeds; the coach write
+reduction and permanent deletion in particular must not be implemented before
+explicit approval. Nothing in this document changes code, schema or
+configuration.
 
 ## Consequences
 
-- The 0016 standing rule is amended for one domain, and the amendment is a
-  precedent: any future team scoping proposal must be argued afresh, not
-  assumed from this one.
-- `member_teams` and `profiles.all_teams` become load bearing for access and
-  join the security test surface permanently.
-- Coaches lose club wide roster curation under the recommended grants; the
-  Roster page's replacement surfaces only what `players.view` scopes to
-  them.
-- A coach viewing another team's board sees numbered discs where names used
-  to resolve; accepted.
-- `tests/security/players.test.ts` grows from seven cells to a full team
-  scope matrix (in scope coach, out of scope coach, all_teams manager,
-  parent, outsider, anon), and `capabilities.test.ts` needs both its
-  catalogue pin and its regex extended for the `players.`, `seasons.` and
-  `audit.` prefixes; the security suite must be wired into CI in the first
-  implementation PR (`docs/roadmaps/registered-players-delivery-plan.md`).
+- The 0016 standing rule is PRESERVED: player reads are club wide and
+  capability gated, no team scoped RLS is introduced, and `member_teams` and
+  `profiles.all_teams` stay UI filter and default drivers, not access
+  controls. No new team scoping precedent is set.
+- Coaches keep club wide READ of the register under the recommended grants
+  (`players.view`), and lose the WRITE powers `sessions.create` gives them
+  today (add, edit, hard delete, Spond import). This is a write reduction, not
+  a read reduction, and is the decision requiring approval.
+- Board name resolution is club wide: any `players.view` holder resolves names
+  on any board; parents still see numbers only.
+- `tests/security/players.test.ts` grows from seven cells to the new capability
+  matrix (coach with players.view reads club wide, manager, admin, parent
+  reads nothing, outsider reads nothing, anon reads nothing), and
+  `capabilities.test.ts` needs both its catalogue pin and its regex extended
+  for the `players.`, `seasons.` and `audit.` prefixes; the security suite must
+  be wired into CI in the first implementation PR
+  (`docs/roadmaps/registered-players-delivery-plan.md`).
 - Team deletion stops destroying child rows (registrations become
   Unassigned), and the misleading AdminTeams copy is corrected in the same
   phase.
 - Two table reads (identity join registration) replace the single table
   roster query throughout the client.
+- Child linked audit events are pseudonymous child personal data
+  (`docs/security/app-audit-boundary.md`), so subject deletion and retention
+  consider audit identifiers and backups, not only the current rows.
 
 ## Unresolved items
 
@@ -823,10 +829,12 @@ than an ordered list (which a Markdown renderer would renumber):
 
 - Decision 1, identity split versus one row per child per season: recommended
   split (stable identity plus seasonal registration).
-- Decision 2, coach team scope, including the standing rule change:
-  recommended assigned teams only, Unassigned visible to all_teams holders.
-- Decision 3, coach access reduction from today's sessions.create powers:
-  recommended reduce to players.view only.
+- Decision 2, coach team scope: recommended CLUB-WIDE read via players.view
+  (team is a filter, not an access boundary; the 0016 standing rule is
+  preserved). The team scoped read is the rejected alternative (Alternatives).
+- Decision 3, coach access change from today's sessions.create powers:
+  recommended coach keeps club wide read and loses write (add, edit, import);
+  the fallback grants write back. Read is not reduced.
 - Decision 4, export capability holders: recommended managers and admins.
 - Decision 5, separate players.import and players.export capabilities:
   recommended yes.
