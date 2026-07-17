@@ -35,3 +35,30 @@ revoke execute on function public.board_tokens_without_names(jsonb, uuid) from a
 revoke all on public.audit_events from anon, authenticated;
 grant select on public.audit_events to authenticated;
 revoke execute on function public.log_audit_event(text, text, text, uuid, uuid, uuid, uuid, jsonb, text, uuid) from anon, authenticated;
+
+-- 0031 seasons. Read is club wide (RLS); writes require seasons.manage. There
+-- is deliberately NO client delete grant (no season delete flow; the guard
+-- trigger refuses deleting a current season for every writer, and registrations
+-- reference seasons ON DELETE RESTRICT). The blanket grants above would give
+-- authenticated DELETE and TRUNCATE, so revoke all and grant back exactly
+-- SELECT, INSERT and UPDATE, as the migration does. activate_season is EXECUTE
+-- for authenticated only (anon revoked); the audit context helpers are private
+-- to the definer triggers (no client EXECUTE). See 0031_seasons.sql.
+revoke all on public.seasons from anon, authenticated;
+grant select, insert, update on public.seasons to authenticated;
+revoke execute on function public.activate_season(uuid, boolean) from anon;
+revoke execute on function public.audit_source_context(uuid) from anon, authenticated;
+revoke execute on function public.audit_batch_context() from anon, authenticated;
+
+-- 0032 registered players. players and player_registrations grant
+-- select, insert, update, delete to authenticated (RLS gates read on
+-- players.view, write on players.manage, delete on players.delete); the blanket
+-- grants would add TRUNCATE, so revoke all and grant back the four verbs, as the
+-- migrations do. add_player and player_history are EXECUTE for authenticated
+-- only (anon revoked). See 0032_registered_players.sql.
+revoke all on public.players from anon, authenticated;
+grant select, insert, update, delete on public.players to authenticated;
+revoke all on public.player_registrations from anon, authenticated;
+grant select, insert, update, delete on public.player_registrations to authenticated;
+revoke execute on function public.add_player(uuid, text, uuid, int, text, date) from anon;
+revoke execute on function public.player_history(uuid, int, int) from anon;
