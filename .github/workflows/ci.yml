@@ -62,6 +62,9 @@ jobs:
     name: security policy suite
     needs: build
     runs-on: ubuntu-latest
+    # The whole job is bounded so a wedged container never hangs CI; on a
+    # healthy runner it finishes in a few minutes.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -69,10 +72,56 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+      # edge-runtime is excluded: the security suite exercises the database,
+      # PostgREST, Auth and Storage only (Edge Functions are out of scope,
+      # covered by the separate deno job), and it is the heaviest container to
+      # restart, so leaving it out shrinks the restart surface db reset churns
+      # through below without changing what is tested.
       - name: Start the local Supabase stack
-        run: npx supabase start
+        run: npx supabase start -x edge-runtime
+      # Belt and braces: start already blocks until healthy, but confirm the
+      # gateway can reach PostgREST and Storage before resetting, so the reset
+      # never runs against a half-ready stack.
+      - name: Wait for the local stack to be reachable
+        run: |
+          for i in $(seq 1 60); do
+            storage=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:54321/storage/v1/bucket || echo 000)
+            rest=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:54321/rest/v1/ || echo 000)
+            if [ "$storage" != "502" ] && [ "$storage" != "000" ] && [ "$rest" != "502" ] && [ "$rest" != "000" ]; then
+              echo "stack reachable (storage=$storage rest=$rest)"; exit 0
+            fi
+            echo "waiting for stack (storage=$storage rest=$rest)"; sleep 3
+          done
+          echo "stack did not become reachable"; exit 1
+      # db reset applies every migration (including 0030's self-verification)
+      # and the seed, then restarts the containers and probes the Storage API
+      # through Kong. On a cold restart that probe can transiently 502 before
+      # storage is reachable again, and the pinned CLI treats it as fatal
+      # (root cause of the earlier red run). Retry ONLY that transient: a Kong
+      # 502, or a hang waiting on the storage upstream. A real migration, seed
+      # or grant/self-verification failure carries no storage 502 and fails
+      # immediately without retry, so genuine regressions are never masked.
       - name: Apply migrations and seed
-        run: npx supabase db reset
+        run: |
+          log=$(mktemp)
+          for attempt in 1 2 3 4 5; do
+            echo "::group::db reset attempt $attempt"
+            timeout 240 npx supabase db reset 2>&1 | tee "$log"
+            rc=${PIPESTATUS[0]}
+            echo "::endgroup::"
+            if [ "$rc" -eq 0 ]; then echo "db reset succeeded on attempt $attempt"; exit 0; fi
+            if [ "$rc" -eq 124 ] || grep -q "Error status 502" "$log"; then
+              echo "attempt $attempt hit the transient storage readiness issue (rc=$rc); waiting for storage before retry"
+              for i in $(seq 1 40); do
+                code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:54321/storage/v1/bucket || echo 000)
+                if [ "$code" != "502" ] && [ "$code" != "000" ]; then break; fi
+                sleep 3
+              done
+            else
+              echo "db reset failed with a non-transient error (rc=$rc); not retrying"; exit 1
+            fi
+          done
+          echo "db reset did not succeed after retries"; exit 1
       - name: Run the security policy suite
         run: npm run test:security
       - name: Stop the local Supabase stack
