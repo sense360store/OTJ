@@ -432,10 +432,11 @@ The contract, at product level (the architecture assessment is
   `my_club()` and the actor from `auth.uid()`. The client's claimed club,
   actor, role, capabilities, counts and audit metadata are never trusted.
 - The season is validated server side: it exists, belongs to the caller's
-  club, and is the current season, not archived. The UI mirrors this by
-  offering import only when the selected season is the current season; a
-  created but not yet activated season is refused here even though manual
-  Add accepts it.
+  club, and is not archived. Import may target ANY non archived season the
+  caller may write, not only the current one, so a manager can prepare next
+  season while the current one is active. The UI mirrors this by offering
+  import on any non archived season (defaulting to current); an archived
+  season is refused. Spond import is the exception and stays current-season-only.
 - Every row is validated independently on the server; the server is not bound
   by the client preview. Validation covers display name bounds, status
   vocabulary, status transition validity against the stored registration (the
@@ -786,8 +787,9 @@ as recommended defaults.
   the export implementation PR (PR 4 in the delivery plan; the import parser
   in PR 5 reuses it), a deliberate exception to the five package runtime
   dependency list, justified and evaluated in that PR.
-- The shared Modal needs a locked mode before the import confirm can ship
-  (`docs/product/registered-players-ux.md`).
+- The import confirm reuses the shared Modal's existing `dismissible` prop
+  (PR #103) to become non dismissible while committing; only the Modal dialog
+  and focus baseline is new work (`docs/product/registered-players-ux.md`).
 - Coaches lose the Spond import trigger under the recommended default grants;
   if the club instead approves the continuity fallback in
   `docs/product/registered-players-spec.md`, coaches keep `players.import`

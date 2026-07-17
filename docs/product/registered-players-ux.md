@@ -60,8 +60,8 @@ Top to bottom, all within the standard content column:
 | Button | Style | Capability | Notes |
 |---|---|---|---|
 | Add player | btn-primary | players.manage | Opens the add modal |
-| Import players | btn-ghost | players.import | Opens the import modal. Renders only when the selected season is the current season |
-| Import from Spond | btn-ghost | players.import | Renders only when the selected season is the current season and the team filter selects a specific team with a Spond mapping |
+| Import players | btn-ghost | players.import | Opens the import modal. Renders whenever a non archived season is selected (the spreadsheet import may target any non archived season, defaulting to current) |
+| Import from Spond | btn-ghost | players.import | Renders only when the selected season is the current season and the team filter selects a specific team with a Spond mapping (Spond stays current-season-only) |
 | Export | btn-ghost | players.export | Opens the export confirmation |
 | Download template | btn-quiet | players.import | Downloads the CSV template immediately, no dialog. The button is a small split control: its default action downloads `registered-players-template.csv`, and an adjacent caret offers "Download XLSX template" (`registered-players-template.xlsx`). Both filenames and their identical header row are fixed in docs/product/registered-players-import-export.md |
 
@@ -118,7 +118,7 @@ The table never renders at or below 900px (the 900px media query is inclusive, s
 
 **Sticky filter bar.** Below the mobile topbar, a sticky row with the search input and a "Filters" button carrying the active filter count ("Filters (2)"). The button opens a bottom filter sheet containing the season selector, team select, status select, sort select and a "Reset" button. The sheet is a dialog (role, focus and Escape behaviour per section 7), not a plain overlay.
 
-**Primary actions.** "Add player" renders as a full width primary button directly under the filter bar for `players.manage` holders; "Import players", "Import from Spond", "Export" and "Download template" sit in a wrapping action row under it, gated and conditioned exactly as on desktop: the two import buttons render only when the selected season is the current one, and Import from Spond additionally requires the resolved team filter to select a specific team with a Spond mapping. The team filter lives inside the filter sheet, so the Spond button appears in the action row when the sheet's team choice resolves to a mapped team; the button itself always sits in the action row, never inside the sheet, and a shared link carrying `?team=` surfaces it directly (section 5). The summary counts collapse to the total plus the filtered count on one line; the status pills remain, wrapping.
+**Primary actions.** "Add player" renders as a full width primary button directly under the filter bar for `players.manage` holders; "Import players", "Import from Spond", "Export" and "Download template" sit in a wrapping action row under it, gated and conditioned exactly as on desktop: "Import players" renders whenever a non archived season is selected, "Import from Spond" renders only on the current season and additionally requires the resolved team filter to select a specific team with a Spond mapping. The team filter lives inside the filter sheet, so the Spond button appears in the action row when the sheet's team choice resolves to a mapped team; the button itself always sits in the action row, never inside the sheet, and a shared link carrying `?team=` surfaces it directly (section 5). The summary counts collapse to the total plus the filtered count on one line; the status pills remain, wrapping.
 
 ### 4. Page states
 
@@ -365,11 +365,11 @@ Adopt the page, flows, states, copy and accessibility contract above as the UX f
 The numbered decisions below are the subset of the canonical list that shapes this document, each with the recommended default. The full list and their owners are in docs/product/registered-players-spec.md.
 
 - 2. Coach team scope: recommended club wide read via `players.view` (team is a filter, not an access boundary; the 0016 standing rule is preserved). A coach's page shows the whole club register, and board name resolution is club wide. The team scoped read is the rejected alternative.
-- 3. Coach access reduction from today's `sessions.create` powers: recommended reduce to view only; determines whether coaches see Add, Import, Export and the row write actions at all.
+- 3. Coach access change from today's `sessions.create` powers: recommended coach keeps club wide read and loses write; determines whether coaches see Add, Import, Export and the row write actions at all (read, including History, stays club wide either way).
 - 6. Spond import default status: recommended Pending; determines the status badge new Spond imported rows carry and the wording of the Spond import result.
 - 7. Historic name retention in audit: recommended no values recorded; determines that History renders "Player name corrected" with no before and after.
 - 9. Permanent deletion versus anonymisation: recommended true deletion, admin only; determines the Delete permanently dialog and its consequence copy.
-- 10. Season renewal mechanism: recommended a bulk Renew action copying registrations into the current season as Pending with team and shirt carried; a UI surface for it lands late in the plan and is not specified in this document beyond the expectation that it follows the locked modal and batch conventions.
+- 10. Season renewal mechanism: recommended a bulk Renew action copying registrations into the current season as Pending with team and shirt carried; a UI surface for it lands late in the plan and is not specified in this document beyond the expectation that it follows the non dismissible modal and batch conventions.
 - 11. Pending players on boards via an explicit toggle: recommended yes; a board picker concern, noted here because the status badge semantics must match (docs/product/registered-players-spec.md).
 - 14. Archived season absoluteness: recommended read only with an admin unarchive escape hatch; determines the archived banner and the removal of all mutating affordances.
 - 15. Club wide `audit.view` versus a separate per player history path: recommended separate paths; determines that the History row action works for coaches while the Activity page stays manager and admin.
