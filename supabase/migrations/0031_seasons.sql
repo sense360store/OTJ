@@ -434,6 +434,13 @@ begin
       using errcode = 'P0001';
   end if;
 
+  -- Re-activating the already current season is a no-op: return it without
+  -- touching any row, so no spurious season.updated audit event is written and
+  -- updated_at/updated_by are not bumped for nothing.
+  if v_target.is_current then
+    return v_target;
+  end if;
+
   -- Identify to the guard trigger for the duration of this transaction.
   perform set_config('otj.season_activation', '1', true);
 

@@ -11,7 +11,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   CLUB_A,
-  CLUB_B,
   expectCheckConstraintRefusal,
   expectRlsInsertRefusal,
   expectTriggerRefusal,
@@ -25,7 +24,7 @@ const RUN = runId()
 // based label per created season (the tag is only for readability of intent).
 const SPREFIX = `s${RUN.slice(0, 6)}-`
 let seasonSeq = 0
-const label = (_tag: string) => `${SPREFIX}${seasonSeq++}`
+const label = () => `${SPREFIX}${seasonSeq++}`
 
 async function currentSeasonId(club: string): Promise<string> {
   const { data, error } = await serviceClient()
@@ -44,13 +43,22 @@ describe('seasons row level security and invariants', () => {
   let coachOne: SupabaseClient
   let parent: SupabaseClient
   let outsider: SupabaseClient
+  let managerId: string
+  let coachOneId: string
+  let parentId: string
   let seasonA: string
 
   beforeAll(async () => {
     admin = (await signIn('admin')).client
-    manager = (await signIn('manager')).client
-    coachOne = (await signIn('coachOne')).client
-    parent = (await signIn('parent')).client
+    const m = await signIn('manager')
+    manager = m.client
+    managerId = m.userId
+    const c1 = await signIn('coachOne')
+    coachOne = c1.client
+    coachOneId = c1.userId
+    const p = await signIn('parent')
+    parent = p.client
+    parentId = p.userId
     outsider = (await signIn('outsider')).client
     seasonA = await currentSeasonId(CLUB_A)
   })
@@ -84,7 +92,7 @@ describe('seasons row level security and invariants', () => {
       .from('seasons')
       .insert({
         club_id: CLUB_A,
-        name: label('create'),
+        name: label(),
         starts_on: '2030-07-01',
         ends_on: '2031-06-30',
         is_current: false,
@@ -97,17 +105,21 @@ describe('seasons row level security and invariants', () => {
   })
 
   it('manager, coach and parent cannot create a season', async () => {
-    for (const [who, client] of [
-      ['manager', manager],
-      ['coach', coachOne],
-      ['parent', parent],
+    // created_by is pinned to each acting user so the created_by arm passes and
+    // the seasons.manage arm is the sole deciding factor: the refusal proves the
+    // capability gate, not the created_by pin.
+    for (const [, client, uid] of [
+      ['manager', manager, managerId],
+      ['coach', coachOne, coachOneId],
+      ['parent', parent, parentId],
     ] as const) {
       const { error } = await client.from('seasons').insert({
         club_id: CLUB_A,
-        name: label(`nope-${who}`),
+        name: label(),
         starts_on: '2032-07-01',
         ends_on: '2033-06-30',
         is_current: false,
+        created_by: uid,
       })
       expectRlsInsertRefusal(error)
     }
@@ -117,7 +129,7 @@ describe('seasons row level security and invariants', () => {
     const outsiderId = (await signIn('outsider')).userId
     const { error } = await admin.from('seasons').insert({
       club_id: CLUB_A,
-      name: label('forge'),
+      name: label(),
       starts_on: '2034-07-01',
       ends_on: '2035-06-30',
       is_current: false,
@@ -129,7 +141,7 @@ describe('seasons row level security and invariants', () => {
   it('a coach cannot update a season (zero rows, no error)', async () => {
     const { data, error } = await coachOne
       .from('seasons')
-      .update({ name: label('coach-edit') })
+      .update({ name: label() })
       .eq('id', seasonA)
       .select('id')
     expect(error).toBeNull()
@@ -172,7 +184,7 @@ describe('seasons row level security and invariants', () => {
   it('a second current season is refused by the partial unique index (23505), even for the service role', async () => {
     const { error } = await serviceClient().from('seasons').insert({
       club_id: CLUB_A,
-      name: label('second-current'),
+      name: label(),
       starts_on: '2036-07-01',
       ends_on: '2037-06-30',
       is_current: true,
@@ -185,7 +197,7 @@ describe('seasons row level security and invariants', () => {
   it('a season with ends_on not after starts_on is refused (23514), even for the service role', async () => {
     const { error } = await serviceClient().from('seasons').insert({
       club_id: CLUB_A,
-      name: label('badorder'),
+      name: label(),
       starts_on: '2038-07-01',
       ends_on: '2037-06-30',
       is_current: false,
@@ -206,7 +218,7 @@ describe('seasons row level security and invariants', () => {
       .from('seasons')
       .insert({
         club_id: CLUB_A,
-        name: label('activate-target'),
+        name: label(),
         starts_on: '2040-07-01',
         ends_on: '2041-06-30',
         is_current: false,

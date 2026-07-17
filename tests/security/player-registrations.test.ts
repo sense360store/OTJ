@@ -79,7 +79,6 @@ async function seedPlayer(opts: {
 }
 
 describe('player_registrations row level security and constraints', () => {
-  let admin: SupabaseClient
   let manager: SupabaseClient
   let coachOne: SupabaseClient
   let parent: SupabaseClient
@@ -91,7 +90,6 @@ describe('player_registrations row level security and constraints', () => {
   let fixture: { playerId: string; regId: string }
 
   beforeAll(async () => {
-    admin = (await signIn('admin')).client
     const m = await signIn('manager')
     manager = m.client
     managerId = m.userId

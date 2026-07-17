@@ -248,6 +248,11 @@ export function Roster() {
     },
   })
 
+  // The interim Roster shows the selected team's current-season players. A
+  // player whose team was deleted becomes Unassigned (teamId null) and does not
+  // appear under any team filter; managing Unassigned players is a job for the
+  // Registered Players page in PR 3, not this temporary surface. At PR 2 every
+  // backfilled and newly added player has a team, so this is not a live gap.
   const teamPlayers = useMemo(() => players.filter((p) => p.teamId === selectedTeam), [players, selectedTeam])
   const spondMapping = mappingForTeam(mappings, selectedTeam)
   const selectedTeamObj = teams.find((t) => t.id === selectedTeam) ?? null

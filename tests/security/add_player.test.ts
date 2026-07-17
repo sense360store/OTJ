@@ -10,7 +10,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { CLUB_A, TEST_TEAM, runId, serviceClient, signIn } from './stack'
+import { TEST_TEAM, runId, serviceClient, signIn } from './stack'
 
 const RUN = runId()
 const name = (s: string) => `SEC ADD ${RUN} ${s}`
@@ -23,6 +23,13 @@ async function auditFor(entityId: string): Promise<string[]> {
     .eq('entity_id', entityId)
     .order('occurred_at', { ascending: true })
   return (data ?? []).map((r) => r.action as string)
+}
+
+// The two events of an atomic add share one occurred_at, so their row order is
+// not guaranteed. Compare as a multiset, which still catches a missing or
+// duplicate event.
+function expectActions(actions: string[], expected: string[]): void {
+  expect([...actions].sort()).toEqual([...expected].sort())
 }
 
 describe('add_player transactional creation', () => {
@@ -61,7 +68,7 @@ describe('add_player transactional creation', () => {
     expect(identity).toHaveLength(1)
     const { data: reg } = await serviceClient().from('player_registrations').select('id').eq('player_id', id)
     expect(reg).toHaveLength(1)
-    expect(await auditFor(id)).toEqual(['player.created', 'player.registration_created'])
+    expectActions(await auditFor(id), ['player.created', 'player.registration_created'])
   })
 
   it('an ambiguous retry with the same stable id does not duplicate the child', async () => {
@@ -84,7 +91,7 @@ describe('add_player transactional creation', () => {
     const { data: reg } = await serviceClient().from('player_registrations').select('id').eq('player_id', id)
     expect(reg).toHaveLength(1)
     // Still exactly two events; the retry added nothing.
-    expect(await auditFor(id)).toEqual(['player.created', 'player.registration_created'])
+    expectActions(await auditFor(id), ['player.created', 'player.registration_created'])
   })
 
   it('a failed add (unknown team) leaves neither row nor any audit event', async () => {
@@ -102,7 +109,7 @@ describe('add_player transactional creation', () => {
     expect(identity).toEqual([])
     const { data: reg } = await serviceClient().from('player_registrations').select('id').eq('player_id', id)
     expect(reg).toEqual([])
-    expect(await auditFor(id)).toEqual([])
+    expectActions(await auditFor(id), [])
   })
 
   it('a parent is refused (42501) and creates nothing', async () => {

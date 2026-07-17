@@ -3646,9 +3646,9 @@ const PLAYER_ORDER = (a: Player, b: Player): number => {
 // board embed skip the query for a viewer without players.view; RLS returns
 // zero rows anyway, but a parent should never even ask.
 export function usePlayers(enabled = true) {
-  const { data: season } = useCurrentSeason(enabled)
-  const seasonId = season?.id ?? null
-  return useQuery({
+  const seasonQuery = useCurrentSeason(enabled)
+  const seasonId = seasonQuery.data?.id ?? null
+  const query = useQuery({
     queryKey: ['players', seasonId],
     enabled: enabled && !!seasonId,
     queryFn: async (): Promise<Player[]> => {
@@ -3680,6 +3680,15 @@ export function usePlayers(enabled = true) {
       return players
     },
   })
+  // Fold the current-season fetch into the loading and error state: while the
+  // season is still resolving the players query is disabled (no season id yet),
+  // so without this a consumer would see isLoading false with empty data and
+  // briefly flash an empty roster. The data shape is unchanged.
+  return {
+    ...query,
+    isLoading: (enabled && seasonQuery.isLoading) || query.isLoading,
+    isError: seasonQuery.isError || query.isError,
+  }
 }
 
 interface AddPlayerRow {
