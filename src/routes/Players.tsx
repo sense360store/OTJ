@@ -69,9 +69,13 @@ export function StatusBadge({ status }: { status: RegistrationStatus }) {
   )
 }
 
-// An accessible overflow menu (row actions on desktop, a bottom sheet style menu
-// on mobile). Escape closes it and returns focus to the trigger; a click outside
-// closes it. Each item is a menuitem.
+// An accessible overflow disclosure (row actions on desktop, an action sheet on
+// mobile). The trigger toggles a popup of plain action buttons: they are Tab
+// reachable, Escape closes the popup and returns focus to the trigger, and a
+// click outside closes it. It is a disclosure, not an ARIA menu widget (no
+// roving arrow-key navigation), so it does not claim the menu role it would not
+// fulfil. Selecting an action first returns focus to the trigger, so the modal
+// that opens captures a still-mounted opener and can restore focus to it.
 function RowMenu({
   label,
   items,
@@ -111,21 +115,22 @@ function RowMenu({
         className="btn btn-ghost btn-sm icon-only"
         style={{ width: 38, padding: 0 }}
         aria-label={label}
-        aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         <Icon.more />
       </button>
       {open && (
-        <div ref={menuRef} className="menu-list" role="menu">
+        <div ref={menuRef} className="menu-list">
           {items.map((it) => (
             <button
               key={it.key}
-              role="menuitem"
               className={it.danger ? 'danger' : undefined}
               onClick={() => {
-                setOpen(false)
+                // Return focus to the trigger (which stays mounted) before the
+                // action opens its modal, so the modal restores focus here on
+                // close rather than dropping to the document body.
+                close()
                 it.onClick()
               }}
             >
@@ -197,8 +202,13 @@ export function Players() {
   const { data: teams = [] } = useTeams()
   const { data: mappings = [] } = useSpondMappings()
 
-  const resolvedSeasonId = filters.seasonId ?? currentSeason?.id ?? null
-  const selectedSeason = seasons.find((s) => s.id === resolvedSeasonId) ?? currentSeason ?? null
+  const requestedSeasonId = filters.seasonId ?? currentSeason?.id ?? null
+  const selectedSeason = seasons.find((s) => s.id === requestedSeasonId) ?? currentSeason ?? null
+  // Drive the query and the season select from the validated season, never the
+  // raw URL id, so a hand-edited /players?season=<bogus id> cannot make the
+  // table query one season while the header, writable state and select show
+  // another. An unknown id falls back to the current season here.
+  const effectiveSeasonId = selectedSeason?.id ?? null
   const archived = selectedSeason?.archivedAt != null
   const isCurrent = !!selectedSeason?.isCurrent
   // Only the current season is writable from this page: add_player and
@@ -211,7 +221,7 @@ export function Players() {
   const seasonName = selectedSeason?.name ?? ''
 
   const { data: rows = [], isLoading: rowsLoading, isError: rowsError } = useRegisteredPlayers(
-    resolvedSeasonId,
+    effectiveSeasonId,
     canView,
   )
 
@@ -255,7 +265,7 @@ export function Players() {
         <select
           id="season-select"
           className="select"
-          value={resolvedSeasonId ?? ''}
+          value={effectiveSeasonId ?? ''}
           onChange={(e) => changeSeason(e.target.value)}
         >
           {seasons.map((s) => (

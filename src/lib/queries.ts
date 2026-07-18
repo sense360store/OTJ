@@ -3753,10 +3753,10 @@ export function useInsertPlayer() {
         createdBy: row.created_by,
       }
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['players'] })
-      qc.invalidateQueries({ queryKey: ['boards'] })
-    },
+    // Invalidate the season-aware register the Registered players page reads
+    // (['registrations']), plus the current-season roster and any board name
+    // map, so an add, edit or delete refreshes every reader consistently.
+    onSettled: () => invalidatePlayerReads(qc),
   })
 }
 
@@ -3799,10 +3799,10 @@ export function useUpdatePlayer() {
         createdBy: row.created_by,
       }
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['players'] })
-      qc.invalidateQueries({ queryKey: ['boards'] })
-    },
+    // Invalidate the season-aware register the Registered players page reads
+    // (['registrations']), plus the current-season roster and any board name
+    // map, so an add, edit or delete refreshes every reader consistently.
+    onSettled: () => invalidatePlayerReads(qc),
   })
 }
 
@@ -3832,10 +3832,10 @@ export function useDeletePlayer() {
         throw new Error('The player was not deleted. Reload and try again.')
       }
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['players'] })
-      qc.invalidateQueries({ queryKey: ['boards'] })
-    },
+    // Invalidate the season-aware register the Registered players page reads
+    // (['registrations']), plus the current-season roster and any board name
+    // map, so an add, edit or delete refreshes every reader consistently.
+    onSettled: () => invalidatePlayerReads(qc),
   })
 }
 
@@ -3897,9 +3897,10 @@ export function useSpondRosterImport() {
         warnings: body.warnings ?? [],
       }
     },
-    // Settled, not success: an error after a partial write still refreshes
-    // the roster so the screen shows the true state.
-    onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
+    // Settled, not success: an error after a partial write still refreshes the
+    // reads so the screen shows the true state. The Registered players page reads
+    // ['registrations'], so invalidate that too, not only ['players'].
+    onSettled: () => invalidatePlayerReads(qc),
   })
 }
 

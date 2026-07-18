@@ -172,11 +172,17 @@ export function PlayerFormModal({
           inputMode="numeric"
           placeholder="Optional"
           aria-invalid={shirtInvalid}
+          aria-describedby={shirtInvalid ? 'pf-shirt-error' : undefined}
           disabled={busy}
           style={{ maxWidth: 140 }}
         />
         {shirtInvalid && (
-          <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 6, marginBottom: 0 }}>
+          <p
+            id="pf-shirt-error"
+            role="alert"
+            className="muted"
+            style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 6, marginBottom: 0 }}
+          >
             Shirt number must be a whole number from 1 to 99.
           </p>
         )}

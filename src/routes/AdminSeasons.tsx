@@ -81,7 +81,7 @@ function CreateSeasonModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
       {startsOn !== '' && endsOn !== '' && endsOn <= startsOn && (
-        <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 0 }}>
+        <p role="alert" className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 0 }}>
           The end date must be after the start date.
         </p>
       )}
@@ -213,22 +213,58 @@ function ArchiveSeasonModal({ season, onClose }: { season: Season; onClose: () =
   )
 }
 
-function SeasonRow({
-  season,
-  onActivate,
-  onArchive,
-}: {
-  season: Season
-  onActivate: () => void
-  onArchive: () => void
-}) {
+function UnarchiveSeasonModal({ season, onClose }: { season: Season; onClose: () => void }) {
   const unarchive = useUnarchiveSeason()
   const { submit, pending, failed } = useGuardedSubmit<void, void>({
     operation: 'unarchive season',
     perform: () => unarchive.mutateAsync({ seasonId: season.id }),
-    onSuccess: () => {},
+    onSuccess: () => onClose(),
   })
-  const unarchiving = pending !== null
+  const busy = pending !== null
+  const run = () => {
+    if (busy) return
+    void submit()
+  }
+  return (
+    <Modal
+      title="Unarchive season"
+      sub={season.name}
+      onClose={onClose}
+      dismissible={!busy}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={run} disabled={busy}>
+            {busy ? 'Unarchiving…' : 'Unarchive'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
+        Unarchive <b>{season.name}</b>. Its register becomes writable again. This does not change the current season.
+      </p>
+      {failed && (
+        <ActionError onRetry={run} style={{ marginTop: 10 }}>
+          Could not unarchive the season. Reload and try again.
+        </ActionError>
+      )}
+    </Modal>
+  )
+}
+
+function SeasonRow({
+  season,
+  onActivate,
+  onArchive,
+  onUnarchive,
+}: {
+  season: Season
+  onActivate: () => void
+  onArchive: () => void
+  onUnarchive: () => void
+}) {
   const isArchived = season.archivedAt != null
   return (
     <div
@@ -252,11 +288,6 @@ function SeasonRow({
         <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
           {fmtRegDate(season.startsOn)} to {fmtRegDate(season.endsOn)}
         </div>
-        {failed && (
-          <ActionError onRetry={() => void submit()} style={{ marginTop: 6 }}>
-            Could not unarchive the season. Try again.
-          </ActionError>
-        )}
       </div>
       <div className="row" style={{ gap: 8 }}>
         {/* The current season is never activated or archived from here. */}
@@ -271,8 +302,8 @@ function SeasonRow({
           </>
         )}
         {isArchived && (
-          <button className="btn btn-ghost btn-sm" disabled={unarchiving} onClick={() => void submit()}>
-            {unarchiving ? 'Unarchiving…' : 'Unarchive'}
+          <button className="btn btn-ghost btn-sm" onClick={onUnarchive}>
+            Unarchive
           </button>
         )}
       </div>
@@ -286,6 +317,7 @@ export function AdminSeasons() {
   const [creating, setCreating] = useState(false)
   const [activating, setActivating] = useState<Season | null>(null)
   const [archiving, setArchiving] = useState<Season | null>(null)
+  const [unarchiving, setUnarchiving] = useState<Season | null>(null)
 
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
@@ -315,7 +347,13 @@ export function AdminSeasons() {
           </Empty>
         ) : (
           seasons.map((s) => (
-            <SeasonRow key={s.id} season={s} onActivate={() => setActivating(s)} onArchive={() => setArchiving(s)} />
+            <SeasonRow
+              key={s.id}
+              season={s}
+              onActivate={() => setActivating(s)}
+              onArchive={() => setArchiving(s)}
+              onUnarchive={() => setUnarchiving(s)}
+            />
           ))
         )}
       </div>
@@ -323,6 +361,7 @@ export function AdminSeasons() {
       {creating && <CreateSeasonModal onClose={() => setCreating(false)} />}
       {activating && <ActivateSeasonModal target={activating} current={current} onClose={() => setActivating(null)} />}
       {archiving && <ArchiveSeasonModal season={archiving} onClose={() => setArchiving(null)} />}
+      {unarchiving && <UnarchiveSeasonModal season={unarchiving} onClose={() => setUnarchiving(null)} />}
     </div>
   )
 }
