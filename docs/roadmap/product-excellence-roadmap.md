@@ -6,6 +6,10 @@ roadmap is built from a read of the current code, not from generic ideas:
 every problem below cites the file and line that evidences it, as of the
 merge of PR #100.
 
+Content sharing (public coaching links, export and future content transfer)
+is tracked separately in `../roadmaps/content-sharing-roadmap.md`. It is a
+distinct programme and does not change the ranking below.
+
 ## How the ranking was made
 
 The weekly life of a grassroots coach with this app runs: browse the
