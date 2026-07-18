@@ -8,14 +8,47 @@
 // (the RPCs derive the season server side). No optimistic write; the button
 // stays busy until the server answers, edited values survive a failure, and the
 // modal cannot be dismissed while the write is in flight.
+//
+// Every attempt carries its values through the guarded submit input, never a
+// closure: useGuardedSubmit captures perform once, at first render, so reading
+// the live fields from a closure would submit the modal's initial values. The
+// sibling action modals pass their payload the same way (see PlayerActionModals).
 import { useRef, useState } from 'react'
 import { useInsertPlayer, useSetRegistrationStatus, useUpdatePlayer } from '../lib/queries'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
-import { parseShirt } from '../lib/playersView'
-import type { RegisteredPlayer, Team } from '../lib/data'
+import {
+  parseShirt,
+  planPlayerEdit,
+  playerEditHasChange,
+  registeredDateForAdd,
+  type PlayerEdit,
+} from '../lib/playersView'
+import type { RegisteredPlayer, RegistrationStatus, Team } from '../lib/data'
 import { Icon } from './icons'
 import { ActionError, Modal } from './ui'
 import { TeamSelect } from './PlayerActionModals'
+
+// The per-attempt payload, computed from the live fields at click time and
+// passed through the guard so perform never reads a stale closure.
+type SubmitInput =
+  | {
+      kind: 'add'
+      id: string
+      teamId: string | null
+      displayName: string
+      shirtNumber: number | null
+      status: 'pending' | 'registered'
+      registeredDate: string | null
+    }
+  | {
+      kind: 'edit'
+      playerId: string
+      registrationId: string
+      playerStatus: RegistrationStatus
+      expectedSeason: string
+      edit: PlayerEdit
+      markRegistered: boolean
+    }
 
 export function PlayerFormModal({
   mode,
@@ -54,43 +87,51 @@ export function PlayerFormModal({
   const shirtInvalid = parsedShirt === undefined
   const trimmedName = name.trim()
 
-  const nameChanged = isEdit ? trimmedName !== '' && trimmedName !== player?.displayName : trimmedName !== ''
-  const shirtChanged = isEdit && !shirtInvalid && (parsedShirt ?? null) !== player?.shirtNumber
+  // The atomic edit for this render's fields (empty in add mode). Recomputed
+  // every render so the Save button and the submit both see the live values.
+  const edit: PlayerEdit =
+    isEdit && player
+      ? planPlayerEdit(
+          { displayName: player.displayName, shirtNumber: player.shirtNumber },
+          { trimmedName, parsedShirt },
+        )
+      : {}
+  const hasEdit = playerEditHasChange(edit)
 
   // A client minted stable id per add, so an ambiguous lost response retry
   // reuses the same identity (add_player is idempotent on it) rather than
   // duplicating the child. Kept across a failure for the retry.
   const addId = useRef<string | null>(null)
 
-  const { submit, pending, failed } = useGuardedSubmit<void, void>({
+  const { submit, pending, failed } = useGuardedSubmit<SubmitInput, void>({
     operation: isEdit ? 'edit player' : 'add player',
     // Edit runs at most two writes, each idempotent so a retry after a partial
     // failure converges: update_player (the atomic name + shirt pair; a no-op
     // when neither changed) and, only when the pending player is being marked
-    // registered, the status write. Add is one atomic add_player call.
-    perform: async () => {
-      if (isEdit && player) {
-        if (nameChanged || shirtChanged) {
+    // registered, the status write. Add is one atomic add_player call. Every
+    // value arrives through input, so nothing is read from a stale closure.
+    perform: async (input) => {
+      if (input.kind === 'edit') {
+        if (playerEditHasChange(input.edit)) {
           await update.mutateAsync({
-            id: player.playerId,
-            expectedSeason: currentSeasonId,
-            displayName: nameChanged ? trimmedName : undefined,
-            shirtNumber: shirtChanged ? (parsedShirt ?? null) : undefined,
+            id: input.playerId,
+            expectedSeason: input.expectedSeason,
+            displayName: input.edit.displayName,
+            shirtNumber: input.edit.shirtNumber,
           })
         }
-        if (markRegistered && player.status === 'pending') {
-          await setStatus.mutateAsync({ registrationId: player.registrationId, status: 'registered' })
+        if (input.markRegistered && input.playerStatus === 'pending') {
+          await setStatus.mutateAsync({ registrationId: input.registrationId, status: 'registered' })
         }
         return
       }
-      if (!addId.current) addId.current = crypto.randomUUID()
       await insert.mutateAsync({
-        id: addId.current,
-        teamId: teamId || null,
-        displayName: trimmedName,
-        shirtNumber: parsedShirt ?? null,
-        status,
-        registeredDate: registeredDate || null,
+        id: input.id,
+        teamId: input.teamId,
+        displayName: input.displayName,
+        shirtNumber: input.shirtNumber,
+        status: input.status,
+        registeredDate: input.registeredDate,
       })
     },
     onSuccess: () => {
@@ -103,11 +144,32 @@ export function PlayerFormModal({
   const canSubmit =
     !shirtInvalid &&
     !busy &&
-    (isEdit ? trimmedName !== '' && (nameChanged || shirtChanged || markRegistered) : trimmedName !== '')
+    (isEdit ? trimmedName !== '' && (hasEdit || markRegistered) : trimmedName !== '')
 
   const run = () => {
     if (!canSubmit) return
-    void submit()
+    if (isEdit && player) {
+      void submit({
+        kind: 'edit',
+        playerId: player.playerId,
+        registrationId: player.registrationId,
+        playerStatus: player.status,
+        expectedSeason: currentSeasonId,
+        edit,
+        markRegistered,
+      })
+      return
+    }
+    if (!addId.current) addId.current = crypto.randomUUID()
+    void submit({
+      kind: 'add',
+      id: addId.current,
+      teamId: teamId || null,
+      displayName: trimmedName,
+      shirtNumber: parsedShirt ?? null,
+      status,
+      registeredDate: registeredDateForAdd(status, registeredDate),
+    })
   }
 
   return (
@@ -154,7 +216,15 @@ export function PlayerFormModal({
               className="select"
               value={status}
               disabled={busy}
-              onChange={(e) => setStatusChoice(e.target.value as 'pending' | 'registered')}
+              onChange={(e) => {
+                const next = e.target.value as 'pending' | 'registered'
+                setStatusChoice(next)
+                // A registration date is a registered-only fact, so leaving
+                // Pending clears any date already entered. Belt and braces with
+                // the field being disabled and the null the submit sends for
+                // Pending.
+                if (next === 'pending') setRegisteredDate('')
+              }}
             >
               <option value="pending">Pending</option>
               <option value="registered">Registered</option>
@@ -210,11 +280,15 @@ export function PlayerFormModal({
             type="date"
             value={registeredDate}
             onChange={(e) => setRegisteredDate(e.target.value)}
-            disabled={busy}
+            // A Pending player carries no registration date; the field is only
+            // live once the status is Registered.
+            disabled={busy || status === 'pending'}
             style={{ maxWidth: 200 }}
           />
           <p className="muted" style={{ fontSize: 12.5, marginTop: 6, marginBottom: 0 }}>
-            Filled in automatically when the player is marked registered. Set it here for a backdated paper registration.
+            {status === 'pending'
+              ? 'Added automatically when the player is marked registered.'
+              : 'Optional. Leave blank to use today, or set a backdated paper registration date.'}
           </p>
         </div>
       )}

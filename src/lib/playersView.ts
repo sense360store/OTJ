@@ -336,3 +336,57 @@ export function parseShirt(raw: string): number | null | undefined {
   if (!Number.isInteger(n) || n < 1 || n > 99) return undefined
   return n
 }
+
+// The registered date an Add submits, from the chosen status and the date field.
+// A registration date is a registered-only fact: a Pending player never carries
+// one, so a Pending add always sends null, whatever the (disabled) date field
+// holds, and switching Registered back to Pending clears it. A Registered add
+// sends the entered date, or null when blank so the server fills today. Pure so
+// the pending/date rule is provable without a DOM.
+//
+// Defect (PR 3): the Add form showed an always-editable registered date and sent
+// it verbatim, so a Pending player could be submitted carrying a registration
+// date, a contradictory record the database has no guard against. This is the
+// single source of truth for the date a Pending or Registered add sends.
+export function registeredDateForAdd(status: 'pending' | 'registered', dateValue: string): string | null {
+  if (status !== 'registered') return null
+  const trimmed = dateValue.trim()
+  return trimmed === '' ? null : trimmed
+}
+
+// The atomic edit an Edit submits: only the fields that actually changed,
+// mirroring update_player's supplied-fields-only contract (an omitted field is
+// left as is, not rewritten). displayName is a trimmed, non-empty, changed name;
+// shirtNumber is included (possibly null, to clear the shirt) only when it is a
+// valid entry that differs from the current value. Pure so the edit decision is
+// provable without a DOM.
+//
+// Defect (PR 3): the Add/Edit modal built its submit closure once, at first
+// render, so an edit ran against the modal's initial values and a shirt typed
+// after opening was never seen: a shirt-only change was silently dropped, wrote
+// nothing and recorded no history. The fix computes this at submit time from the
+// live fields and passes it through the guarded submit input.
+export interface PlayerEdit {
+  displayName?: string
+  shirtNumber?: number | null
+}
+
+export function planPlayerEdit(
+  current: { displayName: string; shirtNumber: number | null },
+  entered: { trimmedName: string; parsedShirt: number | null | undefined },
+): PlayerEdit {
+  const edit: PlayerEdit = {}
+  if (entered.trimmedName !== '' && entered.trimmedName !== current.displayName) {
+    edit.displayName = entered.trimmedName
+  }
+  // undefined is an invalid shirt entry, never a change; a valid null clears the
+  // shirt. Only a genuine difference is written, so a no-op edit stays a no-op.
+  if (entered.parsedShirt !== undefined && entered.parsedShirt !== current.shirtNumber) {
+    edit.shirtNumber = entered.parsedShirt
+  }
+  return edit
+}
+
+export function playerEditHasChange(edit: PlayerEdit): boolean {
+  return 'displayName' in edit || 'shirtNumber' in edit
+}

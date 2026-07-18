@@ -5,6 +5,7 @@ import {
   createAttemptTracker,
   deletedExactlyOne,
   faImportBody,
+  invalidatePlayerReads,
   isUniqueViolation,
   MEDIA_MAX_BYTES,
   oversizeMessage,
@@ -431,5 +432,22 @@ describe('deletedExactlyOne', () => {
     expect(deletedExactlyOne([])).toBe(false)
     expect(deletedExactlyOne([{ id: 'a' }])).toBe(true)
     expect(deletedExactlyOne([{ id: 'a' }, { id: 'b' }])).toBe(false)
+  })
+})
+
+// Every player write (add, edit shirt or name, move, withdraw, delete, import)
+// settles through invalidatePlayerReads. The Registered players table reads
+// ['registrations', seasonId], so a prefix invalidation of ['registrations'] is
+// what makes the table refresh immediately after a shirt edit rather than
+// keeping a stale dash.
+describe('invalidatePlayerReads', () => {
+  it('invalidates the register, the current-season roster and the boards', () => {
+    const invalidateQueries = vi.fn()
+    invalidatePlayerReads({ invalidateQueries } as unknown as Parameters<typeof invalidatePlayerReads>[0])
+    const keys = invalidateQueries.mock.calls.map((c) => (c[0] as { queryKey: unknown }).queryKey)
+    expect(keys).toContainEqual(['registrations'])
+    expect(keys).toContainEqual(['players'])
+    expect(keys).toContainEqual(['boards'])
+    expect(invalidateQueries).toHaveBeenCalledTimes(3)
   })
 })

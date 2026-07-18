@@ -76,6 +76,59 @@ describe('update_player and provenance integrity', () => {
     expect(row.shirt_number).toBe(21)
   })
 
+  // Defect 2: editing only the shirt (name left null) must persist to the
+  // current-season registration and record one player.registration_updated with
+  // the shirt old/new. The frontend bug dropped the write entirely; the RPC
+  // itself was always correct, so this pins the contract the fixed form relies on.
+  it('an edit of only the shirt number persists to player_registrations and records the change', async () => {
+    const { playerId, regId } = seedPlayer({ club: CLUB_A, season: seasonA, display: name('shirt-only'), teamId: TEST_TEAM })
+    const { data: before } = await serviceClient().from('audit_events').select('id').eq('entity_id', playerId)
+    const baseline = (before ?? []).length
+    const { data, error } = await manager.rpc('update_player', {
+      p_id: playerId,
+      p_expected_season: seasonA,
+      p_display_name: null, // name unchanged: a shirt-only edit
+      p_set_shirt: true,
+      p_shirt_number: 12,
+    })
+    expect(error).toBeNull()
+    const row = Array.isArray(data) ? data[0] : data
+    expect(row.shirt_number).toBe(12)
+    // Persisted on the seasonal registration, and the identity name is untouched.
+    const { data: reg } = await serviceClient().from('player_registrations').select('shirt_number').eq('id', regId).single()
+    expect(reg!.shirt_number).toBe(12)
+    const { data: identity } = await serviceClient().from('players').select('display_name').eq('id', playerId).single()
+    expect(identity!.display_name).toBe(name('shirt-only'))
+    // Exactly one new event: player.registration_updated with the shirt old/new.
+    const { data: after } = await serviceClient()
+      .from('audit_events')
+      .select('action, changed_fields, safe_changes')
+      .eq('entity_id', playerId)
+    expect((after ?? []).length).toBe(baseline + 1)
+    const evt = (after ?? []).find((e) => e.action === 'player.registration_updated')
+    expect(evt).toBeTruthy()
+    expect(evt!.changed_fields).toEqual(['shirt_number'])
+    expect(evt!.safe_changes).toEqual({ shirt_number: { old: null, new: 12 } })
+  })
+
+  it('a no-op edit (nothing changed) writes nothing and records no history', async () => {
+    // The fixed form never submits a no-op, but the RPC must also be a no-op if
+    // one arrives: p_display_name null and p_set_shirt false change nothing.
+    const { playerId } = seedPlayer({ club: CLUB_A, season: seasonA, display: name('noop'), teamId: TEST_TEAM, shirt: 8 })
+    const { data: before } = await serviceClient().from('audit_events').select('id').eq('entity_id', playerId)
+    const baseline = (before ?? []).length
+    const { error } = await manager.rpc('update_player', {
+      p_id: playerId,
+      p_expected_season: seasonA,
+      p_display_name: null,
+      p_set_shirt: false,
+      p_shirt_number: null,
+    })
+    expect(error).toBeNull()
+    const { data: after } = await serviceClient().from('audit_events').select('id').eq('entity_id', playerId)
+    expect((after ?? []).length).toBe(baseline)
+  })
+
   it('a forced registration failure rolls back the name change and writes no audit event', async () => {
     const { playerId } = seedPlayer({ club: CLUB_A, season: seasonA, display: name('rollback'), teamId: TEST_TEAM })
     const { data: before } = await serviceClient().from('audit_events').select('id').eq('entity_id', playerId)

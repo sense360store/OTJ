@@ -10,6 +10,9 @@ import {
   filtersToParams,
   parseFilters,
   parseShirt,
+  planPlayerEdit,
+  playerEditHasChange,
+  registeredDateForAdd,
   rowActionKeys,
   sortRows,
   STATUS_META,
@@ -310,5 +313,78 @@ describe('parseShirt', () => {
     expect(parseShirt('100')).toBeUndefined()
     expect(parseShirt('7.5')).toBeUndefined()
     expect(parseShirt('x')).toBeUndefined()
+  })
+})
+
+// Defect 1: the Add form let a Pending player carry a registered date, a
+// contradictory record. The status now decides the date the submit sends.
+describe('registeredDateForAdd', () => {
+  it('sends null for a Pending add whatever the date field holds', () => {
+    expect(registeredDateForAdd('pending', '2026-07-19')).toBeNull()
+    expect(registeredDateForAdd('pending', '')).toBeNull()
+  })
+
+  it('sends null for a Registered add with a blank date, so the server fills today', () => {
+    expect(registeredDateForAdd('registered', '')).toBeNull()
+    expect(registeredDateForAdd('registered', '   ')).toBeNull()
+  })
+
+  it('sends an explicit backdated date for a Registered add', () => {
+    expect(registeredDateForAdd('registered', '2026-01-15')).toBe('2026-01-15')
+  })
+})
+
+// Defect 2: a shirt typed into the Edit modal after it opened was dropped
+// because the submit ran against the modal's initial values. planPlayerEdit
+// computes the atomic edit from the live fields; only genuine changes are sent.
+describe('planPlayerEdit / playerEditHasChange', () => {
+  const current = { displayName: 'Sam Ray', shirtNumber: null as number | null }
+
+  it('carries a newly entered shirt number and leaves the name untouched', () => {
+    const edit = planPlayerEdit(current, { trimmedName: 'Sam Ray', parsedShirt: 12 })
+    expect(edit).toEqual({ shirtNumber: 12 })
+    expect('displayName' in edit).toBe(false)
+    expect(playerEditHasChange(edit)).toBe(true)
+  })
+
+  it('carries a changed shirt number on a player that already had one', () => {
+    const edit = planPlayerEdit({ displayName: 'Sam Ray', shirtNumber: 7 }, { trimmedName: 'Sam Ray', parsedShirt: 12 })
+    expect(edit).toEqual({ shirtNumber: 12 })
+  })
+
+  it('clears the shirt when the field is emptied (null), keeping the null distinct from unchanged', () => {
+    const edit = planPlayerEdit({ displayName: 'Sam Ray', shirtNumber: 7 }, { trimmedName: 'Sam Ray', parsedShirt: null })
+    expect(edit).toEqual({ shirtNumber: null })
+    expect('shirtNumber' in edit).toBe(true)
+    expect(playerEditHasChange(edit)).toBe(true)
+  })
+
+  it('carries only the changed name when the shirt is unchanged', () => {
+    const edit = planPlayerEdit({ displayName: 'Sam Ray', shirtNumber: 12 }, { trimmedName: 'Sam Rae', parsedShirt: 12 })
+    expect(edit).toEqual({ displayName: 'Sam Rae' })
+    expect('shirtNumber' in edit).toBe(false)
+  })
+
+  it('carries both when name and shirt both change', () => {
+    const edit = planPlayerEdit({ displayName: 'Sam Ray', shirtNumber: null }, { trimmedName: 'Sam Rae', parsedShirt: 9 })
+    expect(edit).toEqual({ displayName: 'Sam Rae', shirtNumber: 9 })
+  })
+
+  it('is a no-op when nothing changed', () => {
+    const edit = planPlayerEdit({ displayName: 'Sam Ray', shirtNumber: 12 }, { trimmedName: 'Sam Ray', parsedShirt: 12 })
+    expect(edit).toEqual({})
+    expect(playerEditHasChange(edit)).toBe(false)
+  })
+
+  it('never treats an invalid shirt entry (undefined) as a change', () => {
+    const edit = planPlayerEdit(current, { trimmedName: 'Sam Ray', parsedShirt: undefined })
+    expect('shirtNumber' in edit).toBe(false)
+    expect(playerEditHasChange(edit)).toBe(false)
+  })
+
+  it('never treats an emptied name as a name change (an empty name is not submittable)', () => {
+    const edit = planPlayerEdit(current, { trimmedName: '', parsedShirt: 5 })
+    expect('displayName' in edit).toBe(false)
+    expect(edit).toEqual({ shirtNumber: 5 })
   })
 })
