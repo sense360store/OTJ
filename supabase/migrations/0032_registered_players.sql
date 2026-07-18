@@ -165,6 +165,7 @@ grant select, insert, update, delete on public.players to authenticated;
 create or replace function public.players_touch()
 returns trigger
 language plpgsql
+security definer
 set search_path = ''
 as $$
 begin
@@ -174,8 +175,12 @@ begin
   if new.created_at is distinct from old.created_at then
     raise exception 'players: created_at is immutable' using errcode = 'P0001';
   end if;
-  if new.created_by is distinct from old.created_by and new.created_by is not null then
-    raise exception 'players: created_by cannot be re attributed' using errcode = 'P0001';
+  -- created_by may only change through a genuine profile deletion cascade (the
+  -- referenced profile is gone); an authenticated or service caller cannot
+  -- erase it to null or re attribute it while the profile still exists.
+  if new.created_by is distinct from old.created_by
+     and not public.provenance_change_is_cascade(old.created_by, new.created_by) then
+    raise exception 'players: created_by cannot be erased or re attributed' using errcode = 'P0001';
   end if;
   new.updated_at := now();
   new.updated_by := auth.uid();
@@ -233,15 +238,23 @@ create index player_registrations_player_idx
 comment on table public.player_registrations is
   $$One child's registration for one season (0032_registered_players.sql): the season, team (nullable for Unassigned), status (pending, registered, withdrawn), optional shirt number and registration date. Holds NO name and no other child personal data; the name lives once on public.players and resolves by id. club_id is denormalised for RLS and must equal the player's, season's and team's club (composite foreign keys). Reads require players.view (club wide); writes require players.manage; there is no ordinary product path that deletes a single registration (Withdraw is a status change), and a registration is removed only when its identity is deleted (players.delete) or its season, never. See docs/adr/ADR-0005-registered-players-and-seasons.md.$$;
 
--- Grants: explicit after revoke, matching 0030 hygiene.
+-- Grants: explicit after revoke, matching 0030 hygiene. NO DELETE for any
+-- client: a registration is never deleted on its own. The only way a
+-- registration goes is when its player identity is deleted (players.delete),
+-- which cascades through the (player_id, club_id) foreign key. Removing the
+-- direct delete verb closes the last-registration orphan hazard (a
+-- players.delete holder could otherwise delete a player's final registration
+-- and leave the identity invisible), and is the counterpart of the deferred
+-- require-registration constraint below.
 revoke all on public.player_registrations from anon, authenticated;
-grant select, insert, update, delete on public.player_registrations to authenticated;
+grant select, insert, update on public.player_registrations to authenticated;
 
 -- Row level security. Read is club wide on players.view (no team arm); writes
--- require players.manage with created_by pinned to the writer; permanent delete
--- of a single registration requires players.delete (there is no ordinary
--- product path for it, but the grant and policy exist so an erasure cascade and
--- any future repair are gated, never open to a players.manage holder).
+-- require players.manage with created_by pinned to the writer. There is
+-- deliberately NO delete policy: no client may delete a registration directly
+-- (Withdraw is a status change, and permanent erasure is the players.delete
+-- identity cascade), so a player identity can never be orphaned by losing its
+-- last registration.
 alter table public.player_registrations enable row level security;
 
 create policy "player_registrations_select_view" on public.player_registrations
@@ -266,12 +279,7 @@ create policy "player_registrations_update_manage" on public.player_registration
     club_id = public.my_club()
     and public.has_perm('players.manage')
   );
-
-create policy "player_registrations_delete_admin" on public.player_registrations
-  for delete using (
-    club_id = public.my_club()
-    and public.has_perm('players.delete')
-  );
+-- No delete policy and no delete grant (see the grant note above).
 
 -- ---------------------------------------------------------------------
 -- Registration BEFORE triggers. Split by concern; all raise P0001 on refusal
@@ -279,12 +287,12 @@ create policy "player_registrations_delete_admin" on public.player_registrations
 -- ---------------------------------------------------------------------
 
 -- Immutability and touch (BEFORE UPDATE): maintain updated_at/updated_by;
--- refuse rewriting provenance and linkage (created_by to a different non null
--- profile, created_at, player_id, season_id, club_id). A null created_by is
--- allowed (the ON DELETE SET NULL cascade).
+-- refuse rewriting provenance and linkage (created_at, player_id, season_id,
+-- club_id, and created_by except through a genuine profile deletion cascade).
 create or replace function public.registrations_touch()
 returns trigger
 language plpgsql
+security definer
 set search_path = ''
 as $$
 begin
@@ -300,8 +308,9 @@ begin
   if new.created_at is distinct from old.created_at then
     raise exception 'player_registrations: created_at is immutable' using errcode = 'P0001';
   end if;
-  if new.created_by is distinct from old.created_by and new.created_by is not null then
-    raise exception 'player_registrations: created_by cannot be re attributed' using errcode = 'P0001';
+  if new.created_by is distinct from old.created_by
+     and not public.provenance_change_is_cascade(old.created_by, new.created_by) then
+    raise exception 'player_registrations: created_by cannot be erased or re attributed' using errcode = 'P0001';
   end if;
   new.updated_at := now();
   new.updated_by := auth.uid();
@@ -396,6 +405,44 @@ $$;
 create trigger registrations_guard_archived
   before insert or update on public.player_registrations
   for each row execute function public.registrations_guard_archived();
+
+-- ---------------------------------------------------------------------
+-- The identity <-> registration invariant, enforced for EVERY writer, not only
+-- the app hooks. A committed players row must have at least one registration.
+-- A DEFERRABLE INITIALLY DEFERRED constraint trigger checks this at transaction
+-- commit, so both halves of a legitimate create have landed by then:
+--   * add_player inserts the identity and its current-season registration in
+--     one transaction -> passes;
+--   * a legacy shape insert fires the AFTER INSERT compatibility trigger, which
+--     inserts the current-season registration in the same transaction -> passes;
+--   * a direct null/null insert into players from any players.manage holder
+--     (which the RLS insert policy permits) creates no registration -> fails at
+--     commit, so it can never leave an orphan identity invisible to usePlayers.
+-- The check is club-safe (it looks up only the inserted row's own id) and
+-- schema-qualified. It fires only for rows INSERTed within a transaction, so the
+-- backfill (which inserts registrations, not players) never triggers it, and the
+-- already-registered existing players are untouched.
+-- ---------------------------------------------------------------------
+create or replace function public.players_require_registration()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if not exists (
+    select 1 from public.player_registrations r where r.player_id = new.id
+  ) then
+    raise exception 'players: a player identity must have at least one registration (id %)', new.id
+      using errcode = 'P0001';
+  end if;
+  return null;
+end;
+$$;
+
+create constraint trigger players_require_registration
+  after insert on public.players
+  deferrable initially deferred
+  for each row execute function public.players_require_registration();
 
 -- =====================================================================
 -- PART 3: backfill every existing players row into one current season
@@ -514,6 +561,15 @@ begin
     else
       return new;  -- no audited identity change
     end if;
+  end if;
+
+  -- During a clubs cascade the whole tenancy, including its audit trail, is
+  -- being removed and the club row is already gone; skip the event rather than
+  -- violate the audit_events club foreign key (the event would cascade-delete
+  -- with the club anyway).
+  if not exists (select 1 from public.clubs c where c.id = v_club) then
+    if tg_op = 'DELETE' then return old; end if;
+    return new;
   end if;
 
   if v_actor is not null then
@@ -638,6 +694,12 @@ begin
     else
       v_action := 'player.registration_updated';
     end if;
+  end if;
+
+  -- Skip during a clubs cascade (see audit_players): the club is already gone.
+  if not exists (select 1 from public.clubs c where c.id = v_club) then
+    if tg_op = 'DELETE' then return old; end if;
+    return new;
   end if;
 
   if v_actor is not null then
@@ -825,6 +887,107 @@ comment on function public.add_player(uuid, text, uuid, int, text, date) is
 revoke execute on function public.add_player(uuid, text, uuid, int, text, date) from public, anon;
 grant execute on function public.add_player(uuid, text, uuid, int, text, date) to authenticated;
 
+-- ---------------------------------------------------------------------
+-- update_player: the transactional edit path for the interim Roster. The old
+-- useUpdatePlayer wrote the identity rename and the current-season shirt in two
+-- separate PostgREST calls, so a failure after the first left a partial change.
+-- This RPC does both in ONE transaction (all or nothing) and never touches the
+-- frozen players.team_id / players.shirt_number columns.
+--
+-- SECURITY INVOKER + set search_path = '': the players and registration UPDATE
+-- policies (players.manage, club scoped) bind directly, so no new definer
+-- surface is added. actor and club are derived server side. Only fields
+-- deliberately supplied change: p_display_name null leaves the name; p_set_shirt
+-- false leaves the shirt (p_set_shirt true sets it, and null clears it).
+--
+-- Concurrency with activate_season: the RPC takes the same per club advisory
+-- lock activate_season uses, so an activation cannot run mid edit, and it
+-- refuses when the caller's displayed season (p_expected_season) is no longer
+-- the current season. Together these stop a shirt edit ever landing on a
+-- different (or freshly archived) season than the screen showed.
+--
+-- Fail closed: a cross club id, a missing player, a missing current-season
+-- registration, or an update that matches zero rows all raise rather than
+-- reporting a false success. A retry with the same values changes nothing and
+-- emits no audit event (each UPDATE is a no-op the audit triggers ignore).
+-- ---------------------------------------------------------------------
+create or replace function public.update_player(
+  p_id              uuid,
+  p_expected_season uuid,
+  p_display_name    text    default null,
+  p_set_shirt       boolean default false,
+  p_shirt_number    int     default null
+)
+returns table (id uuid, team_id uuid, display_name text, shirt_number int, created_by uuid)
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_actor  uuid := auth.uid();
+  v_club   uuid := public.my_club();
+  v_season uuid;
+  v_reg    uuid;
+begin
+  if v_actor is null or v_club is null then
+    raise exception 'update_player: not signed in to a club' using errcode = '42501';
+  end if;
+  if not public.has_perm('players.manage') then
+    raise exception 'update_player: requires the players.manage capability' using errcode = '42501';
+  end if;
+
+  -- Serialise with activate_season on the same key, so the current season
+  -- cannot change while this edit runs.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('otj.season_activation:' || v_club::text));
+
+  select s.id into v_season from public.seasons s
+    where s.club_id = v_club and s.is_current;
+  if v_season is null then
+    raise exception 'update_player: the club has no current season' using errcode = 'P0001';
+  end if;
+  if p_expected_season is not null and p_expected_season <> v_season then
+    raise exception 'update_player: the current season changed; reload and retry' using errcode = 'P0001';
+  end if;
+
+  if not exists (select 1 from public.players p where p.id = p_id and p.club_id = v_club) then
+    raise exception 'update_player: player is not in your club' using errcode = '42501';
+  end if;
+  select r.id into v_reg from public.player_registrations r
+    where r.player_id = p_id and r.season_id = v_season and r.club_id = v_club;
+  if v_reg is null then
+    raise exception 'update_player: no current season registration for this player' using errcode = 'P0001';
+  end if;
+
+  if p_display_name is not null then
+    update public.players p set display_name = p_display_name
+      where p.id = p_id and p.club_id = v_club;
+    if not found then
+      raise exception 'update_player: the identity update matched no row' using errcode = '42501';
+    end if;
+  end if;
+
+  if p_set_shirt then
+    update public.player_registrations r set shirt_number = p_shirt_number
+      where r.id = v_reg and r.club_id = v_club;
+    if not found then
+      raise exception 'update_player: the registration update matched no row' using errcode = '42501';
+    end if;
+  end if;
+
+  return query
+    select p.id, r.team_id, p.display_name, r.shirt_number, p.created_by
+    from public.players p
+    join public.player_registrations r on r.player_id = p.id and r.season_id = v_season
+    where p.id = p_id;
+end;
+$$;
+
+comment on function public.update_player(uuid, uuid, text, boolean, int) is
+  $$The transactional interim edit path: SECURITY INVOKER, atomically renames the stable identity and/or updates the current-season registration shirt under the caller's players.manage RLS, never touching the frozen players columns. Takes the same per club advisory lock as activate_season and refuses when p_expected_season is no longer current, so a concurrent activation cannot redirect the edit. Fails closed on cross club, missing or zero-row updates. See 0032_registered_players.sql.$$;
+
+revoke execute on function public.update_player(uuid, uuid, text, boolean, int) from public, anon;
+grant execute on function public.update_player(uuid, uuid, text, boolean, int) to authenticated;
+
 -- player_history: the database read path for the future per player History
 -- modal. SECURITY DEFINER (it reads audit_events, whose select policy the gate
 -- re checks) with set search_path = '' and EXECUTE for authenticated, self
@@ -918,18 +1081,36 @@ begin
     raise exception 'players: created_by must be ON DELETE SET NULL';
   end if;
 
-  -- Grants: authenticated holds the intended verbs and not TRUNCATE; anon none.
+  -- Grants: authenticated holds SELECT, INSERT, UPDATE only. NOT DELETE (a
+  -- registration is removed only through the players.delete identity cascade,
+  -- never directly, so an identity cannot be orphaned by losing its last
+  -- registration) and NOT TRUNCATE; anon holds nothing.
   if not (has_table_privilege('authenticated', 'public.player_registrations', 'SELECT')
           and has_table_privilege('authenticated', 'public.player_registrations', 'INSERT')
-          and has_table_privilege('authenticated', 'public.player_registrations', 'UPDATE')
-          and has_table_privilege('authenticated', 'public.player_registrations', 'DELETE')) then
-    raise exception 'registrations: authenticated is missing an intended grant';
+          and has_table_privilege('authenticated', 'public.player_registrations', 'UPDATE')) then
+    raise exception 'registrations: authenticated is missing an intended grant (select/insert/update)';
   end if;
-  if has_table_privilege('authenticated', 'public.player_registrations', 'TRUNCATE') then
-    raise exception 'registrations: authenticated must not hold TRUNCATE';
+  if has_table_privilege('authenticated', 'public.player_registrations', 'DELETE')
+     or has_table_privilege('authenticated', 'public.player_registrations', 'TRUNCATE') then
+    raise exception 'registrations: authenticated must not hold DELETE or TRUNCATE';
   end if;
   if has_table_privilege('anon', 'public.player_registrations', 'SELECT') then
     raise exception 'registrations: anon must hold no grant';
+  end if;
+
+  -- No delete policy on player_registrations.
+  if exists (select 1 from pg_policies where schemaname = 'public'
+             and tablename = 'player_registrations' and cmd = 'DELETE') then
+    raise exception 'registrations: there must be no delete policy';
+  end if;
+
+  -- The identity <-> registration invariant is a deferred constraint trigger.
+  if not exists (
+    select 1 from pg_trigger t join pg_class c on c.oid = t.tgrelid
+    where c.relname = 'players' and t.tgname = 'players_require_registration'
+      and t.tgconstraint <> 0 and t.tgdeferrable and t.tginitdeferred
+  ) then
+    raise exception 'players: the deferred require-registration constraint trigger is missing';
   end if;
 
   -- RPC EXECUTE: add_player and player_history for authenticated not anon.
@@ -945,10 +1126,22 @@ begin
   if has_function_privilege('anon', 'public.player_history(uuid, int, int)', 'EXECUTE') then
     raise exception 'player_history: anon must not execute';
   end if;
+  if not has_function_privilege('authenticated', 'public.update_player(uuid, uuid, text, boolean, int)', 'EXECUTE') then
+    raise exception 'update_player: authenticated cannot execute';
+  end if;
+  if has_function_privilege('anon', 'public.update_player(uuid, uuid, text, boolean, int)', 'EXECUTE') then
+    raise exception 'update_player: anon must not execute';
+  end if;
+  -- The provenance classifier is private to the definer touch triggers.
+  if has_function_privilege('anon', 'public.provenance_change_is_cascade(uuid, uuid)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.provenance_change_is_cascade(uuid, uuid)', 'EXECUTE') then
+    raise exception 'provenance_change_is_cascade: must not be executable by clients';
+  end if;
 
-  -- Policies present.
-  if (select count(*) from pg_policies where tablename = 'player_registrations') <> 4 then
-    raise exception 'registrations: expected four RLS policies';
+  -- Policies present. player_registrations now has three (no delete policy);
+  -- players keeps four (select/insert/update/delete).
+  if (select count(*) from pg_policies where tablename = 'player_registrations') <> 3 then
+    raise exception 'registrations: expected three RLS policies (no delete)';
   end if;
   if (select count(*) from pg_policies where tablename = 'players') <> 4 then
     raise exception 'players: expected four RLS policies after re gating';

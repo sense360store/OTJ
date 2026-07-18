@@ -50,15 +50,21 @@ revoke execute on function public.activate_season(uuid, boolean) from anon;
 revoke execute on function public.audit_source_context(uuid) from anon, authenticated;
 revoke execute on function public.audit_batch_context() from anon, authenticated;
 
--- 0032 registered players. players and player_registrations grant
--- select, insert, update, delete to authenticated (RLS gates read on
--- players.view, write on players.manage, delete on players.delete); the blanket
--- grants would add TRUNCATE, so revoke all and grant back the four verbs, as the
--- migrations do. add_player and player_history are EXECUTE for authenticated
--- only (anon revoked). See 0032_registered_players.sql.
+-- 0032 registered players. players grants select, insert, update, delete to
+-- authenticated (RLS gates read on players.view, write on players.manage, delete
+-- on players.delete). player_registrations grants select, insert, update ONLY:
+-- there is deliberately no client DELETE, so a registration is removed only
+-- through the players.delete identity cascade and an identity can never be
+-- orphaned by losing its last registration. The blanket grants above would add
+-- DELETE and TRUNCATE, so revoke all and grant back exactly the intended verbs,
+-- as the migrations do. add_player, update_player and player_history are EXECUTE
+-- for authenticated only (anon revoked); provenance_change_is_cascade is private
+-- to the definer touch triggers (no client EXECUTE). See 0032_registered_players.sql.
 revoke all on public.players from anon, authenticated;
 grant select, insert, update, delete on public.players to authenticated;
 revoke all on public.player_registrations from anon, authenticated;
-grant select, insert, update, delete on public.player_registrations to authenticated;
+grant select, insert, update on public.player_registrations to authenticated;
 revoke execute on function public.add_player(uuid, text, uuid, int, text, date) from anon;
+revoke execute on function public.update_player(uuid, uuid, text, boolean, int) from anon;
 revoke execute on function public.player_history(uuid, int, int) from anon;
+revoke execute on function public.provenance_change_is_cascade(uuid, uuid) from anon, authenticated;

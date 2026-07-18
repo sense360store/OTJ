@@ -218,22 +218,54 @@ create policy "seasons_update_manage" on public.seasons
 -- No delete policy. Deleting a season is not a product flow.
 
 -- ---------------------------------------------------------------------
+-- Provenance change classifier, shared by the touch triggers on seasons,
+-- players and player_registrations. created_by is a FK to profiles with ON
+-- DELETE SET NULL, so a genuine profile deletion must be able to null it, but
+-- an authenticated or service caller must NOT be able to erase or replace it.
+-- The distinguishing fact is that during a real ON DELETE SET NULL cascade the
+-- referenced profile row is already gone: so a created_by change is a
+-- legitimate cascade ONLY when it goes from a value to null AND that value's
+-- profile no longer exists. Every other change (to null while the profile
+-- still exists, or to any other value) is a tampering attempt and is refused.
+-- ---------------------------------------------------------------------
+create or replace function public.provenance_change_is_cascade(p_old uuid, p_new uuid)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select p_new is null
+    and p_old is not null
+    and not exists (select 1 from public.profiles pr where pr.id = p_old)
+$$;
+
+comment on function public.provenance_change_is_cascade(uuid, uuid) is
+  $$True only for a genuine created_by ON DELETE SET NULL cascade: the value went from a profile id to null and that profile no longer exists. Used by the seasons/players/player_registrations touch triggers to allow a profile deletion to null created_by while refusing any authenticated or service caller from erasing or replacing it. See 0031_seasons.sql.$$;
+
+revoke execute on function public.provenance_change_is_cascade(uuid, uuid) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
 -- Touch and immutability trigger (BEFORE UPDATE). Maintains updated_at and
 -- updated_by server side, and refuses rewriting the provenance and tenancy
 -- columns (club_id, created_by, created_at), which a with check arm cannot
--- express because it cannot see the old row. P0001 per the harness convention.
+-- express because it cannot see the old row. created_by may still be nulled by
+-- a genuine profile deletion cascade (see provenance_change_is_cascade), so the
+-- adult who created a season can be removed without deleting or blocking the
+-- season. P0001 per the harness convention.
 -- ---------------------------------------------------------------------
 create or replace function public.seasons_touch()
 returns trigger
 language plpgsql
+security definer
 set search_path = ''
 as $$
 begin
   if new.club_id is distinct from old.club_id then
     raise exception 'seasons: club_id is immutable' using errcode = 'P0001';
   end if;
-  if new.created_by is distinct from old.created_by then
-    raise exception 'seasons: created_by is immutable' using errcode = 'P0001';
+  if new.created_by is distinct from old.created_by
+     and not public.provenance_change_is_cascade(old.created_by, new.created_by) then
+    raise exception 'seasons: created_by cannot be erased or replaced' using errcode = 'P0001';
   end if;
   if new.created_at is distinct from old.created_at then
     raise exception 'seasons: created_at is immutable' using errcode = 'P0001';
@@ -348,6 +380,16 @@ begin
   else
     v_club := new.club_id;
     v_entity := new.id;
+    -- Provenance or touch only change (a created_by SET NULL cascade, or an
+    -- updated_by/updated_at bump) where no business field moved: emit no event,
+    -- so removing the adult who created a season does not read as an edit.
+    if new.name = old.name
+       and new.starts_on = old.starts_on
+       and new.ends_on = old.ends_on
+       and new.is_current = old.is_current
+       and new.archived_at is not distinct from old.archived_at then
+      return new;
+    end if;
     if new.archived_at is not null and old.archived_at is null then
       v_action := 'season.archived';
     elsif new.is_current and not old.is_current then
@@ -366,6 +408,13 @@ begin
     else
       v_action := 'season.updated';
     end if;
+  end if;
+
+  -- Skip during a clubs cascade (the club, and its audit trail, are being
+  -- removed): a season INSERT/UPDATE never happens then, but the guard keeps
+  -- the three audit triggers consistent and fails safe.
+  if not exists (select 1 from public.clubs c where c.id = v_club) then
+    return new;
   end if;
 
   if v_actor is not null then
