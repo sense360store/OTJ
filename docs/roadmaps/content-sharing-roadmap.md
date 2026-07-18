@@ -70,7 +70,7 @@ Implication carried forward: a public `/share` route needs no Vercel rewrite cha
 
 CONFIRMED CURRENT STATE.
 
-- All content is club wide readable by any authenticated club member. `sessions` select became club wide in `0002_teams_roles.sql` (`sessions_select_club`, replacing the original own or admin rule). `drills`, `media`, `templates`, `programmes`, `boards` all select on `club_id = my_club()`. There is no anonymous or public select policy on any table; the live hosted `list_tables` read confirms RLS is enabled on all 20 tables.
+- All content is club wide readable by any authenticated club member. `sessions` select became club wide in `0002_teams_roles.sql` (`sessions_select_club`, replacing the original own or admin rule). `drills`, `media`, `templates`, `programmes`, `boards` all select on `club_id = my_club()`. Precise mechanism: these content select policies are written with no `TO` clause, so they apply to `public` (which includes the `anon` role); the anon role is refused not because a policy excludes it but because `my_club()` returns null for an unauthenticated caller (`auth.uid()` is null), so `club_id = null` evaluates false and the row is refused. This is a different mechanism from the Storage boundary, where `0027_storage_boundary.sql` names `to authenticated` so the anon role never evaluates the policy at all. The anon cannot read property holds either way; the live hosted `list_tables` read confirms RLS is enabled on all 20 tables. The design implication is that `content_shares` should go further than the content tables and carry no client policy at all (neither anon nor authenticated), which is stronger than the existing `TO public` content policies.
 - Writes are capability based through `has_perm(capability)`, rewritten in `0012_rbac.sql` and re keyed to roles data in `0015_rbac_roles.sql`. The pattern for content is `has_perm('<domain>.manage') OR (owner AND has_perm('<domain>.create'))`, for example `sessions_update_owner_or_manager` and the same shape on drills, media, programmes, templates. Ownership is `created_by` on drills, media, templates, programmes, boards, and `coach_id` on sessions (sessions have no `created_by`).
 - Roles and capabilities are data, not code. The live catalogue is 20 capability keys (hosted `capabilities` table, 20 rows), following the `<domain>.create` and `<domain>.manage` shape: `sessions.create/manage`, `drills.create/manage`, `media.create/manage`, `programmes.create/manage`, `templates.create/manage`, plus `teams.manage`, `club.manage`, `users.manage`, `players.view/manage/import/export/delete`, `seasons.manage`, `audit.view`. `users.manage` and `club.manage` are reserved to admin (`RESERVED_CAPABILITIES`, `src/lib/data.ts:102`, enforced by `role_capabilities_guard_reserved` in `0015`). System roles are admin, manager, coach, parent.
 - The UI decides what to surface with `useMyCapabilities()` (`src/lib/queries.ts`), which unions the signed in user's `member_roles` into `role_capabilities` and fails closed to an empty set. Every route inlines a `manage-cap OR (create-cap AND own)` check and states in a comment that RLS is the real enforcement. Boards are the one exception, gated `mine || isAdmin` with no `boards.*` capability.
@@ -94,7 +94,7 @@ CONFIRMED CURRENT STATE.
 
 - The `media` bucket is private (`0001_init.sql`, `public = false`). Its Storage policies name `to authenticated` only (`0027_storage_boundary.sql`), so the anon role never evaluates them and cannot read any object. Path shapes are `{club_id}/...` for club content, `{club_id}/crest/...` for the crest, and `avatars/{user_id}/...` for profile photos. Reads are club scoped; there is deliberately no UPDATE policy, so in place replacement is refused for every client and uploads always mint a fresh random path `{club_id}/{uuid}-{filename}`.
 - The client signs media with `useSignedMediaUrl` (`src/lib/queries.ts`), which calls `supabase.storage.from('media').createSignedUrl(path, 3600)` from the browser under the caller's JWT, a one hour URL cached per path.
-- YouTube media store `yt_url` only; the public thumbnail (`img.youtube.com`) and the `youtube-nocookie.com` embed need no signing. Embedded video players are host allowlisted to `player.vimeo.com` only (`embedSrc`, `src/lib/data.ts`); this is the FA video path.
+- YouTube media store `yt_url` only; the public thumbnail (`img.youtube.com`) and the `youtube-nocookie.com` embed need no signing. FA video exists in two forms, both worth accounting for: a `player.vimeo.com` embed (`embed_url` set, no `storage_path`, host allowlisted by `embedSrc` in `src/lib/data.ts`), and a downloaded FA supplied MP4 uploaded into the private `media` bucket with `storage_path` set and `source_url` still the FA page, produced by the sanctioned attach flow (`src/lib/faAttach.ts`, `useAttachFAVideoFiles`), which CLAUDE.md permits ("FA videos may be downloaded by the club and used in the app"). So stored FA video bytes do exist at private storage paths, not only embeds.
 - The club crest is either a private Storage path under `{club_id}/crest/` or a URL. A bundled public static asset `public/crest.png` also exists (favicon and load failure fallback), which is safe to serve publicly.
 
 ### 3.5 The write safety substrate (PR #103, the prerequisite)
@@ -120,7 +120,7 @@ CONFIRMED CURRENT STATE. `0030_audit_foundation.sql` (PR #105) created `audit_ev
 - `action` and `entity_type` have no check constraint by design; the writers validate their own allow lists, so a new action needs no change to the table. `source` does check a fixed vocabulary that already includes `edge_function`.
 - The writer `log_audit_event` is SECURITY DEFINER, `set search_path = ''`, EXECUTE revoked from public, anon and authenticated and granted to `service_role` only. Actor, actor name, club and timestamp are derived server side; a supplied `club_id` is ignored when a session exists. Its current action allow list is player and export specific, and its metadata allow list (`audit_metadata_ok`) admits only bounded scalar facts, no free text.
 - `audit_events` grants authenticated SELECT only, RLS enabled with one select policy `club_id = my_club() AND has_perm('audit.view')`, and no insert, update or delete policy for any client role. The migration self verifies the SELECT only end state.
-- The audit boundary document already reserves future actions `content_share.created`, `content_share.refreshed`, `content_share.revoked` (`docs/security/app-audit-boundary.md:197`). The sharing audit actions are pre anticipated there.
+- The audit boundary document reserves three future actions, `content_share.created`, `content_share.refreshed` and `content_share.revoked` (`docs/security/app-audit-boundary.md:197`). This roadmap plans a fourth core lifecycle action, `content_share.rotated`, plus the conditional `content_share.expired` and `public_share_policy.changed`; those are not yet in the reserved catalogue. Because `audit_events.action` has no check constraint, adding them breaks no schema, but the authoritative catalogue in `app-audit-boundary.md` must be extended too, which is an explicit PR 1 step (section 27), not just a writer allow list change. So three of the four core actions are pre anticipated, not all.
 - No application code invokes the writer yet; it is exercised only by the security suite through the service role.
 
 ### 3.7 Edge Functions
@@ -138,7 +138,7 @@ CONFIRMED CURRENT STATE. Eight functions, all deployed with `verify_jwt = true` 
 
 CONFIRMED CURRENT STATE. `.github/workflows/ci.yml` has five jobs: `lint` (eslint), `build` (`tsc -b && vite build`, the typecheck), `test` (`vitest run`, the unit and component suite in a no DOM style), `security` (Node 22, spins a local Supabase stack, `supabase db reset` applies every migration and its self verification plus the seed, then `npm run test:security`), and `functions` (Deno `deno check` over the eight functions and `deno test` over the four `_shared` test files). The security job may sit outside required checks until it proves stable; branch protection is not visible in the repo.
 
-- The security suite lives in `tests/security/`, runs local only (`assertLocal` refuses any non local URL), mints real JWTs for six synthetic fixture users (admin, manager, two coaches and a parent in one club, an outsider coach in a second club) through the auth admin API and `signInWithPassword`, and exercises PostgREST and Storage exactly as a production client does. A new table is tested with a read matrix, a write matrix asserting `42501` on direct writes, a writer or RPC boundary section, and rollback proven via `docker exec ... psql`. `capabilities.test.ts` pins `EXPECTED_CATALOGUE` at exactly 20 keys and cross checks a static `src` regex, so adding a capability requires updating both or the tripwire fails.
+- The security suite lives in `tests/security/`, runs local only (`assertLocal` refuses any non local URL), mints real JWTs for six synthetic fixture users (admin, manager, two coaches and a parent in one club, an outsider coach in a second club) through the auth admin API and `signInWithPassword`, and exercises PostgREST and Storage exactly as a production client does. A new table is tested with a read matrix, a write matrix asserting `42501` on direct writes, a writer or RPC boundary section, and rollback proven via `docker exec ... psql`. `capabilities.test.ts` pins `EXPECTED_CATALOGUE` at exactly 20 keys and separately runs a static `src` scan using a fixed `CAPABILITY_PATTERN` domain alternation. Precise coupling: only the `EXPECTED_CATALOGUE` update is required to keep the suite green, because that is what the DB catalogue is compared against. The `CAPABILITY_PATTERN` regex is a fixed list of domains and does not include a new domain; if it is not extended, the frontend scan simply fails to see the new capability strings and the suite still passes, so omitting the regex change silently drops coverage rather than failing CI. Adding a capability therefore requires the catalogue count update (gated by CI) and, separately, the regex domain update (a required manual step that CI does not enforce).
 - The runtime dependency set is five packages: `@supabase/supabase-js`, `@tanstack/react-query`, `react`, `react-dom`, `react-router-dom`. There is no Playwright, Cypress or Puppeteer; there is no browser end to end suite.
 
 ### 3.9 Observability
@@ -212,6 +212,8 @@ Role behaviour: the sharer holds `programmes.create` and owns the programme, or 
 
 ## 6. Product scope and non-scope
 
+Terminology for scope, used consistently below: "the programme" is the whole PR 0 to PR 6 arc; "v1" is the first view only public release, which is PR 2 to PR 4 (public drill, session and programme sharing). Internal club links (PR 0) precede v1; export (PR 6) and copy or import (PR 7) follow it. Where a decision or acceptance criterion says v1 it means the view only public release, not the whole arc.
+
 ### 6.1 In scope for the programme
 
 - Internal club links on Session Day, Drill Detail, Programme Detail, and saved Planner sessions.
@@ -262,7 +264,7 @@ The internal action:
 Planner rules. CONFIRMED CURRENT STATE: the Planner works on a local draft held in React state; a new plan has no `/session-day` URL until it is saved through `upsertSession`, and there is no autosave.
 
 - An unsaved new session cannot be shared. There is no stable URL to share.
-- A dirty saved session must save successfully before its refreshed saved content is shared. A "Save and share" action is appropriate.
+- A dirty saved session must save successfully before its refreshed saved content is shared. A "Save and share" action is appropriate, with microcopy that makes the double effect explicit ("This saves your changes, then shares the link"), so a coach who made experimental or half finished edits knows Share will first persist those edits to the club wide saved session and overwrite the previous version, and that what gets shared is the saved version.
 - The established PR #103 guarded save seam (`createGuardedSubmit` / `useGuardedSubmit`) is reused for "Save and share". No second save system is built.
 
 REJECTED ALTERNATIVE: sharing a Planner draft by serialising it into the URL. It would leak venue, team and other draft fields into a link and bypass RLS entirely. The draft is never shared; only a saved, RLS protected session is.
@@ -299,6 +301,8 @@ Why not the others:
 - FUTURE OPTION D (PDF only): a fine later export path (PR 6) but a poor only mechanism, because it cannot be revoked and cannot be refreshed.
 - REJECTED ALTERNATIVE E (temporary guest accounts): it collects or implies a recipient identity, adds an account lifecycle, and grants a real session into the app. It contradicts the view only, no recipient account scope.
 
+REJECTED ALTERNATIVE, the most literal reading of the request: invite the external coach as a real club member through the existing `invite-user` flow. Rejected because club membership grants club wide read of all content and, critically, read of the `players` roster, the only table holding children's names (gated to `sessions.create`). An external or other club coach must never receive that. An unlisted read only snapshot with a reduced public field set gives the recipient exactly what they need to use one piece of content and nothing else, which membership cannot do. This is why the programme builds a public sharing apparatus rather than expanding membership.
+
 ### 8.2 Honest limitation on immutability
 
 The roadmap must not claim stronger immutability than the system enforces.
@@ -308,24 +312,35 @@ The roadmap must not claim stronger immutability than the system enforces.
 
 ### 8.3 Owner experience (one shared Share surface)
 
-RECOMMENDED DEFAULT: one Share modal (built on the existing `Modal` primitive, `dismissible={!writing}`) that supports, according to eligibility and role:
+RECOMMENDED DEFAULT: one Share surface, built on the existing `Modal` primitive (`dismissible={!writing}`), using progressive disclosure so the common one handed path is a single obvious tap and the advanced controls are tucked away.
 
-- Copy club link.
-- Preview public version (the exact snapshot, with any blocked content listed).
-- Create public link.
-- Native Share and Copy public link (shown only immediately after Create or Rotate, when the raw secret is available; see section 14).
-- Current status, created time, refreshed time, expiry.
-- Refresh snapshot.
-- Rotate link.
-- Revoke.
-- A calm unavailable or rights blocked explanation when public sharing is not possible.
+Primary layer (what a coach sees first):
+
+- Copy club link (always, for any club member with read access).
+- Share outside the club, when eligible: a Preview of the exact public version, and a single Create and share action.
+- After Create or after a new link is issued, the primary layer shows the native Share and Copy link controls and the one time link itself (section 14).
+
+Secondary layer, behind a "Manage this link" step, so destructive and advanced actions do not sit next to the everyday Share:
+
+- Update what people see (the Refresh action).
+- Replace this link (the Rotate action), with clear warning that the old link stops working.
+- Turn off this link (the Revoke action).
+- Status shown as plain text: Active with the expiry ("Active, expires in 89 days"), Expired with a one tap extend, or Off.
+
+Coach facing labels. The engineer terms Refresh, Rotate and Revoke are used only in code and this document, never on buttons. The buttons read in plain language: "Update what people see", "Replace this link (the old link stops working)", "Turn off this link". These plain labels are the accessible labels in section 22.
+
+Confirmation before Create. The word "unlisted" is reserved for this document and never shown to a coach. Before creating a public link the coach confirms exactly: "Anyone you send this to can open it with no login, and can pass it on. It works until you turn it off or it expires." This is the honest description of a forwardable, login free, revocable link.
+
+Preview that directs the eye. The Preview renders the exact snapshot, and it visibly marks the coach authored free text regions (session or drill title, custom activity titles, intentions, setup notes, coaching points, area and space, media captions) as distinct from the machine safe structured fields, labelling that group "You wrote this, it will be public." The section 12 warning is attached to that free text group, not to the whole preview, so the coach's attention lands on exactly the fields that can leak a name (section 12).
+
+Rights blocked path with a working alternative. When public sharing is blocked because the content nests England Football or other internal only material (section 13), the surface says so in coach terms ("This uses England Football content, which we can only share inside the club") and actively offers Copy club link as the working way to share it with a fellow OTJ coach, rather than leaving the coach at a dead end.
 
 Lifecycle semantics:
 
-- REFRESH keeps the same link, rebuilds the snapshot from the current saved content, rechecks permissions and rights, and updates `refreshed_at`. It does not publish unsaved Planner state; it reads the saved row.
-- ROTATE invalidates the previous secret immediately and produces a new complete link. The snapshot is retained or rebuilt per the approved design (recommended: retained, since rotation is about the secret, not the content).
-- REVOKE immediately makes the public read return the generic unavailable response, does not delete the underlying drill, session or programme, and records an audit event.
-- EXPIRY returns the same response as invalid and revoked once passed.
+- REFRESH ("Update what people see") keeps the same link, rebuilds the snapshot from the current saved content, rechecks permissions and rights, and updates `refreshed_at`. It does not publish unsaved Planner state; it reads the saved row.
+- ROTATE ("Replace this link") invalidates the previous secret immediately and produces a new complete link. The snapshot is retained (rotation is about the secret, not the content). Rotate is an owner action; a manager holding `shares.manage` may Revoke any club share but does not Rotate another coach's share, because rotation silently kills the owner's distributed link and hands the new secret to the wrong person (section 18).
+- REVOKE ("Turn off this link") immediately makes the public read return the generic unavailable response, does not delete the underlying drill, session or programme, records an audit event, and (RECOMMENDED, section 30 decision 19) clears the stored snapshot so any free text that evaded the preview does not persist.
+- EXPIRY returns the same response as invalid and revoked once passed, and likewise clears the stored snapshot.
 
 ### 8.4 Expiry policy
 
@@ -376,6 +391,8 @@ This is deliberately deferred because it multiplies the rights surface (content 
 
 These are the load bearing safety artefacts. A snapshot builder is an allow list, never a deny list: it names the fields that may appear and copies only those. A recursive allow list scanner asserts that no key outside the allow list ever reaches the public payload. The builder lives in a pure `_shared` module with Deno tests (section 24).
 
+Eligibility is fail closed, not silent drop. In v1, "eligible referenced media" and "eligible referenced drills" below mean the share is built only when every referenced item is rights eligible; if any nested drill, media, board or attached PDF is `internal_only`, the entire share is BLOCKED (the coach is told why and offered the club link, section 8.3), never published with the offending item silently omitted. Dropping a nested FA diagram while its FA drill text still publishes would be exactly the "not made public" breach the rights model exists to prevent. This block rule applies to a standalone drill share as much as to a session or programme (section 13.2). The allow lists here therefore define what a share contains once it is eligible; the eligibility gate in section 13 decides whether the share may exist at all.
+
 ### 11.1 Public session snapshot
 
 RECOMMENDED DEFAULT. Include:
@@ -388,16 +405,16 @@ RECOMMENDED DEFAULT. Include:
 - `totalDuration` (derived sum of activity durations, minutes).
 - `intentions` (free text array, see section 12).
 - `space` (the setup or area requirement, free text).
-- `activities`, ordered, each carrying: `phase`, `duration`, and either a `customTitle` (for a custom activity, free text) or a snapshot local reference to a safe drill snapshot.
-- `referencedDrills`: safe drill snapshots (section 11.2), keyed by snapshot local id.
-- `media`: eligible referenced media (section 20), by snapshot local id.
+- `activities`, ordered, each carrying: `phase`, `duration`, and either a `customTitle` (for a custom activity, free text) or a snapshot local reference to a safe drill snapshot. Content sufficiency limitation, stated plainly: a custom (non drill) activity carries only a title and a duration (CONFIRMED: `Activity` is `{ phase, drillId?, title?, duration }`, `src/lib/data.ts`; there is no description field), so it renders to the external viewer as a heading with a time and no instructions. A session built mostly from custom activities is thin for someone who was not in the room. The preview shows the sharer that those phases will appear as bare labels, and a session intended for external use is best built from drill backed activities. This is a known v1 content sufficiency limit, not a defect to fix in the snapshot.
+- `referencedDrills`: the full section 11.2 drill snapshots (setup, area, equipment, coaching points, adaptations and all), keyed by snapshot local id, so an external coach gets run ready detail for every drill embedded in the session, not a truncated stub.
+- `media`: eligible referenced media (section 11.5 and 20), by snapshot local id.
 - `board`: safe board presentation (section 11.4) where one is attached.
 - `sourceAttribution` (`source_url`, `source_label`) where present and rights eligible.
 - `snapshotAt` (created or refreshed time).
 
 Exclude (each maps to a real column that must never enter the snapshot): `club_id`; `coach_id`; coach name; `created_by` (sessions have none, but the principle stands for the referenced entities); `team_id`; team name; `date`; `start_time`; `venue`; `spond_event_id` (and therefore all attendance counts and event facts one join away); attendance counts; `live_activity_index` and `live_activity_started_at`; `status`; `programme_id` and `programme_week` (internal linkage); the real `board_id`, `media_id` and any database uuid; player names; player ids; member ids; raw media storage paths; signed URLs stored in the snapshot; audit data; internal ownership information.
 
-Rationale for the operational exclusions (grounded in the section 3.3 leak inventory): `date`, `start_time`, `venue`, `team_id` and `age_group` together describe when and where a specific youth team trains, which is safeguarding sensitive if made public; `spond_event_id` is one join from attendance counts, the very boundary the counts only Spond policy protects; the live state fields reveal a session is being run right now.
+Rationale for the operational exclusions (grounded in the section 3.3 leak inventory): `date`, `start_time`, `venue` and `team_id` together describe when and where a specific youth team trains, which is safeguarding sensitive if made public; `spond_event_id` is one join from attendance counts, the very boundary the counts only Spond policy protects; the live state fields reveal a session is being run right now. `age_group` is included, and deliberately so: an age band such as "U10s" on its own, absent the date, start time, venue and team, is coarse and non locating (it identifies a coaching level, not a place, a time or a named team), and it is genuinely useful to a recipient judging whether the session fits their group. This inclusion is recorded as section 30 decision 9 for owner confirmation; if the owner judges even the age band too much, it moves to the exclude list and appendix 33.2 changes with it.
 
 ### 11.2 Public drill snapshot
 
@@ -440,7 +457,7 @@ RECOMMENDED DEFAULT. Include:
 - `sourceAttribution` where present and rights eligible.
 - `snapshotAt` (refreshed time).
 
-Exclude: template `author` (a member full name in plain text, a hard exclusion); `created_by` and any creator or owner; linked club sessions and their completion state; team progress; dates and venues; internal ids; ownership; the private programme PDF unless its sharing rights are explicitly eligible (section 20).
+Exclude: template `author` (a member full name in plain text, a hard exclusion); `created_by` and any creator or owner; linked club sessions and their completion state; team progress; dates and venues; internal ids; ownership. The attached programme PDF is treated as media: it appears only when its own rights class is `public_full`, and if it is `internal_only` (the default for an FA programme PDF) it blocks the whole programme share per the section 11 block rule, rather than being silently dropped from an otherwise published programme.
 
 Nested drill representation. UNRESOLVED sub decision: repeat full drill snapshots inside a programme, or reference snapshot local ids. RECOMMENDED DEFAULT: reference by snapshot local id, with a single `referencedDrills` map, so a drill used in several weeks is stored once and the snapshot stays small. If references are used they must be snapshot local identifiers minted in the snapshot, never database uuids, so the public payload never carries a real drill id.
 
@@ -454,14 +471,32 @@ Remove: `playerId` (a stable child id, even though it carries no name and resolv
 
 Formation name: `formation` is a standard label such as "4-4-2" and carries no personal data. RECOMMENDED DEFAULT: include `formation` as harmless and useful context. Treat the board `name` as free text (section 12), not as `formation`.
 
+### 11.5 Public media snapshot (per referenced media item)
+
+RECOMMENDED DEFAULT. Media is a load bearing safety artefact too, and it is the object most likely to carry a free text leak through its caption, so its own field allow list is explicit here rather than left to the appendix. For each eligible (`public_full`) media item the snapshot carries:
+
+- `ref` (a snapshot local id, never the database media id).
+- `type` (`image`, `pdf`, `video`, `youtube`).
+- `caption` (from `media.name`, free text, called out in section 12 as a leak surface; a file name such as a child's first name or an opponent and date is a real vector here).
+- For a stored object: a short lived signed URL produced by the read function at request time (section 20), never the raw path.
+- For a YouTube item: the video id or the public thumbnail and, where `public_link_only` rights allow, a sandboxed embed (section 20).
+- `sourceAttribution` (`source_url`, `source_label`) where present.
+
+Exclude: `storage_path` (the raw path), `club_id`, the database media `id`, `created_by`, `source_key`, `size`, `dims`, `length`, `pages`, timestamps, and any embed URL for `internal_only` media (an FA Vimeo embed or a stored FA video never appears; it blocks the aggregate instead, section 13).
+
+Note on the signed URL and the raw path: a Supabase signed URL for a stored object necessarily contains the object path in cleartext, so "never the raw path" means the snapshot does not store a path and the response carries no separate path field, but the signed URL string itself still embeds the path unless the media is copied or content addressed. Section 20 and section 23 state this residual honestly rather than claiming the path is fully hidden.
+
 ## 12. Free text risk
 
-Known structured fields can be removed by the allow list, but several included fields are free text and could contain a name or private information: `displayTitle` (session name), custom activity titles, `intentions`, `setupNotes`, `coachingPoints`, drill `summary`, and the board `name`.
+Known structured fields can be removed by the allow list, but the free text surface is larger than the obvious titles and notes, and it is the whole set of text bearing fields the section 11 allow lists admit. Enumerated: `displayTitle` (session name) and drill `title`; custom activity titles; `intentions`; `setupNotes`; drill `summary`; `coachingPoints` (`points`); `easier` and `harder` adaptations; `space` (session area) and `area` (drill area), which can carry a pitch or venue name such as a specific ground even though the structured `venue` field is excluded; `playerGuidance` (`players`), which can carry a pairing instruction naming children; `equipment`, `skill` and `tags`; programme `summary`; per week template `name` and `focus`; and the media `caption` (from `media.name`), a common vector for a child's first name, an opponent name or a match date in a file name.
+
+Two risks travel on that surface: a child's name or other private detail, and a team name or venue re entering through free text after the structured `team_id` and `venue` were excluded.
 
 The design must include:
 
-- An exact pre publish preview. The owner sees precisely what will be public, rendered from the built snapshot, before the link is created. This is the primary control.
-- A calm warning next to the preview: "Check that no player names or private information appear in titles or notes before you share this." No alarm, no blocking on a heuristic.
+- An exact pre publish preview. The owner sees precisely what will be public, rendered from the built snapshot, before the link is created. This is the primary control. The preview visibly marks every free text region (section 8.3), so the human check covers the full surface, not just the title.
+- A calm warning attached to the marked free text group, broader than titles and names: "Check the text you wrote, the notes, setup, area and space, adaptations and any media captions. Remove any child's name, and any team or venue or pitch name you would not want public, before you share this." No alarm, no blocking on a heuristic.
+- A rights line in the same warning: "Confirm this text and any diagrams are the club's own work or cleared for public use, not copied from England Football or another source." This addresses the untagged laundering path (section 13): a coach can paste third party text into a no source field, which the source based rights model classes eligible by default, so the preview is the only control for that class.
 - No claim that automated filtering guarantees privacy. It cannot.
 - A requirement that the server still enforces every structured exclusion regardless of preview. The preview is a human check on free text; the allow list is the machine guarantee on structured fields.
 
@@ -476,7 +511,7 @@ This is a hard design gate. The current product permits England Football content
 CONFIRMED CURRENT STATE:
 - CLAUDE.md, Third party content: FA content is used on the terms that images are unmodified, never recreated, the use is not for profit, and "Nothing is sold or made public. The app is invite-only club membership." FA videos "must never be sold or placed behind any paid or subscription access." For non FA third party content "the default remains link and attribute, do not copy."
 - Nothing in code enforces "not made public"; it is enforced only by the whole app being behind login and the media bucket being private. The one place the app deliberately makes text world readable is the feedback to GitHub promotion, which is hand scrubbed of identifying data and never carries FA media (`Feedback.tsx`, `queries.ts`). The codebase currently equates "public" with "a GitHub issue," nothing else.
-- There is no rights or eligibility classification field on any content or media row. FA versus club original versus non FA third party is inferable only at runtime from `source_url` and `source_label` via `isFaUrl` and `sourceLabelForUrl` (`src/lib/fa.ts`). Club original is signalled only by an absent `source_url`. FA images and PDFs are stored in the private bucket; FA videos are `player.vimeo.com` embeds, not downloaded files.
+- There is no rights or eligibility classification field on any content or media row. FA versus club original versus non FA third party is inferable only at runtime from `source_url` and `source_label` via `isFaUrl` and `sourceLabelForUrl` (`src/lib/fa.ts`). Club original is signalled only by an absent `source_url`, which does not prove club originality (a coach can paste third party text into a no source field). FA images and PDFs are stored in the private bucket. FA video exists in two forms: a `player.vimeo.com` embed (no stored file) and a downloaded FA supplied MP4 stored in the private bucket with `storage_path` set and `source_url` still the FA page (`src/lib/faAttach.ts`). The `isFaUrl(source_url)` derivation classes both forms internal only, and the media rights backfill covers stored FA video bytes as well as images and PDFs.
 
 The roadmap must not assume that imported FA text, images, videos or PDFs may be published on a public link.
 
@@ -497,7 +532,7 @@ RECOMMENDED DEFAULT (a combination):
 - Club created text with no third party source may be eligible.
 - Public YouTube links may be represented as links or embeds only when their existing public availability and embedding terms allow it (a public YouTube video is already public; this is a link, not a copy).
 - Non FA third party content defaults to link and attribution, not copied content.
-- A session or programme containing any internal only nested item is blocked from public sharing in v1 (option 5), rather than silently producing an incomplete plan. The preview names what blocked it.
+- Any share whose content nests an internal only item is blocked from public sharing in v1 (option 5), rather than silently producing an incomplete plan. This covers a standalone drill (with an internal only media), a session, and a programme alike. The preview names what blocked it and offers the club link instead (section 8.3).
 
 ### 13.2 Rights vocabulary
 
@@ -525,6 +560,16 @@ Before any public external sharing of England Football derived content is implem
 - The default this roadmap builds to is the safe one: FA derived content is `internal_only` and never public until the owner records a decision otherwise, informed by the FA's stated terms and any confirmation the club seeks from the FA.
 
 A warning is not a substitute for rights enforcement. The rights class is enforced server side in the snapshot builder and the read function; the preview warning is an additional human check, not the control.
+
+### 13.5 Coverage consequence, to set owner expectations
+
+The safe default has a real product consequence that must be named, not just celebrated as a safety win. FA import is a first class, heavily used content path (the hosted library holds 103 drills and 111 media rows), so a material fraction of the real library is FA derived and therefore internal only. Because a session or programme that nests a single internal only item is blocked from public sharing in v1, Phil's actual sessions and programmes, which routinely nest FA drills and FA diagrams, may be un shareable publicly at launch. In practice, v1 public session and programme sharing will cover mostly club original aggregates until either decision 1 (allow attributed FA text publicly) is resolved or specific media is reclassified.
+
+RECOMMENDED action before PR 3 and PR 4: run a read only count of the club original versus FA derived split of the current drills and media (a `source_url` classification tally, no content output), state the shareable fraction to the owner, and confirm with Phil that club original coverage is enough to make public session and programme sharing worth shipping before the FA rights decision lands. Public drill sharing (PR 2) is less affected because a club original drill with no restricted media is directly shareable. This is a coverage limit of the safe default, recorded as a residual, not a defect.
+
+### 13.6 Untagged third party text residual
+
+The source based classification cannot detect third party text pasted into a no source field: such content defaults to eligible and can reach a public link. The only control for that class is the section 12 preview and its rights confirmation line. This is a genuine residual, recorded in the threat model (section 23), and the reason the preview carries an explicit "club's own work or cleared for public use" prompt rather than relying on `source_url` alone. If the owner wants a stronger control, an explicit "club original or cleared" confirmation before publishing content whose eligibility derives only from an absent `source_url` is the option, at the cost of one extra confirmation.
 
 ## 14. Public URL and token model
 
@@ -575,18 +620,22 @@ Provisional fields:
 - `programme_id` uuid null, references `programmes(id) on delete cascade`.
 - A check constraint proving exactly one of `session_id`, `drill_id`, `programme_id` is set and that it matches `kind`.
 - `token_hash` bytea or text, the SHA-256 of the secret. No plaintext token column.
+- `idempotency_key` text, set by the create, refresh and rotate calls so a lost response retry resolves to the same row (section 17).
 - `snapshot_version` integer.
-- `snapshot` jsonb, the stored safe public projection.
+- `snapshot` jsonb, the stored safe public projection. Cleared to null on revoke and on expiry (section 30 decision 19), so no free text that evaded the preview persists past the share's live life.
 - `rights_version` or an eligibility result recorded at build time (which rights inputs were evaluated), so a later rights change can be compared against what the snapshot assumed.
-- `created_by` uuid, references `profiles(id)`, the creating member.
-- `updated_by` uuid, references `profiles(id)`.
-- `created_at`, `refreshed_at`, `expires_at`, `revoked_at`, `revoked_by`, `rotated_at` timestamps.
+- `created_by` uuid references `profiles(id) on delete set null`, the creating member.
+- `updated_by` uuid references `profiles(id) on delete set null`.
+- `revoked_by` uuid references `profiles(id) on delete set null`, the member who revoked (an actor id, not a timestamp).
+- `created_at`, `refreshed_at`, `expires_at`, `revoked_at`, `rotated_at` timestamps.
+
+The `on delete set null` on the three person columns is not optional: `remove-user` deletes the `profiles` row in one transaction, and the default `no action` would block removing any member who ever created, updated or revoked a share. This matches the established pattern (`drills.created_by` and `media.created_by` are `set null` in `0001`, and `0012` deliberately changed `sessions.coach_id` to `set null` for exactly this reason). Who shared what survives via the audit event's `actor_name` snapshot (section 19), not via this column.
 
 Source entity integrity. RECOMMENDED DEFAULT: three nullable foreign keys plus the exactly one check, over a generic `entity_type`/`entity_id` pair. Real foreign keys mean source deletion invalidates the share automatically through `on delete cascade` (the share row is removed, so the public read finds nothing and returns the neutral unavailable response). A generic pair would need a trigger to emulate that and could dangle. REJECTED ALTERNATIVE: generic `entity_type`/`entity_id`, because it loses referential integrity for the one property (source deletion invalidates the share) that most cheaply satisfies a threat.
 
 How many active links per source. Options: one active public link per source entity; multiple independent links per source; one per creator.
 
-RECOMMENDED DEFAULT for v1: one active public link per source entity per club, enforced by a partial unique index on the source foreign key where `revoked_at is null`. Rationale:
+RECOMMENDED DEFAULT for v1: one active public link per source entity per club, enforced by three partial unique indexes, one per source column (`unique (session_id) where session_id is not null and revoked_at is null`, and likewise for `drill_id` and `programme_id`), or equivalently one expression index `unique (coalesce(session_id, drill_id, programme_id)) where revoked_at is null`. A single index on one column cannot enforce the invariant across three nullable source columns, so the wording "the source foreign key" means all three, spelled out. Rationale:
 
 - Simpler owner UI: one status, one link, one set of controls.
 - No forgotten duplicate links to track or leak.
@@ -598,12 +647,12 @@ Snapshot assets. UNRESOLVED sub decision: whether a structured `content_share_as
 
 Direct database access. RECOMMENDED DEFAULT:
 
-- anon has no direct table access to `content_shares` (no anon policy, matching every other table).
-- Authenticated browser clients have no direct `content_shares` read or write. Owner management goes through the authenticated management function; public reads go through the public read function.
+- `content_shares` carries no client policy at all, neither anon nor authenticated. This is stronger than the existing content tables, whose select policies are `TO public` and fail closed for anon only because `my_club()` is null (section 3.2); `content_shares` simply has no policy any browser role can satisfy.
+- Authenticated browser clients have no direct `content_shares` read or write. Owner management goes through the authenticated management function; public reads go through the public read function; both reach the table through `service_role` gated functions, not client policies (section 16).
 - No anonymous SELECT policy is added to `sessions`, `drills`, `programmes`, `templates`, `boards`, `media`, `profiles`, `teams` or `players`. This is the single most important invariant in the design.
-- The raw `snapshot` rows are never exposed directly to authenticated or anonymous clients. Owners receive lifecycle status from the management function, not a select on the table.
+- The raw `snapshot` rows are never exposed directly to authenticated or anonymous clients. Owners and managers receive their view through the management function, not a select on the table.
 
-If a restricted metadata view for owners is later proposed (status, times, expiry without the snapshot or token), it must justify why it is safer or simpler than returning status from the management function. RECOMMENDED DEFAULT: return status from the management function, so there is exactly one authenticated read path and no direct client select on `content_shares` to reason about.
+Manager review path. A `shares.manage` holder needs to see what an existing share actually makes public before deciding to revoke it, and the live source preview is not equivalent because the stored snapshot is frozen and may predate later edits. RECOMMENDED DEFAULT: the management function exposes a `shares.manage` gated read that returns, for a given share, the redacted stored public snapshot (no `token_hash`, no secret) plus the resolved source entity name and lifecycle status. This lets a manager audit exactly what is currently public and revoke a mistake with knowledge. It is a function read, not a client select on `content_shares`, so there is still no direct client table access to reason about.
 
 ## 16. Edge Function contracts
 
@@ -620,24 +669,27 @@ Closest existing model: `feedback-to-github` (caller JWT, `has_perm` gate matchi
 - Builds the snapshot server side, resolving all referenced entities (drills, media, board) server side.
 - Evaluates content rights eligibility server side (section 13).
 - Creates, previews, refreshes, rotates, revokes, or reads owner status.
-- Uses the service role only after authenticating and authorising the caller, and only to call the private transactional RPC (section 17). The authorisation decision is made under the caller's identity via `has_perm`, exactly as the write policy will, so the early check and the RLS or RPC enforcement cannot drift.
+- Makes the capability decision under the caller's identity, before touching the service role: it calls `caller.db.rpc('has_perm', { capability })` on the caller JWT client, exactly as `feedback-to-github` does, so the early check uses the same function the policy uses and the two cannot drift. Only after that check passes does it use the service role, and only to call the private transactional RPC (section 17), passing a verified actor id (the caller uid it authenticated) plus the source id and lifecycle choice. It does not rely on the RPC to re run `has_perm`, because a service role invocation has no `auth.uid()` and `has_perm` would evaluate to false inside the RPC (section 17). The RPC re checks ownership by an explicit predicate against the passed actor id, which is the legitimate time of check to time of use guard.
 - Returns no secret except on Create or Rotate.
+- Exposes a `shares.manage` gated status read (section 15) that returns the redacted stored snapshot and the resolved source name for a share, so a manager can review before revoking.
+- Exposes a `shares.manage` gated status lookup keyed on `shareId` (not just source id), returning the lifecycle state (active, expired, revoked, or absent) with no snapshot and no secret, so support can diagnose a reported `/share/:shareId` URL from what the reporter actually holds (section 21).
 
 ### 16.2 read-content-share (verify_jwt OFF)
 
 CONFIRMED CURRENT STATE: this would be the first public Edge Function in the project; every current function authenticates and 401s without a JWT. There is no existing auth model to copy, so the departures are called out.
 
-- `verify_jwt` off. Public. This must be pinned at deploy (config has no `[functions.*]` blocks today) and stated explicitly in the deploy procedure, because the platform default is on.
+- `verify_jwt` off. Public. RECOMMENDED DEFAULT: declare this in `config.toml` with a per function `[functions.read-content-share] verify_jwt = false` block, so the boundary is version controlled and reviewable in the gated PR rather than remembered as a deploy flag. Adding one per function block does not change the other eight functions' default of `verify_jwt = true`; the framing "config has no blocks, preserve that" was wrong. The byte for byte source readback does not verify `verify_jwt`, so an explicit positive post deploy check is required: confirm `read-content-share` is anon reachable and the other eight remain `verify_jwt = true` (section 26).
+- Holds the `service_role` key, because it must read `content_shares` (which has no client policy) and sign objects in the private `media` bucket (which is `to authenticated` only). This makes it the first anonymously reachable function that wields elevated credentials, so it is a review gated function on the same footing as `invite-user` and `remove-user`, and its blast radius is bounded deliberately (next bullet).
+- Reaches the database only through a narrow `SECURITY DEFINER` function, for example `read_public_share(p_share_id uuid, p_secret_hash bytea)`, that itself verifies the hash, checks `revoked_at` and `expires_at`, checks the club kill switch (section 26), and returns only the versioned safe `snapshot` and the list of eligible media paths to sign. So `read-content-share` never holds a broad service role DB client that a logic or injection bug could turn into a whole database read; the definer function is the single, auditable read path, and storage signing is the only raw elevated operation left in the function body.
 - Accepts only `shareId` and `secret` in a POST body.
-- Looks up the share by `shareId`, verifies the SHA-256 of `secret` against the stored `token_hash` with a constant time comparison.
-- Checks `revoked_at` and `expires_at`.
+- The `SECURITY DEFINER` function verifies the SHA-256 of `secret` against the stored `token_hash` with a constant time comparison (or a digest keyed lookup).
 - Returns only the versioned safe public `snapshot`.
-- Signs only the private media storage paths explicitly referenced by that eligible snapshot, with a short lifetime (section 20), and removes all raw storage paths before responding.
+- Signs only the private media storage paths explicitly returned by that definer function for that eligible snapshot, with a short lifetime (section 20), and returns no raw path field. Honest limitation: a Supabase signed URL embeds the object path (including the `club_id` folder and the object uuid) in cleartext, so "no raw path" means the response carries no separate path field, not that the path is hidden inside the signed URL. Section 20 and section 23 record the resulting cross share club correlation residual, and the copy or content address option that would remove it.
 - Sets `Cache-Control: no-store`.
-- Uses generic unavailable responses for invalid, revoked and expired, indistinguishable from each other.
+- Uses generic unavailable responses for invalid, revoked and expired, indistinguishable from each other. A transport failure (5xx, timeout) is distinct: the public page shows a retry state for that, because a transient outage is not a lifecycle fact and revealing "try again" leaks nothing about whether a link exists (section 21).
 - Does not log the secret or the snapshot.
-- Applies defensible request size and response size limits.
-- CORS: the public read is called from the public share page, which is served from the same Vercel origin as the app, so the existing `APP_ORIGIN` CORS lock still applies and needs no relaxation. This is a reason to serve the public page from the app origin rather than a separate host. If a genuinely cross origin consumer is ever needed, relaxing CORS is a deliberate, review gated change, not a copy of the existing header.
+- Applies defensible request size and response size limits, and a rate limit per `shareId` and per source IP, so the first anonymous endpoint has a committed abuse throttle rather than "consider a rate limit" (section 23, section 25).
+- CORS: in production the public share page is served from the same Vercel origin as the app, so the existing `APP_ORIGIN` lock applies and needs no relaxation. Two qualifications. First, a Vercel preview deployment has a different origin, so an in browser end to end check of the public page on a preview URL would be blocked by the `APP_ORIGIN` lock; preview verification of the function is therefore server side (a curl against the deployed function), and in browser end to end verification is scoped to the production origin (section 26). Second, the single `APP_ORIGIN` lock and same origin hosting are single tenant simplifications; multi club support with per club subdomains or custom domains needs an allowlist of per club origins (from a `clubs.public_origin` setting), recorded as a multi tenant follow up rather than an assumed permanent design.
 
 Pure logic. The snapshot builder, the recursive allow list scanner, the rights aggregation and the public response redaction live in a shared `_shared` module (for example `_shared/share.ts`) with Deno tests, so both functions and the unit suite exercise the same code. This matches the existing `_shared` pattern.
 
@@ -657,12 +709,12 @@ The lifecycle writes must be atomic and idempotent. The requirements:
 
 Options assessed: direct service role writes from the Edge Function; a private SECURITY DEFINER RPC called by the function; database trigger generated audit; idempotency keys; row locks and unique indexes.
 
-RECOMMENDED DEFAULT: a private transactional RPC for lifecycle writes, `EXECUTE` restricted to `service_role`, called by `manage-content-share` after it authenticates and authorises the caller. This mirrors the CONFIRMED `log_audit_event` and `grant_club_membership` pattern: a SECURITY DEFINER function, `set search_path = ''`, service role only, that does the mutation and the audit write in one transaction.
+RECOMMENDED DEFAULT: a private transactional RPC for lifecycle writes, `EXECUTE` restricted to `service_role`, called by `manage-content-share` after it authenticates the caller and makes the capability decision under the caller JWT (section 16.1). This mirrors the CONFIRMED `grant_club_membership` pattern: a SECURITY DEFINER function, `set search_path = ''`, service role only, that does the mutation and the audit write in one transaction. The important correction over a naive design: the capability check (`has_perm`) happens in the function under the caller JWT, not inside the RPC, because a service role invocation has `auth.uid()` null, so `has_perm` inside the RPC would evaluate false and there is no JWT context to read the actor from. This is exactly how `invite-user` works (it checks the capability in the function and calls a service role RPC that validates data, `0029`), and it is the opposite of "the RPC re runs `has_perm`".
 
-- The RPC revalidates the actor and the source authority rather than trusting actor ids from the function layer. It reads the actor from the JWT propagated context or is passed a verified actor id and re checks `has_perm` and ownership inside the transaction. It does not blindly trust an actor id supplied by the function.
-- Create and the audit insert happen in one statement path, so there is no share without its audit event (Create) and no audit without its mutation (Revoke).
-- The one active share invariant is enforced by a partial unique index on the source foreign key where `revoked_at is null`, so a concurrent second Create fails the unique constraint rather than creating a duplicate; the function maps that to "the existing active share" using the idempotency key.
-- An idempotency key on create, refresh and rotate makes a lost response retry resolve to the same row: the RPC upserts on `(source, idempotency_key)` so a repeat with the same key returns the existing result rather than acting again.
+- The RPC gates on `auth.role() = 'service_role'` (so only the authenticated function path reaches it), is passed the verified actor id and the source id, and re checks the source ownership by an explicit predicate against that actor id inside the transaction (the legitimate time of check to time of use guard: the source could have changed owner or been deleted between the function's check and the write). It validates data, it does not re derive the caller's identity from `auth.uid()`.
+- Create and the audit insert happen in one statement path, and the audit writer is passed the same verified actor id (the audit writer also cannot read `auth.uid()` under a service role call, so the actor is passed explicitly, section 19). There is no share without its audit event (Create) and no audit without its mutation (Revoke).
+- The one active share invariant is enforced by the three partial unique indexes of section 15 (one per source column, `where <col> is not null and revoked_at is null`), so a concurrent second Create for the same source fails the unique constraint rather than creating a duplicate; on that violation the function returns the existing active row found BY SOURCE.
+- Idempotency is a separate mechanism for same key retries (a double click, or a lost response retry carrying the same `idempotency_key`, reusing PR #103's `stableCreateId` discipline): a unique constraint on `(coalesce(session_id, drill_id, programme_id), idempotency_key)` backs an upsert so a repeat with the same key returns the existing result rather than acting again. The two dedup paths are distinct: the by source partial unique handles a genuinely concurrent second create from a different key; the idempotency key handles a retry of the same logical create.
 - Refresh writes the new snapshot and `refreshed_at` in one update, so a reader never sees a half written snapshot (a jsonb column is written atomically).
 - Rotate replaces `token_hash` and sets `rotated_at` in one update, so the old secret stops working the instant the new one starts; there is never a window where both validate.
 - A stale earlier response cannot overwrite a later state because lifecycle updates are guarded by a monotonic check (for example an update that only applies when the row's `updated_at` or a lifecycle version is not newer than the caller's basis), or more simply because each action is a single authoritative statement and the client never sends back a snapshot to persist.
@@ -692,6 +744,8 @@ Combine the share capability with the source ownership rule, mirroring the exist
 - An unowned or FA imported entity (no `created_by`, or `coach_id` null after a coach was removed) requires the relevant manage capability.
 - Copying a protected club link requires only the existing read access and does not require `shares.create`. A club link is a URL, not a share record.
 
+Scope of `shares.manage`, stated precisely to keep section 18 and PR 5 coherent. RECOMMENDED DEFAULT: `shares.manage` authorises Revoke of any public share in the club, and the redacted read to review what a share exposes, but not Rotate or Refresh of another creator's share. Rotate and Refresh stay with the share owner (the creator, or a source manage holder acting as owner), because Rotate silently kills the owner's already distributed link and Refresh republishes the owner's content on their behalf; a manager doing either would change a coach's live link without the coach knowing and would receive the new secret themselves. A manager who judges a share unsafe revokes it; the owner then creates a fresh one if wanted. This is section 30 decision 5. If the owner body prefers managers to also rotate, the owner handoff (how the coach learns their link died and gets the new secret) must be designed; the recommended default avoids that by scoping managers to Revoke.
+
 The RLS on `content_shares` and the RPC both express these as `has_perm(...)` combined with the ownership predicate, never as a role name. Parents hold neither share capability and cannot create or manage public shares; the write policies and the RPC both refuse them, and the security suite pins that (section 24).
 
 ## 19. Audit
@@ -707,7 +761,13 @@ Committed business events to record:
 - `content_share.expired`, only if a background process changes state (see below).
 - `public_share_policy.changed`, if rights classification becomes managed data (section 13).
 
-How they are written. CONFIRMED CURRENT STATE: `audit_events.action` and `entity_type` have no check constraint, so these actions and an `entity_type` of `content_share` need no change to the table; `source` already allows `edge_function`. The writer's allow list is player and export specific today, and its metadata allow list is bounded to player and export keys. So the sharing lifecycle RPC needs its own writer path: either extend `log_audit_event` with a sharing action, entity type and metadata allow list, or add a sibling private writer for sharing events. RECOMMENDED DEFAULT: a sibling private writer (or an extended `log_audit_event`) with a sharing specific metadata allow list, service role only, called inside the lifecycle RPC so the audit commits with the mutation.
+How they are written. CONFIRMED CURRENT STATE: `audit_events.action` and `entity_type` have no check constraint, so these actions and an `entity_type` of `content_share` need no change to the table; `source` already allows `edge_function`. The writer's allow list is player and export specific today, and its metadata allow list is bounded to player and export keys. So the sharing lifecycle RPC needs its own writer path: either extend `log_audit_event` with a sharing action, entity type and metadata allow list, or add a sibling private writer for sharing events. RECOMMENDED DEFAULT: a sibling private writer (or an extended `log_audit_event`) with a sharing specific metadata allow list, service role only, called inside the lifecycle RPC so the audit commits with the mutation. Because the writer runs under a service role invocation, `auth.uid()` is null inside it, so the verified actor id is passed explicitly by the RPC (section 17); the writer stamps the `actor_name` snapshot from that id, which is how "who shared what" survives the creator's later removal.
+
+Durable source reference, so the audit outlives the share. `content_shares` is `on delete cascade` from its source (section 15), so once the source session, drill or programme is deleted the share row is gone. The audit event must therefore record the source entity independently: set `entity_type` to `content_share` and record the source kind and the source id (a scalar uuid, no title, no free text) in the event's own columns or metadata, following the existing audit philosophy that ids are immutable historical facts resolved at read time and degraded to a neutral label when the row no longer exists (`0030` header). So who shared which item, and when, resolves even after both the source and the share row are deleted, and decision 19's claim that the audit answers "who shared what" holds.
+
+Reserved catalogue. Only `content_share.created`, `content_share.refreshed` and `content_share.revoked` are reserved in `app-audit-boundary.md:197`. `content_share.rotated` (and the conditional `content_share.expired` and `public_share_policy.changed`) are new; extending that authoritative catalogue is an explicit PR 1 step (section 27), not only a writer allow list change.
+
+Club link sharing is intentionally unaudited. Copying a club link (section 7) writes no audit event, deliberately: the recipient must already be an authorised club member with club wide read, so a club link creates no new exposure to trace. Only public shares, which cross the club boundary, are audited.
 
 Do not log every public view in v1. RECOMMENDED DEFAULT: no per view logging. Rationale:
 
@@ -728,8 +788,8 @@ RECOMMENDED DEFAULT: do not create a public bucket for this feature. The private
 For eligible stored media (an image or PDF whose rights class is `public_full` and whose path is referenced by the validated snapshot):
 
 - The public `read-content-share` function generates a short lived signed URL, shorter than the client's one hour default (for example five to fifteen minutes), long enough to load the page, short enough to limit a leaked URL.
-- The signed URL is returned only for a path explicitly present in the validated snapshot. The function never signs an arbitrary caller supplied path. This closes the "sign any path could reach avatars or another club's object" threat, because the only inputs are `shareId` and `secret`, and the only paths signed are those the snapshot named.
-- Raw storage paths are removed from the response; the client receives a signed URL and never the path.
+- The signed URL is returned only for a path explicitly returned by the `read_public_share` definer function for the validated snapshot (section 16.2). The function never signs an arbitrary caller supplied path. This closes the "sign any path could reach avatars or another club's object" threat, because the only inputs are `shareId` and `secret`, and the only paths signed are those the definer function named from that snapshot.
+- The response carries no separate raw path field. Honest limitation, corrected from an earlier over claim: a Supabase signed URL is of the form `/storage/v1/object/sign/media/{club_id}/{uuid}-file?token=...`, so the object path, including the `club_id` folder uuid and the object uuid, is embedded in cleartext in every signed media URL handed to the anonymous viewer. The recursive allow list scanner checks keys, not the contents of a URL string, so it does not catch this. The consequence is a cross share correlation handle: the same `club_id` appears in the media URL of every public share from that club, letting an outside observer confirm two unrelated public links belong to the same club, and exposing the club and object uuids. This is a residual (section 23), not a claim that the path is hidden. The option that removes it, deferred past v1 for cost, is to copy each eligible `public_full` object at share build time to a share scoped or content addressed path that embeds no `club_id` and no source row id, and sign that, or to proxy the bytes through the read function so no storage URL reaches the client. v1 references and signs the existing path and records the residual honestly.
 - A page reload requests a fresh URL (the snapshot references the path; the function re signs on each read).
 - An expired media URL has a recoverable Reload action on the public page (section 21).
 - Deleting or reclassifying media degrades the share safely: a deleted object yields a failed sign, which the page shows as unavailable media rather than an error; a reclassification to `internal_only` makes the next Refresh drop the media, and a rights downgrade invalidates the share per section 13.3.
@@ -757,11 +817,14 @@ The public component requirements:
 - No protected content hooks (`useSessions`, `useDrills`, `useSignedMediaUrl`, `useMyCapabilities` and the rest).
 - No profile, team, player, attendance or club member query.
 - A dedicated public query that calls `read-content-share` with `shareId` from the route param and `secret` from `window.location.hash`.
-- Rendering states: loading; generic unavailable; available snapshot; expired media reload; a print layout; a mobile layout.
+- Rendering states: loading; a neutral generic unavailable state (for invalid, revoked or expired, all identical, section 33.4); a distinct transient error and retry state (for a 5xx or a network timeout, which reveals nothing about the link's lifecycle because it is triggered by transport failure, not by the share's status); available snapshot; expired media reload; a print layout; a mobile layout.
+- The generic unavailable state carries calm human copy with a next step that does not reveal whether the link ever existed, worded identically for invalid, expired and revoked: a heading and "This link is not available. If someone shared it with you, ask them to check it or send you a new one." The transient error state instead says "This could not load right now. Try again," with a Retry.
 - Club branding limited to approved public brand fields (section 21.2).
 - No internal navigation and no management links, unless the viewer separately signs in.
 
-Because the whole app is one Vite bundle behind the SPA rewrite, the public route still loads the same JavaScript. The safety property is not a separate bundle; it is that the `PublicShare` component tree imports and mounts none of the authenticated providers or hooks, initialises no Supabase authenticated query, and reaches Supabase only through the public function. A component test asserts the public route mounts no `SessionsProvider` and fires no protected query (section 24).
+Because the whole app is one Vite bundle behind the SPA rewrite, the public route still loads the same JavaScript unless it is split out. The safety property is not a separate bundle; it is that the `PublicShare` component tree imports and mounts none of the authenticated providers or hooks, initialises no Supabase authenticated query, and reaches Supabase only through the public function. A component test asserts the public route mounts no `SessionsProvider` and fires no protected query (section 24).
+
+Usability requirement alongside the safety property: the public `/share` route should be code split with a dynamic import (`React.lazy`), so an external coach opening one shared item on mobile data at a pitch does not download the whole authenticated app's chunks before first paint. Treat first paint for the no account mobile path as a usability budget to keep small, matching the 320px mobile support promised in section 22.
 
 ### 21.1 Response headers and page hardening
 
@@ -769,7 +832,7 @@ Because the whole app is one Vite bundle behind the SPA rewrite, the public rout
 - `robots` noindex and nofollow. UNRESOLVED sub decision: client side meta injection alone is weak because not every crawler runs JavaScript. RECOMMENDED DEFAULT: set `X-Robots-Tag: noindex, nofollow` at the edge for `/share/*` via a Vercel `headers` rule in `vercel.json` (a server level guarantee), in addition to a client side `<meta name="robots">`. This is the assessment the task asks for: client side meta is not sufficient on a Vite SPA for robots control; a Vercel header is needed.
 - `Referrer-Policy: no-referrer` on the public page, so a click out to an attributed source URL sends no referrer carrying the share.
 - `Cache-Control: no-store` at the read API (section 16.2), so intermediaries do not cache the snapshot.
-- A Content Security Policy suitable for the public page: self plus the Supabase project origin for the function call and signed media, `img.youtube.com` for thumbnails, framing limited to sandboxed `youtube-nocookie.com` and `player.vimeo.com` only where rights allow, and no third party script origins.
+- A Content Security Policy suitable for the public page: self plus the Supabase project origin for the function call and signed media, `img.youtube.com` for thumbnails, framing limited to sandboxed `youtube-nocookie.com` only, gated on `public_link_only` YouTube rights, and no third party script origins. `player.vimeo.com` is deliberately not in the frame allowlist: the only Vimeo content in the app is FA video, which is `internal_only` and can never appear on a public snapshot (section 20), and the FA Vimeo player is domain locked and renders as a link out on the app origin anyway, so allowing it would widen the framing surface for a content class that by rule never reaches the public page. A future non FA Vimeo rights path would re add it deliberately.
 - Safe external link `rel` attributes (`rel="noopener noreferrer nofollow"`) on any attribution link.
 - Sandboxed embeds (`sandbox` on any iframe, and referrer stripping) so an embed cannot reach back into the page or receive the fragment.
 - No third party analytics by default (section 25).
@@ -780,7 +843,9 @@ Assessment requested by the task: on the Vite SPA, client side meta changes are 
 
 CONFIRMED CURRENT STATE: the per club crest is either a private Storage path under `{club_id}/crest/` or a URL, and a bundled public static asset `public/crest.png` exists. The club name and motto live on the `clubs` row (`name`, `motto`).
 
-RECOMMENDED DEFAULT for safe public branding: the club name, the motto, and the bundled public static `/crest.png`. Do not sign or return the private Storage crest for the public page, and do not return the club database id. Rationale: the bundled crest is already a public static asset (favicon and fallback), so it is safe and needs no signing; the club name and motto are public facts the club publishes itself. Options considered: bundle a public branding asset (chosen, it already exists); sign the private crest through the public function (rejected, it puts a private object on a public page for no gain); omit branding (rejected, some club identity helps the recipient trust the link). The club database id is never returned.
+RECOMMENDED DEFAULT for safe public branding in the single club deployment: the club name, the motto, and the bundled public static `/crest.png`. Do not return the club database id. Rationale: the bundled crest is already a public static asset (favicon and fallback), so it is safe and needs no signing; the club name and motto are public facts the club publishes itself.
+
+Multi tenant caveat, corrected from the earlier single club reasoning: the bundled `/crest.png` is OTJ's own crest, so in a future multi club deployment it would render OTJ's crest next to a different club's name and motto, a concrete cross club mismatch. Label it explicitly as a single club placeholder. Before multi tenant, resolve the share's own club crest at read time from the share's `club_id`, reusing the same short lived signed URL mechanism the design already builds for media to serve the per club private `clubs.crest_url`, or store a per club public branding asset. So name, motto and crest all come from the share's own club. This is recorded in section 30 decision 10 as a required multi tenant follow up. The club database id is never returned in any case.
 
 ## 22. Accessibility and mobile
 
@@ -790,16 +855,19 @@ Specify for the Share controls and the public page:
 
 - Share buttons with clear accessible labels ("Share this session", "Copy link", "Create public link"), not icon only without a label.
 - 44px minimum touch targets on every new share control, set explicitly since the base classes are 42px and smaller and there is no enforced minimum.
-- Native share and clipboard feedback announced to screen readers: a `role="status"` live region announcing "Link copied" or "Sharing" so the outcome is not visual only.
+- Plain language control labels, which are also the accessible labels: "Share this session", "Copy link", "Create public link", and for the lifecycle controls "Update what people see", "Replace this link", "Turn off this link" (section 8.3), never the engineer terms Refresh, Rotate, Revoke.
+- Native share and clipboard feedback announced to screen readers: a `role="status"` live region announcing "Link copied" or "Sharing". The region must be persistently present in the DOM (rendered empty) with only its text content updated on copy or share, not mounted on demand, because most screen readers do not announce a live region that appears together with its first message.
+- The one time link reveal must be reachable by a screen reader: on Create or Rotate, announce the revealed link region via the live region, move keyboard focus to the link or its Copy control, and keep the reveal on screen until the user dismisses it rather than clearing it on the next state change, since the raw secret is unrecoverable and Rotate is the only second chance.
 - Full keyboard operation of the Share modal and every control.
-- Focus placement into the Share modal on open and restoration to the trigger on close. This should reuse the focus trap work that Product Excellence initiative 10 adds to the shared `Modal`, or add it as part of the sharing work if that lands first; the two should not build two focus traps.
+- Dialog semantics on the Share modal, not just a focus trap: `role="dialog"`, `aria-modal="true"`, an accessible name via `aria-labelledby` pointing at the modal title, and an `aria-label` on the close control (the shared `Modal`'s close X is icon only and unnamed today). A focus trap alone does not tell an assistive technology user they are in a dialog or mark the surrounding app inert.
+- Focus placement into the Share modal on open and restoration to the trigger on close. This should reuse the focus trap work that Product Excellence initiative 10 adds to the shared `Modal`, or add it as part of the sharing work if that lands first; the two should not build two focus traps, and whichever lands first also adds the dialog semantics above for every `Modal` consumer.
 - A non dismissible modal while lifecycle writes are pending, reusing the existing `dismissible={false}` contract from PR #103, not a new mechanism.
 - `role="alert"` on failures (the existing `ActionError` pattern).
 - Link status expressed as text, not colour only ("Active, expires in 89 days", "Revoked"), so status is available without colour perception.
 - The public page usable from 320px to desktop, following the existing 900px and 1080px and 520px breakpoints.
 - Accessible activity order: the ordered activities render as an ordered list with real order semantics, not colour coded stripes alone (the Product Excellence roadmap already flags colour only timelines as an accessibility gap).
-- A board diagram accessible summary: an alternative text description of the shape (for example "4-4-2 formation, eleven home tokens") because the board is otherwise a visual only artefact, and the public board carries numbers and positions only.
-- A print style for the public page (shared with the export work, section 9).
+- A board diagram accessible summary that carries the same numbers and sides the visual board shows, both teams, not just a formation and one count. For example "4-4-2, home shirts 1 to 11, away shirts 1 to 11", accepting that exact x and y positions are approximated in words. A summary that dropped the shirt numbers and the away side would give non visual users materially less than the "numbers and positions only" a sighted user gets.
+- A print style for the public page. To avoid a gap, a minimal print stylesheet ships with the first public release (PR 2) so every public page prints usably from day one, and PR 6 refines print and adds any generated PDF. Section 22's print requirement is owned by PR 2 for the minimal fallback and PR 6 for the refinement, not deferred wholly to PR 6.
 - Reduced motion behaviour: no essential animation on the public page; respect `prefers-reduced-motion`.
 - No inaccessible QR only flow. QR codes may be considered later (section 29) but must never be the only sharing method; the link and the native share and copy paths are always present.
 
@@ -817,7 +885,7 @@ Each threat lists likelihood, impact, prevention, detection where relevant, resi
 8. Database reader seeing plaintext secrets. Likelihood low, impact high. Prevention: only `token_hash` (SHA-256) is stored; there is no plaintext token column. Test: security suite asserts no plaintext token column and that the stored value is a hash.
 9. Parent attempting management. Likelihood medium, impact medium. Prevention: parents hold neither `shares.create` nor `shares.manage`; the RLS and the RPC refuse them. Test: security suite asserts a parent cannot create, refresh, rotate or revoke.
 10. Cross club source id injection. Likelihood medium, impact high. Prevention: `manage-content-share` verifies the source is in the caller's club server side; `club_id` is derived from the caller, never the payload. Test: security suite asserts a cross club actor cannot create, refresh, rotate or revoke, and that a cross club source id is refused.
-11. Service role misuse. Likelihood low, impact high. Prevention: the service role is used only after the function authenticates and authorises the caller, and only to call the lifecycle RPC, which itself revalidates authority. Test: the RPC refuses when the revalidated actor lacks authority even if called with a mismatched actor id.
+11. Service role misuse, two surfaces. Likelihood low, impact high. In `manage-content-share` the service role is used only after the function authenticates and authorises the caller, and only to call the lifecycle RPC, which gates on `auth.role() = 'service_role'` and re checks ownership against the passed actor id. The harder surface is `read-content-share`: it is the first anonymously reachable function and it holds the service role (to read `content_shares` and sign private media), so it has no caller to authenticate and any logic or injection bug in it is a potential whole database read. Prevention: its database access is confined to the narrow `read_public_share` SECURITY DEFINER function (section 16.2), so the function body never issues arbitrary service role queries; the only raw elevated operation left is storage signing of paths that definer function returned; it is a review gated function on the same footing as `invite-user`; and its inputs are only `shareId` and `secret`. Detection: function error and rate limit counts (section 25). Residual: a bug in `read_public_share` itself remains high impact, which is why it is small, single purpose and security tested. Test: the read function cannot read any row other than the one the token authorises; a malformed input returns the generic response; the function holds no code path that selects a content table directly.
 12. Client built snapshot injection. Likelihood medium, impact high. Prevention: the function never accepts a snapshot from the browser; it always builds server side. Test: a request carrying a `snapshot` field is ignored or rejected; the stored snapshot matches the server build.
 13. Nested content overlooked by redaction. Likelihood medium, impact high. Prevention: the recursive allow list scanner asserts no key outside the allow list reaches the payload, at every nesting level (session to activity to drill to media to board). Test: a unit test feeds a snapshot with an injected forbidden key at each level and asserts the scanner rejects it.
 14. playerId leaked through board tokens. Likelihood medium, impact high (child data boundary). Prevention: the board projection keeps only `number, side, x, y`; `playerId` and `id` are dropped; this honours `registered-players-boundary.md:559-564`. Test: board projection test asserts `playerId` is absent from the public snapshot.
@@ -830,8 +898,8 @@ Each threat lists likelihood, impact, prevention, detection where relevant, resi
 21. Delete and recreate of a Storage path. Likelihood low, impact medium. Prevention: the app never reuses a path (fresh random path per upload) and has no UPDATE policy; the snapshot references a path and signs it briefly. Residual: an authorised client (delete then insert) or a service role operator could place different bytes at a path a snapshot references; the roadmap states this plainly and does not claim byte immutability without content addressing. Detection: none. Test: documented as an accepted limitation, matching the existing foundation retrospective accepted risk.
 22. Stale snapshot. Likelihood expected, impact low. Prevention: by design a snapshot does not auto update; Refresh is explicit and rechecks rights and permissions. Residual: a public link may show older content than the private row until refreshed, which is the intended behaviour. Test: an edit to the source does not change the public snapshot until Refresh.
 23. Oversized programme snapshot. Likelihood low, impact medium (denial of service, cost). Prevention: snapshot size cap 256 KiB, media asset cap 64, week cap 12 (section 20); the builder reports rather than truncates. Test: a programme exceeding the caps is refused with a clear message.
-24. Denial of service against the public read function. Likelihood medium, impact medium. Prevention: request and response size limits; `Cache-Control: no-store` but a cheap lookup keyed on `shareId`; consider a rate limit per id or per IP. Detection: function success and failure counts (section 25). Residual: a determined attacker can still call the function; the work per call is bounded and reads a single indexed row. Test: the function enforces the size caps and returns quickly for an invalid id.
-25. Brute force attempts against the secret. Likelihood low, impact low. Prevention: 256 bit secret makes brute force infeasible; a generic response gives no oracle; a rate limit slows automated attempts. Detection: a spike in failed reads for a single id. Residual: negligible given the entropy. Test: wrong secret always returns the generic unavailable response.
+24. Denial of service against the public read function. Likelihood medium, impact medium. Prevention: request and response size limits; `Cache-Control: no-store` with a cheap lookup keyed on `shareId`; a committed rate limit per `shareId` and per source IP (section 16.2), not merely "consider one"; and a Supabase usage or billing alert, since the first anonymous endpoint is a new cost surface. Detection: the section 25 committed baseline (function success and failure counts, rate limit refusal count) plus the uptime probe. Residual: a determined attacker can still call the function; the work per call is bounded and reads a single indexed row. Test: the function enforces the size caps and the rate limit, and returns quickly for an invalid id.
+25. Brute force attempts against the secret. Likelihood low, impact low. Prevention: 256 bit secret makes brute force infeasible; a generic response gives no oracle; the committed per id and per IP rate limit slows automated attempts. Detection: the rate limit refusal count and failed read count in the section 25 baseline surface a spike for a single id. Residual: negligible given the entropy. Test: wrong secret always returns the generic unavailable response, and repeated wrong secrets trip the rate limit.
 26. Public search engine indexing. Likelihood medium, impact medium. Prevention: `X-Robots-Tag: noindex, nofollow` at the edge plus a client meta; unlisted links are not linked from anywhere indexable. Test: the Vercel header rule is present for `/share/*`.
 27. Messaging preview bots. Likelihood high, impact low. Prevention: view only snapshot, no secret in the request line, no per view logging that a preview bot would pollute; the page reveals only the safe snapshot. Residual: a preview bot renders the safe snapshot, which is acceptable. Test: not applicable; noted as a reason not to log views.
 28. Source deleted while a refresh runs. Likelihood low, impact low. Prevention: `on delete cascade` removes the share when the source is deleted; a refresh that races a delete either completes against the row or finds it gone and the share is cascaded away; the public read then returns unavailable. Test: deleting the source removes the share and the public read returns the generic response.
@@ -842,7 +910,9 @@ Each threat lists likelihood, impact, prevention, detection where relevant, resi
 33. Partial lifecycle write. Likelihood low, impact medium. Prevention: each lifecycle action is one transactional RPC; there is no multi statement client orchestration to leave half done. Test: a failed RPC leaves the row in its prior state.
 34. Malformed old snapshot version. Likelihood low, impact low. Prevention: the snapshot carries `snapshot_version`; the read function and the public page handle a known set of versions and show the neutral unavailable state for an unknown one rather than rendering garbage. Test: a snapshot with an unknown version renders the unavailable state, not an error.
 35. Public page accidentally bootstrapping authenticated queries. Likelihood medium if not guarded, impact high. Prevention: the public component imports and mounts none of the authenticated providers or hooks; a component test asserts no `SessionsProvider` and no protected query fires. Test: section 24 route test.
-36. Signed media URL reaches an unintended object (avatars, another club). Likelihood low, impact high. Prevention: the function signs only paths present in the validated snapshot, never a caller supplied path; the only inputs are `shareId` and `secret`. Test: the function ignores any path not in the snapshot and never signs an avatar path.
+36. Signed media URL reaches an unintended object (avatars, another club). Likelihood low, impact high. Prevention: the function signs only paths the `read_public_share` definer function returned for the validated snapshot, never a caller supplied path; the only inputs are `shareId` and `secret`. Test: the function ignores any path not in the snapshot and never signs an avatar path.
+37. Club id and object uuid exposed through the signed media URL. Likelihood certain when a share carries stored media, impact low. A Supabase signed URL embeds the object path (`{club_id}/{uuid}-file`) in cleartext, so the anonymous viewer receives the club uuid and the object uuid, and the same club uuid appears across every public share from that club, a cross share correlation handle. Prevention in v1: none beyond the short URL lifetime; the doc does not claim the path is hidden (section 20). Detection: not applicable. Residual: an observer can confirm two public links belong to the same club and learns two opaque uuids; no name, no human identifier, no other club data. The removal option (copy or content address eligible media to a path carrying no `club_id`, or proxy the bytes) is deferred past v1 for cost. Test: the doc and the media projection tests assert the response has no separate path field, and the residual is recorded rather than asserted away.
+38. Third party text laundered into a public link through a no source field. Likelihood medium, impact medium (rights). A coach can paste FA or other third party text into a free text field without a `source_url`, and the source based rights model classes absent source as eligible, so it can reach a public link. Prevention: the section 12 preview and its explicit "club's own work or cleared for public use" rights confirmation are the only control, since no server signal distinguishes club original from unattributed third party text. Detection: none. Residual: real and recorded (section 13.6); the stronger option is an explicit club original confirmation before publishing content eligible only by absent source. Test: not machine testable; the control is the documented preview prompt.
 
 For any threat marked residual, the residual is the honest limit of a view only unlisted link and is surfaced to the owner rather than hidden.
 
@@ -947,10 +1017,19 @@ Assessment of where this lives:
 - Supabase function logs already carry status and counts (the existing pattern); the sharing functions log the same shape.
 - Vercel surfaces build and runtime errors for the front end; the public route errors surface there.
 - External error tracking (for example a hosted error service) is not justified for v1 at a single club scale and would be a new dependency and a new data processor; it is a FUTURE OPTION.
-- An uptime check on the public route (a simple external probe hitting a known invalid share and asserting a fast generic response) is worthwhile once public sharing is live, because the public route is the first thing an external person sees; it is low cost and carries no personal data. RECOMMENDED as a small operational add when the public slice ships, not a v1 code dependency.
+
+Because the threat model's Detection lines (threats 24, 25, 11) rely on someone actually noticing a problem, v1 does not leave detection to a human happening to open the logs. The public slice commits a minimal, personal data free detection baseline, small and carrying no viewer identity:
+
+- A committed rate limit on `read-content-share` per `shareId` and per source IP, with a refused count logged (the throttle the abuse threats assume, not "consider a rate limit").
+- An external uptime probe on the public route, hitting a known invalid `shareId` and asserting a fast generic response. This is committed as part of the public slice, not deferred, because the public route is the first thing an external person sees and the probe carries no personal data.
+- A Supabase usage or billing alert, since the first anonymous endpoint is a new cost surface with no upstream auth to bound calls.
+- A named owner and a documented periodic log review cadence, so the function success and failure counts are read on a schedule rather than only after an incident.
+
+If the owner declines any of these for v1, the corresponding Detection lines in section 23 must be downgraded to "no active detection in v1; function logs are available for manual post incident review only," so the threat model does not claim a control that does not operate.
+
 - Retention of operational logs follows the platform defaults; no new personal data is introduced, so no new retention decision is forced beyond the audit retention question already open (section 30).
 
-Analytics is not a prerequisite for v1. Do not gate the release on it.
+Analytics that identifies viewers is not a prerequisite for v1 and is out of scope; the baseline above is aggregate operational metrics only, no viewer identity. Do not gate the release on viewer analytics.
 
 ## 26. Rollout and rollback
 
@@ -958,13 +1037,13 @@ Per phase (section 27), the rollout follows the CONFIRMED gated discipline.
 
 - Migrations are gated: opened as a PR, reviewed line by line, run by hand via the connector after the live ledger confirms the slot is free, never auto merged. Confirm a usable backup or point in time restore window before applying a destructive or boundary changing migration (the `0028` precedent).
 - Edge Functions deploy from files on disk, never inline paste, verified by byte for byte readback of the deployed source (the `_shared/fa.ts` lesson).
-- The security suite gates in CI (added in PR #105). Any migration ships with its `tests/security/` additions green locally and in CI.
-- Vercel deploys `main` to production and every PR to a preview URL. The public route and its headers are verified on a preview URL before merge.
-- Post deploy verification for the public functions reads the deployed source back and exercises a real invalid, revoked and expired link against the deployed function, plus a real eligible share end to end on the preview URL.
+- The security suite runs in CI (added in PR #105). CONFIRMED CURRENT STATE caveat (section 3.8): the security job "may sit outside required checks until it proves stable," and branch protection is not visible in the repo, so a red security suite may not mechanically block merge yet. The rollout therefore relies on the security job being a required check, and until that is confirmed the real gate is reviewer discipline plus the no auto merge rule on every gated PR. A recommended precondition for the first public PR is confirming the security job is a required check.
+- Vercel deploys `main` to production and every PR to a preview URL. The public route markup and headers are verified on a preview URL, but note the CORS constraint (section 16.2): a preview origin differs from `APP_ORIGIN`, so an in browser end to end call from the preview page to the function is blocked. Preview verification of the function is therefore server side (a curl against the deployed function), and in browser end to end verification of the public page is scoped to the production origin, or a preview origin is temporarily allowlisted for the check.
+- Post deploy verification for the public functions reads the deployed source back byte for byte, separately confirms `read-content-share` is anon reachable and the other eight functions remain `verify_jwt = true` (source readback does not cover `verify_jwt`), and exercises a real invalid, revoked and expired link against the deployed function, plus a real eligible share end to end on the production origin.
 
 Disable and rollback mechanism:
 
-- A club level kill switch. RECOMMENDED DEFAULT: a boolean the read function checks (for example a `clubs` setting or a function environment flag) that makes every public read return the generic unavailable response without touching share rows, so public sharing can be turned off instantly without a deploy or a data change. UNRESOLVED DECISION (section 30): whether public sharing is disabled globally through a club setting in addition to capabilities.
+- A club level kill switch, built, not deferred. RECOMMENDED DEFAULT: a `clubs.public_sharing_enabled` boolean (a `clubs` column, since `clubs` has no settings column today, so this is a small gated migration) that the `read_public_share` definer function checks after resolving the share's `club_id`, so every public read for that club returns the generic unavailable response while it is off, without deleting or touching any share row. The boolean is added to the schema in PR 1 and the read path check in PR 2, so the lever exists before the first public read ships; section 30 decision 18 is resolved before PR 2, not after. Honest cost: flipping a per club switch is a single row `update`, a small audited data change, not "no data change"; it is instant, but it is a data change. If an instant all clubs emergency stop is also wanted, that is a separate, explicitly global lever (a function environment flag), kept distinct from the per club switch rather than presented as interchangeable with it.
 - Rollback of a lifecycle bug: because the two functions are separate, the read function can be rolled back independently of manage; because share rows carry no content beyond the snapshot, disabling reads exposes nothing while a fix is prepared.
 - Rollback of a migration follows the gated procedure with a confirmed restore window; the `content_shares` table is additive and its drop is structural, but a destructive backfill (for example a rights backfill) must confirm a backup first.
 
@@ -999,15 +1078,15 @@ No sharing implementation PR that contains a migration, a public function, a rig
 
 - User outcome: none visible yet; this is the security substrate.
 - Current code evidence: no rights field exists (section 13); capabilities are data with a pinned catalogue test (section 18); `audit_events` supports new actions without a table change (section 19).
-- Scope: `shares.create` and `shares.manage` capabilities and grants; a content rights classification (the `internal_only` / `public_link_only` / `public_full` vocabulary) on media and content, with an FA derivation backfill defaulting FA content to internal only; the `content_shares` table with the hashed fragment secret model and the three foreign key exactly one design; the exact direct access revocations (no anon or authenticated client access to `content_shares`); the lifecycle RPC skeleton; the sharing audit writer and actions; the security harness additions; no public page yet.
+- Scope: `shares.create` and `shares.manage` capabilities and grants; a content rights classification (the `internal_only` / `public_link_only` / `public_full` vocabulary) on media and content, with an FA derivation backfill (`isFaUrl` on `source_url`) defaulting FA content, including stored FA video bytes, to internal only; the `content_shares` table with the hashed fragment secret model, the three foreign key exactly one design, `on delete set null` person FKs, `idempotency_key`, the three partial unique indexes, and `snapshot` cleared on revoke and expiry; the `clubs.public_sharing_enabled` kill switch boolean; the exact direct access posture (no client policy at all on `content_shares`); the lifecycle RPC and the sharing audit writer with a durable source reference and a sharing specific metadata allow list; the `content_share.*` action additions to the authoritative catalogue in `app-audit-boundary.md`; the security harness additions; no public page yet.
 - Non scope: the public functions and the public route (PR 2).
 - Likely files: a provisional migration at 0038 or the next free slot; `supabase/seed.sql` and `supabase/seed_teams` style grants; `tests/security/content-shares.test.ts`; `tests/security/capabilities.test.ts` update to 22 keys; `src/lib/data.ts` capability and rights types; `docs/security/` a new sharing boundary document.
 - Migrations: one gated migration (provisional 0038+), creating `content_shares`, the rights columns, the grants, the RPC, and the writer.
 - RPCs: the lifecycle RPC (service role only) and the sharing audit writer.
 - Edge Functions: none.
 - Capability changes: add `shares.create`, `shares.manage`; grants per section 18.
-- Audit actions: register `content_share.created/refreshed/rotated/revoked` in the writer's allow list and metadata shape.
-- Tests: the security suite additions (section 24 database and security list) and the capabilities tripwire update.
+- Audit actions: register `content_share.created/refreshed/rotated/revoked` in the writer's allow list and metadata shape, and add them (rotated included, which is not currently reserved) to the authoritative reserved catalogue in `docs/security/app-audit-boundary.md`.
+- Tests: the security suite additions (section 24 database and security list), the `capabilities.test.ts` `EXPECTED_CATALOGUE` update to 22, and the separate `CAPABILITY_PATTERN` regex domain update for the `shares` domain (a required manual step CI does not enforce, section 3.8).
 - Accessibility: not applicable (no UI).
 - Human gates: migration and RLS and capability and audit changes are all gated; do not auto merge.
 - Rollout order: after PR 0, before PR 2.
@@ -1022,12 +1101,12 @@ No sharing implementation PR that contains a migration, a public function, a rig
 
 - User outcome: a coach creates a public link to a drill; an external recipient opens it without an account and sees the drill and its eligible media.
 - Current code evidence: Drill Detail exists; drills are the smallest complete content unit and the first to exercise media signing and rights.
-- Scope: the two Edge Functions (`manage-content-share`, `read-content-share`); the pure shared snapshot builder and allow list scanner in `_shared/share.ts`; the public route `/share/:shareId` outside auth; the Drill Detail public share flow (preview, create, refresh, rotate, revoke); eligible media signing; mobile and accessibility; deployed function byte readback.
-- Non scope: sessions and programmes (PR 3 and PR 4); export (PR 6); a management page (PR 5).
+- Scope: the two Edge Functions (`manage-content-share`, `read-content-share`); the narrow `read_public_share` SECURITY DEFINER read path and the kill switch check inside it; the `[functions.read-content-share] verify_jwt = false` block in `config.toml`; the pure shared snapshot builder and allow list scanner in `_shared/share.ts`; the code split public route `/share/:shareId` outside auth; the Drill Detail public share flow (preview, create, refresh, rotate, revoke) including the per entity manager Revoke from PR 2 onward so oversight exists as soon as public sharing does; eligible media signing; the committed rate limit and the uptime probe (section 25); a minimal print stylesheet so the public page prints usably from day one; mobile and accessibility; deployed function byte readback plus the positive `verify_jwt` check.
+- Non scope: sessions and programmes (PR 3 and PR 4); a generated PDF and print refinement (PR 6); the club wide management page (PR 5).
 - Likely files: `supabase/functions/manage-content-share/index.ts`, `supabase/functions/read-content-share/index.ts`, `supabase/functions/_shared/share.ts` and `share_test.ts`, `src/routes/PublicShare.tsx`, `src/App.tsx` (the public route), `vercel.json` (the `/share/*` headers), `src/routes/DrillDetail.tsx`, a Share modal on the existing `Modal` primitive, `src/lib/queries.ts` (the public and management query hooks), `ci.yml` (`deno check` and `deno test` additions).
 - Migrations: none if PR 1 provided the schema; otherwise a follow up gated migration.
 - RPCs: uses the PR 1 lifecycle RPC.
-- Edge Functions: two new; `read-content-share` is the first public function and must pin `verify_jwt = false` at deploy.
+- Edge Functions: two new; `read-content-share` is the first public function and declares `verify_jwt = false` in `config.toml` (version controlled), holds the service role, and reaches the database only through `read_public_share`.
 - Capability changes: none beyond PR 1.
 - Audit actions: emits the PR 1 registered actions.
 - Tests: the unit builders and scanner; the Deno function tests; the route and component tests; the security suite already covers the table.
@@ -1085,18 +1164,18 @@ No sharing implementation PR that contains a migration, a public function, a rig
 
 - User outcome: a manager sees and manages the club's active shares.
 - Current code evidence: no management surface exists.
-- Scope: a "Shared links" management screen for `shares.manage` holders; filter by kind and status; creator; expiry; revoke and rotate. No token display after initial creation.
+- Scope: a "Shared links" management screen for `shares.manage` holders; filter by kind, status and by unattributed or former member (a share whose `created_by` is null because the creator was removed); the resolved source entity name and the `shareId` shown per row so a reported `/share/:shareId` URL maps to a row; a redacted stored snapshot review so a manager sees what a share exposes before acting; the departing member prompt ("this member has N active public shares, review them") surfaced in or alongside the removal flow, with the original sharer recoverable from the audit `actor_name`; Revoke (not Rotate, section 18); optional bulk revoke of a departed member's shares. No token display after initial creation.
 - Assessment of placement: this can be folded into PR 2 to PR 4 as per entity controls, or be its own screen. RECOMMENDED: per entity controls ship in PR 2 to PR 4 (each detail page manages its own share), and a club wide management screen is its own PR here for managers who need the whole picture.
-- Important: because the database stores only a hash, the raw secret cannot be displayed later. So the management screen shows status, times and expiry, offers Revoke and Rotate, but cannot show the live link for an existing share. RECOMMENDED SECURITY DEFAULT: the raw secret is shown only on Create or Rotate and is never recoverable from the database; an owner who lost the link rotates to get a new one. UNRESOLVED DECISION (section 30): whether the current URL is instead stored encrypted so it can be reshown, at the cost of holding a reversible secret. The recommended default keeps only a hash.
+- Important: because the database stores only a hash, the raw secret cannot be displayed later. So the management screen shows status, times, expiry, source name and the redacted stored snapshot, and offers Revoke, but cannot show the live link for an existing share. Revoke only here, not Rotate: Rotate is an owner action on the per entity Share surface (section 18), because a manager rotating another coach's link would silently kill it and receive the new secret. RECOMMENDED SECURITY DEFAULT: the raw secret is shown only on Create or Rotate and is never recoverable from the database; an owner who lost the link rotates their own share to get a new one. UNRESOLVED DECISION (section 30 decision 8): whether the current URL is instead stored encrypted so it can be reshown, at the cost of holding a reversible secret. The recommended default keeps only a hash.
 - Likely files: a new `src/routes/AdminShares.tsx` (or a section of an existing admin route), `src/lib/queries.ts` (a management list hook via the management function), `src/App.tsx` (a `RequireCap cap="shares.manage"` route).
 - Migrations: none. RPCs: reuse (a list action on the management function). Edge Functions: extend `manage-content-share` with a list action.
-- Capability changes: none. Audit actions: reuse (rotate and revoke).
-- Tests: route tests for the list, filter, revoke and rotate; a test that the raw secret is not shown for an existing share.
+- Capability changes: none. Audit actions: reuse (revoke; rotate stays an owner action on the per entity surface).
+- Tests: route tests for the list, filter (including unattributed or former member), the redacted snapshot review, the shareId lookup, and Revoke; a test that the raw secret is not shown for an existing share; a test that a manager cannot Rotate another creator's share.
 - Accessibility: the section 22 list for the screen.
 - Human gates: touches the management function (redeploy with readback); do not auto merge.
 - Rollout order: after PR 2 at the earliest; naturally after PR 4.
 - Backup requirement: none.
-- Post deploy verification: the list shows status without secrets; revoke and rotate work from the screen.
+- Post deploy verification: the list shows status and the redacted snapshot without secrets; Revoke works from the screen; a reported shareId resolves to a row.
 - Rollback or disable: remove the route; the underlying functions are unchanged.
 - Estimated size: M.
 - Dependencies: PR 2.
@@ -1230,13 +1309,13 @@ Each decision lists the recommended choice, the strongest alternative, the user 
    - Implementation: a grant row per role.
    - Evidence that would change it: if the club wants public sharing centralised through managers for oversight.
 
-5. Do managers receive `shares.manage`?
-   - Recommended: yes, managers and admins get `shares.manage`.
-   - Strongest alternative: only admins manage shares.
-   - User value: a manager can revoke a mistaken or stale club share without an admin.
-   - Privacy and security: `shares.manage` can revoke any club share, a safety lever; it does not expose content.
-   - Implementation: a grant row.
-   - Evidence that would change it: if the club wants share revocation reserved to admins.
+5. Do managers receive `shares.manage`, and what does it authorise?
+   - Recommended: yes, managers and admins get `shares.manage`, scoped to Revoke any club share and to the redacted review of what a share exposes, but not Rotate or Refresh of another creator's share (those stay with the owner, section 18).
+   - Strongest alternative: only admins manage shares; or managers may also Rotate with a defined owner handoff.
+   - User value: a manager can revoke a mistaken or stale club share without an admin, and can see what it exposed first; letting managers Rotate too risks silently killing a coach's link.
+   - Privacy and security: `shares.manage` Revoke is a safety lever; the redacted review shows the snapshot but no secret; excluding Rotate avoids a manager reissuing a link the owner does not know about.
+   - Implementation: a grant row plus the scoped actions in the function.
+   - Evidence that would change it: if the club wants revocation reserved to admins, or explicitly wants managers to Rotate (then the owner handoff must be designed).
 
 6. One active link or multiple per source?
    - Recommended: one active public link per source entity per club in v1.
@@ -1262,21 +1341,21 @@ Each decision lists the recommended choice, the strongest alternative, the user 
    - Implementation: hash only is simplest and safest; a reversible store adds key management.
    - Evidence that would change it: strong owner demand to reshow a link without rotating, weighed against holding reversible secrets.
 
-9. Are session date, time, venue and team always excluded?
-   - Recommended: yes, always excluded from public snapshots.
-   - Strongest alternative: allow the owner to opt in to showing a date.
-   - User value: a date can help an external coach place a session; excluding it is safer.
-   - Privacy and security: when and where a youth team trains is safeguarding sensitive; excluding it is the safe default.
-   - Implementation: the allow list excludes them; an opt in would add per field controls.
-   - Evidence that would change it: a safeguarding reviewed opt in for a coarse label (a month, not a date and venue), if ever wanted.
+9. Are session date, time, venue and team always excluded, and is the age band included?
+   - Recommended: date, start time, venue and team are always excluded from public snapshots. The `age_group` band (for example "U10s") is included, because on its own, absent date, time, venue and team, it identifies a coaching level, not a place, a time or a named team, and it helps a recipient judge fit (section 11.1).
+   - Strongest alternative: exclude the age band too, treating any team related label as sensitive; or allow the owner to opt in to showing a date.
+   - User value: the age band helps an external coach place the session; a date would help more but is unsafe; excluding all of it is safest but least useful.
+   - Privacy and security: when and where a youth team trains is safeguarding sensitive, so date, time, venue and team stay out; an age band alone is coarse and non locating.
+   - Implementation: the allow list includes `age_group` and excludes the rest; moving the band out is a one line change plus appendix 33.2.
+   - Evidence that would change it: a safeguarding view that even a coarse age band, combined with the club name on the page, is too identifying, in which case the band moves to the exclude list.
 
-10. Is the club name and crest public on the share page?
-    - Recommended: yes, club name, motto and the bundled public `/crest.png`; never the private crest object or the club id.
-    - Strongest alternative: omit branding.
-    - User value: branding helps the recipient trust the link.
-    - Privacy and security: the bundled crest and the public name and motto are already public; the club id and the private crest are not returned.
-    - Implementation: use the static asset and the `name` and `motto` fields.
-    - Evidence that would change it: if the club prefers unbranded shares.
+10. Is the club name and crest public on the share page, and how before multi tenant?
+    - Recommended: yes, club name, motto and, in the single club deployment, the bundled public `/crest.png`; never the club database id. Before any multi club deployment, resolve the crest per club from the share's `club_id` (a signed per club crest or a per club public branding asset), because the bundled crest is OTJ's own and would mismatch another club (section 21.2). Label the bundled crest a single club placeholder.
+    - Strongest alternative: omit branding, or serve the per club crest from day one.
+    - User value: branding helps the recipient trust the link; a wrong crest in multi tenant would erode that trust.
+    - Privacy and security: the public name and motto are already public; the bundled crest is a public static asset; the club id is never returned; a per club signed crest reuses the media signing already designed.
+    - Implementation: single club uses the static asset now; multi tenant adds a per club crest resolution, a recorded follow up.
+    - Evidence that would change it: the timeline to multi club, which decides whether per club branding is built now or as the follow up.
 
 11. Are public YouTube embeds allowed, or link only?
     - Recommended: allowed as sandboxed `youtube-nocookie.com` embeds when the video is already public and embedding is permitted, otherwise link only.
@@ -1294,13 +1373,13 @@ Each decision lists the recommended choice, the strongest alternative, the user 
     - Implementation: the media rights class gates the PDF exactly like any other media.
     - Evidence that would change it: a club owned, non FA programme PDF the club wants public.
 
-13. Does creator removal revoke links?
-    - Recommended: no automatic revoke on creator removal; the snapshot is frozen, `created_by` becomes null, and a manager can revoke.
-    - Strongest alternative: revoke all of a removed member's shares automatically.
-    - User value: keeping a useful share alive after a coach leaves may be desirable; auto revoke is tidier.
-    - Privacy and security: the frozen snapshot exposes nothing new when the creator leaves; a manager retains the revoke lever.
-    - Implementation: a set null on `created_by`; auto revoke would be a trigger.
-    - Evidence that would change it: a policy that a departed member's shares must all be revoked.
+13. Does creator removal revoke links, and how are a departed coach's shares handled?
+    - Recommended: no automatic revoke on creator removal; the snapshot is frozen, `created_by` becomes null (`on delete set null`, section 15), and a manager can revoke. To make "a manager can revoke" real, the removal flow surfaces "this member has N active public shares, review them", the PR 5 list has an unattributed or former member filter, the original sharer stays recoverable from the audit `actor_name`, and a bulk revoke of a departed member's shares is offered.
+    - Strongest alternative: revoke all of a removed member's shares automatically at removal.
+    - User value: keeping a useful share alive after a coach leaves may be desirable; auto revoke is tidier but may kill a link the club still wants.
+    - Privacy and security: the frozen snapshot exposes nothing new when the creator leaves; the review prompt plus the filter mean a departed coach's public links are findable, not orphaned silently.
+    - Implementation: `set null` plus the removal prompt and the PR 5 filter; auto revoke would be a trigger.
+    - Evidence that would change it: a policy that a departed member's shares must all be revoked, which flips the default to auto revoke.
 
 14. Is a public page view count useful enough to justify collection?
     - Recommended: no view tracking in v1.
@@ -1334,21 +1413,21 @@ Each decision lists the recommended choice, the strongest alternative, the user 
     - Implementation: an extra route and a list action.
     - Evidence that would change it: how many shares a club actually accumulates.
 
-18. Should public sharing be disabled globally through a club setting as well as capabilities?
-    - Recommended: yes, a club level kill switch the read function checks, in addition to capabilities.
+18. Should public sharing be disabled through a switch as well as capabilities, and at what scope?
+    - Recommended: yes, a per club `clubs.public_sharing_enabled` boolean the `read_public_share` function checks after resolving the share's club, built in PR 1 (schema) and PR 2 (check), resolved before the first public read ships (section 26). Optionally a separate, explicitly global environment flag for an all clubs emergency stop, kept distinct from the per club switch.
     - Strongest alternative: capabilities only.
-    - User value: a kill switch lets an admin turn everything off instantly in an incident.
-    - Privacy and security: a single switch that fails public reads closed is a strong safety lever.
-    - Implementation: a boolean read by the function; small.
-    - Evidence that would change it: if capability revocation is judged sufficient (but it does not stop already created links, so the switch is recommended).
+    - User value: a switch turns public reads off for a club instantly in an incident; capability revocation alone does not stop already created links from being read.
+    - Privacy and security: a switch that fails public reads closed is a strong safety lever; per club scope is correct for a multi tenant future, a global env flag is a blunt all clubs stop.
+    - Implementation: a `clubs` boolean and one check in the definer function; flipping it is a single row update, a small audited data change, not "no data change".
+    - Evidence that would change it: if capability revocation plus per share revoke is judged sufficient, though neither stops an already issued link, so the switch is recommended.
 
-19. What is the retention period for revoked share metadata and audit events?
-    - Recommended: retain share rows and audit events indefinitely at current scale, reviewed annually, matching the audit foundation's stated default.
-    - Strongest alternative: prune revoked shares after a fixed window.
-    - User value: retained audit history answers "who shared what and when"; pruning reduces clutter.
-    - Privacy and security: audit rows hold no secret, no snapshot and no viewer identity, so retention is low risk; a revoked share row could keep its snapshot, so pruning the snapshot from a long revoked share is a reasonable tidy up.
-    - Implementation: none for retain; a sweeper for prune.
-    - Evidence that would change it: a data minimisation policy that sets an explicit retention window.
+19. What is the retention period for revoked share metadata and audit events, and when is the snapshot cleared?
+    - Recommended: retain share rows and audit events indefinitely at current scale, reviewed annually, matching the audit foundation's stated default, BUT clear the `content_shares.snapshot` jsonb on revoke and on expiry (not as an optional tidy up). A revoked or expired share never serves its snapshot again, and the snapshot is the one place a child's name or other private free text that evaded the preview could persist; the lifecycle facts plus the audit event (which records the durable source id and `actor_name`, section 19) suffice for "who shared what and when" without keeping the free text.
+    - Strongest alternative: keep the snapshot on revoked shares for a window, or prune whole revoked rows after a fixed period.
+    - User value: retained lifecycle and audit history answers who shared what and when; clearing the snapshot loses only the frozen public projection, which is never served again.
+    - Privacy and security: audit rows hold no secret, no snapshot and no viewer identity, so retention is low risk; clearing the snapshot on revoke and expiry bounds retention of any personal free text the preview missed.
+    - Implementation: null the `snapshot` column in the revoke and expire paths of the lifecycle RPC; no sweeper needed for the default.
+    - Evidence that would change it: a data minimisation policy that sets an explicit retention window for the whole row, not just the snapshot.
 
 20. What is the maximum programme snapshot size and week count?
     - Recommended: 256 KiB snapshot, 64 media assets, 12 weeks, from the hosted content counts and the FA 10 week cap.
@@ -1407,7 +1486,17 @@ And when the review loop (section below) has run and every material weakness fou
 
 ### Review cycles completed
 
-This roadmap was reviewed against twelve perspectives and revised before it was opened for owner review: a grassroots coach on a phone, an OTJ manager, an external recipient with no account, a product owner, a privacy and safeguarding reviewer, a third party content rights reviewer, a Supabase security engineer, an Edge Function engineer, a database and migration engineer, an accessibility reviewer, an operational support reviewer, and a future multi club architect. Material findings from those perspectives are folded into the sections above (the club wide readability that makes club links trivial, the single unauthenticated route constraint, the first public function departure, the CORS same origin nuance, the audit metadata allow list gap for sharing events, the capability count tripwire coupling, the private crest versus bundled crest branding choice, the delete then recreate immutability residual, the programme expiry exception, and the aggregate rights block).
+This roadmap was reviewed against twelve perspectives and revised before it was opened for owner review: a grassroots coach on a phone, an OTJ manager, an external recipient with no account, a product owner, a privacy and safeguarding reviewer, a third party content rights reviewer, a Supabase security engineer, an Edge Function engineer, a database and migration engineer, an accessibility reviewer, an operational support reviewer, and a future multi club architect. Fifty eight findings were raised and the material ones folded into the sections above. The corrections worth naming, because several were factual errors an unreviewed draft would have shipped:
+
+- A signed Supabase media URL embeds the object path (`club_id` and object uuid) in cleartext, so the earlier "the client never receives the path or the club id" claim was false; sections 20, 21.2 and 23 now record the correlation residual honestly and name the copy or content address fix.
+- FA video exists not only as Vimeo embeds but as downloaded MP4 bytes in the private bucket (`faAttach.ts`); sections 3.4, 13 and 20 now account for stored FA video.
+- `has_perm` is `auth.uid()` bound, so it cannot run inside a service role RPC; sections 16.1, 17 and 19 now put the capability check in the function under the caller JWT and pass a verified actor id to a service role gated RPC and audit writer, matching the `invite-user` pattern.
+- `read-content-share` must hold the service role to read `content_shares` and sign private media, making the first anonymous function an elevated credential surface; section 16.2 confines its DB access to a narrow `read_public_share` SECURITY DEFINER function and threat 11 now covers this.
+- Section 11's "eligible referenced media" read as silent drop while section 13 said block; section 11 now states the v1 fail closed block covers drills, sessions and programmes alike.
+- The `content_shares` person FKs need `on delete set null` or member removal breaks; the one active share invariant needs three partial unique indexes; an `idempotency_key` column was missing; the kill switch was named as the disable lever but built by no PR. All corrected (sections 15, 17, 26, 27).
+- Only three of the four core audit actions are pre reserved; `content_share.rotated` is new (sections 3.6, 19, 28).
+
+Coach, manager, accessibility and ops findings folded in too: plain language lifecycle labels, the free text preview that marks the risky fields, the rights block that offers the club link, the coverage consequence of the FA safe default, the manager redacted review and the departed coach handling, the transient error state and the neutral unavailable copy, dialog semantics and the one time link reveal, and the committed detection baseline.
 
 ## 33. Appendix: proposed snapshot examples (synthetic content only)
 
@@ -1447,7 +1536,7 @@ These examples are illustrative and use invented content only. They contain no r
 }
 ```
 
-Note: `sourceAttribution` is null here because the synthetic drill is club original (`public_full`). An FA derived drill would either carry its attribution and be blocked from public sharing (media internal only) or, if the owner records an FA text decision, show the attribution. No `club_id`, `created_by`, `media_id`, `source_key`, storage path or database id appears.
+Note: `sourceAttribution` is null here because the synthetic drill is club original (`public_full`). An FA derived drill would be blocked from public sharing while its FA media is `internal_only` (section 13), so it would not appear on a public link at all in v1 unless the owner records an FA decision and the media is eligible. No `club_id`, `created_by`, `media_id`, `source_key`, storage path or database id appears. The media `caption` (from `media.name`) is free text and is one of the fields the section 12 preview flags for a name check; the `url` is a short lived signed URL whose string necessarily embeds the object path (section 20).
 
 ### 33.2 Public session snapshot (synthetic)
 
@@ -1484,7 +1573,7 @@ Note: `sourceAttribution` is null here because the synthetic drill is club origi
 }
 ```
 
-Note: no `date`, `start_time`, `venue`, `team_id`, team name, `coach_id`, coach name, `spond_event_id`, attendance count, live state, `programme_id`, real `board_id`, real drill id or storage path appears. Board tokens carry `number`, `side`, `x`, `y` only; there is no `playerId` and no `id`.
+Note: no `date`, `start_time`, `venue`, `team_id`, team name, `coach_id`, coach name, `spond_event_id`, attendance count, live state, `programme_id`, real `board_id`, real drill id or storage path appears. Board tokens carry `number`, `side`, `x`, `y` only; there is no `playerId` and no `id`. The `referencedDrills` entries are abbreviated here for space; in the real snapshot each carries the complete section 11.2 drill field set (setup, area, equipment, level, ages, easier, harder and all), so an external coach gets full run ready detail for every embedded drill. Custom activities (the warm up and cool down here) carry only a title and a duration, so they render as headings with no instructions, the content sufficiency limit noted in section 11.1.
 
 ### 33.3 Public programme snapshot (synthetic)
 
@@ -1512,7 +1601,7 @@ Note: no `date`, `start_time`, `venue`, `team_id`, team name, `coach_id`, coach 
 }
 ```
 
-Note: no template `author`, no `created_by` or owner, no linked club sessions or completion state, no dates, no venues, no internal ids. Referenced drills use snapshot local ids (`d1`, `d2`), never database uuids. The attached programme PDF is present only if its media rights class is `public_full`; an FA PDF is internal only and omitted, and a programme that requires it to be complete is blocked from public sharing.
+Note: no template `author`, no `created_by` or owner, no linked club sessions or completion state, no dates, no venues, no internal ids. Referenced drills use snapshot local ids (`d1`, `d2`), never database uuids, and are abbreviated here but carry the full section 11.2 field set in the real snapshot. The attached programme PDF is media: it is present only if its rights class is `public_full`, and an `internal_only` FA PDF does not appear silently; it blocks the whole programme share (section 11.3, 13), which is why this synthetic example has `"media": []`.
 
 ### 33.4 Generic unavailable response (synthetic)
 
