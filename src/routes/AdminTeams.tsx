@@ -42,8 +42,9 @@ function DeleteTeamModal({
     >
       <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
         {memberCount} member{memberCount !== 1 ? 's' : ''} and {sessionCount} session
-        {sessionCount !== 1 ? 's' : ''} reference this team. They keep working; their team is cleared. No sessions or
-        people are removed.
+        {sessionCount !== 1 ? 's' : ''} reference this team. They keep working; their team is cleared. Any registered
+        players on this team become Unassigned, keeping their registration, shirt number and history. No sessions, people
+        or players are removed.
       </p>
       {del.isError && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>

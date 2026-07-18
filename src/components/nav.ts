@@ -40,6 +40,7 @@ const ADMIN_SECTION: NavSection = {
     { id: 'admin-club', label: 'Club', icon: Icon.star, to: '/admin/club' },
     { id: 'admin-users', label: 'Users', icon: Icon.users, to: '/admin/users' },
     { id: 'admin-teams', label: 'Teams', icon: Icon.flag, to: '/admin/teams' },
+    { id: 'admin-seasons', label: 'Seasons', icon: Icon.calendar, to: '/admin/seasons' },
     { id: 'admin-spond', label: 'Spond', icon: Icon.link, to: '/admin/spond' },
   ],
 }
@@ -55,7 +56,7 @@ const FULL_NAV: NavSection[] = [
       SESSIONS,
       { id: 'planner', label: 'Session Planner', icon: Icon.layers, to: '/planner' },
       { id: 'board', label: 'Tactics Board', icon: Icon.target, to: '/board' },
-      { id: 'roster', label: 'Roster', icon: Icon.users, to: '/roster' },
+      { id: 'players', label: 'Players', icon: Icon.users, to: '/players' },
       { id: 'programmes', label: 'Programmes', icon: Icon.list, to: '/programmes' },
     ],
   },
@@ -92,13 +93,16 @@ const PARENT_ITEMS: BottomItem[] = [
 // included; the keyed ones gate on the capability that backs them.
 export const ITEM_CAP: Record<string, string> = {
   planner: 'sessions.create',
-  // The roster reads the club register, gated on players.view since PR 2
+  // The Registered players page reads the club register, gated on players.view
   // (club wide read). Every coach holds it alongside sessions.create, so the
   // item still shows to coaches; the gate keeps the nav honest to the route.
-  roster: 'players.view',
+  players: 'players.view',
   'admin-club': 'club.manage',
   'admin-users': 'users.manage',
   'admin-teams': 'teams.manage',
+  // The admin seasons surface is admin only (seasons.manage), so the item shows
+  // only to holders even though the rest of the Admin section is club.manage.
+  'admin-seasons': 'seasons.manage',
   'admin-spond': 'club.manage',
 }
 

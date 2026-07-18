@@ -35,7 +35,10 @@ import type {
   Member,
   Phase,
   Player,
+  PlayerHistoryEntry,
   Programme,
+  RegisteredPlayer,
+  RegistrationStatus,
   Season,
   Role,
   RoleCapability,
@@ -3711,8 +3714,24 @@ interface AddPlayerRow {
 export function useInsertPlayer() {
   const qc = useQueryClient()
   const { user, profile } = useAuth()
-  return useMutation<Player, Error, { id: string; teamId: string | null; displayName: string; shirtNumber: number | null }>({
-    mutationFn: async ({ id, teamId, displayName, shirtNumber }) => {
+  return useMutation<
+    Player,
+    Error,
+    {
+      id: string
+      teamId: string | null
+      displayName: string
+      shirtNumber: number | null
+      // The registration status the child is added as. add_player writes into
+      // the current season server side; the Registered players page offers
+      // Pending (the default) or Registered on create (0032). registeredDate is
+      // for a backdated paper registration; left null the trigger fills it the
+      // first time the status is registered.
+      status?: RegistrationStatus
+      registeredDate?: string | null
+    }
+  >({
+    mutationFn: async ({ id, teamId, displayName, shirtNumber, status = 'registered', registeredDate = null }) => {
       const name = displayName.trim()
       if (!name) throw new Error('Enter a name.')
       if (!user || !profile?.club_id) throw new Error('You must be signed in.')
@@ -3721,8 +3740,8 @@ export function useInsertPlayer() {
         p_display_name: name,
         p_team_id: teamId,
         p_shirt_number: shirtNumber,
-        p_status: 'registered',
-        p_registered_date: null,
+        p_status: status,
+        p_registered_date: registeredDate,
       })
       if (error) throw error
       const row = (Array.isArray(data) ? data[0] : data) as AddPlayerRow
@@ -3881,5 +3900,268 @@ export function useSpondRosterImport() {
     // Settled, not success: an error after a partial write still refreshes
     // the roster so the screen shows the true state.
     onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
+  })
+}
+
+// ---- Registered players page: season-aware reads and writes ---------------
+// The Registered players page (PR 3) reads a chosen season's registrations
+// joined to the stable identities, so it can show any season, current or
+// archived, not only the current one usePlayers returns. Read is club wide
+// under players.view; parents hold neither and the route guard keeps them out.
+
+interface RegistrationFullRow {
+  id: string
+  player_id: string
+  season_id: string
+  team_id: string | null
+  status: RegistrationStatus
+  shirt_number: number | null
+  registered_date: string | null
+  created_by: string | null
+  updated_at: string
+}
+
+// The selected season's register, assembled into RegisteredPlayer rows (the
+// registration id, its seasonal facts, and the identity's name resolved by id).
+// Keyed by the season id so switching season or activating one cannot mix
+// stale rows. Rows are returned unsorted; the page's pure sort reducer orders
+// them, so the ordering is unit tested without a database. The name resolves
+// from the identity read; a registration whose identity is missing (should not
+// happen given the FK) is skipped rather than shown nameless.
+export function useRegisteredPlayers(seasonId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['registrations', seasonId],
+    enabled: enabled && !!seasonId,
+    queryFn: async (): Promise<RegisteredPlayer[]> => {
+      const [regs, ids] = await Promise.all([
+        supabase
+          .from('player_registrations')
+          .select('id, player_id, season_id, team_id, status, shirt_number, registered_date, created_by, updated_at')
+          .eq('season_id', seasonId as string),
+        supabase.from('players').select('id, display_name'),
+      ])
+      if (regs.error) throw regs.error
+      if (ids.error) throw ids.error
+      const nameById = new Map(
+        (ids.data as unknown as { id: string; display_name: string }[]).map((p) => [p.id, p.display_name]),
+      )
+      const rows: RegisteredPlayer[] = []
+      for (const r of regs.data as unknown as RegistrationFullRow[]) {
+        const name = nameById.get(r.player_id)
+        if (name === undefined) continue
+        rows.push({
+          registrationId: r.id,
+          playerId: r.player_id,
+          seasonId: r.season_id,
+          teamId: r.team_id,
+          displayName: name,
+          shirtNumber: r.shirt_number,
+          status: r.status,
+          registeredDate: r.registered_date,
+          createdBy: r.created_by,
+          updatedAt: r.updated_at,
+        })
+      }
+      return rows
+    },
+  })
+}
+
+// The shared invalidation for a registration write: the season's register, the
+// current-season roster usePlayers reads, and any board resolving names.
+function invalidatePlayerReads(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['registrations'] })
+  qc.invalidateQueries({ queryKey: ['players'] })
+  qc.invalidateQueries({ queryKey: ['boards'] })
+}
+
+// Moves a registration to another team, or to Unassigned (null). A seasonal
+// edit on the registration, never the frozen players.team_id; the audit trigger
+// records player.team_changed with safe old and new team ids (no name). The
+// update targets the registration by id and requires exactly one affected row,
+// so an RLS filtered or already-gone row surfaces as a failure rather than a
+// silent no-op. Not offered on an archived season (the guard refuses a non-null
+// team change there, and the page hides the affordance).
+export function useMovePlayerTeam() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { registrationId: string; teamId: string | null }>({
+    mutationFn: async ({ registrationId, teamId }) => {
+      const { data, error } = await supabase
+        .from('player_registrations')
+        .update({ team_id: teamId })
+        .eq('id', registrationId)
+        .select('id')
+      if (error) throw error
+      if (!deletedExactlyOne(data as { id: string }[] | null)) {
+        throw new Error('The player was not moved. Reload and try again.')
+      }
+    },
+    onSettled: () => invalidatePlayerReads(qc),
+  })
+}
+
+// Sets a registration's status, the single write behind Withdraw (-> withdrawn),
+// Restore (-> pending or registered) and the pending/registered transitions.
+// Withdraw keeps the team and shirt untouched (only status changes), so the
+// record can be restored intact. Server enforced transitions (0032) reject an
+// invalid move; the UI only offers valid ones. Requires exactly one affected
+// row. Restoring to registered with no registered_date lets the trigger fill it.
+export function useSetRegistrationStatus() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { registrationId: string; status: RegistrationStatus }>({
+    mutationFn: async ({ registrationId, status }) => {
+      const { data, error } = await supabase
+        .from('player_registrations')
+        .update({ status })
+        .eq('id', registrationId)
+        .select('id')
+      if (error) throw error
+      if (!deletedExactlyOne(data as { id: string }[] | null)) {
+        throw new Error('The change was not saved. Reload and try again.')
+      }
+    },
+    onSettled: () => invalidatePlayerReads(qc),
+  })
+}
+
+// The per player History read path (0032 player_history RPC), gated server side
+// on audit.view (managers and admins). Returns the child's audit trail newest
+// first, carrying no name: the action and safe fields describe the change, and
+// the actor, team and player names resolve at render time by id. A coach
+// (players.view only) is refused by the RPC; the page hides the affordance for
+// them, and RequireCap keeps parents off the page entirely.
+interface PlayerHistoryRow {
+  id: string
+  occurred_at: string
+  actor_id: string | null
+  actor_name: string | null
+  action: string
+  entity_id: string
+  season_id: string | null
+  team_id: string | null
+  source: string
+  changed_fields: string[] | null
+  safe_changes: Record<string, { old?: unknown; new?: unknown }> | null
+}
+
+export function usePlayerHistory(playerId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['playerHistory', playerId],
+    enabled: enabled && !!playerId,
+    queryFn: async (): Promise<PlayerHistoryEntry[]> => {
+      const { data, error } = await supabase.rpc('player_history', {
+        p_player_id: playerId,
+        p_limit: 200,
+        p_offset: 0,
+      })
+      if (error) throw error
+      return (data as unknown as PlayerHistoryRow[]).map((r) => ({
+        id: r.id,
+        occurredAt: r.occurred_at,
+        actorId: r.actor_id,
+        actorName: r.actor_name,
+        action: r.action,
+        seasonId: r.season_id,
+        teamId: r.team_id,
+        source: r.source,
+        changedFields: r.changed_fields,
+        safeChanges: r.safe_changes,
+      }))
+    },
+  })
+}
+
+// ---- Admin seasons surface -------------------------------------------------
+// Season create, activate, archive and unarchive, behind seasons.manage (admin
+// only) and backed by the seasons RLS and the activate_season RPC. Every write
+// is confirmed (no optimistic mutation) and invalidates the seasons reads, plus
+// the register when the current season may have moved.
+
+// Creates a season. Never changes the current season (is_current defaults
+// false); club and creator are pinned server side by the insert policy
+// (created_by = auth.uid()). Name is 1..20 unique per club; ends_on after
+// starts_on. A duplicate name or bad date range surfaces as the mutation error.
+export function useCreateSeason() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<void, Error, { name: string; startsOn: string; endsOn: string }>({
+    mutationFn: async ({ name, startsOn, endsOn }) => {
+      if (!user || !profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase.from('seasons').insert({
+        club_id: profile.club_id,
+        name: name.trim(),
+        starts_on: startsOn,
+        ends_on: endsOn,
+        created_by: user.id,
+      })
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['seasons'] }),
+  })
+}
+
+// Activates a season through the activate_season RPC (0032), one transaction
+// that clears the outgoing current season and sets the target, optionally
+// archiving the outgoing season. Registrations are untouched. Invalidates the
+// seasons reads and the register, since the current season the page opens on
+// has moved.
+export function useActivateSeason() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { seasonId: string; archiveOutgoing: boolean }>({
+    mutationFn: async ({ seasonId, archiveOutgoing }) => {
+      const { error } = await supabase.rpc('activate_season', {
+        p_season_id: seasonId,
+        p_archive_outgoing: archiveOutgoing,
+      })
+      if (error) throw error
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['seasons'] })
+      qc.invalidateQueries({ queryKey: ['registrations'] })
+      qc.invalidateQueries({ queryKey: ['players'] })
+    },
+  })
+}
+
+// Archives a non-current season (sets archived_at). The seasons guard refuses
+// archiving the current season alone (P0001), so the UI only offers Archive on
+// non-current seasons; the audit trigger records season.archived. Requires
+// exactly one affected row.
+export function useArchiveSeason() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { seasonId: string }>({
+    mutationFn: async ({ seasonId }) => {
+      const { data, error } = await supabase
+        .from('seasons')
+        .update({ archived_at: new Date().toISOString() })
+        .eq('id', seasonId)
+        .select('id')
+      if (error) throw error
+      if (!deletedExactlyOne(data as { id: string }[] | null)) {
+        throw new Error('The season was not archived. Reload and try again.')
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['seasons'] }),
+  })
+}
+
+// Unarchives a season (clears archived_at), making it writable again. The audit
+// trigger records season.updated with changed_fields ['archived_at']. Requires
+// exactly one affected row.
+export function useUnarchiveSeason() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { seasonId: string }>({
+    mutationFn: async ({ seasonId }) => {
+      const { data, error } = await supabase
+        .from('seasons')
+        .update({ archived_at: null })
+        .eq('id', seasonId)
+        .select('id')
+      if (error) throw error
+      if (!deletedExactlyOne(data as { id: string }[] | null)) {
+        throw new Error('The season was not unarchived. Reload and try again.')
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['seasons'] }),
   })
 }

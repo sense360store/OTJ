@@ -15,15 +15,17 @@ import { useMemo, useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import {
   useBoards,
+  useCurrentSeason,
   useDeleteBoard,
   useMemberMap,
   useMyCapabilities,
-  usePlayers,
+  useRegisteredPlayers,
   useRenameBoard,
   useSaveBoard,
   useTeamMap,
   useTeams,
 } from '../lib/queries'
+import { eligibleForBoard } from '../lib/playersView'
 import {
   boardIsDirty,
   captureBoardEdit,
@@ -72,11 +74,17 @@ export function Board() {
   const isAdmin = caps.has('club.manage')
   const { data: teams } = useTeams()
   const teamList = teams ?? []
-  // The roster source: a team's real players, the opt in alternative to the
-  // formation picker. The players read is gated on sessions.create by RLS, the
-  // same capability that gates this page, so it returns nothing for a parent
-  // (who never reaches the board anyway).
-  const { data: players = [] } = usePlayers()
+  // The roster source: the current season's eligible registrations, the opt in
+  // alternative to the formation picker. Read is club wide under players.view;
+  // board seeding narrows it to the eligibility rules (current season only,
+  // status registered by default, the selected team, Withdrawn never, Pending
+  // only behind the toggle below, Unassigned only when the team selector is set
+  // to it). The persisted board carries ids and numbers, never names.
+  const { data: currentSeason } = useCurrentSeason()
+  const { data: rows = [] } = useRegisteredPlayers(currentSeason?.id ?? null)
+  // Whether early season Pending players are offered to seed (an explicit
+  // grassroots need); off by default so only Registered players seed.
+  const [includePending, setIncludePending] = useState(false)
   // The team selector frames the board and is saved with it. It defaults to
   // the coach's team; tokens come from the formation picker and the add
   // control until a roster lands.
@@ -123,13 +131,21 @@ export function Board() {
     loadedId && savedSnapshot ? savedSnapshot : { name: '', formation: '', teamId: selectedTeam || null, tokens: [] }
   const dirty = boardIsDirty(current, baseline)
 
-  // The selected team's roster, the source the "Seed from roster" control uses.
-  const teamPlayers = useMemo(() => players.filter((p) => p.teamId === selectedTeam), [players, selectedTeam])
+  // The eligible players the "Seed from roster" control uses: the eligibility
+  // rules applied to the current season's rows for the selected team (or the
+  // Unassigned pool when the selector is empty).
+  const eligible = useMemo(
+    () => eligibleForBoard(rows, selectedTeam || null, includePending),
+    [rows, selectedTeam, includePending],
+  )
 
-  // Resolves token playerIds to names at render time. Built from the same
-  // sessions.create gated players query, so it exists only for coaches and
-  // admins; the persisted board itself carries ids and numbers, never names.
-  const names: PlayerNameMap = useMemo(() => playerNameMap(players), [players])
+  // Resolves token playerIds to names at render time. Built from every current
+  // season row (not only the eligible ones) so any token resolves; the persisted
+  // board itself carries ids and numbers, never names.
+  const names: PlayerNameMap = useMemo(
+    () => playerNameMap(rows.map((r) => ({ id: r.playerId, displayName: r.displayName }))),
+    [rows],
+  )
 
   // Placing a formation replaces that side's tokens and leaves the other side
   // alone, so home and away can sit on the board together.
@@ -149,9 +165,9 @@ export function Board() {
   // stores the name; the render resolves it live, so renaming a player updates
   // every board and deleting one leaves a plain numbered disc.
   function seedFromRoster() {
-    if (teamPlayers.length === 0) return
+    if (eligible.length === 0) return
     const placed = rosterTokens(
-      teamPlayers.map((p) => ({ id: p.id, shirtNumber: p.shirtNumber })),
+      eligible.map((p) => ({ id: p.playerId, shirtNumber: p.shirtNumber })),
       side,
     )
     setTokens((prev) => [...prev.filter((t) => t.side !== side), ...placed])
@@ -301,7 +317,9 @@ export function Board() {
         onFormation={placeFormation}
         side={side}
         onSide={setSide}
-        teamPlayerCount={teamPlayers.length}
+        teamPlayerCount={eligible.length}
+        includePending={includePending}
+        onTogglePending={setIncludePending}
         onSeedRoster={seedFromRoster}
         onAddToken={addToken}
         onClear={clearBoard}
@@ -353,6 +371,8 @@ export function BoardStage({
   side,
   onSide,
   teamPlayerCount,
+  includePending,
+  onTogglePending,
   onSeedRoster,
   onAddToken,
   onClear,
@@ -385,6 +405,8 @@ export function BoardStage({
   side: TokenSide
   onSide: (side: TokenSide) => void
   teamPlayerCount: number
+  includePending: boolean
+  onTogglePending: (v: boolean) => void
   onSeedRoster: () => void
   onAddToken: () => void
   onClear: () => void
@@ -441,12 +463,14 @@ export function BoardStage({
         <label className="board-field">
           <span>Team</span>
           <select className="select" value={selectedTeam} onChange={(e) => onTeam(e.target.value)}>
-            {teamList.length === 0 && <option value="">No teams</option>}
             {teamList.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
+            {/* Unassigned players seed only when the team selector is set to
+                Unassigned, never riding along with a team's seed. */}
+            <option value="">Unassigned</option>
           </select>
         </label>
 
@@ -478,6 +502,10 @@ export function BoardStage({
             <Icon.users />
             {teamPlayerCount === 0 ? 'No roster' : `Seed ${side} from roster (${teamPlayerCount})`}
           </button>
+          <label className="row" style={{ gap: 6, fontSize: 12.5, marginTop: 6, alignItems: 'center', color: 'var(--slate)' }}>
+            <input type="checkbox" checked={includePending} onChange={(e) => onTogglePending(e.target.checked)} />
+            Include pending
+          </label>
         </div>
 
         <div className="board-field">
