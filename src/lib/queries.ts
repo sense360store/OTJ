@@ -3968,9 +3968,12 @@ export function useRegisteredPlayers(seasonId: string | null, enabled = true) {
   })
 }
 
-// The shared invalidation for a registration write: the season's register, the
+// The shared invalidation for a registration write: the season's register (the
+// Registered players table, keyed ['registrations', seasonId], so a prefix
+// invalidation refreshes it after every add, edit, delete or import), the
 // current-season roster usePlayers reads, and any board resolving names.
-function invalidatePlayerReads(qc: ReturnType<typeof useQueryClient>) {
+// Exported so the set of refreshed reads is pinned in a unit test.
+export function invalidatePlayerReads(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['registrations'] })
   qc.invalidateQueries({ queryKey: ['players'] })
   qc.invalidateQueries({ queryKey: ['boards'] })

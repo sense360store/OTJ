@@ -184,4 +184,66 @@ describe('add_player transactional creation', () => {
     const { data } = await serviceClient().from('players').select('id').eq('display_name', shared)
     expect((data ?? []).length).toBe(2)
   })
+
+  // --- registered_date behaviour (defect 1) ---
+  // The client never sends a date for a Pending add (registeredDateForAdd), so
+  // the register never holds the contradictory "pending with a registration
+  // date" row. These pin the three date outcomes the add path relies on.
+  async function regFor(playerId: string): Promise<{ status: string; registered_date: string | null }> {
+    const { data } = await serviceClient()
+      .from('player_registrations')
+      .select('status, registered_date')
+      .eq('player_id', playerId)
+      .single()
+    return data as { status: string; registered_date: string | null }
+  }
+
+  it('a Pending add with a null registered date succeeds and stores no date', async () => {
+    const id = uuid()
+    const { error } = await admin.rpc('add_player', {
+      p_id: id,
+      p_display_name: name('pending-null'),
+      p_team_id: null,
+      p_shirt_number: null,
+      p_status: 'pending',
+      p_registered_date: null,
+    })
+    expect(error).toBeNull()
+    const reg = await regFor(id)
+    expect(reg.status).toBe('pending')
+    expect(reg.registered_date).toBeNull()
+  })
+
+  it('a Registered add with a blank (null) date receives the server-derived date (today)', async () => {
+    const id = uuid()
+    const { error } = await admin.rpc('add_player', {
+      p_id: id,
+      p_display_name: name('reg-today'),
+      p_team_id: null,
+      p_shirt_number: null,
+      p_status: 'registered',
+      p_registered_date: null,
+    })
+    expect(error).toBeNull()
+    const reg = await regFor(id)
+    expect(reg.status).toBe('registered')
+    // The trigger fills the club's current UTC date when the field is empty.
+    expect(reg.registered_date).toBe(new Date().toISOString().slice(0, 10))
+  })
+
+  it('a Registered add with an explicit backdated date keeps it', async () => {
+    const id = uuid()
+    const { error } = await admin.rpc('add_player', {
+      p_id: id,
+      p_display_name: name('reg-backdated'),
+      p_team_id: null,
+      p_shirt_number: null,
+      p_status: 'registered',
+      p_registered_date: '2026-01-15',
+    })
+    expect(error).toBeNull()
+    const reg = await regFor(id)
+    expect(reg.status).toBe('registered')
+    expect(reg.registered_date).toBe('2026-01-15')
+  })
 })
