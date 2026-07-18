@@ -170,9 +170,19 @@ function rowMenuItems(
 
 export function Players() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const filters = useMemo<PlayersFilters>(() => parseFilters(searchParams), [searchParams])
+  // The free-text search lives in page state, never the URL: a search term can
+  // be a child's name, and no child name may enter the address bar. The
+  // structural filters (season, team, status, sort) are the URL-persisted,
+  // shareable ones.
+  const [q, setQ] = useState('')
+  const urlFilters = useMemo<PlayersFilters>(() => parseFilters(searchParams), [searchParams])
+  const filters = useMemo<PlayersFilters>(() => ({ ...urlFilters, q }), [urlFilters, q])
   const patch = (p: Partial<PlayersFilters>) => {
-    setSearchParams(filtersToParams({ ...filters, ...p }), { replace: true })
+    const { q: nextQ, ...rest } = p
+    if (nextQ !== undefined) setQ(nextQ)
+    if (Object.keys(rest).length > 0) {
+      setSearchParams(filtersToParams({ ...urlFilters, ...rest }), { replace: true })
+    }
   }
 
   const { caps, isPending: capsPending } = useMyCapabilities()

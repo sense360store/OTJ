@@ -29,7 +29,11 @@ export const DEFAULT_SORT: SortKey = 'name'
 
 // The full filter state the page holds. seasonId null means "the current
 // season" (resolved by the page once the current season is known), so a bare
-// /players opens on the current season without the id in the URL.
+// /players opens on the current season without the id in the URL. The free
+// text search q is deliberately NOT part of the URL scheme: a search term a
+// coach types can be a child's name, and no child name may enter the URL, so q
+// lives in page state only and is merged in for filtering. The structural
+// filters below are the URL-persisted, shareable ones.
 export interface PlayersFilters {
   seasonId: string | null
   team: TeamFilter
@@ -63,7 +67,9 @@ export function parseFilters(params: URLSearchParams): PlayersFilters {
     seasonId: seasonId && seasonId.trim() !== '' ? seasonId : null,
     team: team && team.trim() !== '' ? team : 'all',
     status,
-    q: params.get('q') ?? '',
+    // q is never read from the URL (see PlayersFilters): a search term can be a
+    // child's name, so it stays in page state, never the address bar.
+    q: '',
     sort,
   }
 }
@@ -77,7 +83,8 @@ export function filtersToParams(f: PlayersFilters): URLSearchParams {
   if (f.seasonId) params.set('season', f.seasonId)
   if (f.team !== 'all') params.set('team', f.team)
   if (f.status !== DEFAULT_STATUS_FILTER) params.set('status', f.status)
-  if (f.q.trim() !== '') params.set('q', f.q)
+  // q is intentionally omitted: a search term can be a child's name, and no
+  // child name may enter the URL. Search is page state only.
   if (f.sort !== DEFAULT_SORT) params.set('sort', f.sort)
   return params
 }

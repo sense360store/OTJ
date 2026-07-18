@@ -47,16 +47,23 @@ describe('parseFilters / filtersToParams URL round trip', () => {
     expect(filtersToParams(f).toString()).toBe('')
   })
 
-  it('round trips a fully specified view', () => {
+  it('round trips the structural filters (season, team, status, sort)', () => {
     const f: PlayersFilters = {
       seasonId: 'season-9',
       team: 'titans',
       status: 'withdrawn',
-      q: 'jack',
+      q: '',
       sort: 'shirt',
     }
     const params = filtersToParams(f)
     expect(parseFilters(params)).toEqual(f)
+  })
+
+  it('never writes the search term to the URL (a search can be a child name)', () => {
+    const params = filtersToParams({ ...DEFAULT_FILTERS, q: 'Jack Reed' })
+    expect(params.toString()).toBe('')
+    // And a URL carrying a stray q is not read back into the filter state.
+    expect(parseFilters(new URLSearchParams('q=Jack%20Reed')).q).toBe('')
   })
 
   it('omits the default status pair and the default sort from the URL', () => {
