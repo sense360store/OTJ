@@ -3,7 +3,12 @@
 // refresh component-only rule is relaxed here.
 /* eslint-disable react-refresh/only-export-components */
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import type {
+  CSSProperties,
+  FocusEvent as ReactFocusEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactNode,
+} from 'react'
 import { Icon } from './icons'
 import { focusableElements, trapTabIndex } from '../lib/modalFocus'
 import type { IconComponent } from './icons'
@@ -464,6 +469,27 @@ export function Modal({
     }
   }, [])
 
+  // Keep focus inside the dialog. Escape and the Tab trap below are handled on
+  // the dialog element, so they only fire while focus is within it. That breaks
+  // when a write is in flight: every control (the footer buttons and the X) is
+  // disabled at once, so activating the focused button by keyboard blurs it to
+  // document.body, outside the dialog, and the key handling goes dead. When
+  // focus lands outside, pull it back to the dialog container (tabIndex -1),
+  // which keeps Escape and the trap live and stops Tab leaking to the page
+  // behind an aria-modal dialog. Deferred to a microtask and guarded on
+  // isConnected so it never fights the close path, which unmounts the dialog and
+  // restores focus to the opener.
+  const onBlur = (e: ReactFocusEvent<HTMLDivElement>) => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const next = e.relatedTarget as Node | null
+    if (next && dialog.contains(next)) return
+    queueMicrotask(() => {
+      const d = dialogRef.current
+      if (d && d.isConnected && !d.contains(document.activeElement)) d.focus()
+    })
+  }
+
   // Escape and the Tab trap are handled on the dialog, which holds focus, so the
   // dialog owns its own key handling rather than a document-wide listener.
   // Escape is inert while a write is in flight (dismissible false).
@@ -499,6 +525,7 @@ export function Modal({
         style={wide ? { maxWidth: 860 } : undefined}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
+        onBlur={onBlur}
       >
         <div className="modal-head">
           <div>
