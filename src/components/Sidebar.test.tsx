@@ -31,13 +31,20 @@ describe('Sidebar navigation', () => {
     }
   })
 
-  it('shows a coach the Roster entry but never a parent', () => {
-    // The Roster sits in the Plan group (sessions.create) and additionally
-    // gates on players.view since PR 2, so a coach holding both sees it and a
-    // parent holding neither does not; the route guard and players RLS enforce
-    // the same boundary.
-    expect(ids(new Set(['sessions.create', 'players.view']))).toContain('roster')
-    expect(ids(new Set())).not.toContain('roster')
+  it('shows a coach the Registered players entry but never a parent', () => {
+    // The Players page sits in the Plan group (sessions.create) and additionally
+    // gates on players.view, so a coach holding both sees it and a parent
+    // holding neither does not; the route guard and players RLS enforce the same
+    // boundary.
+    expect(ids(new Set(['sessions.create', 'players.view']))).toContain('players')
+    expect(ids(new Set())).not.toContain('players')
+  })
+
+  it('shows the admin Seasons entry only to seasons.manage holders', () => {
+    // The seasons surface is admin only (seasons.manage), so it shows for an
+    // admin and not for a coach who holds the rest of the coaching nav.
+    expect(ids(new Set(['sessions.create', 'seasons.manage']))).toContain('admin-seasons')
+    expect(ids(new Set(['sessions.create', 'players.view']))).not.toContain('admin-seasons')
   })
 
   it('keeps the full nav for a member holding both a coaching role and parent', () => {

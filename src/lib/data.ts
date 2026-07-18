@@ -77,9 +77,57 @@ export interface PlayerRegistration {
   playerId: string
   seasonId: string
   teamId: string | null
-  status: 'pending' | 'registered' | 'withdrawn'
+  status: RegistrationStatus
   shirtNumber: number | null
   registeredDate: string | null
+}
+
+// A registration's state. Server enforced transitions (0032): pending may go to
+// registered or withdrawn; registered may go to withdrawn; withdrawn may return
+// to pending or registered. Drives list visibility, board eligibility and the
+// status badge.
+export type RegistrationStatus = 'pending' | 'registered' | 'withdrawn'
+
+// A row on the Registered players page: one child's identity joined to its
+// registration for the selected season. The name (displayName) comes from the
+// stable identity (public.players); everything seasonal (team, shirt, status,
+// registered and updated dates, the registration id used for edits) comes from
+// that child's registration in the selected season. teamId is nullable because
+// a registration can be Unassigned (null team), for example after its team is
+// deleted. registrationId is the row the withdraw, restore and move team writes
+// target; playerId is the stable identity the rename, delete and History target.
+export interface RegisteredPlayer {
+  registrationId: string
+  playerId: string
+  seasonId: string
+  teamId: string | null
+  displayName: string
+  shirtNumber: number | null
+  status: RegistrationStatus
+  registeredDate: string | null
+  createdBy: string | null
+  updatedAt: string
+}
+
+// One row of a player's History, returned by the player_history read path
+// (0032, gated on audit.view). It carries no child name by construction: the
+// action and the safe changed fields describe what changed, and names of the
+// actor, team and player resolve at render time by id. safe_changes never holds
+// a display_name (the 0030 allow list excludes it), so a History row is
+// pseudonymous child personal data, never a name in the clear.
+export interface PlayerHistoryEntry {
+  id: string
+  occurredAt: string
+  actorId: string | null
+  actorName: string | null
+  action: string
+  seasonId: string | null
+  teamId: string | null
+  source: string
+  changedFields: string[] | null
+  // A map of safe field -> { old?, new? }. Only the allow listed fields
+  // (status, team_id, shirt_number, registered_date, season_id) ever appear.
+  safeChanges: Record<string, { old?: unknown; new?: unknown }> | null
 }
 
 // A role as a row in the roles table: the four seeded system roles plus any

@@ -23,12 +23,12 @@ describe('Bottom navigation', () => {
     expect(rowIds(new Set(['sessions.create']))).toEqual(['home', 'planner', 'board', 'sessions'])
   })
 
-  it('shows a coach the Roster in the More sheet but never a parent', () => {
-    // The Roster reads the club register, so a coach holding players.view (with
-    // sessions.create for the Plan group) reaches it from the More sheet; a
+  it('shows a coach the Registered players in the More sheet but never a parent', () => {
+    // The Players page reads the club register, so a coach holding players.view
+    // (with sessions.create for the Plan group) reaches it from the More sheet; a
     // parent, holding neither, does not.
-    expect(moreIds(new Set(['sessions.create', 'players.view']))).toContain('roster')
-    expect(moreIds(new Set())).not.toContain('roster')
+    expect(moreIds(new Set(['sessions.create', 'players.view']))).toContain('players')
+    expect(moreIds(new Set())).not.toContain('players')
   })
 
   it('keeps the secondary browse surfaces reachable through More for a coach', () => {

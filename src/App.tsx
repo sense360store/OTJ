@@ -16,7 +16,7 @@ import { DrillDetail } from './routes/DrillDetail'
 import { Sessions } from './routes/Sessions'
 import { Planner } from './routes/Planner'
 import { Board } from './routes/Board'
-import { Roster } from './routes/Roster'
+import { Players } from './routes/Players'
 import { Templates } from './routes/Templates'
 import { Programmes } from './routes/Programmes'
 import { ProgrammeDetail } from './routes/ProgrammeDetail'
@@ -28,6 +28,7 @@ import { Feedback } from './routes/Feedback'
 import { AdminClub } from './routes/AdminClub'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
+import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
 
 function Splash() {
@@ -104,14 +105,18 @@ export function App() {
             <Route path="templates" element={<Templates />} />
             <Route path="media" element={<Media />} />
           </Route>
-          {/* The roster reads the club register, gated on players.view (club
-              wide read since PR 2). Coaches read it; the add, edit, remove and
-              Spond import affordances inside are capability gated on
-              players.manage and players.delete and the RLS enforces the writes.
-              Parents hold neither and are redirected to Home. */}
+          {/* The Registered players page reads the club register, gated on
+              players.view (club wide read). Coaches read it; the add, edit,
+              move, withdraw, restore, permanent delete, per player History and
+              Spond import affordances inside are capability gated
+              (players.manage, players.delete, audit.view) and the RLS enforces
+              the writes. Parents hold none and are redirected to Home; the
+              disabled query means no child-data read fires for them. The old
+              /roster path redirects here so bookmarks keep working. */}
           <Route element={<RequireCap cap="players.view" />}>
-            <Route path="roster" element={<Roster />} />
+            <Route path="players" element={<Players />} />
           </Route>
+          <Route path="roster" element={<Navigate to="/players" replace />} />
           {/* Account self-service is open to every role, parents included. */}
           <Route path="account" element={<Account />} />
           {/* The feedback log is open to every role too, filing included:
@@ -124,6 +129,11 @@ export function App() {
           </Route>
           <Route element={<RequireCap cap="teams.manage" />}>
             <Route path="admin/teams" element={<AdminTeams />} />
+          </Route>
+          {/* The admin seasons surface is admin only (seasons.manage): create,
+              activate, archive and unarchive the club's registration seasons. */}
+          <Route element={<RequireCap cap="seasons.manage" />}>
+            <Route path="admin/seasons" element={<AdminSeasons />} />
           </Route>
           <Route element={<RequireCap cap="users.manage" />}>
             <Route path="admin/users" element={<AdminUsers />} />

@@ -24,6 +24,7 @@ import {
   expectCheckConstraintRefusal,
   expectRlsInsertRefusal,
   runId,
+  seedPlayer,
   serviceClient,
   signIn,
 } from './stack'
@@ -56,6 +57,7 @@ describe('boards row level security and the board data boundary', () => {
   let boardId: string
   let playerId: string
   let doomedPlayerId: string
+  let seasonA: string
 
   beforeAll(async () => {
     const c1 = await signIn('coachOne')
@@ -68,18 +70,23 @@ describe('boards row level security and the board data boundary', () => {
     // The exact flow the app supports since the boundary: roster rows exist,
     // and a coach saves a board whose tokens reference the players by id.
     // No name is in the tokens; the render resolves it (see tacticsBoard.ts
-    // rosterTokens and serializeTokens).
+    // rosterTokens and serializeTokens). Since 0033 the identity holds only the
+    // name; the team and shirt live on the current season registration, so the
+    // fixtures are seeded through seedPlayer (identity + registration in one
+    // transaction), not the dropped frozen columns.
     const service = serviceClient()
-    const { data: players, error: playerErr } = await service
-      .from('players')
-      .insert([
-        { club_id: CLUB_A, team_id: TEST_TEAM, display_name: rosterName, shirt_number: 7, created_by: coachOneId },
-        { club_id: CLUB_A, team_id: TEST_TEAM, display_name: doomedName, shirt_number: 9, created_by: coachOneId },
-      ])
-      .select('id, display_name')
-    if (playerErr || !players) throw new Error(`could not seed the fixture players: ${playerErr?.message}`)
-    playerId = players.find((r) => r.display_name === rosterName)!.id
-    doomedPlayerId = players.find((r) => r.display_name === doomedName)!.id
+    const { data: season, error: seasonErr } = await service
+      .from('seasons')
+      .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('is_current', true)
+      .single()
+    if (seasonErr || !season) throw new Error(`no current season for club A: ${seasonErr?.message}`)
+    seasonA = season.id
+    const roster = seedPlayer({ club: CLUB_A, season: seasonA, display: rosterName, teamId: TEST_TEAM, shirt: 7, createdBy: coachOneId })
+    const doomed = seedPlayer({ club: CLUB_A, season: seasonA, display: doomedName, teamId: TEST_TEAM, shirt: 9, createdBy: coachOneId })
+    playerId = roster.playerId
+    doomedPlayerId = doomed.playerId
 
     const { data: board, error: boardErr } = await coachOne
       .from('boards')
@@ -145,12 +152,19 @@ describe('boards row level security and the board data boundary', () => {
     expect(ref).toBeDefined()
     const { data: player, error } = await coachOne
       .from('players')
-      .select('display_name, shirt_number')
+      .select('display_name')
       .eq('id', ref!.playerId!)
       .single()
     expect(error).toBeNull()
     expect(player?.display_name).toBe(rosterName)
-    expect(player?.shirt_number).toBe(7)
+    // The shirt lives on the current season registration since 0033.
+    const { data: reg } = await coachOne
+      .from('player_registrations')
+      .select('shirt_number')
+      .eq('player_id', ref!.playerId!)
+      .eq('season_id', seasonA)
+      .single()
+    expect(reg?.shirt_number).toBe(7)
   })
 
   it('renaming a player updates what a coach resolves; the board row never changes', async () => {
@@ -174,7 +188,12 @@ describe('boards row level security and the board data boundary', () => {
 
   it('a shirt number change never rewrites a saved board: the token number is a point-in-time fact', async () => {
     const service = serviceClient()
-    const { error } = await service.from('players').update({ shirt_number: 23 }).eq('id', playerId)
+    // The shirt is a seasonal registration fact since 0033, not a players column.
+    const { error } = await service
+      .from('player_registrations')
+      .update({ shirt_number: 23 })
+      .eq('player_id', playerId)
+      .eq('season_id', seasonA)
     expect(error).toBeNull()
     const { data: board } = await coachOne.from('boards').select('tokens').eq('id', boardId).single()
     const tokens = (board?.tokens ?? []) as StoredToken[]
@@ -246,13 +265,12 @@ describe('boards row level security and the board data boundary', () => {
     // semantics stay executable. Twins prove the ambiguity rule: a label
     // matching TWO club players links nothing and is simply removed.
     const service = serviceClient()
-    const { data: twins, error: twinErr } = await service
-      .from('players')
-      .insert([
-        { club_id: CLUB_A, team_id: TEST_TEAM, display_name: twinName, shirt_number: 11, created_by: coachOneId },
-        { club_id: CLUB_A, team_id: TEST_TEAM, display_name: twinName, shirt_number: 12, created_by: coachOneId },
-      ])
-      .select('id')
+    // Two identities sharing a name, each with its own current season
+    // registration (seeded through seedPlayer since 0033 dropped the frozen
+    // columns). The ambiguity is what the transform must refuse to link.
+    seedPlayer({ club: CLUB_A, season: seasonA, display: twinName, teamId: TEST_TEAM, shirt: 11, createdBy: coachOneId })
+    seedPlayer({ club: CLUB_A, season: seasonA, display: twinName, teamId: TEST_TEAM, shirt: 12, createdBy: coachOneId })
+    const { data: twins, error: twinErr } = await service.from('players').select('id').eq('display_name', twinName)
     expect(twinErr).toBeNull()
     expect(twins).toHaveLength(2)
 

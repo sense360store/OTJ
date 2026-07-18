@@ -7,6 +7,7 @@ export type Screen =
   | 'sessions'
   | 'planner'
   | 'board'
+  | 'players'
   | 'programmes'
   | 'templates'
   | 'media'
@@ -17,6 +18,7 @@ export type Screen =
   | 'admin-club'
   | 'admin-users'
   | 'admin-teams'
+  | 'admin-seasons'
   | 'admin-spond'
 
 export function screenFromPath(pathname: string): Screen {
@@ -26,6 +28,7 @@ export function screenFromPath(pathname: string): Screen {
   if (pathname.startsWith('/sessions')) return 'sessions'
   if (pathname.startsWith('/planner')) return 'planner'
   if (pathname.startsWith('/board')) return 'board'
+  if (pathname.startsWith('/players')) return 'players'
   if (pathname.startsWith('/programmes')) return 'programmes'
   if (pathname.startsWith('/templates')) return 'templates'
   if (pathname.startsWith('/media')) return 'media'
@@ -36,6 +39,7 @@ export function screenFromPath(pathname: string): Screen {
   if (pathname.startsWith('/admin/club')) return 'admin-club'
   if (pathname.startsWith('/admin/users')) return 'admin-users'
   if (pathname.startsWith('/admin/teams')) return 'admin-teams'
+  if (pathname.startsWith('/admin/seasons')) return 'admin-seasons'
   if (pathname.startsWith('/admin/spond')) return 'admin-spond'
   return 'home'
 }

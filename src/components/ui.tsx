@@ -2,9 +2,15 @@
 // primitives with the small constants and helpers they share, so the fast
 // refresh component-only rule is relaxed here.
 /* eslint-disable react-refresh/only-export-components */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import type {
+  CSSProperties,
+  FocusEvent as ReactFocusEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactNode,
+} from 'react'
 import { Icon } from './icons'
+import { focusableElements, trapTabIndex } from '../lib/modalFocus'
 import type { IconComponent } from './icons'
 import { CORNERS, cornerClass, youtubeThumb } from '../lib/data'
 import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
@@ -210,7 +216,15 @@ export function Chip({
   disabled?: boolean
 }) {
   return (
-    <button className={'chip' + (on ? ' on' : '')} onClick={onClick} disabled={disabled}>
+    <button
+      className={'chip' + (on ? ' on' : '')}
+      onClick={onClick}
+      disabled={disabled}
+      // A chip that carries an on/off state is a toggle: expose it to assistive
+      // technology so the pressed state is not conveyed by colour alone. Chips
+      // used purely as navigation pass no `on` and get no aria-pressed.
+      aria-pressed={on === undefined ? undefined : on}
+    >
       {dot && <span className="chip-dot" style={{ background: dot }}></span>}
       {Ico && <Ico />}
       {children}
@@ -430,24 +444,101 @@ export function Modal({
   dismissible?: boolean
 }) {
   const { onEscapeKey, onOverlayClick, closeDisabled } = modalDismissControls(dismissible, onClose)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  const bodyId = useId()
+  // Capture the opener at first render, before any autoFocus inside the dialog
+  // moves focus, so focus can be restored to it on close. Guarded for the static
+  // renderer, which has no document.
+  const openerRef = useRef<HTMLElement | null>(
+    typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null,
+  )
+
+  // On open: move focus inside the dialog unless an autoFocus already did.
+  // Focusing the container (role="dialog", labelled and described) announces the
+  // dialog to a screen reader. On close: restore focus to the opener if it is
+  // still in the document (a destructive action may have removed it).
   useEffect(() => {
-    const h = (e: KeyboardEvent) => onEscapeKey(e.key)
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [onEscapeKey])
+    // Copy the ref into the effect so the cleanup uses the value captured at
+    // open, not whatever the ref holds at unmount.
+    const opener = openerRef.current
+    const dialog = dialogRef.current
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus()
+    return () => {
+      if (opener && typeof document !== 'undefined' && document.contains(opener)) opener.focus()
+    }
+  }, [])
+
+  // Keep focus inside the dialog. Escape and the Tab trap below are handled on
+  // the dialog element, so they only fire while focus is within it. That breaks
+  // when a write is in flight: every control (the footer buttons and the X) is
+  // disabled at once, so activating the focused button by keyboard blurs it to
+  // document.body, outside the dialog, and the key handling goes dead. When
+  // focus lands outside, pull it back to the dialog container (tabIndex -1),
+  // which keeps Escape and the trap live and stops Tab leaking to the page
+  // behind an aria-modal dialog. Deferred to a microtask and guarded on
+  // isConnected so it never fights the close path, which unmounts the dialog and
+  // restores focus to the opener.
+  const onBlur = (e: ReactFocusEvent<HTMLDivElement>) => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const next = e.relatedTarget as Node | null
+    if (next && dialog.contains(next)) return
+    queueMicrotask(() => {
+      const d = dialogRef.current
+      if (d && d.isConnected && !d.contains(document.activeElement)) d.focus()
+    })
+  }
+
+  // Escape and the Tab trap are handled on the dialog, which holds focus, so the
+  // dialog owns its own key handling rather than a document-wide listener.
+  // Escape is inert while a write is in flight (dismissible false).
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      onEscapeKey('Escape')
+      return
+    }
+    if (e.key !== 'Tab') return
+    const els = focusableElements(dialogRef.current)
+    if (els.length === 0) {
+      e.preventDefault()
+      return
+    }
+    const activeIndex = els.indexOf(document.activeElement as HTMLElement)
+    const target = trapTabIndex(activeIndex, els.length, e.shiftKey)
+    if (target !== null) {
+      e.preventDefault()
+      els[target].focus()
+    }
+  }
+
   return (
     <div className="modal-overlay" onClick={onOverlayClick}>
-      <div className="modal" style={wide ? { maxWidth: 860 } : undefined} onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={bodyId}
+        ref={dialogRef}
+        tabIndex={-1}
+        style={wide ? { maxWidth: 860 } : undefined}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
+        onBlur={onBlur}
+      >
         <div className="modal-head">
           <div>
-            <h3>{title}</h3>
+            <h3 id={titleId}>{title}</h3>
             {sub && <p>{sub}</p>}
           </div>
-          <button className="icon-btn" onClick={onClose} disabled={closeDisabled}>
+          <button className="icon-btn" aria-label="Close" onClick={onClose} disabled={closeDisabled}>
             <Icon.x />
           </button>
         </div>
-        <div className="modal-body">{children}</div>
+        <div className="modal-body" id={bodyId}>
+          {children}
+        </div>
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
     </div>

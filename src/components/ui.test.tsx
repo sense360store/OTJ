@@ -57,9 +57,35 @@ describe('Modal close button', () => {
   })
 })
 
+describe('Modal dialog and focus semantics', () => {
+  it('renders the dialog role, aria wiring and an accessible close label', () => {
+    const html = renderToStaticMarkup(
+      <Modal title="Edit player" sub="Jack Reed" onClose={noop}>
+        body
+      </Modal>,
+    )
+    expect(html).toContain('role="dialog"')
+    expect(html).toContain('aria-modal="true"')
+    // The title and body are wired to the dialog through aria-labelledby and
+    // aria-describedby, so a screen reader announces both on open.
+    expect(html).toMatch(/aria-labelledby="[^"]+"/)
+    expect(html).toMatch(/aria-describedby="[^"]+"/)
+    // The X carries an accessible label rather than an unlabelled icon.
+    expect(html).toContain('aria-label="Close"')
+    // The dialog container is focusable so focus can move inside on open.
+    expect(html).toContain('tabindex="-1"')
+  })
+})
+
 describe('Chip', () => {
   it('disables when asked and stays live otherwise', () => {
     expect(renderToStaticMarkup(<Chip disabled>Skill</Chip>)).toContain('disabled')
     expect(renderToStaticMarkup(<Chip>Skill</Chip>)).not.toContain('disabled')
+  })
+
+  it('exposes the pressed state on a toggle chip, and none on a plain chip', () => {
+    expect(renderToStaticMarkup(<Chip on>Registered</Chip>)).toContain('aria-pressed="true"')
+    expect(renderToStaticMarkup(<Chip on={false}>Registered</Chip>)).toContain('aria-pressed="false"')
+    expect(renderToStaticMarkup(<Chip>Registered</Chip>)).not.toContain('aria-pressed')
   })
 })
