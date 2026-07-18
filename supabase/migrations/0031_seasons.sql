@@ -267,7 +267,14 @@ set search_path = ''
 as $$
 begin
   if tg_op = 'DELETE' then
-    if old.is_current then
+    -- Refuse a DIRECT delete of the current season, but let a clubs -> seasons
+    -- ON DELETE CASCADE through: during that cascade the parent club row is
+    -- already gone when this BEFORE DELETE fires, so probing for it
+    -- distinguishes a direct season delete (club present, refuse) from a club
+    -- teardown (club gone, allow). Without this, the one-current-season guard
+    -- would make every club with a current season undeletable, silently
+    -- defeating the declared cascade and any future club-level erasure path.
+    if old.is_current and exists (select 1 from public.clubs c where c.id = old.club_id) then
       raise exception 'seasons: the current season cannot be deleted' using errcode = 'P0001';
     end if;
     return old;
