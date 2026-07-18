@@ -7,6 +7,8 @@
 // from `npx supabase status` or from environment variables, never committed.
 
 import { execSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { expect } from 'vitest'
 
@@ -215,4 +217,57 @@ export function expectCheckConstraintRefusal(error: PgError | null, constraintNa
 // across runs against the same local stack.
 export function runId(): string {
   return crypto.randomUUID().slice(0, 8)
+}
+
+// The local database container name, from supabase/config.toml.
+function dbContainer(): string {
+  const configToml = readFileSync(join(process.cwd(), 'supabase', 'config.toml'), 'utf8')
+  const projectId = /^project_id\s*=\s*"([^"]+)"/m.exec(configToml)?.[1]
+  if (!projectId) throw new Error('could not read project_id from supabase/config.toml')
+  return `supabase_db_${projectId}`
+}
+
+// Run SQL directly in the local database container as the owner. For fixture
+// setup and out-of-band verification only, never the subject of an assertion.
+export function runSqlInContainer(sql: string): string {
+  return execSync(`docker exec -i ${dbContainer()} psql -U postgres -d postgres -v ON_ERROR_STOP=1 -t -A -f -`, {
+    input: sql,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+}
+
+function sqlLit(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return 'null'
+  if (typeof v === 'number') return String(v)
+  return `'${String(v).replace(/'/g, "''")}'`
+}
+
+// Seed a stable identity plus one registration in ONE transaction, so the
+// deferred players_require_registration constraint is satisfied at commit (a
+// bare players insert would be rolled back). Runs as the owner through the
+// container, the sanctioned fixture path; the identity is written with null
+// frozen columns so the legacy compatibility trigger does not also create a
+// registration. Returns the two ids. Synthetic data only.
+export function seedPlayer(opts: {
+  club: string
+  season: string
+  display: string
+  teamId?: string | null
+  shirt?: number | null
+  status?: string
+  createdBy?: string | null
+  playerId?: string
+}): { playerId: string; regId: string } {
+  const playerId = opts.playerId ?? crypto.randomUUID()
+  const regId = crypto.randomUUID()
+  runSqlInContainer(
+    `begin;
+     insert into public.players (id, club_id, display_name, created_by)
+       values (${sqlLit(playerId)}, ${sqlLit(opts.club)}, ${sqlLit(opts.display)}, ${sqlLit(opts.createdBy ?? null)});
+     insert into public.player_registrations (id, club_id, player_id, season_id, team_id, status, shirt_number, created_by)
+       values (${sqlLit(regId)}, ${sqlLit(opts.club)}, ${sqlLit(playerId)}, ${sqlLit(opts.season)}, ${sqlLit(opts.teamId ?? null)}, ${sqlLit(opts.status ?? 'registered')}, ${sqlLit(opts.shirt ?? null)}, ${sqlLit(opts.createdBy ?? null)});
+     commit;`,
+  )
+  return { playerId, regId }
 }

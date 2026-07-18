@@ -9,7 +9,17 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { CLUB_A, CLUB_B, anonClient, expectRlsInsertRefusal, runId, serviceClient, signIn } from './stack'
+import {
+  CLUB_A,
+  CLUB_B,
+  TEST_TEAM,
+  anonClient,
+  expectRlsInsertRefusal,
+  runId,
+  seedPlayer,
+  serviceClient,
+  signIn,
+} from './stack'
 
 const RUN = runId()
 const playerName = `SEC TEST Player ${RUN}`
@@ -23,6 +33,7 @@ describe('players identity row level security', () => {
   let managerId: string
   let coachOneId: string
   let playerId: string
+  let seasonA: string
 
   beforeAll(async () => {
     admin = (await signIn('admin')).client
@@ -35,13 +46,22 @@ describe('players identity row level security', () => {
     parent = (await signIn('parent')).client
     outsider = (await signIn('outsider')).client
 
-    const { data, error } = await serviceClient()
-      .from('players')
-      .insert({ club_id: CLUB_A, display_name: playerName, created_by: coachOneId })
+    const { data: season } = await serviceClient()
+      .from('seasons')
       .select('id')
+      .eq('club_id', CLUB_A)
+      .eq('is_current', true)
       .single()
-    if (error) throw new Error(`could not seed the fixture player: ${error.message}`)
-    playerId = data!.id
+    seasonA = season!.id
+    // A stable identity plus its current-season registration, seeded atomically
+    // (a bare players insert is rolled back by the deferred require-registration
+    // constraint).
+    playerId = seedPlayer({
+      club: CLUB_A,
+      season: seasonA,
+      display: playerName,
+      createdBy: coachOneId,
+    }).playerId
   })
 
   afterAll(async () => {
@@ -106,27 +126,63 @@ describe('players identity row level security', () => {
   })
 
   // --- players.manage writes ---
-  it('a manager with players.manage inserts (created_by pinned) and updates', async () => {
-    const { data: created, error: insErr } = await manager
-      .from('players')
-      .insert({ club_id: CLUB_A, display_name: `${playerName} manager`, created_by: managerId })
-      .select('id')
-      .single()
+  it('a manager with players.manage creates (add_player, created_by pinned) and updates', async () => {
+    // Creation goes through add_player: a bare players insert is rolled back by
+    // the deferred require-registration constraint, so the sanctioned path is
+    // the RPC that commits the identity and its registration together.
+    const newId = crypto.randomUUID()
+    const { error: insErr } = await manager.rpc('add_player', {
+      p_id: newId,
+      p_display_name: `${playerName} manager`,
+      p_team_id: TEST_TEAM,
+      p_shirt_number: null,
+      p_status: 'registered',
+      p_registered_date: null,
+    })
     expect(insErr).toBeNull()
+    // created_by is pinned to the acting manager, not forgeable.
+    const { data: row } = await serviceClient().from('players').select('created_by').eq('id', newId).single()
+    expect(row!.created_by).toBe(managerId)
+    // The identity rename is an ordinary players.manage update.
     const { data: upd, error: updErr } = await manager
       .from('players')
       .update({ display_name: `${playerName} manager edited` })
-      .eq('id', created!.id)
+      .eq('id', newId)
       .select('id')
     expect(updErr).toBeNull()
     expect(upd).toHaveLength(1)
   })
 
-  it('a forged created_by on insert is refused (42501)', async () => {
+  it('a forged created_by via add_player is impossible (the RPC pins auth.uid)', async () => {
+    // add_player ignores any caller-supplied creator and pins created_by to the
+    // acting user, so a manager cannot attribute a child to someone else.
+    const newId = crypto.randomUUID()
+    const { error } = await manager.rpc('add_player', {
+      p_id: newId,
+      p_display_name: `${playerName} forge`,
+      p_team_id: TEST_TEAM,
+      p_shirt_number: null,
+      p_status: 'registered',
+      p_registered_date: null,
+    })
+    expect(error).toBeNull()
+    const { data: row } = await serviceClient().from('players').select('created_by').eq('id', newId).single()
+    expect(row!.created_by).toBe(managerId)
+  })
+
+  it('a bare players insert by a manager is rolled back by the deferred invariant', async () => {
+    // The insert passes RLS (players.manage) but leaves no registration, so the
+    // deferred players_require_registration constraint aborts it at commit.
+    const orphanName = `${playerName} orphan`
     const { error } = await manager
       .from('players')
-      .insert({ club_id: CLUB_A, display_name: `${playerName} forge`, created_by: coachOneId })
-    expectRlsInsertRefusal(error)
+      .insert({ club_id: CLUB_A, display_name: orphanName, created_by: managerId })
+      .select('id')
+    expect(error).not.toBeNull()
+    expect(error?.message ?? '').toContain('at least one registration')
+    // Nothing landed, and no player.created audit event survives the rollback.
+    const { data: rows } = await serviceClient().from('players').select('id').eq('display_name', orphanName)
+    expect(rows).toEqual([])
   })
 
   it('a manager insert naming another club is refused (42501)', async () => {
@@ -144,14 +200,31 @@ describe('players identity row level security', () => {
     expect(still).toHaveLength(1)
   })
 
-  it('an admin with players.delete permanently deletes an identity', async () => {
-    const { data: created } = await serviceClient()
-      .from('players')
-      .insert({ club_id: CLUB_A, display_name: `${playerName} to delete`, created_by: managerId })
-      .select('id')
-      .single()
-    const { data: del, error } = await admin.from('players').delete().eq('id', created!.id).select('id')
+  it('an admin with players.delete permanently deletes an identity and cascades its registrations', async () => {
+    const { playerId: pid, regId } = seedPlayer({
+      club: CLUB_A,
+      season: seasonA,
+      display: `${playerName} to delete`,
+      teamId: TEST_TEAM,
+      createdBy: managerId,
+    })
+    const { data: del, error } = await admin.from('players').delete().eq('id', pid).select('id')
     expect(error).toBeNull()
     expect(del).toHaveLength(1)
+    // The registration cascaded with the identity: no orphan registration.
+    const { data: regs } = await serviceClient().from('player_registrations').select('id').eq('id', regId)
+    expect(regs).toEqual([])
+  })
+
+  it('a manager cannot delete a registration directly (no delete grant): erasure is the identity cascade', async () => {
+    // player_registrations has no client delete grant, so even a players.delete
+    // holder cannot remove a single registration and orphan the identity.
+    const { error: mgrErr } = await manager.from('player_registrations').delete().eq('player_id', playerId)
+    expect(mgrErr).not.toBeNull()
+    const { error: adminErr } = await admin.from('player_registrations').delete().eq('player_id', playerId)
+    expect(adminErr).not.toBeNull()
+    // The registration still exists.
+    const { data: still } = await serviceClient().from('player_registrations').select('id').eq('player_id', playerId)
+    expect(still).toHaveLength(1)
   })
 })

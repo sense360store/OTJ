@@ -9,6 +9,7 @@
 // 0021_players.sql, 0032_registered_players.sql). REVIEW: child data surface.
 import { useMemo, useRef, useState } from 'react'
 import {
+  useCurrentSeason,
   useDeletePlayer,
   useInsertPlayer,
   useMyCapabilities,
@@ -20,9 +21,10 @@ import {
 } from '../lib/queries'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
 import { mappingForTeam } from '../lib/spond'
+import { deleteConfirmed } from './rosterHelpers'
 import type { Player, SpondMapping, Team } from '../lib/data'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, Modal } from '../components/ui'
+import { ActionError, ErrorNote, Loading, Modal } from '../components/ui'
 
 // Parse the optional shirt number field: empty clears it, a 1 to 99 integer
 // sets it, anything else is rejected so the input never sends a bad value past
@@ -35,34 +37,70 @@ function parseShirt(raw: string): number | null | undefined {
   return n
 }
 
-function DeletePlayerModal({ player, onClose }: { player: Player; onClose: () => void }) {
+// Permanent deletion is destructive and admin only (players.delete). It removes
+// the stable identity and every one of the child's registrations, in every
+// season, so the modal names that plainly, requires the admin to type the
+// player's current display name to confirm, and cannot be dismissed while the
+// delete is in flight (Escape, overlay and X are all suppressed). Withdraw
+// remains the normal, reversible departure path in the Registered Players page
+// (PR 3); this is the mistake-correction escape hatch only.
+export function DeletePlayerModal({ player, onClose }: { player: Player; onClose: () => void }) {
   const del = useDeletePlayer()
-  const remove = () => del.mutate({ id: player.id }, { onSuccess: onClose })
+  const [typed, setTyped] = useState('')
+  const { submit, pending, failed } = useGuardedSubmit<{ id: string }, void>({
+    operation: 'delete player',
+    perform: ({ id }) => del.mutateAsync({ id }),
+    onSuccess: () => onClose(),
+  })
+  const deleting = pending !== null
+  const confirmed = deleteConfirmed(typed, player.displayName)
+  const remove = () => {
+    if (!confirmed || deleting) return
+    void submit({ id: player.id })
+  }
   return (
     <Modal
-      title="Remove player"
+      title="Permanently delete player"
       sub={player.displayName}
       onClose={onClose}
+      dismissible={!deleting}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={deleting}>
             Cancel
           </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
+          <button
+            className="btn btn-primary"
+            style={{ background: 'var(--m-pdf)' }}
+            onClick={remove}
+            disabled={!confirmed || deleting}
+          >
             <Icon.trash />
-            {del.isPending ? 'Removing…' : 'Remove'}
+            {deleting ? 'Deleting…' : 'Permanently delete'}
           </button>
         </>
       }
     >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-        This removes the player from the roster. A saved board that includes this player keeps its shape; the disc simply
+      <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
+        This permanently deletes <b>{player.displayName}</b> and every one of their registrations, in this season and
+        every other. This cannot be undone. A saved board that includes this player keeps its shape; the disc simply
         shows its number without a name.
       </p>
-      {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
-          Could not remove the player. Try again.
-        </p>
+      <p style={{ fontSize: 13.5, lineHeight: 1.5 }}>To confirm, type the player's name below.</p>
+      <div className="field" style={{ marginBottom: 0 }}>
+        <input
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          placeholder={player.displayName}
+          aria-label="Type the player's name to confirm"
+          disabled={deleting}
+          autoFocus
+        />
+      </div>
+      {failed && (
+        <ActionError onRetry={confirmed ? remove : undefined} style={{ marginTop: 10 }}>
+          Could not delete the player. Reload and try again.
+        </ActionError>
       )}
     </Modal>
   )
@@ -72,11 +110,13 @@ function PlayerRow({
   player,
   canManage,
   canDelete,
+  currentSeason,
   onDelete,
 }: {
   player: Player
   canManage: boolean
   canDelete: boolean
+  currentSeason: string | null
   onDelete: () => void
 }) {
   const update = useUpdatePlayer()
@@ -89,54 +129,83 @@ function PlayerRow({
   const shirtChanged = !shirtInvalid && parsedShirt !== player.shirtNumber
   const changed = (nameChanged || shirtChanged) && !shirtInvalid
 
+  // The rename and the shirt change commit together through the update_player
+  // RPC (one transaction), guarded so a double click or an ambiguous retry
+  // never sends two edits. The edited values stay in the fields on failure so
+  // Retry resends exactly what the coach typed.
+  const { submit, pending, failed } = useGuardedSubmit<
+    { displayName?: string; shirtNumber?: number | null },
+    Player
+  >({
+    operation: 'update player',
+    perform: (input) =>
+      update.mutateAsync({ id: player.id, expectedSeason: currentSeason as string, ...input }),
+    // The query invalidation refreshes the row; the edited values already sit in
+    // the fields, so there is nothing to reset on success.
+    onSuccess: () => {},
+  })
+  const saving = pending !== null
+  const locked = !canManage || saving
+
   const save = () => {
-    if (!changed || !canManage) return
-    update.mutate({
-      id: player.id,
+    if (!changed || !canManage || !currentSeason || saving) return
+    void submit({
       displayName: nameChanged ? name.trim() : undefined,
       shirtNumber: shirtChanged ? parsedShirt : undefined,
     })
   }
 
   return (
-    <div className="row" style={{ gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)' }}>
-      <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={40}
-          aria-label="Player name"
-          readOnly={!canManage}
-          disabled={!canManage}
-        />
+    <div style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
+      <div className="row" style={{ gap: 10 }}>
+        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={40}
+            aria-label="Player name"
+            readOnly={locked}
+            disabled={locked}
+          />
+        </div>
+        <div className="field" style={{ width: 76, marginBottom: 0 }}>
+          <input
+            value={shirt}
+            onChange={(e) => setShirt(e.target.value)}
+            inputMode="numeric"
+            placeholder="No."
+            aria-label="Shirt number"
+            aria-invalid={shirtInvalid}
+            readOnly={locked}
+            disabled={locked}
+          />
+        </div>
+        {canManage && (
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={!changed || saving || !currentSeason}
+            onClick={save}
+          >
+            <Icon.check />
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        )}
+        {canDelete && (
+          <button
+            className="btn btn-ghost btn-sm icon-only"
+            style={{ width: 38, padding: 0 }}
+            aria-label={'Delete ' + player.displayName}
+            onClick={onDelete}
+            disabled={saving}
+          >
+            <Icon.trash />
+          </button>
+        )}
       </div>
-      <div className="field" style={{ width: 76, marginBottom: 0 }}>
-        <input
-          value={shirt}
-          onChange={(e) => setShirt(e.target.value)}
-          inputMode="numeric"
-          placeholder="No."
-          aria-label="Shirt number"
-          aria-invalid={shirtInvalid}
-          readOnly={!canManage}
-          disabled={!canManage}
-        />
-      </div>
-      {canManage && (
-        <button className="btn btn-ghost btn-sm" disabled={!changed || update.isPending} onClick={save}>
-          <Icon.check />
-          Save
-        </button>
-      )}
-      {canDelete && (
-        <button
-          className="btn btn-ghost btn-sm icon-only"
-          style={{ width: 38, padding: 0 }}
-          aria-label={'Remove ' + player.displayName}
-          onClick={onDelete}
-        >
-          <Icon.trash />
-        </button>
+      {failed && (
+        <ActionError onRetry={changed ? save : undefined} style={{ marginTop: 8 }}>
+          Could not save the change. Try again.
+        </ActionError>
       )}
     </div>
   )
@@ -158,6 +227,7 @@ function ImportFromSpondModal({ team, mapping, onClose }: { team: Team; mapping:
       title="Import from Spond"
       sub={team.name}
       onClose={onClose}
+      dismissible={!importer.isPending}
       footer={
         result ? (
           <button className="btn btn-primary" onClick={onClose}>
@@ -217,6 +287,9 @@ export function Roster() {
   const { caps } = useMyCapabilities()
   const { data: teams = [], isLoading: teamsLoading, isError: teamsError } = useTeams()
   const { data: players = [], isLoading: playersLoading, isError: playersError } = usePlayers()
+  // The season the screen is editing against. update_player pins the edit to it,
+  // so a concurrent activation cannot silently redirect a shirt change.
+  const { data: currentSeason } = useCurrentSeason()
   // Club members read spond_groups club wide (no capability), so a coach can
   // see whether the selected team has a mapping. The import affordance shows
   // only when it does; the Edge Function is the real gate.
@@ -366,6 +439,7 @@ export function Roster() {
               player={p}
               canManage={canManage}
               canDelete={canDelete}
+              currentSeason={currentSeason?.id ?? null}
               onDelete={() => setRemoving(p)}
             />
           ))}

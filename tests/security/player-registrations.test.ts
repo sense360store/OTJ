@@ -1,7 +1,8 @@
 // player_registrations RLS and constraints (0032_registered_players.sql). Read
 // is club wide on players.view (no team arm); writes require players.manage with
-// created_by pinned to the writer; permanent single-registration delete requires
-// players.delete. The seasonal facts (team, status, shirt, dates) live here, the
+// created_by pinned to the writer; there is NO client delete grant, so a
+// registration is removed only through the players.delete identity cascade and
+// an identity can never be orphaned. The seasonal facts (team, status, shirt, dates) live here, the
 // name never does. Constraints proven below RLS via the service role: the status
 // vocabulary check (23514), the one registration per player and season unique
 // (23505), the disallowed status transition trigger (P0001), the team deletion
@@ -19,6 +20,7 @@ import {
   expectRlsInsertRefusal,
   expectTriggerRefusal,
   runId,
+  seedPlayer,
   serviceClient,
   signIn,
 } from './stack'
@@ -39,43 +41,6 @@ async function currentSeason(club: string): Promise<string> {
     .single()
   if (error || !data) throw new Error(`no current season for ${club}: ${error?.message}`)
   return data.id
-}
-
-// Seeds a stable identity plus one registration directly through the service
-// role. The identity is written with null frozen columns so the legacy
-// compatibility trigger does not also create a registration; the registration
-// is written explicitly.
-async function seedPlayer(opts: {
-  club: string
-  season: string
-  display: string
-  teamId?: string | null
-  shirt?: number | null
-  status?: string
-  createdBy?: string | null
-}): Promise<{ playerId: string; regId: string }> {
-  const svc = serviceClient()
-  const { data: p, error: pe } = await svc
-    .from('players')
-    .insert({ club_id: opts.club, display_name: opts.display, created_by: opts.createdBy ?? null })
-    .select('id')
-    .single()
-  if (pe || !p) throw new Error(`seed identity failed: ${pe?.message}`)
-  const { data: r, error: re } = await svc
-    .from('player_registrations')
-    .insert({
-      club_id: opts.club,
-      player_id: p.id,
-      season_id: opts.season,
-      team_id: opts.teamId ?? null,
-      status: opts.status ?? 'registered',
-      shirt_number: opts.shirt ?? null,
-      created_by: opts.createdBy ?? null,
-    })
-    .select('id')
-    .single()
-  if (re || !r) throw new Error(`seed registration failed: ${re?.message}`)
-  return { playerId: p.id, regId: r.id }
 }
 
 describe('player_registrations row level security and constraints', () => {
@@ -100,7 +65,7 @@ describe('player_registrations row level security and constraints', () => {
     outsider = (await signIn('outsider')).client
     seasonA = await currentSeason(CLUB_A)
     seasonB = await currentSeason(CLUB_B)
-    fixture = await seedPlayer({ club: CLUB_A, season: seasonA, display: name('fixture'), teamId: TEST_TEAM, shirt: 9 })
+    fixture = seedPlayer({ club: CLUB_A, season: seasonA, display: name('fixture'), teamId: TEST_TEAM, shirt: 9 })
   })
 
   afterAll(async () => {
@@ -151,8 +116,12 @@ describe('player_registrations row level security and constraints', () => {
       .select('id')
     expect(upd).toEqual([])
 
-    const { data: del } = await coachOne.from('player_registrations').delete().eq('id', fixture.regId).select('id')
-    expect(del).toEqual([])
+    // No client holds a delete grant on registrations, so the delete is refused
+    // at the grant (not filtered to zero rows).
+    const { error: delErr } = await coachOne.from('player_registrations').delete().eq('id', fixture.regId)
+    expect(delErr).not.toBeNull()
+    const { data: still } = await serviceClient().from('player_registrations').select('id').eq('id', fixture.regId)
+    expect(still).toHaveLength(1)
   })
 
   it('a manager with players.manage updates a registration', async () => {
@@ -166,15 +135,18 @@ describe('player_registrations row level security and constraints', () => {
     expect(data![0].shirt_number).toBe(12)
   })
 
-  it('a manager cannot permanently delete a registration (no players.delete): zero rows', async () => {
-    const { playerId } = await seedPlayer({ club: CLUB_A, season: seasonA, display: name('mgr-del') })
+  it('no client can delete a registration directly (no delete grant), manager or admin', async () => {
+    const { playerId } = seedPlayer({ club: CLUB_A, season: seasonA, display: name('no-del') })
     const { data: reg } = await serviceClient()
       .from('player_registrations')
       .select('id')
       .eq('player_id', playerId)
       .single()
-    const { data: del } = await manager.from('player_registrations').delete().eq('id', reg!.id).select('id')
-    expect(del).toEqual([])
+    const admin = (await signIn('admin')).client
+    const { error: mgrErr } = await manager.from('player_registrations').delete().eq('id', reg!.id)
+    expect(mgrErr).not.toBeNull()
+    const { error: adminErr } = await admin.from('player_registrations').delete().eq('id', reg!.id)
+    expect(adminErr).not.toBeNull()
     const { data: still } = await serviceClient().from('player_registrations').select('id').eq('id', reg!.id)
     expect(still).toHaveLength(1)
   })
@@ -204,7 +176,7 @@ describe('player_registrations row level security and constraints', () => {
 
   // --- Constraints (below RLS via the service role) ---
   it('the status vocabulary is enforced by a check constraint (23514)', async () => {
-    const { playerId } = await seedPlayer({ club: CLUB_A, season: seasonA, display: name('status-check-parent') })
+    const { playerId } = seedPlayer({ club: CLUB_A, season: seasonA, display: name('status-check-parent') })
     // A fresh season so the (player, season) unique does not interfere.
     const { data: s } = await serviceClient()
       .from('seasons')
@@ -232,7 +204,7 @@ describe('player_registrations row level security and constraints', () => {
   })
 
   it('a disallowed status transition is refused by a trigger (P0001)', async () => {
-    const { regId } = await seedPlayer({ club: CLUB_A, season: seasonA, display: name('transition'), status: 'registered' })
+    const { regId } = seedPlayer({ club: CLUB_A, season: seasonA, display: name('transition'), status: 'registered' })
     // registered -> pending is not in the allowed matrix.
     const { error } = await manager
       .from('player_registrations')
@@ -243,7 +215,7 @@ describe('player_registrations row level security and constraints', () => {
   })
 
   it('an allowed status transition (registered -> withdrawn) succeeds', async () => {
-    const { regId } = await seedPlayer({ club: CLUB_A, season: seasonA, display: name('withdraw'), status: 'registered' })
+    const { regId } = seedPlayer({ club: CLUB_A, season: seasonA, display: name('withdraw'), status: 'registered' })
     const { data, error } = await manager
       .from('player_registrations')
       .update({ status: 'withdrawn' })
@@ -261,7 +233,7 @@ describe('player_registrations row level security and constraints', () => {
       .insert({ club_id: CLUB_A, name: name('disposable-team') })
       .select('id')
       .single()
-    const { regId } = await seedPlayer({ club: CLUB_A, season: seasonA, display: name('team-del'), teamId: team!.id, shirt: 5 })
+    const { regId } = seedPlayer({ club: CLUB_A, season: seasonA, display: name('team-del'), teamId: team!.id, shirt: 5 })
     await svc.from('teams').delete().eq('id', team!.id)
     const { data } = await svc.from('player_registrations').select('team_id, shirt_number, status').eq('id', regId).single()
     expect(data!.team_id).toBeNull()
@@ -280,7 +252,7 @@ describe('player_registrations row level security and constraints', () => {
     if (createErr || !created.user) throw new Error(`could not create disposable creator: ${createErr?.message}`)
     const creatorId = created.user.id
     await svc.from('profiles').update({ club_id: CLUB_A }).eq('id', creatorId)
-    const { regId } = await seedPlayer({
+    const { regId } = seedPlayer({
       club: CLUB_A,
       season: seasonA,
       display: name('curator-del'),
@@ -294,8 +266,8 @@ describe('player_registrations row level security and constraints', () => {
 
   // --- Namesakes ---
   it('two identical names on the same team and season are both representable', async () => {
-    const a = await seedPlayer({ club: CLUB_A, season: seasonA, display: name('Twin Child'), teamId: TEST_TEAM })
-    const b = await seedPlayer({ club: CLUB_A, season: seasonA, display: name('Twin Child'), teamId: TEST_TEAM })
+    const a = seedPlayer({ club: CLUB_A, season: seasonA, display: name('Twin Child'), teamId: TEST_TEAM })
+    const b = seedPlayer({ club: CLUB_A, season: seasonA, display: name('Twin Child'), teamId: TEST_TEAM })
     expect(a.playerId).not.toBe(b.playerId)
     const { data } = await serviceClient()
       .from('players')
@@ -312,7 +284,7 @@ describe('player_registrations row level security and constraints', () => {
       .insert({ club_id: CLUB_A, name: sname(), starts_on: '2060-07-01', ends_on: '2061-06-30' })
       .select('id')
       .single()
-    const { regId } = await seedPlayer({ club: CLUB_A, season: s!.id, display: name('archived-reg'), status: 'registered' })
+    const { regId } = seedPlayer({ club: CLUB_A, season: s!.id, display: name('archived-reg'), status: 'registered' })
     // Archive the (non current) season.
     await svc.from('seasons').update({ archived_at: new Date().toISOString() }).eq('id', s!.id)
     // A content edit is now refused for every writer.

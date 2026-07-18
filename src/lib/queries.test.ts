@@ -3,6 +3,7 @@ import {
   alreadyImportedFrom,
   applySessionUpsert,
   createAttemptTracker,
+  deletedExactlyOne,
   faImportBody,
   isUniqueViolation,
   MEDIA_MAX_BYTES,
@@ -418,5 +419,17 @@ describe('sessionExistsInCache exists hint', () => {
   })
   it('is false only when both caches are absent, where the write self-corrects via recovery', () => {
     expect(sessionExistsInCache(undefined, undefined)).toBe(false)
+  })
+})
+
+// The permanent-delete row-count guard (item 4): a destructive delete must
+// affect exactly one row, so zero rows (RLS-filtered or already gone) is a
+// surfaced failure, not a silent no-op.
+describe('deletedExactlyOne', () => {
+  it('is true only when exactly one row came back', () => {
+    expect(deletedExactlyOne(null)).toBe(false)
+    expect(deletedExactlyOne([])).toBe(false)
+    expect(deletedExactlyOne([{ id: 'a' }])).toBe(true)
+    expect(deletedExactlyOne([{ id: 'a' }, { id: 'b' }])).toBe(false)
   })
 })

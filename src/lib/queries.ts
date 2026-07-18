@@ -3741,35 +3741,43 @@ export function useInsertPlayer() {
   })
 }
 
-// Renames a player or sets their shirt number. The name is an identity edit on
-// public.players; the shirt number is a seasonal fact on the current season
-// registration (never the frozen players.shirt_number, which new code never
-// writes). Sends only the changed fields; the players.manage RLS on both tables
-// is the real enforcement.
+// Renames a player and/or sets their current-season shirt number, atomically,
+// through the transactional update_player RPC (0032). The name is an identity
+// edit on public.players; the shirt is a seasonal fact on the current
+// registration (never the frozen players.shirt_number). Doing both in one
+// transaction means a failure after the first change can never leave a partial
+// edit. p_expected_season pins the edit to the season the screen was showing so
+// a concurrent activation cannot redirect it, and the RPC takes the same per
+// club advisory lock as activate_season. Only supplied fields change:
+// displayName undefined leaves the name; shirtNumber undefined leaves the shirt
+// (null clears it). players.manage RLS binds both writes. Returns the adapted
+// Player shape so the caller can reconcile without a refetch race.
 export function useUpdatePlayer() {
   const qc = useQueryClient()
-  return useMutation<void, Error, { id: string; displayName?: string; shirtNumber?: number | null }>({
-    mutationFn: async ({ id, displayName, shirtNumber }) => {
-      if (displayName !== undefined) {
-        const name = displayName.trim()
-        if (!name) throw new Error('Enter a name.')
-        const { error } = await supabase.from('players').update({ display_name: name }).eq('id', id)
-        if (error) throw error
-      }
-      if (shirtNumber !== undefined) {
-        const { data: season, error: seasonError } = await supabase
-          .from('seasons')
-          .select('id')
-          .eq('is_current', true)
-          .maybeSingle()
-        if (seasonError) throw seasonError
-        if (!season) throw new Error('There is no current season.')
-        const { error } = await supabase
-          .from('player_registrations')
-          .update({ shirt_number: shirtNumber })
-          .eq('player_id', id)
-          .eq('season_id', (season as { id: string }).id)
-        if (error) throw error
+  return useMutation<
+    Player,
+    Error,
+    { id: string; expectedSeason: string; displayName?: string; shirtNumber?: number | null }
+  >({
+    mutationFn: async ({ id, expectedSeason, displayName, shirtNumber }) => {
+      const name = displayName === undefined ? null : displayName.trim()
+      if (displayName !== undefined && !name) throw new Error('Enter a name.')
+      const { data, error } = await supabase.rpc('update_player', {
+        p_id: id,
+        p_expected_season: expectedSeason,
+        p_display_name: name,
+        p_set_shirt: shirtNumber !== undefined,
+        p_shirt_number: shirtNumber === undefined ? null : shirtNumber,
+      })
+      if (error) throw error
+      const row = (Array.isArray(data) ? data[0] : data) as AddPlayerRow | undefined
+      if (!row) throw new Error('The player was not updated. Reload and try again.')
+      return {
+        id: row.id,
+        teamId: row.team_id,
+        displayName: row.display_name,
+        shirtNumber: row.shirt_number,
+        createdBy: row.created_by,
       }
     },
     onSettled: () => {
@@ -3779,17 +3787,31 @@ export function useUpdatePlayer() {
   })
 }
 
-// Permanently removes a player identity (players.delete, admin only), which
-// cascades their registrations across every season. A board token referencing
-// the player keeps its position and number and simply loses its name
-// resolution, so a removal never corrupts a board. The boards query is
-// invalidated alongside the roster so every name resolving render refreshes.
+// Permanently deletes a player identity (players.delete, admin only), which
+// cascades every one of their season registrations. delete(...).select('id')
+// returns the deleted rows: exactly one must come back, so a zero-row result
+// (RLS filtered the row, or it was already gone) is surfaced as a failure
+// rather than a silent success. A board token referencing the player keeps its
+// position and number and simply loses its name resolution, so a deletion never
+// corrupts a board. The boards query is invalidated alongside the roster so
+// every name resolving render refreshes.
+// A destructive delete must affect exactly one row: zero rows means RLS
+// filtered it or it was already gone (a silent no-op that must surface as a
+// failure), and the select('id') return is what proves it. Pure, so it is unit
+// tested directly.
+export function deletedExactlyOne(rows: { id: string }[] | null): boolean {
+  return !!rows && rows.length === 1
+}
+
 export function useDeletePlayer() {
   const qc = useQueryClient()
   return useMutation<void, Error, { id: string }>({
     mutationFn: async ({ id }) => {
-      const { error } = await supabase.from('players').delete().eq('id', id)
+      const { data, error } = await supabase.from('players').delete().eq('id', id).select('id')
       if (error) throw error
+      if (!deletedExactlyOne(data as { id: string }[] | null)) {
+        throw new Error('The player was not deleted. Reload and try again.')
+      }
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['players'] })

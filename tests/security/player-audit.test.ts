@@ -9,7 +9,16 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { CLUB_A, TEST_TEAM, TEST_PASSWORD, anonClient, runId, serviceClient, signIn } from './stack'
+import {
+  CLUB_A,
+  TEST_TEAM,
+  TEST_PASSWORD,
+  anonClient,
+  runId,
+  seedPlayer as seedPlayerRow,
+  serviceClient,
+  signIn,
+} from './stack'
 
 const RUN = runId()
 const name = (s: string) => `SEC AUD ${RUN} ${s}`
@@ -24,15 +33,11 @@ async function currentSeason(club: string): Promise<string> {
   return data!.id
 }
 
-async function seedPlayer(season: string, display: string, teamId: string | null): Promise<{ playerId: string; regId: string }> {
-  const svc = serviceClient()
-  const { data: p } = await svc.from('players').insert({ club_id: CLUB_A, display_name: display }).select('id').single()
-  const { data: r } = await svc
-    .from('player_registrations')
-    .insert({ club_id: CLUB_A, player_id: p!.id, season_id: season, team_id: teamId, status: 'registered' })
-    .select('id')
-    .single()
-  return { playerId: p!.id, regId: r!.id }
+// Seed atomically (a bare players insert is rolled back by the deferred
+// require-registration constraint). Thin wrapper so the existing positional
+// call sites are unchanged.
+function seedPlayer(season: string, display: string, teamId: string | null): { playerId: string; regId: string } {
+  return seedPlayerRow({ club: CLUB_A, season, display, teamId, status: 'registered' })
 }
 
 async function countEvents(entityId: string): Promise<number> {
@@ -68,7 +73,7 @@ describe('player and registration audit integrity', () => {
   })
 
   it('actor, actor_name and occurred_at on a committed write are server derived and un-forgeable', async () => {
-    const { regId, playerId } = await seedPlayer(seasonA, name('actor'), TEST_TEAM)
+    const { regId, playerId } = seedPlayer(seasonA, name('actor'), TEST_TEAM)
     const before = new Date(Date.now() - 1000).toISOString()
     const { error } = await manager.from('player_registrations').update({ shirt_number: 21 }).eq('id', regId).select('id')
     expect(error).toBeNull()
@@ -87,7 +92,7 @@ describe('player and registration audit integrity', () => {
   })
 
   it('a single committed status change writes exactly one player.withdrawn event', async () => {
-    const { regId, playerId } = await seedPlayer(seasonA, name('one-event'), TEST_TEAM)
+    const { regId, playerId } = seedPlayer(seasonA, name('one-event'), TEST_TEAM)
     const baseline = await countEvents(playerId) // player.created + player.registration_created
     const { error } = await manager
       .from('player_registrations')
@@ -105,7 +110,7 @@ describe('player and registration audit integrity', () => {
   })
 
   it('an RLS refused write and a trigger refused write leave the audit count unchanged', async () => {
-    const { regId, playerId } = await seedPlayer(seasonA, name('refused'), TEST_TEAM)
+    const { regId, playerId } = seedPlayer(seasonA, name('refused'), TEST_TEAM)
     const before = await countEvents(playerId)
     // RLS refusal: a view only coach cannot update.
     await coachOne.from('player_registrations').update({ shirt_number: 44 }).eq('id', regId).select('id')
@@ -115,7 +120,7 @@ describe('player and registration audit integrity', () => {
   })
 
   it('a display name change records the field name only, never a name value', async () => {
-    const { playerId } = await seedPlayer(seasonA, name('rename-before'), TEST_TEAM)
+    const { playerId } = seedPlayer(seasonA, name('rename-before'), TEST_TEAM)
     const { error } = await manager
       .from('players')
       .update({ display_name: name('rename-after') })
@@ -193,7 +198,7 @@ describe('player and registration audit integrity', () => {
     let historyPlayer: string
 
     beforeAll(async () => {
-      const seeded = await seedPlayer(seasonA, name('history'), TEST_TEAM)
+      const seeded = seedPlayer(seasonA, name('history'), TEST_TEAM)
       historyPlayer = seeded.playerId
       // A couple of committed changes so there is a history.
       await manager.from('player_registrations').update({ shirt_number: 33 }).eq('id', seeded.regId).select('id')
