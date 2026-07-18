@@ -164,14 +164,36 @@ Deno.serve(async (req) => {
 
   // The capability gate, before Spond is contacted at all. has_perm is the
   // live SECURITY DEFINER function the players write policy calls, so a yes
-  // here means the inserts below pass RLS and a no refuses early.
-  const { data: canImport, error: permError } = await caller.db.rpc('has_perm', { capability: 'sessions.create' })
+  // here means the writes below pass RLS and a no refuses early. Since the PR 2
+  // schema split the probe moves from sessions.create to players.manage so it
+  // matches the write policy the add_player RPC binds under and cannot drift.
+  // The full players.import gate, Pending default and batch audit arrive with
+  // the PR 6 rework; this is the interim compatibility shim.
+  const { data: canImport, error: permError } = await caller.db.rpc('has_perm', { capability: 'players.manage' })
   if (permError) {
     return reply(500, { error: 'Could not check your access. Nothing was imported.' })
   }
   if (canImport !== true) {
-    return reply(403, { error: 'Importing a Spond squad needs the sessions.create capability.' })
+    return reply(403, { error: 'Importing a Spond squad needs the players.manage capability.' })
   }
+
+  // The season is chosen server side: the club's current season. The client
+  // cannot pick an arbitrary season, and the function refuses when the club has
+  // none (registrations require a season).
+  const { data: seasonRow, error: seasonError } = await caller.db
+    .from('seasons')
+    .select('id')
+    .eq('is_current', true)
+    .maybeSingle()
+  if (seasonError) {
+    return reply(500, { error: 'Could not read the current season. Nothing was imported.' })
+  }
+  if (!seasonRow) {
+    return reply(409, {
+      error: 'The club has no current season yet. An admin sets one up before importing. Nothing was imported.',
+    })
+  }
+  const seasonId = (seasonRow as { id: string }).id
 
   let parsed: RosterImportBody
   try {
@@ -231,36 +253,67 @@ Deno.serve(async (req) => {
     for (const member of scoped) members.push(member)
   }
 
-  // The names already on this team's roster, read through RLS, so the
-  // de-dupe matches on (club_id, team_id, display_name) and re running the
-  // import adds nobody twice.
-  const { data: existingRows, error: existingError } = await caller.db
-    .from('players')
-    .select('display_name')
+  // The names already registered on this team for the current season, read
+  // through RLS, so the de-dupe matches on (club, season, team, display_name)
+  // and re running the import adds nobody twice. The team and shirt now live on
+  // the registration since the PR 2 split, so the existing names come from the
+  // current season registrations for this team, joined to the identity names.
+  const { data: regRows, error: regError } = await caller.db
+    .from('player_registrations')
+    .select('player_id')
     .eq('club_id', caller.clubId)
+    .eq('season_id', seasonId)
     .eq('team_id', teamId)
-  if (existingError) {
+  if (regError) {
     return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
   }
-  const existingNames = (existingRows ?? []).map((r) => (r as { display_name: string }).display_name)
+  const existingIds = (regRows ?? []).map((r) => (r as { player_id: string }).player_id)
+  let existingNames: string[] = []
+  if (existingIds.length > 0) {
+    const { data: nameRows, error: nameError } = await caller.db
+      .from('players')
+      .select('display_name')
+      .in('id', existingIds)
+    if (nameError) {
+      return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
+    }
+    existingNames = (nameRows ?? []).map((r) => (r as { display_name: string }).display_name)
+  }
 
   // Reduce each member to name plus optional number and plan the inserts.
   // The reduction discards everything else; planRosterImport never echoes a
-  // member, only counts.
+  // member, only counts. The dedupe cannot distinguish two different children
+  // who share a name in the same subgroup (Spond member ids are never
+  // persisted): the second is treated as already present and skipped. Genuine
+  // same name members are corrected by manual add or an id keyed import until
+  // the PR 6 rework.
   const plan = planRosterImport(members, existingNames)
 
+  // Each new member is created through the add_player RPC, which commits the
+  // stable identity and its current season registration together (never an
+  // orphan). status registered preserves today's behaviour; the Pending
+  // default arrives with the PR 6 rework. INTERIM PROVENANCE: because
+  // add_player is SECURITY INVOKER and sets no audit source GUC, these
+  // registrations are audited as source 'manual' with no batch id and no
+  // players.spond_imported summary event until PR 6 moves a commit RPC that
+  // sets otj.audit_source = 'spond_import' into scope. Actor, club and
+  // timestamp on those events are correct.
   if (plan.inserts.length > 0) {
-    const rows = plan.inserts.map((p: RosterPlayer) => ({
-      club_id: caller.clubId,
-      team_id: teamId,
-      display_name: p.display_name,
-      shirt_number: p.shirt_number,
-      created_by: caller.userId,
-    }))
-    const { error: writeError } = await caller.db.from('players').insert(rows)
-    if (writeError) {
-      console.error('spond-roster-import: insert failed', { code: writeError.code, count: rows.length })
-      return reply(500, { error: 'Could not write the imported players. Check your access and try again.' })
+    for (const p of plan.inserts as RosterPlayer[]) {
+      const { error: addError } = await caller.db.rpc('add_player', {
+        p_id: crypto.randomUUID(),
+        p_display_name: p.display_name,
+        p_team_id: teamId,
+        p_shirt_number: p.shirt_number,
+        p_status: 'registered',
+        p_registered_date: null,
+      })
+      if (addError) {
+        // A partial import is safe: the members already added are committed and
+        // the name dedupe skips them on the next run. Report the failure.
+        console.error('spond-roster-import: add_player failed', { code: addError.code })
+        return reply(500, { error: 'Could not write the imported players. Check your access and try again.' })
+      }
     }
   }
 

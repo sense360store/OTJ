@@ -100,10 +100,17 @@ export function App() {
             <Route path="library" element={<Library />} />
             <Route path="planner" element={<Planner />} />
             <Route path="board" element={<Board />} />
-            <Route path="roster" element={<Roster />} />
             <Route path="programmes" element={<Programmes />} />
             <Route path="templates" element={<Templates />} />
             <Route path="media" element={<Media />} />
+          </Route>
+          {/* The roster reads the club register, gated on players.view (club
+              wide read since PR 2). Coaches read it; the add, edit, remove and
+              Spond import affordances inside are capability gated on
+              players.manage and players.delete and the RLS enforces the writes.
+              Parents hold neither and are redirected to Home. */}
+          <Route element={<RequireCap cap="players.view" />}>
+            <Route path="roster" element={<Roster />} />
           </Route>
           {/* Account self-service is open to every role, parents included. */}
           <Route path="account" element={<Account />} />

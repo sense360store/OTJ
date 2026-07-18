@@ -151,6 +151,8 @@ describe('direct signup with forged metadata', () => {
       'spond_events',
       'spond_groups',
       'players',
+      'player_registrations',
+      'seasons',
       'clubs',
     ]) {
       const { data, error } = await client.from(table).select('*').limit(5)

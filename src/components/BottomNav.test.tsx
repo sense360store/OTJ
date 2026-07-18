@@ -24,9 +24,10 @@ describe('Bottom navigation', () => {
   })
 
   it('shows a coach the Roster in the More sheet but never a parent', () => {
-    // The Roster carries the Import from Spond action, so a coach reaches it
-    // from the More sheet; a parent, holding no sessions.create, does not.
-    expect(moreIds(new Set(['sessions.create']))).toContain('roster')
+    // The Roster reads the club register, so a coach holding players.view (with
+    // sessions.create for the Plan group) reaches it from the More sheet; a
+    // parent, holding neither, does not.
+    expect(moreIds(new Set(['sessions.create', 'players.view']))).toContain('roster')
     expect(moreIds(new Set())).not.toContain('roster')
   })
 

@@ -36,6 +36,7 @@ import type {
   Phase,
   Player,
   Programme,
+  Season,
   Role,
   RoleCapability,
   RoleInfo,
@@ -3553,104 +3554,269 @@ export function useDeleteBoard() {
 // Deleting a player leaves any token referencing it as a plain numbered disc.
 // See 0021_players.sql for the full child data boundary.
 
-interface PlayerRow {
+interface SeasonRow {
   id: string
-  team_id: string
-  display_name: string
-  shirt_number: number | null
-  created_by: string
+  name: string
+  starts_on: string
+  ends_on: string
+  is_current: boolean
+  archived_at: string | null
 }
 
-const PLAYER_COLS = 'id, team_id, display_name, shirt_number, created_by'
+const SEASON_COLS = 'id, name, starts_on, ends_on, is_current, archived_at'
 
-function toPlayer(r: PlayerRow): Player {
+function toSeason(r: SeasonRow): Season {
   return {
     id: r.id,
-    teamId: r.team_id,
-    displayName: r.display_name,
-    shirtNumber: r.shirt_number,
-    createdBy: r.created_by,
+    name: r.name,
+    startsOn: r.starts_on,
+    endsOn: r.ends_on,
+    isCurrent: r.is_current,
+    archivedAt: r.archived_at,
   }
 }
 
-// The club's roster across every team, ordered for a stable list: by shirt
-// number (nulls last) then display name. The roster manager filters this to
-// the selected team and the board reads the selected team's slice. The
-// enabled flag lets a screen shared across roles (the session day board
-// embed) skip the query entirely for a viewer without sessions.create: RLS
-// would return zero rows anyway, but a parent should never even ask.
-export function usePlayers(enabled = true) {
+// The club's seasons (0031_seasons.sql). Read is club wide; every member with
+// players.view can see them. Ordered newest start first.
+export function useSeasons(enabled = true) {
   return useQuery({
-    queryKey: ['players'],
+    queryKey: ['seasons'],
     enabled,
-    queryFn: async (): Promise<Player[]> => {
+    queryFn: async (): Promise<Season[]> => {
       const { data, error } = await supabase
-        .from('players')
-        .select(PLAYER_COLS)
-        .order('shirt_number', { ascending: true, nullsFirst: false })
-        .order('display_name', { ascending: true })
+        .from('seasons')
+        .select(SEASON_COLS)
+        .order('starts_on', { ascending: false })
+        .order('id', { ascending: false })
       if (error) throw error
-      return (data as unknown as PlayerRow[]).map(toPlayer)
+      return (data as unknown as SeasonRow[]).map(toSeason)
     },
   })
 }
 
-// Adds a player to a team. club_id and created_by come from the signed-in
-// user, which the players insert check requires. The RLS is the real gate; the
-// manager only surfaces the action to a sessions.create holder.
+// The one current season for the club, or null before setup. Everything
+// seasonal (the roster query, board seeding) reads from it. A separate cache
+// key from the roster so activating a season invalidates it independently.
+export function useCurrentSeason(enabled = true) {
+  return useQuery({
+    queryKey: ['seasons', 'current'],
+    enabled,
+    queryFn: async (): Promise<Season | null> => {
+      const { data, error } = await supabase
+        .from('seasons')
+        .select(SEASON_COLS)
+        .eq('is_current', true)
+        .maybeSingle()
+      if (error) throw error
+      return data ? toSeason(data as unknown as SeasonRow) : null
+    },
+  })
+}
+
+interface RegistrationJoinRow {
+  player_id: string
+  team_id: string | null
+  shirt_number: number | null
+}
+interface IdentityRow {
+  id: string
+  display_name: string
+  created_by: string | null
+}
+
+const PLAYER_ORDER = (a: Player, b: Player): number => {
+  const sa = a.shirtNumber
+  const sb = b.shirtNumber
+  if (sa !== sb) {
+    if (sa === null) return 1
+    if (sb === null) return -1
+    return sa - sb
+  }
+  return a.displayName.localeCompare(b.displayName)
+}
+
+// The club's roster for the current season, assembled into the stable client
+// Player shape (id, teamId, displayName, shirtNumber, createdBy). Since PR 2
+// the name lives once on public.players (the identity) and the seasonal team
+// and shirt live on public.player_registrations, so this reads both under the
+// players.view RLS and joins them by id, ordered by shirt number (nulls last)
+// then name. Keyed by the current season id so activating a season cannot mix
+// stale rows. The roster manager filters this to the selected team and the
+// board reads the selected team's slice. The enabled flag lets the session day
+// board embed skip the query for a viewer without players.view; RLS returns
+// zero rows anyway, but a parent should never even ask.
+export function usePlayers(enabled = true) {
+  const seasonQuery = useCurrentSeason(enabled)
+  const seasonId = seasonQuery.data?.id ?? null
+  const query = useQuery({
+    queryKey: ['players', seasonId],
+    enabled: enabled && !!seasonId,
+    queryFn: async (): Promise<Player[]> => {
+      const [regs, ids] = await Promise.all([
+        supabase
+          .from('player_registrations')
+          .select('player_id, team_id, shirt_number')
+          .eq('season_id', seasonId as string),
+        supabase.from('players').select('id, display_name, created_by'),
+      ])
+      if (regs.error) throw regs.error
+      if (ids.error) throw ids.error
+      const identityById = new Map(
+        (ids.data as unknown as IdentityRow[]).map((p) => [p.id, p]),
+      )
+      const players: Player[] = []
+      for (const r of regs.data as unknown as RegistrationJoinRow[]) {
+        const identity = identityById.get(r.player_id)
+        if (!identity) continue
+        players.push({
+          id: r.player_id,
+          teamId: r.team_id,
+          displayName: identity.display_name,
+          shirtNumber: r.shirt_number,
+          createdBy: identity.created_by,
+        })
+      }
+      players.sort(PLAYER_ORDER)
+      return players
+    },
+  })
+  // Fold the current-season fetch into the loading and error state: while the
+  // season is still resolving the players query is disabled (no season id yet),
+  // so without this a consumer would see isLoading false with empty data and
+  // briefly flash an empty roster. The data shape is unchanged.
+  return {
+    ...query,
+    isLoading: (enabled && seasonQuery.isLoading) || query.isLoading,
+    isError: seasonQuery.isError || query.isError,
+  }
+}
+
+interface AddPlayerRow {
+  id: string
+  team_id: string | null
+  display_name: string
+  shirt_number: number | null
+  created_by: string | null
+}
+
+// Adds a player through the transactional add_player RPC (0032), which commits
+// the stable identity and its current season registration together so neither
+// can exist without the other. The caller mints a stable id (see the Roster's
+// guarded submit) so an ambiguous lost response retry reuses the same identity
+// rather than duplicating the child. club_id, actor and the season are derived
+// server side; the RLS on both inserts requires players.manage, so the button
+// is only surfaced to a manager or admin. status is registered to preserve the
+// current Roster's behaviour (the pending default and approval flow arrive with
+// the Registered Players page in PR 3). Returns the adapted Player shape.
 export function useInsertPlayer() {
   const qc = useQueryClient()
   const { user, profile } = useAuth()
-  return useMutation<void, Error, { teamId: string; displayName: string; shirtNumber: number | null }>({
-    mutationFn: async ({ teamId, displayName, shirtNumber }) => {
+  return useMutation<Player, Error, { id: string; teamId: string | null; displayName: string; shirtNumber: number | null }>({
+    mutationFn: async ({ id, teamId, displayName, shirtNumber }) => {
       const name = displayName.trim()
       if (!name) throw new Error('Enter a name.')
       if (!user || !profile?.club_id) throw new Error('You must be signed in.')
-      const { error } = await supabase.from('players').insert({
-        club_id: profile.club_id,
-        team_id: teamId,
-        display_name: name,
-        shirt_number: shirtNumber,
-        created_by: user.id,
+      const { data, error } = await supabase.rpc('add_player', {
+        p_id: id,
+        p_display_name: name,
+        p_team_id: teamId,
+        p_shirt_number: shirtNumber,
+        p_status: 'registered',
+        p_registered_date: null,
       })
       if (error) throw error
+      const row = (Array.isArray(data) ? data[0] : data) as AddPlayerRow
+      return {
+        id: row.id,
+        teamId: row.team_id,
+        displayName: row.display_name,
+        shirtNumber: row.shirt_number,
+        createdBy: row.created_by,
+      }
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['players'] })
+      qc.invalidateQueries({ queryKey: ['boards'] })
+    },
   })
 }
 
-// Renames a player or sets their shirt number. Sends only the changed fields;
-// the players update RLS is the real enforcement.
+// Renames a player and/or sets their current-season shirt number, atomically,
+// through the transactional update_player RPC (0032). The name is an identity
+// edit on public.players; the shirt is a seasonal fact on the current
+// registration (never the frozen players.shirt_number). Doing both in one
+// transaction means a failure after the first change can never leave a partial
+// edit. p_expected_season pins the edit to the season the screen was showing so
+// a concurrent activation cannot redirect it, and the RPC takes the same per
+// club advisory lock as activate_season. Only supplied fields change:
+// displayName undefined leaves the name; shirtNumber undefined leaves the shirt
+// (null clears it). players.manage RLS binds both writes. Returns the adapted
+// Player shape so the caller can reconcile without a refetch race.
 export function useUpdatePlayer() {
   const qc = useQueryClient()
-  return useMutation<void, Error, { id: string; displayName?: string; shirtNumber?: number | null }>({
-    mutationFn: async ({ id, displayName, shirtNumber }) => {
-      const patch: { display_name?: string; shirt_number?: number | null } = {}
-      if (displayName !== undefined) {
-        const name = displayName.trim()
-        if (!name) throw new Error('Enter a name.')
-        patch.display_name = name
-      }
-      if (shirtNumber !== undefined) patch.shirt_number = shirtNumber
-      const { error } = await supabase.from('players').update(patch).eq('id', id)
+  return useMutation<
+    Player,
+    Error,
+    { id: string; expectedSeason: string; displayName?: string; shirtNumber?: number | null }
+  >({
+    mutationFn: async ({ id, expectedSeason, displayName, shirtNumber }) => {
+      const name = displayName === undefined ? null : displayName.trim()
+      if (displayName !== undefined && !name) throw new Error('Enter a name.')
+      const { data, error } = await supabase.rpc('update_player', {
+        p_id: id,
+        p_expected_season: expectedSeason,
+        p_display_name: name,
+        p_set_shirt: shirtNumber !== undefined,
+        p_shirt_number: shirtNumber === undefined ? null : shirtNumber,
+      })
       if (error) throw error
+      const row = (Array.isArray(data) ? data[0] : data) as AddPlayerRow | undefined
+      if (!row) throw new Error('The player was not updated. Reload and try again.')
+      return {
+        id: row.id,
+        teamId: row.team_id,
+        displayName: row.display_name,
+        shirtNumber: row.shirt_number,
+        createdBy: row.created_by,
+      }
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['players'] })
+      qc.invalidateQueries({ queryKey: ['boards'] })
+    },
   })
 }
 
-// Removes a player. A board token referencing the player keeps its position
-// and number and simply loses its name resolution, so a removal never
-// corrupts a board; the boards query is invalidated only through the players
-// key, which every name resolving render already watches.
+// Permanently deletes a player identity (players.delete, admin only), which
+// cascades every one of their season registrations. delete(...).select('id')
+// returns the deleted rows: exactly one must come back, so a zero-row result
+// (RLS filtered the row, or it was already gone) is surfaced as a failure
+// rather than a silent success. A board token referencing the player keeps its
+// position and number and simply loses its name resolution, so a deletion never
+// corrupts a board. The boards query is invalidated alongside the roster so
+// every name resolving render refreshes.
+// A destructive delete must affect exactly one row: zero rows means RLS
+// filtered it or it was already gone (a silent no-op that must surface as a
+// failure), and the select('id') return is what proves it. Pure, so it is unit
+// tested directly.
+export function deletedExactlyOne(rows: { id: string }[] | null): boolean {
+  return !!rows && rows.length === 1
+}
+
 export function useDeletePlayer() {
   const qc = useQueryClient()
   return useMutation<void, Error, { id: string }>({
     mutationFn: async ({ id }) => {
-      const { error } = await supabase.from('players').delete().eq('id', id)
+      const { data, error } = await supabase.from('players').delete().eq('id', id).select('id')
       if (error) throw error
+      if (!deletedExactlyOne(data as { id: string }[] | null)) {
+        throw new Error('The player was not deleted. Reload and try again.')
+      }
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['players'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['players'] })
+      qc.invalidateQueries({ queryKey: ['boards'] })
+    },
   })
 }
 

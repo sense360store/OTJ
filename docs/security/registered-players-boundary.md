@@ -479,19 +479,23 @@ create policy "import_batches_select_view" on public.import_batches
 
 #### player_history
 
-The per player history read path (unresolved decision 15, recommended
-separate paths; mechanism in `docs/security/app-audit-boundary.md`, which
-defers the exact semantics here):
+The per player history read path (decision 15, resolved to audit.view;
+mechanism in `docs/security/app-audit-boundary.md`, which defers the exact
+semantics here). The per player History UI is deferred and not built in PR 2;
+only this gated database read path is specified:
 
 - Shape: an RPC `player_history(p_player_id uuid)` (or an equivalent definer
   backed view), SECURITY DEFINER, `set search_path = ''` with schema
   qualified names, EXECUTE granted to authenticated and self gating in its
   body, the `member_states` shape, so refusal is a clean capability error.
 - Gate: the caller must be in the player's club (`my_club()`) and hold
-  `players.view`. There is no team arm: read is club wide (section 3), so a
-  `players.view` holder may read any club player's history, exactly matching
-  `players_select_view` visibility. A child linked history row is pseudonymous
-  child personal data (`docs/security/app-audit-boundary.md`, Data
+  `audit.view`. Managers and admins hold `audit.view` by default; coaches,
+  holding `players.view` only, do NOT and are refused. There is no team arm:
+  read is club wide (section 3), so an `audit.view` holder may read any club
+  player's history. Requiring `audit.view` rather than `players.view` keeps
+  historical child linked audit records off coaches by default, so per player
+  history is not exposed to `players.view` alone. A child linked history row is
+  pseudonymous child personal data (`docs/security/app-audit-boundary.md`, Data
   classification), so this gate is a real access control, not a formality.
 - Rows returned: the entity's `audit_events` rows, which carry no child
   names by construction (action, occurred_at, actor name, changed_fields,
@@ -703,7 +707,7 @@ bounded:
   (section 3): the RPCs check capability and club and validate that every
   supplied player_id and team_id belongs to the caller's club, and that is the
   whole scope. `export_players` applies the same club scope to its read, and
-  `player_history` gates on `players.view` per section 4. Definer functions
+  `player_history` gates on `audit.view` per section 4. Definer functions
   use `set search_path = ''` with schema qualified names.
 - The audit writer `log_audit_event` has EXECUTE revoked from public, anon
   and authenticated, following the 0028 revoke pattern proven for

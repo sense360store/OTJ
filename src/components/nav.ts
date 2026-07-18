@@ -92,6 +92,10 @@ const PARENT_ITEMS: BottomItem[] = [
 // included; the keyed ones gate on the capability that backs them.
 export const ITEM_CAP: Record<string, string> = {
   planner: 'sessions.create',
+  // The roster reads the club register, gated on players.view since PR 2
+  // (club wide read). Every coach holds it alongside sessions.create, so the
+  // item still shows to coaches; the gate keeps the nav honest to the route.
+  roster: 'players.view',
   'admin-club': 'club.manage',
   'admin-users': 'users.manage',
   'admin-teams': 'teams.manage',

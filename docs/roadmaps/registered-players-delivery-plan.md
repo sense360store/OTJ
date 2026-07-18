@@ -177,7 +177,7 @@ Known interim limitation, accepted through PR 6: the page's Import from Spond af
 
 ### PR 7: Club wide Activity page
 
-1. **User outcome.** Holders of audit.view get an Activity page: newest first, server paginated, filterable by date range, actor, entity type, action, team, season, source and import batch, with neutral display for deleted entities and deep links where a target still exists. Parents never see it; coaches without audit.view keep only per player History.
+1. **User outcome.** Holders of audit.view get an Activity page: newest first, server paginated, filterable by date range, actor, entity type, action, team, season, source and import batch, with neutral display for deleted entities and deep links where a target still exists. Parents never see it; coaches without audit.view see neither the Activity page nor per player History (History is gated on audit.view, resolved decision 15).
 2. **Dependencies.** PR 1 (substrate), PR 3 (entity resolution patterns). No migration (indexes shipped in 0030).
 3. **Likely files.** `src/routes/Activity.tsx` (new); `src/components/nav.ts` (item behind audit.view); `src/App.tsx` (`RequireCap cap="audit.view"` block); `src/lib/screen.ts`; `src/lib/queries.ts` (paginated audit query using range windows; never the whole history to the browser); `src/routes/Activity.test.tsx`.
 4. **Migration or Edge Function work.** None. If live filtering shows a missing index, a follow up gated migration is raised separately (provisional slot confirmed against the live ledger at apply time).
@@ -310,7 +310,7 @@ The numbered decisions from the canonical list that gate this plan, each with th
 12. Browser versus server XLSX parsing (recommended: browser; blocks PR 5).
 13. RPC versus Edge Function import commit (recommended: RPC; blocks PR 5).
 14. Archived season absoluteness (recommended: read only with the unarchive escape hatch; blocks PR 2).
-15. audit.view versus per player history access (recommended: separate paths; blocks PR 2 and PR 7).
+15. audit.view versus per player history access (resolved: per player history requires audit.view, the safer direction, so coaches holding players.view only do not see it; unblocks PR 2, still shapes PR 7).
 
 Plus, from the same list: the backfill status and date values (recommended: 'registered' and created_at::date; blocks PR 2), the seasons.manage default holders (recommended: admin only; blocks PR 1 seeds), and all or nothing import commit (recommended: all or nothing; blocks PR 5). The initial season name and dates in the Data migration plan are confirmed with the club owner at the PR 2 review.
 
