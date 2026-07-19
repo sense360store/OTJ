@@ -153,6 +153,7 @@ describe('direct signup with forged metadata', () => {
       'players',
       'player_registrations',
       'seasons',
+      'import_batches',
       'clubs',
     ]) {
       const { data, error } = await client.from(table).select('*').limit(5)

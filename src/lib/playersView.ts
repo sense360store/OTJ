@@ -232,6 +232,27 @@ export function statusTransitions(current: RegistrationStatus): RegistrationStat
   }
 }
 
+// Whether a status change is a valid transition under the SERVER rule (the
+// 0032 registrations_status_transition trigger and the 0035 import RPC): a
+// same value status is not a transition; the only refused move is Registered
+// back to Pending. Unlike statusTransitions above (the Edit modal's restricted
+// dropdown, which deliberately routes Restore through a separate confirmation
+// and so offers no transition out of Withdrawn), this mirrors the database
+// exactly. The import preview uses it so an id-keyed Restore row (Withdrawn to
+// Pending or Registered, a documented import operation) is classified the same
+// way the server would accept it, never spuriously rejected as invalid.
+export function statusTransitionAllowed(from: RegistrationStatus, to: RegistrationStatus): boolean {
+  if (from === to) return true
+  switch (from) {
+    case 'pending':
+      return to === 'registered' || to === 'withdrawn'
+    case 'registered':
+      return to === 'withdrawn'
+    case 'withdrawn':
+      return to === 'pending' || to === 'registered'
+  }
+}
+
 // The row action keys available for a registration, given the capabilities and
 // whether the season is writable. Kept pure so the gating is provable without a
 // DOM: a read-only viewer or an archived season yields no actions; Move team and

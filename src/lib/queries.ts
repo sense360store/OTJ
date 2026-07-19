@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
 import { useAuth } from '../hooks/useAuth'
 import type { ExportFilterPayload, ExportPlayerRow } from './playersExport'
+import type { ImportPayload, ImportServerResult } from './playersImportCommit'
 import type {
   Activity,
   Capability,
@@ -4022,6 +4023,39 @@ export function useExportPlayers() {
       })
       if (error) throw error
       return (data ?? []) as ExportPlayerRow[]
+    },
+  })
+}
+
+// The transactional spreadsheet import commit (players.import,
+// 0035_import_players.sql). Calls the import_players RPC with the client minted
+// batch id, the target season and the confirmed payload (format plus the
+// minimum normalised operations); the RPC re-checks the capability and club,
+// re-validates every row, applies all writes and their audit events in one
+// transaction (all or nothing), records the batch, and is idempotent on the
+// batch id. It RETURNS a structured result: outcome 'succeeded' with counts, or
+// outcome 'failed' with a safe reason (a row failure commits a failed batch, so
+// there is no error to throw). A RAISED error (missing capability, cross club or
+// archived season, a malformed payload, a cross club batch id) rejects instead,
+// which the caller distinguishes by the error carrying a Postgres code. Settled,
+// not success: the reads refresh after any attempt so the register shows the
+// true state, and the import preview's identity map refreshes so a re-import
+// previews against the new rows.
+export function useImportPlayers() {
+  const qc = useQueryClient()
+  return useMutation<ImportServerResult, Error, { batchId: string; seasonId: string; payload: ImportPayload }>({
+    mutationFn: async ({ batchId, seasonId, payload }) => {
+      const { data, error } = await supabase.rpc('import_players', {
+        p_batch_id: batchId,
+        p_season_id: seasonId,
+        p_rows: payload,
+      })
+      if (error) throw error
+      return data as ImportServerResult
+    },
+    onSettled: () => {
+      invalidatePlayerReads(qc)
+      qc.invalidateQueries({ queryKey: ['player_identities'] })
     },
   })
 }

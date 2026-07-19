@@ -201,6 +201,31 @@ describe('classify: invalid rows never become write candidates', () => {
   })
 })
 
+describe('classify: restoring a withdrawn player by id (the documented import Restore path)', () => {
+  // A withdrawn registration in the season, so the id-keyed restore rows have a
+  // stored status of 'withdrawn' to transition from. The server (0032 trigger,
+  // 0035 RPC) accepts withdrawn -> pending and withdrawn -> registered, so the
+  // preview must classify them as valid updates, never spuriously invalid.
+  const WITHDRAWN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const restoreCtx: PlanContext = {
+    ...CTX,
+    seasonRows: [
+      ...SEASON_ROWS,
+      reg({ playerId: WITHDRAWN_ID, displayName: 'Wanda Withdrawn', teamId: 'titans', status: 'withdrawn' }),
+    ],
+    clubIdentities: new Map([...CLUB_IDENTITIES, [WITHDRAWN_ID, 'Wanda Withdrawn']]),
+  }
+  it('withdrawn to registered is a valid update (not a spurious invalid)', () => {
+    const r = only([{ id: WITHDRAWN_ID, name: 'Wanda Withdrawn', team: 'Titans', status: 'Registered' }], restoreCtx)
+    expect(r.class).toBe('update')
+    expect(r.matchPlayerId).toBe(WITHDRAWN_ID)
+  })
+  it('withdrawn to pending is a valid update too', () => {
+    const r = only([{ id: WITHDRAWN_ID, name: 'Wanda Withdrawn', team: 'Titans', status: 'Pending' }], restoreCtx)
+    expect(r.class).toBe('update')
+  })
+})
+
 describe('classify: needs your choice (never auto merged from a name)', () => {
   it('the same name twice in the file, no ids', () => {
     const p = plan([{ name: 'Casey Twin' }, { name: 'Casey Twin' }])
