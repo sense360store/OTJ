@@ -55,6 +55,13 @@ export interface PlanRow {
   // Set for every row after classification; drives the Unassigned summary line,
   // and only importable rows are counted there.
   resolvedTeamId?: string | null
+  // The full resolved registration fields (team, status, shirt, date) a write
+  // for this row would carry: the minimum an operation sends to the server.
+  // Attached for every row from the field validation; only read for actionable
+  // rows (new, update, needs-your-choice resolved to Import as new). Invalid
+  // rows carry it too but are never sent (the commit builder skips them by
+  // class). The server re-validates every field regardless, trusting none of it.
+  resolved?: { teamId: string | null; status: RegistrationStatus; shirt: number | null; date: string | null }
 }
 
 export interface Plan {
@@ -492,10 +499,12 @@ export function classify(sheet: ParsedSheet, ctx: PlanContext): Plan {
     }
   })
 
-  // Attach the resolved team to every row (rows and interims share order), so
-  // the Unassigned summary can count importable rows landing without a team.
+  // Attach the resolved fields to every row (rows and interims share order): the
+  // team drives the Unassigned summary, and the full set is the operation
+  // payload the commit builder reads for an actionable row.
   rows.forEach((row, i) => {
     row.resolvedTeamId = interims[i].resolved.teamId
+    row.resolved = interims[i].resolved
   })
 
   return { rows, blankRows: sheet.blankRows, ignoredHeaders: sheet.ignoredHeaders }

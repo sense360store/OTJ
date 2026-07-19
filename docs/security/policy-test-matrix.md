@@ -60,9 +60,9 @@ verification, never as the subject of an assertion.
 ## Tables tested
 
 `drills`, `media` (rows), `sessions`, `players`, `boards`, `feedback`,
-`audit_events`, plus `capabilities` / `role_capabilities` / `member_roles`
-for the capability consistency checks, and `profiles` / `member_roles` /
-`member_teams` for the signup membership boundary.
+`audit_events`, `import_batches`, plus `capabilities` / `role_capabilities` /
+`member_roles` for the capability consistency checks, and `profiles` /
+`member_roles` / `member_teams` for the signup membership boundary.
 
 ## Signup membership boundary
 
@@ -177,6 +177,34 @@ guarantee is proven by a rolled back writer call leaving no row. No player or
 season trigger exists yet (they attach in PR 2), so every event in the file is
 a synthetic service role or writer fixture. Full design:
 `docs/security/app-audit-boundary.md` and `docs/adr/ADR-0006-app-audit-events.md`.
+
+### import_batches and import_players (0035_import_players)
+
+The transactional spreadsheet import commit (`tests/security/import.test.ts`).
+Contract: `import_players(p_batch_id, p_season_id, p_rows)` is SECURITY DEFINER,
+self gates on `has_perm('players.import')` (a coach and a parent are refused
+`42501`, no batch recorded), derives club and actor server side, validates the
+season belongs to the caller's club and is non archived (a cross club season is
+`42501` and an archived season is refused, neither recording a batch), and re
+validates every proposed row unbound by the preview (status vocabulary and
+transition against the stored status, shirt bounds, date validity, team club
+membership, and existing player id club ownership; a cross club player id or an
+unknown team aborts the whole batch). The commit is all or nothing: one bad row
+rolls back every business and per row audit write, records the batch `failed`
+with a safe row numbered reason and exactly one `players.import_failed` event,
+and a replay returns the stored failure. A success records the batch
+`succeeded`, the server derived counts, one `players.import_completed` summary
+(source `csv_import` or `xlsx_import`, entity id the batch id) and the per row
+trigger events, all sharing the batch id via the `otj.audit_batch` GUC. The
+client minted batch id is the idempotency key: a repeated confirm returns the
+stored result and applies nothing, and a batch id recorded for another club is
+refused, never replayed. `import_batches` reads require `club_id = my_club()`
+and `has_perm('audit.view')` (a coach and a parent read zero rows), and the
+table is written only from inside the RPC (no client insert, update or delete
+grant or policy); it carries counts, format and state only, never a file
+fingerprint, a filename, row content or a child name. Full design:
+`docs/adr/ADR-0007-player-import-export-architecture.md` and
+`docs/security/registered-players-boundary.md` section 4.
 
 ## CI
 

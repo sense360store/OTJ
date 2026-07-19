@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { PreviewRow } from './ImportPlayersModal'
+import { ImportOutcomeBody, PreviewRow, type Outcome } from './ImportPlayersModal'
 import type { PlanRow } from '../lib/playersImportPlan'
 
-// The interactive modal orchestration (file pick, query, state) is exercised by
-// the pure parse/plan/report suites; here the presentational preview row is
-// pinned with the static renderer, the house style (Players.test.tsx). These
-// prove the accessibility affordances: the class word is always shown (never
-// colour alone), the needs-your-choice controls are real buttons with a pressed
-// state, and warnings render as adjacent text.
+// The interactive modal orchestration (file pick, query, confirm, pending) is
+// exercised by the pure parse/plan/commit suites and the security suite (server
+// idempotency and refusals); here the presentational preview row and the outcome
+// screen are pinned with the static renderer, the house style (Players.test.tsx).
+// These prove the accessibility affordances: the class word is always shown
+// (never colour alone), the needs-your-choice controls are real buttons with a
+// pressed state, warnings render as adjacent text, the controls disable while a
+// confirm is in flight, and the outcome screen renders safe counts only.
 
 function row(p: Partial<PlanRow> & { rowNumber: number; class: PlanRow['class'] }): PlanRow {
   return {
@@ -20,8 +22,8 @@ function row(p: Partial<PlanRow> & { rowNumber: number; class: PlanRow['class'] 
   }
 }
 
-function render(r: PlanRow, choice?: 'skip' | 'new') {
-  return renderToStaticMarkup(<PreviewRow row={r} choice={choice} onChoose={() => {}} />)
+function render(r: PlanRow, choice?: 'skip' | 'new', disabled?: boolean) {
+  return renderToStaticMarkup(<PreviewRow row={r} choice={choice} onChoose={() => {}} disabled={disabled} />)
 }
 
 describe('PreviewRow', () => {
@@ -74,5 +76,35 @@ describe('PreviewRow', () => {
 
   it('does not show the needs-your-choice controls on other classes', () => {
     expect(render(row({ rowNumber: 2, class: 'new' }))).not.toContain('Import as new')
+  })
+
+  it('disables the resolution controls while a confirm is in flight', () => {
+    const html = render(row({ rowNumber: 4, class: 'needs_choice' }), undefined, true)
+    // Both Skip and Import as new render as disabled buttons.
+    expect((html.match(/disabled/g) ?? []).length).toBe(2)
+  })
+})
+
+describe('ImportOutcomeBody: the outcome screen renders safe counts only', () => {
+  it('shows the success sentence, the warnings note and the batch reference', () => {
+    const outcome: Outcome = {
+      kind: 'success',
+      counts: { added: 12, updated: 3, alreadyPresent: 1, skipped: 1, rejected: 1, warnings: 2 },
+      warnings: 2,
+      batchId: '3f2a91c8-abcd-4000-8000-000000000001',
+      settledAt: '2026-07-19T14:32:00Z',
+    }
+    const html = renderToStaticMarkup(<ImportOutcomeBody outcome={outcome} seasonName="2026/27" />)
+    expect(html).toContain('Imported into 2026/27: 12 added, 3 updated, 1 already present, 1 skipped, 1 rejected.')
+    expect(html).toContain('2 of these carried warnings.')
+    expect(html).toContain('Import 3f2a91c8')
+  })
+
+  it('renders a failure as a role=alert block that states nothing was imported', () => {
+    const outcome: Outcome = { kind: 'failure', reason: 'The selected season is archived and cannot be imported into.' }
+    const html = renderToStaticMarkup(<ImportOutcomeBody outcome={outcome} seasonName="2026/27" />)
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Nothing was imported.')
+    expect(html).toContain('archived')
   })
 })
