@@ -528,3 +528,27 @@ table.reg-table td.muted-cell { color: var(--slate-2); }
 @media (min-width: 901px) and (max-width: 1080px) {
   table.reg-table .col-date, table.reg-table .col-updated { display: none; }
 }
+
+/* ---- Registered players import modal (preview only, PR 5) ------------- */
+/* The preview-only banner: this release validates and previews, never writes. */
+.ip-note { font-size: 13px; line-height: 1.5; background: var(--gold-soft); border-radius: 11px;
+  padding: 9px 12px; margin: 0 0 12px; }
+
+/* An accessible dropzone: the "Choose file" button is the real, focusable
+   control; drag and drop is an enhancement layered over it. */
+.ip-dropzone { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+  border: 1.5px dashed var(--line); border-radius: 12px; padding: 20px 16px; }
+.ip-dropzone.drag { border-color: var(--royal); background: var(--bg-2); }
+
+/* The preview row list. One bordered row per data row (no separate mobile
+   variant per the spec; it reflows within the wide modal). */
+.ip-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; padding: 2px; }
+.ip-row { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.ip-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ip-pill { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; color: #fff;
+  font-size: 11.5px; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; }
+.ip-name { font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
+.ip-rownum { margin-left: auto; font-size: 12px; color: var(--slate-2); flex: 0 0 auto; }
+.ip-detail { font-size: 13px; color: var(--slate); line-height: 1.45; margin-top: 4px; overflow-wrap: anywhere; }
+.ip-warn { color: var(--c-social); }
+.ip-choice { display: flex; gap: 8px; margin-top: 8px; }
