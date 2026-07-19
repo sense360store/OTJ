@@ -332,6 +332,20 @@ export interface RosterPlayer {
   shirt_number: number | null
 }
 
+// The exact payload the transactional commit RPC (spond_import_roster, 0036)
+// receives for a run: a reduced roster of names and optional shirt numbers
+// ONLY. reduceMember already dropped every Spond member id, guardian and
+// contact field before the plan; this shaping carries through only the two
+// roster fields the RPC reads, so no member identifier can reach the database
+// layer even by accident. Pinned by spond_roster_test.ts.
+export interface RosterCommitMember {
+  name: string
+  shirt_number: number | null
+}
+export function rosterMembersForCommit(inserts: RosterPlayer[]): RosterCommitMember[] {
+  return inserts.map((p) => ({ name: p.display_name, shirt_number: p.shirt_number }))
+}
+
 // The child's full name as Spond gives it: the first and last name fields
 // joined, e.g. "Jack Thompson", from the member's firstName and lastName (the
 // reference library's Member.first_name and last_name). When Spond gives only

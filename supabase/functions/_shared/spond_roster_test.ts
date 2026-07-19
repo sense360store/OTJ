@@ -18,6 +18,7 @@ import {
   planRosterImport,
   reduceMember,
   rosterDisplayName,
+  rosterMembersForCommit,
   rosterShirtNumber,
   ROSTER_NAME_MAX,
   selectGroupMembers,
@@ -234,4 +235,40 @@ Deno.test('the de-dupe is case insensitive', () => {
 Deno.test('the shirt number rides the reduced row into the insert', () => {
   const plan = planRosterImport([{ firstName: 'Nine', lastName: 'Striker', shirtNumber: 9 }], [])
   assertEquals(plan.inserts, [{ display_name: 'Nine Striker', shirt_number: 9 }])
+})
+
+// ---- The commit RPC handoff boundary ----------------------------------------
+// The reduced roster handed to the spond_import_roster RPC (0036) carries only a
+// name and an optional shirt number per member. No Spond member id, guardian or
+// contact field can reach the database layer, even by accident, because the
+// shaping only ever reads the two roster fields reduceMember produced.
+
+Deno.test('the commit payload carries only name and shirt, never a member id or contact', () => {
+  const reduced = [
+    reduceMember(SYNTHETIC_MEMBER)!,
+    reduceMember({ firstName: 'Nine', lastName: 'Striker', shirtNumber: 9 })!,
+  ]
+  const payload = rosterMembersForCommit(reduced)
+  assertEquals(payload, [
+    { name: 'Jack Thompson', shirt_number: null },
+    { name: 'Nine Striker', shirt_number: 9 },
+  ])
+  for (const m of payload) assertEquals(Object.keys(m).sort(), ['name', 'shirt_number'])
+  const flat = JSON.stringify(payload)
+  for (const leak of [
+    'FAKE-MEMBER-1',
+    'Madeup',
+    'Guardianname',
+    'FAKE-GUARDIAN-9',
+    'guardians',
+    'email',
+    'phoneNumber',
+    '+44',
+  ]) {
+    assert(!flat.includes(leak), `commit payload leaked ${leak}`)
+  }
+})
+
+Deno.test('an empty plan makes an empty commit payload (a run still writes its summary server side)', () => {
+  assertEquals(rosterMembersForCommit([]), [])
 })

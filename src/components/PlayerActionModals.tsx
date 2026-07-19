@@ -290,12 +290,14 @@ export function DeletePlayerModal({ player, onClose }: { player: RegisteredPlaye
   )
 }
 
-// Import from Spond, carried over from the interim Roster under the PR 3 interim
-// configuration: the affordance is gated on players.manage (the page decides
-// that; the Edge Function is the real gate) and the copy states the imported
-// players land as Registered, until PR 6 moves the gate to players.import and
-// switches the copy to Pending. The browser never calls Spond; the Edge
-// Function reads the names server side and returns counts only.
+// Import from Spond (PR 6). The affordance is gated on players.import (the page
+// decides what to surface; the Edge Function and its spond_import_roster commit
+// RPC are the real gate) and the copy states the imported players land as
+// Pending in the current season. The browser never calls Spond; the Edge
+// Function reads the names server side and returns counts only. A single confirm
+// then outcome dialog: Spond runs unattended against the live subgroup, so there
+// is no per row preview or choice (docs/product/registered-players-ux.md
+// section 8), unlike the spreadsheet import.
 export function ImportFromSpondModal({
   team,
   mapping,
@@ -308,14 +310,21 @@ export function ImportFromSpondModal({
   onClose: () => void
 }) {
   const importer = useSpondRosterImport()
-  const run = () => importer.mutate({ teamId: team.id })
+  const busy = importer.isPending
+  // Confirmed write only, no optimistic mutation. A double click is prevented by
+  // the disabled button, and a retry is safe: the Spond commit dedupes by name
+  // within the team and season, so re running adds nobody twice.
+  const run = () => {
+    if (busy) return
+    importer.mutate({ teamId: team.id })
+  }
   const result = importer.data
   return (
     <Modal
       title="Import from Spond"
       sub={team.name}
       onClose={onClose}
-      dismissible={!importer.isPending}
+      dismissible={!busy}
       footer={
         result ? (
           <button className="btn btn-primary" onClick={onClose}>
@@ -323,12 +332,12 @@ export function ImportFromSpondModal({
           </button>
         ) : (
           <>
-            <button className="btn btn-ghost" onClick={onClose} disabled={importer.isPending}>
+            <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
               Cancel
             </button>
-            <button className="btn btn-primary" onClick={run} disabled={importer.isPending}>
+            <button className="btn btn-primary" onClick={run} disabled={busy}>
               <Icon.rotate />
-              {importer.isPending ? 'Importing…' : 'Import'}
+              {busy ? 'Importing…' : 'Import'}
             </button>
           </>
         )
@@ -337,8 +346,8 @@ export function ImportFromSpondModal({
       {result ? (
         <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
           <p style={{ marginTop: 0 }}>
-            Imported into {seasonName}: {result.added} added, {result.alreadyPresent} already present
-            {result.skipped > 0 ? `, ${result.skipped} skipped` : ''}.
+            Imported into {seasonName}: {result.added} added, {result.alreadyPresent} already present, {result.skipped}{' '}
+            skipped.
           </p>
           {result.message && (
             <p className="muted" style={{ fontSize: 13.5 }}>
@@ -356,18 +365,23 @@ export function ImportFromSpondModal({
           <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
             This brings over player names from the mapped Spond group <b>{mapping.name}</b> into {seasonName} for{' '}
             <b>{team.name}</b>. Each child's full name is stored. No guardian, contact or other Spond data is imported.
-            New players land as Registered.
+            New players land as Pending.
           </p>
           <p className="muted" style={{ fontSize: 13.5 }}>
             Players already in {seasonName} on this team are left as they are, so importing again adds no duplicates.
           </p>
           {importer.isError && (
             <p role="alert" className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
-              {importer.error.message}
+              Nothing was imported. {importer.error.message}
             </p>
           )}
         </>
       )}
+      {/* A polite live region announces the busy state and the outcome, so a
+          screen reader is told what happened without watching the button. */}
+      <p aria-live="polite" className="sr-only">
+        {busy ? 'Importing from Spond. Do not close this window.' : result ? 'Import complete.' : ''}
+      </p>
     </Modal>
   )
 }
