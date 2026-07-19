@@ -141,8 +141,8 @@ describe('buildPlayersCsv', () => {
     const evil: ExportPlayerRow = { ...ROWS[0], player_name: '=HYPERLINK("http://x")' }
     const csv = buildPlayersCsv([evil])
     const dataLine = csv.slice(BOM.length).split(CRLF)[1]
-    // Guarded with a leading apostrophe, then quoted because it contains commas
-    // and quotes.
+    // Guarded with a leading apostrophe, then RFC 4180 quoted because the value
+    // contains double quotes.
     expect(dataLine).toContain('"\'=HYPERLINK(""http://x"")"')
     expect(dataLine.startsWith('9f2b6c1e')).toBe(true)
   })

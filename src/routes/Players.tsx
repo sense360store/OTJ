@@ -251,7 +251,11 @@ export function Players() {
   const showAdd = canManage && isCurrent && writable
   // Export is allowed on ANY selected season (a past register is a legitimate
   // export), so it is not gated on writable/current like the write affordances.
-  const showExport = canExport && !!selectedSeason
+  // It IS gated on a settled, non-errored register load, because the header
+  // (where the button lives) renders before body() resolves the row query, and
+  // the confirm dialog's previewed count must never read 0 while the real set
+  // is still loading or errored.
+  const showExport = canExport && !!selectedSeason && !rowsLoading && !rowsError
 
   // Loading and error gates. The capability read gates first so a parent (route
   // guarded anyway) never falls through to a child-data read.

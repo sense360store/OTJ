@@ -157,10 +157,14 @@ begin
   end if;
 
   -- Resolve the team view filter. 'all' -> no team arm; 'unassigned' ->
-  -- team_id is null; a uuid -> that team; anything else -> 'all'. There is no
-  -- team scope on ACCESS (read is club wide); this is a view filter only.
+  -- team_id is null; a lowercase uuid -> that team; anything else -> 'all', the
+  -- widest safe default, so a hand built or malformed payload widens to the
+  -- whole club rather than silently narrowing to zero rows. There is no team
+  -- scope on ACCESS (read is club wide); this is a view filter only.
   if v_team ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
     v_team_id := v_team::uuid;
+  elsif v_team <> 'all' and v_team <> 'unassigned' then
+    v_team := 'all';
   end if;
 
   -- The name search matches the client's plain case insensitive substring
@@ -171,7 +175,12 @@ begin
   v_like := '%' || replace(replace(replace(v_search, '\', '\\'), '%', '\%'), '_', '\_') || '%';
 
   -- Count the rows the export will contain, over the SAME predicate as the
-  -- returned set, so the audited record_count is exactly what leaves.
+  -- returned set below, so the audited record_count reflects what leaves. The
+  -- count and the return are separate statements, so a registration committed
+  -- in the narrow gap between them could skew the recorded count by that
+  -- concurrent delta; at grassroots scale (one manual export at a time) the
+  -- window is immaterial, and the count is never widened beyond the caller's
+  -- own club.
   select count(*) into v_count
   from public.player_registrations r
   join public.players p on p.id = r.player_id
