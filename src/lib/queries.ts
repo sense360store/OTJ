@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
 import { useAuth } from '../hooks/useAuth'
+import type { ExportFilterPayload, ExportPlayerRow } from './playersExport'
 import type {
   Activity,
   Capability,
@@ -3977,6 +3978,31 @@ export function invalidatePlayerReads(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['registrations'] })
   qc.invalidateQueries({ queryKey: ['players'] })
   qc.invalidateQueries({ queryKey: ['boards'] })
+}
+
+// The audited export read (players.export, 0034_export_players.sql). Calls the
+// export_players RPC, which re-checks the capability and club server side,
+// applies the caller's view filter under the club wide read scope, writes the
+// one players.exported audit event in the same transaction (never a name, a row
+// or the search string), and returns the dataset the client shapes into a CSV
+// or XLSX file. Read only, so nothing is invalidated. Calling it IS the export
+// for audit purposes: a successful RPC is recorded even if the browser then
+// fails to build the file (the safe, over recording direction for child data).
+export function useExportPlayers() {
+  return useMutation<
+    ExportPlayerRow[],
+    Error,
+    { seasonId: string; filters: ExportFilterPayload; format: 'csv' | 'xlsx' }
+  >({
+    mutationFn: async ({ seasonId, filters, format }) => {
+      const { data, error } = await supabase.rpc('export_players', {
+        p_season_id: seasonId,
+        p_filters: { team: filters.team, statuses: filters.statuses, search: filters.search, format },
+      })
+      if (error) throw error
+      return (data ?? []) as ExportPlayerRow[]
+    },
+  })
 }
 
 // Moves a registration to another team, or to Unassigned (null). A seasonal

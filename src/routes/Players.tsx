@@ -39,6 +39,7 @@ import { Empty, ErrorNote, Loading } from '../components/ui'
 import { PlayerFilters } from '../components/PlayerFilters'
 import { PlayerFormModal } from '../components/PlayerFormModal'
 import { PlayerHistoryModal } from '../components/PlayerHistoryModal'
+import { ExportConfirmModal } from '../components/ExportConfirmModal'
 import {
   DeletePlayerModal,
   ImportFromSpondModal,
@@ -56,6 +57,7 @@ type ModalState =
   | { kind: 'delete'; player: RegisteredPlayer }
   | { kind: 'history'; player: RegisteredPlayer }
   | { kind: 'import' }
+  | { kind: 'export' }
   | null
 
 // A coloured dot plus the word, so status is never conveyed by colour alone.
@@ -196,6 +198,7 @@ export function Players() {
   const canDelete = caps.has('players.delete')
   const canHistory = caps.has('audit.view')
   const canManageSeasons = caps.has('seasons.manage')
+  const canExport = caps.has('players.export')
 
   const { data: seasons = [], isLoading: seasonsLoading, isError: seasonsError } = useSeasons(canView)
   const { data: currentSeason, isLoading: currentLoading } = useCurrentSeason(canView)
@@ -246,6 +249,9 @@ export function Players() {
   const spondMapping = resolvedTeamId ? mappingForTeam(mappings, resolvedTeamId) : null
   const showSpond = canManage && isCurrent && writable && !!spondTeam && !!spondMapping
   const showAdd = canManage && isCurrent && writable
+  // Export is allowed on ANY selected season (a past register is a legitimate
+  // export), so it is not gated on writable/current like the write affordances.
+  const showExport = canExport && !!selectedSeason
 
   // Loading and error gates. The capability read gates first so a parent (route
   // guarded anyway) never falls through to a child-data read.
@@ -292,6 +298,13 @@ export function Players() {
     </button>
   ) : null
 
+  const exportButton = showExport ? (
+    <button className="btn btn-ghost" onClick={() => open({ kind: 'export' })}>
+      <Icon.download />
+      Export
+    </button>
+  ) : null
+
   const header = (
     <div className="page-head">
       <div>
@@ -302,6 +315,7 @@ export function Players() {
         {seasonSelect}
         {addButton}
         {spondButton}
+        {exportButton}
       </div>
     </div>
   )
@@ -471,6 +485,22 @@ export function Players() {
       {modal?.kind === 'history' && <PlayerHistoryModal player={modal.player} teams={teams} onClose={close} />}
       {modal?.kind === 'import' && spondTeam && spondMapping && (
         <ImportFromSpondModal team={spondTeam} mapping={spondMapping} seasonName={seasonName} onClose={close} />
+      )}
+      {modal?.kind === 'export' && selectedSeason && (
+        <ExportConfirmModal
+          season={{ id: selectedSeason.id, name: seasonName }}
+          filters={filters}
+          filteredCount={filtered.length}
+          totalCount={counts.total}
+          teamLabel={
+            filters.team === 'all'
+              ? 'All teams'
+              : filters.team === 'unassigned'
+                ? 'Unassigned'
+                : teamDisplay(filters.team)
+          }
+          onClose={close}
+        />
       )}
     </div>
   )
