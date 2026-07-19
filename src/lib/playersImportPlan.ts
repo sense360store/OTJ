@@ -17,7 +17,7 @@
 // write candidate.
 import type { RegisteredPlayer, RegistrationStatus, Team } from './data'
 import type { FieldMap, ParsedRow, ParsedSheet } from './playersImportParse'
-import { parseShirt, statusTransitions } from './playersView'
+import { parseShirt, statusTransitionAllowed } from './playersView'
 
 // The five primary classes. Every data row lands in exactly one, and the five
 // counts sum to the total. Warnings are an overlay, never a sixth class.
@@ -381,7 +381,11 @@ export function classify(sheet: ParsedSheet, ctx: PlanContext): Plan {
       const stored = seasonByPlayerId.get(id)
       if (stored) {
         // 5. Status transition validation runs last, needing the stored status.
-        if (it.resolved.status !== stored.status && !statusTransitions(stored.status).includes(it.resolved.status)) {
+        // Uses the SERVER transition rule (the only refused move is Registered
+        // back to Pending), so an id-keyed Restore row (Withdrawn to Registered
+        // or Pending) is classified the same way the server would accept it,
+        // never spuriously rejected as invalid.
+        if (!statusTransitionAllowed(stored.status, it.resolved.status)) {
           return {
             rowNumber: it.rowNumber,
             playerName: it.playerName,

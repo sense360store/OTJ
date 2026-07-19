@@ -18,6 +18,7 @@ import {
   STATUS_META,
   statusCounts,
   statusesForFilter,
+  statusTransitionAllowed,
   statusTransitions,
   type PlayersFilters,
 } from './playersView'
@@ -203,10 +204,28 @@ describe('STATUS_META status badge semantics', () => {
 })
 
 describe('statusTransitions', () => {
-  it('mirrors the server enforced transitions', () => {
+  it('mirrors the Edit modal dropdown (Restore routed separately, so no move out of withdrawn)', () => {
     expect(statusTransitions('pending')).toEqual(['pending', 'registered', 'withdrawn'])
     expect(statusTransitions('registered')).toEqual(['registered', 'withdrawn'])
     expect(statusTransitions('withdrawn')).toEqual(['withdrawn'])
+  })
+})
+
+describe('statusTransitionAllowed', () => {
+  it('mirrors the server rule: only Registered back to Pending is refused', () => {
+    // A same value status is not a transition.
+    expect(statusTransitionAllowed('pending', 'pending')).toBe(true)
+    expect(statusTransitionAllowed('registered', 'registered')).toBe(true)
+    expect(statusTransitionAllowed('withdrawn', 'withdrawn')).toBe(true)
+    // Pending and Registered forward moves.
+    expect(statusTransitionAllowed('pending', 'registered')).toBe(true)
+    expect(statusTransitionAllowed('pending', 'withdrawn')).toBe(true)
+    expect(statusTransitionAllowed('registered', 'withdrawn')).toBe(true)
+    // Restore from Withdrawn (the import path a coach uses on an exported file).
+    expect(statusTransitionAllowed('withdrawn', 'pending')).toBe(true)
+    expect(statusTransitionAllowed('withdrawn', 'registered')).toBe(true)
+    // The one refused move.
+    expect(statusTransitionAllowed('registered', 'pending')).toBe(false)
   })
 })
 

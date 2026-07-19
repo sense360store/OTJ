@@ -380,6 +380,33 @@ describe('import_players: capability, server authority, atomicity, idempotency',
     expect(b!.status).toBe('withdrawn')
   })
 
+  // ---- restore by id: withdrawn -> registered is accepted (client/server parity)
+  it('restores a withdrawn player by id (withdrawn to registered), the documented import Restore path', async () => {
+    const wid = seedPlayer({
+      club: CLUB_A,
+      season: seasonA,
+      display: name('withdrawn'),
+      teamId: TEST_TEAM,
+      status: 'withdrawn',
+    }).playerId
+    const id = batch()
+    const { data, error } = await manager.rpc('import_players', {
+      p_batch_id: id,
+      p_season_id: seasonA,
+      p_rows: payload('csv', [{ row: 2, player_id: wid, team_id: TEST_TEAM, status: 'registered' }]),
+    })
+    expect(error).toBeNull()
+    expect((data as { outcome: string; updated: number }).outcome).toBe('succeeded')
+    expect((data as { updated: number }).updated).toBe(1)
+    const { data: reg } = await svc
+      .from('player_registrations')
+      .select('status')
+      .eq('player_id', wid)
+      .eq('season_id', seasonA)
+      .single()
+    expect(reg!.status).toBe('registered')
+  })
+
   // ---- property 17 (server arm): a formula-shaped name is never evaluated ----
   it('stores a formula-shaped display name verbatim, never evaluating it', async () => {
     const id = batch()
