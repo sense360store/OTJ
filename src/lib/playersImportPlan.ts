@@ -51,6 +51,10 @@ export interface PlanRow {
   warnings: RowIssue[]
   // The resolved player id for an update row (an id-keyed row). Undefined otherwise.
   matchPlayerId?: string
+  // The resolved team id (null for a blank Team cell, importing as Unassigned).
+  // Set for every row after classification; drives the Unassigned summary line,
+  // and only importable rows are counted there.
+  resolvedTeamId?: string | null
 }
 
 export interface Plan {
@@ -115,11 +119,14 @@ function normSeason(s: string): string {
   return s.replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
-const STATUS_WORDS: Record<string, RegistrationStatus> = {
-  pending: 'pending',
-  registered: 'registered',
-  withdrawn: 'withdrawn',
-}
+// A Map, not a plain object, so an untrusted cell value that names an inherited
+// Object.prototype property (constructor, __proto__) resolves to undefined and
+// is refused, never accepted as a status.
+const STATUS_WORDS = new Map<string, RegistrationStatus>([
+  ['pending', 'pending'],
+  ['registered', 'registered'],
+  ['withdrawn', 'withdrawn'],
+])
 
 // ---- date parsing ----------------------------------------------------------
 function daysInMonth(y: number, m: number): number {
@@ -247,7 +254,7 @@ function validateFields(
   if (f.status.badType) {
     issues.push({ column: COLUMN.status, message: f.status.badType })
   } else if (f.status.value !== '') {
-    const word = STATUS_WORDS[f.status.value.toLowerCase()]
+    const word = STATUS_WORDS.get(f.status.value.toLowerCase())
     if (word === undefined) {
       issues.push({ column: COLUMN.status, message: `Unknown registration status "${f.status.value}".` })
     } else {
@@ -485,6 +492,12 @@ export function classify(sheet: ParsedSheet, ctx: PlanContext): Plan {
     }
   })
 
+  // Attach the resolved team to every row (rows and interims share order), so
+  // the Unassigned summary can count importable rows landing without a team.
+  rows.forEach((row, i) => {
+    row.resolvedTeamId = interims[i].resolved.teamId
+  })
+
   return { rows, blankRows: sheet.blankRows, ignoredHeaders: sheet.ignoredHeaders }
 }
 
@@ -498,6 +511,10 @@ export interface PlanSummary {
   invalid: number
   warnings: number
   unknownTeams: number
+  // Importable rows (new or update) with a blank Team cell, landing as
+  // Unassigned. Shown as a preview summary line so the number of children
+  // landing without a team is visible before Confirm.
+  unassignedRows: number
   blankRows: number
   // Rows that will be written on confirm: new, update, and needs-your-choice
   // rows the user resolved to Import as new. Skipped, unresolved, already
@@ -515,6 +532,7 @@ export function summarize(plan: Plan, choices: Record<number, Choice>): PlanSumm
     invalid: 0,
     warnings: 0,
     unknownTeams: 0,
+    unassignedRows: 0,
     blankRows: plan.blankRows,
     actionable: 0,
   }
@@ -523,10 +541,12 @@ export function summarize(plan: Plan, choices: Record<number, Choice>): PlanSumm
       case 'new':
         s.newCount += 1
         s.actionable += 1
+        if (r.resolvedTeamId == null) s.unassignedRows += 1
         break
       case 'update':
         s.updateCount += 1
         s.actionable += 1
+        if (r.resolvedTeamId == null) s.unassignedRows += 1
         break
       case 'already_present':
         s.alreadyPresent += 1

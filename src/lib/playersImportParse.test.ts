@@ -285,6 +285,97 @@ describe('parseWorkbook (XLSX)', () => {
     const sheet = ok(out.ok ? out.sheet : undefined)
     expect(sheet.rows[0].fields.shirt.badType).toBeTruthy()
   })
+
+  it('flags bad-typed cells even when the used range does not start at column A', async () => {
+    // Data occupies B1:D2 (column A blank), so range.s.c = 1. A boolean cell in
+    // the status column must still be flagged despite the column offset.
+    const ws: XLSX.WorkSheet = {
+      '!ref': 'B1:D2',
+      B1: { t: 's', v: 'Player Name' },
+      C1: { t: 's', v: 'Shirt Number' },
+      D1: { t: 's', v: 'Registration Status' },
+      B2: { t: 's', v: 'Sam' },
+      C2: { t: 'n', f: '1+1', v: 2 },
+      D2: { t: 'b', v: true },
+    }
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Players')
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
+    const out = parseWorkbook(buf)
+    const sheet = ok(out.ok ? out.sheet : undefined)
+    // The formula in Shirt and the boolean in Status are both flagged, keyed to
+    // the right fields (not shifted by the column offset).
+    expect(sheet.rows[0].fields.shirt.badType).toBeTruthy()
+    expect(sheet.rows[0].fields.status.badType).toBeTruthy()
+    expect(sheet.rows[0].fields.playerName.value).toBe('Sam')
+    expect(sheet.rows[0].fields.playerName.badType).toBeUndefined()
+  })
+
+  it('bounds the rows materialised from a huge declared range (sheetRows)', () => {
+    // A one-cell header with a declared range of 100,000 rows must not be fully
+    // materialised; sheetRows caps the read well under the declared size.
+    const ws: XLSX.WorkSheet = { '!ref': 'A1:A100001', A1: { t: 's', v: 'Player Name' } }
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Players')
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
+    const out = parseWorkbook(buf)
+    expect(out.ok).toBe(true)
+    const sheet = ok(out.ok ? out.sheet : undefined)
+    expect(sheet.rows).toHaveLength(0)
+    // Not 100,000: the read was bounded.
+    expect(sheet.blankRows).toBeLessThan(100000)
+  })
+
+  it('honours the 1904 date system when converting a date cell', () => {
+    // A workbook flagged date1904 with a raw serial: the conversion must use the
+    // 1904 epoch, not silently land ~4 years off.
+    const ws: XLSX.WorkSheet = {
+      '!ref': 'A1:B2',
+      A1: { t: 's', v: 'Player Name' },
+      B1: { t: 's', v: 'Registered Date' },
+      A2: { t: 's', v: 'Sam' },
+      B2: { t: 'n', v: 44351, z: 'yyyy-mm-dd' },
+    }
+    const wb: XLSX.WorkBook = {
+      SheetNames: ['Players'],
+      Sheets: { Players: ws },
+      Workbook: { WBProps: { date1904: true } },
+    }
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
+    const out = parseWorkbook(buf)
+    const sheet = ok(out.ok ? out.sheet : undefined)
+    // Serial 44351 in the 1904 system is 2025-06-05 (1900 system would be 2021-06-04).
+    expect(sheet.rows[0].fields.registeredDate.value).toBe('2025-06-05')
+  })
+})
+
+describe('parseWorkbook external link rejection', () => {
+  it('rejects a workbook whose zip carries an external link part', () => {
+    // Minimal zip-shaped bytes: the PK signature plus the external link part
+    // name, which appears as literal ASCII in a real .xlsx archive.
+    const marker = 'PKxl/externalLinks/externalLink1.xml'
+    const bytes = new Uint8Array([...marker].map((c) => c.charCodeAt(0)))
+    const out = parseWorkbook(bytes.buffer)
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.code).toBe('external_links')
+  })
+
+  it('rejects a workbook carrying a data connection part', () => {
+    const marker = 'PKxl/connections.xml'
+    const bytes = new Uint8Array([...marker].map((c) => c.charCodeAt(0)))
+    const out = parseWorkbook(bytes.buffer)
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.code).toBe('external_links')
+  })
+
+  it('does not falsely reject a normal workbook', async () => {
+    const file = xlsxFromAoa([
+      ['Player Name', 'Shirt Number'],
+      ['Sam', 7],
+    ])
+    const out = parseWorkbook(await file.arrayBuffer())
+    expect(out.ok).toBe(true)
+  })
 })
 
 describe('readImportFile: caps, extensions, encoding', () => {

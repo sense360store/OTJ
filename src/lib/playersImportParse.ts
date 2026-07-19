@@ -74,6 +74,13 @@ export const MAX_COLUMNS = 30
 // with blank lines under the size cap cannot exhaust memory before the data row
 // cap is reached. Well above any real grassroots file.
 const MAX_TOTAL_RECORDS = 100_000
+// The most rows SheetJS is allowed to materialise from a workbook, passed as the
+// `sheetRows` read option so a declared used range far larger than the data (a
+// crafted A1:AD100001 range, or Excel's inflated ghost used-range) cannot drive
+// O(rows*cols) work off metadata alone. Comfortably above the 500 data row cap
+// plus any realistic run of interspersed blank rows; the real data row cap is
+// still enforced in buildSheet.
+const XLSX_MAX_SHEET_ROWS = 5000
 
 // MIME accept lists. The browser frequently supplies an empty or misleading
 // type, so the extension plus the content checks are the real gate; a type
@@ -410,6 +417,19 @@ export function parseCsv(text: string): ParseOutcome {
 // password protected workbook is rejected.
 // ---------------------------------------------------------------------------
 export function parseWorkbook(data: ArrayBuffer): ParseOutcome {
+  // External link parts (a workbook referencing another file, or a data
+  // connection / web query) are rejected outright per the file rules and the
+  // threat model. Detected from the raw zip part names, which appear as literal
+  // ASCII in the archive, so this holds regardless of what the parser surfaces.
+  // The parser evaluates no formulas and makes no network call, so this is
+  // defence in depth, not the only barrier, but the documented rule is enforced.
+  if (hasExternalLinkParts(data)) {
+    return fail(
+      'external_links',
+      'This file links to another workbook or an external data source, which cannot be imported. Remove the links and save a plain .xlsx.',
+    )
+  }
+
   let wb: XLSX.WorkBook
   try {
     wb = XLSX.read(data, {
@@ -419,9 +439,12 @@ export function parseWorkbook(data: ArrayBuffer): ParseOutcome {
       // building rich text; cellNF keeps each cell's number format so a date
       // cell is recognised and converted from its serial in a timezone
       // independent way (readCell), never through a locale dependent Date.
+      // sheetRows bounds how many rows the library materialises, so a declared
+      // range far larger than the data cannot drive O(rows*cols) work.
       cellFormula: true,
       cellHTML: false,
       cellNF: true,
+      sheetRows: XLSX_MAX_SHEET_ROWS,
     })
   } catch {
     return fail('protected', 'This file could not be read. It may be password protected or corrupted.')
@@ -432,6 +455,11 @@ export function parseWorkbook(data: ArrayBuffer): ParseOutcome {
   if ((wb as { vbaraw?: unknown }).vbaraw) {
     return fail('macro', 'This file contains macros and cannot be imported. Save it as a plain .xlsx and try again.')
   }
+
+  // The Excel 1904 date system offsets every date serial by 1462 days. Read the
+  // workbook flag so a 1904 file's dates convert against the right epoch, never
+  // silently four years off.
+  const date1904 = wb.Workbook?.WBProps?.date1904 === true
 
   const sheetNames = wb.SheetNames ?? []
   if (sheetNames.length !== 1) {
@@ -472,9 +500,12 @@ export function parseWorkbook(data: ArrayBuffer): ParseOutcome {
     for (let c = range.s.c; c <= range.e.c; c++) {
       const addr = XLSX.utils.encode_cell({ r, c })
       const cell = ws[addr] as XLSX.CellObject | undefined
-      const { text, bad } = readCell(cell)
+      const { text, bad } = readCell(cell, date1904)
       if (bad && r > range.s.r) {
-        // Record against the data-relative row index (r - header - start).
+        // Keyed by the data-relative row index and the RECORD-relative column
+        // index (c - range.s.c), matching how the record columns and the header
+        // map are indexed. buildSheet's badTypeAt is handed that same record
+        // relative column, so it looks up with no further offset.
         badTypes.set(`${r - range.s.r - 1}:${c - range.s.c}`, bad)
       }
       rec.push(text)
@@ -491,8 +522,22 @@ export function parseWorkbook(data: ArrayBuffer): ParseOutcome {
   return buildSheet(records, header, {
     firstDataRowNumber: range.s.r + 2, // the sheet's own 1-based row number of the first data row
     applyFormulaGuard: false, // XLSX text cells import verbatim (no apostrophe strip)
-    badTypeAt: (rowIndex, col) => badTypes.get(`${rowIndex}:${col - range.s.c}`),
+    // col is already the record-relative column index (header.columnForField is
+    // derived from records[0]), matching the key stored above, so no offset.
+    badTypeAt: (rowIndex, col) => badTypes.get(`${rowIndex}:${col}`),
   })
+}
+
+// Detect external link parts in a workbook's raw zip bytes. A .xlsx is a zip;
+// the part names (xl/externalLinks/..., xl/connections.xml) appear as literal
+// ASCII in the archive's file headers, so a byte scan finds them regardless of
+// what the parser chooses to expose. A normal workbook contains neither part.
+function hasExternalLinkParts(data: ArrayBuffer): boolean {
+  // Only a zip (xlsx) can carry these; a zip starts with the PK signature.
+  const bytes = new Uint8Array(data)
+  if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) return false
+  const text = new TextDecoder('latin1').decode(bytes)
+  return text.includes('xl/externalLinks/') || text.includes('xl/connections.xml')
 }
 
 // Read one XLSX cell to a text value, flagging a type that is never valid data.
@@ -502,7 +547,7 @@ export function parseWorkbook(data: ArrayBuffer): ParseOutcome {
 // JS Date, so the result never depends on the process timezone; a plain numeric
 // cell stringifies (a shirt number typed as a number works); strings pass
 // through cleaned.
-function readCell(cell: XLSX.CellObject | undefined): { text: string; bad?: string } {
+function readCell(cell: XLSX.CellObject | undefined, date1904: boolean): { text: string; bad?: string } {
   if (!cell) return { text: '' }
   if (cell.f !== undefined && cell.f !== null && cell.f !== '') {
     return { text: '', bad: 'This cell contains a formula, which cannot be imported.' }
@@ -515,7 +560,7 @@ function readCell(cell: XLSX.CellObject | undefined): { text: string; bad?: stri
     case 'n': {
       // A date formatted number (cell.z is a date format) converts from its
       // serial timezone independently; any other number stringifies.
-      const iso = numericDateIso(cell)
+      const iso = numericDateIso(cell, date1904)
       if (iso) return { text: iso }
       return { text: cleanText(String(cell.v ?? '')) }
     }
@@ -531,11 +576,12 @@ function readCell(cell: XLSX.CellObject | undefined): { text: string; bad?: stri
 
 // If the cell is a date formatted numeric cell, return its YYYY-MM-DD from the
 // Excel serial using SheetJS's pure date-code parser (no JS Date, so no
-// timezone shift). Otherwise return null so the caller stringifies the number.
-function numericDateIso(cell: XLSX.CellObject): string | null {
+// timezone shift), honouring the workbook's 1900/1904 date system. Otherwise
+// return null so the caller stringifies the number.
+function numericDateIso(cell: XLSX.CellObject, date1904: boolean): string | null {
   const fmt = cell.z
   if (typeof cell.v !== 'number' || typeof fmt !== 'string' || !XLSX.SSF.is_date(fmt)) return null
-  const dc = XLSX.SSF.parse_date_code(cell.v)
+  const dc = XLSX.SSF.parse_date_code(cell.v, { date1904 })
   if (!dc || !dc.y) return null
   return `${dc.y}-${String(dc.m).padStart(2, '0')}-${String(dc.d).padStart(2, '0')}`
 }

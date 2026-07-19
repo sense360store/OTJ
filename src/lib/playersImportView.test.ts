@@ -12,6 +12,7 @@ function summary(p: Partial<PlanSummary>): PlanSummary {
     invalid: 0,
     warnings: 0,
     unknownTeams: 0,
+    unassignedRows: 0,
     blankRows: 0,
     actionable: 0,
     ...p,

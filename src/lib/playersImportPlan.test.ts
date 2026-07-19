@@ -298,4 +298,29 @@ describe('classify: prototype pollution safety', () => {
     // The global Object prototype is untouched.
     expect(({} as Record<string, unknown>).polluted).toBeUndefined()
   })
+  it('a status of "constructor" or "__proto__" is an unknown status, never accepted', () => {
+    expect(only([{ name: 'X', status: 'constructor' }]).class).toBe('invalid')
+    expect(only([{ name: 'X', status: '__proto__' }]).class).toBe('invalid')
+    expect(only([{ name: 'X', status: 'hasOwnProperty' }]).class).toBe('invalid')
+  })
+})
+
+describe('summarize: Unassigned rows', () => {
+  it('counts importable rows with a blank Team cell landing as Unassigned', () => {
+    const built = plan([
+      { name: 'No Team One' }, // new, unassigned
+      { name: 'No Team Two' }, // new, unassigned
+      { name: 'Has Team', team: 'Titans' }, // new, assigned
+      { id: ID_REN, name: 'Ren Renew' }, // update (renewal), unassigned
+    ])
+    const s = summarize(built, {})
+    expect(s.unassignedRows).toBe(3)
+  })
+  it('does not count already-present or invalid rows toward Unassigned', () => {
+    const built = plan([
+      { id: ID_ALEX, name: 'Alex Sample', team: 'Titans', status: 'Registered', shirt: '10', date: '2026-06-28' }, // already present
+      { name: 'X', status: 'nonsense' }, // invalid
+    ])
+    expect(summarize(built, {}).unassignedRows).toBe(0)
+  })
 })

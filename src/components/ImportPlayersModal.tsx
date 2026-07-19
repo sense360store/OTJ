@@ -186,7 +186,10 @@ export function ImportPlayersModal({
   const downloadReport = () => {
     if (!plan) return
     downloadIssuesReport(plan)
-    setActionMsg('Report downloaded.')
+    // Clear then set so the polite live region re-announces even on a second
+    // consecutive download (identical text would otherwise not re-fire).
+    setActionMsg('')
+    queueMicrotask(() => setActionMsg('Report downloaded.'))
   }
 
   // The parse and preview lifecycle announcement, derived so it is never set
@@ -246,6 +249,11 @@ export function ImportPlayersModal({
           type="file"
           accept=".csv,.xlsx"
           className="sr-only"
+          // The visible "Choose file" button is the sole keyboard entry point;
+          // keep this clipped input out of the tab order and the a11y tree so it
+          // is not an invisible tab stop or a duplicate screen-reader control.
+          tabIndex={-1}
+          aria-hidden="true"
           onChange={(e) => {
             void onPick(e.target.files?.[0])
             // Allow re-picking the same file name (onChange won't fire otherwise).
@@ -308,6 +316,11 @@ export function ImportPlayersModal({
           {summary.unknownTeams > 0 && (
             <p className="muted" style={{ fontSize: 13, margin: '0 0 2px' }}>
               {summary.unknownTeams} row{summary.unknownTeams === 1 ? '' : 's'} name a team that does not exist yet.
+            </p>
+          )}
+          {summary.unassignedRows > 0 && (
+            <p className="muted" style={{ fontSize: 13, margin: '0 0 2px' }}>
+              {summary.unassignedRows} row{summary.unassignedRows === 1 ? '' : 's'} have no team and will be Unassigned.
             </p>
           )}
           {plan.blankRows > 0 && (
