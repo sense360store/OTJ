@@ -3969,6 +3969,27 @@ export function useRegisteredPlayers(seasonId: string | null, enabled = true) {
   })
 }
 
+// Every player identity in the club, id to display name, for the import preview
+// only: it verifies a pasted Player ID belongs to the club (a valid uuid absent
+// from this set does not) and supplies the stored name for the rename warning on
+// a cross season update, so the renewal round trip (last season's export imported
+// into a new season) previews correctly. Club wide, read gated by the players
+// select policy (a players.import holder always holds players.view); no season,
+// no team, no registration, and no name ever leaves this map into a log or URL.
+// Keyed by lowercased uuid to match the Player ID normalisation in the plan.
+export function useClubPlayerIdentities(enabled = true) {
+  return useQuery({
+    queryKey: ['player_identities'],
+    enabled,
+    queryFn: async (): Promise<Map<string, string>> => {
+      const { data, error } = await supabase.from('players').select('id, display_name')
+      if (error) throw error
+      const rows = (data ?? []) as unknown as { id: string; display_name: string }[]
+      return new Map(rows.map((p) => [p.id.toLowerCase(), p.display_name]))
+    },
+  })
+}
+
 // The shared invalidation for a registration write: the season's register (the
 // Registered players table, keyed ['registrations', seasonId], so a prefix
 // invalidation refreshes it after every add, edit, delete or import), the

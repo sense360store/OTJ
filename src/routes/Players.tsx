@@ -32,6 +32,7 @@ import {
   type StatusFilter,
 } from '../lib/playersView'
 import { fmtRegDate } from '../lib/playersFormat'
+import { downloadTemplate } from '../lib/playersTemplate'
 import { mappingForTeam } from '../lib/spond'
 import type { RegisteredPlayer, RegistrationStatus, Team } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -40,6 +41,7 @@ import { PlayerFilters } from '../components/PlayerFilters'
 import { PlayerFormModal } from '../components/PlayerFormModal'
 import { PlayerHistoryModal } from '../components/PlayerHistoryModal'
 import { ExportConfirmModal } from '../components/ExportConfirmModal'
+import { ImportPlayersModal } from '../components/ImportPlayersModal'
 import {
   DeletePlayerModal,
   ImportFromSpondModal,
@@ -57,6 +59,7 @@ type ModalState =
   | { kind: 'delete'; player: RegisteredPlayer }
   | { kind: 'history'; player: RegisteredPlayer }
   | { kind: 'import' }
+  | { kind: 'importFile' }
   | { kind: 'export' }
   | null
 
@@ -199,6 +202,7 @@ export function Players() {
   const canHistory = caps.has('audit.view')
   const canManageSeasons = caps.has('seasons.manage')
   const canExport = caps.has('players.export')
+  const canImport = caps.has('players.import')
 
   const { data: seasons = [], isLoading: seasonsLoading, isError: seasonsError } = useSeasons(canView)
   const { data: currentSeason, isLoading: currentLoading } = useCurrentSeason(canView)
@@ -256,6 +260,14 @@ export function Players() {
   // the confirm dialog's previewed count must never read 0 while the real set
   // is still loading or errored.
   const showExport = canExport && !!selectedSeason && !rowsLoading && !rowsError
+  // Spreadsheet import targets any non archived season (defaulting to current),
+  // so it is gated on a non archived selected season, not on writable/current.
+  // The preview reads the current register, so it waits for a settled load.
+  const showImport = canImport && !!selectedSeason && !archived && !rowsLoading && !rowsError
+  // The blank template is season neutral and available to any players.import
+  // holder, including on an archived season (it writes nothing and carries no
+  // child data).
+  const showTemplate = canImport && !!selectedSeason
 
   // Loading and error gates. The capability read gates first so a parent (route
   // guarded anyway) never falls through to a child-data read.
@@ -309,6 +321,20 @@ export function Players() {
     </button>
   ) : null
 
+  const importButton = showImport ? (
+    <button className="btn btn-ghost" onClick={() => open({ kind: 'importFile' })}>
+      <Icon.upload />
+      Import players
+    </button>
+  ) : null
+
+  const templateButton = showTemplate ? (
+    <button className="btn btn-quiet" onClick={() => downloadTemplate('csv')}>
+      <Icon.fileText />
+      Download template
+    </button>
+  ) : null
+
   const header = (
     <div className="page-head">
       <div>
@@ -319,7 +345,9 @@ export function Players() {
         {seasonSelect}
         {addButton}
         {spondButton}
+        {importButton}
         {exportButton}
+        {templateButton}
       </div>
     </div>
   )
@@ -489,6 +517,14 @@ export function Players() {
       {modal?.kind === 'history' && <PlayerHistoryModal player={modal.player} teams={teams} onClose={close} />}
       {modal?.kind === 'import' && spondTeam && spondMapping && (
         <ImportFromSpondModal team={spondTeam} mapping={spondMapping} seasonName={seasonName} onClose={close} />
+      )}
+      {modal?.kind === 'importFile' && selectedSeason && (
+        <ImportPlayersModal
+          season={{ id: selectedSeason.id, name: seasonName }}
+          seasonRows={rows}
+          teams={teams}
+          onClose={close}
+        />
       )}
       {modal?.kind === 'export' && selectedSeason && (
         <ExportConfirmModal
