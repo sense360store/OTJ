@@ -18,7 +18,12 @@ import {
   useUnarchiveSeason,
 } from '../lib/queries'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
-import { seasonCreateErrorMessage } from '../lib/seasonForm'
+import {
+  seasonCreateErrorMessage,
+  submitSeasonCreate,
+  validateSeasonForm,
+  type SeasonFormValues,
+} from '../lib/seasonForm'
 import { fmtRegDate } from '../lib/playersFormat'
 import type { Season } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -29,18 +34,27 @@ function CreateSeasonModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('')
   const [startsOn, setStartsOn] = useState('')
   const [endsOn, setEndsOn] = useState('')
-  const { submit, pending, failed } = useGuardedSubmit<void, void>({
+  // The per-attempt values travel through the guarded submit input, never a
+  // closure. useGuardedSubmit freezes perform on the first render, so a perform
+  // that read name/startsOn/endsOn from this scope would always submit the
+  // initial empty strings even with valid dates on screen: that was the null
+  // starts_on bug. perform reads its input argument instead, and run() passes
+  // the current values.
+  const { submit, pending, failed } = useGuardedSubmit<SeasonFormValues, void>({
     operation: 'create season',
-    perform: () => create.mutateAsync({ name: name.trim(), startsOn, endsOn }),
+    perform: (values) => create.mutateAsync(values),
     onSuccess: () => onClose(),
   })
   const busy = pending !== null
-  const nameOk = name.trim().length >= 1 && name.trim().length <= 20
-  const datesOk = startsOn !== '' && endsOn !== '' && endsOn > startsOn
-  const canSubmit = nameOk && datesOk && !busy
+  const values: SeasonFormValues = { name, startsOn, endsOn }
+  const validation = validateSeasonForm(values)
+  const canSubmit = validation.canSubmit && !busy
+  // Show the validation reason once the user has started filling the form, so a
+  // blank form on open is not pre-flagged but an incomplete one is guided.
+  const touched = name.trim() !== '' || startsOn !== '' || endsOn !== ''
   const run = () => {
-    if (!canSubmit) return
-    void submit()
+    if (busy) return
+    submitSeasonCreate(values, submit)
   }
   return (
     <Modal
@@ -74,16 +88,30 @@ function CreateSeasonModal({ onClose }: { onClose: () => void }) {
       <div className="row" style={{ gap: 12 }}>
         <div className="field" style={{ flex: 1 }}>
           <label htmlFor="season-start">Starts</label>
-          <input id="season-start" type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} disabled={busy} />
+          <input
+            id="season-start"
+            type="date"
+            required
+            value={startsOn}
+            onChange={(e) => setStartsOn(e.target.value)}
+            disabled={busy}
+          />
         </div>
         <div className="field" style={{ flex: 1 }}>
           <label htmlFor="season-end">Ends</label>
-          <input id="season-end" type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} disabled={busy} />
+          <input
+            id="season-end"
+            type="date"
+            required
+            value={endsOn}
+            onChange={(e) => setEndsOn(e.target.value)}
+            disabled={busy}
+          />
         </div>
       </div>
-      {startsOn !== '' && endsOn !== '' && endsOn <= startsOn && (
+      {touched && validation.message && (
         <p role="alert" className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 0 }}>
-          The end date must be after the start date.
+          {validation.message}
         </p>
       )}
       <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
