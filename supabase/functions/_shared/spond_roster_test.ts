@@ -16,12 +16,14 @@ import {
   MAX_ROSTER_MEMBERS,
   memberSubgroupIds,
   planRosterImport,
+  readCappedJson,
   reduceMember,
   rosterDisplayName,
   rosterMembersForCommit,
   rosterShirtNumber,
   ROSTER_NAME_MAX,
   selectGroupMembers,
+  SPOND_MAX_BODY_BYTES,
 } from './spond.ts'
 
 // ---- Synthetic fixtures, invented names and ids only -----------------------
@@ -271,4 +273,41 @@ Deno.test('the commit payload carries only name and shirt, never a member id or 
 
 Deno.test('an empty plan makes an empty commit payload (a run still writes its summary server side)', () => {
   assertEquals(rosterMembersForCommit([]), [])
+})
+
+// ---- The response body cap --------------------------------------------------
+// Every Spond response body is read with a hard byte cap, so a malformed or
+// unexpectedly huge upstream response is bounded rather than buffered whole.
+
+Deno.test('readCappedJson parses a small JSON body within the cap', async () => {
+  const res = new Response(JSON.stringify({ ok: 1, list: [1, 2, 3] }))
+  assertEquals(await readCappedJson(res, SPOND_MAX_BODY_BYTES), { ok: 1, list: [1, 2, 3] })
+})
+
+Deno.test('readCappedJson rejects a body over the cap by declared content-length', async () => {
+  const big = JSON.stringify({ pad: 'x'.repeat(1000) })
+  const res = new Response(big) // Response sets content-length automatically
+  assertEquals(await readCappedJson(res, 100), null)
+})
+
+Deno.test('readCappedJson rejects an oversized streamed body with no content-length', async () => {
+  const enc = new TextEncoder()
+  const stream = new ReadableStream({
+    start(c) {
+      c.enqueue(enc.encode('['))
+      for (let i = 0; i < 1000; i++) c.enqueue(enc.encode('0,'))
+      c.enqueue(enc.encode('0]'))
+      c.close()
+    },
+  })
+  const res = new Response(stream) // a streamed body carries no content-length
+  assertEquals(await readCappedJson(res, 200), null)
+})
+
+Deno.test('readCappedJson returns null for malformed JSON within the cap', async () => {
+  assertEquals(await readCappedJson(new Response('{not json'), SPOND_MAX_BODY_BYTES), null)
+})
+
+Deno.test('readCappedJson returns null for an empty body', async () => {
+  assertEquals(await readCappedJson(new Response(''), SPOND_MAX_BODY_BYTES), null)
 })

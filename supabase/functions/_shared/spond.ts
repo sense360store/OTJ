@@ -43,6 +43,71 @@ export const MAX_TOTAL_EVENTS = 500
 // Timeout on every Spond request.
 export const SPOND_TIMEOUT_MS = 15_000
 
+// A byte cap on every Spond response body, mirroring the FA importer's caps
+// discipline (_shared/fa.ts MAX_PAGE_BYTES). A grassroots club's login token and
+// group list are a few KB; 5 MB is generous headroom, so a malformed or
+// unexpectedly huge upstream response is bounded rather than buffered whole into
+// the function's memory. See readCappedJson.
+export const SPOND_MAX_BODY_BYTES = 5 * 1024 * 1024
+
+// Read a JSON response body with a hard byte cap, streaming the body and
+// aborting once the cap is exceeded, so a huge or malformed upstream response
+// can never buffer past the limit. A declared content-length over the cap is
+// rejected before any read. Returns the parsed value, or null when the body is
+// absent, over the cap, or not valid JSON. The raw body is never logged.
+export async function readCappedJson(res: Response, maxBytes: number): Promise<unknown> {
+  const declared = parseInt(res.headers.get('content-length') ?? '', 10)
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel()
+    return null
+  }
+  const reader = res.body?.getReader()
+  if (!reader) {
+    // No stream (e.g. an empty body): fall back to a bounded text read.
+    let text: string
+    try {
+      text = await res.text()
+    } catch {
+      return null
+    }
+    if (new TextEncoder().encode(text).length > maxBytes) return null
+    try {
+      return text ? JSON.parse(text) : null
+    } catch {
+      return null
+    }
+  }
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value && value.byteLength > 0) {
+        total += value.byteLength
+        if (total > maxBytes) {
+          await reader.cancel()
+          return null
+        }
+        chunks.push(value)
+      }
+    }
+  } catch {
+    return null
+  }
+  const buf = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    buf.set(c, offset)
+    offset += c.byteLength
+  }
+  try {
+    return JSON.parse(new TextDecoder('utf-8', { fatal: false }).decode(buf))
+  } catch {
+    return null
+  }
+}
+
 // One spond_groups mapping row, as the function reads it. spond_name is
 // a team display label, never a person.
 export interface SpondMapping {

@@ -68,9 +68,11 @@ import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
   extractAccessToken,
   planRosterImport,
+  readCappedJson,
   rosterMembersForCommit,
   selectGroupMembers,
   SPOND_API_BASE,
+  SPOND_MAX_BODY_BYTES,
   SPOND_TIMEOUT_MS,
 } from '../_shared/spond.ts'
 import type { SpondMapping } from '../_shared/spond.ts'
@@ -110,12 +112,9 @@ async function spondLogin(): Promise<{ token: string } | { response: Response }>
       }),
     }
   }
-  let body: unknown = null
-  try {
-    body = await res.json()
-  } catch {
-    body = null
-  }
+  // Cap the body: a login response is a few hundred bytes; anything huge is a
+  // malformed or hostile response and is bounded rather than buffered whole.
+  const body = await readCappedJson(res, SPOND_MAX_BODY_BYTES)
   const token = extractAccessToken(body)
   if (!token) {
     console.error('spond-roster-import: login returned no usable token')
@@ -144,11 +143,14 @@ async function spondGroups(token: string): Promise<{ groups: unknown } | { respo
     await res.body?.cancel()
     return { response: reply(502, { error: `Spond refused the group list (HTTP ${res.status}). Nothing was imported.` }) }
   }
-  let body: unknown = null
-  try {
-    body = await res.json()
-  } catch {
-    body = null
+  // Cap the group list body, streaming and aborting past SPOND_MAX_BODY_BYTES so
+  // an oversized or malformed response is bounded, never buffered whole. null
+  // means unreadable, over the cap, or not JSON: a clear 502, not a silent
+  // zero-member import.
+  const body = await readCappedJson(res, SPOND_MAX_BODY_BYTES)
+  if (body === null) {
+    console.error('spond-roster-import: groups body unreadable or over cap')
+    return { response: reply(502, { error: 'Spond returned an unreadable or oversized group list. Nothing was imported.' }) }
   }
   return { groups: body }
 }
@@ -165,25 +167,28 @@ Deno.serve(async (req) => {
   if ('response' in resolved) return resolved.response
   const { caller } = resolved
 
-  // Fail closed while the dedicated organiser account is not configured.
-  if (!SPOND_EMAIL || !SPOND_PASSWORD) {
-    return reply(503, {
-      error:
-        'The Spond account is not configured. An administrator must set the SPOND_EMAIL and SPOND_PASSWORD function secrets. Nothing was imported.',
-    })
-  }
-
-  // The capability gate, before Spond is contacted at all. has_perm is the live
-  // SECURITY DEFINER function; a yes here means the spond_import_roster commit
-  // below will pass its own in body players.import re check, and a no refuses
-  // early. The gate is players.import (managers and admins by default), so the
-  // early probe and the RPC's authoritative check cannot drift.
+  // The capability gate FIRST, before anything else and before Spond is
+  // contacted. has_perm is the live SECURITY DEFINER function; a yes here means
+  // the spond_import_roster commit below will pass its own in body players.import
+  // re check, and a no refuses early. The gate is players.import (managers and
+  // admins by default), so the early probe and the RPC's authoritative check
+  // cannot drift. It runs ahead of the secret presence check so an unauthorized
+  // caller learns nothing about the server's configuration state.
   const { data: canImport, error: permError } = await caller.db.rpc('has_perm', { capability: 'players.import' })
   if (permError) {
     return reply(500, { error: 'Could not check your access. Nothing was imported.' })
   }
   if (canImport !== true) {
     return reply(403, { error: 'Importing a Spond squad needs the players.import capability.' })
+  }
+
+  // Fail closed while the dedicated organiser account is not configured. Only an
+  // authorized caller reaches this point, so it reveals nothing to an outsider.
+  if (!SPOND_EMAIL || !SPOND_PASSWORD) {
+    return reply(503, {
+      error:
+        'The Spond account is not configured. An administrator must set the SPOND_EMAIL and SPOND_PASSWORD function secrets. Nothing was imported.',
+    })
   }
 
   // The season is chosen server side: the club's current season. The client
