@@ -68,3 +68,60 @@ function pgErrorCode(error: unknown): string | null {
 export function seasonCreateErrorMessage(error: unknown): string {
   return pgErrorCode(error) === UNIQUE_VIOLATION ? SEASON_DUPLICATE_NAME_MESSAGE : SEASON_CREATE_GENERIC_MESSAGE
 }
+
+// The Create Season form's live values, straight from the modal's controlled
+// inputs. The submit path reads the CURRENT values through this shape (passed
+// as the guarded submit input), never a first-render closure: that closure
+// capture was the root cause of the create failing with a null start date even
+// when a valid date was visible, because useGuardedSubmit freezes perform on
+// the first render when every field is still empty.
+export interface SeasonFormValues {
+  name: string
+  startsOn: string
+  endsOn: string
+}
+
+// Client side validation copy, shown inline before any network request.
+export const SEASON_NAME_REQUIRED_MESSAGE = 'Enter a season name of 1 to 20 characters.'
+export const SEASON_DATES_REQUIRED_MESSAGE = 'Enter both a start date and an end date.'
+export const SEASON_DATE_ORDER_MESSAGE = 'The end date must be after the start date.'
+
+// Validates the form BEFORE any request. canSubmit gates both the Create button
+// and the submit decision, so an invalid form never reaches Supabase; message
+// is the single reason to surface. Both dates are required (the columns are NOT
+// NULL), so a blank start or end blocks here rather than failing at the database
+// with 22007 or 23502.
+export function validateSeasonForm(values: SeasonFormValues): { canSubmit: boolean; message: string | null } {
+  const name = values.name.trim()
+  if (name.length < 1 || name.length > 20) {
+    return { canSubmit: false, message: SEASON_NAME_REQUIRED_MESSAGE }
+  }
+  if (values.startsOn.trim() === '' || values.endsOn.trim() === '') {
+    return { canSubmit: false, message: SEASON_DATES_REQUIRED_MESSAGE }
+  }
+  if (!(values.endsOn > values.startsOn)) {
+    return { canSubmit: false, message: SEASON_DATE_ORDER_MESSAGE }
+  }
+  return { canSubmit: true, message: null }
+}
+
+// The mutation input, derived from the CURRENT form values. Trims the name; the
+// dates pass through unchanged (a valid ISO date is preserved) and are
+// normalized to null at the insert boundary by seasonDatePayload.
+export function seasonCreateInput(values: SeasonFormValues): SeasonFormValues {
+  return { name: values.name.trim(), startsOn: values.startsOn, endsOn: values.endsOn }
+}
+
+// The Create button's action, extracted so it is testable without a DOM. It
+// submits the CURRENT values only when the form is valid, so an invalid form
+// makes no network request. Returns true when it submitted, false when it
+// blocked. The component passes its guarded submit as `submit` and its live
+// input values as `values`.
+export function submitSeasonCreate(
+  values: SeasonFormValues,
+  submit: (input: SeasonFormValues) => void,
+): boolean {
+  if (!validateSeasonForm(values).canSubmit) return false
+  submit(seasonCreateInput(values))
+  return true
+}
