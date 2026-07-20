@@ -3867,10 +3867,12 @@ interface RosterImportBody {
 }
 
 // Triggers the spond-roster-import Edge Function for one team. The function
-// checks sessions.create before contacting Spond; a 403 (capability), 503
-// (the organiser account secrets are missing) or 502 (Spond unreachable)
-// replies with a plain { error } body shown verbatim. On success the roster
-// query is invalidated so the new players appear.
+// checks players.import before contacting Spond and commits through the
+// transactional spond_import_roster RPC (Pending registrations in the current
+// season, audited as source spond_import); a 403 (capability), 503 (the
+// organiser account secrets are missing), 409 (no current season) or 502 (Spond
+// unreachable) replies with a plain { error } body shown verbatim. On success the
+// roster query is invalidated so the new players appear.
 export function useSpondRosterImport() {
   const qc = useQueryClient()
   return useMutation<RosterImportResult, Error, { teamId: string }>({
@@ -4057,6 +4059,63 @@ export function useImportPlayers() {
       invalidatePlayerReads(qc)
       qc.invalidateQueries({ queryKey: ['player_identities'] })
     },
+  })
+}
+
+// The transactional bulk Renew commit (players.manage, 0036_spond_and_renew.sql).
+// Calls the renew_registrations RPC with a client minted batch id, the chosen
+// source and target season ids and the chosen player ids; the RPC re-checks the
+// capability and club, validates both seasons belong to the club (target non
+// archived, source and target distinct), reads team and shirt from each source
+// registration server side, and creates a Pending target registration for every
+// chosen player not already registered there, in one transaction, audited as
+// source 'renewal' (player.renewed). It never mutates the source registration
+// and records no import_batches row. Idempotent per (player, season): a repeat
+// or a lost-response retry creates no duplicates (the RPC returns already_in_target
+// for rows that exist), so no optimistic write and a safe retry. Settled, not
+// success: the register refreshes after any attempt so the target season shows
+// the true state.
+export interface RenewResult {
+  batchId: string
+  renewed: number
+  alreadyInTarget: number
+  skipped: number
+  outcome: string
+}
+
+interface RenewResultRow {
+  batch_id?: string
+  renewed?: number
+  already_in_target?: number
+  skipped?: number
+  outcome?: string
+}
+
+export function useRenewRegistrations() {
+  const qc = useQueryClient()
+  return useMutation<
+    RenewResult,
+    Error,
+    { batchId: string; sourceSeasonId: string; targetSeasonId: string; playerIds: string[] }
+  >({
+    mutationFn: async ({ batchId, sourceSeasonId, targetSeasonId, playerIds }) => {
+      const { data, error } = await supabase.rpc('renew_registrations', {
+        p_batch_id: batchId,
+        p_source_season_id: sourceSeasonId,
+        p_target_season_id: targetSeasonId,
+        p_player_ids: playerIds,
+      })
+      if (error) throw error
+      const r = (data ?? {}) as RenewResultRow
+      return {
+        batchId: r.batch_id ?? batchId,
+        renewed: r.renewed ?? 0,
+        alreadyInTarget: r.already_in_target ?? 0,
+        skipped: r.skipped ?? 0,
+        outcome: r.outcome ?? 'succeeded',
+      }
+    },
+    onSettled: () => invalidatePlayerReads(qc),
   })
 }
 

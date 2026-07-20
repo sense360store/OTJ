@@ -42,6 +42,7 @@ import { PlayerFormModal } from '../components/PlayerFormModal'
 import { PlayerHistoryModal } from '../components/PlayerHistoryModal'
 import { ExportConfirmModal } from '../components/ExportConfirmModal'
 import { ImportPlayersModal } from '../components/ImportPlayersModal'
+import { RenewSeasonModal } from '../components/RenewSeasonModal'
 import {
   DeletePlayerModal,
   ImportFromSpondModal,
@@ -60,6 +61,7 @@ type ModalState =
   | { kind: 'history'; player: RegisteredPlayer }
   | { kind: 'import' }
   | { kind: 'importFile' }
+  | { kind: 'renew' }
   | { kind: 'export' }
   | null
 
@@ -251,8 +253,15 @@ export function Players() {
   const resolvedTeamId = filters.team !== 'all' && filters.team !== 'unassigned' ? filters.team : null
   const spondTeam: Team | null = resolvedTeamId ? (teams.find((t) => t.id === resolvedTeamId) ?? null) : null
   const spondMapping = resolvedTeamId ? mappingForTeam(mappings, resolvedTeamId) : null
-  const showSpond = canManage && isCurrent && writable && !!spondTeam && !!spondMapping
+  // Import from Spond is gated on players.import (managers and admins by
+  // default), and renders only on the current season with a specific mapped
+  // team selected (Spond stays current-season only, server chosen).
+  const showSpond = canImport && isCurrent && writable && !!spondTeam && !!spondMapping
   const showAdd = canManage && isCurrent && writable
+  // Renew is a season level bulk action (players.manage), independent of the
+  // page's selected season, available whenever there is more than one season to
+  // renew between. The modal picks the source and target seasons itself.
+  const showRenew = canManage && seasons.length >= 2
   // Export is allowed on ANY selected season (a past register is a legitimate
   // export), so it is not gated on writable/current like the write affordances.
   // It IS gated on a settled, non-errored register load, because the header
@@ -314,6 +323,13 @@ export function Players() {
     </button>
   ) : null
 
+  const renewButton = showRenew ? (
+    <button className="btn btn-ghost" onClick={() => open({ kind: 'renew' })}>
+      <Icon.calendar />
+      Renew
+    </button>
+  ) : null
+
   const exportButton = showExport ? (
     <button className="btn btn-ghost" onClick={() => open({ kind: 'export' })}>
       <Icon.download />
@@ -345,6 +361,7 @@ export function Players() {
         {seasonSelect}
         {addButton}
         {spondButton}
+        {renewButton}
         {importButton}
         {exportButton}
         {templateButton}
@@ -517,6 +534,14 @@ export function Players() {
       {modal?.kind === 'history' && <PlayerHistoryModal player={modal.player} teams={teams} onClose={close} />}
       {modal?.kind === 'import' && spondTeam && spondMapping && (
         <ImportFromSpondModal team={spondTeam} mapping={spondMapping} seasonName={seasonName} onClose={close} />
+      )}
+      {modal?.kind === 'renew' && (
+        <RenewSeasonModal
+          seasons={seasons}
+          currentSeasonId={currentSeason?.id ?? null}
+          teams={teams}
+          onClose={close}
+        />
       )}
       {modal?.kind === 'importFile' && selectedSeason && (
         <ImportPlayersModal

@@ -9,7 +9,7 @@
 // import additionally needs the dedicated Spond organiser account and its
 // two secrets (below) and a spond_groups mapping for the team.
 //
-// What this is. A coach or admin imports the children in a mapped Spond
+// What this is. A manager or admin imports the children in a mapped Spond
 // subgroup into that team's Hub roster, so the squad lives in one place
 // instead of being cross referenced against Spond. It runs only when
 // someone presses Import for a specific mapped team: never automatic,
@@ -42,27 +42,40 @@
 // github.com/Olen/Spond (read at build time); it is a reference, not a
 // dependency.
 //
-// Security model, identical to spond-sync:
+// Security model:
 //   * The Supabase client is built from the caller's JWT and the anon key,
-//     so every read and write goes through RLS as that coach. The service
-//     role key is not used in this function at all.
-//   * The sessions.create capability is required before Spond is
-//     contacted, checked by calling the live has_perm function through the
-//     caller's RLS client: the same function the players write policy
-//     uses, so the early check and the RLS enforcement cannot drift.
+//     so the reads and the has_perm probe run through RLS as that member. The
+//     commit goes through the spond_import_roster RPC (0036), which is SECURITY
+//     DEFINER and re checks the capability and club in its own body; the
+//     service role key is not used in this function at all.
+//   * The players.import capability is required before Spond is contacted,
+//     checked by calling the live has_perm function through the caller's RLS
+//     client: the same gate the spond_import_roster RPC re checks at commit,
+//     so the early refusal and the authoritative enforcement cannot drift.
+//     players.import defaults to managers and admins, so a coach (players.view
+//     only) no longer reaches this import, making CLAUDE.md's "admin triggered"
+//     description real.
 //   * Credentials are the dedicated organiser account's, in the
 //     SPOND_EMAIL and SPOND_PASSWORD function secrets. When either is
 //     missing the function fails closed with a 503 and writes nothing.
+//   * Imported children land as Pending registrations in the club's current
+//     season, chosen server side; the client cannot pick a season, and the
+//     function refuses when the club has none. Each run carries a batch id on
+//     its audit events (source spond_import) and writes one players.spond_imported
+//     summary. It records no import_batches row and reads only {name, shirt}.
 // =====================================================================
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
   extractAccessToken,
   planRosterImport,
+  readCappedJson,
+  rosterMembersForCommit,
   selectGroupMembers,
   SPOND_API_BASE,
+  SPOND_MAX_BODY_BYTES,
   SPOND_TIMEOUT_MS,
 } from '../_shared/spond.ts'
-import type { RosterPlayer, SpondMapping } from '../_shared/spond.ts'
+import type { SpondMapping } from '../_shared/spond.ts'
 
 const SPOND_EMAIL = Deno.env.get('SPOND_EMAIL') ?? ''
 const SPOND_PASSWORD = Deno.env.get('SPOND_PASSWORD') ?? ''
@@ -99,12 +112,9 @@ async function spondLogin(): Promise<{ token: string } | { response: Response }>
       }),
     }
   }
-  let body: unknown = null
-  try {
-    body = await res.json()
-  } catch {
-    body = null
-  }
+  // Cap the body: a login response is a few hundred bytes; anything huge is a
+  // malformed or hostile response and is bounded rather than buffered whole.
+  const body = await readCappedJson(res, SPOND_MAX_BODY_BYTES)
   const token = extractAccessToken(body)
   if (!token) {
     console.error('spond-roster-import: login returned no usable token')
@@ -133,11 +143,14 @@ async function spondGroups(token: string): Promise<{ groups: unknown } | { respo
     await res.body?.cancel()
     return { response: reply(502, { error: `Spond refused the group list (HTTP ${res.status}). Nothing was imported.` }) }
   }
-  let body: unknown = null
-  try {
-    body = await res.json()
-  } catch {
-    body = null
+  // Cap the group list body, streaming and aborting past SPOND_MAX_BODY_BYTES so
+  // an oversized or malformed response is bounded, never buffered whole. null
+  // means unreadable, over the cap, or not JSON: a clear 502, not a silent
+  // zero-member import.
+  const body = await readCappedJson(res, SPOND_MAX_BODY_BYTES)
+  if (body === null) {
+    console.error('spond-roster-import: groups body unreadable or over cap')
+    return { response: reply(502, { error: 'Spond returned an unreadable or oversized group list. Nothing was imported.' }) }
   }
   return { groups: body }
 }
@@ -154,27 +167,28 @@ Deno.serve(async (req) => {
   if ('response' in resolved) return resolved.response
   const { caller } = resolved
 
-  // Fail closed while the dedicated organiser account is not configured.
+  // The capability gate FIRST, before anything else and before Spond is
+  // contacted. has_perm is the live SECURITY DEFINER function; a yes here means
+  // the spond_import_roster commit below will pass its own in body players.import
+  // re check, and a no refuses early. The gate is players.import (managers and
+  // admins by default), so the early probe and the RPC's authoritative check
+  // cannot drift. It runs ahead of the secret presence check so an unauthorized
+  // caller learns nothing about the server's configuration state.
+  const { data: canImport, error: permError } = await caller.db.rpc('has_perm', { capability: 'players.import' })
+  if (permError) {
+    return reply(500, { error: 'Could not check your access. Nothing was imported.' })
+  }
+  if (canImport !== true) {
+    return reply(403, { error: 'Importing a Spond squad needs the players.import capability.' })
+  }
+
+  // Fail closed while the dedicated organiser account is not configured. Only an
+  // authorized caller reaches this point, so it reveals nothing to an outsider.
   if (!SPOND_EMAIL || !SPOND_PASSWORD) {
     return reply(503, {
       error:
         'The Spond account is not configured. An administrator must set the SPOND_EMAIL and SPOND_PASSWORD function secrets. Nothing was imported.',
     })
-  }
-
-  // The capability gate, before Spond is contacted at all. has_perm is the
-  // live SECURITY DEFINER function the players write policy calls, so a yes
-  // here means the writes below pass RLS and a no refuses early. Since the PR 2
-  // schema split the probe moves from sessions.create to players.manage so it
-  // matches the write policy the add_player RPC binds under and cannot drift.
-  // The full players.import gate, Pending default and batch audit arrive with
-  // the PR 6 rework; this is the interim compatibility shim.
-  const { data: canImport, error: permError } = await caller.db.rpc('has_perm', { capability: 'players.manage' })
-  if (permError) {
-    return reply(500, { error: 'Could not check your access. Nothing was imported.' })
-  }
-  if (canImport !== true) {
-    return reply(403, { error: 'Importing a Spond squad needs the players.manage capability.' })
   }
 
   // The season is chosen server side: the club's current season. The client
@@ -280,48 +294,54 @@ Deno.serve(async (req) => {
     existingNames = (nameRows ?? []).map((r) => (r as { display_name: string }).display_name)
   }
 
-  // Reduce each member to name plus optional number and plan the inserts.
-  // The reduction discards everything else; planRosterImport never echoes a
-  // member, only counts. The dedupe cannot distinguish two different children
-  // who share a name in the same subgroup (Spond member ids are never
-  // persisted): the second is treated as already present and skipped. Genuine
-  // same name members are corrected by manual add or an id keyed import until
-  // the PR 6 rework.
+  // Reduce each member to name plus optional number and plan the inserts
+  // against the names already registered on this team this season. The
+  // reduction discards everything else; planRosterImport never echoes a member,
+  // only counts. The dedupe cannot distinguish two different children who share
+  // a name in the same subgroup (Spond member ids are never persisted): the
+  // second is treated as already present. Genuine same name members are
+  // represented by a manual add or an id keyed spreadsheet import.
   const plan = planRosterImport(members, existingNames)
 
-  // Each new member is created through the add_player RPC, which commits the
-  // stable identity and its current season registration together (never an
-  // orphan). status registered preserves today's behaviour; the Pending
-  // default arrives with the PR 6 rework. INTERIM PROVENANCE: because
-  // add_player is SECURITY INVOKER and sets no audit source GUC, these
-  // registrations are audited as source 'manual' with no batch id and no
-  // players.spond_imported summary event until PR 6 moves a commit RPC that
-  // sets otj.audit_source = 'spond_import' into scope. Actor, club and
-  // timestamp on those events are correct.
-  if (plan.inserts.length > 0) {
-    for (const p of plan.inserts as RosterPlayer[]) {
-      const { error: addError } = await caller.db.rpc('add_player', {
-        p_id: crypto.randomUUID(),
-        p_display_name: p.display_name,
-        p_team_id: teamId,
-        p_shirt_number: p.shirt_number,
-        p_status: 'registered',
-        p_registered_date: null,
-      })
-      if (addError) {
-        // A partial import is safe: the members already added are committed and
-        // the name dedupe skips them on the next run. Report the failure.
-        console.error('spond-roster-import: add_player failed', { code: addError.code })
-        return reply(500, { error: 'Could not write the imported players. Check your access and try again.' })
-      }
-    }
+  // Commit through the transactional spond_import_roster RPC (0036), not a per
+  // member add_player loop. In one transaction, gated on players.import and the
+  // caller's club (both re derived server side), it inserts a new identity plus
+  // a Pending current season registration for every name still new at commit
+  // (re snapshotting under a per team advisory lock, so a concurrent import
+  // never double inserts), stamps the audit context so each row carries source
+  // 'spond_import' and this run's batch id, and writes exactly one
+  // players.spond_imported summary. It records no import_batches row, and it
+  // receives only {name, shirt_number}, never a Spond member id. A failure
+  // rolls the whole run back, so a partial import cannot occur. The client
+  // minted batch id is an audit grouping key only.
+  const batchId = crypto.randomUUID()
+  const { data: committed, error: commitError } = await caller.db.rpc('spond_import_roster', {
+    p_batch_id: batchId,
+    p_team_id: teamId,
+    p_members: rosterMembersForCommit(plan.inserts),
+  })
+  if (commitError) {
+    console.error('spond-roster-import: spond_import_roster failed', { code: commitError.code })
+    return reply(500, {
+      error: 'Could not write the imported players. Check your access and try again. Nothing was imported.',
+    })
   }
+
+  // Counts: added is the RPC's server derived insert count (authoritative,
+  // reflecting the commit under the advisory lock). already_present and skipped
+  // combine the preview's pre filter with anything the RPC re classified at
+  // commit (a concurrent import that landed a name first, or a name the RPC
+  // itself rejected). The three sum to the reduced member total.
+  const result = (committed ?? {}) as { added?: number; already_present?: number; skipped?: number }
+  const added = result.added ?? 0
+  const alreadyPresent = plan.alreadyPresent + (result.already_present ?? 0)
+  const skipped = plan.skipped + (result.skipped ?? 0)
 
   return reply(200, {
     ok: true,
-    added: plan.added,
-    already_present: plan.alreadyPresent,
-    skipped: plan.skipped,
-    ...(warnings.length > 0 ? { warnings } : { warnings: [] }),
+    added,
+    already_present: alreadyPresent,
+    skipped,
+    warnings,
   })
 })

@@ -572,7 +572,16 @@ resolve names. Shape and numbers only.
 The function's child data boundary is preserved exactly: names plus optional
 shirt number only, no Spond member ids, no guardians, no contacts, counts
 only logging, fails closed on missing secrets, caller JWT plus anon key with
-no service role. What changes:
+no service role.
+
+Implemented (PR 6, migration 0036) as `spond_import_roster(p_batch_id uuid,
+p_team_id uuid, p_members jsonb)`: the Edge Function reduces each member to
+`{name, shirt_number}` and calls this SECURITY DEFINER RPC, which re-checks
+`players.import` and the club in its own body, chooses the current season server
+side, dedupes by normalised name within (club, current season, team), inserts a
+new identity plus a Pending registration for every new name, and stamps source
+`spond_import` plus the run batch id. It records no `import_batches` row. What
+changes from today:
 
 - Permission: the gate moves from `sessions.create` to `players.import`
   (RPC probe before Spond is contacted, same pattern as today at
@@ -697,7 +706,8 @@ bounded:
   data. The Spond functions do not hold it. No new service role surface is
   added by this design.
 - SECURITY DEFINER RPCs: `import_players`, `export_players`,
-  `renew_registrations`, the Spond commit RPC, `activate_season` and the
+  `renew_registrations` (gated on `players.manage`), the Spond commit RPC
+  `spond_import_roster` (gated on `players.import`), `activate_season` and the
   `player_history` read all run as their owner, so RLS does not bind them
   and every check lives in their bodies, failing closed: each re-checks its
   capability via `has_perm`, derives club and actor from `auth.uid()` and

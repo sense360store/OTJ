@@ -16,11 +16,14 @@ import {
   MAX_ROSTER_MEMBERS,
   memberSubgroupIds,
   planRosterImport,
+  readCappedJson,
   reduceMember,
   rosterDisplayName,
+  rosterMembersForCommit,
   rosterShirtNumber,
   ROSTER_NAME_MAX,
   selectGroupMembers,
+  SPOND_MAX_BODY_BYTES,
 } from './spond.ts'
 
 // ---- Synthetic fixtures, invented names and ids only -----------------------
@@ -234,4 +237,77 @@ Deno.test('the de-dupe is case insensitive', () => {
 Deno.test('the shirt number rides the reduced row into the insert', () => {
   const plan = planRosterImport([{ firstName: 'Nine', lastName: 'Striker', shirtNumber: 9 }], [])
   assertEquals(plan.inserts, [{ display_name: 'Nine Striker', shirt_number: 9 }])
+})
+
+// ---- The commit RPC handoff boundary ----------------------------------------
+// The reduced roster handed to the spond_import_roster RPC (0036) carries only a
+// name and an optional shirt number per member. No Spond member id, guardian or
+// contact field can reach the database layer, even by accident, because the
+// shaping only ever reads the two roster fields reduceMember produced.
+
+Deno.test('the commit payload carries only name and shirt, never a member id or contact', () => {
+  const reduced = [
+    reduceMember(SYNTHETIC_MEMBER)!,
+    reduceMember({ firstName: 'Nine', lastName: 'Striker', shirtNumber: 9 })!,
+  ]
+  const payload = rosterMembersForCommit(reduced)
+  assertEquals(payload, [
+    { name: 'Jack Thompson', shirt_number: null },
+    { name: 'Nine Striker', shirt_number: 9 },
+  ])
+  for (const m of payload) assertEquals(Object.keys(m).sort(), ['name', 'shirt_number'])
+  const flat = JSON.stringify(payload)
+  for (const leak of [
+    'FAKE-MEMBER-1',
+    'Madeup',
+    'Guardianname',
+    'FAKE-GUARDIAN-9',
+    'guardians',
+    'email',
+    'phoneNumber',
+    '+44',
+  ]) {
+    assert(!flat.includes(leak), `commit payload leaked ${leak}`)
+  }
+})
+
+Deno.test('an empty plan makes an empty commit payload (a run still writes its summary server side)', () => {
+  assertEquals(rosterMembersForCommit([]), [])
+})
+
+// ---- The response body cap --------------------------------------------------
+// Every Spond response body is read with a hard byte cap, so a malformed or
+// unexpectedly huge upstream response is bounded rather than buffered whole.
+
+Deno.test('readCappedJson parses a small JSON body within the cap', async () => {
+  const res = new Response(JSON.stringify({ ok: 1, list: [1, 2, 3] }))
+  assertEquals(await readCappedJson(res, SPOND_MAX_BODY_BYTES), { ok: 1, list: [1, 2, 3] })
+})
+
+Deno.test('readCappedJson rejects a body over the cap by declared content-length', async () => {
+  const big = JSON.stringify({ pad: 'x'.repeat(1000) })
+  const res = new Response(big) // Response sets content-length automatically
+  assertEquals(await readCappedJson(res, 100), null)
+})
+
+Deno.test('readCappedJson rejects an oversized streamed body with no content-length', async () => {
+  const enc = new TextEncoder()
+  const stream = new ReadableStream({
+    start(c) {
+      c.enqueue(enc.encode('['))
+      for (let i = 0; i < 1000; i++) c.enqueue(enc.encode('0,'))
+      c.enqueue(enc.encode('0]'))
+      c.close()
+    },
+  })
+  const res = new Response(stream) // a streamed body carries no content-length
+  assertEquals(await readCappedJson(res, 200), null)
+})
+
+Deno.test('readCappedJson returns null for malformed JSON within the cap', async () => {
+  assertEquals(await readCappedJson(new Response('{not json'), SPOND_MAX_BODY_BYTES), null)
+})
+
+Deno.test('readCappedJson returns null for an empty body', async () => {
+  assertEquals(await readCappedJson(new Response(''), SPOND_MAX_BODY_BYTES), null)
 })
