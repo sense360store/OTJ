@@ -18,6 +18,7 @@ import {
   useUnarchiveSeason,
 } from '../lib/queries'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
+import { seasonCreateErrorMessage } from '../lib/seasonForm'
 import { fmtRegDate } from '../lib/playersFormat'
 import type { Season } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -90,7 +91,7 @@ function CreateSeasonModal({ onClose }: { onClose: () => void }) {
       </p>
       {failed && (
         <ActionError onRetry={canSubmit ? run : undefined} style={{ marginTop: 10 }}>
-          Could not create the season. The name may already exist.
+          {seasonCreateErrorMessage(create.error)}
         </ActionError>
       )}
     </Modal>
