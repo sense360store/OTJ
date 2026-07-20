@@ -57,6 +57,7 @@ import { newestFirst } from './contentOrder'
 import type { Board, Token } from './tacticsBoard'
 import { deserializeTokens, serializeTokens } from './tacticsBoard'
 import { sourceLabelForUrl } from './fa'
+import { seasonDatePayload } from './seasonForm'
 import { formatBytes } from './faAttach'
 import type { AttachPlan } from './faAttach'
 import { uploadFileWithProgress } from './storageUpload'
@@ -4224,18 +4225,22 @@ export function usePlayerHistory(playerId: string | null, enabled = true) {
 // Creates a season. Never changes the current season (is_current defaults
 // false); club and creator are pinned server side by the insert policy
 // (created_by = auth.uid()). Name is 1..20 unique per club; ends_on after
-// starts_on. A duplicate name or bad date range surfaces as the mutation error.
+// starts_on. A duplicate name or bad date range surfaces as the mutation error;
+// the modal maps it to safe copy through seasonCreateErrorMessage. Blank date
+// inputs are normalized from "" to null through seasonDatePayload so an empty
+// string never reaches the date columns (SQLSTATE 22007).
 export function useCreateSeason() {
   const qc = useQueryClient()
   const { user, profile } = useAuth()
   return useMutation<void, Error, { name: string; startsOn: string; endsOn: string }>({
     mutationFn: async ({ name, startsOn, endsOn }) => {
       if (!user || !profile?.club_id) throw new Error('You must be signed in.')
+      const dates = seasonDatePayload({ startsOn, endsOn })
       const { error } = await supabase.from('seasons').insert({
         club_id: profile.club_id,
         name: name.trim(),
-        starts_on: startsOn,
-        ends_on: endsOn,
+        starts_on: dates.starts_on,
+        ends_on: dates.ends_on,
         created_by: user.id,
       })
       if (error) throw error
