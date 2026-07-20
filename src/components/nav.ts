@@ -57,6 +57,11 @@ const FULL_NAV: NavSection[] = [
       { id: 'planner', label: 'Session Planner', icon: Icon.layers, to: '/planner' },
       { id: 'board', label: 'Tactics Board', icon: Icon.target, to: '/board' },
       { id: 'players', label: 'Players', icon: Icon.users, to: '/players' },
+      // The club wide Activity feed, gated on audit.view so only holders
+      // (managers and admins by default) see it; a coach without audit.view and
+      // every parent get neither the item nor the route (ITEM_CAP below, and the
+      // RequireCap guard in App.tsx).
+      { id: 'activity', label: 'Activity', icon: Icon.clock, to: '/activity' },
       { id: 'programmes', label: 'Programmes', icon: Icon.list, to: '/programmes' },
     ],
   },
@@ -97,6 +102,9 @@ export const ITEM_CAP: Record<string, string> = {
   // (club wide read). Every coach holds it alongside sessions.create, so the
   // item still shows to coaches; the gate keeps the nav honest to the route.
   players: 'players.view',
+  // The Activity feed is gated on audit.view (managers and admins by default),
+  // so a coach holding only sessions.create and players.view never sees it.
+  activity: 'audit.view',
   'admin-club': 'club.manage',
   'admin-users': 'users.manage',
   'admin-teams': 'teams.manage',

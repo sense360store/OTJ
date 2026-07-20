@@ -309,7 +309,12 @@ export function describeHistoryEntry(
     case 'player.deleted':
       return 'Player deleted'
     case 'player.updated':
-      return 'Name changed'
+      // The identity row's only routinely edited field is display_name. Per the
+      // audit boundary (docs/security/app-audit-boundary.md, the display name
+      // rule), a name change records the field name only and renders as this
+      // fixed copy, never the old or new value. Shared with the club wide
+      // Activity feed so both surfaces read identically.
+      return 'Player name corrected'
     case 'player.registration_created':
       return 'Registration created'
     case 'player.renewed':

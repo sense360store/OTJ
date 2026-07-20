@@ -8,24 +8,31 @@
 import { usePlayerHistory } from '../lib/queries'
 import { describeHistoryEntry } from '../lib/playersView'
 import { fmtHistoryTime, fmtRegDate } from '../lib/playersFormat'
-import type { RegisteredPlayer, Team } from '../lib/data'
+import type { Team } from '../lib/data'
 import { Modal } from './ui'
 
+// Opened by id and current display name so both the Registered players page and
+// the club wide Activity page can drive it: the page passes the stable player id
+// (the audit entity id) and the name it already holds. The modal itself never
+// derives a name from an audit event; the name is the current display name the
+// caller resolved through the players.view gated read.
 export function PlayerHistoryModal({
-  player,
+  playerId,
+  displayName,
   teams,
   onClose,
 }: {
-  player: RegisteredPlayer
+  playerId: string
+  displayName: string
   teams: Team[]
   onClose: () => void
 }) {
-  const { data: entries = [], isLoading, isError } = usePlayerHistory(player.playerId)
+  const { data: entries = [], isLoading, isError } = usePlayerHistory(playerId)
   const teamName = (id: string | null | undefined): string =>
     id == null ? 'Unassigned' : (teams.find((t) => t.id === id)?.name ?? 'Deleted team')
 
   return (
-    <Modal title="History" sub={player.displayName} onClose={onClose}>
+    <Modal title="History" sub={displayName} onClose={onClose}>
       {isLoading ? (
         <p className="muted" style={{ fontSize: 14 }}>
           Loading…

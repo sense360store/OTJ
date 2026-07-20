@@ -21,3 +21,13 @@ export function fmtHistoryTime(iso: string): string {
   const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   return `${date}, ${time}`
 }
+
+// A club wide Activity timestamp: "16 Jul 2026, 14:32". Fuller than the per
+// player History time because the feed spans seasons, so the year matters.
+export function fmtActivityTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  return `${date}, ${time}`
+}

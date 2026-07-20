@@ -529,6 +529,51 @@ table.reg-table td.muted-cell { color: var(--slate-2); }
   table.reg-table .col-date, table.reg-table .col-updated { display: none; }
 }
 
+/* ---- Club wide Activity feed (PR 7) ---------------------------------- */
+/* Desktop inline filters; the mobile Filters button opens the same controls in
+   a dialog. The two never show together (media queries below). */
+.activity-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
+.activity-filters .activity-clear { margin-bottom: 0; }
+.activity-filter-grid { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.activity-filter-grid .field { margin-bottom: 0; min-width: 150px; }
+.activity-filter-grid .field .select { width: 100%; }
+.activity-filters-btn { display: none; }
+.activity-filter-note { color: var(--slate); }
+
+/* One list, reflowing from a desktop row to a mobile card by CSS alone. There
+   is no separate desktop table, so there is never a second layout on mobile and
+   the desktop row never needs horizontal scrolling (the body column shrinks and
+   wraps). */
+.activity-list { list-style: none; margin: 0; padding: 0; }
+.activity-item { display: grid; grid-template-columns: 168px minmax(0, 1fr) auto; gap: 14px;
+  align-items: start; padding: 13px 4px; border-bottom: 1px solid var(--line-2); }
+.activity-time { font-size: 12.5px; color: var(--slate); padding-top: 2px; white-space: nowrap; }
+.activity-body { min-width: 0; }
+.activity-line { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.activity-actor { font-weight: 700; }
+.activity-sep { color: var(--slate-2); }
+.activity-desc { color: var(--ink); }
+.activity-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.activity-entity { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.activity-entity.muted-cell { color: var(--slate-2); }
+.activity-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700;
+  color: var(--slate); background: var(--line-2); border-radius: 999px; padding: 3px 9px; }
+a.activity-batch { color: var(--royal); text-decoration: none; }
+a.activity-batch:hover { text-decoration: underline; }
+.activity-actions { display: flex; justify-content: flex-end; align-items: center; }
+.activity-more { display: flex; justify-content: center; padding: 18px 0 4px; }
+
+/* At and below 900px each row becomes a stacked card and the inline filters
+   give way to the Filters button. */
+@media (max-width: 900px) {
+  .activity-filters { display: none; }
+  .activity-filters-btn { display: inline-flex; }
+  .activity-item { grid-template-columns: 1fr; gap: 6px; border: 1px solid var(--line);
+    border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+  .activity-actions { justify-content: flex-start; margin-top: 2px; }
+  .activity-time { order: -1; }
+}
+
 /* ---- Registered players import modal (preview only, PR 5) ------------- */
 /* The preview-only banner: this release validates and previews, never writes. */
 .ip-note { font-size: 13px; line-height: 1.5; background: var(--gold-soft); border-radius: 11px;

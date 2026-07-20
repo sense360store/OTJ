@@ -308,7 +308,9 @@ describe('describeHistoryEntry', () => {
   it('describes the simple lifecycle actions without a name', () => {
     expect(describeHistoryEntry(entry('player.created'), opts)).toBe('Player added')
     expect(describeHistoryEntry(entry('player.withdrawn'), opts)).toBe('Withdrawn')
-    expect(describeHistoryEntry(entry('player.updated'), opts)).toBe('Name changed')
+    // A display name correction renders the fixed copy, never a name value, and
+    // is worded identically to the club wide Activity feed (the shared grammar).
+    expect(describeHistoryEntry(entry('player.updated'), opts)).toBe('Player name corrected')
     expect(describeHistoryEntry(entry('player.deleted'), opts)).toBe('Player deleted')
   })
 })
