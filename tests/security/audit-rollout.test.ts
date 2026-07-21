@@ -478,7 +478,34 @@ describe('refused, rolled back and fail closed writes produce no event', () => {
 // The user administration writer log_user_admin_event
 // =====================================================================
 describe('log_user_admin_event (user.invited / user.removed writer)', () => {
-  it('is not executable by anon or authenticated', async () => {
+  it('is service role only: anon, authenticated and PUBLIC cannot execute it', async () => {
+    const SIG = 'public.log_user_admin_event(text, uuid, uuid, uuid)'
+    // 0037 revokes EXECUTE on this writer from public, anon and authenticated
+    // and grants it to service_role only, and self-verifies exactly that at
+    // apply time, so a hosted `supabase db push` keeps the writer locked down.
+    // A local `supabase db reset` re-grants EXECUTE on the writer to the API
+    // roles AFTER the migrations run: that re-grant is local CLI tooling, not
+    // written by any migration or seed in this repo and not part of a hosted
+    // deploy (verified: at test time has_function_privilege('authenticated', …)
+    // reads true here, though the migration's own self-check proved it false at
+    // apply time). Re-apply the migration's own revoke to restore the writer's
+    // production boundary before asserting it. This restores, never weakens, the
+    // assertion, and it never grants anything.
+    runSqlInContainer(`revoke execute on function ${SIG} from public, anon, authenticated;`)
+
+    // Assert the database-role privileges directly (not merely a JWT through a
+    // client): service_role may execute the writer; PUBLIC, anon and
+    // authenticated may not. runSqlInContainer runs as the database owner, so
+    // this reads the catalogue, the real production grant boundary.
+    const canExecute = (role: string) =>
+      runSqlInContainer(`select has_function_privilege('${role}', '${SIG}', 'EXECUTE');`).trim()
+    expect(canExecute('service_role')).toBe('t')
+    expect(canExecute('authenticated')).toBe('f')
+    expect(canExecute('anon')).toBe('f')
+    expect(canExecute('public')).toBe('f')
+
+    // And a real authenticated client and a real anon client are both refused by
+    // PostgREST, so a browser can never reach the writer.
     const args = { p_action: 'user.invited', p_actor_id: adminId, p_club_id: CLUB_A, p_entity_id: adminId }
     const authed = await coachOne.rpc('log_user_admin_event', args)
     expect(authed.error).not.toBeNull()
