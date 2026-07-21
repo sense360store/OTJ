@@ -326,3 +326,214 @@ scheduled expiry cleanup or any UI. Those are PR 2 and later. The kill switch
 check on a public read, and `content_share.expired`, exist in schema and
 writer form here but are exercised only from PR 2. No public reading is
 implemented; do not treat the placeholder snapshot as a public projection.
+
+---
+
+# Content sharing boundary: the public read path (PR 2)
+
+This part is the security contract for Content Sharing PR 2 (public drill
+sharing), delivered by `0039_public_share_read.sql`, the two Edge Functions
+`manage-content-share` and `read-content-share`, the shared module
+`supabase/functions/_shared/share.ts`, and the public route `/share/:shareId`.
+PR 2 is **drill only**: sessions and programmes remain unsupported publicly, and
+there is no generic renderer that could silently expose another source kind.
+
+## 11. The public route and secret model
+
+- The public URL is `/share/:shareId#secret`.
+  - `shareId` is the share row's own uuid, a lookup id, never a source, club or
+    user id, and not an authorisation secret.
+  - The `secret` lives in the URL **fragment** (`#secret`), which the browser
+    never sends in the request line or the `Referer` header, so it never reaches
+    Vercel route logs or an external resource the page loads.
+  - The page reads the secret from `window.location.hash` and sends `shareId`
+    and `secret` to `read-content-share` in a POST body, never in a query
+    string or the path.
+- The secret is 256 bits of `crypto.getRandomValues` randomness, base64url
+  encoded (43 chars). Only its SHA-256 hash is stored (`token_hash bytea`, 32
+  bytes, a schema constraint). The raw secret is generated server side and
+  returned to the owner **only once** on create or rotate; it is never stored,
+  never logged, never placed in localStorage, analytics, the audit log or a
+  query cache. Losing it requires rotation.
+- The public lookup hashes the presented secret and the definer function
+  `read_public_share` does a keyed lookup (`where id = $1 and token_hash = $2`),
+  so an unknown id and a wrong secret are indistinguishable. The residual timing
+  signal of a keyed equality is negligible (256-bit secret, generic response,
+  rate limited); this is the accepted model from the roadmap section 14.
+
+## 12. The snapshot: builder, schema and public fields
+
+- The snapshot is built server side by the trusted management function from the
+  live drill and its optional media, through the pure `buildDrillSnapshot` in
+  `_shared/share.ts`. It is a strict allow list: only the named fields are
+  copied. A recursive scanner (`assertAllowlistedKeys`, `assertNoForbiddenKeys`)
+  asserts no key outside the allow list, and no forbidden key, reaches the
+  payload at any nesting level.
+- `snapshotVersion` is pinned to `1` (`SNAPSHOT_VERSION`); the read path and the
+  public page refuse an unknown version. The stored snapshot carries internal
+  markers (`builder: 'drill@1'`, `public: true`) that the read path strips; a PR
+  1 placeholder (`builder: 'pending'`, `public: false`) is never publicly
+  readable.
+- Included public drill fields: `title`, `summary`, `classification` (corner or
+  public tags), `skill`, `ages`, `level`, `duration`, `playerGuidance` (the
+  `players` field), `area`, `equipment`, `setupNotes`, `coachingPoints` (the
+  `points` field), `easier`, `harder`, `theme`, `format`, `sourceAttribution`
+  (`source_url`/`source_label` where present), `media`, `snapshotAt`.
+- Excluded, by allow list and by the recursive forbidden-key scan: `club_id`,
+  `created_by`, `created_at`, `media_id`, `source_key`, `source_programme_id`,
+  the real drill/media uuids, `storage_path`, `embed_url`, `token_hash`,
+  `coach_id`, any member id or name, `author`, and any internal or operational
+  field. Free text is sanitised (HTML tags, script/style/embed blocks,
+  event-handler remnants and `javascript:`/`data:`/`vbscript:` schemes stripped);
+  the public page renders every field as a React text node, never via innerHTML.
+
+## 13. Media behaviour (fail closed)
+
+- `internal_only` media never appears and, as a nested dependency, blocks the
+  whole drill share (the PR 1 aggregate block rule; enforced in the lifecycle
+  RPC and re-checked at read time).
+- `public_full` stored media (image, pdf, video with a `storage_path`) is
+  delivered through a short lived (ten minute) signed URL minted at read time by
+  `read-content-share`, for the exact path the definer function named, never a
+  caller-supplied path. No expiring signed URL is ever stored in the snapshot;
+  the snapshot holds the path in a private `_path` field that the read path
+  strips from the response, and re-signs on each read.
+- `public_link_only` media (for example a public YouTube link) is represented as
+  an external link only, never a downloadable stored binary. A `public_link_only`
+  stored object with no external link is rendered as caption only.
+- Honest residual (unchanged from the roadmap): a Supabase signed URL embeds the
+  object path (`{club_id}/{uuid}-file`) in cleartext, so the anonymous viewer
+  receives the club and object uuids. This is a low-impact cross-share
+  correlation handle, not a name or human identifier; copying/content-addressing
+  media to remove it is deferred past v1.
+
+## 14. Preview flow
+
+Before a coach creates a public link, the management function's `preview` action
+builds the exact projection through the SAME builder as create (no separate
+frontend eligibility path that could drift), and returns it with the rights
+status and the eligibility result. The Drill Detail preview modal shows every
+public field, marks the coach-authored free-text group ("You wrote this, it will
+be public"), carries the rights warning ("Confirm this text and any diagrams are
+the club's own work or cleared for public use..."), and blocks publishing when
+the source or any dependency is `internal_only`, offering the internal club link
+instead. Preview writes nothing and emits no audit event.
+
+## 15. Kill switch
+
+Public read fails closed while `clubs.public_sharing_enabled` is false:
+`read_public_share` checks it after resolving the share's club and returns the
+neutral unavailable response. Create, refresh and rotate already fail closed
+while off (PR 1); revoke stays allowed. The management function's `status` action
+surfaces the club switch state so the UI shows a calm disabled state. No
+migration, deploy or test enables the switch; it stays false on every club, and
+hosted production remains disabled until a separate explicit approval.
+
+## 16. The two Edge Functions
+
+- `manage-content-share` (verify_jwt ON): authenticates the caller
+  (`resolveCaller`), makes an early `has_perm` capability check under the
+  caller's identity, derives club and source authority server side, builds the
+  snapshot server side, generates the raw secret only for create/rotate, hashes
+  it before passing to the RPC, and calls the service role lifecycle RPC which is
+  the final authority. It never accepts `club_id`, an actor id or a snapshot from
+  the body; it never returns the token hash; it never logs the secret, snapshot
+  or drill text. Drill only; a non-drill kind is refused. An idempotency key is
+  required for create.
+- `read-content-share` (verify_jwt OFF, declared in `config.toml`): the first and
+  only anonymous function. It holds the service role (to read `content_shares`
+  and sign private media) and reaches the database only through the narrow
+  `read_public_share` SECURITY DEFINER function. It accepts only a bounded
+  `shareId` and `secret` in a POST body, hashes the secret, returns only the
+  stored snapshot with a short lived signed URL per eligible media, sets
+  `Cache-Control: no-store` and security headers, locks CORS to `APP_ORIGIN`,
+  allows only POST/OPTIONS, and returns the identical neutral
+  `{ status: 'unavailable' }` for every lifecycle failure. It never returns a
+  `content_shares` column, hash, source id, club id or member id, and never logs
+  the secret or snapshot. The lifecycle RPC is never exposed to browser clients.
+
+## 17. Anonymous-reader failure uniformity
+
+Unknown id, wrong secret, revoked, expired, kill-switch-off, placeholder
+snapshot, unknown version, non-drill kind, and an ineligible or missing
+dependency ALL return the identical `{ status: 'unavailable' }` at HTTP 200, with
+no distinguishing header, body or status code. A transport failure (5xx/network)
+is distinct (`{ status: 'error' }` with a retry), because it reveals nothing
+about the link's lifecycle. Malformed input is treated as unavailable.
+
+## 18. Expiry
+
+- Enforcement is at read time: `read_public_share` compares `expires_at` and
+  returns unavailable the instant a share is past expiry, mutating nothing.
+- Physical clearing is deferred to `content_share_expiry_cleanup(retention)`, a
+  service-role function that nulls the snapshot and removes the dependency rows
+  of a share expired beyond a retention window (default seven days) and emits
+  `content_share.expired` (a system event, `reason_code: expired_cleanup`).
+  During the window an expired share is inaccessible but still stored, so a
+  Refresh can extend it. This migration creates NO schedule (no casual unaudited
+  background job); wiring a daily invocation is a gated deploy step with a named
+  owner (roadmap section 25). Until then, expiry is read-time enforced and an
+  expired share retains its stored snapshot until Revoke or a manual cleanup run.
+
+## 19. Rate limiting
+
+`read-content-share` is internet facing. It enforces hard input caps (bounded
+token length/charset, a body size limit, a POST-only method allow-list, and a
+single indexed row lookup) which hold per request. It also applies a
+best-effort in-memory limiter keyed by `shareId` and by a hashed source IP (the
+raw IP is never stored or logged), falling back to `shareId` alone when a
+trustworthy IP is unavailable. HONEST LIMITATION: this limiter is per worker and
+is NOT globally durable; it is a first line, not a claimed global control. A
+durable distributed limit (a platform rate limit or a shared store the function
+can reach) is a PR 2 design gate and a follow up; until it exists, the section
+23 detection lines that depend on a global limiter are best-effort only.
+
+## 20. Management authority matrix (PR 2)
+
+| Action | Who |
+|---|---|
+| preview, create | drill owner with `shares.create` + `drills.create`, or `drills.manage` + `shares.create` |
+| refresh, rotate | the share creator only, with `shares.create` (a manager may NOT refresh or rotate another creator's link) |
+| revoke | the share creator with `shares.create`, or any `shares.manage` holder (revoke works while the kill switch is off) |
+| status/review | the share owner, or a `shares.manage` holder |
+| parent | none |
+
+The UI mirrors this but is never the boundary; the lifecycle RPC re-validates
+the passed actor's club, sharing capability, source capability, ownership and
+source club inside the transaction, so a capability revoked between the Edge
+Function check and the RPC fails closed.
+
+## 21. Audit behaviour
+
+Uses the PR 1 registered actions only. Exactly one audit event per successful
+management action (`content_share.created/refreshed/rotated/revoked`); the
+downgrade trigger emits `content_share.invalidated`; the expiry cleanup emits
+`content_share.expired`. No event on preview, no event on an anonymous read, no
+event on an invalid token probe, and a refused or rolled-back write emits
+nothing (the audit insert is in the same transaction as the mutation). Metadata
+stays within the PR 1 allow list; a raw secret, hash, snapshot or drill text
+never enters the audit log.
+
+## 22. Indexing and caching
+
+- `X-Robots-Tag: noindex, nofollow` on `/share/*` at the Vercel edge
+  (`vercel.json`), plus a client `<meta name="robots">`, so the unlisted links
+  are not indexed.
+- `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and a
+  Content-Security-Policy on `/share/*` limiting scripts to self, framing to
+  none, and connect/img/media to self, the Supabase origin and
+  `img.youtube.com`, with no third-party script origins.
+- `Cache-Control: no-store` on the read API response, so intermediaries do not
+  cache a snapshot.
+
+## 23. What PR 2 does NOT do
+
+- No public session sharing and no public programme sharing (`read_public_share`
+  refuses any non-drill kind).
+- No direct anonymous or authenticated database access to `content_shares` or
+  `content_share_dependencies` (no client policy or grant is added); the public
+  boundary remains the Edge Function/service layer.
+- No plaintext secret storage; no hosted migration applied; no hosted Edge
+  Function deployed; `public_sharing_enabled` stays false on every club.
+- No change to the existing FA import/content behaviour; all existing drills
+  remain `internal_only` and are therefore not eligible for public sharing.

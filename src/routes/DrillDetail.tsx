@@ -32,6 +32,7 @@ import { DrillFormModal } from '../components/DrillFormModal'
 import { DeleteDrillModal } from '../components/DeleteDrillModal'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
 import { ShareButton } from '../components/ShareButton'
+import { PublicShareControl } from '../components/PublicShareControl'
 
 function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
   return (
@@ -267,6 +268,12 @@ export function DrillDetail() {
   // whether to surface the actions.
   const canManage =
     caps.has('drills.manage') || (caps.has('drills.create') && !!drill.createdBy && drill.createdBy === user?.id)
+  // Public sharing (PR 2) mirrors the server's create authority: shares.create
+  // combined with the drill create/manage arm (canManage). A manager holding
+  // shares.manage may turn off any club link, but never rotate or refresh one.
+  // The UI only surfaces controls; the Edge Function and RPC are the boundary.
+  const canPublishShare = caps.has('shares.create') && canManage
+  const canRevokeAnyShare = caps.has('shares.manage')
 
   return (
     <div>
@@ -432,6 +439,14 @@ export function DrillDetail() {
             <div style={{ marginTop: 10 }}>
               <ShareButton kind="drill" id={drill.id} title={drill.title} />
             </div>
+          )}
+          {(canPublishShare || canRevokeAnyShare) && (
+            <PublicShareControl
+              drillId={drill.id}
+              drillTitle={drill.title}
+              canPublish={canPublishShare}
+              canRevokeAny={canRevokeAnyShare}
+            />
           )}
         </div>
       </div>

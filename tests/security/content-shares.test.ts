@@ -280,7 +280,10 @@ describe('manage_content_share is service role only', () => {
   })
 
   it('PUBLIC, anon and authenticated hold no EXECUTE, service_role does (exact signature)', () => {
-    const sig = 'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text)'
+    // 0039 (Content Sharing PR 2) extended the lifecycle RPC with p_snapshot and
+    // p_snapshot_version (drop-and-recreate), so the signature is now eleven
+    // arguments. The old nine-argument signature no longer exists.
+    const sig = 'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text, jsonb, integer)'
     expect(scalar(`select has_function_privilege('anon', ${sqlId(sig)}, 'EXECUTE')`)).toBe('f')
     expect(scalar(`select has_function_privilege('authenticated', ${sqlId(sig)}, 'EXECUTE')`)).toBe('f')
     expect(scalar(`select has_function_privilege('service_role', ${sqlId(sig)}, 'EXECUTE')`)).toBe('t')
@@ -302,6 +305,21 @@ describe('manage_content_share is service role only', () => {
         `and has_function_privilege('authenticated', p.oid, 'EXECUTE')`,
     )
     expect(anyExecutable).toBe('0')
+  })
+
+  it('pins the exact 0039 signature so a future drift is caught (regression)', () => {
+    // Regression guard for the signature-change class of failure: if the
+    // lifecycle RPC's argument list changes again, this fails loudly and the
+    // stale references (local-grants.sql, the checks above) are updated in step.
+    // to_regprocedure resolves a specific type signature to NULL when it does
+    // not exist (no error), which is format-independent across PostgreSQL builds.
+    const newSig =
+      'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text, jsonb, integer)'
+    const oldSig =
+      'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text)'
+    expect(scalar(`select (to_regprocedure(${sqlId(newSig)}) is not null)::text`)).toBe('true')
+    // The pre-0039 nine-argument signature must no longer exist.
+    expect(scalar(`select (to_regprocedure(${sqlId(oldSig)}) is null)::text`)).toBe('true')
   })
 })
 
@@ -928,5 +946,337 @@ describe('audit coverage and metadata safety', () => {
     )
     expect(cols).not.toContain('secret')
     expect(cols).not.toContain('plaintext')
+  })
+})
+
+// =====================================================================
+// Content Sharing PR 2: the public read path (read_public_share), the real
+// snapshot stored by the extended lifecycle RPC, and the expiry cleanup.
+//
+// Intended contract (0039_public_share_read.sql,
+// docs/security/content-sharing-boundary.md):
+//   * create/refresh now store the real versioned public snapshot the trusted
+//     Edge Function passes, atomically with the dependency set and audit event;
+//     a placeholder (no snapshot passed) is never publicly readable.
+//   * read_public_share is service_role only and is the single narrow anonymous
+//     read path. Every lifecycle failure (unknown id, wrong secret, revoked,
+//     expired, disabled, placeholder, non-drill kind, ineligible or missing
+//     dependency) returns the identical neutral { status: 'unavailable' }.
+//   * The public response carries only the safe snapshot (private media fields
+//     and internal markers stripped) plus the explicit signable media paths;
+//     never a token hash, source id, club id or member id.
+//   * content_share_expiry_cleanup clears a share expired beyond the retention
+//     window and emits content_share.expired.
+// =====================================================================
+
+// A real, versioned public drill snapshot (what the Edge Function builds).
+function drillSnapshot(media: Array<Record<string, unknown>> = []): Record<string, unknown> {
+  return {
+    snapshotVersion: 1,
+    kind: 'drill',
+    title: `${MARK}-title`,
+    summary: null,
+    classification: null,
+    skill: null,
+    ages: [],
+    level: null,
+    duration: null,
+    playerGuidance: null,
+    area: null,
+    equipment: [],
+    setupNotes: null,
+    coachingPoints: [],
+    easier: [],
+    harder: [],
+    theme: null,
+    format: null,
+    sourceAttribution: null,
+    media,
+    snapshotAt: '2026-01-01T00:00:00.000Z',
+    builder: 'drill@1',
+    public: true,
+  }
+}
+
+async function makeMediaWithPath(rights: 'internal_only' | 'public_link_only' | 'public_full', path: string | null): Promise<string> {
+  const { data, error } = await svc
+    .from('media')
+    .insert({ club_id: CLUB_A, name: `${MARK}-media`, type: 'image', rights, storage_path: path })
+    .select('id')
+    .single()
+  if (error) throw new Error(`makeMediaWithPath: ${error.message}`)
+  createdMediaIds.push(data!.id)
+  return data!.id
+}
+
+async function createDrillShare(
+  owner: string,
+  drillId: string,
+  hash: string,
+  snapshot: Record<string, unknown> | null,
+): Promise<string> {
+  const args: Record<string, unknown> = {
+    p_action: 'create',
+    p_actor_id: owner,
+    p_kind: 'drill',
+    p_source_id: drillId,
+    p_secret_hash: hash,
+    p_idempotency_key: `${MARK}-${runId()}`,
+  }
+  if (snapshot !== null) {
+    args.p_snapshot = snapshot
+    args.p_snapshot_version = 1
+  }
+  const { data, error } = await rpc(args)
+  if (error) throw new Error(`createDrillShare: ${error.message}`)
+  return (data as { share_id: string }).share_id
+}
+
+async function readShare(shareId: string, hash: string) {
+  return svc.rpc('read_public_share', { p_share_id: shareId, p_secret_hash: hash })
+}
+
+describe('read_public_share is service role only', () => {
+  it('anon and an authenticated coach cannot execute read_public_share', async () => {
+    const someId = '00000000-0000-0000-0000-000000000000'
+    const h = randHash()
+    const anonRes = await anon.rpc('read_public_share', { p_share_id: someId, p_secret_hash: h })
+    expect(anonRes.error).not.toBeNull()
+    const coachRes = await coachOne.rpc('read_public_share', { p_share_id: someId, p_secret_hash: h })
+    expect(coachRes.error).not.toBeNull()
+  })
+
+  it('has EXECUTE only for service_role at the exact signature', () => {
+    const anonExec = scalar(
+      `select has_function_privilege('anon', 'public.read_public_share(uuid, bytea)', 'EXECUTE')`,
+    )
+    const authExec = scalar(
+      `select has_function_privilege('authenticated', 'public.read_public_share(uuid, bytea)', 'EXECUTE')`,
+    )
+    const svcExec = scalar(
+      `select has_function_privilege('service_role', 'public.read_public_share(uuid, bytea)', 'EXECUTE')`,
+    )
+    expect(anonExec).toBe('f')
+    expect(authExec).toBe('f')
+    expect(svcExec).toBe('t')
+  })
+})
+
+describe('create stores a real snapshot and read_public_share returns only the safe projection', () => {
+  it('a real snapshot is stored (not the placeholder) and is publicly readable', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const hash = randHash()
+    const shareId = await createDrillShare(coachOneId, drillId, hash, drillSnapshot())
+
+    // Stored snapshot is the real one.
+    expect(scalar(`select snapshot->>'public' from public.content_shares where id = ${sqlId(shareId)}`)).toBe('true')
+    expect(scalar(`select snapshot->>'builder' from public.content_shares where id = ${sqlId(shareId)}`)).toBe('drill@1')
+
+    const { data, error } = await readShare(shareId, hash)
+    expect(error).toBeNull()
+    const res = data as { status: string; snapshot: Record<string, unknown>; media: unknown[] }
+    expect(res.status).toBe('ok')
+    expect(res.snapshot.kind).toBe('drill')
+    expect(res.snapshot.snapshotVersion).toBe(1)
+    // Internal markers stripped from the public projection.
+    expect(res.snapshot.public).toBeUndefined()
+    expect(res.snapshot.builder).toBeUndefined()
+    // No token hash, club id, source id or member id anywhere in the response.
+    const flat = JSON.stringify(res)
+    for (const forbidden of ['token_hash', 'club_id', 'created_by', 'drill_id', drillId, coachOneId, CLUB_A]) {
+      expect(flat).not.toContain(forbidden)
+    }
+  })
+
+  it('signs only eligible public_full stored media and strips the private fields', async () => {
+    await setKill(true)
+    const path = `${CLUB_A}/${runId()}-file.png`
+    const mediaId = await makeMediaWithPath('public_full', path)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full', mediaId })
+    const hash = randHash()
+    const snapshot = drillSnapshot([
+      { ref: 'm1', type: 'image', caption: 'Setup', sourceAttribution: null, link: null, _mid: mediaId, _path: path },
+    ])
+    const shareId = await createDrillShare(coachOneId, drillId, hash, snapshot)
+
+    const { data } = await readShare(shareId, hash)
+    const res = data as { status: string; snapshot: { media: Array<Record<string, unknown>> }; media: Array<Record<string, unknown>> }
+    expect(res.status).toBe('ok')
+    // The sign list names the one eligible path by ref.
+    expect(res.media).toHaveLength(1)
+    expect(res.media[0].ref).toBe('m1')
+    expect(res.media[0].path).toBe(path)
+    // The public media entry has no private fields and no raw path.
+    expect(res.snapshot.media[0]._mid).toBeUndefined()
+    expect(res.snapshot.media[0]._path).toBeUndefined()
+    expect(JSON.stringify(res.snapshot)).not.toContain(path)
+  })
+})
+
+describe('read_public_share returns a uniform neutral response for every failure', () => {
+  let drillId: string
+  let shareId: string
+  const hash = randHash()
+
+  beforeAll(async () => {
+    await setKill(true)
+    drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    shareId = await createDrillShare(coachOneId, drillId, hash, drillSnapshot())
+  })
+
+  it('a wrong secret is unavailable', async () => {
+    const { data } = await readShare(shareId, randHash())
+    expect((data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('an unknown share id is unavailable', async () => {
+    const { data } = await readShare('11111111-2222-3333-4444-555555555555', hash)
+    expect((data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a placeholder snapshot (no snapshot passed at create) is unavailable', async () => {
+    const d2 = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const h2 = randHash()
+    const s2 = await createDrillShare(coachOneId, d2, h2, null) // placeholder
+    const { data } = await readShare(s2, h2)
+    expect((data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a revoked share is unavailable', async () => {
+    const d3 = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const h3 = randHash()
+    const s3 = await createDrillShare(coachOneId, d3, h3, drillSnapshot())
+    await rpc({ p_action: 'revoke', p_actor_id: coachOneId, p_share_id: s3 })
+    const { data } = await readShare(s3, h3)
+    expect((data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('an expired share is unavailable', async () => {
+    const d4 = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const h4 = randHash()
+    const s4 = await createDrillShare(coachOneId, d4, h4, drillSnapshot())
+    runSqlInContainer(`update public.content_shares set expires_at = now() - interval '1 hour' where id = ${sqlId(s4)}`)
+    const { data } = await readShare(s4, h4)
+    expect((data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a share whose club has the kill switch off is unavailable', async () => {
+    // shareId was created while on; turn the club off and read.
+    await setKill(false)
+    const { data } = await readShare(shareId, hash)
+    expect((data as { status: string }).status).toBe('unavailable')
+    await setKill(true)
+    // Back on, it reads again.
+    const { data: back } = await readShare(shareId, hash)
+    expect((back as { status: string }).status).toBe('ok')
+  })
+
+  it('the old secret is unavailable after rotate, the new secret works', async () => {
+    const newHash = randHash()
+    await rpc({ p_action: 'rotate', p_actor_id: coachOneId, p_share_id: shareId, p_secret_hash: newHash })
+    const { data: old } = await readShare(shareId, hash)
+    expect((old as { status: string }).status).toBe('unavailable')
+    const { data: fresh } = await readShare(shareId, newHash)
+    expect((fresh as { status: string }).status).toBe('ok')
+  })
+
+  it('a missing nested dependency is unavailable (the read-time third layer)', async () => {
+    await setKill(true)
+    const path = `${CLUB_A}/${runId()}-file.png`
+    const mediaId = await makeMediaWithPath('public_full', path)
+    const dd = await makeDrill({ owner: coachOneId, rights: 'public_full', mediaId })
+    const hh = randHash()
+    const ss = await createDrillShare(coachOneId, dd, hh, drillSnapshot([
+      { ref: 'm1', type: 'image', caption: null, sourceAttribution: null, link: null, _mid: mediaId, _path: path },
+    ]))
+    // Delete the media object; the drill's media_id nulls out (set null) but the
+    // share's dependency row remains, so the read must fail closed.
+    runSqlInContainer(`delete from public.media where id = ${sqlId(mediaId)}`)
+    const idx = createdMediaIds.indexOf(mediaId)
+    if (idx >= 0) createdMediaIds.splice(idx, 1)
+    const { data } = await readShare(ss, hh)
+    expect((data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a downgraded nested dependency makes the read unavailable', async () => {
+    await setKill(true)
+    const path = `${CLUB_A}/${runId()}-file.png`
+    const mediaId = await makeMediaWithPath('public_full', path)
+    const dd = await makeDrill({ owner: coachOneId, rights: 'public_full', mediaId })
+    const hh = randHash()
+    const ss = await createDrillShare(coachOneId, dd, hh, drillSnapshot([
+      { ref: 'm1', type: 'image', caption: null, sourceAttribution: null, link: null, _mid: mediaId, _path: path },
+    ]))
+    // Downgrade the media to internal_only: the trigger invalidates the share,
+    // and the read fails closed regardless.
+    await svc.from('media').update({ rights: 'internal_only' }).eq('id', mediaId)
+    const { data } = await readShare(ss, hh)
+    expect((data as { status: string }).status).toBe('unavailable')
+  })
+})
+
+describe('read_public_share renders drills only', () => {
+  it('a non-drill share (session) is unavailable, even with a real snapshot', async () => {
+    await setKill(true)
+    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [] })
+    const hash = randHash()
+    const sessionSnapshot = { ...drillSnapshot(), kind: 'session' }
+    const { data, error } = await rpc({
+      p_action: 'create',
+      p_actor_id: coachOneId,
+      p_kind: 'session',
+      p_source_id: sessionId,
+      p_secret_hash: hash,
+      p_idempotency_key: `${MARK}-${runId()}`,
+      p_snapshot: sessionSnapshot,
+      p_snapshot_version: 1,
+    })
+    expect(error).toBeNull()
+    const shareId = (data as { share_id: string }).share_id
+    const read = await readShare(shareId, hash)
+    expect((read.data as { status: string }).status).toBe('unavailable')
+  })
+})
+
+describe('content_share_expiry_cleanup', () => {
+  it('anon and authenticated cannot execute it; service_role can', () => {
+    expect(scalar(`select has_function_privilege('anon', 'public.content_share_expiry_cleanup(interval)', 'EXECUTE')`)).toBe('f')
+    expect(scalar(`select has_function_privilege('authenticated', 'public.content_share_expiry_cleanup(interval)', 'EXECUTE')`)).toBe('f')
+    expect(scalar(`select has_function_privilege('service_role', 'public.content_share_expiry_cleanup(interval)', 'EXECUTE')`)).toBe('t')
+  })
+
+  it('clears a share expired beyond the retention window and emits content_share.expired, sparing within-window and active shares', async () => {
+    await setKill(true)
+    const dExpired = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const dRecent = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const dActive = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const sExpired = await createDrillShare(coachOneId, dExpired, randHash(), drillSnapshot())
+    const sRecent = await createDrillShare(coachOneId, dRecent, randHash(), drillSnapshot())
+    const sActive = await createDrillShare(coachOneId, dActive, randHash(), drillSnapshot())
+
+    // Expired beyond a seven day window, and expired only one day ago.
+    runSqlInContainer(`update public.content_shares set expires_at = now() - interval '10 days' where id = ${sqlId(sExpired)}`)
+    runSqlInContainer(`update public.content_shares set expires_at = now() - interval '1 day' where id = ${sqlId(sRecent)}`)
+
+    const before = scalar(
+      `select count(*) from public.audit_events where entity_type='content_share' and action='content_share.expired' and entity_id=${sqlId(sExpired)}`,
+    )
+    expect(before).toBe('0')
+
+    const { error } = await svc.rpc('content_share_expiry_cleanup', { p_retention: '7 days' })
+    expect(error).toBeNull()
+
+    // The long-expired share is physically cleared and its deps removed.
+    expect(scalar(`select coalesce(snapshot::text, 'NULL') from public.content_shares where id = ${sqlId(sExpired)}`)).toBe('NULL')
+    expect(scalar(`select count(*) from public.content_share_dependencies where share_id = ${sqlId(sExpired)}`)).toBe('0')
+    // Exactly one content_share.expired event for it.
+    expect(scalar(
+      `select count(*) from public.audit_events where entity_type='content_share' and action='content_share.expired' and entity_id=${sqlId(sExpired)}`,
+    )).toBe('1')
+
+    // The within-window and the active shares keep their snapshots.
+    expect(scalar(`select (snapshot is not null)::text from public.content_shares where id = ${sqlId(sRecent)}`)).toBe('true')
+    expect(scalar(`select (snapshot is not null)::text from public.content_shares where id = ${sqlId(sActive)}`)).toBe('true')
   })
 })

@@ -89,6 +89,28 @@ no secret, hash or snapshot ever appearing in a lifecycle result or an audit
 event. `capabilities.test.ts` pins the catalogue at twenty two keys and the
 `shares.create` / `shares.manage` grants.
 
+The same suite proves the Content Sharing PR 2 public read path from
+`0039_public_share_read.sql` (design in the PR 2 part of
+`docs/security/content-sharing-boundary.md`): the extended lifecycle RPC stores
+a real versioned public snapshot (not the PR 1 placeholder) and
+`read_public_share` is service_role only (anon and an authenticated coach cannot
+execute it, the exact signature grant is proven), returns only the safe
+projection with the private media fields and internal markers stripped and no
+token hash, club id, source id or member id, and returns the identical neutral
+`{status:'unavailable'}` for a wrong secret, an unknown id, a placeholder
+snapshot, a revoked share, an expired share, a kill-switched club, a rotated old
+secret, a missing or downgraded nested dependency, and a non-drill kind (drills
+only render). It also proves the signed-media list names only eligible
+`public_full` stored paths by ref, and that `content_share_expiry_cleanup` is
+service_role only, clears a share expired beyond the retention window (nulling
+the snapshot, removing the dependency rows and emitting exactly one
+`content_share.expired` event) while sparing within-window and active shares.
+The pure snapshot builder, allow-list scanner, sanitisers and secret/hash
+helpers are proven by the Deno suite `supabase/functions/_shared/share_test.ts`,
+and the public route, page and share-control views by the Vitest suites
+`src/lib/publicShare.test.ts`, `src/components/PublicDrillView.test.tsx`,
+`src/components/PublicShareControl.test.tsx` and `src/routes/PublicShare.test.tsx`.
+
 ## Signup membership boundary
 
 `tests/security/signup.test.ts` proves the auth membership boundary from
