@@ -140,7 +140,7 @@ describe('content lifecycle audit (drills, templates, programmes, sessions)', ()
   it('a drill create, an allow listed update, and a delete each write exactly one safe event', async () => {
     const { data: created, error } = await admin
       .from('drills')
-      .insert({ club_id: CLUB_A, title: `Audit Drill ${RUN}`, corner: 'technical', level: 'foundation', duration: 10 })
+      .insert({ club_id: CLUB_A, title: `Audit Drill ${RUN}`, corner: 'technical', level: 'Foundation', duration: 10 })
       .select('id')
       .single()
     expect(error).toBeNull()
@@ -384,6 +384,13 @@ describe('role, capability and team membership audit', () => {
   })
 
   it('a service role / system membership write produces no per row assignment event', async () => {
+    // An earlier test legitimately assigns and removes this role for the same
+    // member, and those events stay in the append only log. So assert against a
+    // captured baseline (this write adds NO new event), never an absolute zero:
+    // the deleted-at-source append only invariant is preserved, no audit row is
+    // removed to force the count, and the result no longer depends on run order.
+    const assignedBefore = (await eventsFor(coachTwoId, 'user.role_assigned')).length
+    const removedBefore = (await eventsFor(coachTwoId, 'user.role_removed')).length
     // Insert a member_roles row as the database owner (auth.uid() is null, the
     // invite grant / cascade / seed path). The trigger must skip it, so the only
     // record of an invite is the single user.invited event the Edge Function
@@ -392,12 +399,12 @@ describe('role, capability and team membership audit', () => {
       `insert into public.member_roles (member_id, role_id) values ('${coachTwoId}', '${customRoleId}')
          on conflict do nothing;`,
     )
-    expect(await eventsFor(coachTwoId, 'user.role_assigned')).toHaveLength(0)
+    expect(await eventsFor(coachTwoId, 'user.role_assigned')).toHaveLength(assignedBefore)
     // Clean the row up (also owner path, so it emits nothing either).
     runSqlInContainer(
       `delete from public.member_roles where member_id = '${coachTwoId}' and role_id = '${customRoleId}';`,
     )
-    expect(await eventsFor(coachTwoId, 'user.role_removed')).toHaveLength(0)
+    expect(await eventsFor(coachTwoId, 'user.role_removed')).toHaveLength(removedBefore)
   })
 })
 
@@ -406,10 +413,14 @@ describe('role, capability and team membership audit', () => {
 // =====================================================================
 describe('refused, rolled back and fail closed writes produce no event', () => {
   it('a coach without users.manage cannot assign a role, and no event is written', async () => {
+    // Assert against a captured baseline: earlier tests legitimately leave role
+    // events for this member in the append only log, so the invariant under test
+    // is that the refused write adds NO new event, not that the log is empty.
+    const assignedBefore = (await eventsFor(coachTwoId, 'user.role_assigned')).length
     const { error } = await coachOne.from('member_roles').insert({ member_id: coachTwoId, role_id: customRoleId })
     expect(error).not.toBeNull()
     expect(error?.code).toBe('42501')
-    expect(await eventsFor(coachTwoId, 'user.role_assigned')).toHaveLength(0)
+    expect(await eventsFor(coachTwoId, 'user.role_assigned')).toHaveLength(assignedBefore)
   })
 
   it('a parent cannot create a drill, and no event is written', async () => {
