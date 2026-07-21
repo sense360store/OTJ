@@ -479,9 +479,21 @@ describe('refused, rolled back and fail closed writes produce no event', () => {
 // =====================================================================
 describe('log_user_admin_event (user.invited / user.removed writer)', () => {
   it('is not executable by anon or authenticated', async () => {
+    // TEMP DIAGNOSTIC: capture the runtime grant + ACL + response.
+    const grant = runSqlInContainer(
+      `select has_function_privilege('authenticated','public.log_user_admin_event(text, uuid, uuid, uuid)','EXECUTE');`,
+    ).trim()
+    const acl = runSqlInContainer(
+      `select pg_get_function_identity_arguments(p.oid) || ' acl=' || coalesce(p.proacl::text,'NULL')
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where p.proname = 'log_user_admin_event' and n.nspname = 'public';`,
+    ).trim()
     const args = { p_action: 'user.invited', p_actor_id: adminId, p_club_id: CLUB_A, p_entity_id: adminId }
     const authed = await coachOne.rpc('log_user_admin_event', args)
-    expect(authed.error).not.toBeNull()
+    expect(
+      authed.error,
+      `DIAG grant=${grant} | acl=[${acl}] | status=${authed.status} | data=${JSON.stringify(authed.data)} | err=${JSON.stringify(authed.error)}`,
+    ).not.toBeNull()
     expect(authed.error?.code).toBe('42501')
     const anon = await anonClient().rpc('log_user_admin_event', args)
     expect(anon.error).not.toBeNull()
