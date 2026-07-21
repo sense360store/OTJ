@@ -129,22 +129,27 @@ export function filtersAreActive(f: ActivityFilters): boolean {
   return activeFilterCount(f) > 0
 }
 
-// The inclusive From boundary: the start of the given day, in UTC. Returns null
-// for a blank or malformed date so a partial input never produces a bound.
+// The inclusive From boundary: the start of the given day in the VIEWER's local
+// timezone, as a UTC instant for the query. Local, not UTC, so the range matches
+// the local dates the feed shows (fmtActivityTime renders occurred_at in local
+// time); a UTC boundary would include or exclude the wrong hour around midnight
+// for a non UTC viewer. Returns null for a blank or malformed date.
 export function fromBoundaryIso(date: string): string | null {
   if (!DATE_RE.test(date)) return null
-  return `${date}T00:00:00.000Z`
+  const [y, m, d] = date.split('-').map(Number)
+  const dt = new Date(y, m - 1, d) // local midnight
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString()
 }
 
-// The exclusive To boundary: the start of the day AFTER the given day, in UTC,
-// so the whole To day is included (occurred_at < next midnight). Date maths is
-// deterministic given the input string.
+// The exclusive To boundary: the start of the day AFTER the given day in local
+// time, so the whole local To day is included (occurred_at < next local
+// midnight). new Date normalises a day overflow, so month and year roll over
+// correctly. Deterministic given the input and the runtime timezone.
 export function toBoundaryExclusiveIso(date: string): string | null {
   if (!DATE_RE.test(date)) return null
-  const d = new Date(`${date}T00:00:00.000Z`)
-  if (Number.isNaN(d.getTime())) return null
-  d.setUTCDate(d.getUTCDate() + 1)
-  return d.toISOString()
+  const [y, m, d] = date.split('-').map(Number)
+  const dt = new Date(y, m - 1, d + 1) // local midnight of the next day
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString()
 }
 
 // A single PostgREST filter predicate, applied by the query hook. Kept as data

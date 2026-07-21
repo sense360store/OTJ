@@ -309,14 +309,23 @@ describe('activeFilterCount and filtersAreActive', () => {
 })
 
 describe('date boundaries', () => {
-  it('builds an inclusive UTC start for From and an exclusive next day for To', () => {
-    expect(fromBoundaryIso('2026-07-20')).toBe('2026-07-20T00:00:00.000Z')
-    expect(toBoundaryExclusiveIso('2026-07-20')).toBe('2026-07-21T00:00:00.000Z')
+  // Boundaries are the viewer's LOCAL day (to match the locally rendered feed
+  // times), so the expected instant is computed the same way, keeping the test
+  // deterministic in any runtime timezone rather than hard coding a UTC string.
+  it('builds an inclusive local-day start for From and an exclusive next local day for To', () => {
+    expect(fromBoundaryIso('2026-07-20')).toBe(new Date(2026, 6, 20).toISOString())
+    expect(toBoundaryExclusiveIso('2026-07-20')).toBe(new Date(2026, 6, 21).toISOString())
   })
 
   it('rolls a month and year boundary correctly for To', () => {
-    expect(toBoundaryExclusiveIso('2026-01-31')).toBe('2026-02-01T00:00:00.000Z')
-    expect(toBoundaryExclusiveIso('2026-12-31')).toBe('2027-01-01T00:00:00.000Z')
+    expect(toBoundaryExclusiveIso('2026-01-31')).toBe(new Date(2026, 1, 1).toISOString())
+    expect(toBoundaryExclusiveIso('2026-12-31')).toBe(new Date(2027, 0, 1).toISOString())
+  })
+
+  it('the To boundary is strictly one local day after the From boundary of the same date', () => {
+    const from = new Date(fromBoundaryIso('2026-07-20')!).getTime()
+    const to = new Date(toBoundaryExclusiveIso('2026-07-20')!).getTime()
+    expect(to - from).toBe(24 * 60 * 60 * 1000)
   })
 
   it('returns null for a blank or malformed date', () => {
@@ -347,8 +356,8 @@ describe('activityQueryConditions', () => {
       batchId: good,
     }
     const c = activityQueryConditions(f)
-    expect(c).toContainEqual({ column: 'occurred_at', op: 'gte', value: '2026-07-01T00:00:00.000Z' })
-    expect(c).toContainEqual({ column: 'occurred_at', op: 'lt', value: '2026-08-01T00:00:00.000Z' })
+    expect(c).toContainEqual({ column: 'occurred_at', op: 'gte', value: new Date(2026, 6, 1).toISOString() })
+    expect(c).toContainEqual({ column: 'occurred_at', op: 'lt', value: new Date(2026, 7, 1).toISOString() })
     expect(c).toContainEqual({ column: 'actor_id', op: 'eq', value: 'actor-x' })
     expect(c).toContainEqual({ column: 'entity_type', op: 'eq', value: 'player' })
     expect(c).toContainEqual({ column: 'action', op: 'eq', value: 'player.withdrawn' })

@@ -3996,10 +3996,29 @@ export function useClubPlayerIdentities(enabled = true) {
     queryKey: ['player_identities'],
     enabled,
     queryFn: async (): Promise<Map<string, string>> => {
-      const { data, error } = await supabase.from('players').select('id, display_name')
-      if (error) throw error
-      const rows = (data ?? []) as unknown as { id: string; display_name: string }[]
-      return new Map(rows.map((p) => [p.id.toLowerCase(), p.display_name]))
+      // Page through every identity. PostgREST caps a single response at
+      // db.max_rows (1000, supabase/config.toml), so an unpaged select silently
+      // truncates once the club has accumulated more than a page of children
+      // across seasons. That truncation matters beyond the import preview: the
+      // Activity page treats an id absent from this map as a deleted player, so
+      // a real child past row 1000 would render as "Deleted player" and lose
+      // View history. Advance by the rows actually returned and stop on the
+      // first empty page, which stays correct whatever the server cap is.
+      const map = new Map<string, string>()
+      const PAGE = 1000
+      for (let from = 0; ; ) {
+        const { data, error } = await supabase
+          .from('players')
+          .select('id, display_name')
+          .order('id', { ascending: true })
+          .range(from, from + PAGE - 1)
+        if (error) throw error
+        const rows = (data ?? []) as unknown as { id: string; display_name: string }[]
+        for (const p of rows) map.set(p.id.toLowerCase(), p.display_name)
+        if (rows.length === 0) break
+        from += rows.length
+      }
+      return map
     },
   })
 }
