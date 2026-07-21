@@ -60,9 +60,34 @@ verification, never as the subject of an assertion.
 ## Tables tested
 
 `drills`, `media` (rows), `sessions`, `players`, `boards`, `feedback`,
-`audit_events`, `import_batches`, plus `capabilities` / `role_capabilities` /
-`member_roles` for the capability consistency checks, and `profiles` /
-`member_roles` / `member_teams` for the signup membership boundary.
+`audit_events`, `import_batches`, `content_shares` /
+`content_share_dependencies` (the private public share substrate), plus
+`capabilities` / `role_capabilities` / `member_roles` for the capability
+consistency checks, and `profiles` / `member_roles` / `member_teams` for the
+signup membership boundary.
+
+## Content share substrate
+
+`tests/security/content-shares.test.ts` proves the Content Sharing PR 1
+substrate from `0038_content_sharing.sql` (full design in
+`docs/security/content-sharing-boundary.md`): `content_shares` and
+`content_share_dependencies` carry no client policy and no client grant, so
+anon, an authenticated coach and a manager (`shares.manage`) all fail to read
+or write them directly; the lifecycle RPC `manage_content_share` is
+service_role only, with the exact function signature grant proven and no
+executable overload; and the RPC, as the final authority, refuses a forged
+actor, a cross club source, a parent, and a coach acting on another coach's
+source, while a manager may revoke any club share but never rotate or refresh
+another creator's share. The suite also proves the kill switch (create,
+refresh and rotate refused while off, revoke allowed, only an admin can flip
+it), one active share per source, create idempotency, rotate replacing the
+hash and invalidating the old secret, refresh keeping the secret while
+rebuilding the dependency set, revoke clearing the snapshot and dependency
+rows, a revoked share never reviving, a rights downgrade invalidating exactly
+the dependent shares, and that the stored secret is only a SHA-256 hash with
+no secret, hash or snapshot ever appearing in a lifecycle result or an audit
+event. `capabilities.test.ts` pins the catalogue at twenty two keys and the
+`shares.create` / `shares.manage` grants.
 
 ## Signup membership boundary
 

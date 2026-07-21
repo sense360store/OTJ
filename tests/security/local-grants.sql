@@ -68,3 +68,19 @@ revoke execute on function public.add_player(uuid, text, uuid, int, text, date) 
 revoke execute on function public.update_player(uuid, uuid, text, boolean, int) from anon;
 revoke execute on function public.player_history(uuid, int, int) from anon;
 revoke execute on function public.provenance_change_is_cascade(uuid, uuid) from anon, authenticated;
+
+-- 0038 content sharing. content_shares and content_share_dependencies carry NO
+-- client policy and NO client grant: no anon or authenticated read or write, not
+-- even a shares.manage holder (that oversight goes through the service role
+-- lifecycle path, PR 2). The blanket grants above would resurrect full access
+-- locally, so revoke everything to mirror production. The lifecycle RPC and the
+-- sharing audit writer are service_role only; the internal helpers are private
+-- to the definer paths (no client execute). See 0038_content_sharing.sql and
+-- docs/security/content-sharing-boundary.md.
+revoke all on public.content_shares from anon, authenticated;
+revoke all on public.content_share_dependencies from anon, authenticated;
+revoke execute on function public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text) from anon, authenticated;
+revoke execute on function public.log_content_share_event(text, text, uuid, uuid, uuid, jsonb) from anon, authenticated;
+revoke execute on function public.content_share_actor_has_cap(uuid, text) from anon, authenticated;
+revoke execute on function public.content_share_deps(public.content_share_kind, uuid) from anon, authenticated;
+revoke execute on function public.content_share_invalidate_dependents(text, uuid, uuid) from anon, authenticated;

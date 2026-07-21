@@ -229,6 +229,19 @@ insert into public.sessions (id, club_id, coach_id, name, focus, date, start_tim
 ]'::jsonb)
 on conflict (id) do nothing;
 
+-- Content rights (0038 content sharing). The migration backfill runs before
+-- this file on a fresh local reset, so it classifies an empty database and the
+-- demo rows above land at the internal_only column default. Mirror the
+-- migration's content backfill here so the local database matches the hosted
+-- end state: media stays internal_only (the default; media is never promoted),
+-- and club original content with no third party source (no source_url,
+-- source_label or, for drills, source_key) becomes public_full. FA and other
+-- sourced content stays internal_only. See 0038_content_sharing.sql.
+update public.drills     set rights = 'public_full' where source_url is null and source_label is null and source_key is null;
+update public.sessions   set rights = 'public_full' where source_url is null and source_label is null;
+update public.programmes set rights = 'public_full' where source_url is null and source_label is null;
+update public.templates  set rights = 'public_full' where source_url is null and source_label is null;
+
 -- Verify counts -------------------------------------------------------
 do $$
 declare d int; m int; t int; s int;

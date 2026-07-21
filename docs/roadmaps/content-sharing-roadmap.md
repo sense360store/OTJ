@@ -1140,6 +1140,18 @@ No sharing implementation PR that contains a migration, a public function, a rig
 
 ### PR 1: Rights model, capabilities and public share schema
 
+Status: IMPLEMENTED in migration `0038_content_sharing.sql` (the next free slot
+after the live ledger's `audit_rollout`, 0037; 0033 remains merged but
+deliberately unapplied and is untouched). The security contract for what was
+built is `docs/security/content-sharing-boundary.md`. Owner decisions were
+approved and applied as fixed requirements: FA and unclassified content default
+internal only; coaches get `shares.create`, managers and admins get
+`shares.create` and `shares.manage`; one active link per source; hash only
+secret; 90 day default expiry with no-expiry reserved to `shares.manage`; the
+per club kill switch defaults off and gates create, refresh and rotate while
+revoke stays allowed. No public route, public Edge Function, anonymous read or
+public snapshot rendering ships in PR 1; those remain PR 2.
+
 - User outcome: none visible yet; this is the security substrate.
 - Current code evidence: no rights field exists (section 13); capabilities are data with a pinned catalogue test (section 18); `audit_events` supports new actions without a table change (section 19).
 - Scope: `shares.create` and `shares.manage` capabilities and grants; a content rights classification (the `internal_only` / `public_link_only` / `public_full` vocabulary) on media and content, with an FA derivation backfill (`isFaUrl` on `source_url`) defaulting FA content, including stored FA video bytes, to internal only; the `content_shares` table with the hashed fragment secret model, the three foreign key exactly one design, `on delete set null` person FKs, `idempotency_key`, the three partial unique indexes, and `snapshot` cleared on revoke; the private `content_share_dependencies` reverse index table (section 15.1) with no client policy; the `clubs.public_sharing_enabled` kill switch boolean; the exact direct access posture (no client policy at all on `content_shares` or `content_share_dependencies`); the lifecycle RPC that re validates the full authorisation inside the transaction (actor club, sharing capability, source capability, source ownership, source club) through explicit joins on the verified actor id, writes the dependency set, and calls the sharing audit writer with a durable source reference and a sharing specific metadata allow list; the rights downgrade path that invalidates dependent shares through the reverse index; the `content_share.*` action additions to the authoritative catalogue in `app-audit-boundary.md`; the security harness additions; no public page yet.
