@@ -10,6 +10,8 @@ import {
   SessionFieldsView,
 } from './Planner'
 import type { PlannerAction } from '../lib/sessionSubmit'
+import { SESSION_SHARE_ERROR } from '../lib/sessionSubmit'
+import { SHARE_ACCOUNT_NOTE, type ShareFeedback } from '../lib/share'
 import type { Activity, Drill, Session, Team } from '../lib/data'
 
 // ActivityCardView is the planner's drill row pulled out as a presentational
@@ -202,6 +204,8 @@ describe('ActivityCardView', () => {
 // failure note. The editor's awaited submit flow itself is covered in
 // src/lib/sessionSubmit.test.ts; these tests pin what the coach sees in each
 // submit state.
+const noShareFeedback: ShareFeedback = { role: null, message: '' }
+
 function renderActions(over: Partial<Parameters<typeof PlannerActionsView>[0]> = {}): string {
   return renderToStaticMarkup(
     <PlannerActionsView
@@ -210,8 +214,12 @@ function renderActions(over: Partial<Parameters<typeof PlannerActionsView>[0]> =
       canStart
       pending={null}
       failed={null}
+      shareLabel="Share"
+      shareNote={SHARE_ACCOUNT_NOTE}
+      shareFeedback={noShareFeedback}
       onStart={noop}
       onSave={noop}
+      onShare={noop}
       onSessionDay={noop}
       onCalendar={noop}
       onLoadTemplate={noop}
@@ -231,12 +239,13 @@ function buttons(html: string): { label: string; disabled: boolean }[] {
 }
 
 describe('PlannerActionsView', () => {
-  it('offers Start, Save and the secondary actions enabled when idle', () => {
+  it('offers Start, Save, Share and the secondary actions enabled when idle', () => {
     const all = buttons(renderActions())
     expect(all.map((b) => b.label)).toEqual([
       'Start session',
       'Session day',
       'Add to calendar',
+      'Share',
       'Save session',
       'Load a template',
       'Delete session',
@@ -321,9 +330,60 @@ describe('PlannerActionsView', () => {
     expect(all.find((b) => b.label === 'Save session')?.disabled).toBe(false)
   })
 
-  it('hides Session day, calendar and delete for a session not yet saved', () => {
+  it('hides Session day, calendar and delete for a session not yet saved, but keeps Share', () => {
+    // A new draft still offers Share (as Save and share), which saves first.
     const labels = buttons(renderActions({ isExisting: false })).map((b) => b.label)
-    expect(labels).toEqual(['Start session', 'Save session', 'Load a template'])
+    expect(labels).toEqual(['Start session', 'Share', 'Save session', 'Load a template'])
+  })
+})
+
+describe('PlannerActionsView share control', () => {
+  it('offers a Share control with the account note, enabled and 44px when idle', () => {
+    const html = renderActions()
+    expect(html).toContain('min-height:44px')
+    expect(html).toContain(SHARE_ACCOUNT_NOTE)
+    const share = buttons(html).find((b) => b.label === 'Share')
+    expect(share).toBeDefined()
+    expect(share?.disabled).toBe(false)
+  })
+
+  it('renders the Save and share label for a new or dirty draft', () => {
+    const html = renderActions({ shareLabel: 'Save and share' })
+    expect(buttons(html).some((b) => b.label === 'Save and share')).toBe(true)
+  })
+
+  it('shows Saving… and freezes the Share control while a Save and share is in flight', () => {
+    const all = buttons(renderActions({ pending: 'share' as PlannerAction, shareLabel: 'Save and share' }))
+    const share = all.find((b) => b.label === 'Saving…')
+    expect(share?.disabled).toBe(true)
+    // The other actions freeze on the shared pending flag too.
+    expect(all.find((b) => b.label === 'Start session')?.disabled).toBe(true)
+    expect(all.find((b) => b.label === 'Save session')?.disabled).toBe(true)
+  })
+
+  it('announces a copy or share success through role="status"', () => {
+    const html = renderActions({ shareFeedback: { role: 'status', message: 'Link copied' } })
+    expect(html).toContain('role="status"')
+    expect(html).toContain('Link copied')
+  })
+
+  it('words a failed Save and share as a save failure with a retry', () => {
+    const html = renderActions({ failed: 'share' as PlannerAction })
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('the link wasn&#x27;t shared')
+    expect(html).toContain('Retry')
+    // Calm wording only; no raw error internals.
+    expect(html).not.toMatch(/supabase|postgres|fetch/i)
+    // The message matches the shared constant.
+    expect(SESSION_SHARE_ERROR).toContain("wasn't shared")
+  })
+
+  it('keeps the Share control for a read-only viewer, who shares with no write', () => {
+    const html = renderActions({ readOnly: true })
+    expect(buttons(html).some((b) => b.label === 'Share')).toBe(true)
+    // A viewer still has no Save or Delete affordance.
+    expect(html).not.toContain('Save session')
+    expect(html).not.toContain('Delete session')
   })
 })
 

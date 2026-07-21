@@ -31,6 +31,7 @@ import {
 import { DrillFormModal } from '../components/DrillFormModal'
 import { DeleteDrillModal } from '../components/DeleteDrillModal'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
+import { ShareButton } from '../components/ShareButton'
 
 function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
   return (
@@ -252,6 +253,12 @@ export function DrillDetail() {
   const openHref = signedUrl ?? undefined
   // Adding to a session writes a session, so it follows sessions.create.
   const canPlan = caps.has('sessions.create')
+  // Sharing an internal club link is a coaching affordance: shown to members
+  // who can plan (sessions.create), hidden from parents. It is only a UI
+  // decision about who sees the button, not an access boundary: the link is the
+  // canonical protected page and grants nothing on its own, RLS decides access,
+  // and no capability changes for PR 0.
+  const canShare = caps.has('sessions.create')
   // Edit and delete mirror the drills RLS arms: drills.manage on any drill,
   // an owner holding drills.create on their own. The capability condition
   // matters for a coach demoted to parent, who still matches created_by on
@@ -419,6 +426,11 @@ export function DrillDetail() {
               >
                 <Icon.trash />
               </button>
+            </div>
+          )}
+          {canShare && (
+            <div style={{ marginTop: 10 }}>
+              <ShareButton kind="drill" id={drill.id} title={drill.title} />
             </div>
           )}
         </div>
