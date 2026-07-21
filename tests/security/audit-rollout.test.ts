@@ -216,6 +216,18 @@ describe('content lifecycle audit (drills, templates, programmes, sessions)', ()
     const upd = await expectOneEvent(sessionId, 'session.updated')
     expect(upd.changed_fields).toEqual(['status'])
 
+    // board_id is NOT on the session allow list (boards are out of scope), so
+    // attaching a board writes NO event: the session.updated count stays at one.
+    const { data: board } = await serviceClient()
+      .from('boards')
+      .insert({ club_id: CLUB_A, created_by: adminId, name: `Audit Board ${RUN}` })
+      .select('id')
+      .single()
+    const boardId = board!.id as string
+    await admin.from('sessions').update({ board_id: boardId }).eq('id', sessionId)
+    expect(await eventsFor(sessionId, 'session.updated')).toHaveLength(1)
+    await serviceClient().from('boards').delete().eq('id', boardId)
+
     await admin.from('sessions').delete().eq('id', sessionId)
     await expectOneEvent(sessionId, 'session.deleted')
   })

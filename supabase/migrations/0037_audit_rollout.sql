@@ -90,10 +90,31 @@
 -- do. A refused write (RLS 42501, a guard P0001, a check 23514) never
 -- commits, so it produces no event; a rolled back transaction rolls back
 -- its events; and an audit write failure aborts the business write, the
--- deliberate fail closed behaviour of the foundation. One committed
--- business change produces exactly one event (content and team updates emit
--- at most one; membership and capability changes are one row = one change =
--- one event).
+-- deliberate fail closed behaviour of the foundation.
+--
+-- ONE ROW CHANGE, AT MOST ONE EVENT. Each committed row change produces at
+-- most one event: an INSERT or DELETE always one; an UPDATE at most one (a
+-- content, team or Spond update writes nothing when no allow listed field
+-- changed). A single product action that touches ONE row is therefore one
+-- event. A product action that legitimately touches MANY rows produces one
+-- event per affected row, exactly as 0032 does: a role swap that adds one
+-- role and removes another is two genuine changes (one assignment, one
+-- removal), and deleting a parent whose surviving children have a SET NULL
+-- foreign key (a session losing its team or programme) records the field
+-- change on each survivor, the same way 0032 records player.team_changed per
+-- surviving registration when a team is deleted. Rows that are cascade
+-- DELETED by the parent are NOT separately audited (covered by the parent's
+-- own event); see the cascade suppression note on audit_spond_groups. This is
+-- an accuracy statement, not "one event per product action".
+--
+-- The two Edge Function events (user.invited, user.removed) are the sole
+-- exception to the same transaction property: they are written by a separate
+-- request after the auth API call has already committed, because a Deno
+-- function cannot share the auth API's transaction (the boundary doc rejects
+-- Edge Functions as transactional audit writers for exactly this reason).
+-- They are best effort after success: a failed invite or removal writes no
+-- event, but a committed one whose audit write then fails is logged, not
+-- retried, so those two actions do NOT carry the trigger actions' guarantee.
 --
 -- PROVENANCE. Every event's club, actor, actor_name, source and timestamp
 -- are derived server side inside the definer functions, never from a client
@@ -572,7 +593,24 @@ create trigger audit_spond_groups
 --   * drills:     corner, level, duration
 --   * templates:  programme_id, programme_week
 --   * programmes: weeks
---   * sessions:   team_id, date, status, programme_id, programme_week, board_id
+--   * sessions:   team_id, date, status, programme_id, programme_week
+--
+-- board_id is deliberately NOT on the session allow list: boards are out of
+-- scope for this rollout (no boards trigger), and auditing a session's board
+-- link would emit a context free session.updated when a board is deleted (its
+-- board_id is SET NULL) with no board.deleted event to explain it. team_id and
+-- programme_id stay because their parents ARE audited (team.deleted,
+-- programme.deleted), so a surviving session's field change reads alongside a
+-- real parent event, exactly as 0032's player.team_changed reads alongside a
+-- team deletion. Session board links become auditable when boards join the
+-- catalogue in a later increment.
+--
+-- The content, team and Spond triggers deliberately do NOT skip a write with a
+-- null auth.uid() (unlike the membership triggers): a service role or system
+-- content change is a real change that no higher level event covers, so it is
+-- audited (attributed to System, source database_trigger). The membership
+-- triggers skip such writes because the invite grant and removal cascade ARE
+-- covered by user.invited and user.removed.
 -- =====================================================================
 
 create or replace function public.audit_drills()
@@ -685,7 +723,6 @@ begin
     if new.status is distinct from old.status then v_changed := array_append(v_changed, 'status'); end if;
     if new.programme_id is distinct from old.programme_id then v_changed := array_append(v_changed, 'programme_id'); end if;
     if new.programme_week is distinct from old.programme_week then v_changed := array_append(v_changed, 'programme_week'); end if;
-    if new.board_id is distinct from old.board_id then v_changed := array_append(v_changed, 'board_id'); end if;
     if array_length(v_changed, 1) is null then return new; end if;
     v_action := 'session.updated';
   end if;
