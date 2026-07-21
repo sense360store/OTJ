@@ -9,6 +9,11 @@ import { createShareRunner, shareFeedback, type ShareFeedback, type ShareResult,
 
 export function useShare(): {
   share: (payload: SharePayload) => void
+  // Clears any prior outcome. The direct share() already resets on a new
+  // attempt; a deferred flow (the planner's Save and share, which shares only
+  // after an awaited save) calls this when the attempt starts so a stale
+  // success cannot sit next to a later save failure.
+  reset: () => void
   feedback: ShareFeedback
 } {
   const [result, setResult] = useState<ShareResult | null>(null)
@@ -32,6 +37,7 @@ export function useShare(): {
       setResult(null)
       void runner.run(payload)
     },
+    reset: () => setResult(null),
     feedback: result ? shareFeedback(result) : { role: null, message: '' },
   }
 }

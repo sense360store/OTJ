@@ -125,6 +125,13 @@ export function sessionDirty(draft: Session, baseline: string | null): boolean {
   return stableStringify(draft) !== baseline
 }
 
+// The planner's share routing as a tested pure decision: a session that is
+// saved (has a stable id) and unchanged since that save shares its canonical
+// URL directly with no write; a new (no id) or dirty draft must save first.
+export function shareDecision(savedId: string | null, dirty: boolean): 'direct' | 'save' {
+  return savedId !== null && !dirty ? 'direct' : 'save'
+}
+
 export type PlannerAction = 'save' | 'start' | 'share'
 
 // The planner's busy state composes its own Save or Start pending action with a

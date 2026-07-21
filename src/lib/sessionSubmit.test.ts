@@ -5,6 +5,7 @@ import {
   plannerBusy,
   sessionBaseline,
   sessionDirty,
+  shareDecision,
   stableCreateId,
 } from './sessionSubmit'
 import type { PlannerAction, PlannerActionCallbacks } from './sessionSubmit'
@@ -336,6 +337,33 @@ describe('sessionDirty and sessionBaseline', () => {
     expect(sessionDirty(session({ activities: [a] }), baseline)).toBe(true)
     // Unchanged order is clean.
     expect(sessionDirty(session({ activities: [a, b] }), baseline)).toBe(false)
+  })
+})
+
+describe('shareDecision', () => {
+  it('shares directly, with no write, when the session is saved and clean', () => {
+    expect(shareDecision('s1', false)).toBe('direct')
+  })
+
+  it('saves first for a never-saved draft (no id)', () => {
+    expect(shareDecision(null, false)).toBe('save')
+    // Even a "clean" draft with no id cannot share directly: there is no URL.
+    expect(shareDecision(null, true)).toBe('save')
+  })
+
+  it('saves first for a dirty saved session', () => {
+    expect(shareDecision('s1', true)).toBe('save')
+  })
+
+  it('flips to a direct share once a saved session reads clean again', () => {
+    // The planner advances savedId and baseline after a Save and share, so the
+    // same draft then reads clean and the next share needs no second write.
+    const draft = session({ id: 'saved-1' })
+    // Before any save: new draft with no baseline routes to save.
+    expect(shareDecision(null, sessionDirty(draft, null))).toBe('save')
+    // After the save advances the baseline and id, the unchanged draft is clean.
+    const baseline = sessionBaseline(draft)
+    expect(shareDecision('saved-1', sessionDirty(draft, baseline))).toBe('direct')
   })
 })
 

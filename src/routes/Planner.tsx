@@ -37,6 +37,7 @@ import {
   plannerBusy,
   sessionBaseline,
   sessionDirty,
+  shareDecision,
   SESSION_SAVE_ERROR,
   SESSION_SHARE_ERROR,
   SESSION_START_ERROR,
@@ -807,7 +808,7 @@ function PlannerEditor({
   // so the draft's dirtiness is known and a saved, unchanged session shares its
   // canonical URL with no second write. Both seed from the loaded session and
   // advance after a Save and share, so once saved the control needs no re-save.
-  const { share, feedback: shareFeedback } = useShare()
+  const { share, reset: resetShare, feedback: shareFeedback } = useShare()
   const [baseline, setBaseline] = useState<string | null>(() => sessionBaseline(existing))
   const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null)
 
@@ -943,7 +944,7 @@ function PlannerEditor({
   // shares only after the save resolves, so the link is never built from stale
   // or pre-save data and a rapid double click fires one save (the shared guard).
   const dirty = sessionDirty(session, baseline)
-  const canShareDirect = savedId !== null && !dirty
+  const canShareDirect = shareDecision(savedId, dirty) === 'direct'
   const shareLabel = canShareDirect ? 'Share' : 'Save and share'
   const shareNote = canShareDirect ? SHARE_ACCOUNT_NOTE : `${SAVE_AND_SHARE_NOTE} ${SHARE_ACCOUNT_NOTE}`
   const onShare = () => {
@@ -951,6 +952,10 @@ function PlannerEditor({
     if (canShareDirect && savedId) {
       share({ url: canonicalUrl('session', savedId), title: session.name, text: session.name })
     } else {
+      // Deferred share: clear any stale prior outcome as the attempt starts, so
+      // a save failure below shows only its own error, never a lingering "Link
+      // copied" from an earlier direct share.
+      resetShare()
       void actions.saveAndShare(session)
     }
   }
