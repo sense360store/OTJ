@@ -169,6 +169,31 @@ Deno.serve(async (req) => {
     return reply(500, { error: 'Could not remove the member. Nothing was changed. Try again.' })
   }
 
+  // The removal has succeeded. Record ONE user.removed audit event through
+  // the private service role writer log_user_admin_event (0037). The actor
+  // and club are the caller and club this function verified from the JWT
+  // (the caller still exists; only the target was removed); the removed
+  // member is the entity, recorded as an opaque id (no name, no email). The
+  // member's cascaded member_roles and member_teams deletions do NOT each
+  // write an event: their audit triggers skip a delete whose member profile
+  // is already gone, so this single user.removed event is the whole record.
+  //
+  // AFTER success, so a failed removal (which returns above) writes no event;
+  // not retried within the request, so one committed removal yields exactly
+  // one event, and a retry finds the member already gone (404) before
+  // reaching here, so it cannot duplicate the event. An audit write failure
+  // is logged (a Postgres error code only, never a secret) without failing
+  // the response the member is already removed.
+  const { error: auditError } = await admin.rpc('log_user_admin_event', {
+    p_action: 'user.removed',
+    p_actor_id: caller.id,
+    p_club_id: caller.club_id,
+    p_entity_id: userId,
+  })
+  if (auditError) {
+    console.error('remove-user audit write failed:', auditError.code ?? 'unknown')
+  }
+
   const name = typeof target.full_name === 'string' && target.full_name ? target.full_name : 'The member'
   return reply(200, {
     ok: true,

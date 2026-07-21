@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ACTION_OPTIONS,
   ACTIVITY_PAGE_SIZE,
   ACTIVITY_SELECT_COLUMNS,
+  ENTITY_OPTIONS,
   EMPTY_FILTERS,
   activeFilterCount,
   activityBatchHref,
@@ -145,9 +147,91 @@ describe('describeActivityEvent: season, import and export actions', () => {
   })
 
   it('renders an unknown future action as its bare action key (never user data)', () => {
-    expect(describeActivityEvent(ev({ id: 'a', action: 'team.created', entityType: 'season' }), renderOpts)).toBe(
-      'team.created',
+    // A namespace PR 8 does NOT cover (media is out of scope), so it stays
+    // unmapped and falls through to the bare key.
+    expect(describeActivityEvent(ev({ id: 'a', action: 'media.created', entityType: 'season' }), renderOpts)).toBe(
+      'media.created',
     )
+  })
+})
+
+describe('describeActivityEvent: PR 8 wider rollout actions', () => {
+  // Every action this PR adds must render fixed, human readable copy, never the
+  // raw action key, and never interpolate an unsafe value. The table pins the
+  // exact copy for each.
+  const CASES: [string, string][] = [
+    ['user.invited', 'Member invited'],
+    ['user.removed', 'Member removed'],
+    ['user.role_assigned', 'Role assigned'],
+    ['user.role_removed', 'Role removed'],
+    ['user.capability_granted', 'Capability granted'],
+    ['user.capability_revoked', 'Capability revoked'],
+    ['user.team_assigned', 'Added to a team'],
+    ['user.team_removed', 'Removed from a team'],
+    ['team.created', 'Team created'],
+    ['team.updated', 'Team renamed'],
+    ['team.deleted', 'Team deleted'],
+    ['spond.mapping_created', 'Spond mapping created'],
+    ['spond.mapping_changed', 'Spond mapping updated'],
+    ['spond.mapping_removed', 'Spond mapping removed'],
+    ['drill.created', 'Drill created'],
+    ['drill.updated', 'Drill updated'],
+    ['drill.deleted', 'Drill deleted'],
+    ['template.created', 'Template created'],
+    ['template.updated', 'Template updated'],
+    ['template.deleted', 'Template deleted'],
+    ['programme.created', 'Programme created'],
+    ['programme.updated', 'Programme updated'],
+    ['programme.deleted', 'Programme deleted'],
+    ['session.created', 'Session created'],
+    ['session.updated', 'Session updated'],
+    ['session.deleted', 'Session deleted'],
+  ]
+
+  it.each(CASES)('renders %s as fixed copy, never the raw key', (action, copy) => {
+    const text = describeActivityEvent(ev({ id: 'a', action }), renderOpts)
+    expect(text).toBe(copy)
+    // Never the raw action key, and never a role key, capability key or any
+    // value: these events carry role/capability keys in changedFields, which
+    // this renderer must not surface into the sentence.
+    expect(text).not.toContain(action)
+    expect(text).not.toContain('.')
+  })
+
+  it('never leaks a role key, capability key or member name even when they ride in changedFields', () => {
+    // A role assignment event carries the safe role key in changedFields; the
+    // renderer must ignore it and emit only the fixed copy.
+    const roleEv = ev({
+      id: 'r',
+      action: 'user.role_assigned',
+      entityType: 'user',
+      changedFields: ['coach'],
+    })
+    expect(describeActivityEvent(roleEv, renderOpts)).toBe('Role assigned')
+    const capEv = ev({
+      id: 'c',
+      action: 'user.capability_granted',
+      entityType: 'role',
+      changedFields: ['players.manage'],
+    })
+    expect(describeActivityEvent(capEv, renderOpts)).toBe('Capability granted')
+  })
+
+  it('the ACTION filter options cover every PR 8 action with a fixed label', () => {
+    const optionValues = new Set(ACTION_OPTIONS.map((o) => o.value))
+    for (const [action] of CASES) expect(optionValues.has(action)).toBe(true)
+    // Every option label is non empty and is not the raw key.
+    for (const o of ACTION_OPTIONS) {
+      expect(o.label.length).toBeGreaterThan(0)
+      expect(o.label).not.toBe(o.value)
+    }
+  })
+
+  it('the ENTITY filter options cover every PR 8 entity type', () => {
+    const values = new Set(ENTITY_OPTIONS.map((o) => o.value))
+    for (const t of ['user', 'role', 'team', 'spond_mapping', 'drill', 'template', 'programme', 'session'] as const) {
+      expect(values.has(t)).toBe(true)
+    }
   })
 })
 
@@ -171,66 +255,72 @@ describe('sourceLabel', () => {
 describe('entityRef', () => {
   const exists = (id: string) => id === 'player-1'
   const seasonName = (id: string) => (id === 'season-1' ? '2026/27' : null)
+  const teamName = (id: string | null | undefined) =>
+    id == null ? 'Unassigned' : id === 'titans' ? 'Titans' : 'Deleted team'
+  const opts = { canSeeNames: true, playerExists: exists, seasonName, teamName }
 
   it('offers View history for an existing player the viewer can name', () => {
-    const r = entityRef(ev({ id: 'a', entityType: 'player', entityId: 'player-1' }), {
-      canSeeNames: true,
-      playerExists: exists,
-      seasonName,
-    })
+    const r = entityRef(ev({ id: 'a', entityType: 'player', entityId: 'player-1' }), opts)
     expect(r).toEqual({ kind: 'player-history', playerId: 'player-1' })
   })
 
   it('renders a deleted player neutrally when the viewer can name but the id is gone', () => {
-    const r = entityRef(ev({ id: 'a', entityType: 'player', entityId: 'gone' }), {
-      canSeeNames: true,
-      playerExists: exists,
-      seasonName,
-    })
+    const r = entityRef(ev({ id: 'a', entityType: 'player', entityId: 'gone' }), opts)
     expect(r).toEqual({ kind: 'player-deleted' })
   })
 
   it('fails closed to a neutral player when the viewer cannot see names (never a false deleted)', () => {
-    const r = entityRef(ev({ id: 'a', entityType: 'player', entityId: 'player-1' }), {
-      canSeeNames: false,
-      playerExists: exists,
-      seasonName,
-    })
+    const r = entityRef(ev({ id: 'a', entityType: 'player', entityId: 'player-1' }), { ...opts, canSeeNames: false })
     expect(r).toEqual({ kind: 'player-anon' })
   })
 
   it('resolves a season name, falling back to a neutral Season label', () => {
-    expect(
-      entityRef(ev({ id: 'a', entityType: 'season', entityId: 'season-1' }), {
-        canSeeNames: true,
-        playerExists: exists,
-        seasonName,
-      }),
-    ).toEqual({ kind: 'season', label: '2026/27' })
-    expect(
-      entityRef(ev({ id: 'a', entityType: 'season', entityId: 'gone' }), {
-        canSeeNames: true,
-        playerExists: exists,
-        seasonName,
-      }),
-    ).toEqual({ kind: 'season', label: 'Season' })
+    expect(entityRef(ev({ id: 'a', entityType: 'season', entityId: 'season-1' }), opts)).toEqual({
+      kind: 'season',
+      label: '2026/27',
+    })
+    expect(entityRef(ev({ id: 'a', entityType: 'season', entityId: 'gone' }), opts)).toEqual({
+      kind: 'season',
+      label: 'Season',
+    })
   })
 
   it('links an import batch and labels an export', () => {
-    expect(
-      entityRef(ev({ id: 'a', entityType: 'import_batch', entityId: 'batch-1' }), {
-        canSeeNames: true,
-        playerExists: exists,
-        seasonName,
-      }),
-    ).toEqual({ kind: 'batch', batchId: 'batch-1' })
-    expect(
-      entityRef(ev({ id: 'a', entityType: 'export', entityId: null }), {
-        canSeeNames: true,
-        playerExists: exists,
-        seasonName,
-      }),
-    ).toEqual({ kind: 'export' })
+    expect(entityRef(ev({ id: 'a', entityType: 'import_batch', entityId: 'batch-1' }), opts)).toEqual({
+      kind: 'batch',
+      batchId: 'batch-1',
+    })
+    expect(entityRef(ev({ id: 'a', entityType: 'export', entityId: null }), opts)).toEqual({ kind: 'export' })
+  })
+
+  // ---- PR 8 wider rollout entities ------------------------------------
+  it('resolves a team name and degrades to "Deleted team" once the team is gone', () => {
+    expect(entityRef(ev({ id: 'a', entityType: 'team', entityId: 'titans' }), opts)).toEqual({
+      kind: 'team',
+      label: 'Titans',
+    })
+    expect(entityRef(ev({ id: 'b', entityType: 'team', entityId: 'gone' }), opts)).toEqual({
+      kind: 'team',
+      label: 'Deleted team',
+    })
+  })
+
+  it('renders neutral, deletion proof labels for member, role, spond and content entities', () => {
+    const cases: [string, string][] = [
+      ['user', 'Member'],
+      ['role', 'Role'],
+      ['spond_mapping', 'Spond mapping'],
+      ['drill', 'Drill'],
+      ['template', 'Template'],
+      ['programme', 'Programme'],
+      ['session', 'Session'],
+    ]
+    for (const [entityType, label] of cases) {
+      // A live id and a deleted (unresolvable) id render identically: the label
+      // never depends on the id, so a deletion leaks nothing and never breaks.
+      expect(entityRef(ev({ id: 'x', entityType, entityId: 'some-id' }), opts)).toEqual({ kind: 'label', label })
+      expect(entityRef(ev({ id: 'y', entityType, entityId: null }), opts)).toEqual({ kind: 'label', label })
+    }
   })
 })
 

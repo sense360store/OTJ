@@ -58,6 +58,7 @@ export function ActivityItem({ event, ctx }: { event: ActivityEvent; ctx: Activi
     canSeeNames: ctx.canSeeNames,
     playerExists: ctx.playerExists,
     seasonName: ctx.seasonName,
+    teamName: ctx.teamName,
   })
   return (
     <li className="activity-item">
@@ -110,6 +111,14 @@ function EntityRefView({ refr }: { refr: EntityRef }) {
       return <span className="activity-entity muted-cell">Player</span>
     case 'season':
       return <span className="activity-entity">{refr.label}</span>
+    case 'team':
+      // Resolved team name, or "Deleted team" once the team is gone. Safe, not
+      // child data, the same treatment a season reference gets.
+      return <span className="activity-entity">{refr.label}</span>
+    case 'label':
+      // A neutral, deletion proof label (Member, Role, Drill, and so on) for the
+      // PR 8 entities the feed never names.
+      return <span className="activity-entity muted-cell">{refr.label}</span>
     case 'batch':
       return (
         <Link className="activity-entity activity-batch" to={activityBatchHref(refr.batchId)}>

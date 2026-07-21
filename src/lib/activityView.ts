@@ -17,8 +17,25 @@
 import { describeHistoryEntry } from './playersView'
 
 // The audit entity vocabulary (docs/security/app-audit-boundary.md). The Entity
-// filter maps one to one onto these, with "Import" meaning import_batch.
-export type AuditEntityType = 'player' | 'season' | 'import_batch' | 'export'
+// filter maps one to one onto these, with "Import" meaning import_batch. PR 8's
+// wider rollout adds the user administration, teams, Spond configuration and
+// content lifecycle entities (0037_audit_rollout.sql): 'user' anchors invite,
+// removal, role, capability and team membership events; 'role' anchors a role's
+// capability grants and revokes; 'team' a team; 'spond_mapping' a Spond mapping;
+// and 'drill' / 'template' / 'programme' / 'session' the content lifecycle.
+export type AuditEntityType =
+  | 'player'
+  | 'season'
+  | 'import_batch'
+  | 'export'
+  | 'user'
+  | 'role'
+  | 'team'
+  | 'spond_mapping'
+  | 'drill'
+  | 'template'
+  | 'programme'
+  | 'session'
 
 // The source (provenance) vocabulary, exactly the audit_events.source CHECK.
 export type AuditSource =
@@ -251,6 +268,15 @@ export const ENTITY_OPTIONS: { value: AuditEntityType; label: string }[] = [
   { value: 'season', label: 'Season' },
   { value: 'import_batch', label: 'Import' },
   { value: 'export', label: 'Export' },
+  // PR 8 wider rollout entities.
+  { value: 'user', label: 'Member' },
+  { value: 'role', label: 'Role' },
+  { value: 'team', label: 'Team' },
+  { value: 'spond_mapping', label: 'Spond mapping' },
+  { value: 'drill', label: 'Drill' },
+  { value: 'template', label: 'Template' },
+  { value: 'programme', label: 'Programme' },
+  { value: 'session', label: 'Session' },
 ]
 
 export const SOURCE_OPTIONS: { value: AuditSource; label: string }[] = [
@@ -287,6 +313,34 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'season.updated', label: 'Season updated' },
   { value: 'season.activated', label: 'Season activated' },
   { value: 'season.archived', label: 'Season archived' },
+  // PR 8 wider rollout actions (0037_audit_rollout.sql). Distinct directional
+  // actions per namespace so the feed reads the direction from the action alone.
+  { value: 'user.invited', label: 'Member invited' },
+  { value: 'user.removed', label: 'Member removed' },
+  { value: 'user.role_assigned', label: 'Role assigned' },
+  { value: 'user.role_removed', label: 'Role removed' },
+  { value: 'user.capability_granted', label: 'Capability granted' },
+  { value: 'user.capability_revoked', label: 'Capability revoked' },
+  { value: 'user.team_assigned', label: 'Added to a team' },
+  { value: 'user.team_removed', label: 'Removed from a team' },
+  { value: 'team.created', label: 'Team created' },
+  { value: 'team.updated', label: 'Team renamed' },
+  { value: 'team.deleted', label: 'Team deleted' },
+  { value: 'spond.mapping_created', label: 'Spond mapping created' },
+  { value: 'spond.mapping_changed', label: 'Spond mapping updated' },
+  { value: 'spond.mapping_removed', label: 'Spond mapping removed' },
+  { value: 'drill.created', label: 'Drill created' },
+  { value: 'drill.updated', label: 'Drill updated' },
+  { value: 'drill.deleted', label: 'Drill deleted' },
+  { value: 'template.created', label: 'Template created' },
+  { value: 'template.updated', label: 'Template updated' },
+  { value: 'template.deleted', label: 'Template deleted' },
+  { value: 'programme.created', label: 'Programme created' },
+  { value: 'programme.updated', label: 'Programme updated' },
+  { value: 'programme.deleted', label: 'Programme deleted' },
+  { value: 'session.created', label: 'Session created' },
+  { value: 'session.updated', label: 'Session updated' },
+  { value: 'session.deleted', label: 'Session deleted' },
 ]
 
 // The source label, from the fixed vocabulary. Falls back to the raw value for
@@ -341,6 +395,66 @@ export function describeActivityEvent(
       return 'Players exported'
     case 'players.spond_imported':
       return 'Players imported from Spond'
+    // ---- PR 8 wider rollout (0037_audit_rollout.sql) ----------------------
+    // Every action gets a fixed, human readable string, so no raw action key is
+    // ever shown for a PR 8 action. None interpolates a value: the role and
+    // capability keys the events carry in changedFields are safe bounded labels
+    // but are not rendered into the sentence, and no member, team or content
+    // name is available to this renderer at all.
+    case 'user.invited':
+      return 'Member invited'
+    case 'user.removed':
+      return 'Member removed'
+    case 'user.role_assigned':
+      return 'Role assigned'
+    case 'user.role_removed':
+      return 'Role removed'
+    case 'user.capability_granted':
+      return 'Capability granted'
+    case 'user.capability_revoked':
+      return 'Capability revoked'
+    case 'user.team_assigned':
+      return 'Added to a team'
+    case 'user.team_removed':
+      return 'Removed from a team'
+    case 'team.created':
+      return 'Team created'
+    case 'team.updated':
+      // The only safe field on the teams allow list is the name, so an audited
+      // team update is always a rename.
+      return 'Team renamed'
+    case 'team.deleted':
+      return 'Team deleted'
+    case 'spond.mapping_created':
+      return 'Spond mapping created'
+    case 'spond.mapping_changed':
+      return 'Spond mapping updated'
+    case 'spond.mapping_removed':
+      return 'Spond mapping removed'
+    case 'drill.created':
+      return 'Drill created'
+    case 'drill.updated':
+      return 'Drill updated'
+    case 'drill.deleted':
+      return 'Drill deleted'
+    case 'template.created':
+      return 'Template created'
+    case 'template.updated':
+      return 'Template updated'
+    case 'template.deleted':
+      return 'Template deleted'
+    case 'programme.created':
+      return 'Programme created'
+    case 'programme.updated':
+      return 'Programme updated'
+    case 'programme.deleted':
+      return 'Programme deleted'
+    case 'session.created':
+      return 'Session created'
+    case 'session.updated':
+      return 'Session updated'
+    case 'session.deleted':
+      return 'Session deleted'
     default:
       // A future action not yet mapped: show the bare action key. It is a fixed
       // enum string chosen by a server writer, never user or child data.
@@ -363,6 +477,14 @@ export type EntityRef =
   | { kind: 'season'; label: string }
   | { kind: 'batch'; batchId: string }
   | { kind: 'export' }
+  // A team reference, resolved to the team name or "Deleted team" (safe, not
+  // child data), the same treatment season references already get.
+  | { kind: 'team'; label: string }
+  // A neutral, deletion proof label for the PR 8 entities that carry no name in
+  // the feed (a member, a role, a Spond mapping, a content item). It renders the
+  // same before and after the underlying row is deleted, so a deletion never
+  // leaks a name and never shows a broken reference.
+  | { kind: 'label'; label: string }
   | { kind: 'none' }
 
 export function entityRef(
@@ -371,6 +493,7 @@ export function entityRef(
     canSeeNames: boolean
     playerExists: (id: string) => boolean
     seasonName: (id: string) => string | null
+    teamName: (id: string | null | undefined) => string
   },
 ): EntityRef {
   switch (e.entityType) {
@@ -386,6 +509,24 @@ export function entityRef(
       return e.entityId ? { kind: 'batch', batchId: e.entityId } : { kind: 'none' }
     case 'export':
       return { kind: 'export' }
+    // ---- PR 8 wider rollout entities -------------------------------------
+    case 'team':
+      // Resolve the team name (or "Deleted team" once gone); never a child name.
+      return { kind: 'team', label: e.entityId ? opts.teamName(e.entityId) : 'Team' }
+    case 'user':
+      return { kind: 'label', label: 'Member' }
+    case 'role':
+      return { kind: 'label', label: 'Role' }
+    case 'spond_mapping':
+      return { kind: 'label', label: 'Spond mapping' }
+    case 'drill':
+      return { kind: 'label', label: 'Drill' }
+    case 'template':
+      return { kind: 'label', label: 'Template' }
+    case 'programme':
+      return { kind: 'label', label: 'Programme' }
+    case 'session':
+      return { kind: 'label', label: 'Session' }
     default:
       return { kind: 'none' }
   }
