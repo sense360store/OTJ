@@ -238,5 +238,32 @@ Deno.serve(async (req) => {
     return reply(500, { error: 'Could not send the invite. Try again.' })
   }
 
+  // The invite has fully succeeded: the member is provisioned. Record ONE
+  // user.invited audit event through the private service role writer
+  // log_user_admin_event (0037). The actor and club are the caller and club
+  // this function already verified from the JWT, never a payload field; the
+  // writer resolves the actor name server side and refuses an actor that is
+  // not a member of the club. The invited member is the entity. Nothing
+  // sensitive is passed: no email, token, password, authorization header or
+  // request body reaches the writer, and none is logged here.
+  //
+  // This write is deliberately AFTER success, so a failed invite (which
+  // returns above) writes no event, and it is not retried within the request,
+  // so one committed invite yields exactly one event. A retry of an already
+  // sent invite fails earlier at inviteUserByEmail (409) and never reaches
+  // this line, so a retry cannot duplicate the event. The auth API call and
+  // this database write cannot share one transaction, so an audit write
+  // failure is logged (a Postgres error code only, never a secret) without
+  // failing the response the member is already invited.
+  const { error: auditError } = await admin.rpc('log_user_admin_event', {
+    p_action: 'user.invited',
+    p_actor_id: caller.id,
+    p_club_id: caller.club_id,
+    p_entity_id: memberId,
+  })
+  if (auditError) {
+    console.error('invite-user audit write failed:', auditError.code ?? 'unknown')
+  }
+
   return reply(200, { ok: true })
 })

@@ -199,6 +199,58 @@ describe('ActivityItem renders safely', () => {
     expect(html).not.toContain('<table')
     expect(html).not.toContain('<td')
   })
+
+  // ---- PR 8 wider rollout rows -----------------------------------------
+  it('renders a team event with the resolved team name and, once deleted, a neutral label', () => {
+    const live = itemHtml(ev({ id: 'a', action: 'team.created', entityType: 'team', entityId: 'titans' }))
+    expect(live).toContain('Team created')
+    expect(live).toContain('Titans')
+    const gone = itemHtml(ev({ id: 'b', action: 'team.deleted', entityType: 'team', entityId: 'ghost' }))
+    expect(gone).toContain('Team deleted')
+    expect(gone).toContain('Deleted team')
+    expect(gone).not.toContain('View history')
+  })
+
+  it('renders a role assignment as fixed copy with a neutral Member reference and no role key leak', () => {
+    const html = itemHtml(
+      ev({ id: 'a', action: 'user.role_assigned', entityType: 'user', entityId: 'member-1', changedFields: ['coach'] }),
+    )
+    expect(html).toContain('Role assigned')
+    expect(html).toContain('Member')
+    // The safe role key rides in changedFields but is never rendered.
+    expect(html).not.toContain('coach')
+    expect(html).not.toContain('View history')
+  })
+
+  it('renders a capability grant as fixed copy with a neutral Role reference and no capability key leak', () => {
+    const html = itemHtml(
+      ev({
+        id: 'a',
+        action: 'user.capability_granted',
+        entityType: 'role',
+        entityId: 'role-1',
+        changedFields: ['players.manage'],
+      }),
+    )
+    expect(html).toContain('Capability granted')
+    expect(html).toContain('Role')
+    expect(html).not.toContain('players.manage')
+  })
+
+  it('renders content lifecycle events with fixed copy and a neutral, deletion proof reference', () => {
+    const drill = itemHtml(ev({ id: 'a', action: 'drill.deleted', entityType: 'drill', entityId: 'd-gone' }))
+    expect(drill).toContain('Drill deleted')
+    expect(drill).toContain('Drill')
+    const session = itemHtml(ev({ id: 'b', action: 'session.updated', entityType: 'session', entityId: 's-1', teamId: 'titans' }))
+    expect(session).toContain('Session updated')
+    expect(session).toContain('Session')
+  })
+
+  it('renders a Spond mapping event as fixed copy with a neutral reference', () => {
+    const html = itemHtml(ev({ id: 'a', action: 'spond.mapping_created', entityType: 'spond_mapping', entityId: 'sg-1', teamId: 'titans' }))
+    expect(html).toContain('Spond mapping created')
+    expect(html).toContain('Spond mapping')
+  })
 })
 
 // ---- States (shared Loading/ErrorNote + both empty states) -----------------
@@ -256,11 +308,22 @@ describe('ActivityFilterControls', () => {
     }
   })
 
-  it('offers the four entity options and the eight source options', () => {
+  it('offers the player, season and PR 8 entity options and the eight source options', () => {
     const h = html()
     for (const entity of ['>Player<', '>Season<', '>Import<', '>Export<']) expect(h).toContain(entity)
+    // PR 8 added entity filter options.
+    for (const entity of ['>Member<', '>Role<', '>Team<', '>Spond mapping<', '>Drill<', '>Template<', '>Programme<', '>Session<']) {
+      expect(h).toContain(entity)
+    }
     for (const src of ['>Manual<', '>CSV import<', '>XLSX import<', '>Spond import<', '>Renewal<', '>System<', '>Edge function<', '>Database trigger<']) {
       expect(h).toContain(src)
+    }
+  })
+
+  it('offers PR 8 action filter options with fixed labels', () => {
+    const h = html()
+    for (const action of ['>Member invited<', '>Member removed<', '>Role assigned<', '>Role removed<', '>Capability granted<', '>Capability revoked<', '>Team created<', '>Drill created<', '>Session deleted<']) {
+      expect(h).toContain(action)
     }
   })
 
