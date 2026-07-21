@@ -531,7 +531,14 @@ export function Players() {
       {modal?.kind === 'withdraw' && <WithdrawModal player={modal.player} seasonName={seasonName} onClose={close} />}
       {modal?.kind === 'restore' && <RestoreModal player={modal.player} seasonName={seasonName} onClose={close} />}
       {modal?.kind === 'delete' && <DeletePlayerModal player={modal.player} onClose={close} />}
-      {modal?.kind === 'history' && <PlayerHistoryModal player={modal.player} teams={teams} onClose={close} />}
+      {modal?.kind === 'history' && (
+        <PlayerHistoryModal
+          playerId={modal.player.playerId}
+          displayName={modal.player.displayName}
+          teams={teams}
+          onClose={close}
+        />
+      )}
       {modal?.kind === 'import' && spondTeam && spondMapping && (
         <ImportFromSpondModal team={spondTeam} mapping={spondMapping} seasonName={seasonName} onClose={close} />
       )}

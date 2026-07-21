@@ -16,8 +16,18 @@
 // delete the server refused) still refreshes the affected lists rather than
 // leaving a stale view.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
+import {
+  ACTIVITY_PAGE_SIZE,
+  ACTIVITY_SELECT_COLUMNS,
+  activityQueryConditions,
+  keysetOrFilter,
+  nextCursor,
+  type ActivityCursor,
+  type ActivityEvent,
+  type ActivityFilters,
+} from './activityView'
 import { useAuth } from '../hooks/useAuth'
 import type { ExportFilterPayload, ExportPlayerRow } from './playersExport'
 import type { ImportPayload, ImportServerResult } from './playersImportCommit'
@@ -3986,10 +3996,29 @@ export function useClubPlayerIdentities(enabled = true) {
     queryKey: ['player_identities'],
     enabled,
     queryFn: async (): Promise<Map<string, string>> => {
-      const { data, error } = await supabase.from('players').select('id, display_name')
-      if (error) throw error
-      const rows = (data ?? []) as unknown as { id: string; display_name: string }[]
-      return new Map(rows.map((p) => [p.id.toLowerCase(), p.display_name]))
+      // Page through every identity. PostgREST caps a single response at
+      // db.max_rows (1000, supabase/config.toml), so an unpaged select silently
+      // truncates once the club has accumulated more than a page of children
+      // across seasons. That truncation matters beyond the import preview: the
+      // Activity page treats an id absent from this map as a deleted player, so
+      // a real child past row 1000 would render as "Deleted player" and lose
+      // View history. Advance by the rows actually returned and stop on the
+      // first empty page, which stays correct whatever the server cap is.
+      const map = new Map<string, string>()
+      const PAGE = 1000
+      for (let from = 0; ; ) {
+        const { data, error } = await supabase
+          .from('players')
+          .select('id, display_name')
+          .order('id', { ascending: true })
+          .range(from, from + PAGE - 1)
+        if (error) throw error
+        const rows = (data ?? []) as unknown as { id: string; display_name: string }[]
+        for (const p of rows) map.set(p.id.toLowerCase(), p.display_name)
+        if (rows.length === 0) break
+        from += rows.length
+      }
+      return map
     },
   })
 }
@@ -4213,6 +4242,82 @@ export function usePlayerHistory(playerId: string | null, enabled = true) {
         safeChanges: r.safe_changes,
       }))
     },
+  })
+}
+
+// ---- Club wide Activity feed -----------------------------------------------
+// The club wide audit feed (0030 audit_events), gated server side on audit.view
+// and scoped to the caller's club by the audit_events_select_view policy
+// (club_id = my_club()). Parents and coaches without audit.view read zero rows
+// regardless of what the client sends. Server paginated by a keyset cursor
+// (occurred_at desc, id desc), never OFFSET, so page windows stay disjoint and
+// complete while newer events are inserted between requests, and the whole
+// history is never downloaded to the browser. The select is EXACTLY the safe
+// columns (ACTIVITY_SELECT_COLUMNS): metadata and request_id are never fetched,
+// so no raw JSON and no correlation id ever reaches the page; club_id is
+// enforced by RLS, never sent by or trusted from the client.
+interface AuditActivityRow {
+  id: string
+  occurred_at: string
+  actor_id: string | null
+  actor_name: string | null
+  action: string
+  entity_type: string
+  entity_id: string | null
+  season_id: string | null
+  team_id: string | null
+  source: string
+  changed_fields: string[] | null
+  safe_changes: Record<string, { old?: unknown; new?: unknown }> | null
+  batch_id: string | null
+}
+
+function toActivityEvent(r: AuditActivityRow): ActivityEvent {
+  return {
+    id: r.id,
+    occurredAt: r.occurred_at,
+    actorId: r.actor_id,
+    actorName: r.actor_name,
+    action: r.action,
+    entityType: r.entity_type,
+    entityId: r.entity_id,
+    seasonId: r.season_id,
+    teamId: r.team_id,
+    source: r.source,
+    changedFields: r.changed_fields,
+    safeChanges: r.safe_changes,
+    batchId: r.batch_id,
+  }
+}
+
+export function useAuditActivity(filters: ActivityFilters, enabled = true) {
+  // The applied predicates are the cache key, so any filter change starts a
+  // fresh paginated read and the batch deep link composes with the rest.
+  const conditions = useMemo(() => activityQueryConditions(filters), [filters])
+  return useInfiniteQuery({
+    queryKey: ['activity', conditions],
+    enabled,
+    initialPageParam: null as ActivityCursor | null,
+    queryFn: async ({ pageParam }): Promise<ActivityEvent[]> => {
+      let q = supabase
+        .from('audit_events')
+        .select(ACTIVITY_SELECT_COLUMNS)
+        .order('occurred_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(ACTIVITY_PAGE_SIZE)
+      for (const c of conditions) {
+        if (c.op === 'eq') q = q.eq(c.column, c.value)
+        else if (c.op === 'gte') q = q.gte(c.column, c.value)
+        else if (c.op === 'lt') q = q.lt(c.column, c.value)
+      }
+      const keyset = keysetOrFilter(pageParam)
+      if (keyset) q = q.or(keyset)
+      const { data, error } = await q
+      if (error) throw error
+      return (data as unknown as AuditActivityRow[]).map(toActivityEvent)
+    },
+    // A cursor when the last page was full, else undefined: no more pages.
+    getNextPageParam: (lastPage) => nextCursor(lastPage) ?? undefined,
   })
 }
 

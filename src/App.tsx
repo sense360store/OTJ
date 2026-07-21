@@ -17,6 +17,7 @@ import { Sessions } from './routes/Sessions'
 import { Planner } from './routes/Planner'
 import { Board } from './routes/Board'
 import { Players } from './routes/Players'
+import { Activity } from './routes/Activity'
 import { Templates } from './routes/Templates'
 import { Programmes } from './routes/Programmes'
 import { ProgrammeDetail } from './routes/ProgrammeDetail'
@@ -117,6 +118,13 @@ export function App() {
             <Route path="players" element={<Players />} />
           </Route>
           <Route path="roster" element={<Navigate to="/players" replace />} />
+          {/* The club wide Activity feed reads the audit log, gated on
+              audit.view (managers and admins by default). A coach without
+              audit.view and every parent are redirected to Home; RLS returns
+              them zero audit rows regardless of the UI. */}
+          <Route element={<RequireCap cap="audit.view" />}>
+            <Route path="activity" element={<Activity />} />
+          </Route>
           {/* Account self-service is open to every role, parents included. */}
           <Route path="account" element={<Account />} />
           {/* The feedback log is open to every role too, filing included:
