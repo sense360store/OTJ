@@ -4419,3 +4419,165 @@ export function useUnarchiveSeason() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['seasons'] }),
   })
 }
+
+// =====================================================================
+// Content Sharing PR 2: public drill share management hooks.
+//
+// These wrap the authenticated manage-content-share Edge Function. The raw
+// secret returned by create and rotate is handed to the caller once and never
+// cached in a query (React Query cache is in-memory only and is not persisted);
+// the component holds it in local state and clears it on close. The public read
+// path is deliberately NOT here: the anonymous public page has its own minimal
+// read so it does not pull this module (and useAuth) into its bundle.
+// =====================================================================
+
+export interface DrillShareStatus {
+  shareId: string
+  kind: string
+  isOwner: boolean
+  canManage: boolean
+  expiresAt: string | null
+  createdAt: string | null
+  refreshedAt: string | null
+  rotatedAt: string | null
+  hasSnapshot: boolean
+  snapshot: unknown | null
+}
+
+export interface DrillSharePreview {
+  eligible: boolean
+  blocked: string[]
+  rights: { source: string; media: string | null; hasMedia: boolean }
+  preview: unknown | null
+}
+
+export interface DrillShareCreateResult {
+  shareId: string
+  secret?: string
+  existing?: boolean
+  message?: string
+  expiresAt?: string | null
+}
+
+export interface DrillShareRotateResult {
+  shareId: string
+  secret: string
+}
+
+async function invokeManageShare(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data, error } = await supabase.functions.invoke('manage-content-share', { body })
+  if (error) {
+    let message = 'Something went wrong. No change was made.'
+    const ctx = (error as { context?: Response }).context
+    if (ctx) {
+      try {
+        const parsed = (await ctx.json()) as { error?: string }
+        if (parsed?.error) message = parsed.error
+      } catch {
+        /* keep the generic message */
+      }
+    }
+    throw new Error(message)
+  }
+  return (data ?? {}) as Record<string, unknown>
+}
+
+export interface DrillShareStatusResult {
+  share: DrillShareStatus | null
+  sharingEnabled: boolean
+}
+
+// The active public share for a drill, for the owner or a manager, plus the
+// club kill switch state. share is null when there is none, or when the caller
+// is neither the owner nor a manager.
+export function useDrillShareStatus(drillId: string | undefined, enabled = true) {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['drill-share-status', drillId],
+    enabled: !!drillId && !!user && enabled,
+    retry: false,
+    queryFn: async (): Promise<DrillShareStatusResult> => {
+      const data = await invokeManageShare({ action: 'status', kind: 'drill', sourceId: drillId })
+      return {
+        share: (data.share ?? null) as DrillShareStatus | null,
+        sharingEnabled: data.sharingEnabled === true,
+      }
+    },
+  })
+}
+
+// Build the exact projection that would become public, without writing anything.
+export function usePreviewDrillShare() {
+  return useMutation<DrillSharePreview, Error, { drillId: string }>({
+    mutationFn: async ({ drillId }) => {
+      const data = await invokeManageShare({ action: 'preview', kind: 'drill', sourceId: drillId })
+      return {
+        eligible: data.eligible === true,
+        blocked: Array.isArray(data.blocked) ? (data.blocked as string[]) : [],
+        rights: data.rights as DrillSharePreview['rights'],
+        preview: data.preview ?? null,
+      }
+    },
+  })
+}
+
+export function useCreateDrillShare() {
+  const qc = useQueryClient()
+  return useMutation<
+    DrillShareCreateResult,
+    Error,
+    { drillId: string; idempotencyKey: string; expiresAt?: string | null; noExpiry?: boolean }
+  >({
+    mutationFn: async ({ drillId, idempotencyKey, expiresAt, noExpiry }) => {
+      const data = await invokeManageShare({
+        action: 'create',
+        kind: 'drill',
+        sourceId: drillId,
+        idempotencyKey,
+        expiresAt: expiresAt ?? null,
+        noExpiry: noExpiry ?? false,
+      })
+      return {
+        shareId: data.shareId as string,
+        secret: data.secret as string | undefined,
+        existing: data.existing === true,
+        message: data.message as string | undefined,
+        expiresAt: (data.expiresAt ?? null) as string | null,
+      }
+    },
+    onSettled: (_d, _e, vars) => qc.invalidateQueries({ queryKey: ['drill-share-status', vars.drillId] }),
+  })
+}
+
+export function useRefreshDrillShare() {
+  const qc = useQueryClient()
+  return useMutation<{ expiresAt: string | null }, Error, { drillId: string; shareId: string }>({
+    mutationFn: async ({ shareId }) => {
+      const data = await invokeManageShare({ action: 'refresh', shareId })
+      return { expiresAt: (data.expiresAt ?? null) as string | null }
+    },
+    onSettled: (_d, _e, vars) => qc.invalidateQueries({ queryKey: ['drill-share-status', vars.drillId] }),
+  })
+}
+
+export function useRotateDrillShare() {
+  const qc = useQueryClient()
+  return useMutation<DrillShareRotateResult, Error, { drillId: string; shareId: string }>({
+    mutationFn: async ({ shareId }) => {
+      const data = await invokeManageShare({ action: 'rotate', shareId })
+      return { shareId: data.shareId as string, secret: data.secret as string }
+    },
+    onSettled: (_d, _e, vars) => qc.invalidateQueries({ queryKey: ['drill-share-status', vars.drillId] }),
+  })
+}
+
+export function useRevokeDrillShare() {
+  const qc = useQueryClient()
+  return useMutation<{ status: string }, Error, { drillId: string; shareId: string }>({
+    mutationFn: async ({ shareId }) => {
+      const data = await invokeManageShare({ action: 'revoke', shareId })
+      return { status: (data.status ?? 'revoked') as string }
+    },
+    onSettled: (_d, _e, vars) => qc.invalidateQueries({ queryKey: ['drill-share-status', vars.drillId] }),
+  })
+}

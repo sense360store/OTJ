@@ -613,3 +613,73 @@ a.activity-batch:hover { text-decoration: underline; }
 .ip-outcome-icon { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px;
   border-radius: 999px; margin-bottom: 4px; }
 .ip-outcome-icon.ok { background: var(--c-physical); color: #fff; }
+
+/* =====================================================================
+   Content Sharing PR 2: the public drill page, the preview and the
+   Drill Detail public-link control. Theme-aware via the design tokens,
+   plus a minimal print stylesheet so a public page prints usably.
+   ===================================================================== */
+
+/* --- The anonymous public page --- */
+.public-page { min-height: 100vh; background: var(--bg); color: var(--ink);
+  display: flex; flex-direction: column; }
+.public-main { width: 100%; max-width: 760px; margin: 0 auto; padding: 24px 20px 40px; flex: 1; }
+.public-foot { text-align: center; padding: 16px; border-top: 1px solid var(--line); }
+.public-empty { max-width: 480px; margin: 12vh auto; text-align: center; display: grid; gap: 12px; }
+.public-empty-head { font-family: var(--display); font-weight: 800; font-size: 22px; margin: 0; }
+.public-empty-body { color: var(--slate); margin: 0; }
+.public-reload { text-align: center; margin-top: 20px; }
+
+/* --- The drill content (shared by preview and public page) --- */
+.public-drill { display: grid; gap: 18px; }
+.public-drill-head { display: grid; gap: 4px; }
+.public-eyebrow { text-transform: uppercase; letter-spacing: .06em; font-size: 12px; font-weight: 800;
+  color: var(--royal); margin: 0; }
+.public-title { font-family: var(--display); font-weight: 900; font-size: clamp(24px, 5vw, 34px);
+  line-height: 1.1; margin: 0; }
+.public-skill { color: var(--slate); font-weight: 600; margin: 0; }
+.public-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+.public-pill { display: inline-flex; gap: 6px; align-items: baseline; background: var(--bg-2);
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+.public-pill-label { text-transform: uppercase; letter-spacing: .04em; font-size: 10.5px; font-weight: 800;
+  color: var(--slate-2); }
+.public-pill-value { font-weight: 700; }
+.public-block { display: grid; gap: 6px; }
+.public-block-head { font-family: var(--display); font-weight: 800; font-size: 15px; margin: 0;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--slate); }
+.public-para { margin: 0; line-height: 1.5; }
+.public-list { margin: 0; padding-left: 20px; display: grid; gap: 4px; line-height: 1.45; }
+.public-media { margin: 8px 0 0; display: grid; gap: 6px; }
+.public-media-image { max-width: 100%; height: auto; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+.public-media-video { max-width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+.public-media-link { font-weight: 700; color: var(--royal); }
+.public-media-caption { color: var(--slate); font-size: 13px; }
+.public-media-note { font-size: 12.5px; margin: 0; }
+.public-attribution { font-size: 13px; }
+
+/* --- The Drill Detail public-link control --- */
+.public-share-control { border-top: 1px dashed var(--line); padding-top: 12px; }
+.public-share-heading { font-family: var(--display); font-weight: 800; font-size: 15px; }
+.public-status-line { margin: 0 0 8px; }
+.public-result { display: grid; gap: 8px; }
+.public-result-label { font-weight: 700; font-size: 13px; }
+.public-result-url { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--bg-2); font-size: 13px; }
+.public-manage { display: grid; gap: 6px; }
+.public-preview { display: grid; gap: 14px; }
+.public-preview-frame { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; background: var(--card); }
+.public-freetext-warning { background: var(--gold-soft); border: 1px solid var(--gold); border-radius: var(--radius-sm);
+  padding: 12px 14px; }
+.public-freetext-warning p { margin: 4px 0 0; }
+.public-blocked { background: color-mix(in srgb, var(--m-pdf) 12%, transparent); border: 1px solid var(--m-pdf);
+  border-radius: var(--radius-sm); padding: 12px 14px; font-weight: 600; }
+.public-confirm-note { margin: 12px 0 0; font-weight: 600; }
+
+/* --- Print: a usable public page from day one (PR 6 refines it) --- */
+@media print {
+  .public-foot, .public-reload, .public-media-note { display: none; }
+  .public-page { background: #fff; color: #000; }
+  .public-main { max-width: 100%; padding: 0; }
+  .public-media-image { border: none; }
+  a[href]::after { content: ''; }
+}

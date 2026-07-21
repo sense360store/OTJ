@@ -414,3 +414,20 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# =====================================================================
+# Content Sharing PR 2: the anonymous public read function.
+#
+# read-content-share is the only function that runs with verify_jwt = false:
+# it is the public, unauthenticated reader that resolves an opaque public drill
+# share to its stored, sanitised snapshot. Declaring this here (version
+# controlled, reviewable in the gated PR) rather than as a deploy flag makes the
+# public boundary explicit. Adding this one per-function block does NOT change
+# the other functions' default of verify_jwt = true; every other function
+# (manage-content-share and the eight pre-existing ones) stays authenticated.
+# The byte-for-byte source readback does not verify verify_jwt, so a positive
+# post-deploy check confirms read-content-share is anon reachable while every
+# other function is not.
+# =====================================================================
+[functions.read-content-share]
+verify_jwt = false

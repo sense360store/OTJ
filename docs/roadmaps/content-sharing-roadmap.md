@@ -1175,6 +1175,17 @@ public snapshot rendering ships in PR 1; those remain PR 2.
 
 ### PR 2: Public drill sharing vertical slice
 
+Status: IMPLEMENTED in `0039_public_share_read.sql` (the next free slot after
+0038), the two Edge Functions `manage-content-share` (verify_jwt on) and
+`read-content-share` (verify_jwt off), the shared builder
+`supabase/functions/_shared/share.ts`, and the code-split public route
+`/share/:shareId`. The security contract is the PR 2 part of
+`docs/security/content-sharing-boundary.md`. Drill only; sessions and programmes
+remain unsupported publicly. NOT applied or deployed to hosted: the migration is
+not run on hosted, no Edge Function is deployed, and `public_sharing_enabled`
+stays false on every club, pending separate explicit approval and the human
+gates below.
+
 - User outcome: a coach creates a public link to a drill; an external recipient opens it without an account and sees the drill and its eligible media.
 - Current code evidence: Drill Detail exists; drills are the smallest complete content unit and the first to exercise media signing and rights.
 - Scope: the two Edge Functions (`manage-content-share`, `read-content-share`); the narrow `read_public_share` SECURITY DEFINER read path with the kill switch check and the dependency eligibility verification inside it (section 15.1, 16.2); the `[functions.read-content-share] verify_jwt = false` block in `config.toml`; the pure shared snapshot builder and allow list scanner in `_shared/share.ts`; the code split public route `/share/:shareId` outside auth; the Drill Detail public share flow (preview, create, refresh, rotate, revoke) including the per entity manager Revoke from PR 2 onward so oversight exists as soon as public sharing does; eligible media signing; the rate limit (platform limiting if available, else a pseudonymous HMAC of IP limiter per section 25, or explicitly marked a PR 2 design gate with the Detection claims downgraded if no reliable mechanism is selected); the uptime probe and the billing alert; the scheduled private expiry cleanup process (owner, daily cadence, failure monitoring, test) that clears expired snapshots and dependency rows and emits `content_share.expired`; a minimal print stylesheet so the public page prints usably from day one; mobile and accessibility; deployed function byte readback plus the positive `verify_jwt` check.

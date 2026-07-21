@@ -1,6 +1,7 @@
 // App shell and routing. The auth guard decides Login versus the shell, and
 // the shell hosts the sidebar, top bar, bottom nav and the routed content.
 // REVIEW: contains the auth guard and the capability route guards.
+import { lazy, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import { SessionsProvider } from './context/SessionsContext'
@@ -31,6 +32,12 @@ import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
 import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
+
+// The anonymous public share page is code-split with a dynamic import, so an
+// external recipient opening one shared drill on mobile data does not download
+// the whole authenticated app before first paint. It mounts none of the
+// authenticated providers or hooks.
+const PublicShare = lazy(() => import('./routes/PublicShare'))
 
 function Splash() {
   return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--slate)' }}>Loading…</div>
@@ -148,6 +155,17 @@ export function App() {
           </Route>
         </Route>
       </Route>
+      {/* The anonymous public share route sits OUTSIDE RequireAuth and the app
+          shell, before the catch-all, so it renders with no auth guard, no
+          SessionsProvider and no navigation chrome. */}
+      <Route
+        path="/share/:shareId"
+        element={
+          <Suspense fallback={<Splash />}>
+            <PublicShare />
+          </Suspense>
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
