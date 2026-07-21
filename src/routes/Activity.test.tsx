@@ -291,13 +291,13 @@ describe('ActivityFilterControls', () => {
 
   it('renders every filter with a visible label and a programmatic aria-label', () => {
     const h = html()
-    for (const visible of ['From date', 'To date', 'Actor', 'Entity', 'Action', 'Team', 'Season', 'Source']) {
+    for (const visible of ['From date', 'To date', 'Changed by', 'Entity', 'Action', 'Team', 'Season', 'Source']) {
       expect(h).toContain(visible)
     }
     for (const aria of [
       'aria-label="Filter from date"',
       'aria-label="Filter to date"',
-      'aria-label="Filter by actor"',
+      'aria-label="Filter by who changed"',
       'aria-label="Filter by entity type"',
       'aria-label="Filter by action"',
       'aria-label="Filter by team"',
@@ -306,6 +306,35 @@ describe('ActivityFilterControls', () => {
     ]) {
       expect(h).toContain(aria)
     }
+  })
+
+  it('labels the person filter "Changed by" and exposes no "Actor" copy on the page', () => {
+    const h = html()
+    // The visible label is the plain-language "Changed by".
+    expect(h).toContain('>Changed by</span>')
+    // The control stays programmatically labelled for assistive technology.
+    expect(h).toContain('aria-label="Filter by who changed"')
+    // No user-facing "Actor" label survives anywhere in the filter markup
+    // (the internal actorId field and actor_id column are untouched, but the
+    // rendered copy never says "Actor").
+    expect(h.toLowerCase()).not.toContain('actor')
+  })
+
+  it('keeps the person filter wired to actorId so filtering behaviour is unchanged', () => {
+    const changes: Array<Record<string, unknown>> = []
+    const rendered = renderToStaticMarkup(
+      <ActivityFilterControls
+        filters={{ from: '', to: '', actorId: 'm1', entity: '', action: '', teamId: '', seasonId: '', source: '', batchId: '' }}
+        onChange={(p) => changes.push(p)}
+        actors={actors}
+        teams={teams}
+        seasons={seasons}
+      />,
+    )
+    // The selected actor id still drives the control's value, so the label
+    // rename does not touch how the filter maps to actor_id.
+    expect(rendered).toContain('value="m1"')
+    expect(rendered).toContain('Alex Coach')
   })
 
   it('offers the player, season and PR 8 entity options and the eight source options', () => {
