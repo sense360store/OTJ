@@ -174,12 +174,12 @@ export function ActivityFilterControls({
         />
       </label>
       <label className="field">
-        <span className="filter-label">Actor</span>
+        <span className="filter-label">Changed by</span>
         <select
           className="select"
           value={filters.actorId}
           onChange={(e) => onChange({ actorId: e.target.value })}
-          aria-label="Filter by actor"
+          aria-label="Filter by who changed"
         >
           <option value="">Anyone</option>
           {actors.map((a) => (
