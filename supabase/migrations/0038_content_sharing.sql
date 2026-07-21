@@ -329,11 +329,15 @@ create unique index content_shares_one_active_session
 create unique index content_shares_one_active_programme
   on public.content_shares (programme_id) where programme_id is not null and revoked_at is null;
 
--- Idempotency: a given key is unique per source, so a repeat create with the
--- same key resolves to the existing row rather than acting again.
+-- Idempotency: a given key is unique per source among ACTIVE shares, so a
+-- repeat create with the same key resolves to the existing active row rather
+-- than acting again. The revoked_at is null predicate frees the key when a
+-- share is revoked, so the same source can be shared again later (a revoked
+-- share never resurfaces as a "successful" create, and a fresh share can be
+-- minted).
 create unique index content_shares_idempotency
   on public.content_shares (coalesce(session_id, drill_id, programme_id), idempotency_key)
-  where idempotency_key is not null;
+  where idempotency_key is not null and revoked_at is null;
 
 create index content_shares_club_idx on public.content_shares (club_id);
 create index content_shares_created_by_idx on public.content_shares (created_by);
@@ -549,15 +553,27 @@ revoke execute on function public.content_share_actor_has_cap(uuid, text) from p
 
 -- The nested dependency set for a source: every nested drill, template, media
 -- and board the source projects, with its current rights class and whether
--- the referenced row still exists. A board carries no rights (null). Used by
--- the lifecycle RPC to evaluate aggregate eligibility (fail closed on a
--- missing item or an internal_only item) and to write the dependency rows.
--- SECURITY DEFINER so it reads the club content tables without their RLS; the
--- RPC has already bound the source to the actor's club, so no cross club id
--- can reach here. Private: only the definer RPC calls it.
+-- the referenced row still exists AND belongs to the source's club. A board
+-- carries no rights (null). Used by the lifecycle RPC to evaluate aggregate
+-- eligibility (fail closed on a missing, cross club, or internal_only item)
+-- and to write the dependency rows.
+--
+-- CLUB SCOPING IS LOAD BEARING. The source id is already bound to the actor's
+-- club by the RPC, but the NESTED ids are read out of the free form
+-- sessions/templates activities jsonb (no foreign key, no club check) and from
+-- drills.media_id, sessions.board_id and programmes.pdf_media_id, so a caller
+-- could craft a same club source that references a KNOWN foreign club entity
+-- uuid. Every nested lookup therefore joins on club_id = p_club (the source's
+-- club), placed in the JOIN condition so a cross club id resolves to a NULL
+-- join, i.e. dep_exists = false, which the aggregate check treats as a missing
+-- dependency and blocks. A board has no club_id column, so its club is its
+-- creator's (boards.created_by is not null and on delete cascade, so a live
+-- board always has a live creator profile). SECURITY DEFINER so it reads the
+-- content tables without their RLS. Private: only the definer RPC calls it.
 create or replace function public.content_share_deps(
   p_kind      public.content_share_kind,
-  p_source_id uuid
+  p_source_id uuid,
+  p_club      uuid
 )
 returns table (dep_kind text, dep_id uuid, dep_rights public.content_rights, dep_exists boolean)
 language plpgsql
@@ -567,16 +583,16 @@ set search_path = ''
 as $$
 begin
   if p_kind = 'drill' then
-    -- The drill's own media.
+    -- The drill's own media, club scoped.
     return query
       select 'media'::text, d.media_id, m.rights, (m.id is not null)
       from public.drills d
-      left join public.media m on m.id = d.media_id
+      left join public.media m on m.id = d.media_id and m.club_id = p_club
       where d.id = p_source_id and d.media_id is not null;
 
   elsif p_kind = 'session' then
     -- Nested drills from the activities jsonb (drill_id key; custom
-    -- activities carry a title and no drill_id and are skipped).
+    -- activities carry a title and no drill_id and are skipped), club scoped.
     return query
       with acts as (
         select distinct (a->>'drill_id')::uuid as drill_id
@@ -584,8 +600,8 @@ begin
         where s.id = p_source_id and nullif(a->>'drill_id', '') is not null
       )
       select 'drill'::text, acts.drill_id, d.rights, (d.id is not null)
-      from acts left join public.drills d on d.id = acts.drill_id;
-    -- The media of those nested drills.
+      from acts left join public.drills d on d.id = acts.drill_id and d.club_id = p_club;
+    -- The media of those nested (same club) drills, club scoped.
     return query
       with acts as (
         select distinct (a->>'drill_id')::uuid as drill_id
@@ -594,61 +610,104 @@ begin
       ),
       dm as (
         select distinct d.media_id
-        from acts join public.drills d on d.id = acts.drill_id
+        from acts join public.drills d on d.id = acts.drill_id and d.club_id = p_club
         where d.media_id is not null
       )
       select 'media'::text, dm.media_id, m.rights, (m.id is not null)
-      from dm left join public.media m on m.id = dm.media_id;
-    -- The attached board (shape and numbers only; no rights class).
+      from dm left join public.media m on m.id = dm.media_id and m.club_id = p_club;
+    -- The attached board (shape and numbers only; no rights class), club scoped
+    -- via its creator's profile.
     return query
-      select 'board'::text, s.board_id, null::public.content_rights, (b.id is not null)
+      select 'board'::text, s.board_id, null::public.content_rights, (b.id is not null and bpr.club_id = p_club)
       from public.sessions s
       left join public.boards b on b.id = s.board_id
+      left join public.profiles bpr on bpr.id = b.created_by
       where s.id = p_source_id and s.board_id is not null;
 
   elsif p_kind = 'programme' then
-    -- Nested templates (programme weeks).
+    -- Nested templates (programme weeks), club scoped.
     return query
       select 'template'::text, t.id, t.rights, true
       from public.templates t
-      where t.programme_id = p_source_id;
-    -- Nested drills across those templates.
+      where t.programme_id = p_source_id and t.club_id = p_club;
+    -- Nested drills across those (same club) templates, club scoped.
     return query
       with td as (
         select distinct (a->>'drill_id')::uuid as drill_id
         from public.templates t, lateral jsonb_array_elements(t.activities) a
-        where t.programme_id = p_source_id and nullif(a->>'drill_id', '') is not null
+        where t.programme_id = p_source_id and t.club_id = p_club and nullif(a->>'drill_id', '') is not null
       )
       select 'drill'::text, td.drill_id, d.rights, (d.id is not null)
-      from td left join public.drills d on d.id = td.drill_id;
-    -- The media of those drills.
+      from td left join public.drills d on d.id = td.drill_id and d.club_id = p_club;
+    -- The media of those drills, club scoped.
     return query
       with td as (
         select distinct (a->>'drill_id')::uuid as drill_id
         from public.templates t, lateral jsonb_array_elements(t.activities) a
-        where t.programme_id = p_source_id and nullif(a->>'drill_id', '') is not null
+        where t.programme_id = p_source_id and t.club_id = p_club and nullif(a->>'drill_id', '') is not null
       ),
       dm as (
         select distinct d.media_id
-        from td join public.drills d on d.id = td.drill_id
+        from td join public.drills d on d.id = td.drill_id and d.club_id = p_club
         where d.media_id is not null
       )
       select 'media'::text, dm.media_id, m.rights, (m.id is not null)
-      from dm left join public.media m on m.id = dm.media_id;
-    -- The programme's attached PDF (treated as media).
+      from dm left join public.media m on m.id = dm.media_id and m.club_id = p_club;
+    -- The programme's attached PDF (treated as media), club scoped.
     return query
       select 'media'::text, p.pdf_media_id, m.rights, (m.id is not null)
       from public.programmes p
-      left join public.media m on m.id = p.pdf_media_id
+      left join public.media m on m.id = p.pdf_media_id and m.club_id = p_club
       where p.id = p_source_id and p.pdf_media_id is not null;
   end if;
 end;
 $$;
 
-comment on function public.content_share_deps(public.content_share_kind, uuid) is
-  $$The nested dependency set (drills, templates, media, boards) a share source projects, with each item's current rights class and existence. Used by manage_content_share to evaluate aggregate eligibility (fail closed on a missing or internal_only item) and to write the dependency rows. Private (no client EXECUTE). See 0038_content_sharing.sql.$$;
+comment on function public.content_share_deps(public.content_share_kind, uuid, uuid) is
+  $$The nested dependency set (drills, templates, media, boards) a share source projects, each club scoped to p_club (the source's club) so a cross club nested id read from the free form activities jsonb resolves as a missing dependency and blocks the share. Used by manage_content_share to evaluate aggregate eligibility (fail closed on a missing, cross club or internal_only item) and to write the dependency rows. Private (no client EXECUTE). See 0038_content_sharing.sql.$$;
 
-revoke execute on function public.content_share_deps(public.content_share_kind, uuid) from public, anon, authenticated;
+revoke execute on function public.content_share_deps(public.content_share_kind, uuid, uuid) from public, anon, authenticated;
+
+-- Lock a single rights bearing nested row FOR SHARE and return its current
+-- rights under the lock, club scoped. Used by the lifecycle aggregate check so
+-- a concurrent rights downgrade (FOR NO KEY UPDATE) serialises with the create
+-- or refresh: this returns only after any in flight downgrade of that row
+-- commits, so the check sees the true post downgrade rights. Returns null for a
+-- board (no rights) and for a row that has vanished or left the club (the
+-- caller treats a null on a rights bearing kind as a blocking condition).
+-- VOLATILE (it takes a lock). Private: only the definer RPC calls it.
+create or replace function public.content_share_lock_rights(
+  p_kind text,
+  p_id   uuid,
+  p_club uuid
+)
+returns public.content_rights
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v public.content_rights;
+begin
+  if p_kind = 'drill' then
+    select rights into v from public.drills where id = p_id and club_id = p_club for share;
+  elsif p_kind = 'media' then
+    select rights into v from public.media where id = p_id and club_id = p_club for share;
+  elsif p_kind = 'template' then
+    select rights into v from public.templates where id = p_id and club_id = p_club for share;
+  elsif p_kind = 'programme' then
+    select rights into v from public.programmes where id = p_id and club_id = p_club for share;
+  else
+    v := null;  -- board or unknown: no rights to lock
+  end if;
+  return v;
+end;
+$$;
+
+comment on function public.content_share_lock_rights(text, uuid, uuid) is
+  $$Locks a single rights bearing nested row FOR SHARE and returns its current club scoped rights, so a concurrent rights downgrade serialises with a create or refresh (closing the TOCTOU where an uncommitted new share is invisible to the downgrade trigger). Returns null for a board or a vanished row. Private (no client EXECUTE). See 0038_content_sharing.sql.$$;
+
+revoke execute on function public.content_share_lock_rights(text, uuid, uuid) from public, anon, authenticated;
 
 -- =====================================================================
 -- PART 8: the lifecycle RPC, the final authority
@@ -690,6 +749,7 @@ declare
   v_source_club  uuid;
   v_source_owner uuid;
   v_source_rights public.content_rights;
+  v_locked       public.content_rights;
   v_club         uuid;
   v_share        public.content_shares%rowtype;
   v_dep          record;
@@ -736,16 +796,22 @@ begin
       raise exception 'manage_content_share: create requires an idempotency key';
     end if;
 
-    -- Resolve the source, its club, owner and rights.
+    -- Resolve the source, its club, owner and rights, locking the source row
+    -- FOR SHARE so a concurrent rights downgrade (which takes FOR NO KEY UPDATE)
+    -- serialises with this create: either the downgrade waits until this
+    -- transaction commits and then its trigger sees and invalidates the new
+    -- share, or this read blocks until the downgrade commits and then observes
+    -- internal_only and blocks. This closes the create-versus-downgrade race
+    -- for the source (the nested items are locked in the aggregate loop below).
     if p_kind = 'drill' then
       select d.club_id, d.created_by, d.rights into v_source_club, v_source_owner, v_source_rights
-      from public.drills d where d.id = p_source_id;
+      from public.drills d where d.id = p_source_id for share;
     elsif p_kind = 'session' then
       select s.club_id, s.coach_id, s.rights into v_source_club, v_source_owner, v_source_rights
-      from public.sessions s where s.id = p_source_id;
+      from public.sessions s where s.id = p_source_id for share;
     else
       select p.club_id, p.created_by, p.rights into v_source_club, v_source_owner, v_source_rights
-      from public.programmes p where p.id = p_source_id;
+      from public.programmes p where p.id = p_source_id for share;
     end if;
     if v_source_club is null then
       raise exception 'manage_content_share: the source does not exist';
@@ -778,10 +844,13 @@ begin
       raise exception 'manage_content_share: public sharing is disabled for this club';
     end if;
 
-    -- Idempotency: a repeat with the same key returns the existing row.
+    -- Idempotency: a repeat with the same key returns the existing ACTIVE row.
+    -- A revoked share never matches, so a reused key after revoke does not
+    -- resurface a dead share as a successful create.
     select cs.id into v_existing from public.content_shares cs
     where cs.idempotency_key = p_idempotency_key
-      and coalesce(cs.session_id, cs.drill_id, cs.programme_id) = p_source_id;
+      and coalesce(cs.session_id, cs.drill_id, cs.programme_id) = p_source_id
+      and cs.revoked_at is null;
     if v_existing is not null then
       return jsonb_build_object('ok', true, 'action', 'create', 'share_id', v_existing, 'idempotent', true);
     end if;
@@ -807,11 +876,19 @@ begin
 
     -- Aggregate nested eligibility: fail closed on a missing item or an
     -- internal_only item.
-    for v_dep in select * from public.content_share_deps(p_kind, p_source_id) loop
+    for v_dep in select * from public.content_share_deps(p_kind, p_source_id, v_club) loop
       if not v_dep.dep_exists then
-        raise exception 'manage_content_share: a nested % is missing; the share is blocked', v_dep.dep_kind;
+        raise exception 'manage_content_share: a nested % is missing or cross club; the share is blocked', v_dep.dep_kind;
       end if;
-      if v_dep.dep_rights is not null and v_dep.dep_rights = 'internal_only' then
+      -- Lock each rights bearing nested row FOR SHARE and re-read its rights
+      -- under the lock, so a concurrent downgrade cannot slip an internal_only
+      -- item past this check (the TOCTOU the source lock closes for the source).
+      -- A board carries no rights and is not locked here.
+      v_locked := public.content_share_lock_rights(v_dep.dep_kind, v_dep.dep_id, v_club);
+      if v_dep.dep_kind <> 'board' and v_locked is null then
+        raise exception 'manage_content_share: a nested % vanished; the share is blocked', v_dep.dep_kind;
+      end if;
+      if v_locked = 'internal_only' then
         raise exception 'manage_content_share: a nested % is internal_only; the share is blocked', v_dep.dep_kind;
       end if;
     end loop;
@@ -878,7 +955,14 @@ begin
       if v_existing is null then
         select cs.id into v_existing from public.content_shares cs
         where cs.idempotency_key = p_idempotency_key
-          and coalesce(cs.session_id, cs.drill_id, cs.programme_id) = p_source_id;
+          and coalesce(cs.session_id, cs.drill_id, cs.programme_id) = p_source_id
+          and cs.revoked_at is null;
+      end if;
+      -- If the conflicting active row was revoked in the race window and no
+      -- active row remains, fail closed rather than returning a null share id;
+      -- the caller retries.
+      if v_existing is null then
+        raise exception 'manage_content_share: a concurrent create conflict could not be resolved; retry';
       end if;
       return jsonb_build_object('ok', true, 'action', 'create', 'share_id', v_existing, 'existing', true);
     end;
@@ -887,7 +971,7 @@ begin
     -- constraint).
     insert into public.content_share_dependencies (share_id, club_id, dependency_kind, dependency_id, rights_class_observed)
     select v_new_id, v_club, dep_kind, dep_id, dep_rights
-    from public.content_share_deps(p_kind, p_source_id)
+    from public.content_share_deps(p_kind, p_source_id, v_club)
     on conflict (share_id, dependency_kind, dependency_id) do nothing;
 
     v_initiator := case when v_is_owner then 'owner' else 'manager' end;
@@ -988,13 +1072,14 @@ begin
   -- Rebuild the dependency set and re-check aggregate rights from current
   -- content, keeping the same secret. Fails closed if the aggregate is no
   -- longer eligible.
-  -- Re-resolve source rights.
+  -- Re-resolve source rights, locking the source FOR SHARE (as create does) so
+  -- a concurrent downgrade serialises with this refresh.
   if v_share.kind = 'drill' then
-    select d.club_id, d.rights into v_source_club, v_source_rights from public.drills d where d.id = v_share.drill_id;
+    select d.club_id, d.rights into v_source_club, v_source_rights from public.drills d where d.id = v_share.drill_id for share;
   elsif v_share.kind = 'session' then
-    select s.club_id, s.rights into v_source_club, v_source_rights from public.sessions s where s.id = v_share.session_id;
+    select s.club_id, s.rights into v_source_club, v_source_rights from public.sessions s where s.id = v_share.session_id for share;
   else
-    select p.club_id, p.rights into v_source_club, v_source_rights from public.programmes p where p.id = v_share.programme_id;
+    select p.club_id, p.rights into v_source_club, v_source_rights from public.programmes p where p.id = v_share.programme_id for share;
   end if;
   if v_source_club is null then
     raise exception 'manage_content_share: the source no longer exists';
@@ -1003,11 +1088,15 @@ begin
     raise exception 'manage_content_share: the source is now internal_only; refresh is blocked';
   end if;
   for v_dep in select * from public.content_share_deps(
-      v_share.kind, coalesce(v_share.drill_id, v_share.session_id, v_share.programme_id)) loop
+      v_share.kind, coalesce(v_share.drill_id, v_share.session_id, v_share.programme_id), v_club) loop
     if not v_dep.dep_exists then
-      raise exception 'manage_content_share: a nested % is missing; refresh is blocked', v_dep.dep_kind;
+      raise exception 'manage_content_share: a nested % is missing or cross club; refresh is blocked', v_dep.dep_kind;
     end if;
-    if v_dep.dep_rights is not null and v_dep.dep_rights = 'internal_only' then
+    v_locked := public.content_share_lock_rights(v_dep.dep_kind, v_dep.dep_id, v_club);
+    if v_dep.dep_kind <> 'board' and v_locked is null then
+      raise exception 'manage_content_share: a nested % vanished; refresh is blocked', v_dep.dep_kind;
+    end if;
+    if v_locked = 'internal_only' then
       raise exception 'manage_content_share: a nested % is internal_only; refresh is blocked', v_dep.dep_kind;
     end if;
   end loop;
@@ -1018,7 +1107,7 @@ begin
   delete from public.content_share_dependencies where share_id = p_share_id;
   insert into public.content_share_dependencies (share_id, club_id, dependency_kind, dependency_id, rights_class_observed)
   select p_share_id, v_club, dep_kind, dep_id, dep_rights
-  from public.content_share_deps(v_share.kind, coalesce(v_share.drill_id, v_share.session_id, v_share.programme_id))
+  from public.content_share_deps(v_share.kind, coalesce(v_share.drill_id, v_share.session_id, v_share.programme_id), v_club)
   on conflict (share_id, dependency_kind, dependency_id) do nothing;
 
   v_snapshot := jsonb_build_object(
@@ -1049,18 +1138,37 @@ grant execute on function public.manage_content_share(text, uuid, public.content
 -- PART 9: rights downgrade invalidation
 -- =====================================================================
 
--- When a content or media item drops to internal_only, every active share
--- that depends on it (as its source, or as a nested item) is invalidated in
--- the same transaction: revoked_at set, snapshot cleared, dependency rows
--- removed, and a content_share.invalidated audit event written. Only the
--- dependent shares are touched, found through the source columns and the
--- reverse dependency index, never by a global sweep or a snapshot scan.
+-- When a content or media item drops to internal_only, every active share IN
+-- THE ENTITY'S CLUB that depends on it (as its source, or as a nested item) is
+-- invalidated in the same transaction: revoked_at set, snapshot cleared,
+-- dependency rows removed, and a content_share.invalidated audit event
+-- written. Only the dependent shares are touched, found through the source
+-- columns and the reverse dependency index, never by a global sweep or a
+-- snapshot scan.
+--
+-- CLUB SCOPING IS LOAD BEARING. Both the source column arm and the reverse
+-- dependency arm are constrained to the entity's club (p_entity_club, passed
+-- by the trigger from new.club_id), so a rights change on a club B entity can
+-- never reach a club A share, even if a stale cross club dependency row somehow
+-- existed. This closes the cross club abort: without it, invalidating a club A
+-- share on a club B owner's downgrade would call the audit writer with a club B
+-- actor and a club A club, which the writer's membership check refuses, raising
+-- and aborting the club B owner's legitimate UPDATE. The dependency helper's
+-- club scoping (content_share_deps) already prevents a cross club dependency
+-- from being recorded in the first place; this is defence in depth.
+--
+-- The actor is auth.uid() (the member who changed the rights), which is a
+-- member of p_entity_club. As a final guard, an actor that is not a member of
+-- that club (a service role change, auth.uid() null; or any residual) is
+-- recorded as a system event (null actor) rather than handed to the writer's
+-- membership check, since the actor is server derived and cannot be forged.
 -- SECURITY DEFINER so it writes the private tables as their owner; private
 -- (no client EXECUTE), called only by the rights triggers below.
 create or replace function public.content_share_invalidate_dependents(
-  p_entity_kind text,
-  p_entity_id   uuid,
-  p_actor       uuid
+  p_entity_kind  text,
+  p_entity_id    uuid,
+  p_entity_club  uuid,
+  p_actor        uuid
 )
 returns void
 language plpgsql
@@ -1069,15 +1177,24 @@ set search_path = ''
 as $$
 declare
   v_share record;
+  v_actor uuid := p_actor;
 begin
+  -- A non member (or null) server derived actor is recorded as system.
+  if v_actor is not null
+     and not exists (select 1 from public.profiles pr where pr.id = v_actor and pr.club_id = p_entity_club) then
+    v_actor := null;
+  end if;
+
   for v_share in
     -- Shares whose SOURCE is this entity (drill, session or programme), and
-    -- shares that NEST this entity (via the reverse dependency index). Union
-    -- so each affected active share is handled once.
+    -- shares that NEST this entity (via the reverse dependency index), both
+    -- constrained to the entity's club. Distinct so each affected active share
+    -- is handled once.
     select cs.id, cs.club_id, cs.kind, cs.created_by,
            coalesce(cs.drill_id, cs.session_id, cs.programme_id) as source_id
     from public.content_shares cs
     where cs.revoked_at is null
+      and cs.club_id = p_entity_club
       and (
         (p_entity_kind = 'drill'     and cs.drill_id     = p_entity_id) or
         (p_entity_kind = 'session'   and cs.session_id   = p_entity_id) or
@@ -1085,16 +1202,17 @@ begin
         cs.id in (
           select dep.share_id from public.content_share_dependencies dep
           where dep.dependency_kind = p_entity_kind and dep.dependency_id = p_entity_id
+            and dep.club_id = p_entity_club
         )
       )
   loop
     update public.content_shares
-      set revoked_at = now(), revoked_by = p_actor, updated_by = p_actor,
+      set revoked_at = now(), revoked_by = v_actor, updated_by = v_actor,
           updated_at = now(), snapshot = null
       where id = v_share.id;
     delete from public.content_share_dependencies where share_id = v_share.id;
     perform public.log_content_share_event(
-      'content_share.invalidated', 'database_trigger', p_actor, v_share.club_id, v_share.id,
+      'content_share.invalidated', 'database_trigger', v_actor, v_share.club_id, v_share.id,
       jsonb_build_object('source_kind', v_share.kind::text, 'source_id', v_share.source_id,
                          'reason_code', 'rights_downgrade', 'initiator', 'system')
     );
@@ -1102,21 +1220,21 @@ begin
 end;
 $$;
 
-comment on function public.content_share_invalidate_dependents(text, uuid, uuid) is
-  $$Invalidates exactly the active shares that depend on an entity when it drops to internal_only: revoked_at set, snapshot cleared, dependency rows removed, a content_share.invalidated event written, found through the source columns and the reverse dependency index (never a global sweep). Private (no client EXECUTE); called only by the rights downgrade triggers. See 0038_content_sharing.sql and docs/security/content-sharing-boundary.md.$$;
+comment on function public.content_share_invalidate_dependents(text, uuid, uuid, uuid) is
+  $$Invalidates exactly the active shares in the entity's club that depend on it when it drops to internal_only: revoked_at set, snapshot cleared, dependency rows removed, a content_share.invalidated event written, found through the source columns and the reverse dependency index, both club scoped (never a global sweep, never cross club). A non member or null server derived actor is recorded as a system event. Private (no client EXECUTE); called only by the rights downgrade triggers. See 0038_content_sharing.sql and docs/security/content-sharing-boundary.md.$$;
 
-revoke execute on function public.content_share_invalidate_dependents(text, uuid, uuid) from public, anon, authenticated;
+revoke execute on function public.content_share_invalidate_dependents(text, uuid, uuid, uuid) from public, anon, authenticated;
 
 -- Trigger functions per carrying table, firing only on a transition to
--- internal_only (the downgrade), and passing the acting user (auth.uid(),
--- which the audit writer tolerates as null for a service role change). A
--- trigger is used, not an explicit function call, because rights are updated
--- through the normal client UPDATE path (no Edge Function in the loop), so the
--- invalidation must ride the same transaction whatever writes the rights.
+-- internal_only (the downgrade), passing the entity's club (new.club_id) and
+-- the acting user (auth.uid()). A trigger is used, not an explicit function
+-- call, because rights are updated through the normal client UPDATE path (no
+-- Edge Function in the loop), so the invalidation must ride the same
+-- transaction whatever writes the rights.
 create or replace function public.audit_rights_downgrade_drills()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
-  perform public.content_share_invalidate_dependents('drill', new.id, auth.uid());
+  perform public.content_share_invalidate_dependents('drill', new.id, new.club_id, auth.uid());
   return new;
 end;
 $$;
@@ -1128,7 +1246,7 @@ create trigger content_share_rights_downgrade_drills
 create or replace function public.audit_rights_downgrade_media()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
-  perform public.content_share_invalidate_dependents('media', new.id, auth.uid());
+  perform public.content_share_invalidate_dependents('media', new.id, new.club_id, auth.uid());
   return new;
 end;
 $$;
@@ -1140,7 +1258,7 @@ create trigger content_share_rights_downgrade_media
 create or replace function public.audit_rights_downgrade_sessions()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
-  perform public.content_share_invalidate_dependents('session', new.id, auth.uid());
+  perform public.content_share_invalidate_dependents('session', new.id, new.club_id, auth.uid());
   return new;
 end;
 $$;
@@ -1152,7 +1270,7 @@ create trigger content_share_rights_downgrade_sessions
 create or replace function public.audit_rights_downgrade_programmes()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
-  perform public.content_share_invalidate_dependents('programme', new.id, auth.uid());
+  perform public.content_share_invalidate_dependents('programme', new.id, new.club_id, auth.uid());
   return new;
 end;
 $$;
@@ -1164,7 +1282,7 @@ create trigger content_share_rights_downgrade_programmes
 create or replace function public.audit_rights_downgrade_templates()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
-  perform public.content_share_invalidate_dependents('template', new.id, auth.uid());
+  perform public.content_share_invalidate_dependents('template', new.id, new.club_id, auth.uid());
   return new;
 end;
 $$;
@@ -1267,17 +1385,23 @@ begin
   if (select count(*) from pg_policies where schemaname = 'public' and tablename in ('content_shares', 'content_share_dependencies')) <> 0 then
     raise exception 'content sharing: the private tables must carry no policy';
   end if;
-  if has_table_privilege('authenticated', 'public.content_shares', 'SELECT')
-     or has_table_privilege('authenticated', 'public.content_shares', 'INSERT')
-     or has_table_privilege('authenticated', 'public.content_shares', 'UPDATE')
-     or has_table_privilege('authenticated', 'public.content_shares', 'DELETE')
-     or has_table_privilege('anon', 'public.content_shares', 'SELECT') then
-    raise exception 'content sharing: content_shares must hold no client grant';
-  end if;
-  if has_table_privilege('authenticated', 'public.content_share_dependencies', 'SELECT')
-     or has_table_privilege('anon', 'public.content_share_dependencies', 'SELECT') then
-    raise exception 'content sharing: content_share_dependencies must hold no client grant';
-  end if;
+  -- Comprehensive: neither anon nor authenticated may hold any of the four row
+  -- privileges (or truncate) on either private table.
+  declare
+    r text;
+    tbl text;
+    priv text;
+  begin
+    foreach r in array array['anon', 'authenticated'] loop
+      foreach tbl in array array['public.content_shares', 'public.content_share_dependencies'] loop
+        foreach priv in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] loop
+          if has_table_privilege(r, tbl, priv) then
+            raise exception 'content sharing: % must hold no % on %', r, priv, tbl;
+          end if;
+        end loop;
+      end loop;
+    end loop;
+  end;
 
   -- ---- Function privilege boundary ----
   if has_function_privilege('anon', 'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text)', 'EXECUTE')
@@ -1294,9 +1418,10 @@ begin
   if not has_function_privilege('service_role', 'public.log_content_share_event(text, text, uuid, uuid, uuid, jsonb)', 'EXECUTE') then
     raise exception 'content sharing: service_role must be able to execute log_content_share_event';
   end if;
-  if has_function_privilege('authenticated', 'public.content_share_deps(public.content_share_kind, uuid)', 'EXECUTE')
+  if has_function_privilege('authenticated', 'public.content_share_deps(public.content_share_kind, uuid, uuid)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.content_share_lock_rights(text, uuid, uuid)', 'EXECUTE')
      or has_function_privilege('authenticated', 'public.content_share_actor_has_cap(uuid, text)', 'EXECUTE')
-     or has_function_privilege('authenticated', 'public.content_share_invalidate_dependents(text, uuid, uuid)', 'EXECUTE') then
+     or has_function_privilege('authenticated', 'public.content_share_invalidate_dependents(text, uuid, uuid, uuid)', 'EXECUTE') then
     raise exception 'content sharing: the internal helpers must not be executable by authenticated';
   end if;
 

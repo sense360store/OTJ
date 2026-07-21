@@ -82,5 +82,14 @@ revoke all on public.content_share_dependencies from anon, authenticated;
 revoke execute on function public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text) from anon, authenticated;
 revoke execute on function public.log_content_share_event(text, text, uuid, uuid, uuid, jsonb) from anon, authenticated;
 revoke execute on function public.content_share_actor_has_cap(uuid, text) from anon, authenticated;
-revoke execute on function public.content_share_deps(public.content_share_kind, uuid) from anon, authenticated;
-revoke execute on function public.content_share_invalidate_dependents(text, uuid, uuid) from anon, authenticated;
+revoke execute on function public.content_share_deps(public.content_share_kind, uuid, uuid) from anon, authenticated;
+revoke execute on function public.content_share_lock_rights(text, uuid, uuid) from anon, authenticated;
+revoke execute on function public.content_share_invalidate_dependents(text, uuid, uuid, uuid) from anon, authenticated;
+-- The five rights downgrade trigger functions are private too (the migration
+-- revokes them). PostgREST never exposes trigger-returning functions as RPC, so
+-- this is grant-posture hygiene to mirror production, not a reachable surface.
+revoke execute on function public.audit_rights_downgrade_drills() from anon, authenticated;
+revoke execute on function public.audit_rights_downgrade_media() from anon, authenticated;
+revoke execute on function public.audit_rights_downgrade_sessions() from anon, authenticated;
+revoke execute on function public.audit_rights_downgrade_programmes() from anon, authenticated;
+revoke execute on function public.audit_rights_downgrade_templates() from anon, authenticated;

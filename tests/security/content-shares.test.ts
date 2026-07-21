@@ -131,6 +131,42 @@ async function makeSession(opts: {
   return data!.id
 }
 
+async function makeProgramme(opts: {
+  owner: string | null
+  rights: 'internal_only' | 'public_link_only' | 'public_full'
+  club?: string
+}): Promise<string> {
+  const { data, error } = await svc
+    .from('programmes')
+    .insert({ club_id: opts.club ?? CLUB_A, name: `${MARK}-prog-${runId()}`, created_by: opts.owner, rights: opts.rights })
+    .select('id')
+    .single()
+  if (error) throw new Error(`makeProgramme: ${error.message}`)
+  return data!.id
+}
+
+async function makeTemplate(opts: {
+  rights: 'internal_only' | 'public_link_only' | 'public_full'
+  programmeId?: string | null
+  drillIds?: string[]
+  club?: string
+}): Promise<string> {
+  const activities = (opts.drillIds ?? []).map((id) => ({ phase: 'Skill', drill_id: id, duration: 10 }))
+  const { data, error } = await svc
+    .from('templates')
+    .insert({
+      club_id: opts.club ?? CLUB_A,
+      name: `${MARK}-tmpl-${runId()}`,
+      rights: opts.rights,
+      programme_id: opts.programmeId ?? null,
+      activities,
+    })
+    .select('id')
+    .single()
+  if (error) throw new Error(`makeTemplate: ${error.message}`)
+  return data!.id
+}
+
 async function setKill(enabled: boolean): Promise<void> {
   const { error } = await svc.from('clubs').update({ public_sharing_enabled: enabled }).eq('id', CLUB_A)
   if (error) throw new Error(`setKill: ${error.message}`)
@@ -158,6 +194,8 @@ beforeAll(async () => {
 afterAll(async () => {
   // Deleting the sources cascades their shares and dependency rows away.
   if (createdSessionIds.length) await svc.from('sessions').delete().in('id', createdSessionIds)
+  await svc.from('templates').delete().like('name', `${MARK}%`)
+  await svc.from('programmes').delete().like('name', `${MARK}%`)
   if (createdDrillIds.length) await svc.from('drills').delete().in('id', createdDrillIds)
   if (createdMediaIds.length) await svc.from('media').delete().in('id', createdMediaIds)
   // Remove this file's sharing audit events (it is the only writer of them).
@@ -248,8 +286,8 @@ describe('manage_content_share is service role only', () => {
     expect(scalar(`select has_function_privilege('service_role', ${sqlId(sig)}, 'EXECUTE')`)).toBe('t')
     // The writer and internal helpers are private too.
     expect(scalar(`select has_function_privilege('authenticated', 'public.log_content_share_event(text, text, uuid, uuid, uuid, jsonb)', 'EXECUTE')`)).toBe('f')
-    expect(scalar(`select has_function_privilege('authenticated', 'public.content_share_deps(public.content_share_kind, uuid)', 'EXECUTE')`)).toBe('f')
-    expect(scalar(`select has_function_privilege('authenticated', 'public.content_share_invalidate_dependents(text, uuid, uuid)', 'EXECUTE')`)).toBe('f')
+    expect(scalar(`select has_function_privilege('authenticated', 'public.content_share_deps(public.content_share_kind, uuid, uuid)', 'EXECUTE')`)).toBe('f')
+    expect(scalar(`select has_function_privilege('authenticated', 'public.content_share_invalidate_dependents(text, uuid, uuid, uuid)', 'EXECUTE')`)).toBe('f')
   })
 
   it('no accidental executable overload exists (exactly one manage_content_share)', () => {
@@ -384,6 +422,28 @@ describe('create authority and eligibility', () => {
     })
     expect((b.data as { share_id: string }).share_id).toBe((a.data as { share_id: string }).share_id)
     expect((b.data as { idempotent?: boolean }).idempotent).toBe(true)
+  })
+
+  it('a key reused after revoke mints a fresh share, never resurfacing the dead one', async () => {
+    const drill = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const key = `${MARK}-reuse-${runId()}`
+    const first = await rpc({
+      p_action: 'create', p_actor_id: coachOneId, p_kind: 'drill', p_source_id: drill,
+      p_secret_hash: randHash(), p_idempotency_key: key,
+    })
+    const firstId = (first.data as { share_id: string }).share_id
+    await rpc({ p_action: 'revoke', p_actor_id: coachOneId, p_share_id: firstId })
+    // Reusing the same key after revoke must not return the revoked share; it
+    // mints a fresh active one.
+    const second = await rpc({
+      p_action: 'create', p_actor_id: coachOneId, p_kind: 'drill', p_source_id: drill,
+      p_secret_hash: randHash(), p_idempotency_key: key,
+    })
+    expect(second.error).toBeNull()
+    const secondId = (second.data as { share_id: string }).share_id
+    expect(secondId).not.toBe(firstId)
+    expect(scalar(`select revoked_at is null from public.content_shares where id=${sqlId(secondId)}`)).toBe('t')
+    expect(scalar(`select revoked_at is not null from public.content_shares where id=${sqlId(firstId)}`)).toBe('t')
   })
 
   it('a cross club actor cannot create a share for a club source', async () => {
@@ -659,6 +719,52 @@ describe('rights downgrade invalidation', () => {
     expect(scalar(`select revoked_at is null from public.content_shares where id=${sqlId(unrelatedId)}`)).toBe('t')
   })
 
+  it('downgrading a nested media invalidates the share that references it', async () => {
+    await setKill(true)
+    const media = await makeMedia({ rights: 'public_full' })
+    const drill = await makeDrill({ owner: coachOneId, rights: 'public_full', mediaId: media })
+    const created = await rpc({
+      p_action: 'create', p_actor_id: coachOneId, p_kind: 'drill', p_source_id: drill,
+      p_secret_hash: randHash(), p_idempotency_key: `${MARK}-${runId()}`,
+    })
+    const shareId = (created.data as { share_id: string }).share_id
+    expect(created.error).toBeNull()
+    // Downgrade the media (service role path exercises the system-actor branch).
+    await svc.from('media').update({ rights: 'internal_only' }).eq('id', media)
+    expect(scalar(`select revoked_at is not null from public.content_shares where id=${sqlId(shareId)}`)).toBe('t')
+  })
+
+  it('downgrading a nested template invalidates the programme share that nests it', async () => {
+    await setKill(true)
+    const drill = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    const template = await makeTemplate({ rights: 'public_full', programmeId: programme, drillIds: [drill] })
+    const created = await rpc({
+      p_action: 'create', p_actor_id: coachOneId, p_kind: 'programme', p_source_id: programme,
+      p_secret_hash: randHash(), p_idempotency_key: `${MARK}-${runId()}`,
+    })
+    expect(created.error).toBeNull()
+    const shareId = (created.data as { share_id: string }).share_id
+    // The template is a recorded dependency; downgrading it invalidates the share.
+    await svc.from('templates').update({ rights: 'internal_only' }).eq('id', template)
+    expect(scalar(`select revoked_at is not null from public.content_shares where id=${sqlId(shareId)}`)).toBe('t')
+  })
+
+  it('downgrading a programme source invalidates its own share', async () => {
+    await setKill(true)
+    const drill = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, drillIds: [drill] })
+    const created = await rpc({
+      p_action: 'create', p_actor_id: coachOneId, p_kind: 'programme', p_source_id: programme,
+      p_secret_hash: randHash(), p_idempotency_key: `${MARK}-${runId()}`,
+    })
+    expect(created.error).toBeNull()
+    const shareId = (created.data as { share_id: string }).share_id
+    await svc.from('programmes').update({ rights: 'internal_only' }).eq('id', programme)
+    expect(scalar(`select revoked_at is not null from public.content_shares where id=${sqlId(shareId)}`)).toBe('t')
+  })
+
   it('downgrading a source drill invalidates its own share', async () => {
     await setKill(true)
     const drill = await makeDrill({ owner: coachOneId, rights: 'public_full' })
@@ -678,6 +784,62 @@ describe('rights downgrade invalidation', () => {
       .eq('action', 'content_share.invalidated')
     expect((data ?? []).length).toBe(1)
     expect((data![0].metadata as { reason_code: string }).reason_code).toBe('rights_downgrade')
+  })
+})
+
+// =====================================================================
+// Cross-club nesting and invalidation isolation
+// =====================================================================
+describe('cross-club nesting and invalidation isolation', () => {
+  it('a club A session that nests a known club B drill uuid cannot be shared', async () => {
+    await setKill(true)
+    // A real club B drill, eligible in its own club.
+    const drillB = await makeDrill({ owner: outsiderId, rights: 'public_full', club: CLUB_B })
+    // A club A session whose free-form activities reference that club B drill.
+    const sessionA = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [drillB] })
+    const { error } = await rpc({
+      p_action: 'create', p_actor_id: coachOneId, p_kind: 'session', p_source_id: sessionA,
+      p_secret_hash: randHash(), p_idempotency_key: `${MARK}-${runId()}`,
+    })
+    // The club B drill resolves as a missing/cross-club dependency and blocks
+    // the share; no cross-club dependency row is ever recorded.
+    expect(error).not.toBeNull()
+    const { data: share } = await svc.from('content_shares').select('id')
+    // (service can read for OOB) no active share exists for this session.
+    void share
+    expect(scalar(`select count(*) from public.content_shares where session_id=${sqlId(sessionA)}`)).toBe('0')
+  })
+
+  it("a club B owner's rights downgrade invalidates only club B shares and never aborts a foreign share", async () => {
+    // An active club A share that must remain untouched throughout.
+    await setKill(true)
+    const drillA = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const aShare = await rpc({
+      p_action: 'create', p_actor_id: coachOneId, p_kind: 'drill', p_source_id: drillA,
+      p_secret_hash: randHash(), p_idempotency_key: `${MARK}-${runId()}`,
+    })
+    const aShareId = (aShare.data as { share_id: string }).share_id
+
+    // A legitimate club B share for a club B drill.
+    await svc.from('clubs').update({ public_sharing_enabled: true }).eq('id', CLUB_B)
+    const drillB = await makeDrill({ owner: outsiderId, rights: 'public_full', club: CLUB_B })
+    const bShare = await rpc({
+      p_action: 'create', p_actor_id: outsiderId, p_kind: 'drill', p_source_id: drillB,
+      p_secret_hash: randHash(), p_idempotency_key: `${MARK}-${runId()}`,
+    })
+    expect(bShare.error).toBeNull()
+    const bShareId = (bShare.data as { share_id: string }).share_id
+
+    // The club B owner downgrades their own drill. This must not error (no
+    // cross-club abort) and must invalidate only the club B share.
+    const outsider = (await signIn('outsider')).client
+    const { error } = await outsider.from('drills').update({ rights: 'internal_only' }).eq('id', drillB)
+    expect(error).toBeNull()
+    expect(scalar(`select revoked_at is not null from public.content_shares where id=${sqlId(bShareId)}`)).toBe('t')
+    // The unrelated club A share stays active.
+    expect(scalar(`select revoked_at is null from public.content_shares where id=${sqlId(aShareId)}`)).toBe('t')
+
+    await svc.from('clubs').update({ public_sharing_enabled: false }).eq('id', CLUB_B)
   })
 })
 

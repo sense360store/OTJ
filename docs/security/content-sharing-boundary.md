@@ -143,8 +143,11 @@ public` and fail closed for anon only because `my_club()` is null.
 - One active (non revoked) share per source is enforced by three partial
   unique indexes (`where <col> is not null and revoked_at is null`), one per
   source column; a single index cannot span three nullable columns.
-- `idempotency_key` plus its partial unique index makes a lost response retry
-  resolve to the same row.
+- `idempotency_key` plus its partial unique index (partial on `revoked_at is
+  null`) makes a lost response retry resolve to the same active row, and frees
+  the key when the share is revoked, so a reused key after revoke never
+  resurfaces the dead share as a "successful" create and a fresh share can be
+  minted for the same source.
 - `snapshot` is a minimal non-public placeholder in PR 1 (it carries no
   content; PR 2 owns the real builders) and is cleared to `null` on revoke and
   on rights invalidation. A check constraint (`revoked_at is null or snapshot
@@ -233,6 +236,21 @@ the media for a drill) and refuse the share if the source's own rights are
 referenced entity is missing (fail closed). Restricted content is never
 silently omitted, and PR 1 creates no partial snapshots.
 
+Club scoping is load bearing. `content_share_deps` resolves every nested id
+club scoped to the source's club (the nested ids come from the free form
+`activities` jsonb and from `media_id` / `board_id` / `pdf_media_id`, none of
+which is club constrained by a foreign key), so a same club source that
+references a known foreign club entity uuid resolves that entity as a missing
+dependency and blocks the share. No cross club dependency row is ever recorded.
+
+Concurrency. A create or refresh reads the source rights and each nested rights
+bearing row `FOR SHARE` (`content_share_lock_rights`), which conflicts with the
+`FOR NO KEY UPDATE` a rights downgrade takes, so a concurrent downgrade either
+waits until the share commits (then its trigger invalidates the new share) or
+this read blocks until the downgrade commits (then it observes `internal_only`
+and blocks). This closes the create versus downgrade TOCTOU where an
+uncommitted new share would be invisible to the downgrade trigger.
+
 ## 7. Rights downgrade invalidation
 
 When a content or media item drops to `internal_only`, every active share that
@@ -245,10 +263,16 @@ never by a global sweep or a snapshot scan.
 This is implemented as `after update of rights` triggers on `drills`, `media`,
 `sessions`, `programmes` and `templates`, firing only on a transition to
 `internal_only`, calling the private `content_share_invalidate_dependents`
-function. A trigger is used, not an explicit function call, because rights are
-updated through the normal client UPDATE path (no Edge Function in the loop),
-so the invalidation must ride the same transaction whatever writes the rights.
-No stale share remains potentially usable by PR 2 later.
+function, which is club scoped to the entity's club on both the source column
+arm and the reverse dependency arm (so a foreign club rights change can never
+reach a same uuid share, and a non member or null server derived actor is
+recorded as a system event rather than raising). A trigger is used, not an
+explicit function call, because rights are updated through the normal client
+UPDATE path (no Edge Function in the loop), so the invalidation must ride the
+same transaction whatever writes the rights. Together with the create/refresh
+`FOR SHARE` locking (section 6), no stale share remains potentially usable by
+PR 2 later; PR 2's read path adds a third layer by verifying dependency
+eligibility on every read.
 
 ## 8. Audit actions and metadata
 
