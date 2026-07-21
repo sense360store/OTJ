@@ -14,6 +14,7 @@ import { focusableElements, trapTabIndex } from '../lib/modalFocus'
 import type { IconComponent } from './icons'
 import { CORNERS, cornerClass, youtubeThumb } from '../lib/data'
 import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
+import type { ShareFeedback } from '../lib/share'
 import { sourceLabelForUrl } from '../lib/fa'
 import { useMediaMap, useMediaSrc } from '../lib/queries'
 import { formatBytes } from '../lib/faAttach'
@@ -607,6 +608,59 @@ export function ActionError({ children, onRetry, style }: { children: ReactNode;
           Retry
         </button>
       )}
+    </div>
+  )
+}
+
+/* ---- share control --------------------------------------------- */
+// The internal club link Share control, presentational so the static renderer
+// covers the label, the 44px touch target, the explanatory copy and the
+// success and failure feedback without the share hook or a DOM. The container
+// (src/components/ShareButton.tsx) and the planner wire the real share.
+//
+// Success announces through role="status" ("Link copied" or "Shared"); a
+// failure is an actionable role="alert" (ActionError) with a Retry, and its
+// wording stays calm, never a raw browser error. The button is a native
+// <button>, so it is keyboard reachable and operable, and its visible text is
+// its accessible name.
+export function ShareControlView({
+  label,
+  note,
+  busy = false,
+  feedback,
+  onShare,
+  buttonClassName = 'btn btn-ghost',
+}: {
+  // "Share" for a link that needs no write, "Save and share" for the planner
+  // path that saves first.
+  label: string
+  // Plain-language copy explaining an OTJ account is required, shown under the
+  // button.
+  note?: string
+  // A write the control owns is in flight (the planner's Save and share);
+  // freezes the button so a rapid second click cannot start a second attempt.
+  busy?: boolean
+  feedback: ShareFeedback
+  onShare: () => void
+  buttonClassName?: string
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+      <button type="button" className={buttonClassName} style={{ minHeight: 44 }} disabled={busy} onClick={onShare}>
+        <Icon.share />
+        {label}
+      </button>
+      {note && (
+        <span className="muted" style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+          {note}
+        </span>
+      )}
+      {feedback.role === 'status' && (
+        <span role="status" style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-physical)' }}>
+          {feedback.message}
+        </span>
+      )}
+      {feedback.role === 'alert' && <ActionError onRetry={onShare}>{feedback.message}</ActionError>}
     </div>
   )
 }

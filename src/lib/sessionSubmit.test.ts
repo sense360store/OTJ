@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createGuardedSubmit, createPlannerActions, plannerBusy, stableCreateId } from './sessionSubmit'
+import {
+  createGuardedSubmit,
+  createPlannerActions,
+  plannerBusy,
+  sessionBaseline,
+  sessionDirty,
+  shareDecision,
+  stableCreateId,
+} from './sessionSubmit'
 import type { PlannerAction, PlannerActionCallbacks } from './sessionSubmit'
 import type { Session } from './data'
 
@@ -49,6 +57,7 @@ function session(over: Partial<Session> = {}): Session {
 function plannerHarness() {
   const pendings: (PlannerAction | null)[] = []
   const failures: PlannerAction[] = []
+  const shares: Array<{ saved: Session; draft: Session }> = []
   const waiting: Array<ReturnType<typeof deferred<Session>>> = []
   const upsert = vi.fn((draft: Session) => {
     const d = deferred<Session>()
@@ -59,10 +68,11 @@ function plannerHarness() {
     upsert,
     navSessions: vi.fn(),
     navLive: vi.fn(),
+    shareSaved: (saved, draft) => shares.push({ saved, draft }),
     onPending: (a) => pendings.push(a),
     onFailure: (a) => failures.push(a),
   }
-  return { actions: createPlannerActions(cb), cb, upsert, waiting, pendings, failures }
+  return { actions: createPlannerActions(cb), cb, upsert, waiting, pendings, failures, shares }
 }
 
 // Lets promise callbacks queued by a resolve or reject run.
@@ -201,6 +211,159 @@ describe('planner start', () => {
     expect(h.upsert).not.toHaveBeenCalled()
     expect(h.pendings).toEqual([])
     expect(h.cb.navLive).toHaveBeenCalledWith('s9')
+  })
+})
+
+describe('planner save and share', () => {
+  it('does not share before the write resolves, then shares the saved session on success', async () => {
+    const h = plannerHarness()
+    const done = h.actions.saveAndShare(session({ id: 'saved-1' }))
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    // Nothing is shared until the write resolves, so no stale or pre-save data
+    // is ever shared.
+    expect(h.shares).toEqual([])
+    expect(h.pendings).toEqual(['share'])
+    h.waiting[0].resolve(session({ id: 'saved-1' }))
+    await done
+    expect(h.shares.length).toBe(1)
+    expect(h.shares[0].saved.id).toBe('saved-1')
+    expect(h.pendings).toEqual(['share', null])
+    // Save and share does not navigate away like Save or Start.
+    expect(h.cb.navSessions).not.toHaveBeenCalled()
+    expect(h.cb.navLive).not.toHaveBeenCalled()
+  })
+
+  it('produces no share when the save fails', async () => {
+    const h = plannerHarness()
+    const done = h.actions.saveAndShare(session())
+    h.waiting[0].reject(new Error('network down'))
+    await done
+    expect(h.shares).toEqual([])
+    expect(h.failures).toEqual(['share'])
+    expect(h.pendings).toEqual(['share', null])
+  })
+
+  it('fires one save and one share for a rapid double click', async () => {
+    const h = plannerHarness()
+    const first = h.actions.saveAndShare(session())
+    void h.actions.saveAndShare(session())
+    void h.actions.saveAndShare(session())
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    h.waiting[0].resolve(session())
+    await first
+    await flush()
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    expect(h.shares.length).toBe(1)
+  })
+
+  it('does not share from a write that settles after the editor has gone', async () => {
+    const h = plannerHarness()
+    const done = h.actions.saveAndShare(session())
+    // The coach leaves the planner while the save is still in flight.
+    h.actions.setActive(false)
+    h.waiting[0].resolve(session())
+    await done
+    expect(h.shares).toEqual([])
+    // The write still settled cleanly: pending cleared, nothing failed.
+    expect(h.pendings).toEqual(['share', null])
+    expect(h.failures).toEqual([])
+  })
+
+  it('retries the same session id after a failed save, so no duplicate session is created', async () => {
+    const h = plannerHarness()
+    const draft = session({ id: 'stable-1' })
+    const first = h.actions.saveAndShare(draft)
+    h.waiting[0].reject(new Error('boom'))
+    await first
+    expect(h.shares).toEqual([])
+    const retry = h.actions.saveAndShare(draft)
+    h.waiting[1].resolve(session({ id: 'stable-1' }))
+    await retry
+    // Both attempts targeted the same stable id, so a retry updates that row
+    // rather than inserting a second session, and the share carries that id.
+    expect(h.upsert.mock.calls[0][0].id).toBe('stable-1')
+    expect(h.upsert.mock.calls[1][0].id).toBe('stable-1')
+    expect(h.shares.length).toBe(1)
+    expect(h.shares[0].saved.id).toBe('stable-1')
+  })
+
+  it('blocks Save and Start while a Save and share is in flight (shared guard)', async () => {
+    const h = plannerHarness()
+    const first = h.actions.saveAndShare(session())
+    void h.actions.save(session())
+    void h.actions.start(session(), false)
+    // The one shared guard serialises all three actions.
+    expect(h.upsert).toHaveBeenCalledTimes(1)
+    h.waiting[0].resolve(session())
+    await first
+    expect(h.cb.navSessions).not.toHaveBeenCalled()
+    expect(h.cb.navLive).not.toHaveBeenCalled()
+  })
+})
+
+describe('sessionDirty and sessionBaseline', () => {
+  it('treats a session with no baseline (never saved) as always dirty', () => {
+    expect(sessionBaseline(null)).toBe(null)
+    expect(sessionDirty(session(), null)).toBe(true)
+  })
+
+  it('reads a freshly cloned session as clean against its baseline', () => {
+    const s = session()
+    const baseline = sessionBaseline(s)
+    const clone = JSON.parse(JSON.stringify(s)) as Session
+    expect(sessionDirty(clone, baseline)).toBe(false)
+  })
+
+  it('ignores column order: the same content in a different key order is clean', () => {
+    const s = session()
+    const baseline = sessionBaseline(s)
+    const reordered = Object.fromEntries(Object.entries(s).reverse()) as unknown as Session
+    expect(sessionDirty(reordered, baseline)).toBe(false)
+  })
+
+  it('flags a changed field as dirty', () => {
+    const baseline = sessionBaseline(session())
+    expect(sessionDirty(session({ name: 'Renamed' }), baseline)).toBe(true)
+    expect(sessionDirty(session({ venue: 'Elsewhere' }), baseline)).toBe(true)
+  })
+
+  it('flags reordered or removed activities as dirty', () => {
+    const a = { phase: 'Skill' as const, drillId: 'd1', duration: 10 }
+    const b = { phase: 'Game' as const, drillId: 'd2', duration: 20 }
+    const baseline = sessionBaseline(session({ activities: [a, b] }))
+    // Same activities, different order.
+    expect(sessionDirty(session({ activities: [b, a] }), baseline)).toBe(true)
+    // One removed.
+    expect(sessionDirty(session({ activities: [a] }), baseline)).toBe(true)
+    // Unchanged order is clean.
+    expect(sessionDirty(session({ activities: [a, b] }), baseline)).toBe(false)
+  })
+})
+
+describe('shareDecision', () => {
+  it('shares directly, with no write, when the session is saved and clean', () => {
+    expect(shareDecision('s1', false)).toBe('direct')
+  })
+
+  it('saves first for a never-saved draft (no id)', () => {
+    expect(shareDecision(null, false)).toBe('save')
+    // Even a "clean" draft with no id cannot share directly: there is no URL.
+    expect(shareDecision(null, true)).toBe('save')
+  })
+
+  it('saves first for a dirty saved session', () => {
+    expect(shareDecision('s1', true)).toBe('save')
+  })
+
+  it('flips to a direct share once a saved session reads clean again', () => {
+    // The planner advances savedId and baseline after a Save and share, so the
+    // same draft then reads clean and the next share needs no second write.
+    const draft = session({ id: 'saved-1' })
+    // Before any save: new draft with no baseline routes to save.
+    expect(shareDecision(null, sessionDirty(draft, null))).toBe('save')
+    // After the save advances the baseline and id, the unchanged draft is clean.
+    const baseline = sessionBaseline(draft)
+    expect(shareDecision('saved-1', sessionDirty(draft, baseline))).toBe('direct')
   })
 })
 

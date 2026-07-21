@@ -35,6 +35,7 @@ import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { BoardPickerModal } from '../components/BoardPicker'
+import { ShareButton } from '../components/ShareButton'
 import { TacticsBoardView } from '../components/TacticsBoardView'
 import { playerNameMap, type Board, type PlayerNameMap } from '../lib/tacticsBoard'
 import './SessionDay.css'
@@ -81,6 +82,12 @@ function SessionDayView({ session }: { session: Session }) {
   const canManage =
     caps.has('sessions.manage') || (caps.has('sessions.create') && session.coachId === user?.id)
   const canDrive = canManage
+  // Sharing this saved session's canonical link is a coaching affordance shown
+  // to any coach (sessions.create), not only the owner or a manager, and hidden
+  // from parents. It is a UI decision about who sees the button, not an access
+  // boundary: the link is the canonical protected page, grants nothing on its
+  // own, and makes no write.
+  const canShare = caps.has('sessions.create')
   const [tab, setTab] = useState<Tab>('setup')
   const [viewerAt, setViewerAt] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -175,6 +182,12 @@ function SessionDayView({ session }: { session: Session }) {
           >
             <Icon.trash />
           </button>
+        </div>
+      )}
+
+      {canShare && (
+        <div style={{ marginBottom: 12 }}>
+          <ShareButton kind="session" id={session.id} title={session.name} />
         </div>
       )}
 

@@ -32,6 +32,7 @@ import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
 import { TemplateFormModal } from '../components/TemplateFormModal'
 import { ApplyProgrammeModal } from '../components/ApplyProgrammeModal'
+import { ShareButton } from '../components/ShareButton'
 
 type NavFn = ReturnType<typeof useNav>
 
@@ -281,6 +282,16 @@ function ProgrammeView({ p }: { p: Programme }) {
           </button>
         )}
       </div>
+
+      {/* Sharing an internal club link is a coaching affordance (sessions.create),
+          hidden from parents. It is a UI decision about who sees the button, not
+          an access boundary: the link is the canonical protected page, grants
+          nothing on its own, and makes no write. */}
+      {coaching && (
+        <div style={{ marginBottom: 14 }}>
+          <ShareButton kind="programme" id={p.id} title={p.name} />
+        </div>
+      )}
 
       {p.summary && <p style={{ fontSize: 14.5, lineHeight: 1.55, margin: '0 0 12px', maxWidth: 720 }}>{p.summary}</p>}
 

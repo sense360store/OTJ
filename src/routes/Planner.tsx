@@ -28,10 +28,23 @@ import {
   MediaAttribution,
   MediaThumb,
   PHASE_COLOR,
+  ShareControlView,
   SourceLink,
 } from '../components/ui'
-import { createPlannerActions, logSessionWriteError, plannerBusy, SESSION_SAVE_ERROR, SESSION_START_ERROR } from '../lib/sessionSubmit'
+import {
+  createPlannerActions,
+  logSessionWriteError,
+  plannerBusy,
+  sessionBaseline,
+  sessionDirty,
+  shareDecision,
+  SESSION_SAVE_ERROR,
+  SESSION_SHARE_ERROR,
+  SESSION_START_ERROR,
+} from '../lib/sessionSubmit'
 import type { PlannerAction, PlannerActions } from '../lib/sessionSubmit'
+import { useShare } from '../hooks/useShare'
+import { canonicalUrl, SAVE_AND_SHARE_NOTE, SHARE_ACCOUNT_NOTE, type ShareFeedback } from '../lib/share'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
@@ -405,8 +418,12 @@ export function PlannerActionsView({
   canStart,
   pending,
   failed,
+  shareLabel,
+  shareNote,
+  shareFeedback,
   onStart,
   onSave,
+  onShare,
   onSessionDay,
   onCalendar,
   onLoadTemplate,
@@ -417,8 +434,16 @@ export function PlannerActionsView({
   canStart: boolean
   pending: PlannerAction | null
   failed: PlannerAction | null
+  // "Share" for a saved, clean session (no write) or "Save and share" for a new
+  // or dirty draft; the note explains the effect and the account requirement.
+  shareLabel: string
+  shareNote: string
+  // The clipboard or native-share outcome after a successful save (or a direct
+  // share); a save failure surfaces through the failed error below instead.
+  shareFeedback: ShareFeedback
   onStart: () => void
   onSave: () => void
+  onShare: () => void
   onSessionDay: () => void
   onCalendar: () => void
   onLoadTemplate: () => void
@@ -449,6 +474,19 @@ export function PlannerActionsView({
           Add to calendar
         </button>
       )}
+      {/* Share the canonical session-day link. A saved, clean session (and a
+          read-only viewer, who cannot dirty it) shares with no write; a new or
+          dirty draft saves through the guarded seam first and shares only after
+          the save resolves. The button freezes while any write is in flight and
+          reads "Saving…" during its own. */}
+      <ShareControlView
+        label={pending === 'share' ? 'Saving…' : shareLabel}
+        note={shareNote}
+        busy={busy}
+        feedback={shareFeedback}
+        onShare={onShare}
+        buttonClassName="btn btn-ghost btn-block"
+      />
       {!readOnly && (
         <>
           <button className="btn btn-primary btn-block" disabled={busy} onClick={onSave}>
@@ -458,9 +496,12 @@ export function PlannerActionsView({
           {failed && (
             // Retrying a failed start honours the same empty-session gate as
             // the Start button; with no activities left the error stays but
-            // the retry affordance goes.
-            <ActionError onRetry={failed === 'save' ? onSave : canStart ? onStart : undefined}>
-              {failed === 'save' ? SESSION_SAVE_ERROR : SESSION_START_ERROR}
+            // the retry affordance goes. A failed Save and share retries the
+            // save-then-share as one action.
+            <ActionError
+              onRetry={failed === 'save' ? onSave : failed === 'share' ? onShare : canStart ? onStart : undefined}
+            >
+              {failed === 'save' ? SESSION_SAVE_ERROR : failed === 'share' ? SESSION_SHARE_ERROR : SESSION_START_ERROR}
             </ActionError>
           )}
           {/* Loading a template navigates to the templates screen, abandoning
@@ -762,6 +803,15 @@ function PlannerEditor({
   // points at a moved or gone activity.
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
 
+  // Internal share state. The share hook holds the copy or native-share outcome
+  // for the feedback line. baseline and savedId track the last successful save,
+  // so the draft's dirtiness is known and a saved, unchanged session shares its
+  // canonical URL with no second write. Both seed from the loaded session and
+  // advance after a Save and share, so once saved the control needs no re-save.
+  const { share, reset: resetShare, feedback: shareFeedback } = useShare()
+  const [baseline, setBaseline] = useState<string | null>(() => sessionBaseline(existing))
+  const [savedId, setSavedId] = useState<string | null>(existing?.id ?? null)
+
   // Visibility is club-wide, so any coach can open any club session here.
   // Editing mirrors the sessions update RLS arms: sessions.manage on any
   // session, the owner on their own (the route already requires
@@ -831,6 +881,16 @@ function PlannerEditor({
       upsert: (draft) => upsertSession(draft),
       navSessions: () => nav('sessions'),
       navLive: (id) => nav('live', { sessionId: id }),
+      shareSaved: (saved, draft) => {
+        // The write resolved. Record the saved id and a fresh baseline so the
+        // draft now reads clean (a later share needs no second write), then
+        // share the canonical saved-session URL. Built from the server-returned
+        // id, never from stale or pre-save data. Runs only on success and only
+        // while the guard is active, so an unmounted editor shares nothing.
+        setSavedId(saved.id)
+        setBaseline(sessionBaseline(draft))
+        share({ url: canonicalUrl('session', saved.id), title: draft.name, text: draft.name })
+      },
       onPending: (action) => {
         setPendingAction(action)
         // A new attempt clears the previous attempt's error.
@@ -875,6 +935,29 @@ function PlannerEditor({
   const start = () => {
     if (busy && !readOnly) return
     void actions.start(session, readOnly)
+  }
+
+  // Share decides between a direct share and Save and share. A session that is
+  // saved (has a stable id) and unchanged since that save shares its canonical
+  // URL with no write; a read-only viewer never dirties the draft, so they take
+  // this path too. A new or dirty draft saves through the guarded seam first and
+  // shares only after the save resolves, so the link is never built from stale
+  // or pre-save data and a rapid double click fires one save (the shared guard).
+  const dirty = sessionDirty(session, baseline)
+  const canShareDirect = shareDecision(savedId, dirty) === 'direct'
+  const shareLabel = canShareDirect ? 'Share' : 'Save and share'
+  const shareNote = canShareDirect ? SHARE_ACCOUNT_NOTE : `${SAVE_AND_SHARE_NOTE} ${SHARE_ACCOUNT_NOTE}`
+  const onShare = () => {
+    if (busy) return
+    if (canShareDirect && savedId) {
+      share({ url: canonicalUrl('session', savedId), title: session.name, text: session.name })
+    } else {
+      // Deferred share: clear any stale prior outcome as the attempt starts, so
+      // a save failure below shows only its own error, never a lingering "Link
+      // copied" from an earlier direct share.
+      resetShare()
+      void actions.saveAndShare(session)
+    }
   }
 
   return (
@@ -1002,8 +1085,12 @@ function PlannerEditor({
             canStart={session.activities.length > 0}
             pending={pendingAction}
             failed={failedAction}
+            shareLabel={shareLabel}
+            shareNote={shareNote}
+            shareFeedback={shareFeedback}
             onStart={start}
             onSave={save}
+            onShare={onShare}
             onSessionDay={() => nav('sessionDay', { sessionId: session.id })}
             onCalendar={() => downloadSessionIcs(session)}
             onLoadTemplate={() => nav('templates')}
