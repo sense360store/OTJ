@@ -259,17 +259,7 @@ export function PlayerFormModal({
       </div>
 
       {isEdit && player?.status === 'pending' && (
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label className="row" style={{ gap: 8, fontSize: 14, alignItems: 'center' }}>
-            <input
-              type="checkbox"
-              checked={markRegistered}
-              disabled={busy}
-              onChange={(e) => setMarkRegistered(e.target.checked)}
-            />
-            Mark as registered
-          </label>
-        </div>
+        <MarkRegisteredField checked={markRegistered} disabled={busy} onChange={setMarkRegistered} />
       )}
 
       {!isEdit && (
@@ -299,5 +289,35 @@ export function PlayerFormModal({
         </ActionError>
       )}
     </Modal>
+  )
+}
+
+// The "Mark as registered" control: one compact checkbox row inside a .field.
+// The label wraps the native checkbox so the whole row is clickable and the
+// accessible name comes from the adjacent text, and the check-row class keeps
+// the checkbox at its standard size (the shared .field input text-input sizing
+// is scoped to exclude checkbox and radio, so it never stretches this control).
+// Exported so the static-render regression test can pin the markup.
+export function MarkRegisteredField({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean
+  disabled?: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <div className="field" style={{ marginBottom: 0 }}>
+      <label className="check-row">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        Mark as registered
+      </label>
+    </div>
   )
 }
