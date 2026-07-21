@@ -280,7 +280,10 @@ describe('manage_content_share is service role only', () => {
   })
 
   it('PUBLIC, anon and authenticated hold no EXECUTE, service_role does (exact signature)', () => {
-    const sig = 'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text)'
+    // 0039 (Content Sharing PR 2) extended the lifecycle RPC with p_snapshot and
+    // p_snapshot_version (drop-and-recreate), so the signature is now eleven
+    // arguments. The old nine-argument signature no longer exists.
+    const sig = 'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text, jsonb, integer)'
     expect(scalar(`select has_function_privilege('anon', ${sqlId(sig)}, 'EXECUTE')`)).toBe('f')
     expect(scalar(`select has_function_privilege('authenticated', ${sqlId(sig)}, 'EXECUTE')`)).toBe('f')
     expect(scalar(`select has_function_privilege('service_role', ${sqlId(sig)}, 'EXECUTE')`)).toBe('t')
@@ -302,6 +305,21 @@ describe('manage_content_share is service role only', () => {
         `and has_function_privilege('authenticated', p.oid, 'EXECUTE')`,
     )
     expect(anyExecutable).toBe('0')
+  })
+
+  it('pins the exact 0039 signature so a future drift is caught (regression)', () => {
+    // Regression guard for the signature-change class of failure: if the
+    // lifecycle RPC's argument list changes again, this fails loudly and the
+    // stale references (local-grants.sql, the checks above) are updated in step.
+    // to_regprocedure resolves a specific type signature to NULL when it does
+    // not exist (no error), which is format-independent across PostgreSQL builds.
+    const newSig =
+      'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text, jsonb, integer)'
+    const oldSig =
+      'public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text)'
+    expect(scalar(`select (to_regprocedure(${sqlId(newSig)}) is not null)::text`)).toBe('true')
+    // The pre-0039 nine-argument signature must no longer exist.
+    expect(scalar(`select (to_regprocedure(${sqlId(oldSig)}) is null)::text`)).toBe('true')
   })
 })
 

@@ -79,7 +79,7 @@ revoke execute on function public.provenance_change_is_cascade(uuid, uuid) from 
 -- docs/security/content-sharing-boundary.md.
 revoke all on public.content_shares from anon, authenticated;
 revoke all on public.content_share_dependencies from anon, authenticated;
-revoke execute on function public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text) from anon, authenticated;
+revoke execute on function public.manage_content_share(text, uuid, public.content_share_kind, uuid, uuid, bytea, timestamptz, boolean, text, jsonb, integer) from anon, authenticated;
 revoke execute on function public.log_content_share_event(text, text, uuid, uuid, uuid, jsonb) from anon, authenticated;
 revoke execute on function public.content_share_actor_has_cap(uuid, text) from anon, authenticated;
 revoke execute on function public.content_share_deps(public.content_share_kind, uuid, uuid) from anon, authenticated;
@@ -93,3 +93,16 @@ revoke execute on function public.audit_rights_downgrade_media() from anon, auth
 revoke execute on function public.audit_rights_downgrade_sessions() from anon, authenticated;
 revoke execute on function public.audit_rights_downgrade_programmes() from anon, authenticated;
 revoke execute on function public.audit_rights_downgrade_templates() from anon, authenticated;
+
+-- 0039 public share read (PR 2). manage_content_share gained two parameters
+-- (p_snapshot, p_snapshot_version) via a drop-and-recreate, so its signature is
+-- now eleven arguments (revoked above at the new signature). read_public_share
+-- (the anonymous read path) and content_share_expiry_cleanup are service_role
+-- only; content_share_resolve_snapshot is a private helper. Each migration
+-- revokes them from public, anon and authenticated, but the blanket grants above
+-- resurrect anon/authenticated EXECUTE on every public function locally, so
+-- revoke them again here to mirror production. See 0039_public_share_read.sql
+-- and docs/security/content-sharing-boundary.md.
+revoke execute on function public.read_public_share(uuid, bytea) from anon, authenticated;
+revoke execute on function public.content_share_expiry_cleanup(interval) from anon, authenticated;
+revoke execute on function public.content_share_resolve_snapshot(jsonb, text, integer) from anon, authenticated;
