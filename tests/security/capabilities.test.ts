@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { RESERVED_CAPABILITIES } from '../../src/lib/data'
-import { CLUB_A, serviceClient, signIn } from './stack'
+import { CLUB_A, runId, serviceClient, signIn } from './stack'
 
 // The catalogue 0012_rbac seeds, restated here on purpose: if a migration
 // adds, renames or removes a capability, this test must be updated in the
@@ -43,11 +43,14 @@ const EXPECTED_CATALOGUE = [
   'players.delete',
   'seasons.manage',
   'audit.view',
+  // 0038 content sharing: the two sharing keys.
+  'shares.create',
+  'shares.manage',
 ].sort()
 
-// Coach default grants: the five create capabilities (0012) plus players.view
-// (0030), the club wide read of the register coaches keep. Coaches receive no
-// other new key, and in particular not audit.view.
+// Coach default grants: the five create capabilities (0012), players.view
+// (0030) and shares.create (0038). Coaches receive no other new key, and in
+// particular not audit.view and not shares.manage.
 const COACH_CAPS = [
   'drills.create',
   'media.create',
@@ -55,13 +58,23 @@ const COACH_CAPS = [
   'sessions.create',
   'templates.create',
   'players.view',
+  'shares.create',
 ].sort()
+
+// Manager default grants (0012, 0030, 0038): every content key, both sharing
+// keys, and the manager subset of the players and audit family, but NOT the
+// four admin only keys. Restated so the manager sharing grant is pinned:
+// managers hold both shares.create and shares.manage. The keys a manager lacks
+// are the two reserved administrative keys (users.manage, club.manage) and the
+// two admin only Registered Players keys (players.delete, seasons.manage).
+const MANAGER_ONLY_EXCLUDES = ['users.manage', 'club.manage', 'players.delete', 'seasons.manage']
+const MANAGER_CAPS = EXPECTED_CATALOGUE.filter((k) => !MANAGER_ONLY_EXCLUDES.includes(k)).sort()
 
 // Extended for 0030 to the players, seasons and audit prefixes and the view,
 // import, export and delete verbs, so the frontend drift scan sees the new
 // family. Without this the scan is blind to any new capability string.
 const CAPABILITY_PATTERN =
-  /\b(?:drills|media|templates|programmes|sessions|teams|users|club|players|seasons|audit)\.(?:create|manage|view|import|export|delete)\b/g
+  /\b(?:drills|media|templates|programmes|sessions|teams|users|club|players|seasons|audit|shares)\.(?:create|manage|view|import|export|delete)\b/g
 
 function scanFrontendCapabilityStrings(): Set<string> {
   const found = new Set<string>()
@@ -197,10 +210,42 @@ describe('capability catalogue consistency', () => {
 
   it('the useMyCapabilities read path yields the intended set per role over real JWTs', async () => {
     const admin = await signIn('admin')
+    const manager = await signIn('manager')
     const coach = await signIn('coachOne')
     const parent = await signIn('parent')
+    // Admin holds every key including both sharing keys; manager holds every
+    // non reserved key including both sharing keys; coach holds shares.create
+    // but not shares.manage; parent holds neither.
     expect(await capabilitiesAsTheHookReads(admin.client, admin.userId)).toEqual(EXPECTED_CATALOGUE)
+    expect(await capabilitiesAsTheHookReads(manager.client, manager.userId)).toEqual(MANAGER_CAPS)
     expect(await capabilitiesAsTheHookReads(coach.client, coach.userId)).toEqual(COACH_CAPS)
     expect(await capabilitiesAsTheHookReads(parent.client, parent.userId)).toEqual([])
+  })
+
+  it('the two sharing capabilities are exactly the 0038 addition to the catalogue', () => {
+    const sharing = [...catalogue].filter((k) => k.startsWith('shares.')).sort()
+    expect(sharing).toEqual(['shares.create', 'shares.manage'])
+  })
+
+  it('shares.manage is a normal grantable capability, not reserved', async () => {
+    // shares.manage follows the .manage naming convention but is NOT a reserved
+    // administrative capability: the reserved set stays users.manage plus
+    // club.manage. Granting shares.manage to a non admin custom role succeeds,
+    // proving the reserved guard does not touch it. A disposable role, so no
+    // shared fixture is disturbed.
+    expect(RESERVED_CAPABILITIES).not.toContain('shares.manage')
+    const { data: role, error: roleErr } = await serviceClient()
+      .from('roles')
+      .insert({ club_id: CLUB_A, key: `sec_shares_${runId()}`, label: 'Sec Shares Test', system: false })
+      .select('id')
+      .single()
+    expect(roleErr).toBeNull()
+    try {
+      const { client } = await signIn('admin')
+      const { error } = await client.from('role_capabilities').insert({ role_id: role!.id, capability: 'shares.manage' })
+      expect(error).toBeNull()
+    } finally {
+      await serviceClient().from('roles').delete().eq('id', role!.id)
+    }
   })
 })

@@ -194,7 +194,21 @@ The shape of a Spond roster run's audit output, for the avoidance of doubt: per 
 
 Not written: `players.import_started`. There is no operational need; the batch row records initiation.
 
-Reserved future actions, catalogued now so later phases extend rather than redesign (emitted from the wider rollout phase onward, per docs/roadmaps/registered-players-delivery-plan.md): `user.invited`, `user.removed`, `user.role_changed`, `user.capabilities_changed`; `team.created`, `team.updated`, `team.deleted`; `content_share.created`, `content_share.refreshed`, `content_share.revoked`; `spond.mapping_changed`, `spond.sync_completed`; and create, update and delete actions for `drill.*`, `template.*`, `programme.*` and `session.*`.
+Reserved future actions, catalogued now so later phases extend rather than redesign (emitted from the wider rollout phase onward, per docs/roadmaps/registered-players-delivery-plan.md): `user.invited`, `user.removed`, `user.role_changed`, `user.capabilities_changed`; `team.created`, `team.updated`, `team.deleted`; `spond.mapping_changed`, `spond.sync_completed`; and create, update and delete actions for `drill.*`, `template.*`, `programme.*` and `session.*`. Many of these were realised in the wider audit rollout (0037).
+
+The content share actions were originally reserved as `content_share.created`, `content_share.refreshed`, `content_share.revoked`. As of migration 0038 (Content Sharing PR 1) the realised set is wider: `content_share.created`, `content_share.refreshed`, `content_share.rotated`, `content_share.revoked` and `content_share.invalidated` are emitted by the lifecycle path, and `content_share.expired` is registered in the writer's allow list for the PR 2 scheduled cleanup and is not emitted yet. `content_share.rotated`, `content_share.invalidated` and `content_share.expired` are additions to the originally reserved three. See the content share audit section below.
+
+### Content share audit (0038)
+
+Content share lifecycle events are written by a dedicated private writer, `public.log_content_share_event(action, source, actor_id, club_id, share_id, metadata)`, called inside the service role lifecycle RPC `manage_content_share` and inside the rights downgrade trigger. Properties mirror `log_audit_event`: `security definer`, `set search_path = ''`, schema qualified references, EXECUTE revoked from `public`, `anon` and `authenticated` and granted to `service_role` only. The actor and club are the verified values the trusted caller passed (auth.uid() is null under the service role); a non-null actor is validated to be a member of the named club and the actor_name is resolved from `public.profiles` server side, so a forged actor is refused and "who shared what" survives the creator's later removal. A null actor is allowed for a system consequence (a rights downgrade invalidation whose caller had no session).
+
+- `entity_type` is `content_share`; `entity_id` is the share id.
+- `source` is `edge_function` for lifecycle actions and `database_trigger` for a rights downgrade invalidation.
+- The durable source reference (the source kind and the source uuid) rides in metadata, so who shared which item resolves even after both the source and the share row are deleted (`content_shares` cascades from its source).
+
+Realised actions: `content_share.created`, `content_share.refreshed`, `content_share.rotated`, `content_share.revoked`, `content_share.invalidated`. Registered but not yet emitted: `content_share.expired` (PR 2 scheduled cleanup).
+
+Metadata allow list (enforced by `public.content_share_metadata_ok`, an immutable predicate the writer calls): the only keys are `source_kind` (drill, session or programme), `source_id` (a uuid), `expiry_state` (default, custom or none), `reason_code` (owner_revoke, manager_revoke, rights_downgrade, source_deleted or expired_cleanup) and `initiator` (owner, manager or system). Every value is bounded to a fixed vocabulary or a uuid; there is no free text. A raw secret, a secret hash, a snapshot, a source title, session details, drill or programme text, a media path or any free text can never enter a content share audit event, by construction. The security suite pins the metadata surface and asserts no secret, hash or snapshot appears.
 
 ### Never logged
 

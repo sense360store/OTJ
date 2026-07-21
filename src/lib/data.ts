@@ -188,6 +188,24 @@ export const RESERVED_CAPABILITIES = ['users.manage', 'club.manage']
 export const FA_IMPORT_CAPS = ['templates.create', 'drills.create', 'media.create']
 export const FA_PROGRAMME_IMPORT_CAPS = [...FA_IMPORT_CAPS, 'programmes.create']
 
+// Content sharing capabilities (Content Sharing PR 1, migration 0038).
+// shares.create lets a coach create and manage public share links for content
+// they own (subject to the rights model and the per club kill switch);
+// shares.manage gives managers and admins club wide oversight (revoke any club
+// share, and review what a share exposes) but never rotate of another owner's
+// link. shares.manage is a content style management capability, not a reserved
+// administrative one (users.manage and club.manage remain the only reserved
+// keys), so the manager role holds it. There is no visible sharing UI yet; the
+// keys back the server side substrate and the security suite. See
+// docs/security/content-sharing-boundary.md.
+export const SHARE_CAPS = { create: 'shares.create', manage: 'shares.manage' } as const
+
+// The content rights classification carried by media, drills, sessions,
+// programmes and templates. internal_only never leaves the club; public_link_only
+// permits a metadata or text projection but not binary media export; public_full
+// is eligible for public projection. Enforced server side; the UI never widens it.
+export type ContentRights = 'internal_only' | 'public_link_only' | 'public_full'
+
 export function hasAllCaps(caps: ReadonlySet<string>, needed: readonly string[]): boolean {
   return needed.every((c) => caps.has(c))
 }

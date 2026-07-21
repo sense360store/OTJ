@@ -128,6 +128,11 @@ export default async function setup(): Promise<void> {
       'programmes.create',
       'sessions.create',
       'audit.view',
+      // shares.create too, so the outsider fixture can prove that even a coach
+      // holding the sharing capability in their OWN club cannot create,
+      // refresh, rotate or revoke a share for another club's source: the cross
+      // club refusal is the club arm, not the absence of the capability.
+      'shares.create',
     ]
     const { error } = await service.from('role_capabilities').upsert(
       clubBCoachCaps.map((capability) => ({ role_id: clubBCoach.id, capability })),
