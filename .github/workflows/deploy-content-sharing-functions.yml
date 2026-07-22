@@ -168,9 +168,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Human-readable list (informational; the Python check is authoritative).
+          # Inventory comes from the authenticated CLI, not the broad Management
+          # API endpoint GET /v1/projects/{ref}/functions. A classic Supabase
+          # personal access token can be forbidden (HTTP 403) from that endpoint
+          # while still listing and deploying through the CLI. The CLI JSON is
+          # captured to a temp file, parsed by Python, then deleted; it is never
+          # cat-ed to the log.
+          # Human-readable list first (informational; the Python check is authoritative).
           supabase functions list --project-ref "${SUPABASE_PROJECT_ID}" || true
-          python3 .github/scripts/content-sharing-deploy/verify_inventory.py --ref "${SUPABASE_PROJECT_ID}"
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          supabase functions list --project-ref "${SUPABASE_PROJECT_ID}" --output json > "$tmp"
+          python3 .github/scripts/content-sharing-deploy/verify_inventory.py --cli-json "$tmp"
 
       - name: Best-effort deployed-source readback (honest verification level)
         shell: bash
