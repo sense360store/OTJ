@@ -44,8 +44,15 @@ explicit `--no-verify-jwt` in addition to the config declaration.
   environment so the deploy waits for a human approval before it runs.
 - **Secrets** (on the `production` environment):
   - `SUPABASE_ACCESS_TOKEN` — a Supabase access token for an account that can
-    deploy functions to the target project and run read-only Management API
-    queries. Never printed, echoed, logged or committed.
+    deploy functions to the target project through the CLI (project list,
+    function deploy, function list). It is used for the CLI operations only and
+    is never used for the Management API database query endpoints. Never
+    printed, echoed, logged or committed.
+  - `SUPABASE_DATABASE_READ_TOKEN` — a separate Supabase token carrying the
+    `database_read` scope, used only by the post-deploy no-residue verifier to
+    call the read-only database query endpoint. It is exposed only to that one
+    step, never placed in the job-wide env, and never printed. The verifier
+    never falls back to `SUPABASE_ACCESS_TOKEN`.
   - `SUPABASE_PROJECT_ID` — the target project ref. Expected value:
     `uynorsnrvocksgqweucu`.
 
@@ -221,6 +228,66 @@ review signal, not a cleanup or deploy failure; the deploy is not failed on a
 mismatch. The repository source hashes recorded before deploy, together with
 the deployed function version and eszip bundle fingerprint, remain the
 authoritative deployment record unless byte equality is actually proven.
+
+## Post-deploy no-residue verification (separate read token)
+
+The final step runs
+`.github/scripts/content-sharing-deploy/verify_no_residue.py`, a read-only
+proof that the deploy left the sharing feature fully inert. It checks, on the
+hosted project:
+
+- `public_sharing_enabled` is `false` for every club;
+- `content_shares` has zero rows;
+- `content_share_dependencies` has zero rows;
+- no `content_share` audit event exists;
+- every drill is `internal_only`;
+- every media row is `internal_only`;
+- the migration ledger's newest version is still `20260722064502` (0039);
+- no pg_cron job references `content_share`.
+
+### Endpoint and credential separation
+
+The verifier calls the Management API read-only query endpoint
+
+    POST /v1/projects/{ref}/database/query/read-only
+
+authenticated with `SUPABASE_DATABASE_READ_TOKEN` (the `database_read` scope).
+This is deliberately a different endpoint and a different credential from the
+CLI deploy path:
+
+- CLI deploy and list operations use `SUPABASE_ACCESS_TOKEN` (classic personal
+  access token).
+- The database residue queries use `SUPABASE_DATABASE_READ_TOKEN` and the
+  read-only endpoint.
+
+The verifier never reads or falls back to `SUPABASE_ACCESS_TOKEN`. Using the
+classic access token against the database query endpoints is what previously
+returned HTTP 403 (`database query API returned HTTP 403`), the failure this
+change fixes. The read token is exposed only to this one workflow step, never
+in the job-wide env, and never printed. Every statement the verifier sends is
+SELECT-only; a guard rejects anything else before it is transmitted.
+
+### Read-only role reach
+
+The read-only endpoint executes each statement as the
+`supabase_read_only_user` Postgres role inside a read-only transaction. On the
+target project that role has USAGE on `public` and on `supabase_migrations`,
+SELECT on the queried tables, and BYPASSRLS, so the counts and the migration
+ledger max version are complete and unfiltered rather than RLS-scoped. The
+`cron` schema is not installed on this project, so `to_regclass('cron.job')`
+is null and the "no content_share cron job" check is satisfied by the schema's
+absence. If a future project state makes the migration ledger or the cron
+catalogue unreadable to the read-only role, the affected check is reported
+honestly rather than silently passed.
+
+### Error messages
+
+The verifier distinguishes a missing `SUPABASE_DATABASE_READ_TOKEN`, HTTP 401
+(invalid token), HTTP 403 (missing `database_read` scope or no project access),
+an unreachable API, a non-JSON body, and an unexpected response shape. No error
+path prints the token or the response body. Its offline test suite
+(`test_verify_no_residue.py`) runs in CI under the `content-sharing deploy
+scripts` job.
 
 ## What the workflow does NOT do
 
