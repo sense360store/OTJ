@@ -416,18 +416,24 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
 
 # =====================================================================
-# Content Sharing PR 2: the anonymous public read function.
+# Content Sharing: explicit JWT posture for the two sharing functions.
 #
 # read-content-share is the only function that runs with verify_jwt = false:
 # it is the public, unauthenticated reader that resolves an opaque public drill
-# share to its stored, sanitised snapshot. Declaring this here (version
-# controlled, reviewable in the gated PR) rather than as a deploy flag makes the
-# public boundary explicit. Adding this one per-function block does NOT change
-# the other functions' default of verify_jwt = true; every other function
-# (manage-content-share and the eight pre-existing ones) stays authenticated.
-# The byte-for-byte source readback does not verify verify_jwt, so a positive
-# post-deploy check confirms read-content-share is anon reachable while every
-# other function is not.
+# share to its stored, sanitised snapshot. manage-content-share is the
+# authenticated management function and stays verify_jwt = true; it is declared
+# explicitly here (rather than relying on the implicit default) so the gated
+# deploy workflow can prove the posture from version controlled config rather
+# than a deploy flag. Adding these per-function blocks does NOT change the eight
+# pre-existing functions, which stay verify_jwt = true by default.
+#
+# Invariant enforced by the deploy workflow and its config check:
+# read-content-share is the ONLY function anywhere in this file explicitly set
+# to verify_jwt = false. A positive post-deploy inventory check confirms
+# read-content-share is anon reachable while every other function is not.
 # =====================================================================
+[functions.manage-content-share]
+verify_jwt = true
+
 [functions.read-content-share]
 verify_jwt = false

@@ -1,0 +1,222 @@
+name: Deploy content-sharing Edge Functions
+
+# Manual, production-environment-gated deploy of the two Content Sharing Edge
+# Functions (manage-content-share and read-content-share) directly from the
+# checked-out repository files. This workflow ONLY deploys those two functions
+# and runs read-only verification and safe smoke tests. It never enables public
+# sharing, never reclassifies content, never creates a share, and never applies
+# a migration or changes a database grant. See
+# docs/operations/content-sharing-edge-function-deploy.md.
+#
+# Secrets are read only through environment variables and are never printed.
+# No step uses `set -x`; every script uses `set -euo pipefail`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project:
+        description: "Type the target Supabase project ref to confirm (must equal uynorsnrvocksgqweucu)"
+        required: true
+        type: string
+      app_origin:
+        description: "Optional: approved APP_ORIGIN to assert in the CORS smoke test (e.g. https://app.example). Blank skips the positive CORS assertion."
+        required: false
+        type: string
+        default: ""
+
+# Least privilege: the job only needs to read the repository to deploy from disk.
+permissions:
+  contents: read
+
+# Two production content-sharing deployments must never overlap. Do not cancel a
+# running deploy; queue behind it.
+concurrency:
+  group: deploy-content-sharing-functions-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy content-sharing functions
+    runs-on: ubuntu-latest
+    # The production environment carries the human approval gate (required
+    # reviewers). The job cannot start until an approver releases it.
+    environment: production
+    timeout-minutes: 20
+    env:
+      # Secrets reach the job only as environment variables; never echoed.
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      # Workflow input, passed via env so it is never interpolated into a shell.
+      CONFIRM_PROJECT: ${{ inputs.confirm_project }}
+      APP_ORIGIN_EXPECTED: ${{ inputs.app_origin }}
+      # The one intended project ref. A project ref is not a credential; it
+      # appears in every function URL. Hardcoded so a valid token cannot deploy
+      # to the wrong project.
+      EXPECTED_PROJECT_REF: uynorsnrvocksgqweucu
+      SUPABASE_CLI_VERSION: 2.105.0
+    steps:
+      - name: Check out the selected commit
+        uses: actions/checkout@v4
+
+      - name: Confirm target project (double gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CONFIRM_PROJECT}" ]; then
+            echo "confirm_project input is empty"; exit 1
+          fi
+          # The typed confirmation must equal the configured project secret.
+          if [ "${CONFIRM_PROJECT}" != "${SUPABASE_PROJECT_ID}" ]; then
+            echo "confirm_project does not match the configured SUPABASE_PROJECT_ID"; exit 1
+          fi
+          # And the configured project must be the one intended project ref, so a
+          # valid token pointed at a different project cannot deploy here.
+          if [ "${SUPABASE_PROJECT_ID}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "SUPABASE_PROJECT_ID is not the intended project ref (${EXPECTED_PROJECT_REF})"; exit 1
+          fi
+          echo "Target project confirmed."
+
+      - name: Assert secrets are present (values never printed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${SUPABASE_ACCESS_TOKEN:-}" ] || { echo "SUPABASE_ACCESS_TOKEN is missing"; exit 1; }
+          [ -n "${SUPABASE_PROJECT_ID:-}" ] || { echo "SUPABASE_PROJECT_ID is missing"; exit 1; }
+          echo "token variable present"
+
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.105.0
+
+      - name: Assert Supabase CLI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          have="$(supabase --version)"
+          echo "Supabase CLI: ${have}"
+          if [ "${have}" != "${SUPABASE_CLI_VERSION}" ]; then
+            echo "Expected pinned Supabase CLI ${SUPABASE_CLI_VERSION}, got ${have}"; exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate config.toml JWT posture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/content-sharing-deploy/check_config_jwt.py supabase/config.toml
+
+      - name: Validate access token (read-only, never printed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          # Authenticated, read-only command. Output goes to a temp file that is
+          # parsed and then deleted; it is never cat-ed to the log.
+          supabase projects list --output json > "$tmp"
+          python3 .github/scripts/content-sharing-deploy/validate_token.py "$tmp" "${EXPECTED_PROJECT_REF}"
+
+      - name: Verify working tree and hash the deploy source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree is not clean; refusing to deploy"; git status --porcelain; exit 1
+          fi
+          SHA="$(git rev-parse HEAD)"
+          echo "Deploying commit ${SHA}"
+          {
+            echo "## Content-sharing Edge Function deploy"
+            echo ""
+            echo "- Commit: \`${SHA}\`"
+            echo "- Project: \`${EXPECTED_PROJECT_REF}\`"
+            echo "- Supabase CLI: \`${SUPABASE_CLI_VERSION}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Control-byte scan + SHA-256 of every file the two functions bundle.
+          python3 .github/scripts/content-sharing-deploy/check_source_bytes.py \
+            supabase/functions/manage-content-share/index.ts \
+            supabase/functions/read-content-share/index.ts \
+            supabase/functions/_shared/share.ts \
+            supabase/functions/_shared/fa.ts
+
+      - name: Deploy manage-content-share (verify_jwt = true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # config.toml declares [functions.manage-content-share] verify_jwt=true,
+          # so no --no-verify-jwt override is passed. Packaged from disk:
+          # supabase/functions/manage-content-share plus ../_shared/fa.ts and
+          # ../_shared/share.ts, resolved from the import graph.
+          supabase functions deploy manage-content-share --project-ref "${SUPABASE_PROJECT_ID}"
+
+      - name: Deploy read-content-share (verify_jwt = false)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Explicitly anonymous. config.toml also declares verify_jwt=false; the
+          # flag is belt and braces and overwrites the prior unverified inline
+          # deployment. Packaged from disk: supabase/functions/read-content-share
+          # plus ../_shared/share.ts.
+          supabase functions deploy read-content-share --project-ref "${SUPABASE_PROJECT_ID}" --no-verify-jwt
+
+      - name: Verify deployed inventory and JWT posture
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Human-readable list (informational; the Python check is authoritative).
+          supabase functions list --project-ref "${SUPABASE_PROJECT_ID}" || true
+          python3 .github/scripts/content-sharing-deploy/verify_inventory.py --ref "${SUPABASE_PROJECT_ID}"
+
+      - name: Best-effort deployed-source readback (honest verification level)
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo_root="$(pwd)"
+          echo "### Deployed source readback" >> "$GITHUB_STEP_SUMMARY"
+          for slug in manage-content-share read-content-share; do
+            workdir="$(mktemp -d)"
+            mkdir -p "$workdir/supabase"
+            cp supabase/config.toml "$workdir/supabase/config.toml"
+            level="source readback unavailable (bundled deploy)"
+            if ( cd "$workdir" && supabase functions download "$slug" --project-ref "${SUPABASE_PROJECT_ID}" ) >/dev/null 2>&1; then
+              dl="$workdir/supabase/functions/$slug/index.ts"
+              if [ -f "$dl" ]; then
+                repo_hash="$(sha256sum "$repo_root/supabase/functions/$slug/index.ts" | awk '{print $1}')"
+                dl_hash="$(sha256sum "$dl" | awk '{print $1}')"
+                if [ "$repo_hash" = "$dl_hash" ]; then
+                  level="byte-for-byte CONFIRMED"
+                else
+                  level="REVIEW: downloaded index.ts differs from repo (possible bundler normalization; inspect before relying on this deploy)"
+                fi
+              fi
+            fi
+            echo "- \`$slug\`: ${level}"
+            echo "- \`$slug\`: ${level}" >> "$GITHUB_STEP_SUMMARY"
+            rm -rf "$workdir"
+          done
+          echo "Note: source-input hashes (recorded above) plus the deployed version and eszip bundle fingerprint are the authoritative integrity record; byte-for-byte source equality is only claimed when the readback matched." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Safe endpoint smoke tests (no share created)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/content-sharing-deploy/smoke_tests.py
+
+      - name: Verify no hosted residue (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py --ref "${SUPABASE_PROJECT_ID}"
+
+      - name: Deploy complete
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Content-sharing functions deployed and verified. Public sharing remains DISABLED."
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Public sharing remains DISABLED (public_sharing_enabled=false on every club). No share was created." >> "$GITHUB_STEP_SUMMARY"
