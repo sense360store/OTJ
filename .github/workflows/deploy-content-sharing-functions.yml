@@ -82,7 +82,16 @@ jobs:
           set -euo pipefail
           [ -n "${SUPABASE_ACCESS_TOKEN:-}" ] || { echo "SUPABASE_ACCESS_TOKEN is missing"; exit 1; }
           [ -n "${SUPABASE_PROJECT_ID:-}" ] || { echo "SUPABASE_PROJECT_ID is missing"; exit 1; }
-          echo "token variable present"
+          # The no-residue verifier uses a separate database_read token, checked
+          # here so the run fails early with a clear message if it is absent.
+          # Its value is read from the secret directly; it is not in job env, so
+          # it never reaches the CLI deploy or list steps. Never printed.
+          [ -n "${SUPABASE_DATABASE_READ_TOKEN:-}" ] || { echo "SUPABASE_DATABASE_READ_TOKEN is missing"; exit 1; }
+          echo "token variables present"
+        env:
+          # Scoped to this assertion step only, so the read token is not part of
+          # the job-wide env the CLI steps run under.
+          SUPABASE_DATABASE_READ_TOKEN: ${{ secrets.SUPABASE_DATABASE_READ_TOKEN }}
 
       - name: Install pinned Supabase CLI
         uses: supabase/setup-cli@v1
@@ -261,6 +270,11 @@ jobs:
 
       - name: Verify no hosted residue (read-only)
         shell: bash
+        # The database_read token is exposed only to this step, the one place it
+        # is needed. The CLI deploy and list steps above never see it, and this
+        # verifier never reads SUPABASE_ACCESS_TOKEN. Neither token is printed.
+        env:
+          SUPABASE_DATABASE_READ_TOKEN: ${{ secrets.SUPABASE_DATABASE_READ_TOKEN }}
         run: |
           set -euo pipefail
           python3 .github/scripts/content-sharing-deploy/verify_no_residue.py --ref "${SUPABASE_PROJECT_ID}"

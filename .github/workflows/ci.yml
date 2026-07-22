@@ -154,6 +154,9 @@ jobs:
       - name: Inventory verifier tests
         working-directory: .github/scripts/content-sharing-deploy
         run: python3 test_verify_inventory.py
+      - name: No-residue verifier tests
+        working-directory: .github/scripts/content-sharing-deploy
+        run: python3 test_verify_no_residue.py
 
   # The Edge Function parser tests are hermetic Deno tests pinned against
   # real FA fixture pages; npm ci first because Deno resolves the npm
