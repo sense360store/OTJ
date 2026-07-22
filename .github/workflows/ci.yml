@@ -133,6 +133,28 @@ jobs:
         if: always()
         run: npx supabase stop --no-backup
 
+  # The content-sharing deploy helper scripts are workflow-only tooling; they
+  # never touch a hosted project. These offline tests cover the readback
+  # cleanup safety guards, the inventory verifier, and the bounded structural
+  # comparison. They keep the gated deploy workflow honest without running it.
+  deploy-scripts:
+    name: content-sharing deploy scripts
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Readback cleanup tests (bash)
+        run: bash .github/scripts/content-sharing-deploy/test_readback_cleanup.sh
+      - name: Structural comparison tests
+        working-directory: .github/scripts/content-sharing-deploy
+        run: python3 test_structural_compare.py
+      - name: Inventory verifier tests
+        working-directory: .github/scripts/content-sharing-deploy
+        run: python3 test_verify_inventory.py
+
   # The Edge Function parser tests are hermetic Deno tests pinned against
   # real FA fixture pages; npm ci first because Deno resolves the npm
   # specifiers in fa.ts from node_modules. deno check covers the functions
