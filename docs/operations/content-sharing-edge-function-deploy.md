@@ -53,6 +53,29 @@ A project ref is not a credential; it appears in every function URL. The
 workflow hardcodes the intended ref (`uynorsnrvocksgqweucu`) so a valid token
 pointed at a different project cannot deploy here.
 
+### Access token type and scopes
+
+Use a classic Supabase personal access token, created from the account's
+dashboard token page. Classic personal access tokens do not expose selectable
+scopes in the dashboard: there is no `edge_functions_read` or
+`edge_functions_write` checkbox to choose, so do not go looking for one and do
+not treat its absence as a misconfiguration. The token authenticates the CLI
+for everything this workflow needs: listing projects, deploying the two
+functions, and listing functions.
+
+The dashboard also offers an experimental API-token option. It is not required
+for this deploy; the classic token is sufficient. Do not switch to it to work
+around a verification error.
+
+One consequence of the classic token's coarse authorization: the broad
+Management API endpoint `GET /v1/projects/{ref}/functions`, called directly
+with `Authorization: Bearer <token>`, can return HTTP 403 (forbidden) even
+though the same token lists and deploys functions through the CLI. For that
+reason the inventory verification reads the function list from the authenticated
+CLI (`supabase functions list --output json`), not from a direct call to that
+endpoint. A 403 from the direct endpoint does not by itself mean the deploy
+failed.
+
 ## Approval gate
 
 The job declares `environment: production`. GitHub holds the run at "Waiting"
@@ -88,6 +111,14 @@ Before any deploy, the workflow:
   deletes the file. The token is never printed and the raw list is never dumped
   to the log.
 
+Inventory verification later in the run follows the same pattern: it captures
+`supabase functions list --project-ref "$SUPABASE_PROJECT_ID" --output json`
+to a temporary file, parses it with
+`.github/scripts/content-sharing-deploy/verify_inventory.py`, and deletes the
+file. The CLI output is the authoritative inventory source; the direct
+Management API functions endpoint is a fallback only (see Access token type and
+scopes above).
+
 The workflow never uses `env`, `printenv`, `echo "$SUPABASE_ACCESS_TOKEN"`,
 `set` or `set -x`. Every script uses `set -euo pipefail`.
 
@@ -115,10 +146,27 @@ The job summary records:
 
 - the deployed commit SHA and the source SHA-256 hashes;
 - the full function inventory with `verify_jwt`, version and `updated_at`, and
-  the eszip bundle fingerprint for the two sharing functions;
+  the eszip bundle fingerprint for the two sharing functions, read from the
+  authenticated CLI. When the CLI list carries `verify_jwt`, the JWT posture is
+  verified from that metadata; if a CLI build omits it, the inventory is still
+  verified and the anonymous-versus-authenticated boundary is confirmed by the
+  endpoint smoke tests instead, which the summary states plainly;
 - the deployed-source readback level (see below);
 - the post-deploy residue check (all counts expected to be zero, migration
   ledger newest version `20260722064502`).
+
+### If the run fails at inventory verification
+
+The two deploy steps run before inventory verification. A failure at the
+"Verify deployed inventory and JWT posture" step therefore does not mean the
+functions were not deployed; both deploys may have already succeeded. Read the
+step summary for the deployed versions before assuming otherwise.
+
+If the verifier reports HTTP 403 from a direct Management API call, that is the
+broad functions endpoint refusing a classic personal access token, not a deploy
+failure. The workflow's primary path reads inventory from
+`supabase functions list --output json`, which the same token is authorised to
+run, and does not depend on that endpoint.
 
 ## Verification level (be honest about readback)
 
