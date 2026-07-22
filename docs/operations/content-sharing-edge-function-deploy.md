@@ -190,6 +190,38 @@ differ through bundler normalization. The summary reports one of:
 
 Byte-for-byte equality is only claimed when the comparison actually matched.
 
+### Readback cleanup and file ownership
+
+`supabase functions download` may create files under the readback work
+directory with ownership or permissions the GitHub runner user cannot remove
+directly (commonly root-owned files). A plain `rm -rf` on such a tree returns
+non-zero, and under `set -euo pipefail` that would fail the job even though the
+deploy already succeeded. The readback step therefore cleans up through
+`cleanup_workdir` (`.github/scripts/content-sharing-deploy/readback_cleanup.sh`),
+run from an `EXIT` trap so it also fires when a comparison command fails. The
+helper restores owner write bits, removes the tree, and falls back to a
+privileged `sudo -n rm -rf` scoped only to a path validated as a non-empty,
+absolute location under the temporary root (never a repository or workspace
+path, never a wildcard). Cleanup never returns non-zero for a validated temp
+path, so it can never be the reason the workflow exits. A cleanup message in
+the log is not a deployment failure.
+
+### If the readback reports REVIEW (downloaded source differs)
+
+A `REVIEW` result means the downloaded `index.ts` did not hash-match the
+repository file. This is often expected: the deploy bundles and may normalize
+source, so the downloaded copy is not guaranteed byte-identical. When this
+happens the step records a bounded, secret-safe structural comparison in the
+summary for `index.ts` and each bundled shared module (`_shared/share.ts`, and
+for `manage-content-share` also `_shared/fa.ts`): file sizes, both SHA-256
+hashes, and set differences over imports, environment-variable names, RPC
+names, `verify_jwt` mentions, and the `CONTROL_CHARS` literal. Full source,
+Authorization headers and secret values are never printed. A `REVIEW` is a
+review signal, not a cleanup or deploy failure; the deploy is not failed on a
+mismatch. The repository source hashes recorded before deploy, together with
+the deployed function version and eszip bundle fingerprint, remain the
+authoritative deployment record unless byte equality is actually proven.
+
 ## What the workflow does NOT do
 
 - It does not enable public sharing. `clubs.public_sharing_enabled` stays

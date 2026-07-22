@@ -185,10 +185,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Cleanup of the download work directory is reliable and can never be
+          # the reason this job exits: supabase functions download may write
+          # root-owned files under the temp dir, and a plain rm -rf on those
+          # returns non-zero, which set -e would turn into a job failure even
+          # though the deploy succeeded. cleanup_workdir tolerates that and
+          # only ever removes a validated path under the temp root.
+          # shellcheck source=.github/scripts/content-sharing-deploy/readback_cleanup.sh
+          source .github/scripts/content-sharing-deploy/readback_cleanup.sh
           repo_root="$(pwd)"
           echo "### Deployed source readback" >> "$GITHUB_STEP_SUMMARY"
+
+          # Which shared modules each function bundles, for per-file comparison.
+          shared_manage="_shared/share.ts _shared/fa.ts"
+          shared_read="_shared/share.ts"
+
           for slug in manage-content-share read-content-share; do
             workdir="$(mktemp -d)"
+            # A trap guarantees cleanup even if a command below fails; cleanup
+            # itself never returns non-zero for a validated temp path.
+            trap 'cleanup_workdir "$workdir"' EXIT
             mkdir -p "$workdir/supabase"
             cp supabase/config.toml "$workdir/supabase/config.toml"
             level="source readback unavailable (bundled deploy)"
@@ -205,10 +221,37 @@ jobs:
               fi
             fi
             echo "- \`$slug\`: ${level}"
-            echo "- \`$slug\`: ${level}" >> "$GITHUB_STEP_SUMMARY"
-            rm -rf "$workdir"
+            {
+              echo "- \`$slug\`: ${level}"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            # When index.ts differs, record a bounded, secret-safe structural
+            # diff of index.ts and each bundled shared module, so a reviewer can
+            # tell bundler normalization apart from a real content change
+            # without any full source or secret reaching the log.
+            case "$level" in
+              REVIEW:*)
+                if [ "$slug" = "manage-content-share" ]; then files="index.ts $shared_manage"; else files="index.ts $shared_read"; fi
+                {
+                  for rel in $files; do
+                    if [ "$rel" = "index.ts" ]; then
+                      repo_f="$repo_root/supabase/functions/$slug/index.ts"
+                      dl_f="$workdir/supabase/functions/$slug/index.ts"
+                    else
+                      repo_f="$repo_root/supabase/functions/$rel"
+                      dl_f="$workdir/supabase/functions/$rel"
+                    fi
+                    python3 .github/scripts/content-sharing-deploy/structural_compare.py \
+                      --repo "$repo_f" --download "$dl_f" --label "$slug/$rel"
+                  done
+                } >> "$GITHUB_STEP_SUMMARY"
+                ;;
+            esac
+
+            cleanup_workdir "$workdir"
+            trap - EXIT
           done
-          echo "Note: source-input hashes (recorded above) plus the deployed version and eszip bundle fingerprint are the authoritative integrity record; byte-for-byte source equality is only claimed when the readback matched." >> "$GITHUB_STEP_SUMMARY"
+          echo "Note: source-input hashes (recorded above) plus the deployed version and eszip bundle fingerprint are the authoritative integrity record; byte-for-byte source equality is only claimed when the readback matched. A REVIEW result means the downloaded source differs (often bundler normalization); it is not a cleanup or deploy failure." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Safe endpoint smoke tests (no share created)
         shell: bash
