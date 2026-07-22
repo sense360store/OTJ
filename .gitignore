@@ -37,3 +37,6 @@ yarn-error.log*
 pnpm-debug.log*
 logs/
 *.log
+
+# Local Python bytecode for deploy helper scripts
+.github/scripts/content-sharing-deploy/__pycache__/

@@ -1,0 +1,12 @@
+[
+  { "slug": "invite-user", "verify_jwt": true, "version": 15, "updated_at": "2026-07-01T00:00:00Z", "ezbr_sha256": "aa" },
+  { "slug": "fa-import", "verify_jwt": true, "version": 15, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "bb" },
+  { "slug": "fa-import-programme", "verify_jwt": true, "version": 14, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "cc" },
+  { "slug": "remove-user", "verify_jwt": true, "version": 9, "updated_at": "2026-07-01T00:00:00Z", "ezbr_sha256": "dd" },
+  { "slug": "spond-sync", "verify_jwt": true, "version": 9, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "ee" },
+  { "slug": "spond-roster-import", "verify_jwt": true, "version": 10, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "ff" },
+  { "slug": "feedback-to-github", "verify_jwt": true, "version": 5, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "11" },
+  { "slug": "feedback-github-refresh", "verify_jwt": true, "version": 1, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "22" },
+  { "slug": "manage-content-share", "verify_jwt": true, "version": 1, "updated_at": "2026-07-22T00:00:00Z", "ezbr_sha256": "33" },
+  { "slug": "read-content-share", "verify_jwt": false, "version": 2, "updated_at": "2026-07-22T00:00:00Z", "ezbr_sha256": "44" }
+]

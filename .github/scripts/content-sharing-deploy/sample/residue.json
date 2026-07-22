@@ -1,0 +1,15 @@
+{
+  "residue": {
+    "clubs_enabled": 0,
+    "shares": 0,
+    "deps": 0,
+    "share_audit": 0,
+    "non_internal_drills": 0,
+    "non_internal_media": 0,
+    "total_drills": 103,
+    "total_media": 10,
+    "last_migration": "20260722064502"
+  },
+  "has_cron": false,
+  "cron_jobs": 0
+}
