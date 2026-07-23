@@ -82,16 +82,17 @@ jobs:
           set -euo pipefail
           [ -n "${SUPABASE_ACCESS_TOKEN:-}" ] || { echo "SUPABASE_ACCESS_TOKEN is missing"; exit 1; }
           [ -n "${SUPABASE_PROJECT_ID:-}" ] || { echo "SUPABASE_PROJECT_ID is missing"; exit 1; }
-          # The no-residue verifier uses a separate database_read token, checked
-          # here so the run fails early with a clear message if it is absent.
-          # Its value is read from the secret directly; it is not in job env, so
-          # it never reaches the CLI deploy or list steps. Never printed.
-          [ -n "${SUPABASE_DATABASE_READ_TOKEN:-}" ] || { echo "SUPABASE_DATABASE_READ_TOKEN is missing"; exit 1; }
-          echo "token variables present"
+          # The no-residue verifier connects to Postgres directly with the full
+          # connection string in SUPABASE_DB_URL, checked here so the run fails
+          # early with a clear message if it is absent. Its value is scoped to
+          # this step only; it is not in job env, so it never reaches the CLI
+          # deploy or list steps. Only presence is asserted; never printed.
+          [ -n "${SUPABASE_DB_URL:-}" ] || { echo "SUPABASE_DB_URL is missing"; exit 1; }
+          echo "secret variables present"
         env:
-          # Scoped to this assertion step only, so the read token is not part of
-          # the job-wide env the CLI steps run under.
-          SUPABASE_DATABASE_READ_TOKEN: ${{ secrets.SUPABASE_DATABASE_READ_TOKEN }}
+          # Scoped to this assertion step only, so the DB URL is not part of the
+          # job-wide env the CLI steps run under.
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
       - name: Install pinned Supabase CLI
         uses: supabase/setup-cli@v1
@@ -270,14 +271,17 @@ jobs:
 
       - name: Verify no hosted residue (read-only)
         shell: bash
-        # The database_read token is exposed only to this step, the one place it
-        # is needed. The CLI deploy and list steps above never see it, and this
-        # verifier never reads SUPABASE_ACCESS_TOKEN. Neither token is printed.
+        # SUPABASE_DB_URL is exposed only to this step, the one place it is
+        # needed, and never to the job-wide env the CLI steps run under. The
+        # verifier connects with psql inside a rollback-only, read-only
+        # transaction; it never reads SUPABASE_ACCESS_TOKEN, and the URL and its
+        # password are never printed.
         env:
-          SUPABASE_DATABASE_READ_TOKEN: ${{ secrets.SUPABASE_DATABASE_READ_TOKEN }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py --ref "${SUPABASE_PROJECT_ID}"
+          command -v psql >/dev/null 2>&1 || { echo "psql is not installed on the runner"; exit 1; }
+          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py
 
       - name: Deploy complete
         shell: bash

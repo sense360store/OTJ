@@ -48,11 +48,14 @@ explicit `--no-verify-jwt` in addition to the config declaration.
     function deploy, function list). It is used for the CLI operations only and
     is never used for the Management API database query endpoints. Never
     printed, echoed, logged or committed.
-  - `SUPABASE_DATABASE_READ_TOKEN` — a separate Supabase token carrying the
-    `database_read` scope, used only by the post-deploy no-residue verifier to
-    call the read-only database query endpoint. It is exposed only to that one
-    step, never placed in the job-wide env, and never printed. The verifier
-    never falls back to `SUPABASE_ACCESS_TOKEN`.
+  - `SUPABASE_DB_URL` — the full PostgreSQL connection string, used only by the
+    post-deploy no-residue verifier to connect to the database directly with
+    `psql`. It is exposed only to that one step, never placed in the job-wide
+    env, and never printed. The verifier never falls back to
+    `SUPABASE_ACCESS_TOKEN` or to any Supabase API token. See
+    "The `SUPABASE_DB_URL` secret" below for where it comes from and how to
+    handle it. `SUPABASE_DATABASE_READ_TOKEN` is no longer used and can be
+    removed from the environment once this workflow has run successfully.
   - `SUPABASE_PROJECT_ID` — the target project ref. Expected value:
     `uynorsnrvocksgqweucu`.
 
@@ -82,6 +85,30 @@ reason the inventory verification reads the function list from the authenticated
 CLI (`supabase functions list --output json`), not from a direct call to that
 endpoint. A 403 from the direct endpoint does not by itself mean the deploy
 failed.
+
+### The `SUPABASE_DB_URL` secret
+
+The no-residue verifier connects to Postgres directly rather than through the
+Supabase Management API, so it needs a full connection string.
+
+- Supabase exposes a secret named `SUPABASE_DB_URL` to Edge Functions at
+  runtime, but that value is internal to the Edge Function runtime and is not
+  automatically available to GitHub Actions. GitHub Actions reads only its own
+  secrets.
+- Therefore GitHub has its own `SUPABASE_DB_URL` production environment secret,
+  set independently of the Edge Function runtime.
+- Copy its value from the Supabase dashboard: Project -> Connect -> Direct ->
+  Session pooler. It is the session pooler connection string and it embeds the
+  project database password.
+- It must never be pasted into logs, pull requests, issues or chat. The verifier
+  and workflow only ever assert its presence and redact it from any error
+  output; treat it with the same care as the database password itself.
+
+Using the classic access token against the Management API database query
+endpoints is what previously returned HTTP 403 (`database query API returned
+HTTP 403`), the failure this change fixes. The direct Postgres connection
+avoids that endpoint entirely. Once this workflow has run successfully,
+`SUPABASE_DATABASE_READ_TOKEN` is no longer needed.
 
 ## Approval gate
 
@@ -229,7 +256,7 @@ mismatch. The repository source hashes recorded before deploy, together with
 the deployed function version and eszip bundle fingerprint, remain the
 authoritative deployment record unless byte equality is actually proven.
 
-## Post-deploy no-residue verification (separate read token)
+## Post-deploy no-residue verification (direct Postgres, read-only)
 
 The final step runs
 `.github/scripts/content-sharing-deploy/verify_no_residue.py`, a read-only
@@ -242,52 +269,53 @@ hosted project:
 - no `content_share` audit event exists;
 - every drill is `internal_only`;
 - every media row is `internal_only`;
+- total drill and media counts are reported;
 - the migration ledger's newest version is still `20260722064502` (0039);
-- no pg_cron job references `content_share`.
+- no pg_cron job references `content_share` (the `cron` schema being absent
+  satisfies this).
 
-### Endpoint and credential separation
+### Connection and credential
 
-The verifier calls the Management API read-only query endpoint
+The verifier connects to Postgres directly with `psql`, using the full
+connection string in `SUPABASE_DB_URL` (see "The `SUPABASE_DB_URL` secret"
+above). It never uses the Supabase Management API, never reads
+`SUPABASE_ACCESS_TOKEN`, and never reads `SUPABASE_DATABASE_READ_TOKEN`. The CLI
+deploy and list operations continue to use `SUPABASE_ACCESS_TOKEN`; the residue
+check uses `SUPABASE_DB_URL` and nothing else. The DB URL is exposed only to
+this one workflow step, never in the job-wide env, and never printed; error
+output is redacted so neither the URL nor the database password can leak.
 
-    POST /v1/projects/{ref}/database/query/read-only
+### Rollback-only read-only transaction
 
-authenticated with `SUPABASE_DATABASE_READ_TOKEN` (the `database_read` scope).
-This is deliberately a different endpoint and a different credential from the
-CLI deploy path:
+Every query runs inside a transaction that can never commit:
 
-- CLI deploy and list operations use `SUPABASE_ACCESS_TOKEN` (classic personal
-  access token).
-- The database residue queries use `SUPABASE_DATABASE_READ_TOKEN` and the
-  read-only endpoint.
+```
+BEGIN;
+SET TRANSACTION READ ONLY;
+SET LOCAL statement_timeout = '30s';
+SELECT ...;
+ROLLBACK;
+```
 
-The verifier never reads or falls back to `SUPABASE_ACCESS_TOKEN`. Using the
-classic access token against the database query endpoints is what previously
-returned HTTP 403 (`database query API returned HTTP 403`), the failure this
-change fixes. The read token is exposed only to this one workflow step, never
-in the job-wide env, and never printed. Every statement the verifier sends is
-SELECT-only; a guard rejects anything else before it is transmitted.
+`psql` runs with `--no-psqlrc` and `ON_ERROR_STOP=1`, emits machine-readable
+JSON (tuples-only, unaligned), connects with `PGSSLMODE=require` and a bounded
+connection timeout, and rolls back rather than commits. A guard rejects any
+statement that is not a single read-only SELECT before it is sent, so no
+`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `ALTER`, `DROP`, `CREATE`, `TRUNCATE`,
+`GRANT`, `REVOKE`, `CALL`, `COPY`, `DO`, `COMMIT` or role change can ever be
+transmitted. The two shipped queries read the residue counts, the migration
+ledger max version, and (only when the `cron` schema exists) the count of
+`content_share` cron jobs.
 
-### Read-only role reach
+### Fails closed
 
-The read-only endpoint executes each statement as the
-`supabase_read_only_user` Postgres role inside a read-only transaction. On the
-target project that role has USAGE on `public` and on `supabase_migrations`,
-SELECT on the queried tables, and BYPASSRLS, so the counts and the migration
-ledger max version are complete and unfiltered rather than RLS-scoped. The
-`cron` schema is not installed on this project, so `to_regclass('cron.job')`
-is null and the "no content_share cron job" check is satisfied by the schema's
-absence. If a future project state makes the migration ledger or the cron
-catalogue unreadable to the read-only role, the affected check is reported
-honestly rather than silently passed.
-
-### Error messages
-
-The verifier distinguishes a missing `SUPABASE_DATABASE_READ_TOKEN`, HTTP 401
-(invalid token), HTTP 403 (missing `database_read` scope or no project access),
-an unreachable API, a non-JSON body, and an unexpected response shape. No error
-path prints the token or the response body. Its offline test suite
-(`test_verify_no_residue.py`) runs in CI under the `content-sharing deploy
-scripts` job.
+The verifier fails the job on a missing `SUPABASE_DB_URL`, a connection or
+authentication failure, an unreadable schema or table, malformed or missing
+output, any dirty residue value, a changed migration ledger, or a present
+`content_share` cron job. No error path prints the connection string, the
+password or the environment. Its offline test suite
+(`test_verify_no_residue.py`) mocks `psql` and runs in CI under the
+`content-sharing deploy scripts` job.
 
 ## What the workflow does NOT do
 

@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """Read-only proof that the deploy left no hosted residue (STAGE 9).
 
-Runs a small set of SELECT-only queries through the Supabase Management API
-read-only query endpoint
-
-  POST /v1/projects/{ref}/database/query/read-only
-
-and asserts the sharing feature is still fully inert:
+Runs a small set of SELECT-only queries through psql against a full PostgreSQL
+connection string and asserts the sharing feature is still fully inert:
 
   - public_sharing_enabled is false for every club;
   - content_shares has zero rows;
@@ -17,88 +13,131 @@ and asserts the sharing feature is still fully inert:
   - the migration ledger's newest version is still 0039 (public_share_read);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
-Credential separation
+Credential model
+----------------
+The connection string is read ONLY from SUPABASE_DB_URL, the full Postgres URI
+copied from Project -> Connect -> Direct -> Session pooler, carrying the project
+database password. It is used only to open the psql connection and is never
+printed; error output is redacted so neither the URL nor the password can leak.
+
+This script never reads SUPABASE_DATABASE_READ_TOKEN, SUPABASE_ACCESS_TOKEN, or
+any Supabase Management API endpoint. The Management API read-only SQL endpoint
+returned HTTP 403 for the classic access token on this project, which was the
+original cause of the "database query API returned HTTP 403" failure; the direct
+Postgres connection avoids that endpoint entirely.
+
+Read-only transaction
 ---------------------
-The token is read ONLY from SUPABASE_DATABASE_READ_TOKEN, a token scoped to
-read the database (the `database_read` scope). It is used only in the
-Authorization header and is never printed. This script never reads or falls
-back to SUPABASE_ACCESS_TOKEN: that token is reserved for the CLI deploy and
-list operations and is, on this project, forbidden (HTTP 403) from the
-Management API database query endpoints, which was the original cause of the
-"database query API returned HTTP 403" failure.
+Every psql invocation runs its SELECT inside
 
-Read-only role reach (verified against the hosted project)
-----------------------------------------------------------
-The read-only query endpoint runs each statement as the
-`supabase_read_only_user` Postgres role inside a read-only transaction. On
-this project that role has USAGE on `public` and on `supabase_migrations`,
-SELECT on the queried tables, and BYPASSRLS, so the counts and the migration
-ledger max version are complete and unfiltered. The `cron` schema is not
-installed, so `to_regclass('cron.job')` is null and the cron check is
-satisfied by the schema's absence. If a future project state makes the
-migration ledger or the cron catalogue unreadable to the read-only role, the
-affected check is reported as UNVERIFIED rather than silently passing.
+  BEGIN;
+  SET TRANSACTION READ ONLY;
+  SET LOCAL statement_timeout = '30s';
+  SELECT ...;
+  ROLLBACK;
 
-Every statement sent is SELECT-only; a guard rejects anything else before it
-is transmitted. For local testing pass --sample <file> holding the gathered
-results object.
+so nothing can be committed. psql runs with --no-psqlrc and ON_ERROR_STOP=1,
+emits machine-readable JSON (tuples-only, unaligned), connects with
+PGSSLMODE=require and a bounded connection timeout, and a guard rejects any
+statement that is not a single read-only SELECT before it is ever sent.
 
 Usage:
-  verify_no_residue.py --ref <project_ref>
+  verify_no_residue.py
   verify_no_residue.py --sample <results.json>
 """
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
-import urllib.error
-import urllib.request
+import urllib.parse
 
-API_BASE = "https://api.supabase.com"
 EXPECTED_LAST_MIGRATION = "20260722064502"  # 0039_public_share_read
-TOKEN_ENV = "SUPABASE_DATABASE_READ_TOKEN"
+DB_URL_ENV = "SUPABASE_DB_URL"
 
-RESIDUE_SQL = """
-select
-  (select count(*) from public.clubs where public_sharing_enabled)          as clubs_enabled,
-  (select count(*) from public.content_shares)                              as shares,
-  (select count(*) from public.content_share_dependencies)                  as deps,
-  (select count(*) from public.audit_events where entity_type='content_share') as share_audit,
-  (select count(*) from public.drills where rights <> 'internal_only')      as non_internal_drills,
-  (select count(*) from public.media  where rights <> 'internal_only')      as non_internal_media,
-  (select count(*) from public.drills)                                      as total_drills,
-  (select count(*) from public.media)                                       as total_media,
-  (select max(version) from supabase_migrations.schema_migrations)          as last_migration
-"""
+# Bounded connection timeout (seconds) and an overall subprocess wall-clock cap.
+# statement_timeout below bounds the query itself; these bound the connect and
+# the process so a wedged network can never hang the job.
+CONNECT_TIMEOUT_SECONDS = 15
+SUBPROCESS_TIMEOUT_SECONDS = 60
 
-HAS_CRON_SQL = "select (to_regclass('cron.job') is not null) as has_cron"
-CRON_JOBS_SQL = "select count(*) as n from cron.job where command ilike '%content_share%'"
+# The read-only preamble every statement runs under. No COMMIT ever appears; the
+# transaction is always discarded with ROLLBACK.
+READ_ONLY_PREAMBLE = (
+    "begin;\n"
+    "set transaction read only;\n"
+    "set local statement_timeout = '30s';\n"
+)
+READ_ONLY_EPILOGUE = "rollback;\n"
 
-# Statements that would mutate data or schema. The verifier is read only; this
-# guard is defence in depth so a future edit cannot smuggle a write through the
-# read-only endpoint (which would reject it anyway, but fail late).
+# All eight residue facts plus the cron-schema probe, emitted as one JSON object.
+# count(*) renders as a JSON number; max(version) is text and renders as a JSON
+# string; has_cron is a JSON boolean.
+RESIDUE_SELECT = """select json_build_object(
+  'clubs_enabled',       (select count(*) from public.clubs where public_sharing_enabled),
+  'shares',              (select count(*) from public.content_shares),
+  'deps',                (select count(*) from public.content_share_dependencies),
+  'share_audit',         (select count(*) from public.audit_events where entity_type='content_share'),
+  'non_internal_drills', (select count(*) from public.drills where rights <> 'internal_only'),
+  'non_internal_media',  (select count(*) from public.media  where rights <> 'internal_only'),
+  'total_drills',        (select count(*) from public.drills),
+  'total_media',         (select count(*) from public.media),
+  'last_migration',      (select max(version) from supabase_migrations.schema_migrations),
+  'has_cron',            (to_regclass('cron.job') is not null)
+)"""
+
+# Only run when has_cron is true; referencing cron.job when the schema is absent
+# would error at parse time, so the schema's presence is proven first.
+CRON_JOBS_SELECT = (
+    "select json_build_object('n', count(*)) "
+    "from cron.job where command ilike '%content_share%'"
+)
+
+# Statements that would mutate data, schema, permissions or the session role, or
+# end the transaction with a commit. The verifier is read only; this guard is
+# defence in depth so a future edit cannot smuggle a write past the read-only
+# transaction (which would reject it anyway, but fail late).
 _FORBIDDEN_TOKENS = (
-    "insert", "update", "delete", "drop", "alter", "create", "truncate",
-    "grant", "revoke", "comment", "merge", "call", "do ", "copy",
+    "insert", "update", "delete", "merge", "alter", "drop", "create",
+    "truncate", "grant", "revoke", "call", "copy", "do ", "commit",
+    "set role", "reset role", "set session authorization",
 )
 
 
-def get_token() -> str:
-    """Return the database read token, or exit with a precise message.
+def get_db_url() -> str:
+    """Return the Postgres connection string, or exit with a precise message.
 
-    Never reads SUPABASE_ACCESS_TOKEN. The database query endpoints require a
-    token with the database_read scope; the classic access token used for the
-    CLI is a different credential and is intentionally not consulted here.
+    Reads ONLY SUPABASE_DB_URL. Never reads SUPABASE_DATABASE_READ_TOKEN or
+    SUPABASE_ACCESS_TOKEN; those credentials are not consulted for SQL.
     """
-    token = os.environ.get(TOKEN_ENV, "")
-    if not token:
+    url = os.environ.get(DB_URL_ENV, "")
+    if not url:
         raise SystemExit(
-            f"FAIL: {TOKEN_ENV} is not set. This verifier requires a token "
-            "with the database_read scope; it never falls back to "
-            "SUPABASE_ACCESS_TOKEN."
+            f"FAIL: {DB_URL_ENV} is not set. This verifier connects to Postgres "
+            "directly with psql; it never falls back to a Supabase API token."
         )
-    return token
+    return url
+
+
+def redact(text: str, db_url: str) -> str:
+    """Remove the connection string and its password from a string.
+
+    Applied to any psql stderr before it is surfaced, so neither the URL nor the
+    database password can reach the log on a failure path.
+    """
+    if not text:
+        return ""
+    out = text.replace(db_url, "[redacted]")
+    try:
+        parsed = urllib.parse.urlsplit(db_url)
+        if parsed.password:
+            out = out.replace(parsed.password, "[redacted]")
+        if parsed.username:
+            out = out.replace(parsed.username, "[redacted]")
+    except ValueError:
+        pass
+    return out
 
 
 def assert_select_only(sql: str) -> None:
@@ -118,82 +157,131 @@ def assert_select_only(sql: str) -> None:
             raise SystemExit(f"FAIL: refusing statement containing '{bad.strip()}'")
 
 
-def http_error_message(code: int) -> str:
-    """A precise, secret-safe message per HTTP status. Never includes a body."""
-    if code == 401:
-        return (
-            "FAIL: database query API returned HTTP 401 (unauthorized). The "
-            f"{TOKEN_ENV} value is missing or invalid; rotate the secret and "
-            "confirm it is a current Supabase token."
-        )
-    if code == 403:
-        return (
-            "FAIL: database query API returned HTTP 403 (forbidden). The "
-            f"{TOKEN_ENV} token lacks the database_read scope or has no access "
-            "to this project. Grant database_read and project membership; do "
-            "not substitute SUPABASE_ACCESS_TOKEN."
-        )
-    if code == 404:
-        return (
-            "FAIL: database query API returned HTTP 404. Check the project ref "
-            "and that the read-only query endpoint is available."
-        )
-    return f"FAIL: database query API returned HTTP {code}"
+def build_script(select_sql: str) -> str:
+    """Wrap one SELECT in the read-only, rollback-only transaction.
 
-
-def run_query(ref: str, sql: str, opener=None) -> list[dict]:
-    """POST one SELECT to the read-only query endpoint and return its rows.
-
-    opener is injectable for tests; it defaults to urllib.request.urlopen.
+    The inner statement is validated first, then framed by the preamble and a
+    ROLLBACK epilogue. The result never contains COMMIT.
     """
-    assert_select_only(sql)
-    token = get_token()
-    if opener is None:
-        opener = urllib.request.urlopen
-    url = f"{API_BASE}/v1/projects/{ref}/database/query/read-only"
-    payload = json.dumps({"query": sql}).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-    )
+    assert_select_only(select_sql)
+    script = f"{READ_ONLY_PREAMBLE}{select_sql};\n{READ_ONLY_EPILOGUE}"
+    # Defence in depth: the assembled script must never commit and must roll back.
+    if "commit" in script.lower():
+        raise SystemExit("FAIL: refusing a script that contains COMMIT")
+    if "rollback" not in script.lower():
+        raise SystemExit("FAIL: refusing a script that does not ROLLBACK")
+    return script
+
+
+def classify_error(returncode: int, stderr: str, db_url: str) -> str:
+    """A precise, secret-safe FAIL message for a psql failure.
+
+    Never returns the raw stderr; the connection string and password are
+    redacted before a bounded excerpt is included for diagnosis.
+    """
+    low = (stderr or "").lower()
+    excerpt = redact((stderr or "").strip().splitlines()[0] if stderr.strip() else "", db_url)
+    if "authentication failed" in low or "password authentication" in low:
+        return (
+            "FAIL: authentication failed connecting to Postgres. The "
+            f"{DB_URL_ENV} password is wrong or the role is not permitted. "
+            f"({excerpt})"
+        )
+    if any(s in low for s in (
+        "could not connect", "could not translate host", "connection refused",
+        "no route to host", "timeout expired", "server closed the connection",
+        "could not receive data", "connection timed out",
+    )):
+        return f"FAIL: could not connect to Postgres. ({excerpt})"
+    if "canceling statement due to statement timeout" in low:
+        return f"FAIL: residue query exceeded statement_timeout. ({excerpt})"
+    if "permission denied" in low or "does not exist" in low:
+        return (
+            "FAIL: a queried schema or table is unreadable to this role. "
+            f"({excerpt})"
+        )
+    return f"FAIL: psql exited {returncode}. ({excerpt})"
+
+
+def _default_runner(script: str, db_url: str) -> tuple[int, str, str]:
+    """Run one read-only script through psql and return (rc, stdout, stderr).
+
+    Injectable in tests. --no-psqlrc ignores any user startup file; ON_ERROR_STOP
+    aborts on the first error; -q -t -A yield a single machine-readable JSON line
+    with no command tags. PGSSLMODE=require forces TLS; PGCONNECT_TIMEOUT bounds
+    the connect. The URL is passed as the connection argument and is never echoed.
+    """
+    cmd = [
+        "psql",
+        "--no-psqlrc",
+        "--set", "ON_ERROR_STOP=1",
+        "-q",            # quiet: no command tags (BEGIN/SET/ROLLBACK) on stdout
+        "-t",            # tuples only
+        "-A",            # unaligned
+        "-d", db_url,
+        "-f", "-",       # read the script from stdin
+    ]
+    env = dict(os.environ)
+    env["PGSSLMODE"] = "require"
+    env["PGCONNECT_TIMEOUT"] = str(CONNECT_TIMEOUT_SECONDS)
     try:
-        with opener(req, timeout=30) as resp:
-            body = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        # exc carries the response body; it is deliberately never read or
-        # surfaced, so neither the token nor any row data can leak on error.
-        raise SystemExit(http_error_message(exc.code))
-    except urllib.error.URLError as exc:
-        raise SystemExit(f"FAIL: could not reach database query API: {exc.reason}")
+        proc = subprocess.run(
+            cmd,
+            input=script,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError:
+        raise SystemExit("FAIL: psql is not installed on the runner")
+    except subprocess.TimeoutExpired:
+        raise SystemExit("FAIL: psql timed out connecting to or querying Postgres")
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def parse_json_output(stdout: str) -> object:
+    """Parse the single JSON value psql emitted, or fail closed."""
+    text = (stdout or "").strip()
+    if not text:
+        raise SystemExit("FAIL: psql returned no output")
     try:
-        doc = json.loads(body)
+        return json.loads(text)
     except json.JSONDecodeError:
-        raise SystemExit("FAIL: database query API returned a non-JSON response")
-    if isinstance(doc, dict) and "result" in doc:
-        doc = doc["result"]
-    if not isinstance(doc, list) or (doc and not isinstance(doc[0], dict)):
-        raise SystemExit("FAIL: unexpected database query response shape")
-    return doc
+        # Tolerate a stray line (e.g. an unexpected NOTICE) by finding the JSON.
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("{") or line.startswith("["):
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+        raise SystemExit("FAIL: psql returned malformed (non-JSON) output")
 
 
-def gather(ref: str, opener=None) -> dict:
-    residue_rows = run_query(ref, RESIDUE_SQL, opener)
-    if not residue_rows:
-        raise SystemExit("FAIL: residue query returned no rows")
-    residue = residue_rows[0]
-    has_cron_rows = run_query(ref, HAS_CRON_SQL, opener)
-    if not has_cron_rows:
-        raise SystemExit("FAIL: cron probe returned no rows")
-    has_cron = bool(has_cron_rows[0].get("has_cron"))
+def run_read_only_select(select_sql: str, runner=None) -> object:
+    """Validate, wrap, run one SELECT read-only, and return its parsed JSON."""
+    script = build_script(select_sql)
+    db_url = get_db_url()
+    if runner is None:
+        runner = _default_runner
+    rc, stdout, stderr = runner(script, db_url)
+    if rc != 0:
+        raise SystemExit(classify_error(rc, stderr, db_url))
+    return parse_json_output(stdout)
+
+
+def gather(runner=None) -> dict:
+    residue = run_read_only_select(RESIDUE_SELECT, runner)
+    if not isinstance(residue, dict):
+        raise SystemExit("FAIL: residue query returned an unexpected shape")
+    has_cron = bool(residue.get("has_cron"))
     cron_jobs = 0
     if has_cron:
-        cron_rows = run_query(ref, CRON_JOBS_SQL, opener)
-        cron_jobs = int(cron_rows[0].get("n", 0)) if cron_rows else 0
+        cron = run_read_only_select(CRON_JOBS_SELECT, runner)
+        if not isinstance(cron, dict):
+            raise SystemExit("FAIL: cron probe returned an unexpected shape")
+        cron_jobs = int(cron.get("n", 0))
     return {"residue": residue, "has_cron": has_cron, "cron_jobs": cron_jobs}
 
 
@@ -228,14 +316,10 @@ def assert_clean(data: dict) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    ref = ""
     sample = ""
     i = 1
     while i < len(argv):
-        if argv[i] == "--ref" and i + 1 < len(argv):
-            ref = argv[i + 1]
-            i += 2
-        elif argv[i] == "--sample" and i + 1 < len(argv):
+        if argv[i] == "--sample" and i + 1 < len(argv):
             sample = argv[i + 1]
             i += 2
         else:
@@ -246,7 +330,7 @@ def main(argv: list[str]) -> int:
         with open(sample, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     else:
-        data = gather(ref)
+        data = gather()
 
     r = data.get("residue", {})
     print("Hosted state after deploy:")

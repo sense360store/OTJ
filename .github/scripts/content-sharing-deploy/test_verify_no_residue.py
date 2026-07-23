@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Tests for verify_no_residue.py.
 
-Runs offline with the standard library only:
+Runs offline with the standard library only, mocking the psql runner so no
+network or database is touched:
 
     python3 .github/scripts/content-sharing-deploy/test_verify_no_residue.py
 
-Covers a clean result, dirty residue, the token model (required, no fallback
-to SUPABASE_ACCESS_TOKEN), the HTTP 401/403 messages, malformed responses,
-secret safety, and the SELECT-only guard.
+Covers a clean result, every dirty residue condition, a changed migration, a
+cron job present, a missing DB URL, authentication and connection failure,
+malformed output, the read-only transaction commands, the forbidden-SQL guard,
+the absence of COMMIT, no DB URL or password leakage, and no fallback to either
+Supabase API token.
 """
 from __future__ import annotations
 
@@ -17,12 +20,13 @@ import json
 import os
 import tempfile
 import unittest
-import urllib.error
 
 import verify_no_residue as vr
 
-READ_TOKEN_SENTINEL = "sbp_READ_TOKEN_SHOULD_NEVER_BE_PRINTED_000"
+DB_URL_SENTINEL = "postgresql://postgres.abcd:S3cretPass@aws-0-eu.pooler.supabase.com:5432/postgres"
+DB_PASSWORD_SENTINEL = "S3cretPass"
 ACCESS_TOKEN_SENTINEL = "sbp_ACCESS_TOKEN_MUST_NEVER_BE_USED_111"
+READ_TOKEN_SENTINEL = "sbp_READ_TOKEN_MUST_NEVER_BE_USED_222"
 
 CLEAN_RESIDUE = {
     "clubs_enabled": 0,
@@ -34,87 +38,57 @@ CLEAN_RESIDUE = {
     "total_drills": 103,
     "total_media": 111,
     "last_migration": vr.EXPECTED_LAST_MIGRATION,
+    "has_cron": False,
 }
 
 
-class FakeResponse:
-    def __init__(self, body: str):
-        self._body = body.encode("utf-8")
+def make_runner(residue=None, cron_n=None, rc=0, stderr="", stdout=None):
+    """Return a fake psql runner and record the scripts it was handed.
 
-    def read(self):
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
-def make_opener(by_sql):
-    """Return an opener that answers each POST from a SQL-keyed dict.
-
-    Keys are matched by a substring of the request body's query. Records the
-    requests it saw on the returned function's `.seen` list.
+    Answers the residue script with `residue` and the cron script with
+    `{"n": cron_n}`. When `rc` is non-zero the runner returns it with `stderr`.
+    A literal `stdout` overrides JSON generation (for malformed-output tests).
     """
-    captured = []
+    residue = residue if residue is not None else dict(CLEAN_RESIDUE)
+    seen = []
 
-    def opener(req, timeout=30):
-        captured.append(req)
-        body = req.data.decode("utf-8")
-        query = json.loads(body)["query"]
-        for needle, rows in by_sql.items():
-            if needle in query:
-                return FakeResponse(json.dumps(rows))
-        return FakeResponse(json.dumps([]))
+    def runner(script, db_url):
+        seen.append({"script": script, "db_url": db_url})
+        if rc != 0:
+            return rc, "", stderr
+        if stdout is not None:
+            return 0, stdout, ""
+        if "content_shares" in script:
+            return 0, json.dumps(residue) + "\n", ""
+        if "cron.job" in script:
+            return 0, json.dumps({"n": cron_n or 0}) + "\n", ""
+        return 0, "{}\n", ""
 
-    opener.seen = captured
-    return opener
-
-
-def clean_opener(residue=None):
-    residue = residue or CLEAN_RESIDUE
-    return make_opener({
-        "content_shares": [residue],          # the RESIDUE_SQL block
-        "to_regclass('cron.job')": [{"has_cron": False}],
-    })
+    runner.seen = seen
+    return runner
 
 
 @contextlib.contextmanager
-def read_token(value=READ_TOKEN_SENTINEL):
-    prior = os.environ.get(vr.TOKEN_ENV)
+def db_url(value=DB_URL_SENTINEL):
+    prior = os.environ.get(vr.DB_URL_ENV)
     if value is None:
-        os.environ.pop(vr.TOKEN_ENV, None)
+        os.environ.pop(vr.DB_URL_ENV, None)
     else:
-        os.environ[vr.TOKEN_ENV] = value
+        os.environ[vr.DB_URL_ENV] = value
     try:
         yield
     finally:
         if prior is None:
-            os.environ.pop(vr.TOKEN_ENV, None)
+            os.environ.pop(vr.DB_URL_ENV, None)
         else:
-            os.environ[vr.TOKEN_ENV] = prior
+            os.environ[vr.DB_URL_ENV] = prior
 
 
 class TestCleanResult(unittest.TestCase):
     def test_gather_clean_passes(self):
-        with read_token():
-            data = vr.gather("someref", opener=clean_opener())
+        with db_url():
+            data = vr.gather(runner=make_runner())
         self.assertEqual(vr.assert_clean(data), [])
-
-    def test_endpoint_is_read_only_variant(self):
-        opener = clean_opener()
-        with read_token():
-            vr.gather("myref", opener=opener)
-        for req in opener.seen:
-            self.assertTrue(
-                req.full_url.endswith("/projects/myref/database/query/read-only"),
-                req.full_url,
-            )
-            self.assertEqual(req.get_method(), "POST")
-            self.assertEqual(
-                req.headers.get("Authorization"), f"Bearer {READ_TOKEN_SENTINEL}"
-            )
 
     def test_sample_file_clean_passes(self):
         data = {"residue": CLEAN_RESIDUE, "has_cron": False, "cron_jobs": 0}
@@ -131,19 +105,58 @@ class TestCleanResult(unittest.TestCase):
         self.assertIn("PASS", buf.getvalue())
 
 
-class TestDirtyResidue(unittest.TestCase):
-    def test_share_present_fails(self):
-        dirty = dict(CLEAN_RESIDUE, shares=1)
-        with read_token():
-            data = vr.gather("ref", opener=clean_opener(dirty))
-        errors = vr.assert_clean(data)
-        self.assertTrue(any("shares expected 0, got 1" in e for e in errors), errors)
+class TestReadOnlyTransaction(unittest.TestCase):
+    def test_script_has_read_only_commands(self):
+        script = vr.build_script(vr.RESIDUE_SELECT).lower()
+        self.assertIn("begin;", script)
+        self.assertIn("set transaction read only;", script)
+        self.assertIn("set local statement_timeout = '30s';", script)
+        self.assertIn("rollback;", script)
 
+    def test_script_never_commits(self):
+        for select in (vr.RESIDUE_SELECT, vr.CRON_JOBS_SELECT):
+            self.assertNotIn("commit", vr.build_script(select).lower())
+
+    def test_runner_receives_read_only_script(self):
+        runner = make_runner()
+        with db_url():
+            vr.gather(runner=runner)
+        for call in runner.seen:
+            s = call["script"].lower()
+            self.assertIn("set transaction read only", s)
+            self.assertIn("rollback;", s)
+            self.assertNotIn("commit", s)
+
+
+class TestDirtyResidue(unittest.TestCase):
     def test_enabled_club_fails(self):
         dirty = dict(CLEAN_RESIDUE, clubs_enabled=2)
         self.assertTrue(
             any("clubs_enabled" in e for e in vr.assert_clean({"residue": dirty}))
         )
+
+    def test_share_present_fails(self):
+        dirty = dict(CLEAN_RESIDUE, shares=1)
+        with db_url():
+            data = vr.gather(runner=make_runner(residue=dirty))
+        errors = vr.assert_clean(data)
+        self.assertTrue(any("shares expected 0, got 1" in e for e in errors), errors)
+
+    def test_dependencies_present_fails(self):
+        dirty = dict(CLEAN_RESIDUE, deps=5)
+        self.assertTrue(any("deps" in e for e in vr.assert_clean({"residue": dirty})))
+
+    def test_share_audit_present_fails(self):
+        dirty = dict(CLEAN_RESIDUE, share_audit=7)
+        self.assertTrue(
+            any("share_audit" in e for e in vr.assert_clean({"residue": dirty}))
+        )
+
+    def test_non_internal_content_fails(self):
+        dirty = dict(CLEAN_RESIDUE, non_internal_drills=3, non_internal_media=4)
+        errors = vr.assert_clean({"residue": dirty})
+        self.assertTrue(any("non_internal_drills" in e for e in errors))
+        self.assertTrue(any("non_internal_media" in e for e in errors))
 
     def test_migration_ledger_moved_fails(self):
         dirty = dict(CLEAN_RESIDUE, last_migration="20260722070000")
@@ -152,151 +165,163 @@ class TestDirtyResidue(unittest.TestCase):
         )
 
     def test_cron_job_present_fails(self):
-        opener = make_opener({
-            "content_shares": [CLEAN_RESIDUE],
-            "to_regclass('cron.job')": [{"has_cron": True}],
-            "command ilike": [{"n": 1}],
-        })
-        with read_token():
-            data = vr.gather("ref", opener=opener)
+        cron_residue = dict(CLEAN_RESIDUE, has_cron=True)
+        runner = make_runner(residue=cron_residue, cron_n=1)
+        with db_url():
+            data = vr.gather(runner=runner)
         self.assertEqual(data["cron_jobs"], 1)
         self.assertTrue(any("cron job exists" in e for e in vr.assert_clean(data)))
 
-    def test_non_internal_content_fails(self):
-        dirty = dict(CLEAN_RESIDUE, non_internal_drills=3, non_internal_media=4)
-        errors = vr.assert_clean({"residue": dirty})
-        self.assertTrue(any("non_internal_drills" in e for e in errors))
-        self.assertTrue(any("non_internal_media" in e for e in errors))
+    def test_cron_schema_absent_passes(self):
+        # has_cron false: the cron count query must not run at all.
+        runner = make_runner()
+        with db_url():
+            data = vr.gather(runner=runner)
+        self.assertEqual(data["cron_jobs"], 0)
+        # The cron-count query (the only one that reads from cron.job) never runs.
+        self.assertFalse(any("content_share%" in c["script"] for c in runner.seen))
 
 
-class TestTokenModel(unittest.TestCase):
-    def test_missing_token_fails_clearly(self):
-        with read_token(None):
+class TestDbUrlModel(unittest.TestCase):
+    def test_missing_db_url_fails_clearly(self):
+        with db_url(None):
             with self.assertRaises(SystemExit) as ctx:
-                vr.get_token()
+                vr.get_db_url()
         msg = str(ctx.exception.code)
-        self.assertIn(vr.TOKEN_ENV, msg)
+        self.assertIn(vr.DB_URL_ENV, msg)
         self.assertIn("never falls back", msg)
 
-    def test_no_fallback_to_access_token(self):
-        # ACCESS token present, READ token absent -> must still fail.
-        prior = os.environ.get("SUPABASE_ACCESS_TOKEN")
-        os.environ["SUPABASE_ACCESS_TOKEN"] = ACCESS_TOKEN_SENTINEL
-        try:
-            with read_token(None):
-                with self.assertRaises(SystemExit) as ctx:
-                    vr.run_query("ref", vr.HAS_CRON_SQL, opener=clean_opener())
-        finally:
-            if prior is None:
-                os.environ.pop("SUPABASE_ACCESS_TOKEN", None)
-            else:
-                os.environ["SUPABASE_ACCESS_TOKEN"] = prior
-        self.assertNotIn(ACCESS_TOKEN_SENTINEL, str(ctx.exception.code))
-        self.assertIn(vr.TOKEN_ENV, str(ctx.exception.code))
+    def test_gather_without_db_url_fails(self):
+        with db_url(None):
+            with self.assertRaises(SystemExit) as ctx:
+                vr.gather(runner=make_runner())
+        self.assertIn(vr.DB_URL_ENV, str(ctx.exception.code))
 
-    def test_source_never_reads_access_token_from_env(self):
-        # The name may appear in the docstring explaining the non-fallback, but
-        # it must never be looked up from the environment.
+    def test_no_fallback_to_api_tokens_in_source(self):
         import inspect
         src = inspect.getsource(vr)
-        self.assertNotIn('get("SUPABASE_ACCESS_TOKEN"', src)
-        self.assertNotIn('["SUPABASE_ACCESS_TOKEN"', src)
-        self.assertNotIn("getenv('SUPABASE_ACCESS_TOKEN'", src)
-        self.assertNotIn("getenv(\"SUPABASE_ACCESS_TOKEN\"", src)
+        for name in ("SUPABASE_ACCESS_TOKEN", "SUPABASE_DATABASE_READ_TOKEN"):
+            self.assertNotIn(f'get("{name}"', src)
+            self.assertNotIn(f'["{name}"', src)
+            self.assertNotIn(f"getenv('{name}'", src)
+            self.assertNotIn(f'getenv("{name}"', src)
+
+    def test_source_makes_no_management_api_call(self):
+        import inspect
+        src = inspect.getsource(vr).lower()
+        self.assertNotIn("database/query", src)
+        self.assertNotIn("api.supabase.com", src)
 
 
-class TestHttpErrors(unittest.TestCase):
-    def _raise(self, code, body=b'{"message":"x","token":"leaky"}'):
-        def opener(req, timeout=30):
-            raise urllib.error.HTTPError(
-                url=req.full_url, code=code, msg="e", hdrs=None, fp=io.BytesIO(body)
-            )
-        return opener
-
-    def test_401_message(self):
-        with read_token():
+class TestConnectionErrors(unittest.TestCase):
+    def test_auth_failure_fails_closed(self):
+        runner = make_runner(rc=2, stderr="psql: error: password authentication failed for user \"postgres\"")
+        with db_url():
             with self.assertRaises(SystemExit) as ctx:
-                vr.run_query("ref", vr.HAS_CRON_SQL, opener=self._raise(401))
+                vr.gather(runner=runner)
+        self.assertIn("authentication failed", str(ctx.exception.code).lower())
+
+    def test_connection_failure_fails_closed(self):
+        runner = make_runner(rc=2, stderr="psql: error: could not connect to server: Connection refused")
+        with db_url():
+            with self.assertRaises(SystemExit) as ctx:
+                vr.gather(runner=runner)
+        self.assertIn("could not connect", str(ctx.exception.code).lower())
+
+    def test_unreadable_table_fails_closed(self):
+        runner = make_runner(rc=2, stderr="ERROR:  permission denied for table drills")
+        with db_url():
+            with self.assertRaises(SystemExit) as ctx:
+                vr.gather(runner=runner)
+        self.assertIn("unreadable", str(ctx.exception.code).lower())
+
+    def test_error_never_leaks_url_or_password(self):
+        leaky = f"psql: error: connection to {DB_URL_SENTINEL} failed"
+        runner = make_runner(rc=2, stderr=leaky)
+        with db_url():
+            with self.assertRaises(SystemExit) as ctx:
+                vr.gather(runner=runner)
         msg = str(ctx.exception.code)
-        self.assertIn("401", msg)
-        self.assertIn("unauthorized", msg)
+        self.assertNotIn(DB_URL_SENTINEL, msg)
+        self.assertNotIn(DB_PASSWORD_SENTINEL, msg)
 
-    def test_403_message_mentions_scope_and_no_substitute(self):
-        with read_token():
+
+class TestMalformedOutput(unittest.TestCase):
+    def test_non_json_output_fails(self):
+        runner = make_runner(stdout="this is not json\n")
+        with db_url():
             with self.assertRaises(SystemExit) as ctx:
-                vr.run_query("ref", vr.HAS_CRON_SQL, opener=self._raise(403))
-        msg = str(ctx.exception.code)
-        self.assertIn("403", msg)
-        self.assertIn("database_read", msg)
-        self.assertNotEqual(vr.http_error_message(401), vr.http_error_message(403))
+                vr.gather(runner=runner)
+        self.assertIn("malformed", str(ctx.exception.code).lower())
 
-    def test_error_never_leaks_token_or_body(self):
-        with read_token():
+    def test_empty_output_fails(self):
+        runner = make_runner(stdout="")
+        with db_url():
             with self.assertRaises(SystemExit) as ctx:
-                vr.run_query("ref", vr.HAS_CRON_SQL, opener=self._raise(403))
-        msg = str(ctx.exception.code)
-        self.assertNotIn(READ_TOKEN_SENTINEL, msg)
-        self.assertNotIn("leaky", msg)
+                vr.gather(runner=runner)
+        self.assertIn("no output", str(ctx.exception.code).lower())
+
+    def test_missing_values_reported(self):
+        # A residue object missing counts reports them as dirty rather than passing.
+        runner = make_runner(residue={"last_migration": vr.EXPECTED_LAST_MIGRATION, "has_cron": False})
+        with db_url():
+            data = vr.gather(runner=runner)
+        errors = vr.assert_clean(data)
+        self.assertTrue(any("clubs_enabled" in e for e in errors))
 
 
-class TestMalformedResponse(unittest.TestCase):
-    def test_non_json_body_fails(self):
-        def opener(req, timeout=30):
-            return FakeResponse("this is not json")
-        with read_token():
-            with self.assertRaises(SystemExit) as ctx:
-                vr.run_query("ref", vr.HAS_CRON_SQL, opener=opener)
-        self.assertIn("non-JSON", str(ctx.exception.code))
-
-    def test_wrong_shape_fails(self):
-        def opener(req, timeout=30):
-            return FakeResponse(json.dumps({"message": "permission denied"}))
-        with read_token():
-            with self.assertRaises(SystemExit) as ctx:
-                vr.run_query("ref", vr.HAS_CRON_SQL, opener=opener)
-        self.assertIn("unexpected", str(ctx.exception.code))
-
-
-class TestSelectOnlyGuard(unittest.TestCase):
-    def test_shipped_queries_are_select_only(self):
-        for sql in (vr.RESIDUE_SQL, vr.HAS_CRON_SQL, vr.CRON_JOBS_SQL):
+class TestForbiddenSqlGuard(unittest.TestCase):
+    def test_shipped_selects_are_read_only(self):
+        for sql in (vr.RESIDUE_SELECT, vr.CRON_JOBS_SELECT):
             vr.assert_select_only(sql)  # must not raise
 
-    def test_write_statement_rejected(self):
+    def test_write_and_ddl_statements_rejected(self):
         for bad in (
             "delete from public.content_shares",
             "update public.clubs set public_sharing_enabled = true",
+            "insert into public.content_shares default values",
             "drop table public.drills",
+            "alter table public.media disable row level security",
+            "truncate public.drills",
+            "grant select on public.drills to anon",
+            "revoke select on public.drills from anon",
+            "create table x (id int)",
+            "merge into public.drills using x on true when matched then delete",
+            "call some_proc()",
+            "copy public.drills to stdout",
+            "do $$ begin end $$",
+            "commit",
+            "set role postgres",
             "select 1; drop table public.media",
         ):
             with self.assertRaises(SystemExit, msg=bad):
                 vr.assert_select_only(bad)
 
-    def test_guard_runs_before_network(self):
-        # A write must be rejected without ever invoking the opener.
-        def opener(req, timeout=30):
-            raise AssertionError("opener must not be called for a write")
-        with read_token():
+    def test_guard_runs_before_runner(self):
+        def runner(script, db_url):
+            raise AssertionError("runner must not be called for a write")
+        with db_url():
             with self.assertRaises(SystemExit):
-                vr.run_query("ref", "delete from public.drills", opener=opener)
+                vr.run_read_only_select("delete from public.drills", runner=runner)
 
 
 class TestNoSecretPrinted(unittest.TestCase):
-    def test_token_never_appears_in_output(self):
+    def test_url_never_appears_in_output(self):
         buf = io.StringIO()
-        with read_token():
-            data = vr.gather("ref", opener=clean_opener())
+        with db_url():
+            data = vr.gather(runner=make_runner())
         fd, path = tempfile.mkstemp(suffix=".json")
         with os.fdopen(fd, "w") as fh:
             json.dump(data, fh)
         try:
-            with read_token():
+            with db_url():
                 with contextlib.redirect_stdout(buf):
                     code = vr.main(["verify_no_residue.py", "--sample", path])
         finally:
             os.remove(path)
         self.assertEqual(code, 0, buf.getvalue())
-        self.assertNotIn(READ_TOKEN_SENTINEL, buf.getvalue())
+        self.assertNotIn(DB_URL_SENTINEL, buf.getvalue())
+        self.assertNotIn(DB_PASSWORD_SENTINEL, buf.getvalue())
 
 
 if __name__ == "__main__":
