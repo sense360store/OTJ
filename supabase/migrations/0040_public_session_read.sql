@@ -47,11 +47,138 @@
 -- slot against the live migration ledger before applying, never assume it from
 -- the highest file on disk.
 --
--- Additive and reversible. This migration recreates exactly one function
--- (read_public_share) with an unchanged signature and a single widened clause.
--- Rollback is a create-or-replace back to the 0039 body (the `<> 'drill'`
--- clause). It adds NO client grant, NO policy, NO anon or authenticated access
--- to any table, creates no schedule, and does NOT enable the kill switch.
+-- This migration also hardens the dependency resolver's board arm. In
+-- content_share_deps (0038) the board dep_exists was
+-- `(b.id is not null and bpr.club_id = p_club)`, which is SQL NULL (not false)
+-- when the board's creator profile has a null club_id (a reachable quarantined
+-- state). manage_content_share's `if not v_dep.dep_exists then raise` does not
+-- fire on NULL, so a session board whose creator is clubless would pass the
+-- RPC's aggregate eligibility instead of blocking, a latent fail-open in the
+-- authority that PR 3 is the first to exercise (a board is only ever a session
+-- dependency). The Edge Function and read_public_share already fail closed for
+-- this case, so it leaks nothing, but the RPC must be fail closed on its own.
+-- PART 1 recreates content_share_deps with that arm wrapped in coalesce(...,
+-- false); every other line is copied verbatim from 0038.
+--
+-- Additive and reversible. This migration recreates two functions with
+-- unchanged signatures: read_public_share (a widened kind clause and a
+-- corrected board arm) and content_share_deps (a fail-closed board dep_exists).
+-- Rollback is a create-or-replace back to the 0038/0039 bodies. It adds NO
+-- client grant, NO policy, NO anon or authenticated access to any table,
+-- creates no schedule, and does NOT enable the kill switch.
+-- =====================================================================
+
+-- =====================================================================
+-- PART 1: content_share_deps, board dep_exists made fail closed
+-- =====================================================================
+
+-- Copied verbatim from 0038 with a single change: the board arm's dep_exists is
+-- wrapped in coalesce(..., false) so a null-club board creator yields false (a
+-- blocked, missing dependency) rather than SQL NULL (which the RPC's
+-- `if not dep_exists` would skip, failing open). Every other branch is
+-- unchanged. SECURITY DEFINER, stable, private (no client EXECUTE).
+create or replace function public.content_share_deps(
+  p_kind      public.content_share_kind,
+  p_source_id uuid,
+  p_club      uuid
+)
+returns table (dep_kind text, dep_id uuid, dep_rights public.content_rights, dep_exists boolean)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  if p_kind = 'drill' then
+    -- The drill's own media, club scoped.
+    return query
+      select 'media'::text, d.media_id, m.rights, (m.id is not null)
+      from public.drills d
+      left join public.media m on m.id = d.media_id and m.club_id = p_club
+      where d.id = p_source_id and d.media_id is not null;
+
+  elsif p_kind = 'session' then
+    -- Nested drills from the activities jsonb (drill_id key; custom
+    -- activities carry a title and no drill_id and are skipped), club scoped.
+    return query
+      with acts as (
+        select distinct (a->>'drill_id')::uuid as drill_id
+        from public.sessions s, lateral jsonb_array_elements(s.activities) a
+        where s.id = p_source_id and nullif(a->>'drill_id', '') is not null
+      )
+      select 'drill'::text, acts.drill_id, d.rights, (d.id is not null)
+      from acts left join public.drills d on d.id = acts.drill_id and d.club_id = p_club;
+    -- The media of those nested (same club) drills, club scoped.
+    return query
+      with acts as (
+        select distinct (a->>'drill_id')::uuid as drill_id
+        from public.sessions s, lateral jsonb_array_elements(s.activities) a
+        where s.id = p_source_id and nullif(a->>'drill_id', '') is not null
+      ),
+      dm as (
+        select distinct d.media_id
+        from acts join public.drills d on d.id = acts.drill_id and d.club_id = p_club
+        where d.media_id is not null
+      )
+      select 'media'::text, dm.media_id, m.rights, (m.id is not null)
+      from dm left join public.media m on m.id = dm.media_id and m.club_id = p_club;
+    -- The attached board (shape and numbers only; no rights class), club scoped
+    -- via its creator's profile. dep_exists coalesced to false so a null-club
+    -- creator blocks (fail closed) rather than yielding SQL NULL.
+    return query
+      select 'board'::text, s.board_id, null::public.content_rights,
+             coalesce(b.id is not null and bpr.club_id = p_club, false)
+      from public.sessions s
+      left join public.boards b on b.id = s.board_id
+      left join public.profiles bpr on bpr.id = b.created_by
+      where s.id = p_source_id and s.board_id is not null;
+
+  elsif p_kind = 'programme' then
+    -- Nested templates (programme weeks), club scoped.
+    return query
+      select 'template'::text, t.id, t.rights, true
+      from public.templates t
+      where t.programme_id = p_source_id and t.club_id = p_club;
+    -- Nested drills across those (same club) templates, club scoped.
+    return query
+      with td as (
+        select distinct (a->>'drill_id')::uuid as drill_id
+        from public.templates t, lateral jsonb_array_elements(t.activities) a
+        where t.programme_id = p_source_id and t.club_id = p_club and nullif(a->>'drill_id', '') is not null
+      )
+      select 'drill'::text, td.drill_id, d.rights, (d.id is not null)
+      from td left join public.drills d on d.id = td.drill_id and d.club_id = p_club;
+    -- The media of those drills, club scoped.
+    return query
+      with td as (
+        select distinct (a->>'drill_id')::uuid as drill_id
+        from public.templates t, lateral jsonb_array_elements(t.activities) a
+        where t.programme_id = p_source_id and t.club_id = p_club and nullif(a->>'drill_id', '') is not null
+      ),
+      dm as (
+        select distinct d.media_id
+        from td join public.drills d on d.id = td.drill_id and d.club_id = p_club
+        where d.media_id is not null
+      )
+      select 'media'::text, dm.media_id, m.rights, (m.id is not null)
+      from dm left join public.media m on m.id = dm.media_id and m.club_id = p_club;
+    -- The programme's attached PDF (treated as media), club scoped.
+    return query
+      select 'media'::text, p.pdf_media_id, m.rights, (m.id is not null)
+      from public.programmes p
+      left join public.media m on m.id = p.pdf_media_id and m.club_id = p_club
+      where p.id = p_source_id and p.pdf_media_id is not null;
+  end if;
+end;
+$$;
+
+comment on function public.content_share_deps(public.content_share_kind, uuid, uuid) is
+  $$The nested dependency set (drills, templates, media, boards) a share source projects, each club scoped to p_club (the source's club) so a cross club nested id read from the free form activities jsonb resolves as a missing dependency and blocks the share. The board arm's dep_exists is coalesced to false so a null-club board creator fails closed. Used by manage_content_share to evaluate aggregate eligibility (fail closed on a missing, cross club or internal_only item) and to write the dependency rows. Private (no client EXECUTE). See 0040_public_session_read.sql (board fail-closed fix) and 0038_content_sharing.sql.$$;
+
+revoke execute on function public.content_share_deps(public.content_share_kind, uuid, uuid) from public, anon, authenticated;
+
+-- =====================================================================
+-- PART 2: read_public_share, extended to drill and session shares
 -- =====================================================================
 
 -- read_public_share, extended to render both drill and session shares. The
@@ -212,5 +339,10 @@ begin
   end if;
   if not has_function_privilege('service_role', 'public.read_public_share(uuid, bytea)', 'EXECUTE') then
     raise exception '0040 verify: read_public_share must be executable by service_role';
+  end if;
+  -- content_share_deps stays private (no client EXECUTE) after the recreate.
+  if has_function_privilege('anon', 'public.content_share_deps(public.content_share_kind, uuid, uuid)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.content_share_deps(public.content_share_kind, uuid, uuid)', 'EXECUTE') then
+    raise exception '0040 verify: content_share_deps must not be executable by anon or authenticated';
   end if;
 end $$;

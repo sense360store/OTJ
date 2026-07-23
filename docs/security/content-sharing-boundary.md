@@ -401,11 +401,20 @@ there is no generic renderer that could silently expose another source kind.
 - `public_link_only` media (for example a public YouTube link) is represented as
   an external link only, never a downloadable stored binary. A `public_link_only`
   stored object with no external link is rendered as caption only.
-- Honest residual (unchanged from the roadmap): a Supabase signed URL embeds the
-  object path (`{club_id}/{uuid}-file`) in cleartext, so the anonymous viewer
-  receives the club and object uuids. This is a low-impact cross-share
-  correlation handle, not a name or human identifier; copying/content-addressing
-  media to remove it is deferred past v1.
+- Honest residual (unchanged from the roadmap, sharpened in PR 3): a Supabase
+  signed URL embeds the object path (`{club_id}/{uuid}-{filename}`) in cleartext,
+  so the anonymous viewer receives the club and object uuids AND the original
+  uploaded file name (lowercased, non-word runs replaced, but otherwise intact).
+  The uuids are a low-impact correlation handle, but the file name can itself
+  carry a human identifier: a coach who uploads a file named after a child leaks
+  that name through the link, even though the name never appears as text in the
+  preview and is not covered by the caption scrub. The v1 mitigation is the
+  coach-facing warning ("The name of an uploaded file can also be seen by anyone
+  who opens it, so replace a file whose name includes a child's name before
+  sharing", `RIGHTS_WARNING`); the full fix (copying or content-addressing media
+  to a name-free path at share time) is deferred past v1 and is the same deferred
+  work the roadmap named in sections 8.2 and 11.5. PR 3 broadens the exposure
+  (one session pools media from several drills), so the warning matters more.
 
 ## 14. Preview flow
 

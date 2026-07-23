@@ -466,6 +466,33 @@ Deno.test('a session with a non-object activity entry is blocked', () => {
   assert(e.blocked.includes('unsupported_item'))
 })
 
+Deno.test('a non-string drill_id is an unsupported item, never a silent custom activity', () => {
+  // Regression: a non-string drill_id must not be classified as a custom
+  // activity (which would report eligible while the RPC ::uuid cast crashed).
+  const bad = session({ activities: [{ phase: 'Warm-Up', drill_id: 123, duration: 10 }] as unknown as SessionRow['activities'] })
+  const e = evaluateSessionEligibility(bad, [drillA(), drillB()], [], null)
+  assert(!e.eligible)
+  assert(e.blocked.includes('unsupported_item'))
+  assertThrows(() => buildSessionSnapshot(bad, [drillA(), drillB()], [], null, AT))
+})
+
+Deno.test('a whitespace-padded drill_id is unsupported (kept in lockstep with the RPC uuid cast)', () => {
+  // A padded but otherwise valid uuid would crash the RPC's ::uuid cast, so it
+  // must be blocked as unsupported, not resolved to a drill nor reported missing.
+  const padded = session({ activities: [{ phase: 'Skill', drill_id: `  ${DRILL_A}  `, duration: 10 }] })
+  const e = evaluateSessionEligibility(padded, [drillA()], [], null)
+  assert(!e.eligible)
+  assert(e.blocked.includes('unsupported_item'))
+})
+
+Deno.test('an empty-string drill_id is a custom activity, not a drill or an unsupported item', () => {
+  const custom = session({ activities: [{ phase: 'Skill', drill_id: '', title: 'Free play', duration: 10 }] })
+  const s = buildSessionSnapshot(custom, [], [], null, AT)
+  assertEquals(s.referencedDrills, [])
+  assertEquals(s.activities[0].drillRef, null)
+  assertEquals(s.activities[0].customTitle, 'Free play')
+})
+
 // -------------------------------------------------------------------------
 // Session builder: shape, ordering, dedup, exclusions
 // -------------------------------------------------------------------------

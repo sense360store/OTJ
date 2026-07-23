@@ -171,8 +171,11 @@ export const TRANSIENT_BODY = 'Try again.'
 export const PUBLIC_PAGE_TITLE = 'Shared from Ossett Town Juniors'
 
 // Owner facing warnings and confirmation (roadmap sections 8.3, 12).
+// The file-name line addresses the honest residual that a shared media file's
+// own name is visible to a recipient through its link, even though it never
+// appears as text in the preview.
 export const RIGHTS_WARNING =
-  'Check the text you wrote, the notes, setup, area and any media captions. Remove any child’s name, and any team, venue or pitch name you would not want public, before you share this. Confirm this text and any diagrams are the club’s own work or cleared for public use, not copied from England Football or another source.'
+  'Check the text you wrote, the notes, setup, area and any media captions. Remove any child’s name, and any team, venue or pitch name you would not want public, before you share this. The name of an uploaded file can also be seen by anyone who opens it, so replace a file whose name includes a child’s name before sharing. Confirm this text and any diagrams are the club’s own work or cleared for public use, not copied from England Football or another source.'
 export const PUBLISH_CONFIRM =
   'Anyone you send this to can open it with no login, and can pass it on. It works until you turn it off or it expires.'
 export const ROTATE_WARNING = 'The old link stops working straight away.'

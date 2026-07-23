@@ -518,20 +518,29 @@ function parseActivities(activities: unknown): RawActivity[] {
   return Array.isArray(activities) ? (activities as RawActivity[]) : []
 }
 
-// A drill activity references a drill by a valid uuid; a custom activity has no
-// drill_id. Anything else (a non-object entry, or a drill_id that is not a
-// uuid) is an unsupported item and fails the whole share closed.
+// A drill activity references a drill by a CLEAN uuid; a custom activity has no
+// drill_id (absent, null or an empty string). Anything else is an unsupported
+// item and fails the whole share closed: a non-object entry, a non-string
+// drill_id, or a string that is not a clean uuid (whitespace padded or
+// malformed). This is deliberately exact rather than lenient (no trimming), so
+// it agrees with the RPC's dependency resolver, which casts the raw jsonb value
+// with `::uuid` and would crash on a padded or non-uuid value, and with the
+// Edge Function's own raw-uuid drill id collection. A tolerant classification
+// here would let preview report eligible while create then failed, or block a
+// value the RPC could actually share; keeping all three in lockstep prevents
+// both mismatches.
 function activityShape(
   raw: RawActivity | unknown,
 ): { kind: 'drill'; drillId: string } | { kind: 'custom' } | { kind: 'unsupported' } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unsupported' }
   const a = raw as RawActivity
-  const drillIdRaw = typeof a.drill_id === 'string' ? a.drill_id.trim() : ''
-  if (drillIdRaw.length > 0) {
-    if (!UUID_RE.test(drillIdRaw)) return { kind: 'unsupported' }
-    return { kind: 'drill', drillId: drillIdRaw }
-  }
-  return { kind: 'custom' }
+  const rawId = a.drill_id
+  // No drill reference (absent, null or empty): a custom activity.
+  if (rawId === undefined || rawId === null || rawId === '') return { kind: 'custom' }
+  // A drill reference is present: it must be a clean uuid string. A non-string,
+  // padded or malformed value is unsupported, never silently treated as custom.
+  if (typeof rawId !== 'string' || !UUID_RE.test(rawId)) return { kind: 'unsupported' }
+  return { kind: 'drill', drillId: rawId }
 }
 
 // Evaluate whether a session is publicly shareable. Fail closed aggregate block
