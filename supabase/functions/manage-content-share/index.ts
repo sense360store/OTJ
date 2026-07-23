@@ -1,13 +1,17 @@
 // OTJ Training Hub, manage-content-share Edge Function (Content Sharing PR 2).
 //
-// The authenticated management function for public DRILL shares. verify_jwt is
-// ON (the default; no config block). It authenticates the caller, makes an
-// early capability check under the caller's identity, builds the safe public
-// snapshot server side, and calls the service role lifecycle RPC
+// The authenticated management function for public DRILL and SESSION shares
+// (Content Sharing PR 3 adds sessions; PR 2 shipped drills). verify_jwt is ON
+// (the default; no config block). It authenticates the caller, makes an early
+// capability check under the caller's identity, builds the safe public snapshot
+// server side from the live rows, and calls the service role lifecycle RPC
 // (manage_content_share) which is the final authority and re-validates the
-// whole authorisation inside its transaction.
+// whole authorisation, the aggregate rights eligibility and the authoritative
+// server derived dependency set inside its transaction. The dependency graph is
+// NEVER taken from the client; the RPC re-derives it with content_share_deps.
 //
-// Actions: preview | create | refresh | rotate | revoke | status. Drill only.
+// Actions: preview | create | refresh | rotate | revoke | status. Drill or
+// session; a programme kind is refused (no public programme renderer yet).
 //
 // Hard rules honoured here:
 //   - the actor is derived from the verified JWT, never from the request body;
@@ -26,15 +30,20 @@
 
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
+  type BoardRow,
   buildDrillSnapshot,
+  buildSessionSnapshot,
   type ContentRights,
   type DrillRow,
   evaluateDrillEligibility,
+  evaluateSessionEligibility,
   generateSecret,
   type MediaRow,
+  type SessionRow,
   SNAPSHOT_VERSION,
   secretHashLiteral,
   toPublicProjection,
+  toPublicSessionProjection,
 } from '../_shared/share.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
@@ -47,7 +56,14 @@ const MAX_BODY_BYTES = 8 * 1024
 const DRILL_COLS =
   'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, media_id, rights'
 const MEDIA_COLS = 'id, club_id, name, type, storage_path, yt_url, embed_url, source_url, source_label, rights'
+const SESSION_COLS =
+  'id, club_id, name, focus, age_group, intentions, space, activities, board_id, source_url, source_label, rights'
+// The boards table has no club_id column; the club is resolved through the
+// creator's profile, exactly as content_share_deps does server side.
+const BOARD_COLS = 'id, formation, tokens, created_by'
 
+type Kind = 'drill' | 'session'
+const KINDS: Kind[] = ['drill', 'session']
 type Action = 'preview' | 'create' | 'refresh' | 'rotate' | 'revoke' | 'status'
 const ACTIONS: Action[] = ['preview', 'create', 'refresh', 'rotate', 'revoke', 'status']
 
@@ -102,9 +118,13 @@ function serve(): void {
     const noExpiry = body.noExpiry === true
     const expiresAt = typeof body.expiresAt === 'string' ? body.expiresAt : null
 
-    // Drill only in PR 2: any other kind is refused, never silently accepted.
-    if ((action === 'preview' || action === 'create') && kind !== 'drill') {
-      return reply(400, { error: 'Only drills can be shared publicly.' })
+    // Drills and sessions can be shared publicly (PR 3); any other kind is
+    // refused, never silently accepted. A programme has no public renderer yet.
+    if (
+      (action === 'preview' || action === 'create') &&
+      (typeof kind !== 'string' || !KINDS.includes(kind as Kind))
+    ) {
+      return reply(400, { error: 'Only drills and sessions can be shared publicly.' })
     }
     if (sourceId !== null && !UUID_RE.test(sourceId)) return reply(400, { error: 'Invalid source id.' })
     if (shareId !== null && !UUID_RE.test(shareId)) return reply(400, { error: 'Invalid share id.' })
@@ -133,12 +153,16 @@ function serve(): void {
       auth: { persistSession: false, autoRefreshToken: false },
     }) as unknown as AdminClient
 
+    // The validated share kind. preview/create already gated kind to
+    // {drill, session}; status carries it too and defaults to drill.
+    const shareKind: Kind = kind === 'session' ? 'session' : 'drill'
+
     try {
       switch (action) {
         case 'preview':
-          return await handlePreview(admin, caller.clubId, sourceId)
+          return await handlePreview(admin, caller.clubId, shareKind, sourceId)
         case 'create':
-          return await handleCreate(admin, caller, sourceId, idempotencyKey, expiresAt, noExpiry)
+          return await handleCreate(admin, caller, shareKind, sourceId, idempotencyKey, expiresAt, noExpiry)
         case 'refresh':
           return await handleRefresh(admin, caller, shareId)
         case 'rotate':
@@ -146,7 +170,7 @@ function serve(): void {
         case 'revoke':
           return await handleRevoke(admin, caller, shareId)
         case 'status':
-          return await handleStatus(admin, caller, sourceId, canManage === true)
+          return await handleStatus(admin, caller, shareKind, sourceId, canManage === true)
         default:
           return reply(400, { error: 'Unknown action.' })
       }
@@ -217,7 +241,86 @@ function rightsSummary(drill: DrillRow, media: MediaRow | null): Record<string, 
   }
 }
 
-async function handlePreview(admin: AdminClient, clubId: string, sourceId: string | null): Promise<Response> {
+// The rows a session share projects: the session, the club scoped drills its
+// activities reference, those drills' media, and the optional attached board.
+interface LoadedSession {
+  session: SessionRow
+  drills: DrillRow[]
+  media: MediaRow[]
+  board: BoardRow | null
+}
+
+// Read a session and its full dependency set, each club scoped exactly as
+// content_share_deps does: a cross club or absent nested id simply does not
+// appear in the returned rows, so eligibility resolves it as missing and the
+// share fails closed. All reads are under the service role; the lifecycle RPC
+// re-derives the authoritative dependency set and re-validates authority. The
+// snapshot is only ever built from what this returns, never from a client list.
+async function loadSessionForShare(
+  admin: AdminClient,
+  clubId: string,
+  sourceId: string,
+): Promise<LoadedSession | Response> {
+  const { data: session, error } = await admin.from('sessions').select(SESSION_COLS).eq('id', sourceId).maybeSingle()
+  if (error) return reply(500, { error: 'Could not read the session. No change was made.' })
+  if (!session || session.club_id !== clubId) return reply(404, { error: 'That session was not found in your club.' })
+
+  // Distinct drill ids referenced by the activities jsonb (custom activities
+  // carry a title and no drill_id and are skipped). Only well formed uuids are
+  // queried; a malformed drill_id is left to eligibility, which flags it as an
+  // unsupported item rather than a missing drill.
+  const activities = Array.isArray(session.activities) ? session.activities : []
+  const drillIds = [
+    ...new Set(
+      activities
+        .map((a: unknown) => (a && typeof a === 'object' ? (a as { drill_id?: unknown }).drill_id : null))
+        .filter((id: unknown): id is string => typeof id === 'string' && UUID_RE.test(id)),
+    ),
+  ]
+
+  let drills: DrillRow[] = []
+  if (drillIds.length > 0) {
+    const { data: drillRows, error: dErr } = await admin.from('drills').select(DRILL_COLS).in('id', drillIds)
+    if (dErr) return reply(500, { error: 'Could not read the session drills. No change was made.' })
+    drills = ((drillRows ?? []) as DrillRow[]).filter((d) => d.club_id === clubId)
+  }
+
+  const mediaIds = [
+    ...new Set(drills.map((d) => d.media_id).filter((id): id is string => typeof id === 'string')),
+  ]
+  let media: MediaRow[] = []
+  if (mediaIds.length > 0) {
+    const { data: mediaRows, error: mErr } = await admin.from('media').select(MEDIA_COLS).in('id', mediaIds)
+    if (mErr) return reply(500, { error: 'Could not read the session media. No change was made.' })
+    media = ((mediaRows ?? []) as MediaRow[]).filter((m) => m.club_id === clubId)
+  }
+
+  // The attached board, club scoped through its creator's profile (the boards
+  // table has no club_id). A cross club or vanished board resolves to null, so
+  // eligibility flags board_missing and the share fails closed.
+  let board: BoardRow | null = null
+  if (session.board_id) {
+    const { data: boardRow, error: bErr } = await admin.from('boards').select(BOARD_COLS).eq('id', session.board_id)
+      .maybeSingle()
+    if (bErr) return reply(500, { error: 'Could not read the session board. No change was made.' })
+    if (boardRow && boardRow.created_by) {
+      const { data: prof, error: pErr } = await admin.from('profiles').select('club_id').eq('id', boardRow.created_by)
+        .maybeSingle()
+      if (pErr) return reply(500, { error: 'Could not read the session board. No change was made.' })
+      if (prof && prof.club_id === clubId) board = boardRow as BoardRow
+    }
+  }
+
+  return { session: session as SessionRow, drills, media, board }
+}
+
+async function handlePreview(
+  admin: AdminClient,
+  clubId: string,
+  kind: Kind,
+  sourceId: string | null,
+): Promise<Response> {
+  if (kind === 'session') return handlePreviewSession(admin, clubId, sourceId)
   if (!sourceId) return reply(400, { error: 'A drill is required.' })
   const loaded = await loadDrillAndMedia(admin, clubId, sourceId)
   if (loaded instanceof Response) return loaded
@@ -238,14 +341,35 @@ async function handlePreview(admin: AdminClient, clubId: string, sourceId: strin
   })
 }
 
+async function handlePreviewSession(admin: AdminClient, clubId: string, sourceId: string | null): Promise<Response> {
+  if (!sourceId) return reply(400, { error: 'A session is required.' })
+  const loaded = await loadSessionForShare(admin, clubId, sourceId)
+  if (loaded instanceof Response) return loaded
+  const { session, drills, media, board } = loaded
+  const elig = evaluateSessionEligibility(session, drills, media, board)
+  let preview: unknown = null
+  if (elig.eligible) {
+    preview = toPublicSessionProjection(buildSessionSnapshot(session, drills, media, board, new Date().toISOString()))
+  }
+  return reply(200, {
+    ok: true,
+    eligible: elig.eligible,
+    blocked: elig.blocked,
+    rights: { source: session.rights as ContentRights },
+    preview,
+  })
+}
+
 async function handleCreate(
   admin: AdminClient,
   caller: Caller,
+  kind: Kind,
   sourceId: string | null,
   idempotencyKey: string | null,
   expiresAt: string | null,
   noExpiry: boolean,
 ): Promise<Response> {
+  if (kind === 'session') return handleCreateSession(admin, caller, sourceId, idempotencyKey, expiresAt, noExpiry)
   if (!sourceId) return reply(400, { error: 'A drill is required.' })
   if (!idempotencyKey) return reply(400, { error: 'An idempotency key is required.' })
   const loaded = await loadDrillAndMedia(admin, caller.clubId, sourceId)
@@ -302,11 +426,73 @@ async function handleCreate(
   })
 }
 
+async function handleCreateSession(
+  admin: AdminClient,
+  caller: Caller,
+  sourceId: string | null,
+  idempotencyKey: string | null,
+  expiresAt: string | null,
+  noExpiry: boolean,
+): Promise<Response> {
+  if (!sourceId) return reply(400, { error: 'A session is required.' })
+  if (!idempotencyKey) return reply(400, { error: 'An idempotency key is required.' })
+  const loaded = await loadSessionForShare(admin, caller.clubId, sourceId)
+  if (loaded instanceof Response) return loaded
+  const { session, drills, media, board } = loaded
+  const elig = evaluateSessionEligibility(session, drills, media, board)
+  if (!elig.eligible) {
+    return reply(422, { error: 'This session cannot be shared publicly.', blocked: elig.blocked })
+  }
+
+  const snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  const secret = generateSecret()
+  const secretHash = await secretHashLiteral(secret)
+
+  const { data, error } = await admin.rpc('manage_content_share', {
+    p_action: 'create',
+    p_actor_id: caller.userId,
+    p_kind: 'session',
+    p_source_id: sourceId,
+    p_secret_hash: secretHash,
+    p_expires_at: expiresAt,
+    p_no_expiry: noExpiry,
+    p_idempotency_key: idempotencyKey,
+    p_snapshot: snapshot,
+    p_snapshot_version: SNAPSHOT_VERSION,
+  })
+  if (error) {
+    console.error('manage-content-share: create session rpc failed', { code: errCode(error) })
+    return reply(403, { error: 'Could not create the public link. You may not be able to share this session.' })
+  }
+  const shareId = data?.share_id as string | undefined
+  if (!shareId) return reply(500, { error: 'Could not create the public link. No change was made.' })
+  if (data?.existing === true || data?.idempotent === true) {
+    return reply(200, {
+      ok: true,
+      shareId,
+      existing: true,
+      message: 'A public link already exists for this session. Replace the link to get a new URL.',
+    })
+  }
+  const status = await readStatusRow(admin, shareId)
+  console.log('manage-content-share: created', { shareId })
+  return reply(200, {
+    ok: true,
+    shareId,
+    secret, // returned exactly once, never stored or logged
+    status: 'active',
+    expiresAt: status?.expires_at ?? null,
+  })
+}
+
 async function handleRefresh(admin: AdminClient, caller: Caller, shareId: string | null): Promise<Response> {
   if (!shareId) return reply(400, { error: 'A share id is required.' })
   const share = await readShareForOwnerAction(admin, caller, shareId)
   if (share instanceof Response) return share
-  if (share.kind !== 'drill' || !share.drill_id) return reply(400, { error: 'Only drill links can be refreshed here.' })
+  if (share.kind === 'session') return handleRefreshSession(admin, caller, shareId, share.session_id)
+  if (share.kind !== 'drill' || !share.drill_id) {
+    return reply(400, { error: 'Only drill or session links can be refreshed here.' })
+  }
 
   const loaded = await loadDrillAndMedia(admin, caller.clubId, share.drill_id)
   if (loaded instanceof Response) return loaded
@@ -326,6 +512,38 @@ async function handleRefresh(admin: AdminClient, caller: Caller, shareId: string
   })
   if (error) {
     console.error('manage-content-share: refresh rpc failed', { code: errCode(error) })
+    return reply(403, { error: 'Could not update the public link.' })
+  }
+  const status = await readStatusRow(admin, shareId)
+  console.log('manage-content-share: refreshed', { shareId })
+  return reply(200, { ok: true, status: 'active', expiresAt: status?.expires_at ?? null })
+}
+
+async function handleRefreshSession(
+  admin: AdminClient,
+  caller: Caller,
+  shareId: string,
+  sessionId: string | null,
+): Promise<Response> {
+  if (!sessionId) return reply(400, { error: 'That link is not a session link.' })
+  const loaded = await loadSessionForShare(admin, caller.clubId, sessionId)
+  if (loaded instanceof Response) return loaded
+  const { session, drills, media, board } = loaded
+  const elig = evaluateSessionEligibility(session, drills, media, board)
+  if (!elig.eligible) {
+    return reply(422, { error: 'This session can no longer be shared publicly.', blocked: elig.blocked })
+  }
+  const snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+
+  const { data: _data, error } = await admin.rpc('manage_content_share', {
+    p_action: 'refresh',
+    p_actor_id: caller.userId,
+    p_share_id: shareId,
+    p_snapshot: snapshot,
+    p_snapshot_version: SNAPSHOT_VERSION,
+  })
+  if (error) {
+    console.error('manage-content-share: refresh session rpc failed', { code: errCode(error) })
     return reply(403, { error: 'Could not update the public link.' })
   }
   const status = await readStatusRow(admin, shareId)
@@ -377,10 +595,11 @@ async function handleRevoke(admin: AdminClient, caller: Caller, shareId: string 
 async function handleStatus(
   admin: AdminClient,
   caller: Caller,
+  kind: Kind,
   sourceId: string | null,
   canManage: boolean,
 ): Promise<Response> {
-  if (!sourceId) return reply(400, { error: 'A drill is required.' })
+  if (!sourceId) return reply(400, { error: kind === 'session' ? 'A session is required.' : 'A drill is required.' })
 
   // The club kill switch, so the UI can show a calm disabled state.
   const { data: club } = await admin
@@ -390,10 +609,13 @@ async function handleStatus(
     .maybeSingle()
   const sharingEnabled = club?.public_sharing_enabled === true
 
+  const sourceColumn = kind === 'session' ? 'session_id' : 'drill_id'
   const { data: rows, error } = await admin
     .from('content_shares')
-    .select('id, club_id, kind, drill_id, created_by, snapshot, snapshot_version, expires_at, created_at, refreshed_at, rotated_at, revoked_at')
-    .eq('drill_id', sourceId)
+    .select(
+      'id, club_id, kind, drill_id, session_id, created_by, snapshot, snapshot_version, expires_at, created_at, refreshed_at, rotated_at, revoked_at',
+    )
+    .eq(sourceColumn, sourceId)
     .is('revoked_at', null)
     .limit(1)
   if (error) return reply(500, { error: 'Could not read the share status.' })
@@ -448,7 +670,7 @@ async function readShareForOwnerAction(
 ): Promise<any | Response> {
   const { data: row, error } = await admin
     .from('content_shares')
-    .select('id, club_id, kind, drill_id, created_by, revoked_at')
+    .select('id, club_id, kind, drill_id, session_id, created_by, revoked_at')
     .eq('id', shareId)
     .maybeSingle()
   if (error) return reply(500, { error: 'Could not read the share.' })

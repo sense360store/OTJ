@@ -113,6 +113,7 @@ async function makeSession(opts: {
   rights: 'internal_only' | 'public_link_only' | 'public_full'
   drillIds?: string[]
   club?: string
+  boardId?: string | null
 }): Promise<string> {
   const activities = (opts.drillIds ?? []).map((id, i) => ({ phase: 'Skill', drill_id: id, duration: 10 + i }))
   const { data, error } = await svc
@@ -123,11 +124,37 @@ async function makeSession(opts: {
       name: `${MARK}-session`,
       rights: opts.rights,
       activities,
+      board_id: opts.boardId ?? null,
     })
     .select('id')
     .single()
   if (error) throw new Error(`makeSession: ${error.message}`)
   createdSessionIds.push(data!.id)
+  return data!.id
+}
+
+const createdBoardIds: string[] = []
+
+// A board in a club, created by a club member. boards.club_id is not null (the
+// column the boards RLS and the share dependency scoping use); club defaults to
+// CLUB_A. Tokens carry the minimal shape the 0028 boundary constraint allows.
+async function makeBoard(opts: { owner: string; club?: string }): Promise<string> {
+  const { data, error } = await svc
+    .from('boards')
+    .insert({
+      club_id: opts.club ?? CLUB_A,
+      name: `${MARK}-board`,
+      formation: '2-3-1',
+      created_by: opts.owner,
+      tokens: [
+        { id: 't1', number: 1, side: 'home', x: 0.5, y: 0.95, playerId: null },
+        { id: 't2', number: 7, side: 'home', x: 0.3, y: 0.6, playerId: null },
+      ],
+    })
+    .select('id')
+    .single()
+  if (error) throw new Error(`makeBoard: ${error.message}`)
+  createdBoardIds.push(data!.id)
   return data!.id
 }
 
@@ -194,6 +221,7 @@ beforeAll(async () => {
 afterAll(async () => {
   // Deleting the sources cascades their shares and dependency rows away.
   if (createdSessionIds.length) await svc.from('sessions').delete().in('id', createdSessionIds)
+  if (createdBoardIds.length) await svc.from('boards').delete().in('id', createdBoardIds)
   await svc.from('templates').delete().like('name', `${MARK}%`)
   await svc.from('programmes').delete().like('name', `${MARK}%`)
   if (createdDrillIds.length) await svc.from('drills').delete().in('id', createdDrillIds)
@@ -1036,6 +1064,60 @@ async function readShare(shareId: string, hash: string) {
   return svc.rpc('read_public_share', { p_share_id: shareId, p_secret_hash: hash })
 }
 
+// A real, versioned public SESSION snapshot (Content Sharing PR 3). Media sits
+// in one flat top-level pool (referenced drills point in by ref), mirroring the
+// server buildSessionSnapshot, so read_public_share signs it with its one loop.
+function sessionSnapshotFor(over: {
+  media?: Array<Record<string, unknown>>
+  board?: Record<string, unknown> | null
+  drillMediaRefs?: string[]
+} = {}): Record<string, unknown> {
+  return {
+    snapshotVersion: 1,
+    kind: 'session',
+    displayTitle: `${MARK}-session`,
+    focus: null,
+    ageGroup: 'U10s',
+    totalDuration: 10,
+    intentions: [],
+    space: null,
+    activities: [{ phase: 'Skill', duration: 10, drillRef: 'd1', customTitle: null }],
+    referencedDrills: [{
+      ref: 'd1', title: `${MARK}-drill`, summary: null, classification: null, skill: null,
+      ages: [], level: null, duration: 10, playerGuidance: null, area: null, equipment: [],
+      setupNotes: null, coachingPoints: [], easier: [], harder: [], theme: null, format: null,
+      sourceAttribution: null, mediaRefs: over.drillMediaRefs ?? [],
+    }],
+    board: over.board ?? null,
+    media: over.media ?? [],
+    sourceAttribution: null,
+    snapshotAt: '2026-01-01T00:00:00.000Z',
+    builder: 'session@1',
+    public: true,
+  }
+}
+
+async function createSessionShare(
+  owner: string,
+  sessionId: string,
+  hash: string,
+  snapshot: Record<string, unknown> | null,
+): Promise<{ data: unknown; error: { message: string } | null }> {
+  const args: Record<string, unknown> = {
+    p_action: 'create',
+    p_actor_id: owner,
+    p_kind: 'session',
+    p_source_id: sessionId,
+    p_secret_hash: hash,
+    p_idempotency_key: `${MARK}-${runId()}`,
+  }
+  if (snapshot !== null) {
+    args.p_snapshot = snapshot
+    args.p_snapshot_version = 1
+  }
+  return rpc(args)
+}
+
 describe('read_public_share is service role only', () => {
   it('anon and an authenticated coach cannot execute read_public_share', async () => {
     const someId = '00000000-0000-0000-0000-000000000000'
@@ -1216,26 +1298,139 @@ describe('read_public_share returns a uniform neutral response for every failure
   })
 })
 
-describe('read_public_share renders drills only', () => {
-  it('a non-drill share (session) is unavailable, even with a real snapshot', async () => {
+describe('read_public_share renders drills and sessions, refusing other kinds (PR 3)', () => {
+  it('a session share with a real snapshot is publicly readable, with no internal ids', async () => {
     await setKill(true)
-    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [] })
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [drillId] })
     const hash = randHash()
-    const sessionSnapshot = { ...drillSnapshot(), kind: 'session' }
-    const { data, error } = await rpc({
-      p_action: 'create',
-      p_actor_id: coachOneId,
-      p_kind: 'session',
-      p_source_id: sessionId,
-      p_secret_hash: hash,
-      p_idempotency_key: `${MARK}-${runId()}`,
-      p_snapshot: sessionSnapshot,
-      p_snapshot_version: 1,
-    })
+    const create = await createSessionShare(coachOneId, sessionId, hash, sessionSnapshotFor())
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+
+    const { data, error } = await readShare(shareId, hash)
     expect(error).toBeNull()
-    const shareId = (data as { share_id: string }).share_id
+    const res = data as { status: string; snapshot: Record<string, unknown> }
+    expect(res.status).toBe('ok')
+    expect(res.snapshot.kind).toBe('session')
+    expect(res.snapshot.snapshotVersion).toBe(1)
+    // Internal markers stripped.
+    expect(res.snapshot.public).toBeUndefined()
+    expect(res.snapshot.builder).toBeUndefined()
+    // No token hash, club id, source ids or member id anywhere in the response.
+    const flat = JSON.stringify(res)
+    for (const forbidden of ['token_hash', 'club_id', 'created_by', 'coach_id', 'session_id', 'drill_id', sessionId, drillId, coachOneId, CLUB_A]) {
+      expect(flat).not.toContain(forbidden)
+    }
+  })
+
+  it('signs a session pooled public_full stored media and strips the private fields', async () => {
+    await setKill(true)
+    const path = `${CLUB_A}/${runId()}-file.png`
+    const mediaId = await makeMediaWithPath('public_full', path)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full', mediaId })
+    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [drillId] })
+    const hash = randHash()
+    const snapshot = sessionSnapshotFor({
+      drillMediaRefs: ['m1'],
+      media: [{ ref: 'm1', type: 'image', caption: 'Setup', sourceAttribution: null, link: null, _mid: mediaId, _path: path }],
+    })
+    const create = await createSessionShare(coachOneId, sessionId, hash, snapshot)
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+
+    const { data } = await readShare(shareId, hash)
+    const res = data as { status: string; snapshot: { media: Array<Record<string, unknown>> }; media: Array<Record<string, unknown>> }
+    expect(res.status).toBe('ok')
+    // The sign list names the one eligible path by ref (the flat top-level pool).
+    expect(res.media).toHaveLength(1)
+    expect(res.media[0].ref).toBe('m1')
+    expect(res.media[0].path).toBe(path)
+    // The public media entry has no private fields and no raw path.
+    expect(res.snapshot.media[0]._mid).toBeUndefined()
+    expect(res.snapshot.media[0]._path).toBeUndefined()
+    expect(JSON.stringify(res.snapshot)).not.toContain(path)
+  })
+
+  it('a session with an attached board reads ok while the board exists', async () => {
+    await setKill(true)
+    const boardId = await makeBoard({ owner: coachOneId })
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [drillId], boardId })
+    const hash = randHash()
+    const snapshot = sessionSnapshotFor({ board: { formation: '2-3-1', tokens: [{ number: 1, side: 'home', x: 0.5, y: 0.9 }] } })
+    const create = await createSessionShare(coachOneId, sessionId, hash, snapshot)
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+    // The board is a recorded dependency; the read checks its existence.
+    expect(scalar(`select count(*) from public.content_share_dependencies where share_id=${sqlId(shareId)} and dependency_kind='board'`)).toBe('1')
+    const { data } = await readShare(shareId, hash)
+    expect((data as { status: string }).status).toBe('ok')
+  })
+
+  it('a session read fails closed when a nested drill is reclassified internal_only after creation', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [drillId] })
+    const hash = randHash()
+    const create = await createSessionShare(coachOneId, sessionId, hash, sessionSnapshotFor())
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+    // Confirm it reads ok first.
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('ok')
+    // Downgrade the nested drill: the read-time third layer fails the whole share
+    // closed (the downgrade trigger also revokes it; either way, unavailable).
+    await svc.from('drills').update({ rights: 'internal_only' }).eq('id', drillId)
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a session read fails closed (no partial) when one nested media is reclassified internal_only', async () => {
+    await setKill(true)
+    const path = `${CLUB_A}/${runId()}-file.png`
+    const mediaId = await makeMediaWithPath('public_full', path)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full', mediaId })
+    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [drillId] })
+    const hash = randHash()
+    const snapshot = sessionSnapshotFor({
+      drillMediaRefs: ['m1'],
+      media: [{ ref: 'm1', type: 'image', caption: null, sourceAttribution: null, link: null, _mid: mediaId, _path: path }],
+    })
+    const create = await createSessionShare(coachOneId, sessionId, hash, snapshot)
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+    await svc.from('media').update({ rights: 'internal_only' }).eq('id', mediaId)
+    // The entire share is unavailable; the drill's other content is NOT returned
+    // without the blocked media (no partial session).
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a programme share is still unavailable (no public programme renderer)', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, drillIds: [drillId] })
+    const hash = randHash()
+    // A programme kind snapshot passes the RPC (kind matches) but the read path
+    // still refuses the programme kind.
+    const programmeSnapshot = { snapshotVersion: 1, kind: 'programme', public: true, builder: 'programme@1', media: [] }
+    const create = await rpc({
+      p_action: 'create', p_actor_id: coachOneId, p_kind: 'programme', p_source_id: programme,
+      p_secret_hash: hash, p_idempotency_key: `${MARK}-${runId()}`, p_snapshot: programmeSnapshot, p_snapshot_version: 1,
+    })
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
     const read = await readShare(shareId, hash)
     expect((read.data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a snapshot whose kind does not match the share kind is refused at create (type mismatch)', async () => {
+    await setKill(true)
+    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [] })
+    // A drill-kind snapshot passed for a session share: content_share_resolve_snapshot
+    // rejects the mismatch, so no share row is created.
+    const create = await createSessionShare(coachOneId, sessionId, randHash(), drillSnapshot())
+    expect(create.error).not.toBeNull()
+    expect(scalar(`select count(*) from public.content_shares where session_id=${sqlId(sessionId)}`)).toBe('0')
   })
 })
 

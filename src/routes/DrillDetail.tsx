@@ -442,8 +442,9 @@ export function DrillDetail() {
           )}
           {(canPublishShare || canRevokeAnyShare) && (
             <PublicShareControl
-              drillId={drill.id}
-              drillTitle={drill.title}
+              kind="drill"
+              sourceId={drill.id}
+              title={drill.title}
               canPublish={canPublishShare}
               canRevokeAny={canRevokeAnyShare}
             />

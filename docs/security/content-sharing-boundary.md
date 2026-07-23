@@ -401,11 +401,20 @@ there is no generic renderer that could silently expose another source kind.
 - `public_link_only` media (for example a public YouTube link) is represented as
   an external link only, never a downloadable stored binary. A `public_link_only`
   stored object with no external link is rendered as caption only.
-- Honest residual (unchanged from the roadmap): a Supabase signed URL embeds the
-  object path (`{club_id}/{uuid}-file`) in cleartext, so the anonymous viewer
-  receives the club and object uuids. This is a low-impact cross-share
-  correlation handle, not a name or human identifier; copying/content-addressing
-  media to remove it is deferred past v1.
+- Honest residual (unchanged from the roadmap, sharpened in PR 3): a Supabase
+  signed URL embeds the object path (`{club_id}/{uuid}-{filename}`) in cleartext,
+  so the anonymous viewer receives the club and object uuids AND the original
+  uploaded file name (lowercased, non-word runs replaced, but otherwise intact).
+  The uuids are a low-impact correlation handle, but the file name can itself
+  carry a human identifier: a coach who uploads a file named after a child leaks
+  that name through the link, even though the name never appears as text in the
+  preview and is not covered by the caption scrub. The v1 mitigation is the
+  coach-facing warning ("The name of an uploaded file can also be seen by anyone
+  who opens it, so replace a file whose name includes a child's name before
+  sharing", `RIGHTS_WARNING`); the full fix (copying or content-addressing media
+  to a name-free path at share time) is deferred past v1 and is the same deferred
+  work the roadmap named in sections 8.2 and 11.5. PR 3 broadens the exposure
+  (one session pools media from several drills), so the warning matters more.
 
 ## 14. Preview flow
 
@@ -537,3 +546,126 @@ never enters the audit log.
   Function deployed; `public_sharing_enabled` stays false on every club.
 - No change to the existing FA import/content behaviour; all existing drills
   remain `internal_only` and are therefore not eligible for public sharing.
+
+---
+
+# Content sharing boundary: public session sharing (PR 3)
+
+This part is the security contract for Content Sharing PR 3 (public session
+sharing), delivered by `0040_public_session_read.sql`, the session builder in
+`supabase/functions/_shared/share.ts`, the session branches of
+`manage-content-share` and `read-content-share`, and the session rendering in
+`src/routes/PublicShare.tsx` / `src/components/PublicSessionView.tsx`. PR 3 is
+**drill and session only**: a programme share remains unsupported publicly and
+`read_public_share` still fails a programme kind closed.
+
+## 24. What already existed (PR 1 substrate, reused unchanged)
+
+The whole management substrate was built polymorphic in PR 1 and needs no
+schema change for sessions: `content_shares.kind` already includes `session`,
+the kind/source check constraints and the one-active-per-source and idempotency
+indexes already cover `session_id`, and `manage_content_share` and
+`content_share_deps` already branch on `kind = 'session'` to lock the session
+`FOR SHARE`, resolve its nested drills from the `activities` jsonb, those
+drills' media, and the attached board, and to record the authoritative server
+derived dependency set. The downgrade invalidation triggers and the audit
+writer already cover a session source. The client never submits the dependency
+graph; the RPC re-derives it.
+
+## 25. The one migration (0040) and why it is required
+
+The only drill-only code in the shipped path was the anonymous read:
+`read_public_share` failed closed for any kind other than drill. Because the
+read returns the neutral unavailable response before returning any snapshot, a
+session share could not be read publicly without widening that gate. `0040`
+recreates `read_public_share` with a single behavioural change, the kind gate
+from `= drill` to `in (drill, session)`; its board dependency arm is byte for
+byte 0039 (`b.club_id = v_share.club_id`), unchanged.
+
+`0040` also recreates `content_share_deps` with one change confined to the board
+arm. `boards.club_id` is a real `not null` column (0020), the column the boards
+RLS and `read_public_share` already scope by, but `content_share_deps` (0038)
+scoped the board dependency through the board CREATOR'S profile club
+(`bpr.club_id = p_club`) rather than the board's own `club_id`. That creator
+scoping is a different, weaker rule: it is three-valued (SQL NULL, which the
+RPC's `if not dep_exists` skips) when a creator's profile club is null, and it
+mis-scopes a board whose creator later changed clubs. PR 3 is the first to
+exercise the board arm (a board is only ever a session dependency), so `0040`
+aligns `content_share_deps` to scope the board by its own `club_id`, identical
+to `read_public_share` and the boards RLS: create-time and read-time board
+scoping are now consistent, canonical and two-valued (never NULL). No public
+data was ever exposed by the old scoping (the read path already used
+`b.club_id`). The migration is additive and reversible (recreate the 0038/0039
+bodies to roll back), adds no client grant or policy, creates no schedule,
+reclassifies nothing, and does not enable the kill switch.
+
+## 26. The session snapshot and media pool
+
+The session snapshot (`buildSessionSnapshot`, `SESSION_BUILDER = 'session@1'`)
+is a strict allow list, the same discipline as the drill builder: an allow list
+scanner asserts no key outside the named set at any level, and a recursive
+forbidden-key scan (extended with the session operational columns `team_id`,
+`venue`, `start_time`, `spond_event_id`, `board_id`, the live state and `date`)
+rejects any leak. Public fields: `displayTitle`, `focus`, `ageGroup`,
+`totalDuration` (derived), `intentions`, `space`, ordered `activities` (each a
+`phase` and `duration` plus either a `customTitle` or a snapshot-local
+`drillRef`), `referencedDrills` (the full safe drill projection keyed by a
+snapshot-local ref, media referenced by ref), a safe `board` (`formation` plus
+tokens stripped to `number`, `side`, `x`, `y` only, no `id`, no `playerId`, no
+name, honouring the registered players board boundary), a flat top-level
+`media` pool, `sourceAttribution`, and `snapshotAt`. Excluded operational
+columns: `club_id`, `coach_id` and coach name, `team_id` and team name, `date`,
+`start_time`, `venue`, `spond_event_id` and all attendance, the live state,
+`status`, `programme_id`/`programme_week`, the real `board_id`/`media_id` and
+any uuid, and player names or ids.
+
+Media is a single flat top-level pool so `read_public_share` signs it with the
+exact loop it uses for a drill (no nested traversal, no SQL change): every
+referenced drill's media is pooled once, keyed by ref, and the referenced
+drills point in by `mediaRefs`. The read path signs only `public_full` stored
+media by the path the definer function named, strips `_mid`/`_path`, and never
+signs a caller-supplied path, identically to the drill flow.
+
+## 27. Aggregate block and read-time re-eligibility (fail closed, no partial)
+
+The PR 1 aggregate block rule applies unchanged: a session share is created or
+refreshed only when the session's own rights and every nested drill, its media,
+and the attached board are eligible and present in the source's club. One
+`internal_only`, missing or cross-club dependency, an unsupported activity item
+(a non-object entry or a `drill_id` that is not a uuid), or a malformed board
+blocks the whole share; nothing is silently omitted. At read time
+`read_public_share` re-checks every recorded dependency's current rights and
+existence; a nested drill or media downgraded to `internal_only` after creation,
+or a nested entity removed, fails the entire share closed. There is never a
+partial session.
+
+## 28. The two Edge Functions (session branch)
+
+`manage-content-share` (verify_jwt ON) accepts `kind` of `drill` or `session`;
+a programme kind is refused. For a session it reads the session, its nested
+drills, their media and the attached board under the service role, each
+manually club scoped exactly as `content_share_deps` does, evaluates eligibility
+(`evaluateSessionEligibility`), builds the snapshot server side, and passes it
+to the lifecycle RPC, which is the final authority and independently re-derives
+the dependency set. It never accepts a club id, actor id, snapshot or dependency
+list from the body; it never returns the token hash; it never logs the secret,
+snapshot or session text. `read-content-share` (verify_jwt OFF) dispatches the
+public validation on `snapshot.kind` (`validatePublicDrillSnapshot` or
+`validatePublicSessionSnapshot`); any other kind fails closed to the neutral
+unavailable response. Its media signing loop is unchanged (the flat top-level
+pool). Failure uniformity, CORS, `Cache-Control: no-store`, the security headers
+and the rate limit are unchanged.
+
+## 29. What PR 3 does NOT do
+
+- No public programme sharing (`read_public_share` still refuses a programme
+  kind); copy/import remains a separate future programme.
+- No new client policy or grant on `content_shares` or
+  `content_share_dependencies`; the public boundary remains the Edge
+  Function/service layer.
+- No new capability, no new audit action (it reuses the PR 1 registered
+  actions), no plaintext secret storage.
+- No hosted migration applied, no hosted Edge Function deployed, no production
+  share created, no content reclassified; `public_sharing_enabled` stays false
+  on every club, and hosted public sharing stays disabled until a separate
+  explicit approval.

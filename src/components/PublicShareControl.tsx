@@ -1,41 +1,48 @@
-// OTJ Training Hub, public drill share control (Content Sharing PR 2).
+// OTJ Training Hub, public share control (Content Sharing PR 2 drills, PR 3
+// sessions).
 //
-// The Drill Detail control for creating and managing an anonymous PUBLIC drill
-// link. It is deliberately distinct from the PR 0 internal "Share" button
-// (which copies a protected club URL): this one publishes a login-free public
-// snapshot, so it is clearly labelled "Public link", shows a preview of exactly
-// what becomes public, carries the rights warning, and requires explicit
-// confirmation. The raw secret is shown once and cleared from component state
-// on close or unmount.
+// The Drill Detail and Session Day control for creating and managing an
+// anonymous PUBLIC link. It is deliberately distinct from the PR 0 internal
+// "Share" button (which copies a protected club URL): this one publishes a
+// login-free public snapshot, so it is clearly labelled "Public link", shows a
+// preview of exactly what becomes public, carries the rights warning, and
+// requires explicit confirmation. The raw secret is shown once and cleared from
+// component state on close or unmount.
 //
-// Permissions mirror the server (which is the real boundary): canPublish lets a
-// coach create/refresh/rotate their own eligible drill link; canRevokeAny lets
-// a manager turn off any club link (but never rotate or refresh another coach's
-// link).
+// One kind-aware control drives both a drill share and a session share; the wire
+// carries kind + sourceId and the server is the real authority. Permissions
+// mirror the server: canPublish lets a coach create/refresh/rotate their own
+// eligible link; canRevokeAny lets a manager turn off any club link (but never
+// rotate or refresh another coach's link).
 
 import { useEffect, useRef, useState } from 'react'
 import { ActionError, Modal } from './ui'
 import { PublicDrillView } from './PublicDrillView'
+import { PublicSessionView } from './PublicSessionView'
 import { copyLink, shareLink } from '../lib/share'
 import {
-  type DrillShareStatus,
-  useCreateDrillShare,
-  useDrillShareStatus,
-  usePreviewDrillShare,
-  useRefreshDrillShare,
-  useRevokeDrillShare,
-  useRotateDrillShare,
+  type ContentShareKind,
+  type ContentShareStatus,
+  useContentShareStatus,
+  useCreateContentShare,
+  usePreviewContentShare,
+  useRefreshContentShare,
+  useRevokeContentShare,
+  useRotateContentShare,
 } from '../lib/queries'
 import {
   blockedReasonCopy,
+  blockedSessionReasonCopy,
   buildPublicShareUrl,
   KILL_SWITCH_NOTE,
   type PublicDrillSnapshot,
   PUBLISH_CONFIRM,
+  type PublicSessionSnapshot,
   RIGHTS_WARNING,
   ROTATE_WARNING,
   SECRET_ONCE_NOTE,
   validatePublicDrillSnapshot,
+  validatePublicSessionSnapshot,
 } from '../lib/publicShare'
 
 function expiryLabel(expiresAt: string | null): string {
@@ -93,21 +100,24 @@ export function PublicShareResultView({
   )
 }
 
-// ---- Pure preview body ----
+// ---- Pure preview body (drill or session) ----
 export function PublicSharePreviewBody({
+  kind = 'drill',
   eligible,
   blocked,
   snapshot,
 }: {
+  kind?: ContentShareKind
   eligible: boolean
   blocked: string[]
-  snapshot: PublicDrillSnapshot | null
+  snapshot: PublicDrillSnapshot | PublicSessionSnapshot | null
 }) {
+  const blockedCopy = kind === 'session' ? blockedSessionReasonCopy(blocked) : blockedReasonCopy(blocked)
   return (
     <div className="public-preview">
       {!eligible && (
         <div role="alert" className="public-blocked">
-          {blockedReasonCopy(blocked)} You can still use the internal club link above.
+          {blockedCopy} You can still use the internal club link above.
         </div>
       )}
       <div className="public-freetext-warning">
@@ -116,7 +126,9 @@ export function PublicSharePreviewBody({
       </div>
       {snapshot && (
         <div className="public-preview-frame">
-          <PublicDrillView snapshot={snapshot} mode="preview" />
+          {kind === 'session'
+            ? <PublicSessionView snapshot={snapshot as PublicSessionSnapshot} mode="preview" />
+            : <PublicDrillView snapshot={snapshot as PublicDrillSnapshot} mode="preview" />}
         </div>
       )}
     </div>
@@ -126,23 +138,34 @@ export function PublicSharePreviewBody({
 type Feedback = { role: 'status' | 'alert' | null; message: string }
 const NO_FEEDBACK: Feedback = { role: null, message: '' }
 
+function validatePreview(
+  kind: ContentShareKind,
+  value: unknown,
+): PublicDrillSnapshot | PublicSessionSnapshot | null {
+  if (kind === 'session') return validatePublicSessionSnapshot(value) ? value : null
+  return validatePublicDrillSnapshot(value) ? value : null
+}
+
 export function PublicShareControl({
-  drillId,
-  drillTitle,
+  kind,
+  sourceId,
+  title,
   canPublish,
   canRevokeAny,
 }: {
-  drillId: string
-  drillTitle: string
+  kind: ContentShareKind
+  sourceId: string
+  title: string
   canPublish: boolean
   canRevokeAny: boolean
 }) {
-  const statusQ = useDrillShareStatus(drillId, canPublish || canRevokeAny)
-  const preview = usePreviewDrillShare()
-  const create = useCreateDrillShare()
-  const refresh = useRefreshDrillShare()
-  const rotate = useRotateDrillShare()
-  const revoke = useRevokeDrillShare()
+  const noun = kind === 'session' ? 'session' : 'drill'
+  const statusQ = useContentShareStatus(kind, sourceId, canPublish || canRevokeAny)
+  const preview = usePreviewContentShare()
+  const create = useCreateContentShare()
+  const refresh = useRefreshContentShare()
+  const rotate = useRotateContentShare()
+  const revoke = useRevokeContentShare()
 
   const [modal, setModal] = useState<null | 'preview' | 'result' | 'manage' | 'confirmRevoke'>(null)
   const [result, setResult] = useState<{ url: string; expiresAt: string | null } | null>(null)
@@ -156,10 +179,9 @@ export function PublicShareControl({
 
   const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
-  const share: DrillShareStatus | null = statusQ.data?.share ?? null
+  const share: ContentShareStatus | null = statusQ.data?.share ?? null
   const sharingEnabled = statusQ.data?.sharingEnabled ?? false
-  const previewSnapshot: PublicDrillSnapshot | null =
-    preview.data && validatePublicDrillSnapshot(preview.data.preview) ? preview.data.preview : null
+  const previewSnapshot = preview.data ? validatePreview(kind, preview.data.preview) : null
 
   const closeModal = () => {
     setModal(null)
@@ -172,7 +194,7 @@ export function PublicShareControl({
     setError(null)
     idempotencyKey.current = crypto.randomUUID()
     preview.mutate(
-      { drillId },
+      { kind, sourceId },
       { onSuccess: () => setModal('preview'), onError: (e) => setError(e.message) },
     )
   }
@@ -180,7 +202,7 @@ export function PublicShareControl({
   const confirmCreate = () => {
     setError(null)
     create.mutate(
-      { drillId, idempotencyKey: idempotencyKey.current },
+      { kind, sourceId, idempotencyKey: idempotencyKey.current },
       {
         onSuccess: (res) => {
           if (res.secret) {
@@ -202,7 +224,7 @@ export function PublicShareControl({
     if (!share) return
     setError(null)
     refresh.mutate(
-      { drillId, shareId: share.shareId },
+      { kind, sourceId, shareId: share.shareId },
       { onSuccess: () => setModal(null), onError: (e) => setError(e.message) },
     )
   }
@@ -211,7 +233,7 @@ export function PublicShareControl({
     if (!share) return
     setError(null)
     rotate.mutate(
-      { drillId, shareId: share.shareId },
+      { kind, sourceId, shareId: share.shareId },
       {
         onSuccess: (res) => {
           setResult({ url: buildPublicShareUrl(res.shareId, res.secret), expiresAt: share.expiresAt })
@@ -226,7 +248,7 @@ export function PublicShareControl({
     if (!share) return
     setError(null)
     revoke.mutate(
-      { drillId, shareId: share.shareId },
+      { kind, sourceId, shareId: share.shareId },
       { onSuccess: () => closeModal(), onError: (e) => setError(e.message) },
     )
   }
@@ -239,7 +261,7 @@ export function PublicShareControl({
   }
   const onShare = () => {
     if (!result) return
-    void shareLink({ url: result.url, title: drillTitle, text: drillTitle }).then((r) =>
+    void shareLink({ url: result.url, title, text: title }).then((r) =>
       setCopyState(r === 'shared' ? { role: 'status', message: 'Shared' } : r === 'copied' ? { role: 'status', message: 'Link copied' } : r === 'error' ? { role: 'alert', message: 'Sharing failed. Try again.' } : NO_FEEDBACK)
     )
   }
@@ -290,7 +312,7 @@ export function PublicShareControl({
           </p>
         </div>
       ) : (
-        <p className="muted">Only the coach who owns this drill, or a manager, can publish a public link.</p>
+        <p className="muted">Only the coach who owns this {noun}, or a manager, can publish a public link.</p>
       )}
 
       {error && !modal && <ActionError>{error}</ActionError>}
@@ -318,6 +340,7 @@ export function PublicShareControl({
           }
         >
           <PublicSharePreviewBody
+            kind={kind}
             eligible={preview.data?.eligible ?? false}
             blocked={preview.data?.blocked ?? []}
             snapshot={previewSnapshot}
@@ -353,7 +376,7 @@ export function PublicShareControl({
             <button type="button" className="btn btn-ghost btn-block" style={{ minHeight: 44 }} onClick={doRefresh} disabled={writing}>
               {refresh.isPending ? 'Updating…' : 'Update what people see'}
             </button>
-            <p className="muted" style={{ fontSize: 12.5 }}>Rebuilds the public copy from the current drill. The link stays the same.</p>
+            <p className="muted" style={{ fontSize: 12.5 }}>Rebuilds the public copy from the current {noun}. The link stays the same.</p>
 
             <button type="button" className="btn btn-ghost btn-block" style={{ minHeight: 44 }} onClick={doRotate} disabled={writing}>
               {rotate.isPending ? 'Replacing…' : 'Replace this link'}

@@ -16,15 +16,18 @@ import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { PublicDrillView } from '../components/PublicDrillView'
+import { PublicSessionView } from '../components/PublicSessionView'
 import {
   type PublicDrillSnapshot,
   PUBLIC_PAGE_TITLE,
+  type PublicSessionSnapshot,
   readSecretFromHash,
   TRANSIENT_BODY,
   TRANSIENT_HEADING,
   UNAVAILABLE_BODY,
   UNAVAILABLE_HEADING,
   validatePublicDrillSnapshot,
+  validatePublicSessionSnapshot,
 } from '../lib/publicShare'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -132,19 +135,38 @@ export default function PublicShare() {
   }
 
   const result = query.data
-  if (!result || result.status !== 'ok' || !validatePublicDrillSnapshot(result.snapshot)) {
-    return <Unavailable />
-  }
-  const snapshot = result.snapshot as PublicDrillSnapshot
+  if (!result || result.status !== 'ok') return <Unavailable />
 
-  return (
-    <Frame>
-      <PublicDrillView snapshot={snapshot} mode="public" />
-      <div className="public-reload">
-        <button type="button" className="btn btn-quiet btn-sm" onClick={() => query.refetch()}>
-          Reload media
-        </button>
-      </div>
-    </Frame>
-  )
+  // Dispatch on the snapshot kind, defensively re-validating each shape before
+  // rendering. An unknown kind, or a shape that fails its validator, renders the
+  // neutral unavailable state rather than anything else. The "Reload media"
+  // button re-requests fresh signed media URLs after the ten minute TTL.
+  const kind = (result.snapshot as { kind?: unknown })?.kind
+  if (kind === 'drill' && validatePublicDrillSnapshot(result.snapshot)) {
+    const snapshot = result.snapshot as PublicDrillSnapshot
+    return (
+      <Frame>
+        <PublicDrillView snapshot={snapshot} mode="public" />
+        <div className="public-reload">
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => query.refetch()}>
+            Reload media
+          </button>
+        </div>
+      </Frame>
+    )
+  }
+  if (kind === 'session' && validatePublicSessionSnapshot(result.snapshot)) {
+    const snapshot = result.snapshot as PublicSessionSnapshot
+    return (
+      <Frame>
+        <PublicSessionView snapshot={snapshot} mode="public" />
+        <div className="public-reload">
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => query.refetch()}>
+            Reload media
+          </button>
+        </div>
+      </Frame>
+    )
+  }
+  return <Unavailable />
 }
