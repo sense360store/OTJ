@@ -36,6 +36,7 @@ import type { DiagramSlide } from '../components/DiagramViewer'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { ShareButton } from '../components/ShareButton'
+import { PublicShareControl } from '../components/PublicShareControl'
 import { TacticsBoardView } from '../components/TacticsBoardView'
 import { playerNameMap, type Board, type PlayerNameMap } from '../lib/tacticsBoard'
 import './SessionDay.css'
@@ -88,6 +89,13 @@ function SessionDayView({ session }: { session: Session }) {
   // boundary: the link is the canonical protected page, grants nothing on its
   // own, and makes no write.
   const canShare = caps.has('sessions.create')
+  // Public sharing is a separate, gated affordance from the internal club link:
+  // it publishes a login-free snapshot. Publish/manage needs shares.create plus
+  // ownership or session manage (the server re-enforces this); a shares.manage
+  // holder may turn off any club link. Parents see neither. The UI decides only
+  // what to surface; the lifecycle RPC is the boundary.
+  const canPublishShare = caps.has('shares.create') && canManage
+  const canRevokeAnyShare = caps.has('shares.manage')
   const [tab, setTab] = useState<Tab>('setup')
   const [viewerAt, setViewerAt] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -189,6 +197,16 @@ function SessionDayView({ session }: { session: Session }) {
         <div style={{ marginBottom: 12 }}>
           <ShareButton kind="session" id={session.id} title={session.name} />
         </div>
+      )}
+
+      {(canPublishShare || canRevokeAnyShare) && (
+        <PublicShareControl
+          kind="session"
+          sourceId={session.id}
+          title={session.name}
+          canPublish={canPublishShare}
+          canRevokeAny={canRevokeAnyShare}
+        />
       )}
 
       {programme && (

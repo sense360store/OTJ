@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { PublicSharePreviewBody, PublicShareResultView } from './PublicShareControl'
-import { RIGHTS_WARNING, SECRET_ONCE_NOTE, type PublicDrillSnapshot } from '../lib/publicShare'
+import {
+  type PublicDrillSnapshot,
+  type PublicSessionSnapshot,
+  PUBLIC_SNAPSHOT_VERSION,
+  RIGHTS_WARNING,
+  SECRET_ONCE_NOTE,
+} from '../lib/publicShare'
 
 const noFeedback: { role: 'status' | 'alert' | null; message: string } = { role: null, message: '' }
 
@@ -85,6 +91,40 @@ describe('PublicSharePreviewBody', () => {
   it('shows a blocked message and offers the club link when ineligible', () => {
     const html = renderToStaticMarkup(
       <PublicSharePreviewBody eligible={false} blocked={['media_internal_only']} snapshot={null} />,
+    )
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('England Football')
+    expect(html).toContain('internal club link')
+  })
+
+  it('renders a session preview and marks its free text as public', () => {
+    const sessionSnapshot: PublicSessionSnapshot = {
+      snapshotVersion: PUBLIC_SNAPSHOT_VERSION,
+      kind: 'session',
+      displayTitle: 'Tuesday session',
+      focus: null,
+      ageGroup: 'U10s',
+      totalDuration: 30,
+      intentions: [],
+      space: null,
+      activities: [{ phase: 'Warm-Up', duration: 30, drillRef: null, customTitle: 'Arrival game' }],
+      referencedDrills: [],
+      board: null,
+      media: [],
+      sourceAttribution: null,
+      snapshotAt: '2026-07-21T10:00:00.000Z',
+    }
+    const html = renderToStaticMarkup(
+      <PublicSharePreviewBody kind="session" eligible blocked={[]} snapshot={sessionSnapshot} />,
+    )
+    expect(html).toContain('You wrote this, it will be public.')
+    expect(html).toContain('Tuesday session')
+    expect(html).toContain('Arrival game')
+  })
+
+  it('shows a session-specific blocked message for a restricted drill dependency', () => {
+    const html = renderToStaticMarkup(
+      <PublicSharePreviewBody kind="session" eligible={false} blocked={['drill_internal_only']} snapshot={null} />,
     )
     expect(html).toContain('role="alert"')
     expect(html).toContain('England Football')

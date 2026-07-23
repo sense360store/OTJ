@@ -657,6 +657,19 @@ a.activity-batch:hover { text-decoration: underline; }
 .public-media-note { font-size: 12.5px; margin: 0; }
 .public-attribution { font-size: 13px; }
 
+/* --- The session content (shared by preview and public page) --- */
+.public-session { display: grid; gap: 18px; }
+.public-activities { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.public-activity { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; background: var(--card); }
+.public-activity-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.public-activity-phase { background: var(--gold-soft); border-color: var(--gold); font-weight: 800; }
+.public-activity-title { font-family: var(--display); font-weight: 800; font-size: 16px; }
+/* The referenced drill inside an activity nests without its own outer card. */
+.public-activity .public-drill { gap: 12px; }
+/* Constrain the read only board so it reads at a sensible size on the page. */
+.public-session .board-pitch { max-width: 420px; margin: 0 auto; }
+
 /* --- The Drill Detail public-link control --- */
 .public-share-control { border-top: 1px dashed var(--line); padding-top: 12px; }
 .public-share-heading { font-family: var(--display); font-weight: 800; font-size: 15px; }

@@ -1209,12 +1209,21 @@ gates below.
 
 ### PR 3: Public session sharing
 
+Status: IMPLEMENTED in `0040_public_session_read.sql`, the session builder in
+`supabase/functions/_shared/share.ts`, the session branches of
+`manage-content-share` and `read-content-share`, and the session rendering in
+`src/routes/PublicShare.tsx` / `src/components/PublicSessionView.tsx`, with the
+Session Day public share control. The security contract is the PR 3 part of
+`docs/security/content-sharing-boundary.md`. NOT applied or deployed to hosted;
+`public_sharing_enabled` stays false on every club, pending separate explicit
+approval and the human gates below.
+
 - User outcome: a coach shares a saved session; the external recipient sees the ordered activities, referenced drills, safe board and safe fields.
 - Current code evidence: Session Day and the Planner save seam exist; sessions carry the operational fields the allow list must exclude (section 11.1).
-- Scope: the saved session share flow; the Session Day Share action; Planner Save and share; activity and referenced drill projection; the safe board projection (numbers and positions only); operational fields excluded; unsaved and dirty state handling through the PR #103 seam.
+- Scope: the saved session share flow; the Session Day Share action; activity and referenced drill projection; the safe board projection (numbers and positions only); operational fields excluded. The public share operates on a persisted session id (like a drill), so it lives on Session Day; the Planner's existing "Save and share" is the internal club link and is unchanged.
 - Non scope: programmes (PR 4).
-- Likely files: `_shared/share.ts` (session builder), `src/routes/SessionDay.tsx`, `src/routes/Planner.tsx`, `src/routes/PublicShare.tsx` (session render and board render).
-- Migrations: none. RPCs: reuse. Edge Functions: extend the builder, redeploy with readback.
+- Likely files: `_shared/share.ts` (session builder), `src/components/PublicSessionView.tsx`, `src/routes/PublicShare.tsx` (session render and board render), `src/routes/SessionDay.tsx` (the public share control), `manage-content-share`/`read-content-share` (session branch).
+- Migrations: one small gated migration (`0040`) was required, correcting the roadmap's earlier "none" estimate. PR 2's `read_public_share` hardcoded the drill-only kind and had a dead board arm reading a non-existent `boards.club_id`; `0040` widens the kind gate to {drill, session} and corrects the board arm to club scope through the creator's profile. The whole PR 1 management substrate (RPC, dependency resolver, downgrade triggers, audit) already supported sessions with no change. RPCs: reuse. Edge Functions: extend the builder, redeploy with readback.
 - Capability changes: none. Audit actions: reuse.
 - Tests: session builder unit tests (all section 11.1 exclusions), the board stripping test, the Spond and schedule exclusion tests, route tests for Save and share.
 - Accessibility: accessible activity order, board accessible summary.

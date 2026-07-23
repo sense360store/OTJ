@@ -12,7 +12,9 @@
 
 import type { PublicDrillMedia, PublicDrillSnapshot } from '../lib/publicShare'
 
-function MetaPill({ label, value }: { label: string; value: string }) {
+// Exported so the session renderer (PublicSessionView) reuses the exact same
+// header pills, text blocks and list blocks as a drill, for one visual system.
+export function MetaPill({ label, value }: { label: string; value: string }) {
   return (
     <span className="public-pill">
       <span className="public-pill-label">{label}</span>
@@ -21,7 +23,7 @@ function MetaPill({ label, value }: { label: string; value: string }) {
   )
 }
 
-function TextBlock({ heading, body }: { heading: string; body: string }) {
+export function TextBlock({ heading, body }: { heading: string; body: string }) {
   if (!body) return null
   return (
     <section className="public-block">
@@ -33,7 +35,7 @@ function TextBlock({ heading, body }: { heading: string; body: string }) {
   )
 }
 
-function ListBlock({ heading, items }: { heading: string; items: string[] }) {
+export function ListBlock({ heading, items }: { heading: string; items: string[] }) {
   if (!items || items.length === 0) return null
   return (
     <section className="public-block">
