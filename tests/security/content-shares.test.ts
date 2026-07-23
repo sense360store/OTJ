@@ -135,13 +135,14 @@ async function makeSession(opts: {
 
 const createdBoardIds: string[] = []
 
-// A board owned by a CLUB_A member (its club resolves through the creator's
-// profile, as the boards table has no club_id). Tokens carry the minimal shape
-// the 0028 boundary constraint allows.
-async function makeBoard(opts: { owner: string }): Promise<string> {
+// A board in a club, created by a club member. boards.club_id is not null (the
+// column the boards RLS and the share dependency scoping use); club defaults to
+// CLUB_A. Tokens carry the minimal shape the 0028 boundary constraint allows.
+async function makeBoard(opts: { owner: string; club?: string }): Promise<string> {
   const { data, error } = await svc
     .from('boards')
     .insert({
+      club_id: opts.club ?? CLUB_A,
       name: `${MARK}-board`,
       formation: '2-3-1',
       created_by: opts.owner,

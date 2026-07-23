@@ -567,11 +567,10 @@ the kind/source check constraints and the one-active-per-source and idempotency
 indexes already cover `session_id`, and `manage_content_share` and
 `content_share_deps` already branch on `kind = 'session'` to lock the session
 `FOR SHARE`, resolve its nested drills from the `activities` jsonb, those
-drills' media, and the attached board (club scoped through the board creator's
-profile, as the boards table has no `club_id`), and to record the authoritative
-server derived dependency set. The downgrade invalidation triggers and the
-audit writer already cover a session source. The client never submits the
-dependency graph; the RPC re-derives it.
+drills' media, and the attached board, and to record the authoritative server
+derived dependency set. The downgrade invalidation triggers and the audit
+writer already cover a session source. The client never submits the dependency
+graph; the RPC re-derives it.
 
 ## 25. The one migration (0040) and why it is required
 
@@ -580,15 +579,25 @@ The only drill-only code in the shipped path was the anonymous read:
 read returns the neutral unavailable response before returning any snapshot, a
 session share could not be read publicly without widening that gate. `0040`
 recreates `read_public_share` with a single behavioural change, the kind gate
-from `= drill` to `in (drill, session)`, and one correctness fix: the board
-dependency arm previously read a non-existent `boards.club_id` column. That arm
-was dead code in PR 2 (a drill share records no board dependency, and every
-non-drill kind was rejected before the dependency loop), so it never executed;
-PR 3 activates it for a session's board, so `0040` corrects it to club scope
-through the board creator's profile and fail closed. The migration is additive
-and reversible (recreate the drill-only body to roll back), adds no client
-grant or policy, creates no schedule, reclassifies nothing, and does not enable
-the kill switch.
+from `= drill` to `in (drill, session)`; its board dependency arm is byte for
+byte 0039 (`b.club_id = v_share.club_id`), unchanged.
+
+`0040` also recreates `content_share_deps` with one change confined to the board
+arm. `boards.club_id` is a real `not null` column (0020), the column the boards
+RLS and `read_public_share` already scope by, but `content_share_deps` (0038)
+scoped the board dependency through the board CREATOR'S profile club
+(`bpr.club_id = p_club`) rather than the board's own `club_id`. That creator
+scoping is a different, weaker rule: it is three-valued (SQL NULL, which the
+RPC's `if not dep_exists` skips) when a creator's profile club is null, and it
+mis-scopes a board whose creator later changed clubs. PR 3 is the first to
+exercise the board arm (a board is only ever a session dependency), so `0040`
+aligns `content_share_deps` to scope the board by its own `club_id`, identical
+to `read_public_share` and the boards RLS: create-time and read-time board
+scoping are now consistent, canonical and two-valued (never NULL). No public
+data was ever exposed by the old scoping (the read path already used
+`b.club_id`). The migration is additive and reversible (recreate the 0038/0039
+bodies to roll back), adds no client grant or policy, creates no schedule,
+reclassifies nothing, and does not enable the kill switch.
 
 ## 26. The session snapshot and media pool
 

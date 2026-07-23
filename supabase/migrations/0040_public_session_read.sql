@@ -35,48 +35,57 @@
 -- Everything else in read_public_share already supports a session snapshot
 -- with no change: the dependency re-eligibility loop already handles the
 -- dependency_kind values a session projects (drill, media and board; the board
--- arm checks existence only, as a board carries no rights), and the media
--- signing loop already iterates the flat top-level snapshot->'media' pool,
+-- arm checks existence and club only, as a board carries no rights), and the
+-- media signing loop already iterates the flat top-level snapshot->'media' pool,
 -- which is exactly where the session snapshot builder places every referenced
 -- drill's media (referenced drills point into that pool by ref). So the media
 -- signing, the private-field stripping and the internal-marker stripping are
--- unchanged; only the kind gate moves.
+-- unchanged; the kind gate moves and the board arm is left exactly as 0039.
 --
 -- Numbering: the highest migration file on disk is 0039_public_share_read, so
 -- this is 0040. The file numbers carry development gaps; confirm the next free
 -- slot against the live migration ledger before applying, never assume it from
 -- the highest file on disk.
 --
--- This migration also hardens the dependency resolver's board arm. In
--- content_share_deps (0038) the board dep_exists was
--- `(b.id is not null and bpr.club_id = p_club)`, which is SQL NULL (not false)
--- when the board's creator profile has a null club_id (a reachable quarantined
--- state). manage_content_share's `if not v_dep.dep_exists then raise` does not
--- fire on NULL, so a session board whose creator is clubless would pass the
--- RPC's aggregate eligibility instead of blocking, a latent fail-open in the
--- authority that PR 3 is the first to exercise (a board is only ever a session
--- dependency). The Edge Function and read_public_share already fail closed for
--- this case, so it leaks nothing, but the RPC must be fail closed on its own.
--- PART 1 recreates content_share_deps with that arm wrapped in coalesce(...,
--- false); every other line is copied verbatim from 0038.
+-- This migration also aligns the dependency resolver's board scoping with the
+-- read path. The boards table has a canonical club_id column (not null, FK to
+-- clubs, the column the boards RLS scopes by, 0020_boards.sql), and
+-- read_public_share (0039) already scopes the board dependency by it
+-- (`b.club_id = v_share.club_id`). content_share_deps (0038), however, scoped
+-- the board dependency through the board CREATOR'S profile club
+-- (`bpr.club_id = p_club`) rather than the board's own club_id. That is a
+-- different, weaker scoping: it is three-valued (SQL NULL, which the RPC's
+-- `if not dep_exists` skips) when a creator's profile club is null, and it
+-- mis-scopes a board whose creator later changed clubs. PR 3 is the first to
+-- exercise the board arm (a board is only ever a session dependency), so PART 1
+-- recreates content_share_deps to scope the board dependency by the board's own
+-- club_id, identical to read_public_share and the boards RLS; every other branch
+-- is copied verbatim from 0038. No public data was ever exposed by the old
+-- scoping (the read path already used b.club_id); this makes create-time and
+-- read-time board scoping consistent and canonical.
 --
 -- Additive and reversible. This migration recreates two functions with
--- unchanged signatures: read_public_share (a widened kind clause and a
--- corrected board arm) and content_share_deps (a fail-closed board dep_exists).
--- Rollback is a create-or-replace back to the 0038/0039 bodies. It adds NO
--- client grant, NO policy, NO anon or authenticated access to any table,
--- creates no schedule, and does NOT enable the kill switch.
+-- unchanged signatures: read_public_share (only the kind clause widens; the
+-- board arm is byte-for-byte 0039) and content_share_deps (only the board arm's
+-- club scoping moves to boards.club_id). Rollback is a create-or-replace back to
+-- the 0038/0039 bodies. It adds NO client grant, NO policy, NO anon or
+-- authenticated access to any table, creates no schedule, and does NOT enable
+-- the kill switch.
 -- =====================================================================
 
 -- =====================================================================
--- PART 1: content_share_deps, board dep_exists made fail closed
+-- PART 1: content_share_deps, board scoping aligned to boards.club_id
 -- =====================================================================
 
--- Copied verbatim from 0038 with a single change: the board arm's dep_exists is
--- wrapped in coalesce(..., false) so a null-club board creator yields false (a
--- blocked, missing dependency) rather than SQL NULL (which the RPC's
--- `if not dep_exists` would skip, failing open). Every other branch is
--- unchanged. SECURITY DEFINER, stable, private (no client EXECUTE).
+-- Copied verbatim from 0038 with a single change: the board arm scopes the
+-- board dependency by the board's own club_id (boards.club_id, not null, the
+-- column the boards RLS scopes by and the column read_public_share already
+-- scopes the board dependency by), instead of resolving the club through the
+-- board creator's profile. This makes create-time and read-time board scoping
+-- identical and canonical, and makes dep_exists two-valued (never SQL NULL), so
+-- the RPC's `if not dep_exists then raise` reliably blocks a missing or foreign
+-- club board. Every other branch is unchanged. SECURITY DEFINER, stable,
+-- private (no client EXECUTE).
 create or replace function public.content_share_deps(
   p_kind      public.content_share_kind,
   p_source_id uuid,
@@ -123,14 +132,15 @@ begin
       select 'media'::text, dm.media_id, m.rights, (m.id is not null)
       from dm left join public.media m on m.id = dm.media_id and m.club_id = p_club;
     -- The attached board (shape and numbers only; no rights class), club scoped
-    -- via its creator's profile. dep_exists coalesced to false so a null-club
-    -- creator blocks (fail closed) rather than yielding SQL NULL.
+    -- by the board's own club_id (boards.club_id is not null and is the column
+    -- the boards RLS and the read path scope by). dep_exists is two-valued and
+    -- never NULL: a missing board yields false (left join, b.id null), a foreign
+    -- club board yields false, a same club board yields true.
     return query
       select 'board'::text, s.board_id, null::public.content_rights,
-             coalesce(b.id is not null and bpr.club_id = p_club, false)
+             (b.id is not null and b.club_id = p_club)
       from public.sessions s
       left join public.boards b on b.id = s.board_id
-      left join public.profiles bpr on bpr.id = b.created_by
       where s.id = p_source_id and s.board_id is not null;
 
   elsif p_kind = 'programme' then
@@ -173,7 +183,7 @@ end;
 $$;
 
 comment on function public.content_share_deps(public.content_share_kind, uuid, uuid) is
-  $$The nested dependency set (drills, templates, media, boards) a share source projects, each club scoped to p_club (the source's club) so a cross club nested id read from the free form activities jsonb resolves as a missing dependency and blocks the share. The board arm's dep_exists is coalesced to false so a null-club board creator fails closed. Used by manage_content_share to evaluate aggregate eligibility (fail closed on a missing, cross club or internal_only item) and to write the dependency rows. Private (no client EXECUTE). See 0040_public_session_read.sql (board fail-closed fix) and 0038_content_sharing.sql.$$;
+  $$The nested dependency set (drills, templates, media, boards) a share source projects, each club scoped to p_club (the source's club) so a cross club nested id read from the free form activities jsonb resolves as a missing dependency and blocks the share. The board arm scopes by the board's own club_id (canonical, not null), matching read_public_share and the boards RLS. Used by manage_content_share to evaluate aggregate eligibility (fail closed on a missing, cross club or internal_only item) and to write the dependency rows. Private (no client EXECUTE). See 0040_public_session_read.sql (board scoping aligned to boards.club_id) and 0038_content_sharing.sql.$$;
 
 revoke execute on function public.content_share_deps(public.content_share_kind, uuid, uuid) from public, anon, authenticated;
 
@@ -281,18 +291,11 @@ begin
       select p.rights into v_r from public.programmes p where p.id = v_dep.dependency_id and p.club_id = v_share.club_id;
       if not found or v_r = 'internal_only' then return jsonb_build_object('status', 'unavailable'); end if;
     elsif v_dep.dependency_kind = 'board' then
-      -- The boards table has no club_id column; the club is resolved through the
-      -- creator's profile, mirroring content_share_deps. (0039's board arm read
-      -- a non-existent b.club_id; it was dead code there because PR 2 refused
-      -- every non-drill kind before this loop, and a drill share never records a
-      -- board dependency. PR 3 activates a session's board dependency, so this
-      -- arm is corrected here to club scope via the creator and fail closed.)
-      if not exists (
-        select 1
-        from public.boards b
-        join public.profiles bpr on bpr.id = b.created_by
-        where b.id = v_dep.dependency_id and bpr.club_id = v_share.club_id
-      ) then
+      -- Club scoped by the board's own club_id (boards.club_id, not null),
+      -- unchanged from 0039 and now matched by content_share_deps. A board gone
+      -- or in another club fails the whole session share closed. A board carries
+      -- no rights class, so only existence and club are checked, never content.
+      if not exists (select 1 from public.boards b where b.id = v_dep.dependency_id and b.club_id = v_share.club_id) then
         return jsonb_build_object('status', 'unavailable');
       end if;
     end if;
