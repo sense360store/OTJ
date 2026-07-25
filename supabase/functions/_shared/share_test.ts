@@ -1231,3 +1231,49 @@ Deno.test('the programme builder is deterministic for a fixed snapshotAt', () =>
   const two = buildProgrammeSnapshot(b.p, [b.templates[1], b.templates[0]], [b.drills[1], b.drills[0]], b.media, AT)
   assertEquals(JSON.stringify(one), JSON.stringify(two))
 })
+
+Deno.test('an absurd programmes.weeks value is refused instantly, never expanded', () => {
+  // programmes.weeks is a plain int column. Before the cap was checked against
+  // the COUNT rather than an expanded list, this allocated a two billion entry
+  // array and hung the function. It must refuse immediately.
+  const started = Date.now()
+  const e = evaluateProgrammeEligibility(
+    { rights: 'public_full', weeks: 2_000_000_000, pdf_media_id: null },
+    [],
+    [],
+    [],
+  )
+  assert(!e.eligible)
+  assert(e.blocked.includes('too_many_weeks'))
+  assert(Date.now() - started < 1000, 'week cap must be checked before the week list is expanded')
+})
+
+Deno.test('the builder also refuses an absurd week count without expanding it', () => {
+  const started = Date.now()
+  assertThrows(() => buildProgrammeSnapshot(programme({ weeks: 2_000_000_000 }), [template()], [], [], AT))
+  assert(Date.now() - started < 1000)
+})
+
+Deno.test('a NaN, negative or fractional week count is treated as no declared weeks', () => {
+  const { drills, media: m } = twoWeeks()
+  // Only the claimed template week survives, so the list is exactly [1].
+  for (const weeks of [Number.NaN, -5, 0.5, Number.POSITIVE_INFINITY]) {
+    const s = buildProgrammeSnapshot(programme({ weeks }), [template()], drills, m, AT)
+    assertEquals(s.orderedWeekNumbers, [1])
+  }
+})
+
+Deno.test('a template claiming a zero, negative or fractional week is not rendered', () => {
+  const { drills, media: m } = twoWeeks()
+  for (const week of [0, -1, 1.5]) {
+    const s = buildProgrammeSnapshot(
+      programme({ weeks: 1 }),
+      [template(), template({ id: TEMPLATE_B, programme_week: week, name: 'Ghost week' })],
+      drills,
+      m,
+      AT,
+    )
+    assertEquals(s.orderedWeekNumbers, [1])
+    assert(!JSON.stringify(s).includes('Ghost week'))
+  }
+})

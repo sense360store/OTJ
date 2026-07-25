@@ -872,15 +872,33 @@ function orderProgrammeTemplates(templates: TemplateRow[]): Map<number, Template
   return byWeek
 }
 
-// The week numbers the public page renders: 1..weekCount, where weekCount is the
-// larger of the programme's declared week count and the highest week any
-// template claims. This mirrors ProgrammeDetail exactly, so the public copy and
-// the club page agree on how many weeks a programme has, including weeks no
-// template has filled in yet.
-function programmeWeekNumbers(programme: Pick<ProgrammeRow, 'weeks'>, byWeek: Map<number, TemplateRow>): number[] {
-  const declared = typeof programme.weeks === 'number' && Number.isFinite(programme.weeks) ? programme.weeks : 0
-  const highestClaimed = byWeek.size > 0 ? Math.max(...byWeek.keys()) : 0
-  const count = Math.max(declared, highestClaimed, 0)
+// How many weeks the public page renders: the larger of the programme's declared
+// week count and the highest week any template claims. This mirrors
+// ProgrammeDetail exactly, so the public copy and the club page agree on how
+// many weeks a programme has, including weeks no template has filled in yet.
+//
+// This returns a COUNT and never materialises the list, because programmes.weeks
+// is a plain int column: a row carrying 2000000000 (a typo, or a hostile value
+// written through the programmes API by a coach who may legitimately edit it)
+// would otherwise allocate a two billion entry array before any cap could refuse
+// it, hanging the function. The count is compared against the cap first; only a
+// count within the cap is ever expanded (programmeWeekNumbers below).
+//
+// The highest claimed week is found with a loop, not Math.max(...keys), because
+// spreading a large key set overflows the call stack.
+function programmeWeekCount(programme: Pick<ProgrammeRow, 'weeks'>, byWeek: Map<number, TemplateRow>): number {
+  const raw = programme.weeks
+  const declared = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+  let highestClaimed = 0
+  for (const w of byWeek.keys()) {
+    if (w > highestClaimed) highestClaimed = w
+  }
+  return Math.max(declared, highestClaimed, 0)
+}
+
+// Expand a week count into 1..count. Only ever called with a count already
+// proven to be within MAX_PROGRAMME_WEEKS.
+function programmeWeekNumbers(count: number): number[] {
   const out: number[] = []
   for (let i = 1; i <= count; i++) out.push(i)
   return out
@@ -944,10 +962,12 @@ export function evaluateProgrammeEligibility(
     else if (pdf.rights === 'internal_only') blocked.add('pdf_internal_only')
   }
 
+  // Cap checked against the COUNT, before any per week work, so an absurd
+  // programmes.weeks value is refused instead of expanded.
   const byWeek = orderProgrammeTemplates(templates as TemplateRow[])
-  const weekNumbers = programmeWeekNumbers(programme, byWeek)
-  if (weekNumbers.length === 0) blocked.add('no_weeks')
-  if (weekNumbers.length > MAX_PROGRAMME_WEEKS) blocked.add('too_many_weeks')
+  const weekCount = programmeWeekCount(programme, byWeek)
+  if (weekCount === 0) blocked.add('no_weeks')
+  if (weekCount > MAX_PROGRAMME_WEEKS) blocked.add('too_many_weeks')
 
   return { eligible: blocked.size === 0, blocked: [...blocked] }
 }
@@ -1017,14 +1037,17 @@ export function buildProgrammeSnapshot(
     return ref
   }
 
+  // Same order as eligibility: the count is capped BEFORE it is expanded, so the
+  // builder can never allocate an unbounded week list either.
   const byWeek = orderProgrammeTemplates(templates)
-  const orderedWeekNumbers = programmeWeekNumbers(programme, byWeek)
-  if (orderedWeekNumbers.length === 0) {
+  const weekCount = programmeWeekCount(programme, byWeek)
+  if (weekCount === 0) {
     throw new Error('buildProgrammeSnapshot: refusing to project a programme with no weeks')
   }
-  if (orderedWeekNumbers.length > MAX_PROGRAMME_WEEKS) {
+  if (weekCount > MAX_PROGRAMME_WEEKS) {
     throw new Error('buildProgrammeSnapshot: refusing to project more than the week cap')
   }
+  const orderedWeekNumbers = programmeWeekNumbers(weekCount)
 
   // Weeks are walked in ascending order, and each week's activities in stored
   // order, so ref numbering (d1, d2, m1, m2 ...) is first encounter order over a
