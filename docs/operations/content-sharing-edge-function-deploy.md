@@ -18,7 +18,7 @@ Helper scripts: `.github/scripts/content-sharing-deploy/`
 | Function | verify_jwt | Role |
 |---|---|---|
 | `manage-content-share` | `true` | Authenticated management (preview, create, refresh, rotate, revoke, status). |
-| `read-content-share` | `false` | The only anonymous function: resolves an opaque public drill share to its stored, sanitised snapshot. |
+| `read-content-share` | `false` | The only anonymous function: resolves an opaque public drill, session or programme share to its stored, sanitised snapshot. |
 
 The eight pre-existing functions are untouched and stay `verify_jwt = true`.
 After a run the project has exactly ten functions, and `read-content-share` is

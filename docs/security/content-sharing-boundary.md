@@ -669,3 +669,240 @@ and the rate limit are unchanged.
   share created, no content reclassified; `public_sharing_enabled` stays false
   on every club, and hosted public sharing stays disabled until a separate
   explicit approval.
+
+---
+
+# Part four: public programme sharing and safe print (Content Sharing PR 4, with the browser-print portion of PR 6)
+
+## 30. What PR 4 adds
+
+Public sharing of a whole PROGRAMME: its overview, its ordered weeks, each
+week's ordered activities, the drills those activities reference, those drills'
+media, and an optional attached PDF. Plus a Print / Save as PDF action on the
+public page, which is the browser-print portion of PR 6.
+
+The management model, the URL and secret model, the lifecycle, the audit
+actions, the kill switch, the expiry policy, the failure uniformity and the
+rate limit are all unchanged from PR 1 to PR 3. A programme share is another
+source kind inside the same substrate, with its own explicit branch at every
+layer.
+
+## 31. The programme dependency graph
+
+```
+programme (source, rights)
+ ├─ templates WHERE programme_id = programme.id AND club_id = club   -> dependency_kind 'template'
+ │    └─ activities[].drill_id -> drills (club scoped)               -> dependency_kind 'drill'
+ │          └─ drills.media_id -> media (club scoped)                -> dependency_kind 'media'
+ └─ programmes.pdf_media_id    -> media (club scoped)                -> dependency_kind 'media'
+```
+
+The graph is derived server side by `content_share_deps`, which already had a
+complete programme branch from 0040, club scoped at every hop. A cross club or
+absent nested id resolves as a missing dependency (`dep_exists` false) and
+blocks the share; it is never followed. The dependency set is never taken from
+the client, on create or on refresh.
+
+A week is not a table: it is a `templates` row carrying `programme_week`. Every
+template belonging to the programme is a dependency, including one with no week
+assigned. An unassigned template is not rendered but its rights still gate the
+share. The asymmetry is deliberate and strictly fail closed: a share can be
+blocked by a template the public page would not have shown, never the reverse.
+
+## 32. The public programme snapshot
+
+Allow listed, versioned (`snapshotVersion: 1`), built server side, and validated
+by its own guard at three points: the builder's own allow list scan, the read
+function's public validator, and the browser's independent re-check before
+anything renders.
+
+Top level: `snapshotVersion`, `kind`, `displayTitle`, `focus`, `summary`,
+`intentions`, `weeks`, `orderedWeekNumbers`, `weekTemplates`,
+`referencedDrills`, `pdf`, `media`, `sourceAttribution`, `snapshotAt`, plus the
+stored-only `builder` and `public` markers the read path strips.
+
+Each week carries `week`, `title`, `focus`, `activities`, `totalDuration`. The
+number field is named `week`: `programmeWeek` and `programme_week` are both in
+`FORBIDDEN_ANYWHERE`, so a projection that used either would make the builder
+throw on its own output.
+
+**`templates.author` is the hard exclusion.** It is a club member's full name in
+plain text. It is not in the column list the Edge Function reads, not in the
+`TemplateRow` type, not in the allow list, and it is in the forbidden key
+scanner on both the server and the client. Four independent layers.
+
+Also excluded: every real id (programme, template, drill, media), `club_id`,
+`created_by`, `created_at`, `rights`, `storage_path`, `embed_url`, the legacy
+`programme` and `week` label columns, and every operational field a programme
+page shows but a public copy must not (the linked club sessions, per team
+progress, team names and ids, session dates, venues, `spond_event_id`, live
+state). Drill and media references are snapshot-local refs (`d1`, `m1`) minted
+in the snapshot, never database ids.
+
+`created_at` is READ from templates, for ordering only. Weeks are walked in
+ascending week order, tie broken by `created_at` then by id, so the earliest
+created template claims a contested week exactly as the club's programme page
+renders it, and the output is deterministic regardless of the row order
+Postgres returned. It never enters the snapshot.
+
+## 33. Caps (reported, never silently applied)
+
+| Cap | Value | Enforced |
+|---|---|---|
+| Weeks | 12 | builder, with a stated reason |
+| Referenced media | 64 | builder, with a stated reason |
+| Stored snapshot | 256 KiB | the RPC is the authority; the builder checks it too so the coach gets a reason instead of a bare failure |
+
+A programme over any cap is refused. It is never truncated, because a truncated
+programme would publish a partial copy of the club's material while presenting
+itself as the whole thing.
+
+## 34. The attached PDF policy (explicit)
+
+The programme PDF is private media and is treated exactly like any other media
+dependency. It is shared only when it exists in the same club, is not
+`internal_only`, is in the server derived dependency set, and is referenced
+through a snapshot-local media ref. The read function signs only the stored path
+the database read function returned.
+
+**An `internal_only`, missing or cross club PDF blocks the WHOLE programme
+share.** It is never silently omitted. The rule is stated here because the
+alternative (publish the programme without its document) was available and was
+rejected: the PDF is usually the programme's substance, and a copy without it
+would misrepresent what was shared. `content_share_deps` already emits
+`pdf_media_id` as a media dependency, so the RPC enforces this independently of
+the builder. Both the builder and the database refuse it, and a test pins each.
+
+A programme with no weeks at all is refused too (`no_weeks`), for the same
+reason: an overview with no content is not a useful public copy.
+
+The media bucket stays private. Nothing here makes it public.
+
+## 35. The one migration (0041) and why it is required
+
+Every programme-shaped piece of the substrate already existed and was already
+live: the `programme` value in `content_share_kind`, `content_shares.programme_id`
+with both check constraints, the one-active and idempotency indexes, the
+`content_share_deps` programme branch, the `content_share_lock_rights` template
+and programme arms, the lifecycle RPC's programme arms, the `programmes.manage`
+and `programmes.create` capabilities, the audit `source_kind` vocabulary, and
+the rights downgrade triggers on `programmes` and `templates`.
+
+The one blocker was the anonymous READ path. `read_public_share` failed closed
+for any kind other than drill or session. 0041 widens that allow list from
+`{drill, session}` to `{drill, session, programme}` and nothing else. Outside
+comments, the function body differs from 0040 in exactly one line. The signature
+is unchanged, so the signature pin and the existing grants are untouched (the
+grants are re-stated anyway). The migration changes no table, column, enum,
+constraint, index, trigger or capability, enables no club, creates no share and
+reclassifies no content, and its self-verification block asserts all of that.
+
+## 36. Read-time re-eligibility (fail closed, no partial programme)
+
+`read_public_share` re-checks every recorded dependency's current rights and
+existence on every read. A programme's dependency kinds are `template`, `drill`
+and `media`, and each already had an arm. So a week template, a nested drill, a
+nested media item or the attached PDF that is later downgraded to
+`internal_only`, deleted, or moved to another club takes the WHOLE programme
+share dark, with the identical neutral unavailable response. No partial
+programme is ever returned.
+
+The rights downgrade triggers additionally revoke an active programme share in
+the same transaction as the downgrade and null its snapshot.
+
+**Known residual, unchanged from PR 2 and PR 3.** `read_public_share` re-checks
+every DEPENDENCY's rights, but not the SOURCE row's own current rights, because
+`content_share_deps` never emits the source as a dependency of itself. This is
+true for drill and session sources today and is now true for programme sources
+too; PR 4 deliberately did not change it, because doing so would alter drill and
+session read behaviour and is beyond widening the kind gate. The compensating
+control is the downgrade trigger, which revokes the share the moment the source
+is downgraded. Worth revisiting as its own change, for all three kinds at once.
+
+## 37. The two Edge Functions (programme branch)
+
+`manage-content-share` gains an explicit programme branch: `PROGRAMME_COLS` and
+`TEMPLATE_COLS` (no `author`, no `created_by`), `loadProgrammeForShare` (which
+matches `content_share_deps`' programme branch set for set), programme
+eligibility, the programme builder, and programme arms for preview, create,
+refresh and status. Its kind resolve is now exhaustive: an unrecognised kind is
+refused rather than coerced. This closed a real defect, where
+`{action:'status', kind:'programme'}` silently became a drill lookup and queried
+the wrong source column.
+
+`read-content-share` gains one arm: a programme snapshot is validated by
+`validatePublicProgrammeSnapshot`. There is no generic validator; each kind
+keeps its own guard, and an unknown kind fails closed. `verify_jwt` stays true
+on manage and false on read, and read remains the only anonymous function.
+
+`assertAllowlistedKeys` now dispatches explicitly on `drill | session |
+programme` and throws on any unknown kind, replacing an unguarded fallthrough
+that would have validated a future fourth kind against the drill allow list.
+
+## 38. Print and Save as PDF (the browser-print portion of PR 6)
+
+The public page offers a Print / Save as PDF action. It calls `window.print()`
+on the already rendered, already validated snapshot DOM.
+
+- It makes no request, reads no live row, adds no database access, needs no
+  Edge Function and generates no server side PDF.
+- It is structurally incapable of printing anything the public projection did
+  not already carry: the page imports no authenticated data layer, and the
+  button sits inside the post-validation render branch.
+- The print stylesheet hides every control (the reload button, the print button
+  itself, the print note and the page footer), keeps weeks, activities, drills
+  and media figures from splitting across pages, starts each programme week on a
+  fresh page, and preserves colour so a four corners tag stays legible.
+- Attribution is kept visible in print, because the FA terms require the source
+  to appear wherever the image renders.
+
+The page states plainly: **"A downloaded or printed copy cannot be turned off or
+recalled."** Revoking a link cannot reach a copy that has already left the
+platform. That is a property of any export, and saying so is the honest control.
+
+No generated PDF service was built. If browser print ever proves inadequate, a
+server side PDF function is its own gated change, not an extension of this one.
+
+## 39. Management authority matrix (programme)
+
+| Action | Who |
+|---|---|
+| preview, create | programme owner with `shares.create` + `programmes.create`, or `programmes.manage` + `shares.create` |
+| refresh, rotate | the share creator only, with `shares.create` |
+| revoke | the share creator with `shares.create`, or any `shares.manage` holder |
+| status/review | the share owner, or a `shares.manage` holder |
+| parent | none |
+
+No new capability was introduced. The lifecycle RPC resolves programme authority
+through its existing `p_kind::text || 's.manage'` and `p_kind::text || 's.create'`
+construction, which lands on the capabilities that already govern the programme
+edit buttons. Expiry policy is unchanged: 90 days for a `shares.create` holder,
+no-expiry only for a `shares.manage` holder. The roadmap's floated 180 day
+programme default is NOT implemented; it would require changing the SQL expiry
+policy, which is a separate decision.
+
+## 40. Signed URL residual, widened scope
+
+A programme pools media from many weeks and many drills, so one programme link
+can expose more uploaded FILENAMES (visible inside a signed URL) than a drill or
+session link does. The residual itself is unchanged and already documented in
+section 13; PR 4 only widens how much of it one link can carry. The owner facing
+warning about file names is shown on the programme control exactly as it is on
+the drill and session controls.
+
+## 41. What PR 4 does NOT do
+
+- No authenticated copy or import of a shared programme; that remains a
+  separately scoped future programme (roadmap PR 7).
+- No generated server side PDF.
+- No club-wide shared links management surface; that is its own PR.
+- No new client policy or grant on `content_shares` or
+  `content_share_dependencies`.
+- No new capability, no new audit action, no plaintext secret storage, no change
+  to the expiry policy.
+- No change to drill or session behaviour: the existing tests all still pass
+  unchanged, and 0041's executable SQL differs from 0040 in one line.
+- No hosted migration applied, no hosted Edge Function deployed, no production
+  share created, no content reclassified; `public_sharing_enabled` stays false
+  on every club, and hosted public sharing stays disabled until a separate
+  explicit approval.

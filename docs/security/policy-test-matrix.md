@@ -99,8 +99,15 @@ projection with the private media fields and internal markers stripped and no
 token hash, club id, source id or member id, and returns the identical neutral
 `{status:'unavailable'}` for a wrong secret, an unknown id, a placeholder
 snapshot, a revoked share, an expired share, a kill-switched club, a rotated old
-secret, a missing or downgraded nested dependency, and a non-drill kind (drills
-only render). It also proves the signed-media list names only eligible
+secret, a missing or downgraded nested dependency, and an unsupported kind. The
+supported kinds have widened with each PR: PR 2 shipped drills, PR 3 added
+sessions (`0040`) and PR 4 adds programmes (`0041`), so the suite now proves a
+real programme read as well, carrying no template author, no internal ids and no
+member id, with its week templates, nested drills, their pooled media and the
+attached PDF all gating the share. A programme whose week template, nested
+drill, media or PDF is `internal_only`, missing or in another club is refused at
+create, and one downgraded after creation fails the whole read closed with no
+partial programme. It also proves the signed-media list names only eligible
 `public_full` stored paths by ref, and that `content_share_expiry_cleanup` is
 service_role only, clears a share expired beyond the retention window (nulling
 the snapshot, removing the dependency rows and emitting exactly one
@@ -109,7 +116,14 @@ The pure snapshot builder, allow-list scanner, sanitisers and secret/hash
 helpers are proven by the Deno suite `supabase/functions/_shared/share_test.ts`,
 and the public route, page and share-control views by the Vitest suites
 `src/lib/publicShare.test.ts`, `src/components/PublicDrillView.test.tsx`,
-`src/components/PublicShareControl.test.tsx` and `src/routes/PublicShare.test.tsx`.
+`src/components/PublicSessionView.test.tsx`,
+`src/components/PublicProgrammeView.test.tsx`,
+`src/components/PublicShareControl.test.tsx`,
+`src/components/PublicShareControl.gating.test.tsx`,
+`src/routes/PublicShare.test.tsx` and `src/routes/PublicShare.print.test.tsx`
+(the last proving the browser Print / Save as PDF action consumes the validated
+public projection only, makes no request, and can carry no operational field to
+paper).
 
 ## Signup membership boundary
 
