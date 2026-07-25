@@ -10,16 +10,27 @@
 // identical neutral unavailable state, so the page never reveals which state
 // occurred or whether the link ever existed. A transport failure is distinct (a
 // retry), because it reveals nothing about the link's lifecycle.
+//
+// Print / Save as PDF (Content Sharing PR 6, browser print only). The action
+// calls window.print() on the already rendered, already validated snapshot DOM.
+// It makes NO request, reads NO live row, adds NO database access, needs NO
+// Edge Function and generates NO server side PDF. Whatever is on the page is
+// what prints, so the printed copy can carry nothing the public projection did
+// not already carry. Because the printed or saved copy leaves the platform
+// entirely, the page states plainly that it cannot be turned off or recalled.
 
 import { useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { PublicDrillView } from '../components/PublicDrillView'
+import { PublicProgrammeView } from '../components/PublicProgrammeView'
 import { PublicSessionView } from '../components/PublicSessionView'
 import {
   type PublicDrillSnapshot,
+  PRINT_WARNING,
   PUBLIC_PAGE_TITLE,
+  type PublicProgrammeSnapshot,
   type PublicSessionSnapshot,
   readSecretFromHash,
   TRANSIENT_BODY,
@@ -27,6 +38,7 @@ import {
   UNAVAILABLE_BODY,
   UNAVAILABLE_HEADING,
   validatePublicDrillSnapshot,
+  validatePublicProgrammeSnapshot,
   validatePublicSessionSnapshot,
 } from '../lib/publicShare'
 
@@ -47,6 +59,28 @@ function Frame({ children }: { children: React.ReactNode }) {
       <footer className="public-foot">
         <p className="muted">Shared from Ossett Town Juniors</p>
       </footer>
+    </div>
+  )
+}
+
+// The interactive chrome under a rendered snapshot. Every control here is
+// hidden in print (see the @media print block in styles.css): a printed page
+// must not carry buttons, and the reload control is meaningless on paper.
+function PublicActions({ onReload }: { onReload: () => void }) {
+  return (
+    <div className="public-reload">
+      <button type="button" className="btn btn-quiet btn-sm" onClick={onReload}>
+        Reload media
+      </button>
+      <button
+        type="button"
+        className="btn btn-quiet btn-sm"
+        style={{ minHeight: 44 }}
+        onClick={() => window.print()}
+      >
+        Print or Save as PDF
+      </button>
+      <p className="public-print-note muted">{PRINT_WARNING}</p>
     </div>
   )
 }
@@ -147,11 +181,7 @@ export default function PublicShare() {
     return (
       <Frame>
         <PublicDrillView snapshot={snapshot} mode="public" />
-        <div className="public-reload">
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => query.refetch()}>
-            Reload media
-          </button>
-        </div>
+        <PublicActions onReload={() => query.refetch()} />
       </Frame>
     )
   }
@@ -160,11 +190,16 @@ export default function PublicShare() {
     return (
       <Frame>
         <PublicSessionView snapshot={snapshot} mode="public" />
-        <div className="public-reload">
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => query.refetch()}>
-            Reload media
-          </button>
-        </div>
+        <PublicActions onReload={() => query.refetch()} />
+      </Frame>
+    )
+  }
+  if (kind === 'programme' && validatePublicProgrammeSnapshot(result.snapshot)) {
+    const snapshot = result.snapshot as PublicProgrammeSnapshot
+    return (
+      <Frame>
+        <PublicProgrammeView snapshot={snapshot} mode="public" />
+        <PublicActions onReload={() => query.refetch()} />
       </Frame>
     )
   }

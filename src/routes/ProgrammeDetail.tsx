@@ -32,6 +32,7 @@ import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
 import { TemplateFormModal } from '../components/TemplateFormModal'
 import { ApplyProgrammeModal } from '../components/ApplyProgrammeModal'
+import { PublicShareControl } from '../components/PublicShareControl'
 import { ShareButton } from '../components/ShareButton'
 
 type NavFn = ReturnType<typeof useNav>
@@ -216,6 +217,14 @@ function ProgrammeView({ p }: { p: Programme }) {
   // buttons.
   const canManage =
     caps.has('programmes.manage') || (caps.has('programmes.create') && !!p.createdBy && p.createdBy === user?.id)
+  // Public sharing is a separate, gated affordance from the internal club link:
+  // it publishes a login-free snapshot of the whole programme. Publish/manage
+  // needs shares.create plus the same programme authority the edit buttons use
+  // (the lifecycle RPC re-enforces exactly this); a shares.manage holder may
+  // turn off any club link. Parents see neither. The UI decides only what to
+  // surface; the RPC is the boundary.
+  const canPublishShare = caps.has('shares.create') && canManage
+  const canRevokeAnyShare = caps.has('shares.manage')
 
   // The first template found claims each week. The templates read returns
   // newest first, so creation order is restored here to keep the earliest
@@ -291,6 +300,16 @@ function ProgrammeView({ p }: { p: Programme }) {
         <div style={{ marginBottom: 14 }}>
           <ShareButton kind="programme" id={p.id} title={p.name} />
         </div>
+      )}
+
+      {(canPublishShare || canRevokeAnyShare) && (
+        <PublicShareControl
+          kind="programme"
+          sourceId={p.id}
+          title={p.name}
+          canPublish={canPublishShare}
+          canRevokeAny={canRevokeAnyShare}
+        />
       )}
 
       {p.summary && <p style={{ fontSize: 14.5, lineHeight: 1.55, margin: '0 0 12px', maxWidth: 720 }}>{p.summary}</p>}

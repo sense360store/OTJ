@@ -139,6 +139,42 @@ export interface PublicSessionSnapshot {
 }
 
 // -------------------------------------------------------------------------
+// Public PROGRAMME snapshot (Content Sharing PR 4)
+// -------------------------------------------------------------------------
+//
+// Mirrors the server programme builder (supabase/functions/_shared/share.ts).
+// The same flat top-level media pool as a session, shared by every week's
+// drills AND the optional attached PDF, which points into it by ref rather than
+// carrying a path. A week's number field is `week`; programmeWeek is a
+// forbidden key. The template's author is never present: it is a club member's
+// full name and is excluded from the projection entirely.
+
+export interface PublicProgrammeWeek {
+  week: number
+  title: string | null
+  focus: string | null
+  activities: PublicSessionActivity[]
+  totalDuration: number
+}
+
+export interface PublicProgrammeSnapshot {
+  snapshotVersion: number
+  kind: 'programme'
+  displayTitle: string
+  focus: string | null
+  summary: string | null
+  intentions: string[]
+  weeks: number | null
+  orderedWeekNumbers: number[]
+  weekTemplates: PublicProgrammeWeek[]
+  referencedDrills: PublicReferencedDrill[]
+  pdf: { ref: string } | null
+  media: PublicDrillMedia[]
+  sourceAttribution: PublicSourceAttribution | null
+  snapshotAt: string
+}
+
+// -------------------------------------------------------------------------
 // URL model
 // -------------------------------------------------------------------------
 
@@ -185,6 +221,9 @@ export const KILL_SWITCH_NOTE =
   'Public sharing is turned off for your club. An admin can turn it on.'
 export const BLOCKED_FA_NOTE =
   'This uses England Football or other restricted content, which we can only share inside the club.'
+// Shown on the public page beside the Print / Save as PDF action. A printed or
+// saved copy leaves the platform: revoking the link cannot reach it.
+export const PRINT_WARNING = 'A downloaded or printed copy cannot be turned off or recalled.'
 
 // Map a server block reason to calm coach copy for a DRILL share.
 export function blockedReasonCopy(reasons: string[]): string {
@@ -221,6 +260,47 @@ export function blockedSessionReasonCopy(reasons: string[]): string {
   return 'This session cannot be shared publicly.'
 }
 
+// Map a server block reason to calm coach copy for a PROGRAMME share. A
+// programme aggregates far more than a session (every week template, every
+// drill those weeks use, every one of those drills' media, and the attached
+// PDF), so the blockers name which layer failed in plain words. Never leaks a
+// reason code, and never says which specific week or drill, which would tell a
+// coach more about another coach's content than the screen otherwise shows.
+export function blockedProgrammeReasonCopy(reasons: string[]): string {
+  if (
+    reasons.includes('source_internal_only') ||
+    reasons.includes('template_internal_only') ||
+    reasons.includes('drill_internal_only') ||
+    reasons.includes('media_internal_only') ||
+    reasons.includes('pdf_internal_only')
+  ) {
+    return BLOCKED_FA_NOTE
+  }
+  if (
+    reasons.includes('drill_missing') ||
+    reasons.includes('media_missing') ||
+    reasons.includes('pdf_missing')
+  ) {
+    return 'Something this programme uses is missing, so it cannot be shared publicly.'
+  }
+  if (reasons.includes('unsupported_item')) {
+    return 'This programme has an activity we cannot share publicly yet.'
+  }
+  if (reasons.includes('no_weeks')) {
+    return 'This programme has no weeks yet, so there is nothing to share.'
+  }
+  if (reasons.includes('too_many_weeks')) {
+    return 'This programme has more weeks than we can share in one link.'
+  }
+  if (reasons.includes('too_many_media')) {
+    return 'This programme uses more files than we can share in one link.'
+  }
+  if (reasons.includes('snapshot_too_large')) {
+    return 'This programme is too large to share in one link.'
+  }
+  return 'This programme cannot be shared publicly.'
+}
+
 // -------------------------------------------------------------------------
 // Snapshot validation (defensive, before rendering)
 // -------------------------------------------------------------------------
@@ -232,10 +312,22 @@ const TOP_KEYS = new Set<string>([
   'media', 'snapshotAt',
 ])
 const MEDIA_KEYS = new Set<string>(['ref', 'type', 'caption', 'sourceAttribution', 'link', 'url'])
+// Kept aligned with FORBIDDEN_ANYWHERE in supabase/functions/_shared/share.ts,
+// plus the four client-only markers (builder, public, _mid, _path) that the
+// read path strips and must never arrive here. The server is the authority;
+// this is the browser's independent re-check before anything renders.
 const FORBIDDEN = new Set<string>([
-  'club_id', 'clubId', 'created_by', 'createdBy', 'media_id', 'mediaId', 'source_key',
-  'sourceKey', 'storage_path', 'storagePath', 'token_hash', 'tokenHash', 'secret',
-  'coach_id', 'drill_id', 'player_id', 'playerId', 'builder', 'public', '_mid', '_path',
+  'club_id', 'clubId', 'created_by', 'createdBy', 'created_at', 'createdAt',
+  'media_id', 'mediaId', 'source_key', 'sourceKey', 'source_programme_id',
+  'storage_path', 'storagePath', 'embed_url', 'embedUrl', 'token_hash', 'tokenHash',
+  'secret', 'coach_id', 'coachId', 'drill_id', 'drillId', 'session_id', 'programme_id',
+  'idempotency_key', 'revoked_by', 'updated_by', 'rights_class_observed', 'player_id',
+  'playerId', 'author',
+  'team_id', 'teamId', 'venue', 'start_time', 'startTime', 'date',
+  'spond_event_id', 'spondEventId', 'board_id', 'boardId', 'programme_week',
+  'programmeWeek', 'live_activity_index', 'liveActivityIndex',
+  'live_activity_started_at', 'liveActivityStartedAt',
+  'builder', 'public', '_mid', '_path',
 ])
 
 function hasNoForbidden(node: unknown): boolean {
@@ -346,6 +438,87 @@ export function validatePublicSessionSnapshot(value: unknown): value is PublicSe
       if (typeof tok.x !== 'number' || !Number.isFinite(tok.x)) return false
       if (typeof tok.y !== 'number' || !Number.isFinite(tok.y)) return false
     }
+  }
+
+  return hasNoForbidden(s)
+}
+
+// -------------------------------------------------------------------------
+// Programme snapshot validation (defensive, before rendering)
+// -------------------------------------------------------------------------
+
+const PROGRAMME_TOP_KEYS = new Set<string>([
+  'snapshotVersion', 'kind', 'displayTitle', 'focus', 'summary', 'intentions',
+  'weeks', 'orderedWeekNumbers', 'weekTemplates', 'referencedDrills', 'pdf',
+  'media', 'sourceAttribution', 'snapshotAt',
+])
+const WEEK_KEYS = new Set<string>(['week', 'title', 'focus', 'activities', 'totalDuration'])
+const PDF_KEYS = new Set<string>(['ref'])
+
+// Validate that a value is a well formed PUBLIC programme snapshot of the
+// pinned version and kind, with only allow listed keys at every level, week
+// numbers that are integers, activity drill references that all resolve, a pdf
+// pointer that resolves into the flat media pool, and no forbidden key anywhere
+// (blocks author/programme_week/storage_path/_path etc.).
+export function validatePublicProgrammeSnapshot(value: unknown): value is PublicProgrammeSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const s = value as Record<string, unknown>
+  if (s.kind !== 'programme') return false
+  if (s.snapshotVersion !== PUBLIC_SNAPSHOT_VERSION) return false
+  if (!keysWithin(s, PROGRAMME_TOP_KEYS)) return false
+  if (typeof s.displayTitle !== 'string') return false
+
+  if (!Array.isArray(s.media)) return false
+  const mediaRefs = new Set<string>()
+  for (const m of s.media as unknown[]) {
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return false
+    if (!keysWithin(m as Record<string, unknown>, MEDIA_KEYS)) return false
+    const ref = (m as Record<string, unknown>).ref
+    if (typeof ref !== 'string') return false
+    mediaRefs.add(ref)
+  }
+
+  if (!Array.isArray(s.referencedDrills)) return false
+  const drillRefs = new Set<string>()
+  for (const d of s.referencedDrills as unknown[]) {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return false
+    const dr = d as Record<string, unknown>
+    if (!keysWithin(dr, REF_DRILL_KEYS)) return false
+    if (typeof dr.ref !== 'string') return false
+    drillRefs.add(dr.ref)
+    if (!Array.isArray(dr.mediaRefs)) return false
+    for (const mr of dr.mediaRefs as unknown[]) {
+      if (typeof mr !== 'string' || !mediaRefs.has(mr)) return false
+    }
+  }
+
+  if (!Array.isArray(s.orderedWeekNumbers)) return false
+  for (const n of s.orderedWeekNumbers as unknown[]) {
+    if (typeof n !== 'number' || !Number.isInteger(n)) return false
+  }
+
+  if (!Array.isArray(s.weekTemplates)) return false
+  for (const w of s.weekTemplates as unknown[]) {
+    if (!w || typeof w !== 'object' || Array.isArray(w)) return false
+    const wk = w as Record<string, unknown>
+    if (!keysWithin(wk, WEEK_KEYS)) return false
+    if (typeof wk.week !== 'number' || !Number.isInteger(wk.week)) return false
+    if (!Array.isArray(wk.activities)) return false
+    for (const a of wk.activities as unknown[]) {
+      if (!a || typeof a !== 'object' || Array.isArray(a)) return false
+      const act = a as Record<string, unknown>
+      if (!keysWithin(act, ACTIVITY_KEYS)) return false
+      // Every activity drill reference must resolve to a referenced drill.
+      if (act.drillRef != null && !drillRefs.has(act.drillRef as string)) return false
+    }
+  }
+
+  if (s.pdf !== null) {
+    if (!s.pdf || typeof s.pdf !== 'object' || Array.isArray(s.pdf)) return false
+    const pdf = s.pdf as Record<string, unknown>
+    if (!keysWithin(pdf, PDF_KEYS)) return false
+    // The pdf pointer must resolve into the same flat media pool.
+    if (typeof pdf.ref !== 'string' || !mediaRefs.has(pdf.ref)) return false
   }
 
   return hasNoForbidden(s)

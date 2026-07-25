@@ -18,6 +18,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ActionError, Modal } from './ui'
 import { PublicDrillView } from './PublicDrillView'
+import { PublicProgrammeView } from './PublicProgrammeView'
 import { PublicSessionView } from './PublicSessionView'
 import { copyLink, shareLink } from '../lib/share'
 import {
@@ -31,17 +32,20 @@ import {
   useRotateContentShare,
 } from '../lib/queries'
 import {
+  blockedProgrammeReasonCopy,
   blockedReasonCopy,
   blockedSessionReasonCopy,
   buildPublicShareUrl,
   KILL_SWITCH_NOTE,
   type PublicDrillSnapshot,
+  type PublicProgrammeSnapshot,
   PUBLISH_CONFIRM,
   type PublicSessionSnapshot,
   RIGHTS_WARNING,
   ROTATE_WARNING,
   SECRET_ONCE_NOTE,
   validatePublicDrillSnapshot,
+  validatePublicProgrammeSnapshot,
   validatePublicSessionSnapshot,
 } from '../lib/publicShare'
 
@@ -100,7 +104,7 @@ export function PublicShareResultView({
   )
 }
 
-// ---- Pure preview body (drill or session) ----
+// ---- Pure preview body (drill, session or programme) ----
 export function PublicSharePreviewBody({
   kind = 'drill',
   eligible,
@@ -110,9 +114,13 @@ export function PublicSharePreviewBody({
   kind?: ContentShareKind
   eligible: boolean
   blocked: string[]
-  snapshot: PublicDrillSnapshot | PublicSessionSnapshot | null
+  snapshot: PublicDrillSnapshot | PublicSessionSnapshot | PublicProgrammeSnapshot | null
 }) {
-  const blockedCopy = kind === 'session' ? blockedSessionReasonCopy(blocked) : blockedReasonCopy(blocked)
+  const blockedCopy = kind === 'session'
+    ? blockedSessionReasonCopy(blocked)
+    : kind === 'programme'
+    ? blockedProgrammeReasonCopy(blocked)
+    : blockedReasonCopy(blocked)
   return (
     <div className="public-preview">
       {!eligible && (
@@ -128,6 +136,8 @@ export function PublicSharePreviewBody({
         <div className="public-preview-frame">
           {kind === 'session'
             ? <PublicSessionView snapshot={snapshot as PublicSessionSnapshot} mode="preview" />
+            : kind === 'programme'
+            ? <PublicProgrammeView snapshot={snapshot as PublicProgrammeSnapshot} mode="preview" />
             : <PublicDrillView snapshot={snapshot as PublicDrillSnapshot} mode="preview" />}
         </div>
       )}
@@ -138,11 +148,15 @@ export function PublicSharePreviewBody({
 type Feedback = { role: 'status' | 'alert' | null; message: string }
 const NO_FEEDBACK: Feedback = { role: null, message: '' }
 
+// Each kind is validated by its OWN guard before it is rendered, even in the
+// owner preview: the preview reuses the public renderers, so it reuses the
+// public validators too. There is no generic path.
 function validatePreview(
   kind: ContentShareKind,
   value: unknown,
-): PublicDrillSnapshot | PublicSessionSnapshot | null {
+): PublicDrillSnapshot | PublicSessionSnapshot | PublicProgrammeSnapshot | null {
   if (kind === 'session') return validatePublicSessionSnapshot(value) ? value : null
+  if (kind === 'programme') return validatePublicProgrammeSnapshot(value) ? value : null
   return validatePublicDrillSnapshot(value) ? value : null
 }
 
@@ -159,7 +173,7 @@ export function PublicShareControl({
   canPublish: boolean
   canRevokeAny: boolean
 }) {
-  const noun = kind === 'session' ? 'session' : 'drill'
+  const noun = kind === 'session' ? 'session' : kind === 'programme' ? 'programme' : 'drill'
   const statusQ = useContentShareStatus(kind, sourceId, canPublish || canRevokeAny)
   const preview = usePreviewContentShare()
   const create = useCreateContentShare()
