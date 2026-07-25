@@ -208,8 +208,8 @@ export const PUBLIC_PAGE_TITLE = 'Shared from Ossett Town Juniors'
 
 // Owner facing warnings and confirmation (roadmap sections 8.3, 12).
 // The file-name line addresses the honest residual that a shared media file's
-// own name is visible to a recipient through its link, even though it never
-// appears as text in the preview.
+// own name is visible to a recipient: as the media caption (which the preview
+// does render), and inside the signed URL of the file itself.
 export const RIGHTS_WARNING =
   'Check the text you wrote, the notes, setup, area and any media captions. Remove any child’s name, and any team, venue or pitch name you would not want public, before you share this. The name of an uploaded file can also be seen by anyone who opens it, so replace a file whose name includes a child’s name before sharing. Confirm this text and any diagrams are the club’s own work or cleared for public use, not copied from England Football or another source.'
 export const PUBLISH_CONFIRM =
@@ -322,7 +322,7 @@ const FORBIDDEN = new Set<string>([
   'storage_path', 'storagePath', 'embed_url', 'embedUrl', 'token_hash', 'tokenHash',
   'secret', 'coach_id', 'coachId', 'drill_id', 'drillId', 'session_id', 'programme_id',
   'idempotency_key', 'revoked_by', 'updated_by', 'rights_class_observed', 'player_id',
-  'playerId', 'author',
+  'playerId', 'author', 'pdf_media_id', 'pdfMediaId', 'sessionId', 'programmeId',
   'team_id', 'teamId', 'venue', 'start_time', 'startTime', 'date',
   'spond_event_id', 'spondEventId', 'board_id', 'boardId', 'programme_week',
   'programmeWeek', 'live_activity_index', 'liveActivityIndex',

@@ -199,14 +199,34 @@ Deno.serve(async (req) => {
   let signFailures = 0
   if (toSign.length > 0 && Array.isArray(snapshot.media)) {
     const byRef = new Map<string, string>()
-    for (const item of toSign) {
-      if (!item || typeof item.ref !== 'string' || typeof item.path !== 'string') continue
-      const { data, error } = await admin.storage.from('media').createSignedUrl(item.path, SIGNED_URL_TTL_SECONDS)
-      if (error || !data?.signedUrl) {
-        signFailures += 1
-        continue
+    // ONE batched storage call for the whole pool, not one per item. A drill
+    // share signs at most one path, but a programme pools every week's drill
+    // media plus the attached PDF (up to MAX_PROGRAMME_MEDIA), and this is the
+    // project's only anonymous function: signing serially would turn a single
+    // unauthenticated request into that many sequential storage round trips.
+    // Order is preserved by the storage API, so results map back positionally;
+    // the per item failure tolerance is unchanged (a path that fails to sign
+    // simply renders without media rather than failing the whole share).
+    const valid = toSign.filter(
+      (item) => item && typeof item.ref === 'string' && typeof item.path === 'string',
+    )
+    signFailures += toSign.length - valid.length
+    if (valid.length > 0) {
+      const { data, error } = await admin.storage
+        .from('media')
+        .createSignedUrls(valid.map((item) => item.path), SIGNED_URL_TTL_SECONDS)
+      if (error || !Array.isArray(data)) {
+        signFailures += valid.length
+      } else {
+        for (let i = 0; i < valid.length; i++) {
+          const signed = data[i]
+          if (!signed || signed.error || typeof signed.signedUrl !== 'string') {
+            signFailures += 1
+            continue
+          }
+          byRef.set(valid[i].ref, signed.signedUrl)
+        }
       }
-      byRef.set(item.ref, data.signedUrl)
     }
     for (const m of snapshot.media as Array<Record<string, unknown>>) {
       const ref = typeof m.ref === 'string' ? m.ref : ''

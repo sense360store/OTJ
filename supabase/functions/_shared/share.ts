@@ -834,6 +834,20 @@ export interface ProgrammeEligibility {
   blocked: ProgrammeBlockReason[]
 }
 
+// The programme builder's throws carry the reason they refused, so the caller
+// reports what actually happened instead of collapsing every refusal into one
+// message. The throws are defensive (the caller must evaluate eligibility
+// first), so a reason arriving here at all means eligibility and the builder
+// disagreed, which is worth surfacing accurately rather than mislabelling.
+export class ProgrammeBuildError extends Error {
+  readonly reason: ProgrammeBlockReason
+  constructor(reason: ProgrammeBlockReason, message: string) {
+    super(message)
+    this.name = 'ProgrammeBuildError'
+    this.reason = reason
+  }
+}
+
 // A template claims a week only when programme_week is a positive integer. A
 // null, zero, negative or fractional week is unassigned: the club's programme
 // page never renders it (its week list runs 1..weekCount), so neither does the
@@ -962,6 +976,22 @@ export function evaluateProgrammeEligibility(
     else if (pdf.rights === 'internal_only') blocked.add('pdf_internal_only')
   }
 
+  // The media cap is evaluated here, on the same distinct set the builder will
+  // pool (every referenced drill's media, plus the attached PDF), so a
+  // programme over the cap is reported as too_many_media rather than sailing
+  // through eligibility and being refused later as a size failure.
+  const pooled = new Set<string>()
+  for (const t of templates) {
+    for (const raw of parseActivities(t.activities)) {
+      const shape = activityShape(raw)
+      if (shape.kind !== 'drill') continue
+      const d = drillById.get(shape.drillId)
+      if (d?.media_id) pooled.add(d.media_id)
+    }
+  }
+  if (programme.pdf_media_id) pooled.add(programme.pdf_media_id)
+  if (pooled.size > MAX_PROGRAMME_MEDIA) blocked.add('too_many_media')
+
   // Cap checked against the COUNT, before any per week work, so an absurd
   // programmes.weeks value is refused instead of expanded.
   const byWeek = orderProgrammeTemplates(templates as TemplateRow[])
@@ -990,11 +1020,11 @@ export function buildProgrammeSnapshot(
   snapshotAt: string,
 ): StoredProgrammeSnapshot {
   if (programme.rights === 'internal_only') {
-    throw new Error('buildProgrammeSnapshot: refusing to project an internal_only programme')
+    throw new ProgrammeBuildError('source_internal_only', 'buildProgrammeSnapshot: refusing to project an internal_only programme')
   }
   for (const t of templates) {
     if (t.rights === 'internal_only') {
-      throw new Error('buildProgrammeSnapshot: refusing to project an internal_only template')
+      throw new ProgrammeBuildError('template_internal_only', 'buildProgrammeSnapshot: refusing to project an internal_only template')
     }
   }
 
@@ -1010,9 +1040,9 @@ export function buildProgrammeSnapshot(
     const existing = mediaRefById.get(mediaId)
     if (existing) return existing
     const m = mediaById.get(mediaId)
-    if (!m) throw new Error('buildProgrammeSnapshot: a referenced media is missing')
+    if (!m) throw new ProgrammeBuildError('media_missing', 'buildProgrammeSnapshot: a referenced media is missing')
     if (m.rights === 'internal_only') {
-      throw new Error('buildProgrammeSnapshot: refusing to project internal_only media')
+      throw new ProgrammeBuildError('media_internal_only', 'buildProgrammeSnapshot: refusing to project internal_only media')
     }
     const ref = 'm' + (mediaPool.length + 1)
     mediaPool.push(buildMediaEntry(m, ref))
@@ -1024,9 +1054,9 @@ export function buildProgrammeSnapshot(
     const existing = drillRefById.get(drillId)
     if (existing) return existing
     const d = drillById.get(drillId)
-    if (!d) throw new Error('buildProgrammeSnapshot: a referenced drill is missing')
+    if (!d) throw new ProgrammeBuildError('drill_missing', 'buildProgrammeSnapshot: a referenced drill is missing')
     if (d.rights === 'internal_only') {
-      throw new Error('buildProgrammeSnapshot: refusing to project an internal_only drill')
+      throw new ProgrammeBuildError('drill_internal_only', 'buildProgrammeSnapshot: refusing to project an internal_only drill')
     }
     const ref = 'd' + (referencedDrills.length + 1)
     // Reserve the ref before projecting so a self reference cannot recurse.
@@ -1042,10 +1072,10 @@ export function buildProgrammeSnapshot(
   const byWeek = orderProgrammeTemplates(templates)
   const weekCount = programmeWeekCount(programme, byWeek)
   if (weekCount === 0) {
-    throw new Error('buildProgrammeSnapshot: refusing to project a programme with no weeks')
+    throw new ProgrammeBuildError('no_weeks', 'buildProgrammeSnapshot: refusing to project a programme with no weeks')
   }
   if (weekCount > MAX_PROGRAMME_WEEKS) {
-    throw new Error('buildProgrammeSnapshot: refusing to project more than the week cap')
+    throw new ProgrammeBuildError('too_many_weeks', 'buildProgrammeSnapshot: refusing to project more than the week cap')
   }
   const orderedWeekNumbers = programmeWeekNumbers(weekCount)
 
@@ -1067,7 +1097,7 @@ export function buildProgrammeSnapshot(
     for (const raw of parseActivities(t.activities)) {
       const shape = activityShape(raw)
       if (shape.kind === 'unsupported') {
-        throw new Error('buildProgrammeSnapshot: an unsupported activity item')
+        throw new ProgrammeBuildError('unsupported_item', 'buildProgrammeSnapshot: an unsupported activity item')
       }
       const a = raw as RawActivity
       const phase = sanitizeText(a.phase, 60)
@@ -1094,15 +1124,15 @@ export function buildProgrammeSnapshot(
   let pdf: { ref: string } | null = null
   if (programme.pdf_media_id) {
     const m = mediaById.get(programme.pdf_media_id)
-    if (!m) throw new Error('buildProgrammeSnapshot: the attached PDF is missing')
+    if (!m) throw new ProgrammeBuildError('pdf_missing', 'buildProgrammeSnapshot: the attached PDF is missing')
     if (m.rights === 'internal_only') {
-      throw new Error('buildProgrammeSnapshot: refusing to project an internal_only PDF')
+      throw new ProgrammeBuildError('pdf_internal_only', 'buildProgrammeSnapshot: refusing to project an internal_only PDF')
     }
     pdf = { ref: ensureMediaRef(programme.pdf_media_id) }
   }
 
   if (mediaPool.length > MAX_PROGRAMME_MEDIA) {
-    throw new Error('buildProgrammeSnapshot: refusing to project more than the media cap')
+    throw new ProgrammeBuildError('too_many_media', 'buildProgrammeSnapshot: refusing to project more than the media cap')
   }
 
   const snapshot: StoredProgrammeSnapshot = {
@@ -1129,7 +1159,7 @@ export function buildProgrammeSnapshot(
   // The RPC enforces this too and is the authority; checking here turns a bare
   // database exception into a stated reason the coach can act on.
   if (new TextEncoder().encode(JSON.stringify(snapshot)).length > MAX_SNAPSHOT_BYTES) {
-    throw new Error('buildProgrammeSnapshot: refusing to project a snapshot over the size cap')
+    throw new ProgrammeBuildError('snapshot_too_large', 'buildProgrammeSnapshot: refusing to project a snapshot over the size cap')
   }
 
   return snapshot
@@ -1184,7 +1214,7 @@ const FORBIDDEN_ANYWHERE = [
   'storage_path', 'storagePath', 'embed_url', 'embedUrl', 'token_hash', 'tokenHash',
   'secret', 'coach_id', 'coachId', 'drill_id', 'drillId', 'session_id', 'programme_id',
   'idempotency_key', 'revoked_by', 'updated_by', 'rights_class_observed', 'player_id',
-  'playerId', 'author',
+  'playerId', 'author', 'pdf_media_id', 'pdfMediaId', 'sessionId', 'programmeId',
   // Session operational columns (PR 3). The positive allow list already prevents
   // these; naming them here is belt and braces so a future field rename that
   // reintroduced a real column would trip the scanner rather than leak.

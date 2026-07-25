@@ -720,6 +720,12 @@ a.activity-batch:hover { text-decoration: underline; }
   /* Interactive chrome never prints: the buttons are meaningless on paper and
      the print note is guidance for the person at the screen. */
   .public-foot, .public-reload, .public-media-note, .public-print-note { display: none; }
+  /* The transient-error retry is a control and prints as an inert button. The
+     programme PDF link is deliberately NOT hidden: on paper it still names the
+     document that accompanies the programme, which is useful, and the link does
+     not expand to a signed URL (see the a[href]::after rule below). */
+  .public-empty .btn { display: none; }
+  .public-programme-pdf .btn { border: none; padding: 0; background: none; font-weight: 700; }
   .public-page { background: #fff; color: #000; }
   .public-main { max-width: 100%; padding: 0; }
   .public-media-image { border: none; }
@@ -730,11 +736,11 @@ a.activity-batch:hover { text-decoration: underline; }
   /* Keep a unit of meaning on one page where it fits: a programme week, a
      session or programme activity, a drill card, a media figure and a text
      block. Headings never sit alone at the foot of a page. */
-  .public-week, .public-activity, .public-drill, .public-block, .public-media-figure {
+  .public-week, .public-activity, .public-drill, .public-block, .public-media {
     break-inside: avoid;
     page-break-inside: avoid;
   }
-  .public-title, .public-block-head, .public-week-title, .public-drill-title {
+  .public-title, .public-block-head, .public-week-title {
     break-after: avoid;
     page-break-after: avoid;
   }
@@ -748,7 +754,7 @@ a.activity-batch:hover { text-decoration: underline; }
   /* Diagrams, boards and images must stay legible and must not overflow the
      sheet. Colour is preserved so a four corners tag or a board side still
      reads correctly on a colour printer or in a saved PDF. */
-  .public-media-image, .board-pitch, img, svg {
+  .public-media, .public-media-image, .board-pitch, img, svg {
     max-width: 100%;
     height: auto;
     -webkit-print-color-adjust: exact;

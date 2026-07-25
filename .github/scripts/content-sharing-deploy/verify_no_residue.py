@@ -60,11 +60,22 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. Content
-# Sharing PR 4 applies 0041_public_programme_read, which must be recorded with
-# version 20260725160000 (see the migration's header). Apply the migration
-# first, confirm the recorded version, then run the deploy: this check runs
-# after the deploy and fails closed if the two disagree.
-EXPECTED_LAST_MIGRATION = "20260725160000"  # 0041_public_programme_read
+# Sharing PR 4 applies 0041_public_programme_read.
+#
+# The ledger version is assigned BY THE APPLY (the connector stamps it from the
+# server clock), so it cannot be known before the apply happens. The value below
+# is a PREDICTED placeholder and MUST be replaced with the version actually
+# recorded, as step 3 of the apply order in the 0041 header:
+#
+#   1. apply 0041 through the connector after review;
+#   2. select max(version) from supabase_migrations.schema_migrations;
+#   3. set this constant to exactly that value and commit it;
+#   4. only then run the Edge Function deploy workflow.
+#
+# Until step 3 this constant is wrong on purpose, and the post-deploy check will
+# fail closed if the deploy is run before it is reconciled. That is the intended
+# behaviour: it is far safer than a loose check that passes regardless.
+EXPECTED_LAST_MIGRATION = "20260725160000"  # 0041_public_programme_read (PREDICTED, reconcile at apply)
 DB_URL_ENV = "SUPABASE_DB_URL"
 
 # Bounded connection timeout (seconds) and an overall subprocess wall-clock cap.

@@ -10,13 +10,25 @@
 -- (clubs.public_sharing_enabled). No club is enabled, no share is created and
 -- no content is reclassified by this migration.
 --
--- HOSTED LEDGER VERSION. When this migration is applied it MUST be recorded in
--- supabase_migrations.schema_migrations with version 20260725160000 and name
--- public_programme_read. The post-deploy residue verifier
+-- HOSTED LEDGER VERSION. The post-deploy residue verifier
 -- (.github/scripts/content-sharing-deploy/verify_no_residue.py) asserts the
--- newest ledger version EXACTLY, so the applied version and that constant move
--- together or the deploy job fails closed. Confirm the recorded version
--- immediately after applying and before running the Edge Function deploy.
+-- newest ledger version EXACTLY, and its EXPECTED_LAST_MIGRATION constant must
+-- equal the version this migration is actually recorded under.
+--
+-- The version is assigned BY THE APPLY, not by this file. The connector stamps
+-- it from the server clock at apply time (which is why 0039 is recorded as
+-- 20260722064502 and 0040 as 20260725123000), so it cannot be predicted here
+-- and this file must not pretend otherwise. The apply order is therefore:
+--
+--   1. apply this migration through the connector after review;
+--   2. read back the recorded version:
+--        select max(version) from supabase_migrations.schema_migrations;
+--   3. set EXPECTED_LAST_MIGRATION to exactly that value and commit it;
+--   4. only then run the Edge Function deploy workflow.
+--
+-- The constant carries a PREDICTED value until step 3 replaces it with the
+-- recorded one. The assertion stays an exact equality throughout: it is never
+-- relaxed to a >=, a prefix match or an "exists somewhere" check.
 --
 -- Why a migration at all. PR 1 (0038) built the management substrate as a
 -- first-class polymorphic model, and every programme-shaped piece of it already
@@ -67,6 +79,13 @@
 -- schedule. It changes no table, no column, no enum, no constraint, no index,
 -- no trigger and no capability.
 -- =====================================================================
+
+-- ONE transaction. The self verification at the end runs in the same
+-- transaction as the create-or-replace above it, so a failed check rolls the
+-- widened read path back rather than leaving it live. This matters because the
+-- header instructs a by-hand apply, and a statement-at-a-time apply path would
+-- otherwise install the widened gate and then merely report an error.
+begin;
 
 create or replace function public.read_public_share(
   p_share_id    uuid,
@@ -212,8 +231,15 @@ grant execute on function public.read_public_share(uuid, bytea) to service_role;
 --      the drill and session kinds are still in it (a botched replace that
 --      dropped a kind would otherwise pass silently);
 --   4. the programme source column and enum value the widening depends on still
---      exist;
---   5. nothing was enabled and nothing was created by this migration.
+--      exist.
+--
+-- Deliberately NOT asserted here: that no club has public_sharing_enabled. That
+-- is pre-existing global state, not something this migration does, and asserting
+-- it would abort the migration on exactly the intended go-live ordering (drill
+-- and session sharing enabled first, programme sharing applied after). This
+-- migration contains no statement that could enable a club, create a share or
+-- reclassify content; that is proven by reading it, and by the deploy-time
+-- residue verifier which checks the hosted state independently.
 do $$
 declare
   v_def text;
@@ -242,6 +268,12 @@ begin
   if position('not in (''drill'', ''session'', ''programme'')' in v_def) = 0 then
     raise exception '0041 verify: read_public_share does not carry the widened kind allow list';
   end if;
+  -- Two sided: the superseded two kind list must be gone. A partial or botched
+  -- replace that left the old gate in place would otherwise satisfy the check
+  -- above through a comment while still refusing programmes.
+  if position('not in (''drill'', ''session'') then' in v_def) > 0 then
+    raise exception '0041 verify: read_public_share still carries the superseded two kind allow list';
+  end if;
 
   -- The substrate the widening depends on must still exist.
   if not exists (
@@ -256,9 +288,6 @@ begin
   ) then
     raise exception '0041 verify: content_share_kind is missing the programme value';
   end if;
-
-  -- This migration enables nothing and creates nothing.
-  if exists (select 1 from public.clubs where public_sharing_enabled) then
-    raise exception '0041 verify: a club has public sharing enabled; this migration must not enable one';
-  end if;
 end $$;
+
+commit;

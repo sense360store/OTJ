@@ -186,8 +186,10 @@ The job summary records:
   verified and the anonymous-versus-authenticated boundary is confirmed by the
   endpoint smoke tests instead, which the summary states plainly;
 - the deployed-source readback level (see below);
-- the post-deploy residue check (all counts expected to be zero, migration
-  ledger newest version exactly `20260725160000`).
+- the post-deploy residue check (all counts expected to be zero, and the
+  migration ledger's newest version exactly equal to `EXPECTED_LAST_MIGRATION`
+  in `verify_no_residue.py`, which is reconciled to the version the apply
+  actually recorded before the deploy is run).
 
 ### If the run fails at inventory verification
 
@@ -270,7 +272,7 @@ hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `20260725160000` (0041);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION` (0041 after Content Sharing PR 4, reconciled to the recorded version at apply time);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 

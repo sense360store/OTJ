@@ -846,9 +846,19 @@ on the already rendered, already validated snapshot DOM.
 
 - It makes no request, reads no live row, adds no database access, needs no
   Edge Function and generates no server side PDF.
-- It is structurally incapable of printing anything the public projection did
-  not already carry: the page imports no authenticated data layer, and the
-  button sits inside the post-validation render branch.
+- The page content it prints is structurally incapable of carrying anything the
+  public projection did not: the page imports no authenticated data layer, and
+  the button sits inside the post-validation render branch.
+- The browser's OWN print chrome is the exception, and both halves are handled.
+  Browsers print `document.title` in the header and `document.URL` in the
+  footer by default. The title was already overwritten with neutral copy. The
+  URL is the one that mattered: our secret lives in the URL FRAGMENT, so a naive
+  print would have stamped a working credential onto every sheet of a saved PDF,
+  and that PDF is exactly what recipients forward on. The page now strips the
+  fragment for the duration of the print and restores it immediately after, via
+  both the button handler and `beforeprint`/`afterprint` (so the browser's own
+  Ctrl+P is covered too). The fragment is restored rather than dropped, so a
+  plain page reload still works.
 - The print stylesheet hides every control (the reload button, the print button
   itself, the print note and the page footer), keeps weeks, activities, drills
   and media figures from splitting across pages, starts each programme week on a
@@ -862,6 +872,44 @@ platform. That is a property of any export, and saying so is the honest control.
 
 No generated PDF service was built. If browser print ever proves inadequate, a
 server side PDF function is its own gated change, not an extension of this one.
+
+## 38a. Residuals recorded by the PR 4 adversarial review
+
+These are true, are NOT introduced by this branch, and are recorded so they are
+not mistaken for new findings later. None of them is a fail-open.
+
+- **`media.storage_path` is free text, and the path is what gets signed.** The
+  rights gate is on the media ROW, while the capability granted is the PATH
+  string frozen in the snapshot, signed under the service role. A coach with
+  `media.create` could insert a `public_full` media row whose `storage_path`
+  duplicates an `internal_only` object's path (or an `avatars/` path), attach it
+  and publish it with every gate satisfied. This primitive has existed since
+  PR 2 (drill media has the identical shape); the programme PDF is a new
+  instantiation of it, not a new primitive. **Worth constraining
+  `media.storage_path` to the caller's club prefix, and excluding `avatars/`,
+  before any club is enabled.** That is a schema change and belongs in its own
+  gated migration.
+- **The signed path is the snapshot's frozen `_path`, not the live
+  `media.storage_path`.** Repointing a media row after publish keeps serving the
+  old object. Same family as above, identical in 0039 and 0040.
+- **A demoted share owner keeps refresh and rotate authority.** The lifecycle
+  RPC re-checks share ownership plus `shares.create`, never the SOURCE
+  capability that create required. Pre-existing; broader in effect for a
+  programme than for a drill.
+- **`sanitizeText` is quadratic on hostile input** (the regex chain runs before
+  the length slice), and a programme multiplies that cost across every
+  referenced drill. Pre-existing PR 2 code; not changed here to keep drill and
+  session behaviour identical.
+- **Caps are measured after materialisation.** Nothing bounds activities per
+  week or referenced drills; the size cap is checked on the built snapshot. All
+  insider-reachable only, all fail closed. The week and media caps now bind
+  before materialisation.
+- **A non-array `templates.activities` produces a misleading 403** rather than a
+  stated reason, because the dependency resolver raises inside the RPC. Fail
+  closed, wrong message. Same shape for sessions since PR 3.
+- **A template carrying `programme_id` with no rendered week is a blocking
+  dependency no page shows.** Deliberate and documented in section 31; deleting
+  such a template takes a live link unavailable until someone refreshes.
 
 ## 39. Management authority matrix (programme)
 

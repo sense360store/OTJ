@@ -48,6 +48,7 @@ import {
   evaluateDrillEligibility,
   evaluateProgrammeEligibility,
   evaluateSessionEligibility,
+  ProgrammeBuildError,
   generateSecret,
   type MediaRow,
   type ProgrammeRow,
@@ -229,6 +230,15 @@ async function hasPerm(db: any, capability: string): Promise<boolean | null> {
 }
 
 // deno-lint-ignore no-explicit-any
+// The builder's refusal reason, for reporting. A ProgrammeBuildError names why
+// it refused; anything else is an unexpected failure and is reported as the
+// most conservative cap reason rather than surfacing an internal message.
+// The reason vocabulary is the same closed set eligibility already returns, so
+// nothing new reaches the client.
+function programmeBuildReason(err: unknown): string {
+  return err instanceof ProgrammeBuildError ? err.reason : 'snapshot_too_large'
+}
+
 function errCode(err: any): string {
   return (err && (err.code || err.name)) ? String(err.code || err.name) : 'unknown'
 }
@@ -489,11 +499,11 @@ async function handlePreviewProgramme(admin: AdminClient, clubId: string, source
       preview = toPublicProgrammeProjection(
         buildProgrammeSnapshot(programme, templates, drills, media, new Date().toISOString()),
       )
-    } catch {
+    } catch (err) {
       return reply(200, {
         ok: true,
         eligible: false,
-        blocked: ['snapshot_too_large'],
+        blocked: [programmeBuildReason(err)],
         rights: { source: programme.rights as ContentRights },
         preview: null,
       })
@@ -657,12 +667,13 @@ async function handleCreateProgramme(
   let snapshot
   try {
     snapshot = buildProgrammeSnapshot(programme, templates, drills, media, new Date().toISOString())
-  } catch {
-    // A cap only measurable after projection (media count, stored size). No
-    // share is created and nothing is stored.
+  } catch (err) {
+    // A cap only measurable after projection (the stored size), or a defensive
+    // throw meaning eligibility and the builder disagreed. Either way no share
+    // is created and nothing is stored; the reason is reported accurately.
     return reply(422, {
       error: 'This programme cannot be shared publicly.',
-      blocked: ['snapshot_too_large'],
+      blocked: [programmeBuildReason(err)],
     })
   }
   const secret = generateSecret()
@@ -790,10 +801,10 @@ async function handleRefreshProgramme(
   let snapshot
   try {
     snapshot = buildProgrammeSnapshot(programme, templates, drills, media, new Date().toISOString())
-  } catch {
+  } catch (err) {
     return reply(422, {
       error: 'This programme can no longer be shared publicly.',
-      blocked: ['snapshot_too_large'],
+      blocked: [programmeBuildReason(err)],
     })
   }
 

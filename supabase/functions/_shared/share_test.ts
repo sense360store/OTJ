@@ -20,6 +20,8 @@ import {
   MAX_PROGRAMME_MEDIA,
   MAX_PROGRAMME_WEEKS,
   type MediaRow,
+  type ProgrammeBlockReason,
+  ProgrammeBuildError,
   PROGRAMME_BUILDER,
   type ProgrammeRow,
   sanitizeHttpUrl,
@@ -1114,14 +1116,21 @@ Deno.test('the programme builder refuses more media than the cap defensively', (
   const mediaRows: MediaRow[] = []
   const activities: Array<Record<string, unknown>> = []
   for (let i = 0; i < count; i++) {
-    const did = `d${String(i).padStart(2, '0')}1111-1111-1111-1111-111111111111`
-    const mid = `e${String(i).padStart(2, '0')}1111-1111-1111-1111-111111111111`
+    const did = `d${String(i).padStart(2, '0')}11111-1111-1111-1111-111111111111`
+    const mid = `e${String(i).padStart(2, '0')}11111-1111-1111-1111-111111111111`
     drills.push(drill({ id: did, media_id: mid }))
     mediaRows.push(media({ id: mid }))
     activities.push({ phase: 'Skill', drill_id: did, duration: 1 })
   }
   const t = template({ activities })
-  assertThrows(() => buildProgrammeSnapshot(programme({ weeks: 1 }), [t], drills, mediaRows, AT))
+  let caught: unknown = null
+  try {
+    buildProgrammeSnapshot(programme({ weeks: 1 }), [t], drills, mediaRows, AT)
+  } catch (err) {
+    caught = err
+  }
+  assert(caught instanceof ProgrammeBuildError)
+  assertEquals((caught as ProgrammeBuildError).reason, 'too_many_media')
 })
 
 Deno.test('the programme builder refuses a snapshot over the size cap defensively', () => {
@@ -1275,5 +1284,82 @@ Deno.test('a template claiming a zero, negative or fractional week is not render
     )
     assertEquals(s.orderedWeekNumbers, [1])
     assert(!JSON.stringify(s).includes('Ghost week'))
+  }
+})
+
+Deno.test('a programme over the media cap is reported as too_many_media, not as a size failure', () => {
+  // 65 distinct media across the weeks: comfortably under the size cap, so the
+  // media cap is the only thing that should refuse it, and eligibility must say
+  // so rather than letting the builder throw later.
+  const count = MAX_PROGRAMME_MEDIA + 1
+  const drills: DrillRow[] = []
+  const mediaRows: MediaRow[] = []
+  const activities: Array<Record<string, unknown>> = []
+  for (let i = 0; i < count; i++) {
+    const did = `d${String(i).padStart(2, '0')}11111-1111-1111-1111-111111111111`
+    const mid = `e${String(i).padStart(2, '0')}11111-1111-1111-1111-111111111111`
+    drills.push(drill({ id: did, media_id: mid, summary: null, setup_notes: null, points: [] }))
+    mediaRows.push(media({ id: mid }))
+    activities.push({ phase: 'Skill', drill_id: did, duration: 1 })
+  }
+  const e = evaluateProgrammeEligibility(
+    programme({ weeks: 1 }),
+    [template({ activities })],
+    drills,
+    mediaRows,
+  )
+  assert(!e.eligible)
+  assert(e.blocked.includes('too_many_media'))
+  assert(!e.blocked.includes('snapshot_too_large'))
+})
+
+Deno.test('the attached PDF counts towards the media cap', () => {
+  const drills: DrillRow[] = []
+  const mediaRows: MediaRow[] = []
+  const activities: Array<Record<string, unknown>> = []
+  for (let i = 0; i < MAX_PROGRAMME_MEDIA; i++) {
+    const did = `d${String(i).padStart(2, '0')}11111-1111-1111-1111-111111111111`
+    const mid = `e${String(i).padStart(2, '0')}11111-1111-1111-1111-111111111111`
+    drills.push(drill({ id: did, media_id: mid }))
+    mediaRows.push(media({ id: mid }))
+    activities.push({ phase: 'Skill', drill_id: did, duration: 1 })
+  }
+  // Exactly at the cap without a PDF.
+  const atCap = evaluateProgrammeEligibility(
+    programme({ weeks: 1 }),
+    [template({ activities })],
+    drills,
+    mediaRows,
+  )
+  assert(!atCap.blocked.includes('too_many_media'))
+  // The PDF is the one that tips it over.
+  const overCap = evaluateProgrammeEligibility(
+    programme({ weeks: 1, pdf_media_id: MEDIA_PDF }),
+    [template({ activities })],
+    drills,
+    [...mediaRows, media({ id: MEDIA_PDF, type: 'pdf' })],
+  )
+  assert(overCap.blocked.includes('too_many_media'))
+})
+
+Deno.test('every builder refusal carries its own reason, not a generic one', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const cases: Array<[() => unknown, ProgrammeBlockReason]> = [
+    [() => buildProgrammeSnapshot(programme({ rights: 'internal_only' }), templates, drills, m, AT), 'source_internal_only'],
+    [() => buildProgrammeSnapshot(p, [template({ rights: 'internal_only' })], drills, m, AT), 'template_internal_only'],
+    [() => buildProgrammeSnapshot(p, templates, [drill({ id: DRILL_A, media_id: MEDIA_A })], m, AT), 'drill_missing'],
+    [() => buildProgrammeSnapshot(programme({ weeks: 0 }), [], [], [], AT), 'no_weeks'],
+    [() => buildProgrammeSnapshot(programme({ weeks: 2_000_000_000 }), [template()], drills, m, AT), 'too_many_weeks'],
+    [() => buildProgrammeSnapshot(programme({ pdf_media_id: MEDIA_PDF }), templates, drills, m, AT), 'pdf_missing'],
+  ]
+  for (const [run, reason] of cases) {
+    let caught: unknown = null
+    try {
+      run()
+    } catch (err) {
+      caught = err
+    }
+    assert(caught instanceof ProgrammeBuildError, `expected a ProgrammeBuildError for ${reason}`)
+    assertEquals((caught as ProgrammeBuildError).reason, reason)
   }
 })
