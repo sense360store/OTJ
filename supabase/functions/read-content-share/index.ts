@@ -2,19 +2,22 @@
 //
 // The FIRST public, anonymous Edge Function in the project. verify_jwt is OFF
 // (declared in supabase/config.toml, version controlled and reviewable). It
-// resolves an opaque public DRILL or SESSION share to its stored, sanitised
-// snapshot (Content Sharing PR 3 adds sessions; PR 2 shipped drills).
+// resolves an opaque public DRILL, SESSION or PROGRAMME share to its stored,
+// sanitised snapshot (PR 2 shipped drills, PR 3 added sessions, PR 4 adds
+// programmes).
 //
 // It holds the service role (to read content_shares, which has no client
 // policy, and to sign private media), so it is review gated on the same footing
 // as invite-user and remove-user. It reaches the database ONLY through the
 // narrow read_public_share SECURITY DEFINER function, which verifies the secret
 // hash, revoked_at, expires_at, the per club kill switch, the snapshot version,
-// the drill-or-session kind and every dependency's current rights, and returns
-// only the safe public snapshot plus the explicit list of eligible stored media
-// paths to sign. This function signs only those exact paths, never a caller
-// supplied one. The signing loop iterates the flat top-level media pool, which
-// for a session share holds every referenced drill's media once, keyed by ref.
+// the supported kind and every dependency's current rights, and returns only the
+// safe public snapshot plus the explicit list of eligible stored media paths to
+// sign. This function signs only those exact paths, never a caller supplied one.
+// The signing loop iterates the flat top-level media pool, which for a session
+// share holds every referenced drill's media once, keyed by ref, and for a
+// programme share holds every week's drills' media plus the attached PDF once,
+// keyed by ref.
 //
 // Hard rules honoured here:
 //   - only shareId and secret are accepted, in a POST body; the secret is never
@@ -35,7 +38,12 @@
 // is anon reachable while every other function stays verify_jwt = true.
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { sha256Hex, validatePublicDrillSnapshot, validatePublicSessionSnapshot } from '../_shared/share.ts'
+import {
+  sha256Hex,
+  validatePublicDrillSnapshot,
+  validatePublicProgrammeSnapshot,
+  validatePublicSessionSnapshot,
+} from '../_shared/share.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -209,15 +217,19 @@ Deno.serve(async (req) => {
 
   // Validate the projection schema before responding: an unknown or tampered
   // shape yields the neutral unavailable state rather than anything else.
-  // Dispatch on the snapshot kind so a drill snapshot is validated by the drill
-  // guard and a session snapshot by the session guard; any other kind (an
-  // unexpected value, or a programme snapshot with no public renderer) fails
-  // closed to the neutral unavailable response, never a partial or raw payload.
+  // Dispatch on the snapshot kind so each kind is validated by its OWN guard: a
+  // drill by the drill guard, a session by the session guard, a programme by the
+  // programme guard. There is no generic validator; any other kind fails closed
+  // to the neutral unavailable response, never a partial or raw payload. The
+  // database gate (read_public_share) has already refused an unsupported kind
+  // before this point, so this is the second of two independent kind checks.
   const kind = (snapshot as { kind?: unknown }).kind
   const validShape = kind === 'session'
     ? validatePublicSessionSnapshot(snapshot)
     : kind === 'drill'
     ? validatePublicDrillSnapshot(snapshot)
+    : kind === 'programme'
+    ? validatePublicProgrammeSnapshot(snapshot)
     : false
   if (!validShape) {
     console.error('read-content-share: snapshot failed public validation')
