@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blockedProgrammeReasonCopy,
   blockedReasonCopy,
   blockedSessionReasonCopy,
   buildPublicShareUrl,
   BLOCKED_FA_NOTE,
+  PRINT_WARNING,
   type PublicDrillSnapshot,
   type PublicSessionSnapshot,
   PUBLIC_SNAPSHOT_VERSION,
   readSecretFromHash,
   validatePublicDrillSnapshot,
+  validatePublicProgrammeSnapshot,
   validatePublicSessionSnapshot,
 } from './publicShare'
 
@@ -229,5 +232,156 @@ describe('blockedSessionReasonCopy', () => {
     expect(blockedSessionReasonCopy(['drill_missing'])).toContain('missing')
     expect(blockedSessionReasonCopy(['board_missing'])).toContain('missing')
     expect(blockedSessionReasonCopy(['unsupported_item'])).toContain('activity')
+  })
+})
+
+// -------------------------------------------------------------------------
+// Programme snapshot validation (Content Sharing PR 4)
+// -------------------------------------------------------------------------
+
+function programmeSnapshot(over: Record<string, unknown> = {}): unknown {
+  return {
+    snapshotVersion: PUBLIC_SNAPSHOT_VERSION,
+    kind: 'programme',
+    displayTitle: 'Playing out from the back',
+    focus: null,
+    summary: null,
+    intentions: [],
+    weeks: 1,
+    orderedWeekNumbers: [1],
+    weekTemplates: [{
+      week: 1,
+      title: 'Week one',
+      focus: null,
+      activities: [{ phase: 'Skill', duration: 10, drillRef: 'd1', customTitle: null }],
+      totalDuration: 10,
+    }],
+    referencedDrills: [{
+      ref: 'd1', title: 'Rondo', summary: null, classification: null, skill: null, ages: [],
+      level: null, duration: 10, playerGuidance: null, area: null, equipment: [], setupNotes: null,
+      coachingPoints: [], easier: [], harder: [], theme: null, format: null,
+      sourceAttribution: null, mediaRefs: ['m1'],
+    }],
+    pdf: null,
+    media: [{ ref: 'm1', type: 'image', caption: null, sourceAttribution: null, link: null }],
+    sourceAttribution: null,
+    snapshotAt: '2026-01-01T00:00:00.000Z',
+    ...over,
+  }
+}
+
+describe('validatePublicProgrammeSnapshot', () => {
+  it('accepts a clean projection', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot())).toBe(true)
+  })
+
+  it('rejects a wrong kind and an unknown snapshot version', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ kind: 'session' }))).toBe(false)
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ snapshotVersion: 2 }))).toBe(false)
+  })
+
+  it('rejects the stored markers and the private media fields', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ builder: 'programme@1' }))).toBe(false)
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ public: true }))).toBe(false)
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({
+      media: [{ ref: 'm1', type: 'image', caption: null, sourceAttribution: null, link: null, _path: 'club/x.png' }],
+    }))).toBe(false)
+  })
+
+  it('rejects a leaked template author anywhere in the payload', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ author: 'Jane Coach' }))).toBe(false)
+    const withWeekAuthor = programmeSnapshot() as Record<string, unknown>
+    ;(withWeekAuthor.weekTemplates as Array<Record<string, unknown>>)[0].author = 'Jane Coach'
+    expect(validatePublicProgrammeSnapshot(withWeekAuthor)).toBe(false)
+  })
+
+  it('rejects a programmeWeek or programme_week key in place of week', () => {
+    const s = programmeSnapshot() as Record<string, unknown>
+    ;(s.weekTemplates as Array<Record<string, unknown>>)[0].programmeWeek = 1
+    expect(validatePublicProgrammeSnapshot(s)).toBe(false)
+  })
+
+  it('rejects a non integer week number', () => {
+    const s = programmeSnapshot() as Record<string, unknown>
+    ;(s.weekTemplates as Array<Record<string, unknown>>)[0].week = 1.5
+    expect(validatePublicProgrammeSnapshot(s)).toBe(false)
+  })
+
+  it('rejects an activity drill reference that resolves to no referenced drill', () => {
+    const s = programmeSnapshot() as Record<string, unknown>
+    ;(s.weekTemplates as Array<Record<string, unknown>>)[0].activities = [
+      { phase: 'Skill', duration: 10, drillRef: 'ghost', customTitle: null },
+    ]
+    expect(validatePublicProgrammeSnapshot(s)).toBe(false)
+  })
+
+  it('rejects a drill media ref that is not in the flat pool', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ media: [] }))).toBe(false)
+  })
+
+  it('rejects a pdf pointer that does not resolve into the flat pool', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ pdf: { ref: 'm99' } }))).toBe(false)
+  })
+
+  it('accepts a pdf pointer that resolves into the pool', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ pdf: { ref: 'm1' } }))).toBe(true)
+  })
+
+  it('rejects a pdf object carrying anything beyond a ref', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({ pdf: { ref: 'm1', _path: 'club/x.pdf' } }))).toBe(false)
+  })
+
+  it('accepts an empty week with no activities', () => {
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot({
+      weekTemplates: [{ week: 1, title: null, focus: null, activities: [], totalDuration: 0 }],
+      referencedDrills: [],
+      media: [],
+    }))).toBe(true)
+  })
+
+  it('rejects a non-object, a null and an array', () => {
+    expect(validatePublicProgrammeSnapshot(null)).toBe(false)
+    expect(validatePublicProgrammeSnapshot('programme')).toBe(false)
+    expect(validatePublicProgrammeSnapshot([programmeSnapshot()])).toBe(false)
+  })
+
+  it('refuses a programme payload from the drill and session guards', () => {
+    expect(validatePublicDrillSnapshot(programmeSnapshot())).toBe(false)
+    expect(validatePublicSessionSnapshot(programmeSnapshot())).toBe(false)
+  })
+})
+
+describe('blockedProgrammeReasonCopy', () => {
+  it('maps every restricted layer to the England Football note', () => {
+    for (
+      const r of [
+        'source_internal_only',
+        'template_internal_only',
+        'drill_internal_only',
+        'media_internal_only',
+        'pdf_internal_only',
+      ]
+    ) {
+      expect(blockedProgrammeReasonCopy([r])).toBe(BLOCKED_FA_NOTE)
+    }
+  })
+
+  it('explains missing content, caps and an unsupported item without leaking a code', () => {
+    expect(blockedProgrammeReasonCopy(['drill_missing'])).toContain('missing')
+    expect(blockedProgrammeReasonCopy(['pdf_missing'])).toContain('missing')
+    expect(blockedProgrammeReasonCopy(['unsupported_item'])).toContain('activity')
+    expect(blockedProgrammeReasonCopy(['no_weeks'])).toContain('no weeks')
+    expect(blockedProgrammeReasonCopy(['too_many_weeks'])).toContain('more weeks')
+    expect(blockedProgrammeReasonCopy(['too_many_media'])).toContain('more files')
+    expect(blockedProgrammeReasonCopy(['snapshot_too_large'])).toContain('too large')
+    for (const r of ['drill_missing', 'no_weeks', 'too_many_weeks', 'snapshot_too_large']) {
+      expect(blockedProgrammeReasonCopy([r])).not.toContain('_')
+    }
+  })
+})
+
+describe('PRINT_WARNING', () => {
+  it('states plainly that a printed or downloaded copy cannot be recalled', () => {
+    expect(PRINT_WARNING).toBe('A downloaded or printed copy cannot be turned off or recalled.')
   })
 })

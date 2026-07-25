@@ -162,10 +162,19 @@ async function makeProgramme(opts: {
   owner: string | null
   rights: 'internal_only' | 'public_link_only' | 'public_full'
   club?: string
+  weeks?: number
+  pdfMediaId?: string | null
 }): Promise<string> {
   const { data, error } = await svc
     .from('programmes')
-    .insert({ club_id: opts.club ?? CLUB_A, name: `${MARK}-prog-${runId()}`, created_by: opts.owner, rights: opts.rights })
+    .insert({
+      club_id: opts.club ?? CLUB_A,
+      name: `${MARK}-prog-${runId()}`,
+      created_by: opts.owner,
+      rights: opts.rights,
+      weeks: opts.weeks ?? 1,
+      pdf_media_id: opts.pdfMediaId ?? null,
+    })
     .select('id')
     .single()
   if (error) throw new Error(`makeProgramme: ${error.message}`)
@@ -175,6 +184,7 @@ async function makeProgramme(opts: {
 async function makeTemplate(opts: {
   rights: 'internal_only' | 'public_link_only' | 'public_full'
   programmeId?: string | null
+  programmeWeek?: number | null
   drillIds?: string[]
   club?: string
 }): Promise<string> {
@@ -186,6 +196,7 @@ async function makeTemplate(opts: {
       name: `${MARK}-tmpl-${runId()}`,
       rights: opts.rights,
       programme_id: opts.programmeId ?? null,
+      programme_week: opts.programmeWeek ?? null,
       activities,
     })
     .select('id')
@@ -1097,6 +1108,60 @@ function sessionSnapshotFor(over: {
   }
 }
 
+function programmeSnapshotFor(over: {
+  media?: Array<Record<string, unknown>>
+  drillMediaRefs?: string[]
+  pdf?: Record<string, unknown> | null
+} = {}): Record<string, unknown> {
+  return {
+    snapshotVersion: 1,
+    kind: 'programme',
+    displayTitle: `${MARK}-programme`,
+    focus: null,
+    summary: null,
+    intentions: [],
+    weeks: 1,
+    orderedWeekNumbers: [1],
+    weekTemplates: [{
+      week: 1,
+      title: `${MARK}-week-one`,
+      focus: null,
+      activities: [{ phase: 'Skill', duration: 10, drillRef: 'd1', customTitle: null }],
+      totalDuration: 10,
+    }],
+    referencedDrills: [{
+      ref: 'd1', title: `${MARK}-drill`, summary: null, classification: null, skill: null,
+      ages: [], level: null, duration: 10, playerGuidance: null, area: null, equipment: [],
+      setupNotes: null, coachingPoints: [], easier: [], harder: [], theme: null, format: null,
+      sourceAttribution: null, mediaRefs: over.drillMediaRefs ?? [],
+    }],
+    pdf: over.pdf ?? null,
+    media: over.media ?? [],
+    sourceAttribution: null,
+    snapshotAt: '2026-01-01T00:00:00.000Z',
+    builder: 'programme@1',
+    public: true,
+  }
+}
+
+async function createProgrammeShare(
+  owner: string,
+  programmeId: string,
+  hash: string,
+  snapshot: Record<string, unknown> | null,
+): Promise<{ data: unknown; error: { message: string } | null }> {
+  return await rpc({
+    p_action: 'create',
+    p_actor_id: owner,
+    p_kind: 'programme',
+    p_source_id: programmeId,
+    p_secret_hash: hash,
+    p_idempotency_key: `${MARK}-${runId()}`,
+    p_snapshot: snapshot,
+    p_snapshot_version: 1,
+  })
+}
+
 async function createSessionShare(
   owner: string,
   sessionId: string,
@@ -1298,7 +1363,7 @@ describe('read_public_share returns a uniform neutral response for every failure
   })
 })
 
-describe('read_public_share renders drills and sessions, refusing other kinds (PR 3)', () => {
+describe('read_public_share renders drills, sessions and programmes, refusing other kinds (PR 4)', () => {
   it('a session share with a real snapshot is publicly readable, with no internal ids', async () => {
     await setKill(true)
     const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
@@ -1404,23 +1469,208 @@ describe('read_public_share renders drills and sessions, refusing other kinds (P
     expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('unavailable')
   })
 
-  it('a programme share is still unavailable (no public programme renderer)', async () => {
+  // ---- Programme reads (Content Sharing PR 4) ----
+  //
+  // 0041 widened the read allow list from {drill, session} to
+  // {drill, session, programme}. These tests pin the new behaviour AND the
+  // fail-closed rules that did not change.
+
+  it('a programme share with a real snapshot is publicly readable, with no internal ids or author', async () => {
     await setKill(true)
     const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
     const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
-    await makeTemplate({ rights: 'public_full', programmeId: programme, drillIds: [drillId] })
-    const hash = randHash()
-    // A programme kind snapshot passes the RPC (kind matches) but the read path
-    // still refuses the programme kind.
-    const programmeSnapshot = { snapshotVersion: 1, kind: 'programme', public: true, builder: 'programme@1', media: [] }
-    const create = await rpc({
-      p_action: 'create', p_actor_id: coachOneId, p_kind: 'programme', p_source_id: programme,
-      p_secret_hash: hash, p_idempotency_key: `${MARK}-${runId()}`, p_snapshot: programmeSnapshot, p_snapshot_version: 1,
+    const templateId = await makeTemplate({
+      rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId],
     })
+    const hash = randHash()
+    const create = await createProgrammeShare(coachOneId, programme, hash, programmeSnapshotFor())
     expect(create.error).toBeNull()
     const shareId = (create.data as { share_id: string }).share_id
-    const read = await readShare(shareId, hash)
+
+    const { data, error } = await readShare(shareId, hash)
+    expect(error).toBeNull()
+    const res = data as { status: string; snapshot: Record<string, unknown> }
+    expect(res.status).toBe('ok')
+    expect(res.snapshot.kind).toBe('programme')
+    expect(res.snapshot.snapshotVersion).toBe(1)
+    // Internal markers stripped.
+    expect(res.snapshot.public).toBeUndefined()
+    expect(res.snapshot.builder).toBeUndefined()
+    // No token hash, club id, source ids, member id or author anywhere.
+    const flat = JSON.stringify(res)
+    for (
+      const forbidden of [
+        'token_hash', 'club_id', 'created_by', 'coach_id', 'author', 'programme_id', 'programme_week',
+        programme, templateId, drillId, coachOneId, CLUB_A,
+      ]
+    ) {
+      expect(flat).not.toContain(forbidden)
+    }
+  })
+
+  it('signs a programme pooled public_full stored media and strips the private fields', async () => {
+    await setKill(true)
+    const path = `${CLUB_A}/${runId()}-file.png`
+    const mediaId = await makeMediaWithPath('public_full', path)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full', mediaId })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    const hash = randHash()
+    const snapshot = programmeSnapshotFor({
+      drillMediaRefs: ['m1'],
+      media: [{ ref: 'm1', type: 'image', caption: 'Setup', sourceAttribution: null, link: null, _mid: mediaId, _path: path }],
+    })
+    const create = await createProgrammeShare(coachOneId, programme, hash, snapshot)
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+
+    const { data } = await readShare(shareId, hash)
+    const res = data as {
+      status: string
+      snapshot: { media: Array<Record<string, unknown>> }
+      media: Array<Record<string, unknown>>
+    }
+    expect(res.status).toBe('ok')
+    expect(res.media).toEqual([{ ref: 'm1', path }])
+    expect(res.snapshot.media[0]._mid).toBeUndefined()
+    expect(res.snapshot.media[0]._path).toBeUndefined()
+    expect(JSON.stringify(res.snapshot)).not.toContain(path)
+  })
+
+  it('an eligible public_full attached PDF is pooled and signed like any other media', async () => {
+    await setKill(true)
+    const pdfPath = `${CLUB_A}/${runId()}-booklet.pdf`
+    const pdfId = await makeMediaWithPath('public_full', pdfPath)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full', pdfMediaId: pdfId })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    const hash = randHash()
+    const snapshot = programmeSnapshotFor({
+      pdf: { ref: 'm1' },
+      media: [{ ref: 'm1', type: 'pdf', caption: 'Booklet', sourceAttribution: null, link: null, _mid: pdfId, _path: pdfPath }],
+    })
+    const create = await createProgrammeShare(coachOneId, programme, hash, snapshot)
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+    const { data } = await readShare(shareId, hash)
+    const res = data as { status: string; media: Array<Record<string, unknown>> }
+    expect(res.status).toBe('ok')
+    expect(res.media).toEqual([{ ref: 'm1', path: pdfPath }])
+  })
+
+  it('an internal_only attached PDF blocks the programme share at create', async () => {
+    await setKill(true)
+    const pdfId = await makeMedia({ rights: 'internal_only' })
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full', pdfMediaId: pdfId })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    const create = await createProgrammeShare(coachOneId, programme, randHash(), programmeSnapshotFor())
+    expect(create.error).not.toBeNull()
+    expect(scalar(`select count(*) from public.content_shares where programme_id=${sqlId(programme)}`)).toBe('0')
+  })
+
+  it('an internal_only week template blocks the programme share at create', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'internal_only', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    const create = await createProgrammeShare(coachOneId, programme, randHash(), programmeSnapshotFor())
+    expect(create.error).not.toBeNull()
+    expect(scalar(`select count(*) from public.content_shares where programme_id=${sqlId(programme)}`)).toBe('0')
+  })
+
+  it('an internal_only nested drill blocks the programme share at create', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'internal_only' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    const create = await createProgrammeShare(coachOneId, programme, randHash(), programmeSnapshotFor())
+    expect(create.error).not.toBeNull()
+  })
+
+  it('a cross club template, drill or PDF resolves as missing and blocks the share', async () => {
+    await setKill(true)
+    // A drill in the OTHER club referenced from this club's week template.
+    const foreignDrill = await makeDrill({ owner: null, rights: 'public_full', club: CLUB_B })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [foreignDrill] })
+    const create = await createProgrammeShare(coachOneId, programme, randHash(), programmeSnapshotFor())
+    expect(create.error).not.toBeNull()
+    expect(scalar(`select count(*) from public.content_shares where programme_id=${sqlId(programme)}`)).toBe('0')
+  })
+
+  it('a nested week template downgraded after creation fails the whole read closed', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    const templateId = await makeTemplate({
+      rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId],
+    })
+    const hash = randHash()
+    const create = await createProgrammeShare(coachOneId, programme, hash, programmeSnapshotFor())
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('ok')
+
+    await svc.from('templates').update({ rights: 'internal_only' }).eq('id', templateId)
+    // No partial programme: the whole share goes dark.
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a nested drill downgraded after creation fails the whole read closed', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    const hash = randHash()
+    const create = await createProgrammeShare(coachOneId, programme, hash, programmeSnapshotFor())
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+    await svc.from('drills').update({ rights: 'internal_only' }).eq('id', drillId)
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a programme share is unavailable once revoked, expired or the kill switch is off', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    const hash = randHash()
+    const create = await createProgrammeShare(coachOneId, programme, hash, programmeSnapshotFor())
+    const shareId = (create.data as { share_id: string }).share_id
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('ok')
+
+    // The kill switch alone takes it dark, with the identical neutral response.
+    await setKill(false)
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('unavailable')
+    await setKill(true)
+
+    await rpc({ p_action: 'revoke', p_actor_id: coachOneId, p_share_id: shareId })
+    expect(((await readShare(shareId, hash)).data as { status: string }).status).toBe('unavailable')
+  })
+
+  it('a wrong secret against a real programme share is the same neutral response', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    const hash = randHash()
+    const create = await createProgrammeShare(coachOneId, programme, hash, programmeSnapshotFor())
+    const shareId = (create.data as { share_id: string }).share_id
+    const read = await readShare(shareId, randHash())
     expect((read.data as { status: string }).status).toBe('unavailable')
+    expect(JSON.stringify(read.data)).not.toContain('snapshot')
+  })
+
+  it('a programme snapshot of the wrong kind is refused at create (type mismatch)', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const programme = await makeProgramme({ owner: coachOneId, rights: 'public_full' })
+    await makeTemplate({ rights: 'public_full', programmeId: programme, programmeWeek: 1, drillIds: [drillId] })
+    // A session-kind snapshot passed for a programme share.
+    const create = await createProgrammeShare(coachOneId, programme, randHash(), sessionSnapshotFor())
+    expect(create.error).not.toBeNull()
+    expect(scalar(`select count(*) from public.content_shares where programme_id=${sqlId(programme)}`)).toBe('0')
   })
 
   it('a snapshot whose kind does not match the share kind is refused at create (type mismatch)', async () => {
