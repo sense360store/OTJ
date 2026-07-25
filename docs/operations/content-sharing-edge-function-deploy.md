@@ -187,7 +187,7 @@ The job summary records:
   endpoint smoke tests instead, which the summary states plainly;
 - the deployed-source readback level (see below);
 - the post-deploy residue check (all counts expected to be zero, migration
-  ledger newest version `20260722064502`).
+  ledger newest version exactly `20260725160000`).
 
 ### If the run fails at inventory verification
 
@@ -270,7 +270,7 @@ hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is still `20260722064502` (0039);
+- the migration ledger's newest version is exactly `20260725160000` (0041);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
@@ -327,8 +327,11 @@ password or the environment. Its offline test suite
 - It does not reclassify content. All drills and media remain `internal_only`;
   the workflow verifies this after deploy.
 - It does not apply a migration, change a grant, or create a cleanup schedule;
-  the workflow verifies the migration ledger is unchanged after `0039` and no
-  `pg_cron` job references content sharing.
+  the workflow verifies the migration ledger's newest version is exactly the
+  reviewed one (`0041` after Content Sharing PR 4) and no `pg_cron` job
+  references content sharing. The check is an exact equality, so applying a
+  migration without updating `EXPECTED_LAST_MIGRATION` fails the deploy, and so
+  does updating the constant without applying the migration.
 
 ## Rotating the access token
 

@@ -159,7 +159,7 @@ class TestDirtyResidue(unittest.TestCase):
         self.assertTrue(any("non_internal_media" in e for e in errors))
 
     def test_migration_ledger_moved_fails(self):
-        dirty = dict(CLEAN_RESIDUE, last_migration="20260722070000")
+        dirty = dict(CLEAN_RESIDUE, last_migration="20260726000000")
         self.assertTrue(
             any("migration ledger changed" in e for e in vr.assert_clean({"residue": dirty}))
         )

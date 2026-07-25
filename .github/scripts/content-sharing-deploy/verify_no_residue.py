@@ -10,7 +10,7 @@ connection string and asserts the sharing feature is still fully inert:
   - no content_share audit event exists;
   - every drill is internal_only;
   - every media row is internal_only;
-  - the migration ledger's newest version is still 0039 (public_share_read);
+  - the migration ledger's newest version is exactly 0041 (public_programme_read);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
 Credential model
@@ -53,7 +53,18 @@ import subprocess
 import sys
 import urllib.parse
 
-EXPECTED_LAST_MIGRATION = "20260722064502"  # 0039_public_share_read
+# The EXACT version the migration ledger's newest row must carry after a
+# successful deploy. This is an equality assertion on purpose: it proves the
+# hosted schema is precisely the one this deploy was reviewed against. It is
+# deliberately NOT a ">=", a prefix match or an "exists somewhere" check, any of
+# which would let an unreviewed migration land unnoticed.
+#
+# It moves in lockstep with the migration actually applied to hosted. Content
+# Sharing PR 4 applies 0041_public_programme_read, which must be recorded with
+# version 20260725160000 (see the migration's header). Apply the migration
+# first, confirm the recorded version, then run the deploy: this check runs
+# after the deploy and fails closed if the two disagree.
+EXPECTED_LAST_MIGRATION = "20260725160000"  # 0041_public_programme_read
 DB_URL_ENV = "SUPABASE_DB_URL"
 
 # Bounded connection timeout (seconds) and an overall subprocess wall-clock cap.

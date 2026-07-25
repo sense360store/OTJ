@@ -9,13 +9,19 @@ import {
   base64urlEncode,
   type BoardRow,
   buildDrillSnapshot,
+  buildProgrammeSnapshot,
   buildSessionSnapshot,
   DRILL_BUILDER,
   type DrillRow,
   evaluateDrillEligibility,
+  evaluateProgrammeEligibility,
   evaluateSessionEligibility,
   generateSecret,
+  MAX_PROGRAMME_MEDIA,
+  MAX_PROGRAMME_WEEKS,
   type MediaRow,
+  PROGRAMME_BUILDER,
+  type ProgrammeRow,
   sanitizeHttpUrl,
   sanitizeText,
   secretHashLiteral,
@@ -25,9 +31,12 @@ import {
   type SessionRow,
   type StoredDrillSnapshot,
   type StoredSessionSnapshot,
+  type TemplateRow,
+  toPublicProgrammeProjection,
   toPublicProjection,
   toPublicSessionProjection,
   validatePublicDrillSnapshot,
+  validatePublicProgrammeSnapshot,
   validatePublicSessionSnapshot,
 } from './share.ts'
 
@@ -748,4 +757,477 @@ Deno.test('the session builder is deterministic for a fixed snapshotAt', () => {
   const a = buildSessionSnapshot(session({ board_id: BOARD_ID }), [drillA({ media_id: MEDIA_A }), drillB()], [mediaA()], board(), AT)
   const b = buildSessionSnapshot(session({ board_id: BOARD_ID }), [drillA({ media_id: MEDIA_A }), drillB()], [mediaA()], board(), AT)
   assertEquals(JSON.stringify(a), JSON.stringify(b))
+})
+
+// -------------------------------------------------------------------------
+// Programme snapshot (Content Sharing PR 4)
+// -------------------------------------------------------------------------
+
+const PROGRAMME_ID = 'f1111111-1111-1111-1111-111111111111'
+const TEMPLATE_A = 'a1111111-1111-1111-1111-111111111111'
+const TEMPLATE_B = 'a2222222-2222-2222-2222-222222222222'
+const MEDIA_PDF = 'e9999999-9999-9999-9999-999999999999'
+
+function programme(over: Partial<ProgrammeRow> = {}): ProgrammeRow {
+  return {
+    id: PROGRAMME_ID,
+    name: 'Playing out from the back',
+    focus: 'Building from goal kicks',
+    summary: 'A six week block on calm build up play.',
+    intentions: ['Play forward when it is on'],
+    weeks: 2,
+    pdf_media_id: null,
+    source_url: null,
+    source_label: null,
+    rights: 'public_full',
+    ...over,
+  }
+}
+
+function template(over: Partial<TemplateRow> = {}): TemplateRow {
+  return {
+    id: TEMPLATE_A,
+    name: 'Week one, short goal kicks',
+    focus: 'Receiving on the half turn',
+    activities: [
+      { phase: 'Warm-Up', drill_id: DRILL_A, duration: 15 },
+      { phase: 'Game', title: 'Free play', duration: 20 },
+    ],
+    programme_week: 1,
+    created_at: '2026-01-01T00:00:00.000Z',
+    rights: 'public_full',
+    ...over,
+  }
+}
+
+// A two week programme: week 1 uses DRILL_A (with media), week 2 uses DRILL_B.
+function twoWeeks() {
+  const t1 = template()
+  const t2 = template({
+    id: TEMPLATE_B,
+    name: 'Week two, playing through midfield',
+    programme_week: 2,
+    activities: [{ phase: 'Skill', drill_id: DRILL_B, duration: 25 }],
+  })
+  const d1 = drill({ id: DRILL_A, media_id: MEDIA_A })
+  const d2 = drill({ id: DRILL_B, title: 'Third man run' })
+  const m1 = media({ id: MEDIA_A })
+  return { p: programme(), templates: [t1, t2], drills: [d1, d2], media: [m1] }
+}
+
+// ---- Eligibility ----
+
+Deno.test('an eligible programme with public_full weeks, drills and media is eligible', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const e = evaluateProgrammeEligibility(p, templates, drills, m)
+  assert(e.eligible)
+  assertEquals(e.blocked, [])
+})
+
+Deno.test('an internal_only programme is blocked', () => {
+  const { templates, drills, media: m } = twoWeeks()
+  const e = evaluateProgrammeEligibility(programme({ rights: 'internal_only' }), templates, drills, m)
+  assert(!e.eligible)
+  assert(e.blocked.includes('source_internal_only'))
+})
+
+Deno.test('an internal_only week template blocks the whole programme', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  templates[1].rights = 'internal_only'
+  const e = evaluateProgrammeEligibility(p, templates, drills, m)
+  assert(!e.eligible)
+  assert(e.blocked.includes('template_internal_only'))
+})
+
+Deno.test('an internal_only nested drill blocks the whole programme', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  drills[1].rights = 'internal_only'
+  const e = evaluateProgrammeEligibility(p, templates, drills, m)
+  assert(!e.eligible)
+  assert(e.blocked.includes('drill_internal_only'))
+})
+
+Deno.test('internal_only nested media blocks the whole programme', () => {
+  const { p, templates, drills } = twoWeeks()
+  const e = evaluateProgrammeEligibility(p, templates, drills, [media({ id: MEDIA_A, rights: 'internal_only' })])
+  assert(!e.eligible)
+  assert(e.blocked.includes('media_internal_only'))
+})
+
+Deno.test('a missing nested drill blocks the programme (a cross club id arrives as missing)', () => {
+  const { p, templates, media: m } = twoWeeks()
+  const e = evaluateProgrammeEligibility(p, templates, [drill({ id: DRILL_A, media_id: MEDIA_A })], m)
+  assert(!e.eligible)
+  assert(e.blocked.includes('drill_missing'))
+})
+
+Deno.test('a missing nested media blocks the programme', () => {
+  const { p, templates, drills } = twoWeeks()
+  const e = evaluateProgrammeEligibility(p, templates, drills, [])
+  assert(!e.eligible)
+  assert(e.blocked.includes('media_missing'))
+})
+
+Deno.test('an internal_only attached PDF blocks the whole programme, it is never omitted', () => {
+  const { templates, drills, media: m } = twoWeeks()
+  const p = programme({ pdf_media_id: MEDIA_PDF })
+  const e = evaluateProgrammeEligibility(p, templates, drills, [
+    ...m,
+    media({ id: MEDIA_PDF, type: 'pdf', rights: 'internal_only' }),
+  ])
+  assert(!e.eligible)
+  assert(e.blocked.includes('pdf_internal_only'))
+})
+
+Deno.test('a missing or cross club attached PDF blocks the whole programme', () => {
+  const { templates, drills, media: m } = twoWeeks()
+  const e = evaluateProgrammeEligibility(programme({ pdf_media_id: MEDIA_PDF }), templates, drills, m)
+  assert(!e.eligible)
+  assert(e.blocked.includes('pdf_missing'))
+})
+
+Deno.test('a malformed activity blocks the programme as an unsupported item', () => {
+  const { p, drills, media: m } = twoWeeks()
+  const t = template({ activities: [{ phase: 'Warm-Up', drill_id: ' not-a-uuid ', duration: 10 }] })
+  const e = evaluateProgrammeEligibility(p, [t], drills, m)
+  assert(!e.eligible)
+  assert(e.blocked.includes('unsupported_item'))
+})
+
+Deno.test('a programme with no weeks at all is refused rather than published as an overview', () => {
+  const e = evaluateProgrammeEligibility(programme({ weeks: 0 }), [], [], [])
+  assert(!e.eligible)
+  assert(e.blocked.includes('no_weeks'))
+})
+
+Deno.test('a programme over the week cap is refused, never truncated', () => {
+  const templates = Array.from({ length: MAX_PROGRAMME_WEEKS + 1 }, (_, i) =>
+    template({ id: `a${i}111111-1111-1111-1111-111111111111`, programme_week: i + 1, activities: [] }))
+  const e = evaluateProgrammeEligibility(programme({ weeks: MAX_PROGRAMME_WEEKS + 1 }), templates, [], [])
+  assert(!e.eligible)
+  assert(e.blocked.includes('too_many_weeks'))
+})
+
+// ---- Builder ----
+
+Deno.test('builds an eligible programme snapshot with the pinned version and kind', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  assertEquals(s.snapshotVersion, SNAPSHOT_VERSION)
+  assertEquals(s.kind, 'programme')
+  assertEquals(s.public, true)
+  assertEquals(s.builder, PROGRAMME_BUILDER)
+  assertEquals(s.displayTitle, 'Playing out from the back')
+  assertEquals(s.orderedWeekNumbers, [1, 2])
+  assertEquals(s.weekTemplates.length, 2)
+  assertEquals(s.weekTemplates[0].week, 1)
+  assertEquals(s.weekTemplates[0].totalDuration, 35)
+  assertEquals(s.snapshotAt, AT)
+})
+
+Deno.test('weeks are ordered ascending regardless of the input row order', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(p, [templates[1], templates[0]], drills, m, AT)
+  assertEquals(s.weekTemplates.map((w) => w.week), [1, 2])
+  assertEquals(s.weekTemplates[0].title, 'Week one, short goal kicks')
+})
+
+Deno.test('the earliest created template claims a contested week, matching the club page', () => {
+  const { p, drills, media: m } = twoWeeks()
+  const early = template({ id: TEMPLATE_A, name: 'First', created_at: '2026-01-01T00:00:00.000Z' })
+  const late = template({ id: TEMPLATE_B, name: 'Second', created_at: '2026-02-01T00:00:00.000Z' })
+  const s = buildProgrammeSnapshot(programme({ weeks: 1 }), [late, early], drills, m, AT)
+  assertEquals(s.weekTemplates.length, 1)
+  assertEquals(s.weekTemplates[0].title, 'First')
+})
+
+Deno.test('a week no template claims renders as an empty week, as the club page does', () => {
+  const { drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(programme({ weeks: 3 }), [template()], drills, m, AT)
+  assertEquals(s.orderedWeekNumbers, [1, 2, 3])
+  assertEquals(s.weekTemplates[1].activities, [])
+  assertEquals(s.weekTemplates[1].title, null)
+  assertEquals(s.weekTemplates[1].totalDuration, 0)
+})
+
+Deno.test('a template claiming a week beyond the declared count extends the week list', () => {
+  const { drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(
+    programme({ weeks: 1 }),
+    [template({ programme_week: 4, activities: [] })],
+    drills,
+    m,
+    AT,
+  )
+  assertEquals(s.orderedWeekNumbers, [1, 2, 3, 4])
+})
+
+Deno.test('a template with no week assigned is not rendered but still gates the share', () => {
+  const { p, drills, media: m } = twoWeeks()
+  const unassigned = template({ id: TEMPLATE_B, programme_week: null, activities: [] })
+  const s = buildProgrammeSnapshot(p, [template(), unassigned], drills, m, AT)
+  assertEquals(s.weekTemplates.filter((w) => w.title !== null).length, 1)
+  // It is still a dependency: an internal_only unassigned template blocks.
+  unassigned.rights = 'internal_only'
+  const e = evaluateProgrammeEligibility(p, [template(), unassigned], drills, m)
+  assert(!e.eligible)
+  assert(e.blocked.includes('template_internal_only'))
+})
+
+Deno.test('a drill used in two weeks dedupes to one referenced drill sharing the ref', () => {
+  const { p, drills, media: m } = twoWeeks()
+  const t1 = template({ id: TEMPLATE_A, programme_week: 1 })
+  const t2 = template({
+    id: TEMPLATE_B,
+    programme_week: 2,
+    activities: [{ phase: 'Skill', drill_id: DRILL_A, duration: 10 }],
+  })
+  const s = buildProgrammeSnapshot(p, [t1, t2], drills, m, AT)
+  assertEquals(s.referencedDrills.length, 1)
+  assertEquals(s.weekTemplates[0].activities[0].drillRef, s.weekTemplates[1].activities[0].drillRef)
+})
+
+Deno.test('programme media is pooled once at the top level and referenced by ref', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  assertEquals(s.media.length, 1)
+  assertEquals(s.media[0].ref, 'm1')
+  assertEquals(s.referencedDrills[0].mediaRefs, ['m1'])
+  // The private markers live only in the stored pool, never in a week.
+  assertEquals(s.media[0]._mid, MEDIA_A)
+  assert(typeof s.media[0]._path === 'string')
+})
+
+Deno.test('an eligible attached PDF joins the same flat pool and is addressed by ref', () => {
+  const { templates, drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(
+    programme({ pdf_media_id: MEDIA_PDF }),
+    templates,
+    drills,
+    [...m, media({ id: MEDIA_PDF, type: 'pdf', name: 'Programme booklet' })],
+    AT,
+  )
+  assert(s.pdf !== null)
+  const pooled = s.media.find((x) => x.ref === s.pdf!.ref)
+  assert(pooled !== undefined)
+  assertEquals(pooled!.type, 'pdf')
+  // One pool, not two: the pdf ref points into snapshot.media.
+  assertEquals(s.media.filter((x) => x.type === 'pdf').length, 1)
+})
+
+Deno.test('the programme snapshot excludes the template author and every operational field', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  // Simulate a row that carried extra columns; the builder must not project them.
+  const dirty = { ...templates[0], author: 'Jane Coach', created_by: 'someone', club_id: CLUB }
+  const s = buildProgrammeSnapshot(p, [dirty as TemplateRow, templates[1]], drills, m, AT)
+  const flat = JSON.stringify(s)
+  for (
+    const banned of [
+      'author',
+      'Jane Coach',
+      'created_by',
+      'club_id',
+      'programme_id',
+      'programme_week',
+      'programmeWeek',
+      'team_id',
+      'venue',
+      'spond_event_id',
+      PROGRAMME_ID,
+      TEMPLATE_A,
+      DRILL_A,
+    ]
+  ) {
+    assert(!flat.includes(banned), `programme snapshot leaked ${banned}`)
+  }
+  assertNoForbiddenKeys(toPublicProgrammeProjection(s))
+})
+
+// ---- Defensive builder throws ----
+
+Deno.test('the programme builder refuses an internal_only programme defensively', () => {
+  const { templates, drills, media: m } = twoWeeks()
+  assertThrows(() => buildProgrammeSnapshot(programme({ rights: 'internal_only' }), templates, drills, m, AT))
+})
+
+Deno.test('the programme builder refuses an internal_only week template defensively', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  templates[0].rights = 'internal_only'
+  assertThrows(() => buildProgrammeSnapshot(p, templates, drills, m, AT))
+})
+
+Deno.test('the programme builder refuses an internal_only nested drill defensively', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  drills[0].rights = 'internal_only'
+  assertThrows(() => buildProgrammeSnapshot(p, templates, drills, m, AT))
+})
+
+Deno.test('the programme builder refuses internal_only nested media defensively', () => {
+  const { p, templates, drills } = twoWeeks()
+  assertThrows(() =>
+    buildProgrammeSnapshot(p, templates, drills, [media({ id: MEDIA_A, rights: 'internal_only' })], AT)
+  )
+})
+
+Deno.test('the programme builder refuses a missing nested drill defensively', () => {
+  const { p, templates, media: m } = twoWeeks()
+  assertThrows(() => buildProgrammeSnapshot(p, templates, [drill({ id: DRILL_A, media_id: MEDIA_A })], m, AT))
+})
+
+Deno.test('the programme builder refuses an internal_only attached PDF defensively', () => {
+  const { templates, drills, media: m } = twoWeeks()
+  assertThrows(() =>
+    buildProgrammeSnapshot(
+      programme({ pdf_media_id: MEDIA_PDF }),
+      templates,
+      drills,
+      [...m, media({ id: MEDIA_PDF, type: 'pdf', rights: 'internal_only' })],
+      AT,
+    )
+  )
+})
+
+Deno.test('the programme builder refuses a missing attached PDF defensively', () => {
+  const { templates, drills, media: m } = twoWeeks()
+  assertThrows(() => buildProgrammeSnapshot(programme({ pdf_media_id: MEDIA_PDF }), templates, drills, m, AT))
+})
+
+Deno.test('the programme builder refuses an unsupported activity item defensively', () => {
+  const { p, drills, media: m } = twoWeeks()
+  const t = template({ activities: [{ phase: 'Warm-Up', drill_id: 'nope', duration: 10 }] })
+  assertThrows(() => buildProgrammeSnapshot(p, [t], drills, m, AT))
+})
+
+Deno.test('the programme builder refuses a programme with no weeks defensively', () => {
+  assertThrows(() => buildProgrammeSnapshot(programme({ weeks: 0 }), [], [], [], AT))
+})
+
+Deno.test('the programme builder refuses more weeks than the cap defensively', () => {
+  const templates = Array.from({ length: MAX_PROGRAMME_WEEKS + 1 }, (_, i) =>
+    template({ id: `a${i}111111-1111-1111-1111-111111111111`, programme_week: i + 1, activities: [] }))
+  assertThrows(() => buildProgrammeSnapshot(programme({ weeks: MAX_PROGRAMME_WEEKS + 1 }), templates, [], [], AT))
+})
+
+Deno.test('the programme builder refuses more media than the cap defensively', () => {
+  const count = MAX_PROGRAMME_MEDIA + 1
+  const drills: DrillRow[] = []
+  const mediaRows: MediaRow[] = []
+  const activities: Array<Record<string, unknown>> = []
+  for (let i = 0; i < count; i++) {
+    const did = `d${String(i).padStart(2, '0')}1111-1111-1111-1111-111111111111`
+    const mid = `e${String(i).padStart(2, '0')}1111-1111-1111-1111-111111111111`
+    drills.push(drill({ id: did, media_id: mid }))
+    mediaRows.push(media({ id: mid }))
+    activities.push({ phase: 'Skill', drill_id: did, duration: 1 })
+  }
+  const t = template({ activities })
+  assertThrows(() => buildProgrammeSnapshot(programme({ weeks: 1 }), [t], drills, mediaRows, AT))
+})
+
+Deno.test('the programme builder refuses a snapshot over the size cap defensively', () => {
+  const huge = 'x'.repeat(3800)
+  const activities = Array.from({ length: 60 }, (_, i) => ({ phase: 'Skill', drill_id: DRILL_A, duration: i }))
+  const drills = [drill({ id: DRILL_A, summary: huge, setup_notes: huge, media_id: null })]
+  const templates = Array.from({ length: MAX_PROGRAMME_WEEKS }, (_, i) =>
+    template({
+      id: `a${i}111111-1111-1111-1111-111111111111`,
+      programme_week: i + 1,
+      name: huge.slice(0, 300),
+      focus: huge.slice(0, 300),
+      activities,
+    }))
+  const p = programme({ weeks: MAX_PROGRAMME_WEEKS, summary: huge, intentions: Array(64).fill(huge) })
+  assertThrows(() => buildProgrammeSnapshot(p, templates, drills, [], AT))
+})
+
+// ---- Scanner ----
+
+Deno.test('the scanner rejects a forbidden key injected at the programme top level', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(p, templates, drills, m, AT) as unknown as Record<string, unknown>
+  s.club_id = CLUB
+  assertThrows(() => assertAllowlistedKeys(s))
+})
+
+Deno.test('the scanner rejects a forbidden key injected into a programme week', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  ;(s.weekTemplates[0] as unknown as Record<string, unknown>).author = 'Jane Coach'
+  assertThrows(() => assertAllowlistedKeys(s))
+})
+
+Deno.test('the scanner rejects a programmeWeek key injected into a week', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  ;(s.weekTemplates[0] as unknown as Record<string, unknown>).programmeWeek = 1
+  assertThrows(() => assertAllowlistedKeys(s))
+})
+
+Deno.test('the scanner rejects a forbidden key injected into a referenced drill', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const s = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  ;(s.referencedDrills[0] as unknown as Record<string, unknown>).media_id = MEDIA_A
+  assertThrows(() => assertAllowlistedKeys(s))
+})
+
+Deno.test('assertAllowlistedKeys throws on an unknown kind rather than treating it as a drill', () => {
+  assertThrows(() => assertAllowlistedKeys({ kind: 'club', snapshotVersion: 1, media: [] }))
+})
+
+// ---- Projection and public validator ----
+
+Deno.test('toPublicProgrammeProjection strips the private media fields and internal markers', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const stored = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  const pub = toPublicProgrammeProjection(stored)
+  assertEquals((pub as unknown as Record<string, unknown>).builder, undefined)
+  assertEquals((pub as unknown as Record<string, unknown>).public, undefined)
+  for (const entry of pub.media) {
+    assertEquals((entry as unknown as Record<string, unknown>)._mid, undefined)
+    assertEquals((entry as unknown as Record<string, unknown>)._path, undefined)
+  }
+  assert(validatePublicProgrammeSnapshot(pub))
+})
+
+Deno.test('validatePublicProgrammeSnapshot rejects a stored snapshot, private fields and a wrong kind', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const stored = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  // A stored snapshot (builder/public present) can never pass a public guard.
+  assert(!validatePublicProgrammeSnapshot(stored))
+  const pub = toPublicProgrammeProjection(stored) as unknown as Record<string, unknown>
+  assert(!validatePublicProgrammeSnapshot({ ...pub, kind: 'session' }))
+  assert(!validatePublicProgrammeSnapshot({ ...pub, snapshotVersion: 2 }))
+  assert(!validatePublicProgrammeSnapshot({ ...pub, author: 'Jane Coach' }))
+})
+
+Deno.test('validatePublicProgrammeSnapshot rejects a dangling activity drill reference', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const pub = toPublicProgrammeProjection(buildProgrammeSnapshot(p, templates, drills, m, AT))
+  pub.weekTemplates[0].activities[0].drillRef = 'd99'
+  assert(!validatePublicProgrammeSnapshot(pub))
+})
+
+Deno.test('validatePublicProgrammeSnapshot rejects a pdf ref that is not in the media pool', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const pub = toPublicProgrammeProjection(buildProgrammeSnapshot(p, templates, drills, m, AT))
+  ;(pub as unknown as Record<string, unknown>).pdf = { ref: 'm99' }
+  assert(!validatePublicProgrammeSnapshot(pub))
+})
+
+Deno.test('the public guards refuse a snapshot of the wrong kind in every direction', () => {
+  const { p, templates, drills, media: m } = twoWeeks()
+  const prog = toPublicProgrammeProjection(buildProgrammeSnapshot(p, templates, drills, m, AT))
+  assert(!validatePublicDrillSnapshot(prog))
+  assert(!validatePublicSessionSnapshot(prog))
+  const drl = toPublicProjection(buildDrillSnapshot(drill(), null, AT))
+  assert(!validatePublicProgrammeSnapshot(drl))
+})
+
+Deno.test('the programme builder is deterministic for a fixed snapshotAt', () => {
+  const a = twoWeeks()
+  const b = twoWeeks()
+  const one = buildProgrammeSnapshot(a.p, a.templates, a.drills, a.media, AT)
+  // Reversed input row order must not change the output at all.
+  const two = buildProgrammeSnapshot(b.p, [b.templates[1], b.templates[0]], [b.drills[1], b.drills[0]], b.media, AT)
+  assertEquals(JSON.stringify(one), JSON.stringify(two))
 })
