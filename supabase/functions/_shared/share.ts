@@ -33,10 +33,29 @@ export const DRILL_BUILDER = 'drill@1'
 // loop it uses for a drill share; referenced drills point into the pool by ref.
 export const SESSION_BUILDER = 'session@1'
 
+// The programme builder identity (Content Sharing PR 4). A programme snapshot is
+// a public projection of one saved programme: its overview, its ordered weeks
+// (each week being a template row carrying programme_week), each week's ordered
+// activities, the full snapshots of every drill those activities reference, an
+// optional attached PDF, and one flat top-level pool of the referenced media.
+// The pool sits at the top level for the same reason the session pool does:
+// read_public_share signs snapshot->'media' and nothing else.
+export const PROGRAMME_BUILDER = 'programme@1'
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-// The snapshot size cap, mirrored by the lifecycle RPC (256 KiB).
+// The snapshot size cap, mirrored by the lifecycle RPC (256 KiB). The RPC is the
+// authority (content_share_resolve_snapshot rejects an oversized snapshot with a
+// bare exception); the programme builder checks it too so a coach gets a stated
+// reason instead of a generic failure. A programme is the first kind that can
+// realistically approach this cap.
 export const MAX_SNAPSHOT_BYTES = 262144
+
+// Programme aggregate caps. Reported, never silently applied: a programme over
+// either cap is refused with a stated reason rather than truncated, because a
+// truncated programme would publish a partial copy of the club's material.
+export const MAX_PROGRAMME_WEEKS = 12
+export const MAX_PROGRAMME_MEDIA = 64
 
 // Per field and per array caps, so a pathological drill cannot inflate the
 // snapshot or the public page.
@@ -716,6 +735,384 @@ export function buildSessionSnapshot(
 }
 
 // -------------------------------------------------------------------------
+// The programme snapshot builder (Content Sharing PR 4)
+// -------------------------------------------------------------------------
+
+// The subset of programme columns the builder reads. Ownership and operational
+// columns (club_id, created_by, created_at) are never read here and never enter
+// the snapshot. pdf_media_id is read only to resolve the attached PDF into the
+// media pool by ref; the real id never reaches the snapshot.
+export interface ProgrammeRow {
+  id: string
+  name: string | null
+  focus: string | null
+  summary: string | null
+  intentions: string[] | null
+  weeks: number | null
+  pdf_media_id: string | null
+  source_url: string | null
+  source_label: string | null
+  rights: ContentRights
+}
+
+// The subset of template columns the builder reads. Deliberately NO author:
+// templates.author is a club member's full name in plain text and is the single
+// hard exclusion of this projection (it is also in FORBIDDEN_ANYWHERE, so a
+// future reintroduction trips the scanner rather than leaking). No created_by
+// either. created_at is read for ORDERING ONLY (the earliest created template
+// claims a contested week, matching what the club's programme page renders) and
+// is never projected; the allow list and the forbidden key scanner both prove
+// that.
+export interface TemplateRow {
+  id: string
+  name: string | null
+  focus: string | null
+  activities: unknown
+  programme_week: number | null
+  created_at: string | null
+  rights: ContentRights
+}
+
+// One public programme week: its number, the safe titling of the template that
+// claims it, and that template's ordered activities. The field is named `week`,
+// never programmeWeek or programme_week, because both of those are in
+// FORBIDDEN_ANYWHERE and would make the builder throw on its own output.
+export interface PublicWeek {
+  week: number
+  title: string | null
+  focus: string | null
+  activities: PublicActivity[]
+  totalDuration: number
+}
+
+interface ProgrammeSnapshotBase {
+  snapshotVersion: number
+  kind: 'programme'
+  displayTitle: string
+  focus: string | null
+  summary: string | null
+  intentions: string[]
+  weeks: number | null
+  orderedWeekNumbers: number[]
+  weekTemplates: PublicWeek[]
+  referencedDrills: ReferencedDrill[]
+  pdf: { ref: string } | null
+  sourceAttribution: SourceAttribution | null
+  snapshotAt: string
+}
+
+// The stored programme snapshot: the flat media pool carries the private fields
+// and the internal markers the read path strips.
+export interface StoredProgrammeSnapshot extends ProgrammeSnapshotBase {
+  media: StoredMedia[]
+  builder: string
+  public: true
+}
+
+// The public projection: no private media fields, no internal markers.
+export interface PublicProgrammeSnapshot extends ProgrammeSnapshotBase {
+  media: PublicMedia[]
+}
+
+export type ProgrammeBlockReason =
+  | 'source_internal_only'
+  | 'template_internal_only'
+  | 'drill_internal_only'
+  | 'media_internal_only'
+  | 'pdf_internal_only'
+  | 'drill_missing'
+  | 'media_missing'
+  | 'pdf_missing'
+  | 'unsupported_item'
+  | 'no_weeks'
+  | 'too_many_weeks'
+  | 'too_many_media'
+  | 'snapshot_too_large'
+
+export interface ProgrammeEligibility {
+  eligible: boolean
+  blocked: ProgrammeBlockReason[]
+}
+
+// A template claims a week only when programme_week is a positive integer. A
+// null, zero, negative or fractional week is unassigned: the club's programme
+// page never renders it (its week list runs 1..weekCount), so neither does the
+// public copy. An unassigned template is still a DEPENDENCY (content_share_deps
+// returns every template with this programme_id), so its rights and its drills
+// still gate the share; it simply has no week to render. That asymmetry is
+// deliberate and strictly fail closed: a share can be blocked by a template the
+// public page would not have shown, never the reverse.
+function claimedWeek(template: Pick<TemplateRow, 'programme_week'>): number | null {
+  const w = template.programme_week
+  if (typeof w !== 'number' || !Number.isInteger(w) || w < 1) return null
+  return w
+}
+
+// Order templates deterministically and resolve which template owns each week.
+// Sort key: week ascending, then created_at ascending, then id ascending. The
+// created_at tiebreak reproduces the club programme page's "the earliest created
+// template claims the week" rule; the id tiebreak makes the result total, so the
+// builder is deterministic even when two templates share a timestamp or the
+// database returns rows in an arbitrary order.
+function orderProgrammeTemplates(templates: TemplateRow[]): Map<number, TemplateRow> {
+  const claimed = templates
+    .map((t) => ({ t, week: claimedWeek(t) }))
+    .filter((e): e is { t: TemplateRow; week: number } => e.week !== null)
+  claimed.sort((a, b) => {
+    if (a.week !== b.week) return a.week - b.week
+    const ac = a.t.created_at ?? ''
+    const bc = b.t.created_at ?? ''
+    if (ac !== bc) return ac < bc ? -1 : 1
+    return a.t.id < b.t.id ? -1 : a.t.id > b.t.id ? 1 : 0
+  })
+  const byWeek = new Map<number, TemplateRow>()
+  for (const { t, week } of claimed) {
+    if (!byWeek.has(week)) byWeek.set(week, t)
+  }
+  return byWeek
+}
+
+// The week numbers the public page renders: 1..weekCount, where weekCount is the
+// larger of the programme's declared week count and the highest week any
+// template claims. This mirrors ProgrammeDetail exactly, so the public copy and
+// the club page agree on how many weeks a programme has, including weeks no
+// template has filled in yet.
+function programmeWeekNumbers(programme: Pick<ProgrammeRow, 'weeks'>, byWeek: Map<number, TemplateRow>): number[] {
+  const declared = typeof programme.weeks === 'number' && Number.isFinite(programme.weeks) ? programme.weeks : 0
+  const highestClaimed = byWeek.size > 0 ? Math.max(...byWeek.keys()) : 0
+  const count = Math.max(declared, highestClaimed, 0)
+  const out: number[] = []
+  for (let i = 1; i <= count; i++) out.push(i)
+  return out
+}
+
+// Evaluate whether a programme is publicly shareable. Fail closed aggregate
+// block rule: the programme's own rights, EVERY template that belongs to it,
+// every drill those templates' activities reference, every one of those drills'
+// media, and the attached PDF must all be eligible and present in the source's
+// club. One restricted, missing or cross club dependency blocks the whole
+// programme; nothing is partially published. The caller passes only rows it has
+// already club scoped, so a cross club or absent id arrives as a missing row.
+//
+// A programme with no week at all is refused (no_weeks): an overview with no
+// content is not a useful public copy, and refusing keeps "a share always
+// carries the material it claims to" true.
+export function evaluateProgrammeEligibility(
+  programme: Pick<ProgrammeRow, 'rights' | 'weeks' | 'pdf_media_id'>,
+  templates: Array<Pick<TemplateRow, 'id' | 'rights' | 'activities' | 'programme_week'>>,
+  drills: Array<Pick<DrillRow, 'id' | 'rights' | 'media_id'>>,
+  media: Array<Pick<MediaRow, 'id' | 'rights'>>,
+): ProgrammeEligibility {
+  const blocked = new Set<ProgrammeBlockReason>()
+  if (programme.rights === 'internal_only') blocked.add('source_internal_only')
+
+  const drillById = new Map(drills.map((d) => [d.id, d]))
+  const mediaById = new Map(media.map((m) => [m.id, m]))
+
+  for (const t of templates) {
+    if (t.rights === 'internal_only') blocked.add('template_internal_only')
+    for (const raw of parseActivities(t.activities)) {
+      const shape = activityShape(raw)
+      if (shape.kind === 'unsupported') {
+        blocked.add('unsupported_item')
+        continue
+      }
+      if (shape.kind !== 'drill') continue
+      const drill = drillById.get(shape.drillId)
+      if (!drill) {
+        blocked.add('drill_missing')
+        continue
+      }
+      if (drill.rights === 'internal_only') blocked.add('drill_internal_only')
+      if (drill.media_id) {
+        const m = mediaById.get(drill.media_id)
+        if (!m) blocked.add('media_missing')
+        else if (m.rights === 'internal_only') blocked.add('media_internal_only')
+      }
+    }
+  }
+
+  // The attached PDF is private media like any other. It is shared only when it
+  // exists in the same club and is eligible; an internal_only or missing PDF
+  // blocks the WHOLE programme rather than being silently dropped, because the
+  // PDF is usually the programme's substance and a copy without it would
+  // misrepresent what was shared. This matches content_share_deps, which already
+  // emits pdf_media_id as a media dependency, so the RPC refuses it too.
+  if (programme.pdf_media_id) {
+    const pdf = mediaById.get(programme.pdf_media_id)
+    if (!pdf) blocked.add('pdf_missing')
+    else if (pdf.rights === 'internal_only') blocked.add('pdf_internal_only')
+  }
+
+  const byWeek = orderProgrammeTemplates(templates as TemplateRow[])
+  const weekNumbers = programmeWeekNumbers(programme, byWeek)
+  if (weekNumbers.length === 0) blocked.add('no_weeks')
+  if (weekNumbers.length > MAX_PROGRAMME_WEEKS) blocked.add('too_many_weeks')
+
+  return { eligible: blocked.size === 0, blocked: [...blocked] }
+}
+
+// Build the stored programme snapshot from the live programme, the club scoped
+// templates that are its weeks, the club scoped drills those templates
+// reference, those drills' media, and the optional attached PDF media.
+//
+// The caller MUST have confirmed eligibility first (evaluateProgrammeEligibility);
+// this throws defensively on any internal_only, missing or unsupported item so
+// an ineligible programme can never be projected. Media (including the PDF) is
+// deduplicated into ONE flat top-level pool so the read path signs it with its
+// existing loop; referenced drills and the pdf pointer both index into that pool
+// by ref. Deterministic for a fixed snapshotAt regardless of input row order.
+export function buildProgrammeSnapshot(
+  programme: ProgrammeRow,
+  templates: TemplateRow[],
+  drills: DrillRow[],
+  media: MediaRow[],
+  snapshotAt: string,
+): StoredProgrammeSnapshot {
+  if (programme.rights === 'internal_only') {
+    throw new Error('buildProgrammeSnapshot: refusing to project an internal_only programme')
+  }
+  for (const t of templates) {
+    if (t.rights === 'internal_only') {
+      throw new Error('buildProgrammeSnapshot: refusing to project an internal_only template')
+    }
+  }
+
+  const drillById = new Map(drills.map((d) => [d.id, d]))
+  const mediaById = new Map(media.map((m) => [m.id, m]))
+
+  const mediaPool: StoredMedia[] = []
+  const mediaRefById = new Map<string, string>()
+  const drillRefById = new Map<string, string>()
+  const referencedDrills: ReferencedDrill[] = []
+
+  const ensureMediaRef = (mediaId: string): string => {
+    const existing = mediaRefById.get(mediaId)
+    if (existing) return existing
+    const m = mediaById.get(mediaId)
+    if (!m) throw new Error('buildProgrammeSnapshot: a referenced media is missing')
+    if (m.rights === 'internal_only') {
+      throw new Error('buildProgrammeSnapshot: refusing to project internal_only media')
+    }
+    const ref = 'm' + (mediaPool.length + 1)
+    mediaPool.push(buildMediaEntry(m, ref))
+    mediaRefById.set(mediaId, ref)
+    return ref
+  }
+
+  const ensureDrillRef = (drillId: string): string => {
+    const existing = drillRefById.get(drillId)
+    if (existing) return existing
+    const d = drillById.get(drillId)
+    if (!d) throw new Error('buildProgrammeSnapshot: a referenced drill is missing')
+    if (d.rights === 'internal_only') {
+      throw new Error('buildProgrammeSnapshot: refusing to project an internal_only drill')
+    }
+    const ref = 'd' + (referencedDrills.length + 1)
+    // Reserve the ref before projecting so a self reference cannot recurse.
+    drillRefById.set(drillId, ref)
+    const mediaRefs: string[] = []
+    if (d.media_id) mediaRefs.push(ensureMediaRef(d.media_id))
+    referencedDrills.push({ ref, ...projectDrillFields(d), mediaRefs })
+    return ref
+  }
+
+  const byWeek = orderProgrammeTemplates(templates)
+  const orderedWeekNumbers = programmeWeekNumbers(programme, byWeek)
+  if (orderedWeekNumbers.length === 0) {
+    throw new Error('buildProgrammeSnapshot: refusing to project a programme with no weeks')
+  }
+  if (orderedWeekNumbers.length > MAX_PROGRAMME_WEEKS) {
+    throw new Error('buildProgrammeSnapshot: refusing to project more than the week cap')
+  }
+
+  // Weeks are walked in ascending order, and each week's activities in stored
+  // order, so ref numbering (d1, d2, m1, m2 ...) is first encounter order over a
+  // stable traversal. Any other traversal would make refs depend on the order
+  // Postgres happened to return the templates in.
+  const weekTemplates: PublicWeek[] = []
+  for (const week of orderedWeekNumbers) {
+    const t = byWeek.get(week)
+    if (!t) {
+      // A week no template has filled in yet. The club page renders it as an
+      // empty week; so does the public copy.
+      weekTemplates.push({ week, title: null, focus: null, activities: [], totalDuration: 0 })
+      continue
+    }
+    const activities: PublicActivity[] = []
+    let totalDuration = 0
+    for (const raw of parseActivities(t.activities)) {
+      const shape = activityShape(raw)
+      if (shape.kind === 'unsupported') {
+        throw new Error('buildProgrammeSnapshot: an unsupported activity item')
+      }
+      const a = raw as RawActivity
+      const phase = sanitizeText(a.phase, 60)
+      const duration = numOrNull(a.duration)
+      if (typeof duration === 'number') totalDuration += duration
+      if (shape.kind === 'drill') {
+        activities.push({ phase, duration, drillRef: ensureDrillRef(shape.drillId), customTitle: null })
+      } else {
+        activities.push({ phase, duration, drillRef: null, customTitle: sanitizeText(a.title, 300) })
+      }
+    }
+    weekTemplates.push({
+      week,
+      title: sanitizeText(t.name, 300),
+      focus: sanitizeText(t.focus, 300),
+      activities,
+      totalDuration,
+    })
+  }
+
+  // The attached PDF joins the SAME pool and is addressed by a ref. It is never
+  // a second pool and never a path, because read_public_share signs exactly the
+  // entries of snapshot->'media' and nothing else.
+  let pdf: { ref: string } | null = null
+  if (programme.pdf_media_id) {
+    const m = mediaById.get(programme.pdf_media_id)
+    if (!m) throw new Error('buildProgrammeSnapshot: the attached PDF is missing')
+    if (m.rights === 'internal_only') {
+      throw new Error('buildProgrammeSnapshot: refusing to project an internal_only PDF')
+    }
+    pdf = { ref: ensureMediaRef(programme.pdf_media_id) }
+  }
+
+  if (mediaPool.length > MAX_PROGRAMME_MEDIA) {
+    throw new Error('buildProgrammeSnapshot: refusing to project more than the media cap')
+  }
+
+  const snapshot: StoredProgrammeSnapshot = {
+    snapshotVersion: SNAPSHOT_VERSION,
+    kind: 'programme',
+    displayTitle: sanitizeText(programme.name, 300) ?? 'Untitled programme',
+    focus: sanitizeText(programme.focus, 300),
+    summary: sanitizeText(programme.summary),
+    intentions: sanitizeTextArray(programme.intentions),
+    weeks: numOrNull(programme.weeks),
+    orderedWeekNumbers,
+    weekTemplates,
+    referencedDrills,
+    pdf,
+    sourceAttribution: attributionOf(programme.source_url, programme.source_label),
+    media: mediaPool,
+    snapshotAt,
+    builder: PROGRAMME_BUILDER,
+    public: true,
+  }
+
+  assertAllowlistedKeys(snapshot)
+
+  // The RPC enforces this too and is the authority; checking here turns a bare
+  // database exception into a stated reason the coach can act on.
+  if (new TextEncoder().encode(JSON.stringify(snapshot)).length > MAX_SNAPSHOT_BYTES) {
+    throw new Error('buildProgrammeSnapshot: refusing to project a snapshot over the size cap')
+  }
+
+  return snapshot
+}
+
+// -------------------------------------------------------------------------
 // The public projection and the allow list scanner
 // -------------------------------------------------------------------------
 
@@ -744,6 +1141,16 @@ const REF_DRILL_ALLOWED = new Set<string>([
 ])
 const BOARD_ALLOWED = new Set<string>(['formation', 'tokens'])
 const BOARD_TOKEN_ALLOWED = new Set<string>(['number', 'side', 'x', 'y'])
+
+// Programme snapshot allow lists (Content Sharing PR 4). The week entry's number
+// field is `week`; programmeWeek and programme_week are forbidden everywhere.
+const PROGRAMME_TOP_ALLOWED = new Set<string>([
+  'snapshotVersion', 'kind', 'displayTitle', 'focus', 'summary', 'intentions',
+  'weeks', 'orderedWeekNumbers', 'weekTemplates', 'referencedDrills', 'pdf',
+  'media', 'sourceAttribution', 'snapshotAt', 'builder', 'public',
+])
+const WEEK_ALLOWED = new Set<string>(['week', 'title', 'focus', 'activities', 'totalDuration'])
+const PDF_ALLOWED = new Set<string>(['ref'])
 
 // Keys that must never appear anywhere in a snapshot, at any level. A belt and
 // braces denylist beneath the positive allow list, naming the real columns and
@@ -783,6 +1190,17 @@ export function assertAllowlistedKeys(snapshot: unknown): void {
   if (s.kind === 'session') {
     assertAllowlistedSessionKeys(s)
     return
+  }
+  if (s.kind === 'programme') {
+    assertAllowlistedProgrammeKeys(s)
+    return
+  }
+  // Explicit, exhaustive dispatch. A snapshot of any other kind is refused here
+  // rather than falling through to the drill allow list, so a future fourth kind
+  // fails loudly at its first build instead of being silently validated against
+  // the wrong allow list.
+  if (s.kind !== 'drill') {
+    throw new Error(`snapshot allow list: unsupported kind "${String(s.kind)}"`)
   }
   assertKeysWithin(s, TOP_ALLOWED, 'top level')
   if (s.classification && typeof s.classification === 'object') {
@@ -844,6 +1262,46 @@ function assertAllowlistedSessionKeys(s: Record<string, unknown>): void {
         assertKeysWithin(t as Record<string, unknown>, BOARD_TOKEN_ALLOWED, 'board token')
       }
     }
+  }
+  assertMediaArrayKeys(s.media)
+}
+
+// Validate a STORED programme snapshot's known structure at every level: the top
+// level, each week, each week's activities, each referenced drill (and its
+// classification and attribution), the pdf pointer and the flat media pool.
+function assertAllowlistedProgrammeKeys(s: Record<string, unknown>): void {
+  assertKeysWithin(s, PROGRAMME_TOP_ALLOWED, 'programme top level')
+  if (s.sourceAttribution && typeof s.sourceAttribution === 'object') {
+    assertKeysWithin(s.sourceAttribution as Record<string, unknown>, ATTRIBUTION_ALLOWED, 'programme sourceAttribution')
+  }
+  if (Array.isArray(s.weekTemplates)) {
+    for (const w of s.weekTemplates as unknown[]) {
+      if (!w || typeof w !== 'object') throw new Error('snapshot allow list: week not an object')
+      const wk = w as Record<string, unknown>
+      assertKeysWithin(wk, WEEK_ALLOWED, 'programme week')
+      if (Array.isArray(wk.activities)) {
+        for (const a of wk.activities as unknown[]) {
+          if (!a || typeof a !== 'object') throw new Error('snapshot allow list: activity not an object')
+          assertKeysWithin(a as Record<string, unknown>, ACTIVITY_ALLOWED, 'programme week activity')
+        }
+      }
+    }
+  }
+  if (Array.isArray(s.referencedDrills)) {
+    for (const d of s.referencedDrills as unknown[]) {
+      if (!d || typeof d !== 'object') throw new Error('snapshot allow list: referenced drill not an object')
+      const dr = d as Record<string, unknown>
+      assertKeysWithin(dr, REF_DRILL_ALLOWED, 'referenced drill')
+      if (dr.classification && typeof dr.classification === 'object') {
+        assertKeysWithin(dr.classification as Record<string, unknown>, CLASSIFICATION_ALLOWED, 'referenced drill classification')
+      }
+      if (dr.sourceAttribution && typeof dr.sourceAttribution === 'object') {
+        assertKeysWithin(dr.sourceAttribution as Record<string, unknown>, ATTRIBUTION_ALLOWED, 'referenced drill sourceAttribution')
+      }
+    }
+  }
+  if (s.pdf && typeof s.pdf === 'object' && !Array.isArray(s.pdf)) {
+    assertKeysWithin(s.pdf as Record<string, unknown>, PDF_ALLOWED, 'programme pdf')
   }
   assertMediaArrayKeys(s.media)
 }
@@ -971,6 +1429,95 @@ export function validatePublicSessionSnapshot(value: unknown): value is PublicSe
         if (!t || typeof t !== 'object') return false
         assertKeysWithin(t as Record<string, unknown>, BOARD_TOKEN_ALLOWED, 'public board token')
       }
+    }
+    assertNoForbiddenKeys(s)
+  } catch {
+    return false
+  }
+  return true
+}
+
+// Strip the private media fields and the internal markers from a stored
+// programme snapshot, producing the public projection. Mirrors read_public_share
+// exactly, so the owner preview and the live public read agree.
+export function toPublicProgrammeProjection(stored: StoredProgrammeSnapshot): PublicProgrammeSnapshot {
+  const media: PublicMedia[] = stored.media.map((m) => {
+    const out: PublicMedia = {
+      ref: m.ref,
+      type: m.type,
+      caption: m.caption,
+      sourceAttribution: m.sourceAttribution,
+      link: m.link,
+    }
+    if (typeof m.url === 'string') out.url = m.url
+    return out
+  })
+  const { builder: _builder, public: _public, media: _m, ...rest } = stored
+  return { ...rest, media }
+}
+
+// Validate that a value is a well formed PUBLIC programme snapshot: known keys
+// only at every level, no private media fields, no forbidden key anywhere, the
+// pinned version and kind, and every activity drillRef resolving to a referenced
+// drill. Used by the read function before responding and by the public page
+// before rendering, so an unknown or tampered shape renders the neutral
+// unavailable state rather than anything else.
+export function validatePublicProgrammeSnapshot(value: unknown): value is PublicProgrammeSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const s = value as Record<string, unknown>
+  if (s.kind !== 'programme') return false
+  if (s.snapshotVersion !== SNAPSHOT_VERSION) return false
+  if (s.public !== undefined || s.builder !== undefined) return false
+  try {
+    const publicTop = new Set([...PROGRAMME_TOP_ALLOWED].filter((k) => k !== 'builder' && k !== 'public'))
+    assertKeysWithin(s, publicTop, 'public programme top level')
+    if (!Array.isArray(s.media)) return false
+    const mediaRefs = new Set<string>()
+    for (const m of s.media as unknown[]) {
+      if (!m || typeof m !== 'object') return false
+      assertKeysWithin(m as Record<string, unknown>, MEDIA_PUBLIC_ALLOWED, 'public media entry')
+      const ref = (m as Record<string, unknown>).ref
+      if (typeof ref === 'string') mediaRefs.add(ref)
+    }
+    if (!Array.isArray(s.referencedDrills)) return false
+    const drillRefs = new Set<string>()
+    for (const d of s.referencedDrills as unknown[]) {
+      if (!d || typeof d !== 'object') return false
+      assertKeysWithin(d as Record<string, unknown>, REF_DRILL_ALLOWED, 'public referenced drill')
+      const dr = d as Record<string, unknown>
+      if (typeof dr.ref === 'string') drillRefs.add(dr.ref)
+      // Every media ref a drill points at must exist in the pool.
+      if (!Array.isArray(dr.mediaRefs)) return false
+      for (const mr of dr.mediaRefs as unknown[]) {
+        if (typeof mr !== 'string' || !mediaRefs.has(mr)) return false
+      }
+    }
+    if (!Array.isArray(s.orderedWeekNumbers)) return false
+    for (const n of s.orderedWeekNumbers as unknown[]) {
+      if (typeof n !== 'number' || !Number.isInteger(n)) return false
+    }
+    if (!Array.isArray(s.weekTemplates)) return false
+    for (const w of s.weekTemplates as unknown[]) {
+      if (!w || typeof w !== 'object') return false
+      const wk = w as Record<string, unknown>
+      assertKeysWithin(wk, WEEK_ALLOWED, 'public programme week')
+      if (typeof wk.week !== 'number' || !Number.isInteger(wk.week)) return false
+      if (!Array.isArray(wk.activities)) return false
+      for (const a of wk.activities as unknown[]) {
+        if (!a || typeof a !== 'object') return false
+        assertKeysWithin(a as Record<string, unknown>, ACTIVITY_ALLOWED, 'public programme week activity')
+        // Every activity drill reference must resolve to a referenced drill;
+        // a dangling ref means a tampered or partial payload.
+        const dref = (a as Record<string, unknown>).drillRef
+        if (dref !== null && (typeof dref !== 'string' || !drillRefs.has(dref))) return false
+      }
+    }
+    if (s.pdf !== null) {
+      if (!s.pdf || typeof s.pdf !== 'object' || Array.isArray(s.pdf)) return false
+      const p = s.pdf as Record<string, unknown>
+      assertKeysWithin(p, PDF_ALLOWED, 'public programme pdf')
+      // The pdf pointer must resolve into the same flat media pool.
+      if (typeof p.ref !== 'string' || !mediaRefs.has(p.ref)) return false
     }
     assertNoForbiddenKeys(s)
   } catch {
