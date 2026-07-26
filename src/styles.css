@@ -670,6 +670,26 @@ a.activity-batch:hover { text-decoration: underline; }
 /* Constrain the read only board so it reads at a sensible size on the page. */
 .public-session .board-pitch { max-width: 420px; margin: 0 auto; }
 
+/* --- The programme content (shared by preview and public page) --- */
+.public-programme { display: grid; gap: 18px; }
+.public-weeks { list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; }
+.public-week { display: grid; gap: 12px; border: 1px solid var(--line); border-radius: var(--radius-lg);
+  padding: 16px 18px; background: var(--card); }
+.public-week-head { display: grid; gap: 8px; }
+.public-week-title { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin: 0;
+  font-family: var(--display); font-weight: 800; font-size: 16px; }
+.public-week-number { color: var(--navy); }
+.public-week-name { font-weight: 700; }
+.public-week-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.public-week-focus { background: var(--gold-soft); border-color: var(--gold); font-weight: 800; }
+.public-week-empty { margin: 0; font-size: 14px; }
+/* The activity cards inside a week already carry their own border; drop the
+   doubled inset so a week reads as one block rather than a box in a box. */
+.public-week .public-activities { gap: 14px; }
+.public-programme-pdf { display: grid; gap: 8px; justify-items: start; }
+.public-media-attribution { margin: 0; font-size: 13px; }
+.public-print-note { margin: 8px 0 0; font-size: 13px; }
+
 /* --- The Drill Detail public-link control --- */
 .public-share-control { border-top: 1px dashed var(--line); padding-top: 12px; }
 .public-share-heading { font-family: var(--display); font-weight: 800; font-size: 15px; }
@@ -689,10 +709,62 @@ a.activity-batch:hover { text-decoration: underline; }
 .public-confirm-note { margin: 12px 0 0; font-weight: 600; }
 
 /* --- Print: a usable public page from day one (PR 6 refines it) --- */
+/* Public page print / Save as PDF (Content Sharing PR 6).
+
+   Print consumes the already rendered, already validated public snapshot DOM.
+   There is no separate print template and no second data path, so the printed
+   copy can only ever contain what the public page itself showed. What changes
+   here is presentation: the interactive chrome is hidden, links stop expanding
+   to raw URLs, and weeks, activities and drills get sensible page breaks. */
 @media print {
-  .public-foot, .public-reload, .public-media-note { display: none; }
+  /* Interactive chrome never prints: the buttons are meaningless on paper and
+     the print note is guidance for the person at the screen. */
+  .public-foot, .public-reload, .public-media-note, .public-print-note { display: none; }
+  /* The transient-error retry is a control and prints as an inert button. The
+     programme PDF link is deliberately NOT hidden: on paper it still names the
+     document that accompanies the programme, which is useful, and the link does
+     not expand to a signed URL (see the a[href]::after rule below). */
+  .public-empty .btn { display: none; }
+  .public-programme-pdf .btn { border: none; padding: 0; background: none; font-weight: 700; }
   .public-page { background: #fff; color: #000; }
   .public-main { max-width: 100%; padding: 0; }
   .public-media-image { border: none; }
   a[href]::after { content: ''; }
+
+  @page { margin: 14mm; }
+
+  /* Keep a unit of meaning on one page where it fits: a programme week, a
+     session or programme activity, a drill card, a media figure and a text
+     block. Headings never sit alone at the foot of a page. */
+  .public-week, .public-activity, .public-drill, .public-block, .public-media {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .public-title, .public-block-head, .public-week-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  /* A programme can run to many weeks. Start each week on a fresh page after
+     the first, so a week is read as a unit. */
+  .public-weeks > .public-week + .public-week {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* Diagrams, boards and images must stay legible and must not overflow the
+     sheet. Colour is preserved so a four corners tag or a board side still
+     reads correctly on a colour printer or in a saved PDF. */
+  .public-media, .public-media-image, .board-pitch, img, svg {
+    max-width: 100%;
+    height: auto;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .public-pill, .public-meta, .tag, .board-disc {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* Attribution must survive to paper: the FA terms require the source to be
+     visible wherever the image renders. */
+  .public-attribution, .public-media-attribution { display: block; }
 }

@@ -1,7 +1,8 @@
 // OTJ Training Hub, manage-content-share Edge Function (Content Sharing PR 2).
 //
-// The authenticated management function for public DRILL and SESSION shares
-// (Content Sharing PR 3 adds sessions; PR 2 shipped drills). verify_jwt is ON
+// The authenticated management function for public DRILL, SESSION and PROGRAMME
+// shares (PR 2 shipped drills, PR 3 added sessions, PR 4 adds programmes).
+// verify_jwt is ON
 // (the default; no config block). It authenticates the caller, makes an early
 // capability check under the caller's identity, builds the safe public snapshot
 // server side from the live rows, and calls the service role lifecycle RPC
@@ -10,8 +11,16 @@
 // server derived dependency set inside its transaction. The dependency graph is
 // NEVER taken from the client; the RPC re-derives it with content_share_deps.
 //
-// Actions: preview | create | refresh | rotate | revoke | status. Drill or
-// session; a programme kind is refused (no public programme renderer yet).
+// Actions: preview | create | refresh | rotate | revoke | status. Drill,
+// session or programme; every kind is an EXPLICIT branch with its own loader,
+// eligibility evaluation and builder. There is no generic kind renderer and no
+// fallback: an unrecognised kind is refused rather than coerced to drill.
+//
+// A programme share projects the programme overview, its ordered weeks (the
+// templates carrying programme_week), each week's activities, the drills those
+// activities reference, those drills' media and the optional attached PDF. The
+// week template's author column is never read here: it is a club member's full
+// name and is excluded from the projection entirely.
 //
 // Hard rules honoured here:
 //   - the actor is derived from the verified JWT, never from the request body;
@@ -22,8 +31,8 @@
 //     returned and the secret is never logged;
 //   - the snapshot is always built server side from the live rows;
 //   - the lifecycle RPC (not this function) is the security boundary;
-//   - logs carry status, action and ids only, never a secret, snapshot or
-//     drill text.
+//   - logs carry status, action and ids only, never a secret, snapshot,
+//     storage path, drill text or member name.
 //
 // This function is review gated (a security boundary). Deploy from disk via the
 // CLI and verify by reading the deployed source back byte for byte.
@@ -32,16 +41,22 @@ import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
   type BoardRow,
   buildDrillSnapshot,
+  buildProgrammeSnapshot,
   buildSessionSnapshot,
   type ContentRights,
   type DrillRow,
   evaluateDrillEligibility,
+  evaluateProgrammeEligibility,
   evaluateSessionEligibility,
+  ProgrammeBuildError,
   generateSecret,
   type MediaRow,
+  type ProgrammeRow,
   type SessionRow,
   SNAPSHOT_VERSION,
   secretHashLiteral,
+  type TemplateRow,
+  toPublicProgrammeProjection,
   toPublicProjection,
   toPublicSessionProjection,
 } from '../_shared/share.ts'
@@ -61,9 +76,16 @@ const SESSION_COLS =
 // The boards table has no club_id column; the club is resolved through the
 // creator's profile, exactly as content_share_deps does server side.
 const BOARD_COLS = 'id, formation, tokens, created_by'
+// Programme and template columns (PR 4). TEMPLATE_COLS deliberately omits
+// author, created_by and created_at is read for deterministic week ordering
+// only; author is a club member's full name and must never be read into a
+// snapshot path at all.
+const PROGRAMME_COLS =
+  'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, rights'
+const TEMPLATE_COLS = 'id, club_id, name, focus, activities, programme_week, created_at, rights'
 
-type Kind = 'drill' | 'session'
-const KINDS: Kind[] = ['drill', 'session']
+type Kind = 'drill' | 'session' | 'programme'
+const KINDS: Kind[] = ['drill', 'session', 'programme']
 type Action = 'preview' | 'create' | 'refresh' | 'rotate' | 'revoke' | 'status'
 const ACTIONS: Action[] = ['preview', 'create', 'refresh', 'rotate', 'revoke', 'status']
 
@@ -118,13 +140,13 @@ function serve(): void {
     const noExpiry = body.noExpiry === true
     const expiresAt = typeof body.expiresAt === 'string' ? body.expiresAt : null
 
-    // Drills and sessions can be shared publicly (PR 3); any other kind is
-    // refused, never silently accepted. A programme has no public renderer yet.
+    // Drills, sessions and programmes can be shared publicly (PR 4); any other
+    // kind is refused, never silently accepted.
     if (
       (action === 'preview' || action === 'create') &&
       (typeof kind !== 'string' || !KINDS.includes(kind as Kind))
     ) {
-      return reply(400, { error: 'Only drills and sessions can be shared publicly.' })
+      return reply(400, { error: 'Only drills, sessions and programmes can be shared publicly.' })
     }
     if (sourceId !== null && !UUID_RE.test(sourceId)) return reply(400, { error: 'Invalid source id.' })
     if (shareId !== null && !UUID_RE.test(shareId)) return reply(400, { error: 'Invalid share id.' })
@@ -153,9 +175,20 @@ function serve(): void {
       auth: { persistSession: false, autoRefreshToken: false },
     }) as unknown as AdminClient
 
-    // The validated share kind. preview/create already gated kind to
-    // {drill, session}; status carries it too and defaults to drill.
-    const shareKind: Kind = kind === 'session' ? 'session' : 'drill'
+    // The validated share kind, resolved EXHAUSTIVELY. preview and create
+    // already gated kind to KINDS above; status carries it too, and an
+    // unrecognised value is refused here rather than silently coerced. The old
+    // two-way coercion turned {action:'status', kind:'programme'} into a drill
+    // lookup, which would have queried the wrong source column; every kind now
+    // either resolves to itself or is rejected. kind is optional only for
+    // status, where an absent value keeps the historic drill default.
+    let shareKind: Kind = 'drill'
+    if (typeof kind === 'string') {
+      if (!KINDS.includes(kind as Kind)) return reply(400, { error: 'Unknown share kind.' })
+      shareKind = kind as Kind
+    } else if (kind !== undefined && kind !== null) {
+      return reply(400, { error: 'Unknown share kind.' })
+    }
 
     try {
       switch (action) {
@@ -197,6 +230,15 @@ async function hasPerm(db: any, capability: string): Promise<boolean | null> {
 }
 
 // deno-lint-ignore no-explicit-any
+// The builder's refusal reason, for reporting. A ProgrammeBuildError names why
+// it refused; anything else is an unexpected failure and is reported as the
+// most conservative cap reason rather than surfacing an internal message.
+// The reason vocabulary is the same closed set eligibility already returns, so
+// nothing new reaches the client.
+function programmeBuildReason(err: unknown): string {
+  return err instanceof ProgrammeBuildError ? err.reason : 'snapshot_too_large'
+}
+
 function errCode(err: any): string {
   return (err && (err.code || err.name)) ? String(err.code || err.name) : 'unknown'
 }
@@ -314,6 +356,87 @@ async function loadSessionForShare(
   return { session: session as SessionRow, drills, media, board }
 }
 
+// The rows a programme share projects: the programme, its week templates, the
+// club scoped drills those templates' activities reference, those drills' media,
+// and the optional attached PDF media.
+interface LoadedProgramme {
+  programme: ProgrammeRow
+  templates: TemplateRow[]
+  drills: DrillRow[]
+  media: MediaRow[]
+}
+
+// Read a programme and its full dependency set, each club scoped exactly as
+// content_share_deps does: a cross club or absent nested id simply does not
+// appear in the returned rows, so eligibility resolves it as missing and the
+// share fails closed. All reads are under the service role; the lifecycle RPC
+// re-derives the authoritative dependency set and re-validates authority. The
+// snapshot is only ever built from what this returns, never from a client list.
+//
+// The template read matches content_share_deps' programme branch set for set:
+// EVERY template carrying this programme_id in this club, including one with no
+// week assigned. An unassigned template is not rendered but is still a
+// dependency, so its rights still gate the share.
+async function loadProgrammeForShare(
+  admin: AdminClient,
+  clubId: string,
+  sourceId: string,
+): Promise<LoadedProgramme | Response> {
+  const { data: programme, error } = await admin.from('programmes').select(PROGRAMME_COLS).eq('id', sourceId)
+    .maybeSingle()
+  if (error) return reply(500, { error: 'Could not read the programme. No change was made.' })
+  if (!programme || programme.club_id !== clubId) {
+    return reply(404, { error: 'That programme was not found in your club.' })
+  }
+
+  const { data: templateRows, error: tErr } = await admin.from('templates').select(TEMPLATE_COLS).eq(
+    'programme_id',
+    sourceId,
+  )
+  if (tErr) return reply(500, { error: 'Could not read the programme weeks. No change was made.' })
+  const templates = ((templateRows ?? []) as Array<TemplateRow & { club_id?: string }>).filter(
+    (t) => t.club_id === clubId,
+  ) as TemplateRow[]
+
+  // Distinct drill ids referenced across every week's activities jsonb (custom
+  // activities carry a title and no drill_id and are skipped). Only well formed
+  // uuids are queried; a malformed drill_id is left to eligibility, which flags
+  // it as an unsupported item rather than a missing drill.
+  const drillIds = [
+    ...new Set(
+      templates.flatMap((t) => (Array.isArray(t.activities) ? (t.activities as unknown[]) : []))
+        .map((a: unknown) => (a && typeof a === 'object' ? (a as { drill_id?: unknown }).drill_id : null))
+        .filter((id: unknown): id is string => typeof id === 'string' && UUID_RE.test(id)),
+    ),
+  ]
+
+  let drills: DrillRow[] = []
+  if (drillIds.length > 0) {
+    const { data: drillRows, error: dErr } = await admin.from('drills').select(DRILL_COLS).in('id', drillIds)
+    if (dErr) return reply(500, { error: 'Could not read the programme drills. No change was made.' })
+    drills = ((drillRows ?? []) as DrillRow[]).filter((d) => d.club_id === clubId)
+  }
+
+  // Those drills' media, plus the programme's attached PDF, in one read. The
+  // PDF is ordinary private media: club scoped and rights checked like the rest.
+  const mediaIds = [
+    ...new Set([
+      ...drills.map((d) => d.media_id).filter((id): id is string => typeof id === 'string'),
+      ...(typeof programme.pdf_media_id === 'string' && UUID_RE.test(programme.pdf_media_id)
+        ? [programme.pdf_media_id]
+        : []),
+    ]),
+  ]
+  let media: MediaRow[] = []
+  if (mediaIds.length > 0) {
+    const { data: mediaRows, error: mErr } = await admin.from('media').select(MEDIA_COLS).in('id', mediaIds)
+    if (mErr) return reply(500, { error: 'Could not read the programme media. No change was made.' })
+    media = ((mediaRows ?? []) as MediaRow[]).filter((m) => m.club_id === clubId)
+  }
+
+  return { programme: programme as ProgrammeRow, templates, drills, media }
+}
+
 async function handlePreview(
   admin: AdminClient,
   clubId: string,
@@ -321,6 +444,7 @@ async function handlePreview(
   sourceId: string | null,
 ): Promise<Response> {
   if (kind === 'session') return handlePreviewSession(admin, clubId, sourceId)
+  if (kind === 'programme') return handlePreviewProgramme(admin, clubId, sourceId)
   if (!sourceId) return reply(400, { error: 'A drill is required.' })
   const loaded = await loadDrillAndMedia(admin, clubId, sourceId)
   if (loaded instanceof Response) return loaded
@@ -360,6 +484,40 @@ async function handlePreviewSession(admin: AdminClient, clubId: string, sourceId
   })
 }
 
+async function handlePreviewProgramme(admin: AdminClient, clubId: string, sourceId: string | null): Promise<Response> {
+  if (!sourceId) return reply(400, { error: 'A programme is required.' })
+  const loaded = await loadProgrammeForShare(admin, clubId, sourceId)
+  if (loaded instanceof Response) return loaded
+  const { programme, templates, drills, media } = loaded
+  const elig = evaluateProgrammeEligibility(programme, templates, drills, media)
+  let preview: unknown = null
+  if (elig.eligible) {
+    // The builder can still refuse on a cap only measurable after projection
+    // (the media count and the stored size). Surface that as a blocker rather
+    // than a 500, so the coach sees a stated reason.
+    try {
+      preview = toPublicProgrammeProjection(
+        buildProgrammeSnapshot(programme, templates, drills, media, new Date().toISOString()),
+      )
+    } catch (err) {
+      return reply(200, {
+        ok: true,
+        eligible: false,
+        blocked: [programmeBuildReason(err)],
+        rights: { source: programme.rights as ContentRights },
+        preview: null,
+      })
+    }
+  }
+  return reply(200, {
+    ok: true,
+    eligible: elig.eligible,
+    blocked: elig.blocked,
+    rights: { source: programme.rights as ContentRights },
+    preview,
+  })
+}
+
 async function handleCreate(
   admin: AdminClient,
   caller: Caller,
@@ -370,6 +528,9 @@ async function handleCreate(
   noExpiry: boolean,
 ): Promise<Response> {
   if (kind === 'session') return handleCreateSession(admin, caller, sourceId, idempotencyKey, expiresAt, noExpiry)
+  if (kind === 'programme') {
+    return handleCreateProgramme(admin, caller, sourceId, idempotencyKey, expiresAt, noExpiry)
+  }
   if (!sourceId) return reply(400, { error: 'A drill is required.' })
   if (!idempotencyKey) return reply(400, { error: 'An idempotency key is required.' })
   const loaded = await loadDrillAndMedia(admin, caller.clubId, sourceId)
@@ -485,13 +646,85 @@ async function handleCreateSession(
   })
 }
 
+async function handleCreateProgramme(
+  admin: AdminClient,
+  caller: Caller,
+  sourceId: string | null,
+  idempotencyKey: string | null,
+  expiresAt: string | null,
+  noExpiry: boolean,
+): Promise<Response> {
+  if (!sourceId) return reply(400, { error: 'A programme is required.' })
+  if (!idempotencyKey) return reply(400, { error: 'An idempotency key is required.' })
+  const loaded = await loadProgrammeForShare(admin, caller.clubId, sourceId)
+  if (loaded instanceof Response) return loaded
+  const { programme, templates, drills, media } = loaded
+  const elig = evaluateProgrammeEligibility(programme, templates, drills, media)
+  if (!elig.eligible) {
+    return reply(422, { error: 'This programme cannot be shared publicly.', blocked: elig.blocked })
+  }
+
+  let snapshot
+  try {
+    snapshot = buildProgrammeSnapshot(programme, templates, drills, media, new Date().toISOString())
+  } catch (err) {
+    // A cap only measurable after projection (the stored size), or a defensive
+    // throw meaning eligibility and the builder disagreed. Either way no share
+    // is created and nothing is stored; the reason is reported accurately.
+    return reply(422, {
+      error: 'This programme cannot be shared publicly.',
+      blocked: [programmeBuildReason(err)],
+    })
+  }
+  const secret = generateSecret()
+  const secretHash = await secretHashLiteral(secret)
+
+  const { data, error } = await admin.rpc('manage_content_share', {
+    p_action: 'create',
+    p_actor_id: caller.userId,
+    p_kind: 'programme',
+    p_source_id: sourceId,
+    p_secret_hash: secretHash,
+    p_expires_at: expiresAt,
+    p_no_expiry: noExpiry,
+    p_idempotency_key: idempotencyKey,
+    p_snapshot: snapshot,
+    p_snapshot_version: SNAPSHOT_VERSION,
+  })
+  if (error) {
+    console.error('manage-content-share: create rpc failed', { code: errCode(error) })
+    return reply(403, { error: 'Could not create the public link. You may not be able to share this programme.' })
+  }
+  const shareId = data?.share_id as string | undefined
+  if (!shareId) return reply(500, { error: 'Could not create the public link. No change was made.' })
+
+  if (data?.existing === true || data?.idempotent === true) {
+    return reply(200, {
+      ok: true,
+      shareId,
+      existing: true,
+      message: 'A public link already exists for this programme. Replace the link to get a new URL.',
+    })
+  }
+  const status = await readStatusRow(admin, shareId)
+  console.log('manage-content-share: created', { shareId })
+  return reply(200, {
+    ok: true,
+    shareId,
+    secret, // returned exactly once, never stored or logged
+    status: 'active',
+    expiresAt: status?.expires_at ?? null,
+  })
+}
+
 async function handleRefresh(admin: AdminClient, caller: Caller, shareId: string | null): Promise<Response> {
   if (!shareId) return reply(400, { error: 'A share id is required.' })
   const share = await readShareForOwnerAction(admin, caller, shareId)
   if (share instanceof Response) return share
   if (share.kind === 'session') return handleRefreshSession(admin, caller, shareId, share.session_id)
+  if (share.kind === 'programme') return handleRefreshProgramme(admin, caller, shareId, share.programme_id)
   if (share.kind !== 'drill' || !share.drill_id) {
-    return reply(400, { error: 'Only drill or session links can be refreshed here.' })
+    return reply(400, { error: 'Only drill, session or programme links can be refreshed here.' })
   }
 
   const loaded = await loadDrillAndMedia(admin, caller.clubId, share.drill_id)
@@ -551,6 +784,46 @@ async function handleRefreshSession(
   return reply(200, { ok: true, status: 'active', expiresAt: status?.expires_at ?? null })
 }
 
+async function handleRefreshProgramme(
+  admin: AdminClient,
+  caller: Caller,
+  shareId: string,
+  programmeId: string | null,
+): Promise<Response> {
+  if (!programmeId) return reply(400, { error: 'That link is not a programme link.' })
+  const loaded = await loadProgrammeForShare(admin, caller.clubId, programmeId)
+  if (loaded instanceof Response) return loaded
+  const { programme, templates, drills, media } = loaded
+  const elig = evaluateProgrammeEligibility(programme, templates, drills, media)
+  if (!elig.eligible) {
+    return reply(422, { error: 'This programme can no longer be shared publicly.', blocked: elig.blocked })
+  }
+  let snapshot
+  try {
+    snapshot = buildProgrammeSnapshot(programme, templates, drills, media, new Date().toISOString())
+  } catch (err) {
+    return reply(422, {
+      error: 'This programme can no longer be shared publicly.',
+      blocked: [programmeBuildReason(err)],
+    })
+  }
+
+  const { data: _data, error } = await admin.rpc('manage_content_share', {
+    p_action: 'refresh',
+    p_actor_id: caller.userId,
+    p_share_id: shareId,
+    p_snapshot: snapshot,
+    p_snapshot_version: SNAPSHOT_VERSION,
+  })
+  if (error) {
+    console.error('manage-content-share: refresh programme rpc failed', { code: errCode(error) })
+    return reply(403, { error: 'Could not update the public link.' })
+  }
+  const status = await readStatusRow(admin, shareId)
+  console.log('manage-content-share: refreshed', { shareId })
+  return reply(200, { ok: true, status: 'active', expiresAt: status?.expires_at ?? null })
+}
+
 async function handleRotate(admin: AdminClient, caller: Caller, shareId: string | null): Promise<Response> {
   if (!shareId) return reply(400, { error: 'A share id is required.' })
   const share = await readShareForOwnerAction(admin, caller, shareId)
@@ -599,7 +872,10 @@ async function handleStatus(
   sourceId: string | null,
   canManage: boolean,
 ): Promise<Response> {
-  if (!sourceId) return reply(400, { error: kind === 'session' ? 'A session is required.' : 'A drill is required.' })
+  if (!sourceId) {
+    const noun = kind === 'session' ? 'A session' : kind === 'programme' ? 'A programme' : 'A drill'
+    return reply(400, { error: `${noun} is required.` })
+  }
 
   // The club kill switch, so the UI can show a calm disabled state.
   const { data: club } = await admin
@@ -609,11 +885,13 @@ async function handleStatus(
     .maybeSingle()
   const sharingEnabled = club?.public_sharing_enabled === true
 
-  const sourceColumn = kind === 'session' ? 'session_id' : 'drill_id'
+  // Exhaustive per kind source column. A programme status must query
+  // programme_id; falling back to drill_id would silently report "no share".
+  const sourceColumn = kind === 'session' ? 'session_id' : kind === 'programme' ? 'programme_id' : 'drill_id'
   const { data: rows, error } = await admin
     .from('content_shares')
     .select(
-      'id, club_id, kind, drill_id, session_id, created_by, snapshot, snapshot_version, expires_at, created_at, refreshed_at, rotated_at, revoked_at',
+      'id, club_id, kind, drill_id, session_id, programme_id, created_by, snapshot, snapshot_version, expires_at, created_at, refreshed_at, rotated_at, revoked_at',
     )
     .eq(sourceColumn, sourceId)
     .is('revoked_at', null)
@@ -670,7 +948,7 @@ async function readShareForOwnerAction(
 ): Promise<any | Response> {
   const { data: row, error } = await admin
     .from('content_shares')
-    .select('id, club_id, kind, drill_id, session_id, created_by, revoked_at')
+    .select('id, club_id, kind, drill_id, session_id, programme_id, created_by, revoked_at')
     .eq('id', shareId)
     .maybeSingle()
   if (error) return reply(500, { error: 'Could not read the share.' })

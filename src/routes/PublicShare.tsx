@@ -10,16 +10,31 @@
 // identical neutral unavailable state, so the page never reveals which state
 // occurred or whether the link ever existed. A transport failure is distinct (a
 // retry), because it reveals nothing about the link's lifecycle.
+//
+// Print / Save as PDF (Content Sharing PR 6, browser print only). The action
+// calls window.print() on the already rendered, already validated snapshot DOM.
+// It makes NO request, reads NO live row, adds NO database access, needs NO
+// Edge Function and generates NO server side PDF. Whatever is on the page is
+// what prints, so the printed copy can carry nothing the public projection did
+// not already carry. The browser's own print chrome is the exception, and both
+// halves of it are handled: document.title is overwritten with neutral copy,
+// and the secret is stripped from the address bar for the duration of the print
+// (see stripSecretFromUrl) so the URL footer cannot stamp a working credential
+// onto the page. Because the printed or saved copy leaves the platform
+// entirely, the page states plainly that it cannot be turned off or recalled.
 
 import { useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { PublicDrillView } from '../components/PublicDrillView'
+import { PublicProgrammeView } from '../components/PublicProgrammeView'
 import { PublicSessionView } from '../components/PublicSessionView'
 import {
   type PublicDrillSnapshot,
+  PRINT_WARNING,
   PUBLIC_PAGE_TITLE,
+  type PublicProgrammeSnapshot,
   type PublicSessionSnapshot,
   readSecretFromHash,
   TRANSIENT_BODY,
@@ -27,6 +42,7 @@ import {
   UNAVAILABLE_BODY,
   UNAVAILABLE_HEADING,
   validatePublicDrillSnapshot,
+  validatePublicProgrammeSnapshot,
   validatePublicSessionSnapshot,
 } from '../lib/publicShare'
 
@@ -47,6 +63,68 @@ function Frame({ children }: { children: React.ReactNode }) {
       <footer className="public-foot">
         <p className="muted">Shared from Ossett Town Juniors</p>
       </footer>
+    </div>
+  )
+}
+
+// The interactive chrome under a rendered snapshot. Every control here is
+// hidden in print (see the @media print block in styles.css): a printed page
+// must not carry buttons, and the reload control is meaningless on paper.
+// Remove the secret from the address bar, and put it back afterwards.
+//
+// Every desktop browser prints its own header and footer by default, and the
+// footer is document.URL. Our secret lives in the URL FRAGMENT, so a naive
+// print would stamp a working credential onto every sheet of the saved PDF, and
+// that PDF is exactly the thing recipients forward on. The page already
+// neutralises the other half of that chrome by overwriting document.title, so
+// this closes the matching hole: the fragment is stripped for the duration of
+// the print and restored immediately after, which keeps a plain page reload
+// working (a permanent strip would break it).
+function stripSecretFromUrl(): void {
+  if (typeof window === 'undefined' || !window.history || !window.location.hash) return
+  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+}
+
+function restoreSecretToUrl(secret: string): void {
+  if (typeof window === 'undefined' || !window.history || !secret) return
+  if (window.location.hash) return
+  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${secret}`)
+}
+
+function PublicActions({ onReload, secret }: { onReload: () => void; secret: string }) {
+  // Covers the browser's own print (Ctrl+P, the menu) as well as our button.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const before = () => stripSecretFromUrl()
+    const after = () => restoreSecretToUrl(secret)
+    window.addEventListener('beforeprint', before)
+    window.addEventListener('afterprint', after)
+    return () => {
+      window.removeEventListener('beforeprint', before)
+      window.removeEventListener('afterprint', after)
+    }
+  }, [secret])
+
+  // The button strips and restores around the call too, so a browser that does
+  // not fire beforeprint still never prints the secret.
+  const print = () => {
+    stripSecretFromUrl()
+    try {
+      window.print()
+    } finally {
+      restoreSecretToUrl(secret)
+    }
+  }
+
+  return (
+    <div className="public-reload">
+      <button type="button" className="btn btn-quiet btn-sm" onClick={onReload}>
+        Reload media
+      </button>
+      <button type="button" className="btn btn-quiet btn-sm" style={{ minHeight: 44 }} onClick={print}>
+        Print or Save as PDF
+      </button>
+      <p className="public-print-note muted">{PRINT_WARNING}</p>
     </div>
   )
 }
@@ -147,11 +225,7 @@ export default function PublicShare() {
     return (
       <Frame>
         <PublicDrillView snapshot={snapshot} mode="public" />
-        <div className="public-reload">
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => query.refetch()}>
-            Reload media
-          </button>
-        </div>
+        <PublicActions onReload={() => query.refetch()} secret={secret} />
       </Frame>
     )
   }
@@ -160,11 +234,16 @@ export default function PublicShare() {
     return (
       <Frame>
         <PublicSessionView snapshot={snapshot} mode="public" />
-        <div className="public-reload">
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => query.refetch()}>
-            Reload media
-          </button>
-        </div>
+        <PublicActions onReload={() => query.refetch()} secret={secret} />
+      </Frame>
+    )
+  }
+  if (kind === 'programme' && validatePublicProgrammeSnapshot(result.snapshot)) {
+    const snapshot = result.snapshot as PublicProgrammeSnapshot
+    return (
+      <Frame>
+        <PublicProgrammeView snapshot={snapshot} mode="public" />
+        <PublicActions onReload={() => query.refetch()} secret={secret} />
       </Frame>
     )
   }

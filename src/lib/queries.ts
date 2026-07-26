@@ -4435,7 +4435,7 @@ export function useUnarchiveSeason() {
 // hook set drives the shared PublicShareControl for both a drill and a session;
 // the wire always carries kind + sourceId, and the source column and dependency
 // authority are re-derived server side by the lifecycle RPC.
-export type ContentShareKind = 'drill' | 'session'
+export type ContentShareKind = 'drill' | 'session' | 'programme'
 
 export interface ContentShareStatus {
   shareId: string
