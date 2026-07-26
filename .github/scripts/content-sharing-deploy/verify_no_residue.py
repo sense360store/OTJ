@@ -13,6 +13,20 @@ connection string and asserts the sharing feature is still fully inert:
   - the migration ledger's newest version is exactly 0041 (public_programme_read);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
+Runs TWICE in the deploy workflow, with identical assertions:
+
+  --phase pre    before either function is deployed. A wrong ledger version or a
+                 dirty hosted state stops the workflow while both functions are
+                 still untouched, so a deploy is never made against a schema it
+                 was not reviewed against.
+  --phase post   after the deploy (the original use), proving the deploy itself
+                 left no residue.
+
+The assertion on the ledger version is an EXACT equality in both phases. It is
+never relaxed to a >=, a prefix match or an "exists somewhere" check: the point
+is to prove the hosted schema is precisely the reviewed one, and a loose check
+would pass against an unreviewed migration.
+
 Credential model
 ----------------
 The connection string is read ONLY from SUPABASE_DB_URL, the full Postgres URI
@@ -42,8 +56,8 @@ PGSSLMODE=require and a bounded connection timeout, and a guard rejects any
 statement that is not a single read-only SELECT before it is ever sent.
 
 Usage:
-  verify_no_residue.py
-  verify_no_residue.py --sample <results.json>
+  verify_no_residue.py [--phase pre|post]
+  verify_no_residue.py --sample <results.json> [--phase pre|post]
 """
 from __future__ import annotations
 
@@ -59,23 +73,17 @@ import urllib.parse
 # deliberately NOT a ">=", a prefix match or an "exists somewhere" check, any of
 # which would let an unreviewed migration land unnoticed.
 #
-# It moves in lockstep with the migration actually applied to hosted. Content
-# Sharing PR 4 applies 0041_public_programme_read.
+# It moves in lockstep with the migration actually applied to hosted. The value
+# below is RECONCILED: 0041_public_programme_read was applied to the hosted
+# project and recorded under this exact version, read back from
+# supabase_migrations.schema_migrations immediately after the apply and
+# confirmed to appear exactly once and to be the newest row.
 #
 # The ledger version is assigned BY THE APPLY (the connector stamps it from the
-# server clock), so it cannot be known before the apply happens. The value below
-# is a PREDICTED placeholder and MUST be replaced with the version actually
-# recorded, as step 3 of the apply order in the 0041 header:
-#
-#   1. apply 0041 through the connector after review;
-#   2. select max(version) from supabase_migrations.schema_migrations;
-#   3. set this constant to exactly that value and commit it;
-#   4. only then run the Edge Function deploy workflow.
-#
-# Until step 3 this constant is wrong on purpose, and the post-deploy check will
-# fail closed if the deploy is run before it is reconciled. That is the intended
-# behaviour: it is far safer than a loose check that passes regardless.
-EXPECTED_LAST_MIGRATION = "20260725160000"  # 0041_public_programme_read (PREDICTED, reconcile at apply)
+# server clock), so it cannot be known before the apply happens. The order is
+# always: apply -> read back the recorded version -> set this constant to
+# exactly that value in a reviewed pull request -> only then deploy.
+EXPECTED_LAST_MIGRATION = "20260726154133"  # 0041_public_programme_read
 DB_URL_ENV = "SUPABASE_DB_URL"
 
 # Bounded connection timeout (seconds) and an overall subprocess wall-clock cap.
@@ -339,10 +347,17 @@ def assert_clean(data: dict) -> list[str]:
 
 def main(argv: list[str]) -> int:
     sample = ""
+    phase = "post"
     i = 1
     while i < len(argv):
         if argv[i] == "--sample" and i + 1 < len(argv):
             sample = argv[i + 1]
+            i += 2
+        elif argv[i] == "--phase" and i + 1 < len(argv):
+            phase = argv[i + 1]
+            if phase not in ("pre", "post"):
+                print(f"FAIL: --phase must be pre or post, got {phase!r}")
+                return 1
             i += 2
         else:
             print(f"FAIL: unknown argument {argv[i]}")
@@ -355,7 +370,7 @@ def main(argv: list[str]) -> int:
         data = gather()
 
     r = data.get("residue", {})
-    print("Hosted state after deploy:")
+    print("Hosted state before deploy:" if phase == "pre" else "Hosted state after deploy:")
     print(f"  clubs with public_sharing_enabled : {as_int(r, 'clubs_enabled')}")
     print(f"  content_shares rows               : {as_int(r, 'shares')}")
     print(f"  content_share_dependencies rows   : {as_int(r, 'deps')}")
@@ -371,7 +386,12 @@ def main(argv: list[str]) -> int:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as sfh:
-            sfh.write("\n### Post-deploy hosted residue check\n\n")
+            heading = (
+                "Pre-deploy hosted ledger and inert-state check"
+                if phase == "pre"
+                else "Post-deploy hosted residue check"
+            )
+            sfh.write(f"\n### {heading}\n\n")
             sfh.write("| Check | Value | Expected |\n|---|---|---|\n")
             sfh.write(f"| clubs public_sharing_enabled | {as_int(r,'clubs_enabled')} | 0 |\n")
             sfh.write(f"| content_shares rows | {as_int(r,'shares')} | 0 |\n")
@@ -387,7 +407,10 @@ def main(argv: list[str]) -> int:
         for e in errors:
             print(f"FAIL: {e}")
         return 1
-    print("PASS: no hosted residue; sharing remains fully disabled and inert")
+    if phase == "pre":
+        print("PASS: hosted ledger is the reviewed one and hosted state is inert; safe to deploy")
+    else:
+        print("PASS: no hosted residue; sharing remains fully disabled and inert")
     return 0
 
 

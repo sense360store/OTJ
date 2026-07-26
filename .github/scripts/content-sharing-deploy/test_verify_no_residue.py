@@ -18,6 +18,7 @@ import contextlib
 import io
 import json
 import os
+import pathlib
 import tempfile
 import unittest
 
@@ -40,6 +41,21 @@ CLEAN_RESIDUE = {
     "last_migration": vr.EXPECTED_LAST_MIGRATION,
     "has_cron": False,
 }
+
+
+CLEAN_PAYLOAD = {"residue": dict(CLEAN_RESIDUE), "has_cron": False, "cron_jobs": 0}
+
+
+@contextlib.contextmanager
+def sample_file(payload):
+    """Write a --sample payload to a temp file and yield its path."""
+    fd, path = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        yield path
+    finally:
+        os.unlink(path)
 
 
 def make_runner(residue=None, cron_n=None, rc=0, stderr="", stdout=None):
@@ -159,7 +175,7 @@ class TestDirtyResidue(unittest.TestCase):
         self.assertTrue(any("non_internal_media" in e for e in errors))
 
     def test_migration_ledger_moved_fails(self):
-        dirty = dict(CLEAN_RESIDUE, last_migration="20260726000000")
+        dirty = dict(CLEAN_RESIDUE, last_migration="20260727000000")
         self.assertTrue(
             any("migration ledger changed" in e for e in vr.assert_clean({"residue": dirty}))
         )
@@ -326,3 +342,65 @@ class TestNoSecretPrinted(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestPhaseArgument(unittest.TestCase):
+    """--phase selects the wording only; the assertions are identical."""
+
+    def _run(self, argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = vr.main(argv)
+        return rc, buf.getvalue()
+
+    def test_pre_phase_passes_on_clean_sample(self):
+        with sample_file(CLEAN_PAYLOAD) as path:
+            rc, out = self._run(["verify_no_residue.py", "--sample", path, "--phase", "pre"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Hosted state before deploy:", out)
+        self.assertIn("safe to deploy", out)
+
+    def test_post_phase_is_the_default(self):
+        with sample_file(CLEAN_PAYLOAD) as path:
+            rc, out = self._run(["verify_no_residue.py", "--sample", path])
+        self.assertEqual(rc, 0)
+        self.assertIn("Hosted state after deploy:", out)
+
+    def test_pre_phase_fails_on_a_wrong_ledger_version(self):
+        """The pre-deploy gate must stop a deploy against an unreviewed schema."""
+        payload = {
+            "residue": dict(CLEAN_RESIDUE, last_migration="20260727000000"),
+            "has_cron": False,
+            "cron_jobs": 0,
+        }
+        with sample_file(payload) as path:
+            rc, out = self._run(["verify_no_residue.py", "--sample", path, "--phase", "pre"])
+        self.assertEqual(rc, 1)
+        self.assertIn("migration ledger changed", out)
+
+    def test_pre_phase_fails_on_dirty_hosted_state(self):
+        """An enabled club or an existing share must stop the deploy too."""
+        for key in ("clubs_enabled", "shares", "deps", "share_audit"):
+            payload = {
+                "residue": dict(CLEAN_RESIDUE, **{key: 1}),
+                "has_cron": False,
+                "cron_jobs": 0,
+            }
+            with sample_file(payload) as path:
+                rc, out = self._run(["verify_no_residue.py", "--sample", path, "--phase", "pre"])
+            self.assertEqual(rc, 1, f"{key} should fail the pre-deploy gate")
+            self.assertIn(key, out)
+
+    def test_unknown_phase_is_refused(self):
+        with sample_file(CLEAN_PAYLOAD) as path:
+            rc, out = self._run(["verify_no_residue.py", "--sample", path, "--phase", "sometime"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--phase must be pre or post", out)
+
+    def test_expected_last_migration_is_an_exact_equality(self):
+        """Never a >=, a prefix match or an exists-check."""
+        src = pathlib.Path(vr.__file__).read_text(encoding="utf-8")
+        self.assertIn('str(r.get("last_migration")) != EXPECTED_LAST_MIGRATION', src)
+        self.assertNotIn("startswith(EXPECTED_LAST_MIGRATION", src)
+        self.assertNotIn(">= EXPECTED_LAST_MIGRATION", src)
+        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260726154133")

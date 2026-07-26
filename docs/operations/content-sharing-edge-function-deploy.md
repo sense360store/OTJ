@@ -186,10 +186,54 @@ The job summary records:
   verified and the anonymous-versus-authenticated boundary is confirmed by the
   endpoint smoke tests instead, which the summary states plainly;
 - the deployed-source readback level (see below);
-- the post-deploy residue check (all counts expected to be zero, and the
-  migration ledger's newest version exactly equal to `EXPECTED_LAST_MIGRATION`
-  in `verify_no_residue.py`, which is reconciled to the version the apply
-  actually recorded before the deploy is run).
+- the PRE-deploy ledger and inert-state gate (see below), which runs while both
+  functions are still untouched;
+- the post-deploy residue check (the same assertions again, proving the deploy
+  itself left no residue).
+
+### The ledger and inert-state gate, run twice
+
+`verify_no_residue.py` runs at two points in the workflow, with **identical**
+assertions and only the wording differing:
+
+| Phase | Step | Purpose |
+|---|---|---|
+| `--phase pre` | before either function is deployed | stops the run against a schema this commit was not reviewed against, or a hosted project that is no longer inert, while nothing has been changed |
+| `--phase post` | after the deploy | proves the deploy itself left no residue |
+
+Both assert: every club has `public_sharing_enabled` false; `content_shares` and
+`content_share_dependencies` are empty; there is no `content_share` audit event;
+every drill and every media row is `internal_only`; there is no `content_share`
+pg_cron job; and the migration ledger's newest version is **exactly**
+`EXPECTED_LAST_MIGRATION`.
+
+The ledger assertion is an exact equality and must stay one. It is never
+relaxed to a `>=`, a prefix match or an "exists somewhere" check, because the
+point is to prove the hosted schema is precisely the reviewed one. A test pins
+this (`test_expected_last_migration_is_an_exact_equality`).
+
+### Reconciling EXPECTED_LAST_MIGRATION after applying a migration
+
+The hosted ledger version is stamped **by the apply** (the connector uses the
+server clock), so it cannot be predicted before the apply happens. The order is
+always:
+
+1. apply the reviewed migration through the connector, after its own approval;
+2. read back the recorded version and name immediately:
+   `select version, name from supabase_migrations.schema_migrations order by version desc limit 1;`
+3. confirm it appears **exactly once** and is the newest row;
+4. open a small reconciliation pull request setting `EXPECTED_LAST_MIGRATION` to
+   exactly that value, updating its tests, fixtures and this document. Never
+   push it straight to `main`;
+5. merge it after CI;
+6. only then run this deploy workflow.
+
+Because the pre-deploy gate asserts the same constant, running the deploy before
+step 5 fails closed with nothing deployed. That is intended: it is far safer
+than a loose check that passes regardless.
+
+Current value: `20260726154133` (`0041_public_programme_read`, applied
+2026-07-26 as part of the Content Sharing PR 4 rollout).
 
 ### If the run fails at inventory verification
 
@@ -272,7 +316,7 @@ hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION` (0041 after Content Sharing PR 4, reconciled to the recorded version at apply time);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260726154133` (0041, applied as part of the Content Sharing PR 4 rollout);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
@@ -331,8 +375,9 @@ password or the environment. Its offline test suite
 - It does not apply a migration, change a grant, or create a cleanup schedule;
   the workflow verifies the migration ledger's newest version is exactly the
   reviewed one (`0041` after Content Sharing PR 4) and no `pg_cron` job
-  references content sharing. The check is an exact equality, so applying a
-  migration without updating `EXPECTED_LAST_MIGRATION` fails the deploy, and so
+  references content sharing, both BEFORE and after the deploy. The check is an
+  exact equality, so applying a migration without updating
+  `EXPECTED_LAST_MIGRATION` fails the deploy before anything is changed, and so
   does updating the constant without applying the migration.
 
 ## Rotating the access token
