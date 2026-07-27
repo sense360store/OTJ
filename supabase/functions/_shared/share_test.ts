@@ -15,6 +15,12 @@ import {
   type DrillRow,
   evaluateDrillEligibility,
   invalidMediaPaths,
+  buildShareListFilter,
+  deriveShareStatus,
+  SHARE_LIST_DEFAULT_LIMIT,
+  SHARE_LIST_MAX_LIMIT,
+  toPublicProjectionByKind,
+  validatePublicSnapshotByKind,
   evaluateProgrammeEligibility,
   evaluateSessionEligibility,
   generateSecret,
@@ -1467,4 +1473,152 @@ Deno.test('invalidMediaPaths reports every offender, not just the first', () => 
   const b = media({ id: DRILL_B, storage_path: 'avatars/1/b.png' })
   const good = media({ id: DRILL_A })
   assertEquals(invalidMediaPaths([a, good, b]).sort(), [a.id, b.id].sort())
+})
+
+
+// -------------------------------------------------------------------------
+// Club-wide shared links management (Content Sharing PR 5)
+// -------------------------------------------------------------------------
+
+const NOW = '2026-07-27T12:00:00.000Z'
+
+Deno.test('deriveShareStatus: a live share with no expiry is active', () => {
+  assertEquals(deriveShareStatus({ revoked_at: null, expires_at: null }, NOW), 'active')
+})
+
+Deno.test('deriveShareStatus: an expiry in the future is still active', () => {
+  assertEquals(deriveShareStatus({ revoked_at: null, expires_at: '2026-08-01T00:00:00Z' }, NOW), 'active')
+})
+
+Deno.test('deriveShareStatus: an expiry in the past is expired', () => {
+  assertEquals(deriveShareStatus({ revoked_at: null, expires_at: '2026-07-01T00:00:00Z' }, NOW), 'expired')
+})
+
+Deno.test('deriveShareStatus: an expiry exactly now is expired', () => {
+  // Matches read_public_share, which refuses on expires_at <= now().
+  assertEquals(deriveShareStatus({ revoked_at: null, expires_at: NOW }, NOW), 'expired')
+})
+
+Deno.test('deriveShareStatus: revoked wins over expired', () => {
+  // A revoked share had its snapshot cleared and its dependency rows deleted,
+  // so it can never serve again whatever its expiry says.
+  assertEquals(
+    deriveShareStatus({ revoked_at: '2026-07-02T00:00:00Z', expires_at: '2026-07-01T00:00:00Z' }, NOW),
+    'revoked',
+  )
+})
+
+Deno.test('deriveShareStatus: an expiry-swept share still reads as expired', () => {
+  // The cleanup sweep clears the snapshot without setting revoked_at, so the
+  // row has a past expiry and no snapshot. It must not read as revoked.
+  assertEquals(deriveShareStatus({ revoked_at: null, expires_at: '2026-01-01T00:00:00Z' }, NOW), 'expired')
+})
+
+Deno.test('the management projection matches the anonymous one for every kind', () => {
+  const d = buildDrillSnapshot(drill(), media(), AT)
+  const projD = toPublicProjectionByKind('drill', d)
+  assert(validatePublicSnapshotByKind('drill', projD))
+  assertEquals(projD, toPublicProjection(d))
+
+  const sn = buildSessionSnapshot(session(), [drillA(), drillB()], [], null, AT)
+  assert(validatePublicSnapshotByKind('session', toPublicProjectionByKind('session', sn)))
+
+  const { p, templates, drills, media: m } = twoWeeks()
+  const pr = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  assert(validatePublicSnapshotByKind('programme', toPublicProjectionByKind('programme', pr)))
+})
+
+Deno.test('the management projection carries no forbidden key and no internal marker', () => {
+  const d = buildDrillSnapshot(drill(), media(), AT)
+  const proj = toPublicProjectionByKind('drill', d) as Record<string, unknown>
+  assertNoForbiddenKeys(proj)
+  const first = (proj.media as Array<Record<string, unknown>>)[0]
+  assertEquals('_mid' in first, false)
+  assertEquals('_path' in first, false)
+  assertEquals('storage_path' in first, false)
+})
+
+Deno.test('the management projection drops an unknown media key rather than passing it through', () => {
+  // The private stripper this replaced rebuilt each entry with a spread, so any
+  // key it had not been taught about survived, and nothing validated the result.
+  const d = buildDrillSnapshot(drill(), media(), AT)
+  ;(d.media[0] as unknown as Record<string, unknown>).surprise = 'leak'
+  ;(d.media[0] as unknown as Record<string, unknown>).storage_path = 'club/secret.png'
+  const proj = toPublicProjectionByKind('drill', d) as Record<string, unknown>
+  const first = (proj.media as Array<Record<string, unknown>>)[0]
+  assertEquals('surprise' in first, false)
+  assertEquals('storage_path' in first, false)
+  assert(validatePublicSnapshotByKind('drill', proj))
+})
+
+Deno.test('an unknown kind throws when projecting and fails closed when validating', () => {
+  // No generic renderer: a kind added later must widen both deliberately.
+  assertThrows(() => toPublicProjectionByKind('board', {}), Error, 'unsupported kind')
+  assertEquals(validatePublicSnapshotByKind('board', {}), false)
+})
+
+Deno.test('buildShareListFilter: an empty body is the safe default', () => {
+  const r = buildShareListFilter({})
+  assert('filter' in r)
+  assertEquals(r.filter.status, 'all')
+  assertEquals(r.filter.kind, null)
+  assertEquals(r.filter.limit, SHARE_LIST_DEFAULT_LIMIT)
+  assertEquals(r.filter.unattributed, false)
+})
+
+Deno.test('buildShareListFilter: a club can never be supplied by the caller', () => {
+  // The club is derived from the verified JWT server side. A club in the body is
+  // simply not part of the filter, so it cannot widen or redirect the query.
+  const r = buildShareListFilter({ clubId: '11111111-1111-4111-8111-111111111111', club_id: 'x' })
+  assert('filter' in r)
+  assertEquals(Object.keys(r.filter).includes('clubId'), false)
+  assertEquals(Object.keys(r.filter).includes('club_id'), false)
+})
+
+Deno.test('buildShareListFilter: every closed field refuses an unknown value', () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['Unknown status filter.', { status: 'anything' }],
+    ['Unknown status filter.', { status: 7 }],
+    ['Unknown share kind.', { kind: 'board' }],
+    ['Invalid share id.', { shareId: 'not-a-uuid' }],
+    ['Invalid member id.', { createdBy: 'not-a-uuid' }],
+    ['Invalid limit.', { limit: 0 }],
+    ['Invalid limit.', { limit: SHARE_LIST_MAX_LIMIT + 1 }],
+    ['Invalid limit.', { limit: 2.5 }],
+    ['Invalid limit.', { limit: '10' }],
+    ['Invalid cursor.', { cursor: 'not-a-date' }],
+  ]
+  for (const [message, input] of cases) {
+    const r = buildShareListFilter(input)
+    assert('error' in r, JSON.stringify(input))
+    assertEquals(r.error, message)
+  }
+})
+
+Deno.test('buildShareListFilter: a member and unattributed together are refused', () => {
+  const r = buildShareListFilter({
+    createdBy: '11111111-1111-4111-8111-111111111111',
+    unattributed: true,
+  })
+  assert('error' in r)
+})
+
+Deno.test('buildShareListFilter: unattributed is strict, not truthy', () => {
+  const r = buildShareListFilter({ unattributed: 'yes' })
+  assert('filter' in r)
+  assertEquals(r.filter.unattributed, false)
+})
+
+Deno.test('buildShareListFilter: the accepted values round trip', () => {
+  const r = buildShareListFilter({
+    status: 'revoked',
+    kind: 'programme',
+    createdBy: '11111111-1111-4111-8111-111111111111',
+    limit: 10,
+    cursor: '2026-07-01T00:00:00.000Z',
+  })
+  assert('filter' in r)
+  assertEquals(r.filter.status, 'revoked')
+  assertEquals(r.filter.kind, 'programme')
+  assertEquals(r.filter.limit, 10)
 })

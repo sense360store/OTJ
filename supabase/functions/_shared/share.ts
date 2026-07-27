@@ -1655,3 +1655,162 @@ export async function sha256Hex(secret: string): Promise<string> {
 export async function secretHashLiteral(secret: string): Promise<string> {
   return '\\x' + (await sha256Hex(secret))
 }
+
+
+// -------------------------------------------------------------------------
+// Club-wide shared links management (Content Sharing PR 5)
+// -------------------------------------------------------------------------
+//
+// The management screen needs three decisions that are pure functions of a row
+// and a request, so they live here where Deno can test them, leaving the Edge
+// Function handler a thin translation into PostgREST calls. Nothing here reads
+// a secret, a token hash or a storage path.
+
+export type ManagedShareStatus = 'active' | 'expired' | 'revoked'
+
+/**
+ * The lifecycle status of a share, from its columns alone.
+ *
+ * Revoked wins over expired: a revoked share had its snapshot cleared and its
+ * dependency rows deleted, so it can never come back whatever its expiry says.
+ * A row with no expiry is active until revoked. `nowIso` is passed in, and the
+ * caller computes it ONCE per request, so a list's filter and its labels cannot
+ * disagree with each other across a slow page.
+ *
+ * The label is advisory. read_public_share compares expires_at against Postgres
+ * now() and remains the only authority on whether a link actually serves.
+ */
+export function deriveShareStatus(
+  row: { revoked_at?: string | null; expires_at?: string | null },
+  nowIso: string,
+): ManagedShareStatus {
+  if (row.revoked_at) return 'revoked'
+  if (row.expires_at && Date.parse(row.expires_at) <= Date.parse(nowIso)) return 'expired'
+  return 'active'
+}
+
+/**
+ * The public projection for a stored snapshot of any supported kind. Throws on
+ * an unknown kind rather than guessing: there is deliberately no generic
+ * renderer, and a kind added later must widen this explicitly.
+ */
+export function toPublicProjectionByKind(kind: string, stored: unknown): unknown {
+  switch (kind) {
+    case 'drill':
+      return toPublicProjection(stored as StoredDrillSnapshot)
+    case 'session':
+      return toPublicSessionProjection(stored as StoredSessionSnapshot)
+    case 'programme':
+      return toPublicProgrammeProjection(stored as StoredProgrammeSnapshot)
+    default:
+      throw new Error(`toPublicProjectionByKind: unsupported kind ${kind}`)
+  }
+}
+
+/**
+ * The matching validator. Returns false for an unknown kind rather than
+ * throwing, so a management preview fails closed to "no preview" instead of
+ * failing the whole request.
+ */
+export function validatePublicSnapshotByKind(kind: string, value: unknown): boolean {
+  switch (kind) {
+    case 'drill':
+      return validatePublicDrillSnapshot(value)
+    case 'session':
+      return validatePublicSessionSnapshot(value)
+    case 'programme':
+      return validatePublicProgrammeSnapshot(value)
+    default:
+      return false
+  }
+}
+
+export const SHARE_LIST_MAX_LIMIT = 100
+export const SHARE_LIST_DEFAULT_LIMIT = 50
+
+export type ShareStatusFilter = ManagedShareStatus | 'all'
+const STATUS_FILTERS: ShareStatusFilter[] = ['active', 'expired', 'revoked', 'all']
+
+export interface ShareListFilter {
+  status: ShareStatusFilter
+  kind: 'drill' | 'session' | 'programme' | null
+  shareId: string | null
+  createdBy: string | null
+  unattributed: boolean
+  limit: number
+  cursor: string | null
+}
+
+const LIST_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const KINDS_FOR_LIST = ['drill', 'session', 'programme']
+
+/**
+ * Validates a management list request into an allow listed filter, or names the
+ * refusal. Every field is closed: an unknown status, an unknown kind, a
+ * malformed id, an out of range limit and an unparseable cursor are all
+ * refused rather than ignored, so a caller cannot widen a query by sending a
+ * field this function does not understand. The club is NOT part of this: it is
+ * derived from the verified JWT server side and can never be supplied.
+ */
+export function buildShareListFilter(
+  input: Record<string, unknown>,
+): { filter: ShareListFilter } | { error: string } {
+  const status = input.status === undefined || input.status === null ? 'all' : input.status
+  if (typeof status !== 'string' || !STATUS_FILTERS.includes(status as ShareStatusFilter)) {
+    return { error: 'Unknown status filter.' }
+  }
+
+  let kind: ShareListFilter['kind'] = null
+  if (input.kind !== undefined && input.kind !== null) {
+    if (typeof input.kind !== 'string' || !KINDS_FOR_LIST.includes(input.kind)) {
+      return { error: 'Unknown share kind.' }
+    }
+    kind = input.kind as ShareListFilter['kind']
+  }
+
+  let shareId: string | null = null
+  if (input.shareId !== undefined && input.shareId !== null) {
+    if (typeof input.shareId !== 'string' || !LIST_UUID_RE.test(input.shareId)) {
+      return { error: 'Invalid share id.' }
+    }
+    shareId = input.shareId
+  }
+
+  const unattributed = input.unattributed === true
+  let createdBy: string | null = null
+  if (input.createdBy !== undefined && input.createdBy !== null) {
+    if (typeof input.createdBy !== 'string' || !LIST_UUID_RE.test(input.createdBy)) {
+      return { error: 'Invalid member id.' }
+    }
+    createdBy = input.createdBy
+  }
+  if (createdBy !== null && unattributed) {
+    return { error: 'Choose a member or unattributed links, not both.' }
+  }
+
+  let limit = SHARE_LIST_DEFAULT_LIMIT
+  if (input.limit !== undefined && input.limit !== null) {
+    if (
+      typeof input.limit !== 'number' ||
+      !Number.isInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > SHARE_LIST_MAX_LIMIT
+    ) {
+      return { error: 'Invalid limit.' }
+    }
+    limit = input.limit
+  }
+
+  let cursor: string | null = null
+  if (input.cursor !== undefined && input.cursor !== null) {
+    if (typeof input.cursor !== 'string' || Number.isNaN(Date.parse(input.cursor))) {
+      return { error: 'Invalid cursor.' }
+    }
+    cursor = input.cursor
+  }
+
+  return {
+    filter: { status: status as ShareStatusFilter, kind, shareId, createdBy, unattributed, limit, cursor },
+  }
+}
+
