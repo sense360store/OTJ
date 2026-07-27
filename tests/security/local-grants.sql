@@ -87,7 +87,6 @@ revoke execute on function public.content_share_lock_rights(text, uuid, uuid) fr
 -- 0042 gave the invalidator a fifth argument (the reason code), so the
 -- signature named here must match or this whole file fails to apply.
 revoke execute on function public.content_share_invalidate_dependents(text, uuid, uuid, uuid, text) from anon, authenticated;
-revoke execute on function public.is_canonical_media_path(text, uuid) from anon, authenticated;
 -- The five rights downgrade trigger functions are private too (the migration
 -- revokes them). PostgREST never exposes trigger-returning functions as RPC, so
 -- this is grant-posture hygiene to mirror production, not a reachable surface.

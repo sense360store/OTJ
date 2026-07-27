@@ -140,13 +140,14 @@ as $$
      and p_path !~* '(^|/)avatars(/|$)';
 $$;
 
--- No client needs to call this: the browser and the Edge Functions each carry
--- their own copy of the grammar, and the CHECK constraint below does NOT
--- require the inserting role to hold EXECUTE. Constraint expressions are
--- evaluated as part of the table definition rather than as a call made by the
--- writer, so revoking here tightens the client surface without breaking a
--- single insert or update. Verified against PostgreSQL 16 before committing.
-revoke execute on function public.is_canonical_media_path(text, uuid) from public, anon, authenticated;
+-- EXECUTE deliberately stays with PUBLIC. A CHECK constraint is evaluated with
+-- the privileges of the role performing the write, so revoking EXECUTE here
+-- turns every media insert and update by `authenticated` into
+-- "permission denied for function is_canonical_media_path" (42501) instead of
+-- a clean constraint violation. The function is a pure predicate over two
+-- scalars: it reads no table, returns nothing but a boolean, and discloses
+-- nothing a caller did not already supply, so leaving it callable costs
+-- nothing. Do not revoke it.
 
 comment on function public.is_canonical_media_path(text, uuid) is
   $$True only when the path is the canonical storage key of an object owned by the named club: exactly {club_id}/{segment}[/{segment}...], each segment starting alphanumeric and drawn from [A-Za-z0-9._-], at most 512 characters, never in the reserved avatars namespace at any depth. Refuses rather than normalises, so traversal, percent encoding, backslashes and control bytes fail on the character set before any structural test. Stated identically in supabase/functions/_shared/mediaPath.ts and src/lib/mediaPath.ts and pinned to them by tests/fixtures/media-path-cases.json. IMMUTABLE and table free so it can back the media_storage_path_canonical CHECK constraint. See 0042_public_media_path_boundary.sql.$$;
@@ -570,14 +571,14 @@ begin
        'public.content_share_invalidate_dependents(text, uuid, uuid, uuid, text)', 'execute') then
     raise exception '0042: the invalidator is executable by authenticated';
   end if;
-  if has_function_privilege('anon', 'public.is_canonical_media_path(text, uuid)', 'execute')
-     or has_function_privilege('authenticated', 'public.is_canonical_media_path(text, uuid)', 'execute') then
-    raise exception '0042: the path validator is executable by a client role';
+  -- The writing roles must KEEP execute on the validator: a CHECK constraint is
+  -- evaluated with the writer's privileges, so losing it breaks every media
+  -- write with a permission error rather than a constraint violation.
+  if not has_function_privilege('authenticated', 'public.is_canonical_media_path(text, uuid)', 'execute') then
+    raise exception '0042: authenticated lost execute on the path validator; media writes would fail 42501';
   end if;
 
-  -- The constraint still bites for a client role even though that role cannot
-  -- execute the function it calls. This is the assumption the revoke above
-  -- rests on, so it is proved here rather than assumed.
+  -- The constraint bites through the function, proved rather than assumed.
   create temporary table zz_0042_probe (
     club_id uuid,
     storage_path text
