@@ -218,9 +218,11 @@ describe('the public read path signs the live path, not the frozen one', () => {
     const share = `00000000-0000-4000-8000-${RUN.replace(/\W/g, '').slice(0, 12).padStart(12, '0')}`
     const script = `
       begin;
+      create temporary table probe_out (msg text);
       do $probe$
       declare
         v_club   uuid := ${sqlLiteral(club)}::uuid;
+        v_fail   text;
         v_user   uuid;
         v_media  uuid;
         v_drill  uuid;
@@ -286,8 +288,15 @@ describe('the public read path signs the live path, not the frozen one', () => {
           raise exception 'PROBE_FAIL stale path served';
         end if;
 
-        raise notice 'PROBE_OK';
+        insert into probe_out values ('PROBE_OK');
+      exception when others then
+        -- Report the verdict on stdout rather than aborting: runSqlInContainer
+        -- runs with ON_ERROR_STOP, so an uncaught raise would throw in the
+        -- test runner instead of failing the assertion with a readable reason.
+        v_fail := sqlerrm;
+        insert into probe_out values ('PROBE_FAIL: ' || v_fail);
       end $probe$;
+      select msg from probe_out;
       -- Everything the probe did is discarded, including the club it had to
       -- enable to exercise the read path at all. Rolling back explicitly rather
       -- than by raising, because runSqlInContainer runs with ON_ERROR_STOP and
