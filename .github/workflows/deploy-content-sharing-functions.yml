@@ -154,6 +154,32 @@ jobs:
             supabase/functions/_shared/share.ts \
             supabase/functions/_shared/fa.ts
 
+      - name: Verify hosted ledger and inert state BEFORE deploying (read-only)
+        shell: bash
+        # The pre-deploy gate. Identical assertions to the post-deploy check,
+        # run while BOTH functions are still untouched: the migration ledger's
+        # newest version must be exactly the reviewed one, every club must still
+        # have public sharing disabled, there must be no share, no dependency
+        # row, no content_share audit event, no reclassified drill or media and
+        # no content_share cron job.
+        #
+        # Why before and not only after: a deploy against a schema this commit
+        # was never reviewed against is exactly the thing that must not happen,
+        # and a post-deploy failure would report it only once both functions had
+        # already been changed. A wrong ledger or a dirty hosted state now stops
+        # the workflow with nothing deployed.
+        #
+        # SUPABASE_DB_URL is exposed only to this step and the matching
+        # post-deploy step. The verifier connects with psql inside a
+        # rollback-only, read-only transaction; the URL and its password are
+        # never printed.
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          command -v psql >/dev/null 2>&1 || { echo "psql is not installed on the runner"; exit 1; }
+          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py --phase pre
+
       - name: Deploy manage-content-share (verify_jwt = true)
         shell: bash
         run: |
@@ -281,7 +307,7 @@ jobs:
         run: |
           set -euo pipefail
           command -v psql >/dev/null 2>&1 || { echo "psql is not installed on the runner"; exit 1; }
-          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py
+          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py --phase post
 
       - name: Deploy complete
         shell: bash
