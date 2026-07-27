@@ -205,3 +205,28 @@ export const REVOKE_CONFIRM_NOTE =
 
 export const KILL_SWITCH_NOTE =
   'Public sharing is turned off for the club. Existing links do not work while it is off.'
+
+
+// The Made by picker's option values are list positions, never member ids, so
+// no user id is rendered into the markup. Turning a chosen value back into a
+// filter has one trap worth naming: Number('') is 0, so the "Anyone" option
+// must be handled BEFORE any index lookup. Coercing it would select the first
+// member and silently narrow a club-wide review to one person, on a screen
+// whose whole purpose is to show every link the club has made.
+//
+// Pure and exported so it can be tested without a DOM: the suite renders
+// through renderToStaticMarkup and cannot fire a change event.
+export function creatorFilterPatch(
+  value: string,
+  members: ReadonlyArray<{ id: string }>,
+): { unattributed: boolean; createdBy: string } {
+  if (value === 'unattributed') return { unattributed: true, createdBy: '' }
+  if (value === '') return { unattributed: false, createdBy: '' }
+  const index = Number(value)
+  if (!Number.isInteger(index) || index < 0 || index >= members.length) {
+    // An unresolvable position (the deep-link placeholder, or a stale index)
+    // clears the filter rather than guessing at a member.
+    return { unattributed: false, createdBy: '' }
+  }
+  return { unattributed: false, createdBy: members[index].id }
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  creatorFilterPatch,
   countByStatus,
   EMPTY_SHARE_FILTERS,
   filtersToRequest,
@@ -231,5 +232,50 @@ describe('copy helpers', () => {
     expect(sourceKindLabel('drill')).toBe('Drill')
     expect(sourceKindLabel('session')).toBe('Session')
     expect(sourceKindLabel('programme')).toBe('Programme')
+  })
+})
+
+describe('creatorFilterPatch', () => {
+  const members = [{ id: 'aaaaaaaa-0000-4000-8000-000000000001' }, { id: 'bbbbbbbb-0000-4000-8000-000000000002' }]
+
+  it('clears the creator filter for Anyone', () => {
+    // Number('') is 0. Coercing it would select the first member and silently
+    // narrow a club-wide review to one person, which is the harmful direction
+    // on a screen whose purpose is to show every link the club has made.
+    expect(creatorFilterPatch('', members)).toEqual({ unattributed: false, createdBy: '' })
+  })
+
+  it('clears the creator filter for Anyone even when a member is already chosen', () => {
+    // The regression path: arrive from the member removal deep link with a
+    // creator pre-set, then pick Anyone.
+    const patch = creatorFilterPatch('', members)
+    expect(patch.createdBy).toBe('')
+    expect(patch.createdBy).not.toBe(members[0].id)
+  })
+
+  it('selects the member at the given position', () => {
+    expect(creatorFilterPatch('0', members)).toEqual({ unattributed: false, createdBy: members[0].id })
+    expect(creatorFilterPatch('1', members)).toEqual({ unattributed: false, createdBy: members[1].id })
+  })
+
+  it('sets the former member flag and never a creator alongside it', () => {
+    expect(creatorFilterPatch('unattributed', members)).toEqual({ unattributed: true, createdBy: '' })
+  })
+
+  it('clears rather than guessing for an unresolvable position', () => {
+    for (const value of ['unresolved', '-1', '2', '1.5', 'NaN', 'abc']) {
+      expect(creatorFilterPatch(value, members)).toEqual({ unattributed: false, createdBy: '' })
+    }
+  })
+
+  it('clears when there are no members to choose from', () => {
+    expect(creatorFilterPatch('0', [])).toEqual({ unattributed: false, createdBy: '' })
+  })
+
+  it('never returns both a creator and the former member flag', () => {
+    for (const value of ['', '0', '1', 'unattributed', 'unresolved', '9']) {
+      const patch = creatorFilterPatch(value, members)
+      expect(patch.unattributed && patch.createdBy !== '').toBe(false)
+    }
   })
 })

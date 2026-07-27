@@ -41,6 +41,7 @@ import {
   useRevokeManagedShare,
 } from '../lib/queries'
 import {
+  creatorFilterPatch,
   countByStatus,
   EMPTY_SHARE_FILTERS,
   FORMER_MEMBER_LABEL,
@@ -187,12 +188,11 @@ export function ShareFilterControls({
           className="select"
           value={creatorValue}
           onChange={(e) => {
-            const v = e.target.value
             // The server refuses a request carrying both, so the control is one
             // list with the former member option inside it, never two inputs a
-            // manager could set at once.
-            if (v === 'unattributed') onChange({ unattributed: true, createdBy: '' })
-            else onChange({ unattributed: false, createdBy: members[Number(v)]?.id ?? '' })
+            // manager could set at once. The mapping is pure and tested in
+            // sharesView: this suite has no DOM and cannot fire a change event.
+            onChange(creatorFilterPatch(e.target.value, members))
           }}
           aria-label="Filter by who made the link"
         >
