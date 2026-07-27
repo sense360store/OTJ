@@ -37,6 +37,7 @@ import type {
   Capability,
   Club,
   CornerKey,
+  ContentRights,
   Drill,
   FeedbackComment,
   FeedbackItem,
@@ -67,6 +68,8 @@ import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } f
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
 import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
 import { newestFirst } from './contentOrder'
+import { RIGHTS_REFUSED_MESSAGE, type RightsKind } from './contentRights'
+import { readProvenance, type SharePreviewProvenance } from './shareBlockers'
 import type { Board, Token } from './tacticsBoard'
 import { deserializeTokens, serializeTokens } from './tacticsBoard'
 import { sourceLabelForUrl } from './fa'
@@ -105,6 +108,7 @@ export interface DrillRow {
   format: string | null
   source_url: string | null
   source_label: string | null
+  rights: ContentRights
 }
 
 interface MediaRow {
@@ -124,6 +128,7 @@ interface MediaRow {
   created_at: string
   source_url: string | null
   source_label: string | null
+  rights: ContentRights
 }
 
 // The activities jsonb element. drill_id on the wire maps to drillId in the UI.
@@ -150,6 +155,7 @@ interface TemplateRow {
   programme_week: number | null
   source_url: string | null
   source_label: string | null
+  rights: ContentRights
 }
 
 export interface ProgrammeRow {
@@ -165,6 +171,7 @@ export interface ProgrammeRow {
   source_label: string | null
   created_by: string | null
   created_at: string
+  rights: ContentRights
 }
 
 export interface SessionRow {
@@ -192,6 +199,7 @@ export interface SessionRow {
   live_activity_started_at: string | null
   spond_event_id: string | null
   board_id: string | null
+  rights: ContentRights
 }
 
 interface TeamRow {
@@ -238,15 +246,15 @@ interface ClubRow {
 // ---- Column lists ------------------------------------------------------
 // Explicit so each read is checkable against the schema at a glance.
 const DRILL_COLS =
-  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at, setup_notes, easier, harder, theme, format, source_url, source_label'
+  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at, setup_notes, easier, harder, theme, format, source_url, source_label, rights'
 const MEDIA_COLS =
-  'id, club_id, name, type, kind, storage_path, embed_url, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label'
+  'id, club_id, name, type, kind, storage_path, embed_url, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label, rights'
 const TEMPLATE_COLS =
-  'id, club_id, name, focus, author, activities, created_by, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label'
+  'id, club_id, name, focus, author, activities, created_by, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label, rights'
 const PROGRAMME_COLS =
-  'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at'
+  'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at, rights'
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, rights'
 const TEAM_COLS = 'id, club_id, name, created_at'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
@@ -317,6 +325,9 @@ export function toDrill(r: DrillRow): Drill {
     format: r.format ?? '',
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    // Fail closed: a read that predates the column, or a row the select could
+    // not resolve, presents as club only rather than as publishable.
+    rights: r.rights ?? 'internal_only',
     createdAt: r.created_at,
   }
 }
@@ -337,6 +348,7 @@ function toMedia(r: MediaRow): MediaItem {
     createdBy: r.created_by ?? undefined,
     sourceUrl: r.source_url ?? undefined,
     sourceLabel: r.source_label ?? undefined,
+    rights: r.rights ?? 'internal_only',
     createdAt: r.created_at,
   }
 }
@@ -356,6 +368,7 @@ function toTemplate(r: TemplateRow): Template {
     programmeWeek: r.programme_week,
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    rights: r.rights ?? 'internal_only',
     createdAt: r.created_at,
   }
 }
@@ -372,6 +385,7 @@ export function toProgramme(r: ProgrammeRow): Programme {
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
     createdBy: r.created_by ?? undefined,
+    rights: r.rights ?? 'internal_only',
     createdAt: r.created_at,
   }
 }
@@ -408,6 +422,7 @@ export function toSession(r: SessionRow): Session {
     liveActivityStartedAt: r.live_activity_started_at ?? null,
     spondEventId: r.spond_event_id ?? null,
     boardId: r.board_id ?? null,
+    rights: r.rights ?? 'internal_only',
   }
 }
 
@@ -4472,6 +4487,11 @@ export interface ContentSharePreview {
   eligible: boolean
   blocked: string[]
   rights: { source: string; media?: string | null; hasMedia?: boolean }
+  // Bounded provenance, so the blocked copy can tell "set to club only" apart
+  // from "came from England Football". Never carries an id, title or count. An
+  // older deployed function omits it and readProvenance falls back to "no proof
+  // of provenance", which keeps England Football out of the wording.
+  provenance: SharePreviewProvenance
   preview: unknown | null
 }
 
@@ -4547,8 +4567,76 @@ export function usePreviewContentShare() {
         eligible: data.eligible === true,
         blocked: Array.isArray(data.blocked) ? (data.blocked as string[]) : [],
         rights: data.rights as ContentSharePreview['rights'],
+        provenance: readProvenance(data.provenance),
         preview: data.preview ?? null,
       }
+    },
+  })
+}
+
+// =====================================================================
+// Content rights classification.
+//
+// Club authored content created after migration 0038 lands at the fail closed
+// default (club only) and, until now, nothing in the app could change it. This
+// is that write, and it is a plain RLS backed table update on purpose: the
+// existing owner-or-manager UPDATE policy on each of the five tables is already
+// the right authority, so no service role path and no new capability is
+// introduced for it.
+//
+// The England Football lock is a database trigger (migration 0043), not a rule
+// this hook applies. A refusal arrives here as a Postgres privilege error and
+// is turned into the same sentence the locked control shows, so the two routes
+// agree and the client is never the thing deciding.
+// =====================================================================
+
+// An explicit closed map. There is no dynamic table name in this write path.
+const RIGHTS_TABLE: Record<RightsKind, 'drills' | 'sessions' | 'programmes' | 'templates' | 'media'> = {
+  drill: 'drills',
+  session: 'sessions',
+  programme: 'programmes',
+  template: 'templates',
+  media: 'media',
+}
+
+const RIGHTS_CACHE_KEY: Record<RightsKind, string> = {
+  drill: 'drills',
+  session: 'sessions',
+  programme: 'programmes',
+  template: 'templates',
+  media: 'media',
+}
+
+export function useUpdateContentRights() {
+  const qc = useQueryClient()
+  return useMutation<
+    { id: string; rights: ContentRights },
+    Error,
+    { kind: RightsKind; id: string; rights: ContentRights }
+  >({
+    mutationFn: async ({ kind, id, rights }) => {
+      const { data, error } = await supabase
+        .from(RIGHTS_TABLE[kind])
+        .update({ rights })
+        .eq('id', id)
+        .select('id, rights')
+        .maybeSingle()
+      if (error) {
+        // 42501 is what the England Football lock raises. Anything else is an
+        // ordinary failure and keeps the calm generic wording.
+        if ((error as { code?: string }).code === '42501') throw new Error(RIGHTS_REFUSED_MESSAGE)
+        throw new Error('We could not change the sharing level. Try again.')
+      }
+      // RLS returns no row rather than an error when the policy refuses.
+      if (!data) throw new Error('You cannot change the sharing level for this item.')
+      return { id: (data as { id: string }).id, rights: (data as { rights: ContentRights }).rights }
+    },
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: [RIGHTS_CACHE_KEY[vars.kind]] })
+      // A source's own level decides its share, and a nested item's level
+      // decides every aggregate above it, so both are invalidated wholesale
+      // rather than guessed at.
+      void qc.invalidateQueries({ queryKey: ['content-share-status'] })
     },
   })
 }

@@ -1072,3 +1072,128 @@ namespace:
    introduced by it. Closing it would mean content-addressing the object or
    recording an object version in the snapshot, which is a larger change than
    this boundary needs.
+
+---
+
+# Rights classification and the England Football lock (0043)
+
+## 47. What changed and why
+
+Public sharing shipped with the rights model, the preview, the snapshot and the
+link lifecycle, but with no way for anyone to classify content. Every row
+created after `0038` sits at the fail closed default (`internal_only`), so a
+coach's own work could never be shared, and the screen that told them so said
+it used England Football content. Both halves of that are fixed here.
+
+Two things were wrong.
+
+1. **No classification workflow.** The `rights` column was never read into the
+   client and never written by it. The club's own content was permanently stuck
+   at club only.
+2. **Provenance was inferred from the rights value.** The blocked copy mapped
+   every `*_internal_only` reason to one England Football sentence. Since
+   `internal_only` is the default for everything, the claim was usually false.
+
+## 48. Provenance is the source columns, never the rights value
+
+Provenance is derived from `source_url`, `source_label` and (drills)
+`source_key`:
+
+| Provenance | Evidence | Consequence |
+|---|---|---|
+| `fa` | an England Football Learning host, or the England Football Learning label | locked at club only, enforced by the database |
+| `third_party` | any other recorded source | classifiable, behind an explicit confirmation |
+| `none` | no recorded source | classifiable; the same rule 0038's backfill used |
+
+The rule has three implementations, kept aligned deliberately:
+
+| Implementation | Used by |
+|---|---|
+| `public.content_rights_is_fa_url(text)` plus `content_rights_fa_lock()` | the CHECK the database enforces |
+| `rowProvenance()` in `supabase/functions/_shared/share.ts` | the preview's provenance summary |
+| `deriveProvenance()` in `src/lib/contentRights.ts` | which control the edit form renders |
+
+The database is the boundary. The other two decide what to say and what to
+offer, and are deliberately no wider than the database will accept.
+
+## 49. The write path is ordinary RLS
+
+Classification is a plain `UPDATE` of the `rights` column on the row's own
+table. The existing `*_update_owner_or_manager` policy is already exactly the
+right authority: the owner holding the create capability, or a manager holding
+the manage capability, in their own club. No service role path, no new
+capability, no new policy and no new RPC were added for it. A parent, a
+non-owner and a member of another club are refused by the policy that already
+exists, and the suite proves each.
+
+## 50. The England Football lock (migration 0043)
+
+`content_rights_fa_lock()` is a `BEFORE INSERT OR UPDATE` trigger on `drills`,
+`sessions`, `programmes`, `templates` and `media`. It refuses any `rights` value
+above `internal_only` on a row whose recorded source is England Football
+derived, and raises `42501`.
+
+It is a data rule, not a permission: the owning coach, a manager, an admin and
+the service role are all refused equally, and the suite proves the service role
+case explicitly. Lowering back to club only is always allowed, and an ordinary
+edit that leaves the level alone is untouched. A row that tries to acquire an
+England Football source while already classified as publishable is refused too,
+so the invariant cannot be reached by the back door.
+
+Before 0043 the invariant was proved once, by 0038's backfill, and enforced by
+nothing. Any member holding the write arm could have published an FA imported
+drill through a hand written PostgREST call. The only reason it had not
+happened is that no screen offered it, which is precisely what this change adds.
+
+The migration self verifies both halves: no existing England Football derived
+row is classified above club only, and all five triggers are installed.
+
+## 51. Non England Football third party content
+
+A recorded non England Football source is evidence of third party origin, not
+proof of a restriction: the club may well own or be cleared for it. The
+database therefore does not lock it. The classification control instead requires
+an explicit confirmation before a public level is saved, and media asks for that
+confirmation whatever its recorded source says, because media is where third
+party rights concentrate and one production file is known to carry England
+Football origin in its name alone with no recorded source.
+
+## 52. The blocked reason model
+
+The server's reason vocabulary is unchanged and still closed. What is new is
+that the preview also returns a bounded provenance summary:
+
+```
+provenance: {
+  source: 'none' | 'fa' | 'third_party',
+  restricted: { template: bool, drill: bool, media: bool, pdf: bool }
+}
+```
+
+Each nested boolean means "at least one club only row at this layer is England
+Football derived". It carries no id, title, path, name, count or owner, so a
+coach learns that one or more drills in a programme are restricted, never which
+and never whose. That is the same disclosure level the screen already had.
+
+Reasons are shown one at a time, in a fixed order: structure, then caps, then
+the source's own level, then nested levels. For a programme `no_weeks` leads,
+because a programme with nothing in it has nothing to share whatever its rights
+say.
+
+## 53. `no_weeks` now means what it says
+
+`no_weeks` previously meant "the declared week count is zero". A programme
+carrying `weeks = 6` with no week template at all passed that check, so its only
+reported blocker was its rights level, and classifying it would have published a
+title and six blank weeks. Eligibility and the builder now both refuse a
+programme with no week template, so the structural blocker is reported first and
+cannot be cleared by reclassifying the programme row.
+
+## 54. What 0043 does NOT do
+
+- No row is reclassified, and no club is enabled.
+- No policy, grant, capability or role changes.
+- No change to `content_shares`, the lifecycle RPC, the read path, the secret
+  model, expiry or the kill switch.
+- No new anonymous surface: `read-content-share` remains the only function
+  reachable without a JWT, and `manage-content-share` keeps `verify_jwt = true`.

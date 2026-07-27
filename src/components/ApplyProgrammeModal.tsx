@@ -335,6 +335,8 @@ export function ApplyProgrammeModal({
           liveActivityStartedAt: null,
           spondEventId: null,
           boardId: null,
+          // Club only until classified; the upsert never writes the column.
+          rights: 'internal_only',
         }
         await upsert.mutateAsync(s)
       }

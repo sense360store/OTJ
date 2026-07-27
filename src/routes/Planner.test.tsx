@@ -44,6 +44,7 @@ const drill: Drill = {
   sourceUrl: '',
   sourceLabel: '',
   createdAt: '2026-01-01',
+  rights: 'internal_only',
 }
 
 const act: Activity = { phase: 'Skill', drillId: 'd1', duration: 15 }
@@ -420,6 +421,7 @@ function sessionFixture(over: Partial<Session> = {}): Session {
     liveActivityStartedAt: null,
     spondEventId: null,
     boardId: 'b1',
+    rights: 'internal_only',
     ...over,
   }
 }

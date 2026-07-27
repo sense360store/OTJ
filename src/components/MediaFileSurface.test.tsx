@@ -11,8 +11,8 @@ import type { MediaItem } from '../lib/data'
 
 const signed = 'https://store.supabase.co/storage/v1/object/sign/media/club/doc.pdf?token=abc'
 
-const pdf: MediaItem = { id: 'm-pdf', name: 'Session card', type: 'pdf', storagePath: 'club/doc.pdf' }
-const image: MediaItem = { id: 'm-img', name: 'Pitch diagram', type: 'image', storagePath: 'club/diagram.png' }
+const pdf: MediaItem = { id: 'm-pdf', name: 'Session card', type: 'pdf', storagePath: 'club/doc.pdf', rights: 'internal_only' }
+const image: MediaItem = { id: 'm-img', name: 'Pitch diagram', type: 'image', storagePath: 'club/diagram.png', rights: 'internal_only' }
 
 const noop = () => {}
 

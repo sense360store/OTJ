@@ -53,6 +53,7 @@ import { MediaPlayerModal } from '../components/MediaPlayerModal'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { downloadSessionIcs } from '../lib/ics'
 import { PlanFromSpond } from '../components/PlanFromSpond'
+import { RightsControl } from '../components/RightsControl'
 
 interface DragHandlers {
   onDragStart: DragEventHandler<HTMLDivElement>
@@ -1065,6 +1066,22 @@ function PlannerEditor({
             onRemoveBoard={() => setBoard(null)}
             onOpenBoardPicker={() => setBoardPickerOpen(true)}
           />
+
+          {/* The session's sharing level, in the ordinary edit flow. It saves on
+              its own and writes only the rights column, so a planner Save never
+              changes it and nothing is promoted as a side effect. Only a saved
+              session has a row to classify. */}
+          {existing && !readOnly && (
+            <div className="card side-card">
+              <RightsControl
+                kind="session"
+                id={existing.id}
+                current={existing.rights}
+                source={{ sourceUrl: existing.sourceUrl, sourceLabel: existing.sourceLabel }}
+                canEdit
+              />
+            </div>
+          )}
 
           {/* Linking edits the draft like every other planner field; Save
               writes it with the session. It freezes while a write is in

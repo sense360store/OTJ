@@ -7,6 +7,7 @@
 // a new item inline without leaving the form.
 import { useRef, useState } from 'react'
 import { Icon } from './icons'
+import { RightsControl, RightsNewNote } from './RightsControl'
 import { Chip, ListInput, Loading, MediaThumb, MEDIA_META, Modal, UploadProgress } from './ui'
 import {
   mediaTypeForFile,
@@ -498,6 +499,23 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
           placeholder="https://… where this drill came from, shown with attribution"
           onChange={(e) => set('sourceUrl', e.target.value)}
         />
+      </div>
+      {/* The sharing level lives in the ordinary edit flow, next to the source
+          it depends on. It saves on its own, explicitly: saving the drill does
+          not change it, and neither does pressing Share. */}
+      <div className="field">
+        <label>Sharing</label>
+        {drill ? (
+          <RightsControl
+            kind="drill"
+            id={drill.id}
+            current={drill.rights}
+            source={{ sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel }}
+            canEdit
+          />
+        ) : (
+          <RightsNewNote noun="drill" />
+        )}
       </div>
       <div className="field" style={{ marginBottom: 0 }}>
         <label>Media</label>

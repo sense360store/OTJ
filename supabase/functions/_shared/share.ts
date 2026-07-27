@@ -188,6 +188,72 @@ export interface Eligibility {
 }
 
 // -------------------------------------------------------------------------
+// Provenance (bounded, non identifying)
+// -------------------------------------------------------------------------
+//
+// A blocked share tells a coach WHICH LAYER refused. Until now it told them
+// nothing about WHY that layer is club only, so the client said England
+// Football for every case, including a coach's own writing. These helpers
+// derive provenance from the source columns a row already carries, so the
+// client can say England Football only where the data proves it.
+//
+// This is a classification of the row's recorded origin, never of its content
+// and never of a person. What crosses the wire is one enum for the source row
+// and one boolean per nested layer; no id, title, path or count.
+//
+// Mirrors public.content_rights_is_fa_url (the boundary) and src/lib/fa.ts
+// isFaUrl. All three read the URL host and nothing else.
+
+export type SourceProvenance = 'none' | 'fa' | 'third_party'
+
+const FA_HOSTS = ['learn.englandfootball.com', 'cdn.englandfootball.com']
+const FA_SOURCE_LABEL = 'England Football Learning'
+
+export function isFaSourceUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  try {
+    return FA_HOSTS.includes(new URL(url).hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+export interface ProvenanceFields {
+  source_url?: string | null
+  source_label?: string | null
+  source_key?: string | null
+}
+
+function filled(v: string | null | undefined): boolean {
+  return typeof v === 'string' && v.trim().length > 0
+}
+
+export function rowProvenance(row: ProvenanceFields): SourceProvenance {
+  if (isFaSourceUrl(row.source_url) || isFaSourceUrl(row.source_key)) return 'fa'
+  if (filled(row.source_label) && row.source_label!.trim() === FA_SOURCE_LABEL) return 'fa'
+  if (filled(row.source_url) || filled(row.source_label) || filled(row.source_key)) return 'third_party'
+  return 'none'
+}
+
+// True when at least one of the given rows both blocks the share (it is club
+// only) and is England Football derived. Aggregate by design: it names no row,
+// so a coach never learns which of another coach's items is restricted.
+export function anyRestricted(
+  rows: ReadonlyArray<ProvenanceFields & { rights?: ContentRights }>,
+): boolean {
+  return rows.some((r) => r.rights === 'internal_only' && rowProvenance(r) === 'fa')
+}
+
+export interface SharePreviewProvenance {
+  source: SourceProvenance
+  restricted: { template: boolean; drill: boolean; media: boolean; pdf: boolean }
+}
+
+export function emptyRestricted(): SharePreviewProvenance['restricted'] {
+  return { template: false, drill: false, media: false, pdf: false }
+}
+
+// -------------------------------------------------------------------------
 // Sanitisation
 // -------------------------------------------------------------------------
 
@@ -808,6 +874,11 @@ export interface TemplateRow {
   programme_week: number | null
   created_at: string | null
   rights: ContentRights
+  // Read for provenance only, never projected. The builder's allow list does
+  // not copy them onto a week, and the source attribution a public programme
+  // shows is the programme's own.
+  source_url?: string | null
+  source_label?: string | null
 }
 
 // One public programme week: its number, the safe titling of the template that
@@ -1034,7 +1105,14 @@ export function evaluateProgrammeEligibility(
   // programmes.weeks value is refused instead of expanded.
   const byWeek = orderProgrammeTemplates(templates as TemplateRow[])
   const weekCount = programmeWeekCount(programme, byWeek)
-  if (weekCount === 0) blocked.add('no_weeks')
+  // no_weeks means there is nothing to share, which is a stronger statement
+  // than "the declared count is zero". A programme carrying weeks = 6 and no
+  // week template at all would otherwise project six empty weeks: a public page
+  // showing a title and six blank rows, which misrepresents the programme and
+  // is worth nothing to a recipient. It is also a structural blocker, so it
+  // outranks every rights reason and cannot be cleared by reclassifying the
+  // programme row.
+  if (weekCount === 0 || byWeek.size === 0) blocked.add('no_weeks')
   if (weekCount > MAX_PROGRAMME_WEEKS) blocked.add('too_many_weeks')
 
   return { eligible: blocked.size === 0, blocked: [...blocked] }
@@ -1109,7 +1187,9 @@ export function buildProgrammeSnapshot(
   // builder can never allocate an unbounded week list either.
   const byWeek = orderProgrammeTemplates(templates)
   const weekCount = programmeWeekCount(programme, byWeek)
-  if (weekCount === 0) {
+  // Same rule as eligibility: a declared week count with no template behind it
+  // is nothing to share, not six empty weeks.
+  if (weekCount === 0 || byWeek.size === 0) {
     throw new ProgrammeBuildError('no_weeks', 'buildProgrammeSnapshot: refusing to project a programme with no weeks')
   }
   if (weekCount > MAX_PROGRAMME_WEEKS) {

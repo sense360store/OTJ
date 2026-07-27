@@ -33,6 +33,7 @@ const drill: Drill = {
   sourceUrl: '',
   sourceLabel: '',
   createdAt: '2026-01-01',
+  rights: 'internal_only',
 }
 
 function session(over: Partial<Session> = {}): Session {
@@ -58,6 +59,7 @@ function session(over: Partial<Session> = {}): Session {
     liveActivityStartedAt: null,
     spondEventId: null,
     boardId: null,
+    rights: 'internal_only',
     ...over,
   }
 }

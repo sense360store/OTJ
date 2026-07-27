@@ -690,9 +690,26 @@ a.activity-batch:hover { text-decoration: underline; }
 .public-media-attribution { margin: 0; font-size: 13px; }
 .public-print-note { margin: 8px 0 0; font-size: 13px; }
 
-/* --- The Drill Detail public-link control --- */
-.public-share-control { border-top: 1px dashed var(--line); padding-top: 12px; }
-.public-share-heading { font-family: var(--display); font-weight: 800; font-size: 15px; }
+/* --- The Share dialog (one dialog, both ways of sharing) --- */
+/* Two labelled sections stacked, each with room to breathe at 360px. The
+   sections are siblings, never nested, so there is no interactive control
+   inside another. */
+.share-home { min-width: 0; }
+.share-section { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; min-width: 0; }
+.share-section + .share-section { border-top: 1px dashed var(--line); padding-top: 16px; }
+.share-section-title { display: flex; align-items: center; gap: 8px; margin: 0;
+  font-family: var(--display); font-weight: 800; font-size: 15px; }
+.share-section p { margin: 0; }
+.share-classify { min-width: 0; }
+.public-blocked-view { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.public-blocked-view p { margin: 0; }
+
+/* --- The sharing level control --- */
+.rights-field { display: block; }
+.rights-option { padding: 4px 0; }
+.rights-locked { display: flex; gap: 8px; align-items: flex-start;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; }
+.rights-locked svg { width: 17px; height: 17px; flex: 0 0 auto; margin-top: 1px; }
 .public-status-line { margin: 0 0 8px; }
 .public-result { display: grid; gap: 8px; }
 .public-result-label { font-weight: 700; font-size: 13px; }

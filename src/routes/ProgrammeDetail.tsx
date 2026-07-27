@@ -32,8 +32,7 @@ import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
 import { TemplateFormModal } from '../components/TemplateFormModal'
 import { ApplyProgrammeModal } from '../components/ApplyProgrammeModal'
-import { PublicShareControl } from '../components/PublicShareControl'
-import { ShareButton } from '../components/ShareButton'
+import { ShareAction } from '../components/ShareModal'
 
 type NavFn = ReturnType<typeof useNav>
 
@@ -280,6 +279,20 @@ function ProgrammeView({ p }: { p: Programme }) {
             Edit programme
           </button>
         )}
+        {/* One Share action, alongside Apply, PDF, Edit and Delete. The dialog
+            behind it holds the club link (which needs an account) and the
+            public link (which needs none), each labelled for what it does. */}
+        <ShareAction
+          kind="programme"
+          sourceId={p.id}
+          title={p.name}
+          rights={p.rights}
+          source={{ sourceUrl: p.sourceUrl, sourceLabel: p.sourceLabel }}
+          canClassify={canManage}
+          canShareInternal={coaching}
+          canPublish={canPublishShare}
+          canRevokeAny={canRevokeAnyShare}
+        />
         {canManage && (
           <button
             className="btn btn-ghost btn-sm icon-only"
@@ -291,26 +304,6 @@ function ProgrammeView({ p }: { p: Programme }) {
           </button>
         )}
       </div>
-
-      {/* Sharing an internal club link is a coaching affordance (sessions.create),
-          hidden from parents. It is a UI decision about who sees the button, not
-          an access boundary: the link is the canonical protected page, grants
-          nothing on its own, and makes no write. */}
-      {coaching && (
-        <div style={{ marginBottom: 14 }}>
-          <ShareButton kind="programme" id={p.id} title={p.name} />
-        </div>
-      )}
-
-      {(canPublishShare || canRevokeAnyShare) && (
-        <PublicShareControl
-          kind="programme"
-          sourceId={p.id}
-          title={p.name}
-          canPublish={canPublishShare}
-          canRevokeAny={canRevokeAnyShare}
-        />
-      )}
 
       {p.summary && <p style={{ fontSize: 14.5, lineHeight: 1.55, margin: '0 0 12px', maxWidth: 720 }}>{p.summary}</p>}
 

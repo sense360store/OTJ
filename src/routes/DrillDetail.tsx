@@ -31,8 +31,7 @@ import {
 import { DrillFormModal } from '../components/DrillFormModal'
 import { DeleteDrillModal } from '../components/DeleteDrillModal'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
-import { ShareButton } from '../components/ShareButton'
-import { PublicShareControl } from '../components/PublicShareControl'
+import { ShareAction } from '../components/ShareModal'
 
 function SetupCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
   return (
@@ -435,20 +434,23 @@ export function DrillDetail() {
               </button>
             </div>
           )}
-          {canShare && (
-            <div style={{ marginTop: 10 }}>
-              <ShareButton kind="drill" id={drill.id} title={drill.title} />
-            </div>
-          )}
-          {(canPublishShare || canRevokeAnyShare) && (
-            <PublicShareControl
+          {/* One Share action, next to the page's other actions. It opens the
+              dialog that holds both the club link and the public link, so
+              public sharing no longer hides in a section below the fold. */}
+          <div className="row" style={{ gap: 10, marginTop: 10 }}>
+            <ShareAction
               kind="drill"
               sourceId={drill.id}
               title={drill.title}
+              rights={drill.rights}
+              source={{ sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel }}
+              canClassify={canManage}
+              canShareInternal={canShare}
               canPublish={canPublishShare}
               canRevokeAny={canRevokeAnyShare}
+              buttonClassName="btn btn-ghost btn-block"
             />
-          )}
+          </div>
         </div>
       </div>
 
