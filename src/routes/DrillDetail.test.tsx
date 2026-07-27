@@ -32,6 +32,7 @@ const drill: Drill = {
   format: '',
   sourceUrl: '',
   sourceLabel: '',
+  sourceKey: '',
   createdAt: '2026-01-01',
   rights: 'internal_only',
 }

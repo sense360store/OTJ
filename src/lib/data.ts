@@ -284,6 +284,10 @@ export interface Drill {
   format: string
   sourceUrl: string
   sourceLabel: string
+  // The FA importer's stable identity for the activity, which begins with the
+  // England Football source URL. Read for provenance only, so the sharing level
+  // control locks exactly what migration 0043 refuses.
+  sourceKey: string
   // The sharing level this row carries (see src/lib/contentRights.ts). The
   // server is the authority; this is what the edit form and the share flow
   // display. Reads that predate the column present as club only.

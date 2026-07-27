@@ -108,6 +108,10 @@ export interface DrillRow {
   format: string | null
   source_url: string | null
   source_label: string | null
+  // Read for provenance only: an FA imported drill can carry its England
+  // Football identity here with no source_url, and the sharing level control
+  // must lock exactly what migration 0043 refuses.
+  source_key: string | null
   rights: ContentRights
 }
 
@@ -246,7 +250,7 @@ interface ClubRow {
 // ---- Column lists ------------------------------------------------------
 // Explicit so each read is checkable against the schema at a glance.
 const DRILL_COLS =
-  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at, setup_notes, easier, harder, theme, format, source_url, source_label, rights'
+  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at, setup_notes, easier, harder, theme, format, source_url, source_label, source_key, rights'
 const MEDIA_COLS =
   'id, club_id, name, type, kind, storage_path, embed_url, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label, rights'
 const TEMPLATE_COLS =
@@ -325,6 +329,7 @@ export function toDrill(r: DrillRow): Drill {
     format: r.format ?? '',
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
+    sourceKey: r.source_key ?? '',
     // Fail closed: a read that predates the column, or a row the select could
     // not resolve, presents as club only rather than as publishable.
     rights: r.rights ?? 'internal_only',

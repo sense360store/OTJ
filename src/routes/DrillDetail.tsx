@@ -443,7 +443,7 @@ export function DrillDetail() {
               sourceId={drill.id}
               title={drill.title}
               rights={drill.rights}
-              source={{ sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel }}
+              source={{ sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel, sourceKey: drill.sourceKey }}
               canClassify={canManage}
               canShareInternal={canShare}
               canPublish={canPublishShare}

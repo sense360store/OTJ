@@ -59,6 +59,7 @@ function sessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
 function drillRow(overrides: Partial<DrillRow> = {}): DrillRow {
   return {
     rights: 'internal_only',
+    source_key: null,
     id: 'd1',
     club_id: 'c1',
     title: 'Rondo',

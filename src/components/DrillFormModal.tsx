@@ -510,7 +510,7 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
             kind="drill"
             id={drill.id}
             current={drill.rights}
-            source={{ sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel }}
+            source={{ sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel, sourceKey: drill.sourceKey }}
             canEdit
           />
         ) : (

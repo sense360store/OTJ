@@ -76,8 +76,13 @@ const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_BODY_BYTES = 8 * 1024
 
+// source_key is read for PROVENANCE only. An FA imported drill carries its
+// England Football identity there, so reading it keeps this function's
+// provenance answer aligned with what migration 0043 actually refuses. It is
+// never projected: the builder copies an explicit allow list, and source_key is
+// in FORBIDDEN_ANYWHERE, so a future leak trips the scanner rather than shipping.
 const DRILL_COLS =
-  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, media_id, rights'
+  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, source_key, media_id, rights'
 const MEDIA_COLS = 'id, club_id, name, type, storage_path, yt_url, embed_url, source_url, source_label, rights'
 const SESSION_COLS =
   'id, club_id, name, focus, age_group, intentions, space, activities, board_id, source_url, source_label, rights'
@@ -575,15 +580,12 @@ async function handlePreviewProgramme(admin: AdminClient, clubId: string, source
   if (loaded instanceof Response) return loaded
   const { programme, templates, drills, media } = loaded
   const elig = withPathBlockers(evaluateProgrammeEligibility(programme, templates, drills, media), media)
-  // The attached PDF is one media row; keeping it out of the general media
-  // layer lets the copy name the PDF specifically when the PDF is what blocks.
+  // The attached PDF gets its own layer so the copy can name it specifically,
+  // but it stays in the media layer too: one row can be both the programme's
+  // PDF and a drill's media, and removing it from the media layer would make a
+  // restricted file report as merely club only under whichever reason won.
   const pdfRows = programme.pdf_media_id ? media.filter((m) => m.id === programme.pdf_media_id) : []
-  const provenance = provenanceOf(programme, {
-    templates,
-    drills,
-    media: media.filter((m) => m.id !== programme.pdf_media_id),
-    pdf: pdfRows,
-  })
+  const provenance = provenanceOf(programme, { templates, drills, media, pdf: pdfRows })
   let preview: unknown = null
   if (elig.eligible) {
     // The builder can still refuse on a cap only measurable after projection

@@ -92,6 +92,9 @@ export interface DrillRow {
   format: string | null
   source_url: string | null
   source_label: string | null
+  // Read for provenance only, never projected (the builder copies an explicit
+  // allow list, and source_key is in FORBIDDEN_ANYWHERE).
+  source_key?: string | null
   media_id: string | null
   rights: ContentRights
 }
