@@ -47,6 +47,16 @@ describe('Sidebar navigation', () => {
     expect(ids(new Set(['sessions.create', 'players.view']))).not.toContain('admin-seasons')
   })
 
+  it('shows the admin Shared links entry only to shares.manage holders', () => {
+    // The club wide Shared links screen is gated on shares.manage, not
+    // club.manage, so a coach who can only create shares never sees it and an
+    // admin without the capability does not either.
+    expect(ids(new Set(['sessions.create', 'shares.manage']))).toContain('admin-shares')
+    expect(ids(new Set(['sessions.create', 'shares.create']))).not.toContain('admin-shares')
+    expect(ids(new Set(['club.manage']))).not.toContain('admin-shares')
+    expect(ids(new Set())).not.toContain('admin-shares')
+  })
+
   it('keeps the full nav for a member holding both a coaching role and parent', () => {
     // The parent role grants no write capabilities, so a member who also
     // coaches still holds sessions.create and keeps the full nav.

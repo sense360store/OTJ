@@ -47,6 +47,10 @@ import {
   type DrillRow,
   evaluateDrillEligibility,
   invalidMediaPaths,
+  buildShareListFilter,
+  deriveShareStatus,
+  toPublicProjectionByKind,
+  validatePublicSnapshotByKind,
   evaluateProgrammeEligibility,
   evaluateSessionEligibility,
   ProgrammeBuildError,
@@ -87,13 +91,15 @@ const TEMPLATE_COLS = 'id, club_id, name, focus, activities, programme_week, cre
 
 type Kind = 'drill' | 'session' | 'programme'
 const KINDS: Kind[] = ['drill', 'session', 'programme']
-type Action = 'preview' | 'create' | 'refresh' | 'rotate' | 'revoke' | 'status'
-const ACTIONS: Action[] = ['preview', 'create', 'refresh', 'rotate', 'revoke', 'status']
+type Action = 'preview' | 'create' | 'refresh' | 'rotate' | 'revoke' | 'status' | 'list' | 'detail'
+const ACTIONS: Action[] = ['preview', 'create', 'refresh', 'rotate', 'revoke', 'status', 'list', 'detail']
 
 interface AdminClient {
   from: (t: string) => {
+    // The optional second argument is PostgREST's count option, used by the
+    // management list for its exact total.
     // deno-lint-ignore no-explicit-any
-    select: (c: string) => any
+    select: (c: string, opts?: { count?: 'exact'; head?: boolean }) => any
   }
   // deno-lint-ignore no-explicit-any
   rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: any; error: any }>
@@ -159,14 +165,22 @@ function serve(): void {
     }
 
     // Early capability refusal under the caller's identity (a fast path, not the
-    // boundary; the RPC re-validates). Revoke and status allow a manager too.
+    // boundary; the RPC re-validates). Three tiers, and the manage-only tier is
+    // tested FIRST: the create tier is the fall-through arm, so a club-wide
+    // action reaching it would be admitted on shares.create alone.
+    const needsManage = action === 'list' || action === 'detail'
     const needsManageOrCreate = action === 'revoke' || action === 'status'
+    const wantsManage = needsManage || needsManageOrCreate
     const canCreate = await hasPerm(caller.db, 'shares.create')
-    const canManage = needsManageOrCreate ? await hasPerm(caller.db, 'shares.manage') : false
-    if (canCreate === null || (needsManageOrCreate && canManage === null)) {
+    const canManage = wantsManage ? await hasPerm(caller.db, 'shares.manage') : false
+    if (canCreate === null || (wantsManage && canManage === null)) {
       return reply(500, { error: 'Could not check your access. No change was made.' })
     }
-    if (needsManageOrCreate) {
+    if (needsManage) {
+      if (!canManage) {
+        return reply(403, { error: "Reviewing the club's public links needs the shares.manage capability." })
+      }
+    } else if (needsManageOrCreate) {
       if (!canCreate && !canManage) return reply(403, { error: 'You do not have access to manage public share links.' })
     } else if (!canCreate) {
       return reply(403, { error: 'Creating a public share link needs the shares.create capability.' })
@@ -193,6 +207,13 @@ function serve(): void {
 
     try {
       switch (action) {
+        case 'list':
+          // NOT shareKind: that defaults to 'drill' when kind is absent, which
+          // would silently narrow every unfiltered list to drills. The list
+          // takes the raw optional kind as a filter instead.
+          return await handleList(admin, caller, body)
+        case 'detail':
+          return await handleDetail(admin, caller, shareId)
         case 'preview':
           return await handlePreview(admin, caller.clubId, shareKind, sourceId)
         case 'create':
@@ -923,10 +944,7 @@ async function handleStatus(
   if (!isOwner && !canManage) return reply(200, { ok: true, share: null, sharingEnabled })
 
   // Redacted public projection for owner/manager review (no live signing here).
-  let projection: unknown = null
-  if (row.snapshot && row.snapshot.public === true) {
-    projection = stripSnapshotForReview(row.snapshot)
-  }
+  const projection = redactedProjection(row.kind, row.snapshot, row.id)
   return reply(200, {
     ok: true,
     sharingEnabled,
@@ -945,16 +963,237 @@ async function handleStatus(
   })
 }
 
+// The ONE redaction path for every review surface (owner status, manager
+// detail). It runs the same projection and the same validators the anonymous
+// public route runs, so a management preview can never carry a field the public
+// page would refuse. The previous private stripper rebuilt each media entry
+// with a spread, which kept any unknown key it had not been taught about, and
+// nothing validated its output.
+//
+// Deliberately no media signing: the anonymous route injects short lived signed
+// URLs from a separate channel, and a management list has no business minting
+// them. Media renders as caption plus attribution.
 // deno-lint-ignore no-explicit-any
-function stripSnapshotForReview(snapshot: any): any {
-  const media = Array.isArray(snapshot.media)
-    ? snapshot.media.map((m: Record<string, unknown>) => {
-      const { _mid: _a, _path: _b, ...rest } = m
-      return rest
-    })
-    : []
-  const { builder: _x, public: _y, media: _m, ...rest } = snapshot
-  return { ...rest, media }
+function redactedProjection(kind: string, snapshot: any, shareId: string): unknown {
+  if (!snapshot || snapshot.public !== true) return null
+  let projection: unknown
+  try {
+    projection = toPublicProjectionByKind(kind, snapshot)
+  } catch {
+    console.error('manage-content-share: could not project a snapshot', { shareId })
+    return null
+  }
+  if (!validatePublicSnapshotByKind(kind, projection)) {
+    console.error('manage-content-share: a projection failed its public validator', { shareId })
+    return null
+  }
+  return projection
+}
+
+// -------------------------------------------------------------------------
+// Club-wide shared links management (PR 5)
+// -------------------------------------------------------------------------
+//
+// Authority: the caller's identity comes from the verified JWT (resolveCaller),
+// the club comes from their profile, and shares.manage was already required
+// above. The club is NEVER taken from the body: the service role bypasses RLS,
+// so the club predicate below is the only thing standing between a manager and
+// another club's rows, and it is applied both as a query filter and as a
+// per-row re-check.
+//
+// The browser never reads content_shares: the table carries no client policy
+// and no client grant, and this is the only way to see a club's links.
+
+const LIST_COLS =
+  'id, club_id, kind, drill_id, session_id, programme_id, created_by, ' +
+  'expires_at, created_at, refreshed_at, rotated_at, revoked_at, snapshot_version'
+
+// token_hash, snapshot and idempotency_key are deliberately absent. Adding a
+// column here is the one edit that could leak one, so the DTO below names every
+// field it returns rather than spreading the row.
+interface ShareRow {
+  id: string
+  club_id: string
+  kind: string
+  drill_id: string | null
+  session_id: string | null
+  programme_id: string | null
+  created_by: string | null
+  expires_at: string | null
+  created_at: string | null
+  refreshed_at: string | null
+  rotated_at: string | null
+  revoked_at: string | null
+  snapshot_version: number
+}
+
+function sourceIdOf(row: ShareRow): string | null {
+  return row.drill_id ?? row.session_id ?? row.programme_id ?? null
+}
+
+async function handleList(
+  admin: AdminClient,
+  caller: Caller,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const built = buildShareListFilter(body)
+  if ('error' in built) return reply(400, { error: built.error })
+  const f = built.filter
+
+  // ONE clock for the whole response, so the status predicate below and the
+  // per row label agree with each other even on a slow page.
+  const nowIso = new Date().toISOString()
+
+  const { data: club } = await admin
+    .from('clubs')
+    .select('public_sharing_enabled')
+    .eq('id', caller.clubId)
+    .maybeSingle()
+  const sharingEnabled = club?.public_sharing_enabled === true
+
+  // deno-lint-ignore no-explicit-any
+  const applyFilters = (q: any) => {
+    q = q.eq('club_id', caller.clubId)
+    if (f.kind) q = q.eq('kind', f.kind)
+    if (f.shareId) q = q.eq('id', f.shareId)
+    if (f.unattributed) q = q.is('created_by', null)
+    else if (f.createdBy) q = q.eq('created_by', f.createdBy)
+    if (f.status === 'revoked') q = q.not('revoked_at', 'is', null)
+    else if (f.status === 'expired') q = q.is('revoked_at', null).lte('expires_at', nowIso)
+    else if (f.status === 'active') {
+      q = q.is('revoked_at', null).or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+    }
+    return q
+  }
+
+  let q = applyFilters(admin.from('content_shares').select(LIST_COLS))
+  if (f.cursor) q = q.lt('created_at', f.cursor)
+  // One more than asked for, to know whether another page exists without a
+  // second round trip.
+  const { data, error } = await q
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(f.limit + 1)
+  if (error) {
+    console.error('manage-content-share: could not list shares', { code: errCode(error) })
+    return reply(500, { error: 'Could not read the club\'s public links.' })
+  }
+
+  const all: ShareRow[] = Array.isArray(data) ? data : []
+  // Belt and braces on top of the club predicate above.
+  const scoped = all.filter((r) => r.club_id === caller.clubId)
+  const hasMore = scoped.length > f.limit
+  const rows = scoped.slice(0, f.limit)
+
+  const { count } = await applyFilters(
+    admin.from('content_shares').select('id', { count: 'exact', head: true }),
+  )
+
+  const shares = await decorate(admin, caller, rows, nowIso)
+  console.log('manage-content-share: listed', { count: shares.length })
+  return reply(200, {
+    ok: true,
+    shares,
+    sharingEnabled,
+    hasMore,
+    nextCursor: hasMore ? rows[rows.length - 1]?.created_at ?? null : null,
+    total: typeof count === 'number' ? count : null,
+  })
+}
+
+// Resolves the two display names a row needs, in one query per table rather
+// than one per row, and assembles the safe DTO. Source titles and creator names
+// are both club scoped, so a dangling id from another club resolves to null
+// rather than leaking a name across the boundary.
+async function decorate(
+  admin: AdminClient,
+  caller: Caller,
+  rows: ShareRow[],
+  nowIso: string,
+): Promise<unknown[]> {
+  const idsFor = (k: string, col: keyof ShareRow) =>
+    rows.filter((r) => r.kind === k).map((r) => r[col]).filter((v): v is string => typeof v === 'string')
+
+  const titles = new Map<string, string>()
+  const lookups: Array<[string, string, string, string[]]> = [
+    ['drills', 'title', 'drill', idsFor('drill', 'drill_id')],
+    ['sessions', 'name', 'session', idsFor('session', 'session_id')],
+    ['programmes', 'name', 'programme', idsFor('programme', 'programme_id')],
+  ]
+  for (const [table, nameCol, , ids] of lookups) {
+    if (ids.length === 0) continue
+    const { data } = await admin
+      .from(table)
+      .select(`id, ${nameCol}`)
+      .in('id', ids)
+      .eq('club_id', caller.clubId)
+    for (const r of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+      if (typeof r.id === 'string' && typeof r[nameCol] === 'string') titles.set(r.id, r[nameCol] as string)
+    }
+  }
+
+  const creatorIds = [...new Set(rows.map((r) => r.created_by).filter((v): v is string => typeof v === 'string'))]
+  const names = new Map<string, string>()
+  if (creatorIds.length > 0) {
+    // Exactly two columns, never a wildcard: a profile carries an email and a
+    // team elsewhere and none of it belongs in this list.
+    const { data } = await admin
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', creatorIds)
+      .eq('club_id', caller.clubId)
+    for (const r of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+      if (typeof r.id === 'string' && typeof r.full_name === 'string') names.set(r.id, r.full_name)
+    }
+  }
+
+  return rows.map((row) => {
+    const sourceId = sourceIdOf(row)
+    return {
+      shareId: row.id,
+      kind: row.kind,
+      sourceId,
+      sourceTitle: sourceId ? titles.get(sourceId) ?? null : null,
+      status: deriveShareStatus(row, nowIso),
+      createdById: row.created_by,
+      createdByName: row.created_by ? names.get(row.created_by) ?? null : null,
+      unattributed: row.created_by === null,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      refreshedAt: row.refreshed_at,
+      rotatedAt: row.rotated_at,
+      revokedAt: row.revoked_at,
+      snapshotVersion: row.snapshot_version,
+    }
+  })
+}
+
+async function handleDetail(
+  admin: AdminClient,
+  caller: Caller,
+  shareId: string | null,
+): Promise<Response> {
+  if (!shareId) return reply(400, { error: 'A share id is required.' })
+  const nowIso = new Date().toISOString()
+
+  const { data: row, error } = await admin
+    .from('content_shares')
+    .select(`${LIST_COLS}, snapshot`)
+    .eq('id', shareId)
+    .maybeSingle()
+  if (error) {
+    console.error('manage-content-share: could not read a share', { code: errCode(error) })
+    return reply(500, { error: 'Could not read that public link.' })
+  }
+  // Same neutral answer for "no such share" and "another club's share", so a
+  // manager cannot probe another club's ids.
+  if (!row || row.club_id !== caller.clubId) {
+    return reply(404, { error: 'That link was not found in your club.' })
+  }
+
+  const snapshot = redactedProjection(row.kind, row.snapshot, row.id)
+  const [share] = await decorate(admin, caller, [row as ShareRow], nowIso)
+  return reply(200, { ok: true, share, snapshot, hasSnapshot: Boolean(snapshot) })
 }
 
 // Read a share and confirm the caller may perform an OWNER action (refresh,

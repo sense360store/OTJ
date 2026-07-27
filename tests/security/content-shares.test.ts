@@ -283,6 +283,41 @@ describe('content_shares direct access is denied to every client', () => {
     if (data) expect(data.map((r: { id: string }) => r.id)).not.toContain(shareId)
   })
 
+  // PR 5 adds a club-wide management screen. It goes through the service role
+  // Edge Function, and these assert that it did NOT take the shortcut of
+  // opening a client read path instead: the obvious "just add a select policy
+  // for shares.manage holders" would satisfy the screen and quietly hand every
+  // manager the token hashes and stored snapshots of their whole club.
+  it('content_shares and its dependency index still carry ZERO client policies', () => {
+    for (const table of ['content_shares', 'content_share_dependencies']) {
+      expect(
+        scalar(`select count(*)::text from pg_policies where schemaname='public' and tablename='${table}'`),
+      ).toBe('0')
+      expect(
+        scalar(`select relrowsecurity::text from pg_class where oid='public.${table}'::regclass`),
+      ).toBe('true')
+    }
+  })
+
+  it('content_shares and its dependency index still carry ZERO client grants', () => {
+    for (const table of ['content_shares', 'content_share_dependencies']) {
+      for (const role of ['anon', 'authenticated']) {
+        for (const priv of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+          expect(
+            scalar(`select has_table_privilege('${role}', 'public.${table}', '${priv}')::text`),
+          ).toBe('false')
+        }
+      }
+    }
+  })
+
+  it('the token hash column is unreachable even by name from a client role', async () => {
+    // Belt and braces on the grant: a select naming the column explicitly must
+    // not succeed for a manager either.
+    const { data, error } = await manager.from('content_shares').select('token_hash')
+    expect(error !== null || (data ?? []).length === 0).toBe(true)
+  })
+
   it('an authenticated coach cannot insert or update content_shares', async () => {
     const ins = await coachOne
       .from('content_shares')
