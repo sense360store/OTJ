@@ -1,0 +1,139 @@
+/* Club wide Shared links (Content Sharing PR 5). One list, not a desktop table
+   plus a separate mobile card list: each row reflows from stacked to columns at
+   the content breakpoint, so there is a single DOM to keep honest and nothing
+   scrolls sideways at 360px. Tokens come from styles.css. */
+
+.shares-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.shares-summary .pill b {
+  color: var(--ink);
+}
+
+.shares-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+}
+.shares-filters .field {
+  margin-bottom: 0;
+  min-width: 160px;
+}
+.shares-filters .field .select {
+  width: 100%;
+}
+.shares-lookup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 6px;
+}
+.shares-lookup .field {
+  margin-bottom: 0;
+  flex: 1 1 260px;
+}
+.shares-lookup-note {
+  font-size: 12.5px;
+  line-height: 1.45;
+  margin: 0 0 14px;
+}
+
+.shares-note {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+
+.shares-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.share-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.share-main {
+  min-width: 0;
+}
+.share-title {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.3;
+  word-break: break-word;
+}
+.share-title-missing {
+  color: var(--slate);
+  font-style: normal;
+}
+.share-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--slate);
+}
+/* Every control on this screen carries its 44px minimum touch target inline, on
+   the button itself, the same way the rest of the app does; .btn's own 42px
+   default is not enough for a thumb. */
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.share-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.share-badge-active {
+  color: var(--m-image);
+}
+.share-badge-expired {
+  color: var(--slate);
+}
+.share-badge-revoked {
+  color: var(--m-pdf);
+}
+
+.shares-more {
+  padding: 16px 0 0;
+  text-align: center;
+}
+
+.share-review-frame {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin-top: 10px;
+}
+
+@media (min-width: 901px) {
+  .share-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 16px;
+    align-items: center;
+  }
+  .share-actions {
+    justify-content: flex-end;
+  }
+}

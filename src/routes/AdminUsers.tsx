@@ -9,12 +9,14 @@
 // functions enforce the same boundaries server side; the checks here only
 // decide what to surface. REVIEW: invite, removal and role assignment logic.
 import { Fragment, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import {
   useCapabilities,
   useCreateRole,
   useDeleteRole,
   useInviteUser,
+  useMemberActiveShareCount,
   useMemberStates,
   useMyCapabilities,
   useProfiles,
@@ -28,7 +30,7 @@ import {
   useSetMemberTeams,
   useTeams,
 } from '../lib/queries'
-import { RESERVED_CAPABILITIES, roleKeyFromLabel } from '../lib/data'
+import { RESERVED_CAPABILITIES, roleKeyFromLabel, SHARE_CAPS } from '../lib/data'
 import type { Capability, Member, RoleCapability, RoleInfo, Team } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Tick } from '../components/Tick'
@@ -477,6 +479,27 @@ function MemberRow({
   )
 }
 
+// The public links warning inside the removal modal. It is advisory only and
+// never gates the removal: an admin without shares.manage sees nothing, a count
+// that fails to load renders nothing, and the Remove button is untouched in
+// every case. The count is the server's own total for that member's active
+// links, so no page of another member's shares is pulled into the browser, and
+// nothing about an individual link is shown here.
+export function MemberShareWarning({ memberId }: { memberId: string }) {
+  const { caps } = useMyCapabilities()
+  const canManage = caps.has(SHARE_CAPS.manage)
+  const { data: count } = useMemberActiveShareCount(canManage ? memberId : null)
+  if (!canManage || typeof count !== 'number' || count < 1) return null
+  return (
+    <p role="status" style={{ fontSize: 13.5, lineHeight: 1.55, color: 'var(--m-pdf)' }}>
+      This member has {count} public {count === 1 ? 'link' : 'links'} still working. Removing them does not turn
+      {count === 1 ? ' it' : ' them'} off: the {count === 1 ? 'link keeps' : 'links keep'} working and will show as
+      made by a former member.{' '}
+      <Link to={`/admin/shares?createdBy=${memberId}`}>Review their links</Link>
+    </p>
+  )
+}
+
 function RemoveMemberModal({
   member,
   onClose,
@@ -521,6 +544,7 @@ function RemoveMemberModal({
         This removes their sign in and their profile. Everything they created (drills, media, templates, programmes
         and sessions) stays with the club as club content. This cannot be undone; they can be invited again later.
       </p>
+      <MemberShareWarning memberId={member.id} />
       {remove.isError && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
           {remove.error.message}

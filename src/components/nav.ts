@@ -42,6 +42,7 @@ const ADMIN_SECTION: NavSection = {
     { id: 'admin-teams', label: 'Teams', icon: Icon.flag, to: '/admin/teams' },
     { id: 'admin-seasons', label: 'Seasons', icon: Icon.calendar, to: '/admin/seasons' },
     { id: 'admin-spond', label: 'Spond', icon: Icon.link, to: '/admin/spond' },
+    { id: 'admin-shares', label: 'Shared links', icon: Icon.share, to: '/admin/shares' },
   ],
 }
 
@@ -112,6 +113,10 @@ export const ITEM_CAP: Record<string, string> = {
   // only to holders even though the rest of the Admin section is club.manage.
   'admin-seasons': 'seasons.manage',
   'admin-spond': 'club.manage',
+  // The club wide Shared links screen is gated on shares.manage (managers and
+  // admins), not club.manage, so a club.manage holder without it sees neither
+  // the item nor the route.
+  'admin-shares': 'shares.manage',
 }
 
 // The sidebar nav layout for a capability set.

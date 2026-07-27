@@ -32,6 +32,7 @@ import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
 import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
+import { AdminShares } from './routes/AdminShares'
 
 // The anonymous public share page is code-split with a dynamic import, so an
 // external recipient opening one shared drill on mobile data does not download
@@ -152,6 +153,14 @@ export function App() {
           </Route>
           <Route element={<RequireCap cap="users.manage" />}>
             <Route path="admin/users" element={<AdminUsers />} />
+          </Route>
+          {/* The club wide Shared links screen is gated on shares.manage
+              (managers and admins by default), the same capability the
+              manage-content-share list and detail actions require. A coach
+              holding only shares.create, and every parent, are redirected to
+              Home; the function answers 403 regardless of the UI. */}
+          <Route element={<RequireCap cap="shares.manage" />}>
+            <Route path="admin/shares" element={<AdminShares />} />
           </Route>
         </Route>
       </Route>

@@ -48,6 +48,13 @@ describe('Bottom navigation', () => {
     }
   })
 
+  it('surfaces Shared links in More for shares.manage holders only', () => {
+    expect(moreIds(new Set(['sessions.create', 'shares.manage']))).toContain('admin-shares')
+    expect(moreIds(new Set(['sessions.create', 'shares.create']))).not.toContain('admin-shares')
+    expect(moreIds(new Set(['club.manage']))).not.toContain('admin-shares')
+    expect(moreIds(new Set())).not.toContain('admin-shares')
+  })
+
   it('gives a parent holding no admin or coach capability an empty More list', () => {
     // The bottom nav drops the More entry when the list is empty, so a plain
     // parent keeps the two item row and nothing else.

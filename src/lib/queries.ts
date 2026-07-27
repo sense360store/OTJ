@@ -63,7 +63,9 @@ import type {
   Team,
   Template,
 } from './data'
-import { nextPrimaryTeamId, primaryRoleKey, sortRoles, youtubeId } from './data'
+import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
+import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
+import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
 import { newestFirst } from './contentOrder'
 import type { Board, Token } from './tacticsBoard'
 import { deserializeTokens, serializeTokens } from './tacticsBoard'
@@ -4621,5 +4623,176 @@ export function useRevokeContentShare() {
       return { status: (data.status ?? 'revoked') as string }
     },
     onSettled: (_d, _e, vars) => qc.invalidateQueries({ queryKey: shareStatusKey(vars.kind, vars.sourceId) }),
+  })
+}
+
+// =====================================================================
+// Content Sharing PR 5: club wide Shared Links management hooks.
+//
+// The same manage-content-share function, two more actions, both gated on
+// shares.manage server side (a caller without it gets 403, which is why every
+// hook here is enabled only when the capability is held: an unauthorised call
+// is not a useful thing to make). The browser never selects content_shares
+// directly; the table carries no client policy, so this function is the only
+// way to see a club's links.
+//
+// Nothing secret bearing rides these hooks. The list DTO carries no token hash,
+// no snapshot and no idempotency key, and the detail snapshot is the same
+// already redacted public projection the anonymous page would render. There is
+// deliberately no rotate and no refresh here: see AdminShares.tsx.
+// =====================================================================
+
+export interface ManagedShare {
+  shareId: string
+  kind: ManagedShareKind
+  sourceId: string | null
+  // null when the drill, session or programme behind the link was deleted.
+  sourceTitle: string | null
+  status: ManagedShareStatus
+  createdById: string | null
+  createdByName: string | null
+  // true when created_by is null, which is what a removed member leaves behind.
+  unattributed: boolean
+  createdAt: string | null
+  expiresAt: string | null
+  refreshedAt: string | null
+  rotatedAt: string | null
+  revokedAt: string | null
+  snapshotVersion: number
+}
+
+export interface ManagedSharesPage {
+  shares: ManagedShare[]
+  sharingEnabled: boolean
+  hasMore: boolean
+  nextCursor: string | null
+  total: number | null
+}
+
+export interface ManagedShareDetail {
+  share: ManagedShare
+  // An already redacted public projection, or null. Re-validated in the browser
+  // by the public validators before anything renders.
+  snapshot: unknown | null
+  hasSnapshot: boolean
+}
+
+function toManagedShare(value: unknown): ManagedShare {
+  const r = (value ?? {}) as Record<string, unknown>
+  return {
+    shareId: r.shareId as string,
+    kind: r.kind as ManagedShareKind,
+    sourceId: (r.sourceId ?? null) as string | null,
+    sourceTitle: (r.sourceTitle ?? null) as string | null,
+    status: r.status as ManagedShareStatus,
+    createdById: (r.createdById ?? null) as string | null,
+    createdByName: (r.createdByName ?? null) as string | null,
+    unattributed: r.unattributed === true,
+    createdAt: (r.createdAt ?? null) as string | null,
+    expiresAt: (r.expiresAt ?? null) as string | null,
+    refreshedAt: (r.refreshedAt ?? null) as string | null,
+    rotatedAt: (r.rotatedAt ?? null) as string | null,
+    revokedAt: (r.revokedAt ?? null) as string | null,
+    snapshotVersion: typeof r.snapshotVersion === 'number' ? r.snapshotVersion : 0,
+  }
+}
+
+// Every public link in the club, newest first, filtered. Paged with the
+// server's cursor rather than an offset, so a link created mid browse cannot
+// push a row onto a page the manager already read past.
+export function useManagedShares(filters: ShareFilters) {
+  const { caps } = useMyCapabilities()
+  const canManage = caps.has(SHARE_CAPS.manage)
+  return useInfiniteQuery({
+    queryKey: ['managed-shares', filters],
+    enabled: canManage,
+    retry: false,
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }): Promise<ManagedSharesPage> => {
+      const data = await invokeManageShare(filtersToRequest(filters, { cursor: pageParam }))
+      return {
+        shares: (Array.isArray(data.shares) ? data.shares : []).map(toManagedShare),
+        sharingEnabled: data.sharingEnabled === true,
+        hasMore: data.hasMore === true,
+        nextCursor: (data.nextCursor ?? null) as string | null,
+        total: typeof data.total === 'number' ? data.total : null,
+      }
+    },
+    // A cursor only while the server says another page exists.
+    getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
+  })
+}
+
+// One share plus its stored public projection, for the Review panel. Disabled
+// until a share is chosen, so opening the screen reads no snapshots.
+export function useManagedShareDetail(shareId: string | null) {
+  const { caps } = useMyCapabilities()
+  const canManage = caps.has(SHARE_CAPS.manage)
+  return useQuery({
+    queryKey: ['managed-share-detail', shareId],
+    enabled: canManage && !!shareId,
+    retry: false,
+    queryFn: async (): Promise<ManagedShareDetail> => {
+      const data = await invokeManageShare({ action: 'detail', shareId })
+      return {
+        share: toManagedShare(data.share),
+        snapshot: data.snapshot ?? null,
+        hasSnapshot: data.hasSnapshot === true,
+      }
+    },
+  })
+}
+
+// How many public links a member still has live. Used by the removal warning in
+// Admin users, which asks for a single row purely for the server's total, so
+// the warning never pulls a page of another member's shares into the browser.
+// Returns null when the total is unknown, which the warning treats as "say
+// nothing": it must never block a removal.
+export function useMemberActiveShareCount(memberId: string | null) {
+  const { caps } = useMyCapabilities()
+  const canManage = caps.has(SHARE_CAPS.manage)
+  return useQuery({
+    queryKey: ['managed-shares-count', memberId],
+    enabled: canManage && !!memberId,
+    retry: false,
+    queryFn: async (): Promise<number | null> => {
+      const data = await invokeManageShare(
+        filtersToRequest(
+          { ...EMPTY_SHARE_FILTERS, status: 'active', createdBy: memberId as string },
+          { limit: 1 },
+        ),
+      )
+      return typeof data.total === 'number' ? data.total : null
+    },
+  })
+}
+
+// Turn a club link off from the management screen. It reuses the SAME revoke
+// action the owner's control uses; there is no manager only write path. Revoke
+// is idempotent server side, so a second press on an already revoked link is
+// harmless.
+export function useRevokeManagedShare() {
+  const qc = useQueryClient()
+  return useMutation<
+    { status: string },
+    Error,
+    { shareId: string; kind: ManagedShareKind; sourceId: string | null }
+  >({
+    mutationFn: async ({ shareId }) => {
+      const data = await invokeManageShare({ action: 'revoke', shareId })
+      return { status: (data.status ?? 'revoked') as string }
+    },
+    onSettled: (_d, _e, vars) => {
+      void qc.invalidateQueries({ queryKey: ['managed-shares'] })
+      void qc.invalidateQueries({ queryKey: ['managed-shares-count'] })
+      void qc.invalidateQueries({ queryKey: ['managed-share-detail', vars.shareId] })
+      // The owner's own control on the drill, session or programme page reads
+      // the same share through its status key, so refresh that too. With no
+      // source id (the source was deleted) the whole status prefix is
+      // invalidated rather than guessing a key.
+      void qc.invalidateQueries({
+        queryKey: vars.sourceId ? shareStatusKey(vars.kind, vars.sourceId) : ['content-share-status'],
+      })
+    },
   })
 }
