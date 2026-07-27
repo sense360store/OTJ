@@ -954,3 +954,121 @@ the drill and session controls.
   share created, no content reclassified; `public_sharing_enabled` stays false
   on every club, and hosted public sharing stays disabled until a separate
   explicit approval.
+
+---
+
+# Content sharing boundary: the media signing path (0042)
+
+## 42. The threat this closes
+
+`media.storage_path` is a key into the private `media` Storage bucket. The
+anonymous read path signs it with the **service role**, which bypasses every
+Storage policy in `0027_storage_boundary.sql`. Until 0042 the column was bare
+nullable text: `media_update_owner_or_manager` (0012) constrains `club_id` and
+capability, never the path VALUE, so a member who could edit a media row could
+point a `public_full` row at:
+
+| # | Target | Why it was reachable |
+|---|---|---|
+| a | Another club's object | No club prefix was ever checked. |
+| b | A member's avatar | `avatars/{user_id}/...` shares the bucket, and `profiles.avatar_url` is readable club-wide, so the exact key was known. Signing it published a member's face on an unauthenticated URL. |
+| c | An `internal_only` row's object | Rights live on the ROW. `media_select_club` exposes `storage_path` club-wide, so a second row could name the same bytes and carry weaker rights. |
+| d | An object it never created | Nothing tied the column to any object the writer was permitted to write. |
+| e | A stale object | The read path re-checked the live row's RIGHTS but signed the path frozen in the snapshot, so a later path change left the share serving the old object. |
+
+(a), (b) and (c) were exploitable with no guessing. All of them required an
+authenticated member and an enabled club, and `public_sharing_enabled` has been
+false on every club throughout, so none was ever reachable in production.
+
+## 43. The canonical grammar
+
+A stored media object lives at exactly:
+
+```
+{club_id}/{segment}[/{segment}...]
+```
+
+Each segment starts alphanumeric and then allows `.`, `-` and `_`; the whole
+path is at most 512 characters and may never contain an `avatars` segment at any
+depth. The character set contains no `/` within a segment, no `\`, no `%`, no
+`:`, no space and no control byte, so traversal, percent encoding and control
+character tricks fail the character test before any structural test runs.
+Nothing normalises a path: the grammar accepts or rejects, because normalising
+an attacker's string and then trusting the result is the bug class being closed.
+
+Stated three times, and pinned together by `tests/fixtures/media-path-cases.json`
+which all three suites run:
+
+| Implementation | Used by |
+|---|---|
+| `public.is_canonical_media_path(text, uuid)` | the CHECK constraint and the read path |
+| `supabase/functions/_shared/mediaPath.ts` | the snapshot builder and the manage function |
+| `src/lib/mediaPath.ts` | the upload flows |
+
+The SQL function is not executable by `anon` or `authenticated`. A CHECK
+constraint does not require the writing role to hold EXECUTE on a function it
+calls, which 0042 asserts rather than assumes.
+
+## 44. The enforcement layers
+
+1. **Upload.** `mediaStoragePath()` builds the key and refuses one the database
+   would reject, so a bad path never leaves an orphaned object in the bucket.
+2. **Database (the boundary).** `media_storage_path_canonical` refuses a
+   non canonical or cross club path outright. `media_storage_path_unique`
+   allows at most one row per stored object, which is what closes (c): the
+   rights class can no longer be detached from the bytes it protects.
+3. **Snapshot creation.** `invalidMediaPaths()` makes the manage function return
+   a 422 carrying `media_path_invalid`, and `buildMediaEntry` throws rather than
+   put an unvalidated path into `_path`.
+4. **Read and signing.** `read_public_share` signs the **live** media row's
+   path, revalidated against the grammar. The snapshot's `_path` is demoted to a
+   marker that must agree; a disagreement fails the whole share closed,
+   neutrally. `read-content-share` re-checks the club agnostic shape as the last
+   gate before the service role signs.
+5. **Dependency lifecycle.** Changing a `storage_path` or `club_id` invalidates
+   every dependent active share and records `reason_code = path_changed`,
+   matching how a rights downgrade already behaves. All or nothing is preserved
+   throughout: there is no partial drill, session or programme.
+
+## 45. Existing data and rollback
+
+A read-only hosted preflight ran before the migration was written: 105 of 111
+media rows carry a path and **all 105 already satisfied the grammar**, with zero
+rows outside their club prefix, zero avatars paths, zero duplicates and zero
+malformed paths. The constraint was therefore added validated, with no data
+remediation and no production row rewritten.
+
+Rollback is documented in the migration header and is fully reversible: drop the
+trigger, function, index and constraint, then restore `read_public_share`,
+`content_share_metadata_ok` and `content_share_invalidate_dependents` from their
+0041/0038 bodies. Rolling back restores the stale path exposure, so it is a
+break-glass step rather than a routine one.
+
+## 46. What 0042 does NOT do
+
+- No club is enabled, no share is created, no content is reclassified.
+- No new capability, no new client policy and no new client grant.
+- No change to the rights model, the secret model, expiry or rate limiting.
+- The only audit change is one added `reason_code` value; the metadata allow
+  list stays closed and still carries no free text and no identifier.
+### Residuals
+
+Two, both recorded rather than fixed, and both bounded to the club's own
+namespace:
+
+1. **Orphan adoption.** An object in the club's own bucket prefix that no media
+   row names (an orphan left by a failed replace) can still be adopted by a new
+   row. Bounded to objects created under `media.create` by that club. Fixing it
+   needs an object ownership check the Storage schema does not expose to a row
+   constraint.
+2. **Delete and re-upload at the same key.** The invalidation trigger keys on the
+   media ROW's `storage_path` changing, so deleting the Storage object and
+   re-uploading different bytes at the same key leaves the row, the snapshot and
+   the share untouched, and the share then serves the new bytes. The in-place
+   overwrite route is already closed (`0027` has no UPDATE policy, so the Storage
+   API's upsert and move are refused for every caller), so this needs a delete
+   followed by an upload, which only a member holding `media.create` in that club
+   can do, against their own club's object. It is unchanged by 0042 rather than
+   introduced by it. Closing it would mean content-addressing the object or
+   recording an object version in the snapshot, which is a larger change than
+   this boundary needs.

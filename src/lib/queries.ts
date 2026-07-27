@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from './supabase'
+import { isCanonicalMediaPath } from './mediaPath'
 import {
   ACTIVITY_PAGE_SIZE,
   ACTIVITY_SELECT_COLUMNS,
@@ -822,6 +823,21 @@ export function oversizeMessage(file: File): string | null {
 
 // A storage key safe filename: keep word characters, dots and hyphens, collapse
 // the rest. The {club_id}/{uuid}- prefix guarantees uniqueness regardless.
+// Builds the canonical storage key for a club's own object and refuses to
+// return one the database CHECK constraint (media_storage_path_canonical,
+// 0042) would reject. Called before the object is written, so a path that
+// could never be stored does not leave an orphaned object in the bucket.
+// Avatars deliberately do not come through here: they live at
+// avatars/{user_id}/... , outside any club prefix, and carry no media row.
+function mediaStoragePath(clubId: string, filename: string, folder?: string): string {
+  const name = `${crypto.randomUUID()}-${sanitiseFilename(filename)}`
+  const path = folder ? `${clubId}/${folder}/${name}` : `${clubId}/${name}`
+  if (!isCanonicalMediaPath(path, clubId)) {
+    throw new Error('That file name cannot be stored safely. Rename the file and try again.')
+  }
+  return path
+}
+
 function sanitiseFilename(name: string): string {
   const cleaned = name
     .normalize('NFKD')
@@ -922,7 +938,7 @@ export function useUploadMedia() {
       }
       const tooBig = oversizeMessage(file)
       if (tooBig) throw new Error(tooBig)
-      const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+      const path = mediaStoragePath(clubId, file.name)
       const { error: uploadError } = await uploadFileWithProgress('media', path, file, { onProgress })
       if (uploadError) throw new Error(`The upload failed: ${uploadError.message}`)
 
@@ -1004,7 +1020,7 @@ export function useReplaceMedia() {
         const tooBig = oversizeMessage(file)
         if (tooBig) throw new Error(tooBig)
 
-        const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+        const path = mediaStoragePath(clubId, file.name)
         const { error: uploadError } = await uploadFileWithProgress('media', path, file, { onProgress })
         if (uploadError) throw new Error(`The upload failed: ${uploadError.message}`)
 
@@ -1101,7 +1117,7 @@ export function useAttachFAVideoFiles() {
         }
 
         const file = entry.file
-        const path = `${clubId}/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+        const path = mediaStoragePath(clubId, file.name)
         const { error: uploadError } = await uploadFileWithProgress('media', path, file, {
           onProgress: (loaded, total) => onBytes?.({ name: file.name, loaded, total }),
         })
@@ -2889,7 +2905,7 @@ export function useUploadCrest() {
   return useMutation<void, Error, { club: Club; file: File }>({
     mutationFn: async ({ club, file }) => {
       if (!CREST_TYPES.includes(file.type)) throw new Error('Use a PNG, JPG or SVG file.')
-      const path = `${club.id}/crest/${crypto.randomUUID()}-${sanitiseFilename(file.name)}`
+      const path = mediaStoragePath(club.id, file.name, 'crest')
       const { error: uploadError } = await supabase.storage
         .from('media')
         .upload(path, file, { contentType: file.type || undefined })

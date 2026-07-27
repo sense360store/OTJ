@@ -46,6 +46,7 @@ import {
   type ContentRights,
   type DrillRow,
   evaluateDrillEligibility,
+  invalidMediaPaths,
   evaluateProgrammeEligibility,
   evaluateSessionEligibility,
   ProgrammeBuildError,
@@ -275,6 +276,24 @@ function eligibilityWithMissing(
   return { eligible: blocked.length === 0, blocked }
 }
 
+// Aggregate rights eligibility says nothing about WHERE a public_full media
+// item points. A row whose stored path is not its own club's object must not be
+// snapshotted, because the anonymous read path signs with the service role and
+// bypasses every Storage policy. Appending the reason here keeps the refusal a
+// 422 carrying the closed reason vocabulary, exactly like every other blocker,
+// rather than the builder's defensive throw. The database CHECK constraint
+// added in 0042 is the actual boundary; this is the layer that explains it.
+function withPathBlockers(
+  elig: { eligible: boolean; blocked: readonly string[] },
+  media: Array<Pick<MediaRow, 'id' | 'club_id' | 'storage_path' | 'rights' | 'type'>>,
+): { eligible: boolean; blocked: string[] } {
+  const blocked = [...elig.blocked] as string[]
+  if (invalidMediaPaths(media).length > 0 && !blocked.includes('media_path_invalid')) {
+    blocked.push('media_path_invalid')
+  }
+  return { eligible: blocked.length === 0, blocked }
+}
+
 function rightsSummary(drill: DrillRow, media: MediaRow | null): Record<string, unknown> {
   return {
     source: drill.rights as ContentRights,
@@ -449,7 +468,7 @@ async function handlePreview(
   const loaded = await loadDrillAndMedia(admin, clubId, sourceId)
   if (loaded instanceof Response) return loaded
   const { drill, media, mediaMissing } = loaded
-  const elig = eligibilityWithMissing(drill, media, mediaMissing)
+  const elig = withPathBlockers(eligibilityWithMissing(drill, media, mediaMissing), media ? [media] : [])
   // Build the exact projection the coach would publish, using the same builder
   // as create, but only when eligible (the builder refuses restricted content).
   let preview: unknown = null
@@ -470,7 +489,7 @@ async function handlePreviewSession(admin: AdminClient, clubId: string, sourceId
   const loaded = await loadSessionForShare(admin, clubId, sourceId)
   if (loaded instanceof Response) return loaded
   const { session, drills, media, board } = loaded
-  const elig = evaluateSessionEligibility(session, drills, media, board)
+  const elig = withPathBlockers(evaluateSessionEligibility(session, drills, media, board), media)
   let preview: unknown = null
   if (elig.eligible) {
     preview = toPublicSessionProjection(buildSessionSnapshot(session, drills, media, board, new Date().toISOString()))
@@ -489,7 +508,7 @@ async function handlePreviewProgramme(admin: AdminClient, clubId: string, source
   const loaded = await loadProgrammeForShare(admin, clubId, sourceId)
   if (loaded instanceof Response) return loaded
   const { programme, templates, drills, media } = loaded
-  const elig = evaluateProgrammeEligibility(programme, templates, drills, media)
+  const elig = withPathBlockers(evaluateProgrammeEligibility(programme, templates, drills, media), media)
   let preview: unknown = null
   if (elig.eligible) {
     // The builder can still refuse on a cap only measurable after projection
@@ -536,7 +555,7 @@ async function handleCreate(
   const loaded = await loadDrillAndMedia(admin, caller.clubId, sourceId)
   if (loaded instanceof Response) return loaded
   const { drill, media, mediaMissing } = loaded
-  const elig = eligibilityWithMissing(drill, media, mediaMissing)
+  const elig = withPathBlockers(eligibilityWithMissing(drill, media, mediaMissing), media ? [media] : [])
   if (!elig.eligible) {
     return reply(422, { error: 'This drill cannot be shared publicly.', blocked: elig.blocked })
   }
@@ -600,7 +619,7 @@ async function handleCreateSession(
   const loaded = await loadSessionForShare(admin, caller.clubId, sourceId)
   if (loaded instanceof Response) return loaded
   const { session, drills, media, board } = loaded
-  const elig = evaluateSessionEligibility(session, drills, media, board)
+  const elig = withPathBlockers(evaluateSessionEligibility(session, drills, media, board), media)
   if (!elig.eligible) {
     return reply(422, { error: 'This session cannot be shared publicly.', blocked: elig.blocked })
   }
@@ -659,7 +678,7 @@ async function handleCreateProgramme(
   const loaded = await loadProgrammeForShare(admin, caller.clubId, sourceId)
   if (loaded instanceof Response) return loaded
   const { programme, templates, drills, media } = loaded
-  const elig = evaluateProgrammeEligibility(programme, templates, drills, media)
+  const elig = withPathBlockers(evaluateProgrammeEligibility(programme, templates, drills, media), media)
   if (!elig.eligible) {
     return reply(422, { error: 'This programme cannot be shared publicly.', blocked: elig.blocked })
   }
@@ -730,7 +749,7 @@ async function handleRefresh(admin: AdminClient, caller: Caller, shareId: string
   const loaded = await loadDrillAndMedia(admin, caller.clubId, share.drill_id)
   if (loaded instanceof Response) return loaded
   const { drill, media, mediaMissing } = loaded
-  const elig = eligibilityWithMissing(drill, media, mediaMissing)
+  const elig = withPathBlockers(eligibilityWithMissing(drill, media, mediaMissing), media ? [media] : [])
   if (!elig.eligible) {
     return reply(422, { error: 'This drill can no longer be shared publicly.', blocked: elig.blocked })
   }
@@ -762,7 +781,7 @@ async function handleRefreshSession(
   const loaded = await loadSessionForShare(admin, caller.clubId, sessionId)
   if (loaded instanceof Response) return loaded
   const { session, drills, media, board } = loaded
-  const elig = evaluateSessionEligibility(session, drills, media, board)
+  const elig = withPathBlockers(evaluateSessionEligibility(session, drills, media, board), media)
   if (!elig.eligible) {
     return reply(422, { error: 'This session can no longer be shared publicly.', blocked: elig.blocked })
   }
@@ -794,7 +813,7 @@ async function handleRefreshProgramme(
   const loaded = await loadProgrammeForShare(admin, caller.clubId, programmeId)
   if (loaded instanceof Response) return loaded
   const { programme, templates, drills, media } = loaded
-  const elig = evaluateProgrammeEligibility(programme, templates, drills, media)
+  const elig = withPathBlockers(evaluateProgrammeEligibility(programme, templates, drills, media), media)
   if (!elig.eligible) {
     return reply(422, { error: 'This programme can no longer be shared publicly.', blocked: elig.blocked })
   }

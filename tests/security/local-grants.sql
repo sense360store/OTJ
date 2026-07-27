@@ -84,7 +84,9 @@ revoke execute on function public.log_content_share_event(text, text, uuid, uuid
 revoke execute on function public.content_share_actor_has_cap(uuid, text) from anon, authenticated;
 revoke execute on function public.content_share_deps(public.content_share_kind, uuid, uuid) from anon, authenticated;
 revoke execute on function public.content_share_lock_rights(text, uuid, uuid) from anon, authenticated;
-revoke execute on function public.content_share_invalidate_dependents(text, uuid, uuid, uuid) from anon, authenticated;
+-- 0042 gave the invalidator a fifth argument (the reason code), so the
+-- signature named here must match or this whole file fails to apply.
+revoke execute on function public.content_share_invalidate_dependents(text, uuid, uuid, uuid, text) from anon, authenticated;
 -- The five rights downgrade trigger functions are private too (the migration
 -- revokes them). PostgREST never exposes trigger-returning functions as RPC, so
 -- this is grant-posture hygiene to mirror production, not a reachable surface.
@@ -93,6 +95,8 @@ revoke execute on function public.audit_rights_downgrade_media() from anon, auth
 revoke execute on function public.audit_rights_downgrade_sessions() from anon, authenticated;
 revoke execute on function public.audit_rights_downgrade_programmes() from anon, authenticated;
 revoke execute on function public.audit_rights_downgrade_templates() from anon, authenticated;
+-- 0042 adds a sixth trigger function, on a storage_path or club_id change.
+revoke execute on function public.audit_storage_path_change_media() from anon, authenticated;
 
 -- 0039 public share read (PR 2). manage_content_share gained two parameters
 -- (p_snapshot, p_snapshot_version) via a drop-and-recreate, so its signature is

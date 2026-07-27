@@ -44,6 +44,7 @@ import {
   validatePublicProgrammeSnapshot,
   validatePublicSessionSnapshot,
 } from '../_shared/share.ts'
+import { isCanonicalMediaPathShape } from '../_shared/mediaPath.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -207,8 +208,17 @@ Deno.serve(async (req) => {
     // Order is preserved by the storage API, so results map back positionally;
     // the per item failure tolerance is unchanged (a path that fails to sign
     // simply renders without media rather than failing the whole share).
+    // Last gate before the service role signs. read_public_share already
+    // revalidated each path against the live media row and its club, so a path
+    // failing here means something upstream is wrong; drop it rather than hand
+    // a malformed key to Storage. The club agnostic shape is all that can be
+    // checked here: this function is never told which club a share belongs to.
     const valid = toSign.filter(
-      (item) => item && typeof item.ref === 'string' && typeof item.path === 'string',
+      (item) =>
+        item &&
+        typeof item.ref === 'string' &&
+        typeof item.path === 'string' &&
+        isCanonicalMediaPathShape(item.path),
     )
     signFailures += toSign.length - valid.length
     if (valid.length > 0) {

@@ -329,7 +329,7 @@ describe('manage_content_share is service role only', () => {
     // The writer and internal helpers are private too.
     expect(scalar(`select has_function_privilege('authenticated', 'public.log_content_share_event(text, text, uuid, uuid, uuid, jsonb)', 'EXECUTE')`)).toBe('f')
     expect(scalar(`select has_function_privilege('authenticated', 'public.content_share_deps(public.content_share_kind, uuid, uuid)', 'EXECUTE')`)).toBe('f')
-    expect(scalar(`select has_function_privilege('authenticated', 'public.content_share_invalidate_dependents(text, uuid, uuid, uuid)', 'EXECUTE')`)).toBe('f')
+    expect(scalar(`select has_function_privilege('authenticated', 'public.content_share_invalidate_dependents(text, uuid, uuid, uuid, text)', 'EXECUTE')`)).toBe('f')
   })
 
   it('no accidental executable overload exists (exactly one manage_content_share)', () => {
