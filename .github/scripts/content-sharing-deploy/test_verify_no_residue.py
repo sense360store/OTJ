@@ -340,8 +340,6 @@ class TestNoSecretPrinted(unittest.TestCase):
         self.assertNotIn(DB_PASSWORD_SENTINEL, buf.getvalue())
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class TestPhaseArgument(unittest.TestCase):
@@ -403,4 +401,38 @@ class TestPhaseArgument(unittest.TestCase):
         self.assertIn('str(r.get("last_migration")) != EXPECTED_LAST_MIGRATION', src)
         self.assertNotIn("startswith(EXPECTED_LAST_MIGRATION", src)
         self.assertNotIn(">= EXPECTED_LAST_MIGRATION", src)
-        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260726154133")
+        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260727110609")
+
+
+# The runner must stay at the very BOTTOM of this file. It previously sat above
+# TestPhaseArgument, so unittest.main() ran before that class was defined and
+# its six tests, including the exact-equality guard on EXPECTED_LAST_MIGRATION,
+# never executed in CI. test_every_test_class_runs below fails if a class is
+# ever added after this point again.
+class TestSuiteCompleteness(unittest.TestCase):
+    def test_every_test_class_runs(self):
+        """Nothing may be defined after the runner block."""
+        import inspect
+        import sys
+
+        module = sys.modules[__name__]
+        classes = [
+            v for v in vars(module).values()
+            if inspect.isclass(v) and issubclass(v, unittest.TestCase)
+        ]
+        collected = unittest.defaultTestLoader.loadTestsFromModule(module)
+
+        def count(suite):
+            n = 0
+            for item in suite:
+                n += count(item) if isinstance(item, unittest.TestSuite) else 1
+            return n
+
+        declared = sum(
+            len([m for m in dir(c) if m.startswith("test")]) for c in classes
+        )
+        self.assertEqual(count(collected), declared)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

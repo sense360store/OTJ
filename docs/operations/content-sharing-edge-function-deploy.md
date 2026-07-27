@@ -232,7 +232,7 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260726154133` (`0041_public_programme_read`, applied
+Current value: `20260727110609` (`0042_public_media_path_boundary`, applied
 2026-07-26 as part of the Content Sharing PR 4 rollout).
 
 ### If the run fails at inventory verification
@@ -316,7 +316,7 @@ hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260726154133` (0041, applied as part of the Content Sharing PR 4 rollout);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260727110609` (0042, applied as part of the media path hardening rollout);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
