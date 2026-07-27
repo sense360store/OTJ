@@ -433,6 +433,7 @@ export function Modal({
   footer,
   wide,
   dismissible = true,
+  focusKey,
 }: {
   title: ReactNode
   sub?: ReactNode
@@ -443,6 +444,15 @@ export function Modal({
   // Defaults to true (unchanged for every existing caller). A caller passes
   // false while a write it owns is in flight, freezing every dismissal route.
   dismissible?: boolean
+  // A dialog that replaces its own body in place (the Share dialog's steps)
+  // passes a value that changes with the body. Escape and the Tab trap are
+  // bound to the dialog element, so they only work while focus is inside it,
+  // and swapping the body removes the element focus was on: Chrome fires no
+  // focusout for a removed node, so the onBlur recovery below never runs and
+  // the dialog goes inert. Changing this pulls focus back to the container,
+  // which also announces the new title. Left undefined, nothing changes for
+  // the dialogs that mount one body and keep it.
+  focusKey?: string | number
 }) {
   const { onEscapeKey, onOverlayClick, closeDisabled } = modalDismissControls(dismissible, onClose)
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -463,12 +473,18 @@ export function Modal({
     // Copy the ref into the effect so the cleanup uses the value captured at
     // open, not whatever the ref holds at unmount.
     const opener = openerRef.current
-    const dialog = dialogRef.current
-    if (dialog && !dialog.contains(document.activeElement)) dialog.focus()
     return () => {
       if (opener && typeof document !== 'undefined' && document.contains(opener)) opener.focus()
     }
   }, [])
+
+  // Move focus inside the dialog on open, and again whenever a caller replaces
+  // the body in place. Focusing the container (role="dialog", labelled and
+  // described) announces the dialog, and the new title, to a screen reader.
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus()
+  }, [focusKey])
 
   // Keep focus inside the dialog. Escape and the Tab trap below are handled on
   // the dialog element, so they only fire while focus is within it. That breaks
@@ -616,7 +632,7 @@ export function ActionError({ children, onRetry, style }: { children: ReactNode;
 // The internal club link Share control, presentational so the static renderer
 // covers the label, the 44px touch target, the explanatory copy and the
 // success and failure feedback without the share hook or a DOM. The container
-// (src/components/ShareButton.tsx) and the planner wire the real share.
+// (src/components/ShareModal.tsx) and the planner wire the real share.
 //
 // Success announces through role="status" ("Link copied" or "Shared"); a
 // failure is an actionable role="alert" (ActionError) with a Retry, and its

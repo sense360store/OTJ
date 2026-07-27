@@ -1014,7 +1014,12 @@ export function useReplaceMedia() {
 
       const applyUpdate = async (patch: Record<string, unknown>) => {
         const { data, error } = await supabase.from('media').update(patch).eq('id', id).select('id')
-        if (error) throw new Error(`Could not update the media record: ${error.message}`)
+        if (error) {
+          // An England Football refusal (0043) reads as itself; anything else
+          // keeps the existing wording.
+          if ((error as { code?: string }).code === '42501') throw contentWriteError(error)
+          throw new Error(`Could not update the media record: ${error.message}`)
+        }
         if (!data?.length) throw new Error('You do not have permission to replace this item.')
       }
 
@@ -1306,6 +1311,21 @@ export interface DrillInput {
 // The attribution label always derives from the link at write time, so the
 // two cannot drift apart. An empty or unparsable link stores null for both.
 // Shared by every write that carries a source (drills here, sessions below).
+// Migration 0043 refuses two writes on England Football derived content: raising
+// its sharing level, and clearing its recorded source. Both arrive as 42501.
+// Every content write can trip them now (pasting an England Football link into
+// the Source field of a row that is already public, or clearing that field on an
+// imported row), so each one translates the refusal into the sentence the locked
+// control shows plus the hint that says which field to change. Without this the
+// coach sees the raw database message and no way to act on it.
+export function contentWriteError(error: unknown): Error {
+  const e = error as { code?: string; message?: string; hint?: string } | null
+  if (e && e.code === '42501' && e.message) {
+    return new Error(e.hint ? `${e.message} ${e.hint}` : e.message)
+  }
+  return error instanceof Error ? error : new Error('Something went wrong. Try again.')
+}
+
 function toSourceFields(rawUrl: string): { source_url: string | null; source_label: string | null } {
   const url = rawUrl.trim()
   return {
@@ -1351,7 +1371,7 @@ export function useInsertDrill() {
         .insert({ ...toDrillWriteRow(input), club_id: profile.club_id, created_by: user.id })
         .select(DRILL_COLS)
         .single()
-      if (error) throw error
+      if (error) throw contentWriteError(error)
       return toDrill(data as unknown as DrillRow)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['drills'] }),
@@ -1368,7 +1388,7 @@ export function useUpdateDrill() {
         .eq('id', id)
         .select(DRILL_COLS)
         .single()
-      if (error) throw error
+      if (error) throw contentWriteError(error)
       return toDrill(data as unknown as DrillRow)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['drills'] }),
@@ -1432,7 +1452,7 @@ export function useInsertTemplate() {
         })
         .select(TEMPLATE_COLS)
         .single()
-      if (error) throw error
+      if (error) throw contentWriteError(error)
       return toTemplate(data as unknown as TemplateRow)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['templates'] }),
@@ -1449,7 +1469,7 @@ export function useUpdateTemplate() {
         .eq('id', id)
         .select(TEMPLATE_COLS)
         .single()
-      if (error) throw error
+      if (error) throw contentWriteError(error)
       return toTemplate(data as unknown as TemplateRow)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['templates'] }),
@@ -1571,7 +1591,7 @@ export function useInsertProgramme() {
         .insert({ ...toProgrammeWriteRow(input), club_id: profile.club_id, created_by: user.id })
         .select(PROGRAMME_COLS)
         .single()
-      if (error) throw error
+      if (error) throw contentWriteError(error)
       return toProgramme(data as unknown as ProgrammeRow)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['programmes'] }),
@@ -1588,7 +1608,7 @@ export function useUpdateProgramme() {
         .eq('id', id)
         .select(PROGRAMME_COLS)
         .single()
-      if (error) throw error
+      if (error) throw contentWriteError(error)
       return toProgramme(data as unknown as ProgrammeRow)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['programmes'] }),
@@ -1827,7 +1847,7 @@ export function useUpsertSession() {
           .eq('id', input.id)
           .select(SESSION_COLS)
           .single()
-        if (error) throw error
+        if (error) throw contentWriteError(error)
         return toSession(data as unknown as SessionRow)
       }
 
@@ -1840,7 +1860,7 @@ export function useUpsertSession() {
           .insert({ id: input.id, coach_id: user.id, club_id: profile.club_id, ...editable })
           .select(SESSION_COLS)
           .single()
-        if (error) throw error
+        if (error) throw contentWriteError(error)
         return toSession(data as unknown as SessionRow)
       }
 
@@ -4470,7 +4490,7 @@ export function useUnarchiveSeason() {
 // =====================================================================
 
 // Content sharing (Content Sharing PR 2 drills, PR 3 sessions). One kind-aware
-// hook set drives the shared PublicShareControl for both a drill and a session;
+// hook set drives the shared ShareModal for a drill, a session and a programme;
 // the wire always carries kind + sourceId, and the source column and dependency
 // authority are re-derived server side by the lifecycle RPC.
 export type ContentShareKind = 'drill' | 'session' | 'programme'

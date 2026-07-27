@@ -6,6 +6,7 @@ import {
   previewGate,
   type PublicSectionInput,
   publicSectionState,
+  shareHasExpired,
   stepAfterClassify,
 } from './shareFlow'
 
@@ -133,5 +134,26 @@ describe('canAttemptCreate', () => {
   it('refuses without a preview at all', () => {
     const blocked = previewGate({ eligible: false, hasValidSnapshot: false })
     expect(canAttemptCreate({ gate: blocked, previewStale: false, writing: false })).toBe(false)
+  })
+})
+
+describe('shareHasExpired', () => {
+  const now = Date.parse('2026-07-27T12:00:00.000Z')
+
+  it('treats a link with no expiry as live', () => {
+    expect(shareHasExpired(null, now)).toBe(false)
+  })
+
+  it('treats a future expiry as live and a past one as expired', () => {
+    expect(shareHasExpired('2026-08-27T12:00:00.000Z', now)).toBe(false)
+    expect(shareHasExpired('2026-07-26T12:00:00.000Z', now)).toBe(true)
+  })
+
+  it('treats the exact moment of expiry as expired', () => {
+    expect(shareHasExpired('2026-07-27T12:00:00.000Z', now)).toBe(true)
+  })
+
+  it('does not call an unparsable timestamp expired, which would hide a live link', () => {
+    expect(shareHasExpired('not a date', now)).toBe(false)
   })
 })

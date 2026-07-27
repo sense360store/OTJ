@@ -119,6 +119,7 @@ describe('PublicLinkSectionView', () => {
   const base = {
     noun: 'programme',
     expiry: 'Active, no expiry',
+    expired: false,
     busy: false,
     onCreate: noop,
     onManage: noop,
@@ -152,6 +153,16 @@ describe('PublicLinkSectionView', () => {
     expect(html).toContain('Turn off this link')
     expect(html).not.toContain('Manage this link')
     expect(html).toContain('not replace it')
+  })
+
+  it('says an expired link has expired, and does not claim anyone can open it', () => {
+    // Every link this dialog creates expires after 90 days, and the status read
+    // still returns the row, because an expired share is refreshable.
+    const html = renderToStaticMarkup(<PublicLinkSectionView {...base} section="owned" expired expiry="Expired" />)
+    expect(html).toContain('This public link has expired')
+    expect(html).not.toContain('A public link is live')
+    expect(html).not.toContain('without signing in')
+    expect(html).toContain('unavailable message')
   })
 
   it('keeps every control at a 44px target', () => {

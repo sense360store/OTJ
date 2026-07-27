@@ -262,6 +262,98 @@ describe('England Football derived content is locked at club only', () => {
     expect((data as { source_url: string | null }).source_url).toBeNull()
   })
 
+  // The two-save bypass. Rule 1 alone is cosmetic: the source columns are
+  // ordinary editable columns, so clearing the Source link field (one save,
+  // rights untouched) leaves nothing for rule 1 to see on the second save.
+  it('refuses clearing the source of an FA sourced row, so the lock cannot be stripped', async () => {
+    const id = await makeDrill({ owner: coachOneId, sourceUrl: FA_URL })
+    const { error } = await coachOne
+      .from('drills')
+      .update({ source_url: null, source_label: null })
+      .eq('id', id)
+      .select('id')
+    expect(error).not.toBeNull()
+    expect(error!.code).toBe('42501')
+    const { data } = await svc.from('drills').select('source_url').eq('id', id).single()
+    expect((data as { source_url: string | null }).source_url).toBe(FA_URL)
+  })
+
+  it('refuses clearing the source and raising the level in one statement', async () => {
+    const id = await makeDrill({ owner: coachOneId, sourceUrl: FA_URL })
+    const { error } = await coachOne
+      .from('drills')
+      .update({ source_url: null, source_label: null, rights: 'public_full' })
+      .eq('id', id)
+      .select('id')
+    expect(error).not.toBeNull()
+    expect(await rightsOf('drills', id)).toBe('internal_only')
+  })
+
+  it('refuses clearing the drill source key, the other England Football evidence', async () => {
+    const id = await makeDrill({ owner: coachOneId, sourceKey: `${FA_URL}#activity-2` })
+    const { error } = await coachOne.from('drills').update({ source_key: null }).eq('id', id).select('id')
+    expect(error).not.toBeNull()
+  })
+
+  it('refuses the strip on every table, not only drills', async () => {
+    const mediaId = await makeMedia({ sourceUrl: FA_URL })
+    const { error } = await svc.from('media').update({ source_url: null }).eq('id', mediaId).select('id')
+    expect(error).not.toBeNull()
+    for (const table of ['programmes', 'templates', 'sessions'] as const) {
+      const row: Record<string, unknown> = {
+        club_id: CLUB_A,
+        name: `${MARK}-strip-${table}`,
+        rights: 'internal_only',
+        source_url: FA_URL,
+      }
+      if (table === 'sessions') row.coach_id = coachOneId
+      if (table === 'programmes') row.weeks = 1
+      const { data, error: insertError } = await svc.from(table).insert(row).select('id').single()
+      expect(insertError).toBeNull()
+      const { error: stripError } = await svc
+        .from(table)
+        .update({ source_url: null })
+        .eq('id', (data as { id: string }).id)
+        .select('id')
+      expect(stripError, `${table} must refuse the strip`).not.toBeNull()
+      await svc.from(table).delete().eq('id', (data as { id: string }).id)
+    }
+  })
+
+  it('allows swapping one England Football source for another', async () => {
+    const id = await makeDrill({ owner: coachOneId, sourceUrl: FA_URL })
+    const { error } = await coachOne
+      .from('drills')
+      .update({ source_url: 'https://learn.englandfootball.com/resources/session/other' })
+      .eq('id', id)
+      .select('id')
+    expect(error).toBeNull()
+  })
+
+  it('allows clearing the source of a row that was never England Football', async () => {
+    const id = await makeDrill({ owner: coachOneId, sourceUrl: OTHER_URL })
+    const { error } = await coachOne.from('drills').update({ source_url: null }).eq('id', id).select('id')
+    expect(error).toBeNull()
+  })
+
+  it('matches the URL parser on userinfo, a port and stray whitespace', async () => {
+    // The 0038 host extraction stopped at the first colon and treated userinfo
+    // as part of the host, so it disagreed with the WHATWG parser the two
+    // TypeScript readers use, and it disagreed the permissive way.
+    const cases: Array<[string, boolean]> = [
+      ['https://x@learn.englandfootball.com/a', true],
+      ['https://learn.englandfootball.com:443/a', true],
+      ['  https://cdn.englandfootball.com/a  ', true],
+      ['https://learn.englandfootball.com:8080@evil.test/', false],
+      ['https://notenglandfootball.com/a', false],
+    ]
+    for (const [url, expected] of cases) {
+      const { data, error } = await svc.rpc('content_rights_is_fa_url', { p_url: url })
+      expect(error).toBeNull()
+      expect(data, url).toBe(expected)
+    }
+  })
+
   it('does not lock a non England Football source: that is evidence, not proof', async () => {
     const id = await makeDrill({ owner: coachOneId, sourceUrl: OTHER_URL })
     const { error } = await coachOne.from('drills').update({ rights: 'public_full' }).eq('id', id).select('id')

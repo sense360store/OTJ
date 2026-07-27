@@ -56,6 +56,22 @@ export function deriveProvenance(f: SourceFields): SourceProvenance {
   return 'none'
 }
 
+// The strongest provenance across several readings of the same row. An edit
+// form holds two: the saved row, and the draft the user is typing into. Taking
+// the strongest means pasting an England Football link into the Source field
+// locks the level immediately, before the save that would make the database
+// refuse it, and clearing that field in the draft does not unlock a row whose
+// saved source is still England Football.
+export function deriveProvenanceAll(fields: readonly SourceFields[]): SourceProvenance {
+  let out: SourceProvenance = 'none'
+  for (const f of fields) {
+    const p = deriveProvenance(f)
+    if (p === 'fa') return 'fa'
+    if (p === 'third_party') out = 'third_party'
+  }
+  return out
+}
+
 // The three levels in the club's words. The enum names never reach a screen.
 export interface RightsOption {
   value: ContentRights
@@ -145,7 +161,13 @@ export function rightsControlState({
   const locked = provenance === 'fa'
   if (locked) {
     return {
-      current: 'internal_only',
+      // The row's REAL stored level, not an assumed club only. The database
+      // holds England Football content at club only, but the two readings can
+      // still disagree for a moment (a source pasted into a draft, a row
+      // classified before the lock existed), and telling someone their
+      // publishable row is club only would be a false statement about their
+      // own content with no control offered to correct it.
+      current,
       editable: false,
       locked: true,
       note: FA_LOCK_NOTE,

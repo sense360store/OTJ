@@ -437,7 +437,7 @@ export function DrillDetail() {
           {/* One Share action, next to the page's other actions. It opens the
               dialog that holds both the club link and the public link, so
               public sharing no longer hides in a section below the fold. */}
-          <div className="row" style={{ gap: 10, marginTop: 10 }}>
+          <div style={{ marginTop: 10 }}>
             <ShareAction
               kind="drill"
               sourceId={drill.id}

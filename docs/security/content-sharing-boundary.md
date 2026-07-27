@@ -1109,9 +1109,15 @@ The rule has three implementations, kept aligned deliberately:
 
 | Implementation | Used by |
 |---|---|
-| `public.content_rights_is_fa_url(text)` plus `content_rights_fa_lock()` | the CHECK the database enforces |
+| `public.content_rights_fa_evidence(text, text, text)` | the five triggers the database enforces |
 | `rowProvenance()` in `supabase/functions/_shared/share.ts` | the preview's provenance summary |
 | `deriveProvenance()` in `src/lib/contentRights.ts` | which control the edit form renders |
+
+The client reads the saved row and the unsaved draft together and takes the
+stronger of the two (`deriveProvenanceAll`), so pasting an England Football link
+locks the level before the save the database would refuse, and clearing that
+field in a draft does not unlock a row whose saved source is still England
+Football.
 
 The database is the boundary. The other two decide what to say and what to
 offer, and are deliberately no wider than the database will accept.
@@ -1128,25 +1134,69 @@ exists, and the suite proves each.
 
 ## 50. The England Football lock (migration 0043)
 
-`content_rights_fa_lock()` is a `BEFORE INSERT OR UPDATE` trigger on `drills`,
-`sessions`, `programmes`, `templates` and `media`. It refuses any `rights` value
-above `internal_only` on a row whose recorded source is England Football
-derived, and raises `42501`.
+Five `BEFORE INSERT OR UPDATE` triggers, one per rights carrying table, each a
+small function reading its own columns and calling two shared helpers:
+`content_rights_fa_evidence(url, key, label)` states what counts as England
+Football provenance, and `content_rights_fa_assert(...)` states the two
+refusals. Both raise `42501`.
 
-It is a data rule, not a permission: the owning coach, a manager, an admin and
-the service role are all refused equally, and the suite proves the service role
-case explicitly. Lowering back to club only is always allowed, and an ordinary
-edit that leaves the level alone is untouched. A row that tries to acquire an
-England Football source while already classified as publishable is refused too,
-so the invariant cannot be reached by the back door.
+**Rule 1.** A row whose recorded source is England Football derived cannot be
+raised above `internal_only`.
+
+**Rule 2.** That recorded source cannot be removed.
+
+Rule 2 is what makes rule 1 real. The source columns are ordinary editable
+columns covered by the same owner-or-manager UPDATE policy as everything else,
+so without it a coach could clear the Source link field in the edit form (one
+save, rights untouched, so rule 1 never fires), reopen the form and classify the
+now source-free row as public (a second save, no evidence left for rule 1 to
+see). Two ordinary saves through the shipped UI, no hand written call, and an
+England Football session is public. Rule 2 is also correct on its own terms: the
+club's permission to use England Football content is conditional on the source
+being recorded and displayed, so a write that strips the attribution is one to
+refuse whatever it does to rights. Swapping one England Football source for
+another stays allowed; only leaving the England Football set is refused.
+
+Both rules are data rules, not permissions: the owning coach, a manager, an
+admin and the service role are refused equally, and the suite proves the service
+role case explicitly. Lowering back to club only is always allowed, and an
+ordinary edit that leaves the level and the source alone is untouched. A row
+that tries to acquire an England Football source while already classified as
+publishable is refused too.
 
 Before 0043 the invariant was proved once, by 0038's backfill, and enforced by
 nothing. Any member holding the write arm could have published an FA imported
 drill through a hand written PostgREST call. The only reason it had not
 happened is that no screen offered it, which is precisely what this change adds.
 
-The migration self verifies both halves: no existing England Football derived
-row is classified above club only, and all five triggers are installed.
+### The host rule
+
+0038's `content_rights_is_fa_url` extracted the host with `[^/:?#]+`, which
+stops at the first colon and treats userinfo as part of the host. The two
+TypeScript readers use the WHATWG URL parser. They disagreed, and the
+disagreement ran the permissive way for the database:
+
+| URL | 0038 SQL | JS | 0043 SQL |
+|---|---|---|---|
+| `https://x@learn.englandfootball.com/a` | not FA | FA | FA |
+| `https://learn.englandfootball.com:8080@evil.test/` | FA | not FA | not FA |
+| `https:\learn.englandfootball.com` | not FA | FA | FA |
+| `'  https://learn.englandfootball.com/a'` | not FA | FA | FA |
+
+0043 replaces the body: it takes the whole authority, translates backslashes,
+trims whitespace, drops userinfo at the last `@` and drops the port. A read only
+check of the hosted data before writing the migration found zero rows on any of
+the five tables carrying an `@`, a backslash or a port in `source_url`, so no
+existing classification changes.
+
+### Self verification
+
+The migration proves, before it commits: no existing England Football derived
+row is classified above club only; all five triggers are installed by name; the
+two helpers and `content_rights_is_fa_url` are still executable by
+`authenticated` (a SECURITY INVOKER trigger evaluates them as the writing role,
+the lesson 0042 learned with the media path CHECK constraint); and the corrected
+host rule matches the URL parser in both directions.
 
 ## 51. Non England Football third party content
 

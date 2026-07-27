@@ -182,7 +182,11 @@ function SessionDayView({ session }: { session: Session }) {
       {(canManage || canShare || canPublishShare || canRevokeAnyShare) && (
         <div className="row wrap" style={{ gap: 9, marginBottom: 12 }}>
           {canManage && (
-            <button className="btn btn-ghost btn-sm" onClick={() => nav('planner', { sessionId: session.id })}>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ minHeight: 44 }}
+              onClick={() => nav('planner', { sessionId: session.id })}
+            >
               <Icon.edit />
               Edit plan
             </button>

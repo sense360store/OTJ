@@ -18,7 +18,7 @@ import { useState } from 'react'
 import type { ContentRights } from '../lib/data'
 import {
   canSaveRights,
-  deriveProvenance,
+  deriveProvenanceAll,
   type RightsControlState,
   RIGHTS_NOUN,
   type RightsKind,
@@ -27,6 +27,7 @@ import {
   type SourceFields,
 } from '../lib/contentRights'
 import { useUpdateContentRights } from '../lib/queries'
+import { initialRightsSelection } from '../lib/shareFlow'
 import { ActionError } from './ui'
 import { Icon } from './icons'
 
@@ -154,27 +155,39 @@ export function RightsControl({
   id,
   current,
   source,
+  draftSource,
   canEdit,
   onSaved,
+  onSavingChange,
   idPrefix,
 }: {
   kind: RightsKind
   id: string
   current: ContentRights
+  // The saved row's source columns.
   source: SourceFields
+  // The unsaved source the user is typing into the same form, where there is
+  // one. Read together with the saved row and the strongest wins, so pasting an
+  // England Football link locks the control before the save the database would
+  // refuse, and clearing that field in the draft does not unlock a row whose
+  // saved source is still England Football.
+  draftSource?: SourceFields
   // The caller's existing ownership decision, the same one that shows Edit.
   canEdit: boolean
   onSaved?: (rights: ContentRights) => void
+  // Lets a surrounding dialog freeze its dismissal routes while this write is
+  // in flight, so closing cannot drop the result of a write that still lands.
+  onSavingChange?: (saving: boolean) => void
   idPrefix?: string
 }) {
   const noun = RIGHTS_NOUN[kind]
   const state = rightsControlState({
     current,
-    provenance: deriveProvenance(source),
+    provenance: deriveProvenanceAll(draftSource ? [source, draftSource] : [source]),
     canEdit,
     isMedia: kind === 'media',
   })
-  const [selected, setSelected] = useState<ContentRights>(state.current)
+  const [selected, setSelected] = useState<ContentRights>(() => initialRightsSelection(state.current))
   const [confirmed, setConfirmed] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -183,6 +196,7 @@ export function RightsControl({
   const save = () => {
     setError(null)
     setSaved(false)
+    onSavingChange?.(true)
     update.mutate(
       { kind, id, rights: selected },
       {
@@ -192,6 +206,7 @@ export function RightsControl({
           onSaved?.(res.rights)
         },
         onError: (e) => setError(e.message),
+        onSettled: () => onSavingChange?.(false),
       },
     )
   }

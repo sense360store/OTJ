@@ -450,6 +450,7 @@ export function ProgrammeFormModal({
             id={programme.id}
             current={programme.rights}
             source={{ sourceUrl: programme.sourceUrl, sourceLabel: programme.sourceLabel }}
+            draftSource={{ sourceUrl: form.sourceUrl }}
             canEdit
           />
         ) : (

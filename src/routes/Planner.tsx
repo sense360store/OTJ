@@ -435,7 +435,7 @@ export function PlannerActionsView({
   canStart: boolean
   pending: PlannerAction | null
   failed: PlannerAction | null
-  // "Share" for a saved, clean session (no write) or "Save and share" for a new
+  // "Copy the club link" for a saved, clean session (no write) or "Save and copy
   // or dirty draft; the note explains the effect and the account requirement.
   shareLabel: string
   shareNote: string
@@ -946,7 +946,11 @@ function PlannerEditor({
   // or pre-save data and a rapid double click fires one save (the shared guard).
   const dirty = sessionDirty(session, baseline)
   const canShareDirect = shareDecision(savedId, dirty) === 'direct'
-  const shareLabel = canShareDirect ? 'Share' : 'Save and share'
+  // Named for what it does, not just "Share". The session day page's Share
+  // action opens the dialog that offers the club link AND the public link; this
+  // one only ever copies the club link, and two identically labelled buttons
+  // that do different things is the confusion this whole change removes.
+  const shareLabel = canShareDirect ? 'Copy the club link' : 'Save and copy the club link'
   const shareNote = canShareDirect ? SHARE_ACCOUNT_NOTE : `${SAVE_AND_SHARE_NOTE} ${SHARE_ACCOUNT_NOTE}`
   const onShare = () => {
     if (busy) return

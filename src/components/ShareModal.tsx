@@ -67,8 +67,17 @@ import {
   previewGate,
   publicSectionState,
   type PublicSectionKind,
+  shareHasExpired,
   type ShareStep,
+  stepAfterClassify,
 } from '../lib/shareFlow'
+
+// Reads the wall clock, exactly as expiryLabel below does. The decision itself
+// is pure and tested in shareFlow.ts; this is the one place that supplies the
+// clock, so the render never depends on a value a test cannot pin.
+function hasExpired(expiresAt: string | null): boolean {
+  return shareHasExpired(expiresAt, Date.now())
+}
 
 function expiryLabel(expiresAt: string | null): string {
   if (!expiresAt) return 'Active, no expiry'
@@ -178,16 +187,22 @@ export function PublicShareBlockedView({
 export function PublicSharePreviewBody({
   kind,
   snapshot,
+  showRightsWarning = true,
 }: {
   kind: ContentShareKind
   snapshot: PublicDrillSnapshot | PublicSessionSnapshot | PublicProgrammeSnapshot
+  // Comes from previewGate, which is the one place that decides the warning and
+  // the projection appear together and never apart.
+  showRightsWarning?: boolean
 }) {
   return (
     <div className="public-preview">
-      <div className="public-freetext-warning">
-        <strong>You wrote this, it will be public.</strong>
-        <p className="muted">{RIGHTS_WARNING}</p>
-      </div>
+      {showRightsWarning && (
+        <div className="public-freetext-warning">
+          <strong>You wrote this, it will be public.</strong>
+          <p className="muted">{RIGHTS_WARNING}</p>
+        </div>
+      )}
       <div className="public-preview-frame">
         {kind === 'session'
           ? <PublicSessionView snapshot={snapshot as PublicSessionSnapshot} mode="preview" />
@@ -205,6 +220,7 @@ export function PublicLinkSectionView({
   section,
   noun,
   expiry,
+  expired,
   busy,
   onCreate,
   onManage,
@@ -213,6 +229,10 @@ export function PublicLinkSectionView({
   section: PublicSectionKind
   noun: string
   expiry: string
+  // A share row survives its own expiry in the status answer, because an
+  // expired share is still refreshable. Saying "a public link is live" over one
+  // that stopped working is the wrong way round to be wrong.
+  expired: boolean
   busy: boolean
   onCreate: () => void
   onManage: () => void
@@ -253,10 +273,12 @@ export function PublicLinkSectionView({
       {(section === 'owned' || section === 'others' || section === 'readonly') && (
         <>
           <p className="public-status-line" style={{ fontWeight: 700 }}>
-            A public link is live. {expiry}
+            {expired ? 'This public link has expired.' : `A public link is live. ${expiry}`}
           </p>
           <p className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
-            Anyone with it can open this {noun} without signing in.
+            {expired
+              ? `Anyone opening it now sees an unavailable message. Update what people see to start it again, or turn it off for good.`
+              : `Anyone with it can open this ${noun} without signing in.`}
           </p>
           {section === 'owned' && (
             <button type="button" className="btn btn-ghost" style={{ minHeight: 44 }} onClick={onManage}>
@@ -349,6 +371,12 @@ export function ShareDialog({
   // Set when a classification is saved while a preview answer is on screen: the
   // answer is now stale, so a create may not ride it.
   const [previewStale, setPreviewStale] = useState(false)
+  // A rights save runs inside RightsControl, so the dialog has to be told about
+  // it to freeze its own dismissal routes: closing mid-write would drop the
+  // callback that marks the preview stale while the write still lands.
+  const [classifying, setClassifying] = useState(false)
+  // Announced for the outcomes that change nothing visible on screen.
+  const [notice, setNotice] = useState('')
   const idempotencyKey = useRef<string>('')
 
   // Clear the secret bearing result on unmount. The secret only ever lives in
@@ -357,6 +385,7 @@ export function ShareDialog({
 
   const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
   const share: ContentShareStatus | null = statusQ.data?.share ?? null
+  const expired = hasExpired(share?.expiresAt ?? null)
   const section = publicSectionState({
     sharingEnabled: statusQ.data?.sharingEnabled ?? false,
     statusPending: statusQ.isPending,
@@ -379,11 +408,13 @@ export function ShareDialog({
     setResult(null) // clears the secret from state
     setCopyState(NO_FEEDBACK)
     setError(null)
+    setNotice('')
     onClose()
   }
 
   const startPreview = () => {
     setError(null)
+    setNotice('')
     setPreviewStale(false)
     idempotencyKey.current = crypto.randomUUID()
     preview.mutate(
@@ -419,7 +450,13 @@ export function ShareDialog({
     setError(null)
     refresh.mutate(
       { kind, sourceId, shareId: share.shareId },
-      { onSuccess: () => setStep('home'), onError: (e) => setError(e.message) },
+      {
+        onSuccess: () => {
+          setNotice('The public copy was updated. The link is unchanged.')
+          setStep('home')
+        },
+        onError: (e) => setError(e.message),
+      },
     )
   }
 
@@ -443,7 +480,13 @@ export function ShareDialog({
     setError(null)
     revoke.mutate(
       { kind, sourceId, shareId: share.shareId },
-      { onSuccess: () => setStep('home'), onError: (e) => setError(e.message) },
+      {
+        onSuccess: () => {
+          setNotice('The public link was turned off.')
+          setStep('home')
+        },
+        onError: (e) => setError(e.message),
+      },
     )
   }
 
@@ -474,7 +517,13 @@ export function ShareDialog({
     )
   }
 
-  const busyStep = step === 'preview' ? create.isPending : step === 'confirmRevoke' ? revoke.isPending : writing
+  const busyStep = step === 'classify'
+    ? classifying
+    : step === 'preview'
+    ? create.isPending
+    : step === 'confirmRevoke'
+    ? revoke.isPending
+    : writing
 
   const footer =
     step === 'home' ? (
@@ -510,6 +559,15 @@ export function ShareDialog({
       <button type="button" className="btn btn-ghost" onClick={close}>
         Done
       </button>
+    ) : step === 'classify' ? (
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={() => setStep(stepAfterClassify())}
+        disabled={classifying}
+      >
+        Back to the preview
+      </button>
     ) : (
       <button type="button" className="btn btn-ghost" onClick={() => setStep('home')} disabled={writing}>
         Back
@@ -523,8 +581,13 @@ export function ShareDialog({
       onClose={close}
       wide={step === 'preview'}
       dismissible={!busyStep}
+      focusKey={step}
       footer={footer}
     >
+      {/* One live region for the whole dialog, always mounted so a later
+          message is announced rather than inserted with its text already
+          present. Carries the outcomes that change nothing else on screen. */}
+      <span role="status" className="public-live">{notice}</span>
       {step === 'home' && (
         <div className="share-home" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           {canShareInternal && (
@@ -548,6 +611,7 @@ export function ShareDialog({
             section={section}
             noun={noun}
             expiry={share ? expiryLabel(share.expiresAt) : ''}
+            expired={expired}
             busy={preview.isPending}
             onCreate={startPreview}
             onManage={() => setStep('manage')}
@@ -560,8 +624,8 @@ export function ShareDialog({
       {step === 'preview' && (
         <>
           {gate.showSnapshot && snapshot ? (
-            <PublicSharePreviewBody kind={kind} snapshot={snapshot} />
-          ) : (
+            <PublicSharePreviewBody kind={kind} snapshot={snapshot} showRightsWarning={gate.showRightsWarning} />
+          ) : gate.showBlocked ? (
             <PublicShareBlockedView
               noun={noun}
               blocked={preview.data?.blocked ?? []}
@@ -569,6 +633,16 @@ export function ShareDialog({
               canClassify={canClassify}
               onClassify={() => setStep('classify')}
             />
+          ) : (
+            // The server said this is shareable but the projection it sent did
+            // not pass the browser's own validator. The coach was promised they
+            // would see exactly what becomes public, so this is a refusal, not
+            // a formality to wave through, and it says so rather than showing
+            // an empty frame or inventing a blocker.
+            <div role="alert" className="public-blocked">
+              We could not show what this {noun} would look like publicly, so there is nothing to
+              confirm. Try again, and tell an admin if it keeps happening.
+            </div>
           )}
           {gate.showConfirmNote && <p className="public-confirm-note">{PUBLISH_CONFIRM}</p>}
           {previewStale && (
@@ -599,6 +673,7 @@ export function ShareDialog({
             canEdit={canClassify}
             idPrefix={`share-rights-${sourceId}`}
             onSaved={() => setPreviewStale(true)}
+            onSavingChange={setClassifying}
           />
           {previewStale && (
             <button
@@ -610,6 +685,7 @@ export function ShareDialog({
               Check the preview again
             </button>
           )}
+          {error && <ActionError onRetry={startPreview}>{error}</ActionError>}
         </div>
       )}
 
@@ -624,9 +700,24 @@ export function ShareDialog({
         />
       )}
 
+      {step === 'manage' && !share && (
+        <div className="public-manage">
+          {/* Reached when a create answered "one already exists" while this
+              caller cannot see the row (a custom role with shares.create and no
+              shares.manage, or a status read that has not caught up). The
+              message that sent us here is rendered below; without this arm the
+              step was a blank page with a Back button. */}
+          <p style={{ marginTop: 0 }}>
+            There is already a public link for this {noun}. Its details are not visible to you.
+          </p>
+        </div>
+      )}
+
       {step === 'manage' && share && (
         <div className="public-manage">
-          <p className="muted" style={{ marginTop: 0 }}>{expiryLabel(share.expiresAt)}</p>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {expired ? 'This link has expired. Updating what people see starts it again.' : expiryLabel(share.expiresAt)}
+          </p>
           <button type="button" className="btn btn-ghost btn-block" style={{ minHeight: 44 }} onClick={doRefresh} disabled={writing}>
             {refresh.isPending ? 'Updating…' : 'Update what people see'}
           </button>
@@ -648,9 +739,10 @@ export function ShareDialog({
           >
             Turn off this link
           </button>
-          {error && <ActionError onRetry={doRefresh}>{error}</ActionError>}
         </div>
       )}
+
+      {step === 'manage' && error && <ActionError onRetry={share ? doRefresh : undefined}>{error}</ActionError>}
 
       {step === 'confirmRevoke' && (
         <>

@@ -171,6 +171,7 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
             id={template.id}
             current={template.rights}
             source={{ sourceUrl: template.sourceUrl, sourceLabel: template.sourceLabel }}
+            draftSource={{ sourceUrl: form.sourceUrl }}
             canEdit
           />
         ) : (

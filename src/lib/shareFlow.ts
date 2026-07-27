@@ -36,6 +36,17 @@ export type PublicSectionKind =
   | 'others'
   | 'readonly'
 
+// A share row stays in the status answer after it expires: the server filters
+// on revoked_at only, because an expired share is still refreshable. The
+// section has to know, or it tells the owner a link is live and openable by
+// anyone on the day it stopped working.
+export function shareHasExpired(expiresAt: string | null, now: number): boolean {
+  if (!expiresAt) return false
+  const ms = Date.parse(expiresAt)
+  if (Number.isNaN(ms)) return false
+  return ms <= now
+}
+
 export interface PublicSectionInput {
   sharingEnabled: boolean
   statusPending: boolean
@@ -109,10 +120,10 @@ export function canOfferClassify({
   return blockerAction === 'classify' && canClassify
 }
 
-// After a successful classification the preview must be taken again: the level
-// that blocked it has changed, and the old answer is stale. Returning the step
-// to take next keeps that decision in one tested place rather than in a
-// callback.
+// Leaving the classify step returns to the preview it was reached from. That is
+// what makes the stale guard reachable: a coach who saves a level and then goes
+// back lands on the answer that is now out of date, sees it said so, and cannot
+// create from it until it has been taken again.
 export function stepAfterClassify(): ShareStep {
   return 'preview'
 }

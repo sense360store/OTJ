@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canSaveRights,
   deriveProvenance,
+  deriveProvenanceAll,
   FA_LOCK_NOTE,
   MEDIA_CONFIRM,
   RIGHTS_NOUN,
@@ -136,5 +137,38 @@ describe('canSaveRights', () => {
   it('refuses a locked or read only control outright', () => {
     expect(canSaveRights({ selected: 'public_full', current: 'internal_only', state: locked, confirmed: true })).toBe(false)
     expect(canSaveRights({ selected: 'public_full', current: 'internal_only', state: readOnly, confirmed: true })).toBe(false)
+  })
+})
+
+describe('deriveProvenanceAll (the saved row and the unsaved draft together)', () => {
+  it('takes England Football from either reading', () => {
+    expect(deriveProvenanceAll([{}, { sourceUrl: FA }])).toBe('fa')
+    expect(deriveProvenanceAll([{ sourceUrl: FA }, {}])).toBe('fa')
+  })
+
+  // The bypass this closes in the form: clearing the Source field must not
+  // unlock a row whose saved source is still England Football.
+  it('does not unlock a saved England Football row because the draft cleared the field', () => {
+    expect(deriveProvenanceAll([{ sourceUrl: FA }, { sourceUrl: '' }])).toBe('fa')
+  })
+
+  // The other direction: pasting one locks before the save the database refuses.
+  it('locks as soon as an England Football link is typed, before it is saved', () => {
+    expect(deriveProvenanceAll([{}, { sourceUrl: FA }])).toBe('fa')
+  })
+
+  it('falls back to third party, then to club original', () => {
+    expect(deriveProvenanceAll([{}, { sourceUrl: 'https://example.com/x' }])).toBe('third_party')
+    expect(deriveProvenanceAll([{}, {}])).toBe('none')
+    expect(deriveProvenanceAll([])).toBe('none')
+  })
+})
+
+describe('a locked control still tells the truth about the stored level', () => {
+  it('does not report a publishable row as club only', () => {
+    const s = rightsControlState({ current: 'public_full', provenance: 'fa', canEdit: true })
+    expect(s.locked).toBe(true)
+    expect(s.current).toBe('public_full')
+    expect(rightsStatusLine(s.current, 'drill')).toContain('can be shared publicly')
   })
 })
