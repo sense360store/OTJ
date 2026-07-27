@@ -1,0 +1,272 @@
+{
+  "comment": "The one authoritative case list for the canonical media storage path grammar. Read by all three implementations so they cannot drift: the Deno validator (supabase/functions/_shared/mediaPath_test.ts), the browser mirror (src/lib/mediaPath.test.ts) and the Postgres function public.is_canonical_media_path (tests/security/media-path-boundary.test.ts). Every case is evaluated against clubId, and every implementation must agree with valid on every case. Adding a case here adds it to all three suites at once.",
+  "clubId": "a1b2c3d4-1111-4111-8111-1111111111ef",
+  "otherClubId": "f9e8d7c6-2222-4222-8222-2222222222ab",
+  "cases": [
+    {
+      "name": "valid same-club two segment path",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/9f0a1b2c-file.png",
+      "valid": true
+    },
+    {
+      "name": "valid nested path (club crest shape)",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/crest/9f0a-logo.png",
+      "valid": true
+    },
+    {
+      "name": "valid filename with underscore, dot and dash",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/9f0a-my_drill.v2-final.mp4",
+      "valid": true
+    },
+    {
+      "name": "valid deeply nested path",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/a/b/c/d-e.pdf",
+      "valid": true
+    },
+    {
+      "name": "valid single character object segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/a",
+      "valid": true
+    },
+    {
+      "name": "at the 512 character length cap",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": true
+    },
+    {
+      "name": "another club prefix",
+      "path": "f9e8d7c6-2222-4222-8222-2222222222ab/9f0a-file.png",
+      "valid": false
+    },
+    {
+      "name": "club id present but not first",
+      "path": "other/a1b2c3d4-1111-4111-8111-1111111111ef/file.png",
+      "valid": false
+    },
+    {
+      "name": "club id as a bare prefix without a separator",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef9/file.png",
+      "valid": false
+    },
+    {
+      "name": "club id followed by extra characters in the same segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111efx/file.png",
+      "valid": false
+    },
+    {
+      "name": "club id only, no object segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef",
+      "valid": false
+    },
+    {
+      "name": "club id with a trailing slash and nothing else",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/",
+      "valid": false
+    },
+    {
+      "name": "uppercase club id segment",
+      "path": "A1B2C3D4-1111-4111-8111-1111111111EF/file.png",
+      "valid": false
+    },
+    {
+      "name": "over the 512 character length cap",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "valid": false
+    },
+    {
+      "name": "avatars namespace at the root",
+      "path": "avatars/33333333-3333-4333-8333-333333333333/face.jpg",
+      "valid": false
+    },
+    {
+      "name": "avatars namespace nested under the club",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/avatars/face.jpg",
+      "valid": false
+    },
+    {
+      "name": "avatars namespace in mixed case",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/AVATARS/face.jpg",
+      "valid": false
+    },
+    {
+      "name": "avatars namespace as the deepest segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/a/avatars",
+      "valid": false
+    },
+    {
+      "name": "leading slash",
+      "path": "/a1b2c3d4-1111-4111-8111-1111111111ef/file.png",
+      "valid": false
+    },
+    {
+      "name": "trailing slash",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file.png/",
+      "valid": false
+    },
+    {
+      "name": "double slash",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef//file.png",
+      "valid": false
+    },
+    {
+      "name": "empty string",
+      "path": "",
+      "valid": false
+    },
+    {
+      "name": "single slash",
+      "path": "/",
+      "valid": false
+    },
+    {
+      "name": "backslash separator",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef\\file.png",
+      "valid": false
+    },
+    {
+      "name": "backslash inside a segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/dir\\file.png",
+      "valid": false
+    },
+    {
+      "name": "dot segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/./file.png",
+      "valid": false
+    },
+    {
+      "name": "dot dot segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/../file.png",
+      "valid": false
+    },
+    {
+      "name": "dot dot escaping to another club",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/../f9e8d7c6-2222-4222-8222-2222222222ab/file.png",
+      "valid": false
+    },
+    {
+      "name": "trailing dot dot segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/dir/..",
+      "valid": false
+    },
+    {
+      "name": "segment starting with a dot",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/.hidden",
+      "valid": false
+    },
+    {
+      "name": "segment starting with a dash",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/-file.png",
+      "valid": false
+    },
+    {
+      "name": "percent encoded dot dot traversal",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/%2e%2e/file.png",
+      "valid": false
+    },
+    {
+      "name": "percent encoded forward slash",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef%2ffile.png",
+      "valid": false
+    },
+    {
+      "name": "percent encoded backslash",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef%5cfile.png",
+      "valid": false
+    },
+    {
+      "name": "double percent encoded slash",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef%252ffile.png",
+      "valid": false
+    },
+    {
+      "name": "percent encoded null byte",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file%00.png",
+      "valid": false
+    },
+    {
+      "name": "bare percent sign",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file%.png",
+      "valid": false
+    },
+    {
+      "name": "absolute https url",
+      "path": "https://example.test/a1b2c3d4-1111-4111-8111-1111111111ef/file.png",
+      "valid": false
+    },
+    {
+      "name": "protocol relative url",
+      "path": "//example.test/file.png",
+      "valid": false
+    },
+    {
+      "name": "file scheme",
+      "path": "file:///etc/passwd",
+      "valid": false
+    },
+    {
+      "name": "query string appended",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file.png?download=1",
+      "valid": false
+    },
+    {
+      "name": "fragment appended",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file.png#frag",
+      "valid": false
+    },
+    {
+      "name": "null byte",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file\u0000.png",
+      "valid": false
+    },
+    {
+      "name": "newline",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file\n.png",
+      "valid": false
+    },
+    {
+      "name": "carriage return",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file\r.png",
+      "valid": false
+    },
+    {
+      "name": "tab",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file\t.png",
+      "valid": false
+    },
+    {
+      "name": "delete control character",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file\u007f.png",
+      "valid": false
+    },
+    {
+      "name": "bell control character",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file\u0007.png",
+      "valid": false
+    },
+    {
+      "name": "space in a segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/my file.png",
+      "valid": false
+    },
+    {
+      "name": "non ascii letter",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/fi\u00e9le.png",
+      "valid": false
+    },
+    {
+      "name": "zero width space",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file\u200b.png",
+      "valid": false
+    },
+    {
+      "name": "colon in a segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/c:file.png",
+      "valid": false
+    },
+    {
+      "name": "at sign in a segment",
+      "path": "a1b2c3d4-1111-4111-8111-1111111111ef/file@2x.png",
+      "valid": false
+    }
+  ]
+}

@@ -17,6 +17,8 @@
 // See docs/security/content-sharing-boundary.md and
 // docs/roadmaps/content-sharing-roadmap.md (sections 11.2, 11.5, 14, 16).
 
+import { isCanonicalMediaPath } from './mediaPath.ts'
+
 // The public snapshot schema version. Bump only with a deliberate migration of
 // stored snapshots; the read path and the public page refuse an unknown value.
 export const SNAPSHOT_VERSION = 1
@@ -178,6 +180,7 @@ export type BlockReason =
   | 'source_internal_only'
   | 'media_internal_only'
   | 'media_missing'
+  | 'media_path_invalid'
 
 export interface Eligibility {
   eligible: boolean
@@ -285,11 +288,44 @@ export function evaluateDrillEligibility(
 // The drill snapshot builder
 // -------------------------------------------------------------------------
 
+// The media whose stored path is not the canonical path of an object owned by
+// its own club. Callers refuse the whole share rather than dropping the item,
+// so a share is never quietly published with one piece missing.
+//
+// Only a stored object can be wrong this way: a YouTube item carries no path,
+// and an item with no path signs nothing. A path that fails here means the row
+// points somewhere it does not own (another club, the avatars namespace, an
+// object it never created) or is shaped so that Storage might read it
+// differently from the way this code does. Either way it must not be signed.
+export function invalidMediaPaths(
+  media: Array<Pick<MediaRow, 'id' | 'club_id' | 'storage_path' | 'rights' | 'type'>>,
+): string[] {
+  return media
+    .filter(
+      (m) =>
+        m.rights === 'public_full' &&
+        m.type !== 'youtube' &&
+        typeof m.storage_path === 'string' &&
+        m.storage_path.length > 0 &&
+        !isCanonicalMediaPath(m.storage_path, m.club_id),
+    )
+    .map((m) => m.id)
+}
+
 function buildMediaEntry(media: MediaRow, ref: string): StoredMedia {
   const caption = sanitizeText(media.name, 300)
   const sourceAttribution = attributionOf(media.source_url, media.source_label)
   // public_full stored object: reference the private path for read-time signing.
   if (media.rights === 'public_full' && media.storage_path && media.type !== 'youtube') {
+    // Never put an unvalidated path into _path. The read path signs with the
+    // service role, which bypasses every Storage policy, so a path that is not
+    // this club's own object would be a direct disclosure. Defensive: the
+    // caller evaluates invalidMediaPaths first and returns a 422, and the
+    // database CHECK constraint refuses to store such a path at all. Reaching
+    // here means both were bypassed, so fail the whole share closed.
+    if (!isCanonicalMediaPath(media.storage_path, media.club_id)) {
+      throw new Error('buildMediaEntry: refusing a media path outside its own club namespace')
+    }
     return {
       ref,
       type: media.type,
@@ -516,6 +552,7 @@ export type SessionBlockReason =
   | 'media_internal_only'
   | 'drill_missing'
   | 'media_missing'
+  | 'media_path_invalid'
   | 'board_missing'
   | 'unsupported_item'
 
@@ -822,6 +859,7 @@ export type ProgrammeBlockReason =
   | 'pdf_internal_only'
   | 'drill_missing'
   | 'media_missing'
+  | 'media_path_invalid'
   | 'pdf_missing'
   | 'unsupported_item'
   | 'no_weeks'

@@ -14,6 +14,7 @@ import {
   DRILL_BUILDER,
   type DrillRow,
   evaluateDrillEligibility,
+  invalidMediaPaths,
   evaluateProgrammeEligibility,
   evaluateSessionEligibility,
   generateSecret,
@@ -1362,4 +1363,77 @@ Deno.test('every builder refusal carries its own reason, not a generic one', () 
     assert(caught instanceof ProgrammeBuildError, `expected a ProgrammeBuildError for ${reason}`)
     assertEquals((caught as ProgrammeBuildError).reason, reason)
   }
+})
+
+
+// -------------------------------------------------------------------------
+// The media path boundary (0042_public_media_path_boundary)
+// -------------------------------------------------------------------------
+//
+// The read path signs with the service role, which bypasses every Storage
+// policy, so a public_full row whose stored path is not its own club's object
+// must never reach a snapshot. These assert the builder half; the database
+// CHECK constraint is the boundary and is asserted in
+// tests/security/media-path-boundary.test.ts.
+
+const OTHER_CLUB = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+
+Deno.test('invalidMediaPaths passes a canonical same club path', () => {
+  assertEquals(invalidMediaPaths([media()]), [])
+})
+
+Deno.test('invalidMediaPaths flags a public_full row pointing outside its club', () => {
+  const m = media({ storage_path: `${OTHER_CLUB}/33333333-file.png` })
+  assertEquals(invalidMediaPaths([m]), [m.id])
+})
+
+Deno.test('invalidMediaPaths flags the avatars namespace', () => {
+  const m = media({ storage_path: 'avatars/22222222-2222-2222-2222-222222222222/face.jpg' })
+  assertEquals(invalidMediaPaths([m]), [m.id])
+})
+
+Deno.test('invalidMediaPaths flags a traversal and an encoded traversal', () => {
+  for (const path of [
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/../bbbb/file.png',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/%2e%2e/file.png',
+    '/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/file.png',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\\file.png',
+  ]) {
+    const m = media({ storage_path: path })
+    assertEquals(invalidMediaPaths([m]), [m.id], path)
+  }
+})
+
+Deno.test('invalidMediaPaths ignores media that signs nothing', () => {
+  // A YouTube item carries an external link, not a stored object; an
+  // internal_only or link only row is never signed. None of them can leak a
+  // path, so none of them blocks a share.
+  assertEquals(invalidMediaPaths([media({ type: 'youtube', storage_path: null })]), [])
+  assertEquals(invalidMediaPaths([media({ storage_path: null })]), [])
+  assertEquals(
+    invalidMediaPaths([media({ rights: 'internal_only', storage_path: `${OTHER_CLUB}/x.png` })]),
+    [],
+  )
+  assertEquals(
+    invalidMediaPaths([media({ rights: 'public_link_only', storage_path: `${OTHER_CLUB}/x.png` })]),
+    [],
+  )
+})
+
+Deno.test('the drill builder refuses to project a media path outside its club', () => {
+  // Defensive backstop: the manage function returns a 422 before this, and the
+  // database refuses to store such a path at all. Reaching the builder means
+  // both were bypassed, so it must fail the share closed rather than sign.
+  const bad = media({ storage_path: `${OTHER_CLUB}/33333333-file.png` })
+  assertThrows(
+    () => buildDrillSnapshot(drill(), bad, '2026-01-01T00:00:00.000Z'),
+    Error,
+    'outside its own club namespace',
+  )
+})
+
+Deno.test('a canonical path still reaches _path unchanged', () => {
+  const s = buildDrillSnapshot(drill(), media(), '2026-01-01T00:00:00.000Z')
+  assertEquals(s.media[0]._path, media().storage_path)
+  assertEquals(s.media[0]._mid, media().id)
 })
