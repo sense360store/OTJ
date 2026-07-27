@@ -1051,9 +1051,24 @@ break-glass step rather than a routine one.
 - No change to the rights model, the secret model, expiry or rate limiting.
 - The only audit change is one added `reason_code` value; the metadata allow
   list stays closed and still carries no free text and no identifier.
-- Residual: an object in the club's own bucket prefix that no media row names
-  (an orphan left by a failed replace) can still be adopted by a new row. It is
-  bounded to the club's own namespace and to objects created under
-  `media.create` by that club, and it is recorded here rather than fixed,
-  because fixing it needs an object ownership check the Storage schema does not
-  expose to a row constraint.
+### Residuals
+
+Two, both recorded rather than fixed, and both bounded to the club's own
+namespace:
+
+1. **Orphan adoption.** An object in the club's own bucket prefix that no media
+   row names (an orphan left by a failed replace) can still be adopted by a new
+   row. Bounded to objects created under `media.create` by that club. Fixing it
+   needs an object ownership check the Storage schema does not expose to a row
+   constraint.
+2. **Delete and re-upload at the same key.** The invalidation trigger keys on the
+   media ROW's `storage_path` changing, so deleting the Storage object and
+   re-uploading different bytes at the same key leaves the row, the snapshot and
+   the share untouched, and the share then serves the new bytes. The in-place
+   overwrite route is already closed (`0027` has no UPDATE policy, so the Storage
+   API's upsert and move are refused for every caller), so this needs a delete
+   followed by an upload, which only a member holding `media.create` in that club
+   can do, against their own club's object. It is unchanged by 0042 rather than
+   introduced by it. Closing it would mean content-addressing the object or
+   recording an object version in the snapshot, which is a larger change than
+   this boundary needs.

@@ -1,5 +1,9 @@
 import { assertEquals } from 'jsr:@std/assert@1'
-import { isCanonicalMediaPath, MEDIA_PATH_MAX_LENGTH } from './mediaPath.ts'
+import {
+  isCanonicalMediaPath,
+  isCanonicalMediaPathShape,
+  MEDIA_PATH_MAX_LENGTH,
+} from './mediaPath.ts'
 
 // The shared case list. Resolved relative to this file so the suite does not
 // depend on the working directory CI happens to run deno from.
@@ -78,4 +82,40 @@ Deno.test('the browser mirror states an identical grammar', async () => {
 
   const capOf = (source: string) => /MEDIA_PATH_MAX_LENGTH = (\d+)/.exec(source)?.[1]
   assertEquals(capOf(browser), capOf(deno))
+})
+
+// The club agnostic half of the grammar, used by read-content-share as the last
+// gate before the service role signs. It agrees with the full validator on every
+// case except the one that is wrong ONLY because it names a different club,
+// which this half deliberately cannot see. An uppercase club id is not in that
+// set: the shape guard's uuid pattern is lowercase only, so it refuses one for
+// its own reasons.
+const OTHER_CLUB_ONLY = new Set(['another club prefix'])
+
+for (const testCase of fixture.cases) {
+  Deno.test(`canonical media path shape: ${testCase.name}`, () => {
+    const expected = OTHER_CLUB_ONLY.has(testCase.name) ? true : testCase.valid
+    assertEquals(isCanonicalMediaPathShape(testCase.path), expected)
+  })
+}
+
+Deno.test('the shape guard still refuses a first segment that is not a uuid', () => {
+  assertEquals(isCanonicalMediaPathShape('notauuid/file.png'), false)
+  assertEquals(isCanonicalMediaPathShape('avatars/file.png'), false)
+  assertEquals(isCanonicalMediaPathShape('file.png'), false)
+})
+
+Deno.test('the shape guard refuses a non string', () => {
+  for (const bad of [null, undefined, 42, {}, [], true]) {
+    assertEquals(isCanonicalMediaPathShape(bad), false)
+  }
+})
+
+Deno.test('anything the full validator accepts, the shape guard accepts', () => {
+  // The read path must never drop a path the definer function legitimately
+  // named, or a valid share would silently render without its media.
+  for (const testCase of fixture.cases) {
+    if (!testCase.valid) continue
+    assertEquals(isCanonicalMediaPathShape(testCase.path), true, testCase.name)
+  }
 })
