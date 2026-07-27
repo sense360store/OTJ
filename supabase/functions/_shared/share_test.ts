@@ -1437,3 +1437,34 @@ Deno.test('a canonical path still reaches _path unchanged', () => {
   assertEquals(s.media[0]._path, media().storage_path)
   assertEquals(s.media[0]._mid, media().id)
 })
+
+Deno.test('the session builder refuses a nested drill media path outside its club', () => {
+  // A session share pools every referenced drill's media into one top level
+  // list, so a bad path on any nested drill's media must fail the whole
+  // session, not just drop that one item.
+  const bad = mediaA({ storage_path: `${OTHER_CLUB}/33333333-file.png` })
+  assertThrows(
+    () => buildSessionSnapshot(session(), [drillA({ media_id: bad.id }), drillB()], [bad], null, AT),
+    Error,
+    'outside its own club namespace',
+  )
+})
+
+Deno.test('the programme builder refuses a nested week drill media path outside its club', () => {
+  const { p, templates, drills } = twoWeeks()
+  const bad = media({ id: MEDIA_A, storage_path: `${OTHER_CLUB}/33333333-file.png` })
+  assertThrows(
+    () => buildProgrammeSnapshot(p, templates, drills, [bad], AT),
+    Error,
+    'outside its own club namespace',
+  )
+})
+
+Deno.test('invalidMediaPaths reports every offender, not just the first', () => {
+  // The manage function turns a non empty result into one 422; reporting all of
+  // them keeps the blocker honest if a future caller wants to name them.
+  const a = media({ id: MEDIA_A, storage_path: `${OTHER_CLUB}/a.png` })
+  const b = media({ id: DRILL_B, storage_path: 'avatars/1/b.png' })
+  const good = media({ id: DRILL_A })
+  assertEquals(invalidMediaPaths([a, good, b]).sort(), [a.id, b.id].sort())
+})
