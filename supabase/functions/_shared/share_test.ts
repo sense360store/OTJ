@@ -15,6 +15,9 @@ import {
   type DrillRow,
   evaluateDrillEligibility,
   invalidMediaPaths,
+  anyRestricted,
+  isFaSourceUrl,
+  rowProvenance,
   buildShareListFilter,
   deriveShareStatus,
   SHARE_LIST_DEFAULT_LIMIT,
@@ -909,6 +912,39 @@ Deno.test('a programme with no weeks at all is refused rather than published as 
   assert(e.blocked.includes('no_weeks'))
 })
 
+// The production regression (programme f2de855c "Mybe"): weeks = 6 declared, no
+// week template at all, no source, no PDF, club only. The declared count alone
+// used to satisfy the week check, so the only reported blocker was the rights
+// level, and reclassifying the programme would have published a title with six
+// blank weeks.
+Deno.test('a programme with declared weeks but no week template has nothing to share', () => {
+  const e = evaluateProgrammeEligibility(programme({ weeks: 6, rights: 'internal_only' }), [], [], [])
+  assert(!e.eligible)
+  assert(e.blocked.includes('no_weeks'))
+})
+
+Deno.test('reclassifying such a programme does not make it shareable', () => {
+  const e = evaluateProgrammeEligibility(programme({ weeks: 6, rights: 'public_full' }), [], [], [])
+  assert(!e.eligible)
+  assert(e.blocked.includes('no_weeks'))
+  // The rights reason is gone; the structural one is not.
+  assertEquals(e.blocked.includes('source_internal_only'), false)
+})
+
+Deno.test('the builder refuses it too, so no six blank weeks can be projected', () => {
+  assertThrows(
+    () => buildProgrammeSnapshot(programme({ weeks: 6, rights: 'public_full' }), [], [], [], AT),
+    ProgrammeBuildError,
+  )
+})
+
+Deno.test('a programme whose only template claims no week still has nothing to share', () => {
+  const orphan = template({ programme_week: null, activities: [] })
+  const e = evaluateProgrammeEligibility(programme({ weeks: 6, rights: 'public_full' }), [orphan], [], [])
+  assert(!e.eligible)
+  assert(e.blocked.includes('no_weeks'))
+})
+
 Deno.test('a programme over the week cap is refused, never truncated', () => {
   const templates = Array.from({ length: MAX_PROGRAMME_WEEKS + 1 }, (_, i) =>
     template({ id: `a${i}111111-1111-1111-1111-111111111111`, programme_week: i + 1, activities: [] }))
@@ -1621,4 +1657,52 @@ Deno.test('buildShareListFilter: the accepted values round trip', () => {
   assertEquals(r.filter.status, 'revoked')
   assertEquals(r.filter.kind, 'programme')
   assertEquals(r.filter.limit, 10)
+})
+
+// =====================================================================
+// Provenance (bounded, non identifying)
+//
+// The preview reports WHICH LAYER blocked a share. Provenance is what lets the
+// client tell "set to club only" apart from "came from England Football", which
+// the old copy could not do and so claimed England Football for everything.
+// =====================================================================
+
+Deno.test('isFaSourceUrl: both England Football hosts, and nothing else', () => {
+  assert(isFaSourceUrl('https://learn.englandfootball.com/resources/session/abc'))
+  assert(isFaSourceUrl('https://CDN.EnglandFootball.com/img/a.png'))
+  assertEquals(isFaSourceUrl('https://example.com/x'), false)
+  assertEquals(isFaSourceUrl('https://notenglandfootball.com/x'), false)
+  assertEquals(isFaSourceUrl('https://learn.englandfootball.com.evil.test/x'), false)
+  assertEquals(isFaSourceUrl(null), false)
+  assertEquals(isFaSourceUrl('not a url'), false)
+})
+
+Deno.test('rowProvenance: England Football from a url, a drill source key or the label', () => {
+  assertEquals(rowProvenance({ source_url: 'https://learn.englandfootball.com/a' }), 'fa')
+  assertEquals(rowProvenance({ source_key: 'https://learn.englandfootball.com/a#act-2' }), 'fa')
+  assertEquals(rowProvenance({ source_label: 'England Football Learning' }), 'fa')
+})
+
+Deno.test('rowProvenance: any other recorded source is third party, absent is club original', () => {
+  assertEquals(rowProvenance({ source_url: 'https://example.com/x' }), 'third_party')
+  assertEquals(rowProvenance({ source_label: 'A coaching book' }), 'third_party')
+  assertEquals(rowProvenance({}), 'none')
+  assertEquals(rowProvenance({ source_url: null, source_label: '   ' }), 'none')
+})
+
+Deno.test('rowProvenance: never reads the rights value, which proves nothing', () => {
+  // Every row created since 0038 is internal_only by the column default,
+  // including content the club wrote itself.
+  assertEquals(rowProvenance({ source_url: null, source_label: null }), 'none')
+})
+
+Deno.test('anyRestricted: true only for a blocking row that is England Football derived', () => {
+  const fa = { rights: 'internal_only' as const, source_url: 'https://learn.englandfootball.com/a', source_label: null }
+  const clubOnly = { rights: 'internal_only' as const, source_url: null, source_label: null }
+  const faButPublishable = { rights: 'public_full' as const, source_url: 'https://learn.englandfootball.com/a', source_label: null }
+  assertEquals(anyRestricted([clubOnly]), false)
+  assertEquals(anyRestricted([clubOnly, fa]), true)
+  // A row that is not blocking cannot make the layer restricted.
+  assertEquals(anyRestricted([faButPublishable]), false)
+  assertEquals(anyRestricted([]), false)
 })

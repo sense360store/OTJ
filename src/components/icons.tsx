@@ -67,6 +67,10 @@ export const Icon = {
   skipFwd: S([{ t: 'polygon', p: { points: '6 4 15 12 6 20 6 4', fill: 'currentColor', stroke: 'none' } }, R(17, 4, 2.5, 16, 1)]),
   skipBack: S([{ t: 'polygon', p: { points: '18 4 9 12 18 20 18 4', fill: 'currentColor', stroke: 'none' } }, R(4.5, 4, 2.5, 16, 1)]),
   plus: S([L(12, 5, 12, 19), L(5, 12, 19, 12)]),
+  // Marks a sharing level that cannot be changed (England Football derived
+  // content, which the database refuses to raise above club only).
+  lock: S([R(4.5, 10.5, 15, 10, 2.5), 'M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3', L(12, 14.5, 12, 16.5)]),
+  globe: S([C(12, 12, 9), L(3, 12, 21, 12), 'M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z']),
   search: S([C(11, 11, 7), L(16.5, 16.5, 21, 21)]),
   clock: S([C(12, 12, 9), 'M12 7.5V12l3 2']),
   users: S([C(9, 8, 3.5), 'M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5', 'M16 4.5a3.3 3.3 0 0 1 0 6.4', 'M18 14.5c2 .6 3 2.2 3 4.5']),

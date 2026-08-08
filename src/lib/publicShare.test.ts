@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  blockedProgrammeReasonCopy,
-  blockedReasonCopy,
-  blockedSessionReasonCopy,
   buildPublicShareUrl,
-  BLOCKED_FA_NOTE,
   PRINT_WARNING,
   type PublicDrillSnapshot,
   type PublicSessionSnapshot,
@@ -93,16 +89,6 @@ describe('validatePublicDrillSnapshot', () => {
     expect(validatePublicDrillSnapshot(null)).toBe(false)
     expect(validatePublicDrillSnapshot('drill')).toBe(false)
     expect(validatePublicDrillSnapshot([snapshot()])).toBe(false)
-  })
-})
-
-describe('blockedReasonCopy', () => {
-  it('maps a restricted dependency to the England Football note', () => {
-    expect(blockedReasonCopy(['media_internal_only'])).toBe(BLOCKED_FA_NOTE)
-    expect(blockedReasonCopy(['source_internal_only'])).toBe(BLOCKED_FA_NOTE)
-  })
-  it('explains a missing media dependency', () => {
-    expect(blockedReasonCopy(['media_missing'])).toContain('missing')
   })
 })
 
@@ -222,19 +208,6 @@ describe('validatePublicSessionSnapshot', () => {
   })
 })
 
-describe('blockedSessionReasonCopy', () => {
-  it('maps a restricted session, drill or media dependency to the England Football note', () => {
-    expect(blockedSessionReasonCopy(['source_internal_only'])).toBe(BLOCKED_FA_NOTE)
-    expect(blockedSessionReasonCopy(['drill_internal_only'])).toBe(BLOCKED_FA_NOTE)
-    expect(blockedSessionReasonCopy(['media_internal_only'])).toBe(BLOCKED_FA_NOTE)
-  })
-  it('explains a missing dependency and an unsupported item without leaking a code', () => {
-    expect(blockedSessionReasonCopy(['drill_missing'])).toContain('missing')
-    expect(blockedSessionReasonCopy(['board_missing'])).toContain('missing')
-    expect(blockedSessionReasonCopy(['unsupported_item'])).toContain('activity')
-  })
-})
-
 // -------------------------------------------------------------------------
 // Programme snapshot validation (Content Sharing PR 4)
 // -------------------------------------------------------------------------
@@ -351,34 +324,8 @@ describe('validatePublicProgrammeSnapshot', () => {
   })
 })
 
-describe('blockedProgrammeReasonCopy', () => {
-  it('maps every restricted layer to the England Football note', () => {
-    for (
-      const r of [
-        'source_internal_only',
-        'template_internal_only',
-        'drill_internal_only',
-        'media_internal_only',
-        'pdf_internal_only',
-      ]
-    ) {
-      expect(blockedProgrammeReasonCopy([r])).toBe(BLOCKED_FA_NOTE)
-    }
-  })
-
-  it('explains missing content, caps and an unsupported item without leaking a code', () => {
-    expect(blockedProgrammeReasonCopy(['drill_missing'])).toContain('missing')
-    expect(blockedProgrammeReasonCopy(['pdf_missing'])).toContain('missing')
-    expect(blockedProgrammeReasonCopy(['unsupported_item'])).toContain('activity')
-    expect(blockedProgrammeReasonCopy(['no_weeks'])).toContain('no weeks')
-    expect(blockedProgrammeReasonCopy(['too_many_weeks'])).toContain('more weeks')
-    expect(blockedProgrammeReasonCopy(['too_many_media'])).toContain('more files')
-    expect(blockedProgrammeReasonCopy(['snapshot_too_large'])).toContain('too large')
-    for (const r of ['drill_missing', 'no_weeks', 'too_many_weeks', 'snapshot_too_large']) {
-      expect(blockedProgrammeReasonCopy([r])).not.toContain('_')
-    }
-  })
-})
+// The blocked reason copy now lives in src/lib/shareBlockers.test.ts, where it
+// is tested with the reason ORDER and the provenance summary that decide it.
 
 describe('PRINT_WARNING', () => {
   it('states plainly that a printed or downloaded copy cannot be recalled', () => {

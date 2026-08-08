@@ -21,6 +21,7 @@ import { Icon } from '../components/icons'
 import { ErrorNote, Loading, MediaAttribution, MediaThumb, MEDIA_META, Modal, UploadProgress } from '../components/ui'
 import { MediaFileSurface, MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
 import { AttachFAVideosModal } from '../components/AttachFAVideosModal'
+import { RightsControl } from '../components/RightsControl'
 
 function usedLabel(used: number): string {
   return used > 0 ? `Used in ${used} drill${used !== 1 ? 's' : ''}` : 'Not in use'
@@ -232,6 +233,19 @@ function RenameModal({ item, onClose }: { item: MediaItem; onClose: () => void }
           {rename.error.message}
         </p>
       )}
+      {/* The file's sharing level, in the same place a coach already edits the
+          file. Media is where third-party rights concentrate, so publishing one
+          always asks for the confirmation, whatever its recorded source says.
+          It saves separately from the name; neither write touches the other. */}
+      <div className="field" style={{ marginTop: 16, marginBottom: 0 }}>
+        <RightsControl
+          kind="media"
+          id={item.id}
+          current={item.rights}
+          source={{ sourceUrl: item.sourceUrl, sourceLabel: item.sourceLabel }}
+          canEdit
+        />
+      </div>
     </Modal>
   )
 }

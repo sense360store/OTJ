@@ -49,6 +49,7 @@ function session(over: Partial<Session> = {}): Session {
     liveActivityStartedAt: null,
     spondEventId: null,
     boardId: null,
+    rights: 'internal_only',
     ...over,
   }
 }

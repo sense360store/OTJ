@@ -54,6 +54,8 @@ export function useStartFromTemplate() {
       liveActivityStartedAt: null,
       spondEventId: null,
       boardId: null,
+      // Club only until classified; the upsert never writes the column.
+      rights: 'internal_only',
     }
     void submit({ templateId: t.id, session })
   }

@@ -14,6 +14,7 @@
 import { useState } from 'react'
 import { Icon } from './icons'
 import { ListInput, Loading, MediaThumb, Modal } from './ui'
+import { RightsControl, RightsNewNote } from './RightsControl'
 import {
   useAssignTemplateWeek,
   useCopyTemplateToWeek,
@@ -437,6 +438,24 @@ export function ProgrammeFormModal({
           placeholder="https://… where this programme came from (optional)"
           onChange={(e) => set('sourceUrl', e.target.value)}
         />
+      </div>
+      {/* The sharing level lives in the ordinary edit flow, next to the source
+          it depends on. It saves on its own, explicitly: saving the programme does
+          not change it, and neither does pressing Share. */}
+      <div className="field">
+        <label>Sharing</label>
+        {programme ? (
+          <RightsControl
+            kind="programme"
+            id={programme.id}
+            current={programme.rights}
+            source={{ sourceUrl: programme.sourceUrl, sourceLabel: programme.sourceLabel }}
+            draftSource={{ sourceUrl: form.sourceUrl }}
+            canEdit
+          />
+        ) : (
+          <RightsNewNote noun="programme" />
+        )}
       </div>
       {error && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>

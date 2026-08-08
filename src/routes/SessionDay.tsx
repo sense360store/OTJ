@@ -35,8 +35,7 @@ import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { BoardPickerModal } from '../components/BoardPicker'
-import { ShareButton } from '../components/ShareButton'
-import { PublicShareControl } from '../components/PublicShareControl'
+import { ShareAction } from '../components/ShareModal'
 import { TacticsBoardView } from '../components/TacticsBoardView'
 import { playerNameMap, type Board, type PlayerNameMap } from '../lib/tacticsBoard'
 import './SessionDay.css'
@@ -176,37 +175,45 @@ function SessionDayView({ session }: { session: Session }) {
         </button>
       </div>
 
-      {canManage && (
-        <div className="row" style={{ gap: 9, marginBottom: 12 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => nav('planner', { sessionId: session.id })}>
-            <Icon.edit />
-            Edit plan
-          </button>
-          <button
-            className="btn btn-ghost btn-sm icon-only"
-            style={{ width: 38, padding: 0 }}
-            aria-label="Delete session"
-            onClick={() => setDeleting(true)}
-          >
-            <Icon.trash />
-          </button>
+      {/* The page's own action row. Share sits here, beside Edit plan and
+          Delete, rather than in a section below the fold: the dialog behind it
+          holds the club link and the public link, each labelled for what it
+          does. */}
+      {(canManage || canShare || canPublishShare || canRevokeAnyShare) && (
+        <div className="row wrap" style={{ gap: 9, marginBottom: 12 }}>
+          {canManage && (
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ minHeight: 44 }}
+              onClick={() => nav('planner', { sessionId: session.id })}
+            >
+              <Icon.edit />
+              Edit plan
+            </button>
+          )}
+          <ShareAction
+            kind="session"
+            sourceId={session.id}
+            title={session.name}
+            rights={session.rights}
+            source={{ sourceUrl: session.sourceUrl, sourceLabel: session.sourceLabel }}
+            canClassify={canManage}
+            canShareInternal={canShare}
+            canPublish={canPublishShare}
+            canRevokeAny={canRevokeAnyShare}
+            buttonClassName="btn btn-ghost btn-sm"
+          />
+          {canManage && (
+            <button
+              className="btn btn-ghost btn-sm icon-only"
+              style={{ width: 38, minHeight: 44, padding: 0 }}
+              aria-label="Delete session"
+              onClick={() => setDeleting(true)}
+            >
+              <Icon.trash />
+            </button>
+          )}
         </div>
-      )}
-
-      {canShare && (
-        <div style={{ marginBottom: 12 }}>
-          <ShareButton kind="session" id={session.id} title={session.name} />
-        </div>
-      )}
-
-      {(canPublishShare || canRevokeAnyShare) && (
-        <PublicShareControl
-          kind="session"
-          sourceId={session.id}
-          title={session.name}
-          canPublish={canPublishShare}
-          canRevokeAny={canRevokeAnyShare}
-        />
       )}
 
       {programme && (

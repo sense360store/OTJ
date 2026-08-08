@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { Icon } from './icons'
 import { ListInput, Modal, PHASE_COLOR } from './ui'
 import { AddDrillModal } from './AddDrillModal'
+import { RightsControl, RightsNewNote } from './RightsControl'
 import { useActivityTitle, useDrillMap, useInsertTemplate, useUpdateTemplate } from '../lib/queries'
 import type { TemplateInput } from '../lib/queries'
 import { PHASES, sessionMinutes } from '../lib/data'
@@ -158,6 +159,24 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
           placeholder="https://… where this template came from (optional)"
           onChange={(e) => set('sourceUrl', e.target.value)}
         />
+      </div>
+      {/* The sharing level lives in the ordinary edit flow, next to the source
+          it depends on. It saves on its own, explicitly: saving the week does
+          not change it, and neither does pressing Share. */}
+      <div className="field">
+        <label>Sharing</label>
+        {template ? (
+          <RightsControl
+            kind="template"
+            id={template.id}
+            current={template.rights}
+            source={{ sourceUrl: template.sourceUrl, sourceLabel: template.sourceLabel }}
+            draftSource={{ sourceUrl: form.sourceUrl }}
+            canEdit
+          />
+        ) : (
+          <RightsNewNote noun="week" />
+        )}
       </div>
       {error && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
