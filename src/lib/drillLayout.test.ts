@@ -223,6 +223,117 @@ describe('layoutProblems per piece rules', () => {
   })
 })
 
+describe('layoutProblems closed field lists', () => {
+  it('refuses unknown fields at every level, the no free text channel rule', () => {
+    const top = base() as unknown as Record<string, unknown>
+    top.author = 'x'
+    expect(layoutProblems(top)).toContain('The layout carries an unknown field author.')
+
+    const area = base() as unknown as { area: Record<string, unknown> }
+    area.area.depth = 3
+    expect(layoutProblems(area)).toContain('The area carries an unknown field depth.')
+
+    const frame = base() as unknown as { frames: Record<string, unknown>[] }
+    frame.frames[0].meta = {}
+    expect(layoutProblems(frame)).toContain('Phase 1 carries an unknown field meta.')
+
+    const ent = base()
+    ;(ent.frames[0].entities[0] as unknown as Record<string, unknown>).name = 'a name'
+    expect(layoutProblems(ent)).toContain('Phase 1 piece 1 carries an unknown field name.')
+
+    const zone = base()
+    zone.frames[0].zones = [{ id: 'z9', x: 0, y: 0, width: 2, height: 2 }]
+    ;(zone.frames[0].zones[0] as unknown as Record<string, unknown>).colour = 'red'
+    expect(layoutProblems(zone)).toContain('Phase 1 zone 1 carries an unknown field colour.')
+
+    const arrow = base()
+    ;(arrow.frames[0].arrows[0] as unknown as Record<string, unknown>).via = { x: 1, y: 1 }
+    expect(layoutProblems(arrow)).toContain('Phase 1 arrow 1 carries an unknown field via.')
+
+    const point = base()
+    ;(point.frames[0].arrows[0].from as unknown as Record<string, unknown>).z = 1
+    expect(layoutProblems(point)).toContain('Phase 1 arrow 1 start carries an unknown field z.')
+  })
+})
+
+describe('layoutProblems hostile input', () => {
+  it('produces problems, never exceptions, for hostile shapes', () => {
+    const area = { width: 10, length: 10 }
+    const hostiles: unknown[] = [
+      { version: 1, area, frames: [null] },
+      { version: 1, area: [], frames: [] },
+      { version: 1, area, frames: [true] },
+      { version: 1, area, frames: new Array(2) },
+      { version: 1, area, frames: [{ entities: new Array(1), zones: [], arrows: [] }] },
+      { version: 1, area, frames: [{ entities: [{ id: {}, kind: 'cone', x: 1, y: 1 }], zones: [], arrows: [] }] },
+      { version: 1, area, frames: [{ entities: [], zones: ['zone'], arrows: [] }] },
+      { version: 1, area, frames: [{ entities: [], zones: [], arrows: [{ id: 'a1', kind: 'pass', from: 5, to: { x: 1, y: 1 } }] }] },
+      { version: 1, area, frames: [{ entities: [], zones: [], arrows: [], note: 7 }] },
+    ]
+    for (const hostile of hostiles) {
+      expect(layoutProblems(hostile).length).toBeGreaterThan(0)
+      expect(parseDrillLayout(hostile)).toBeNull()
+    }
+  })
+
+  it('refuses sparse array holes rather than skipping them', () => {
+    // forEach would skip holes silently; the index loops must not, or a
+    // parse blessed value could throw in layoutEntityCounts.
+    expect(layoutProblems({ version: 1, area: { width: 10, length: 10 }, frames: new Array(2) })).toContain(
+      'Phase 1 is not an object.',
+    )
+    const holes = base()
+    holes.frames[0].entities = new Array(3) as never
+    expect(layoutProblems(holes)).toContain('Phase 1 piece 1 has no usable id.')
+  })
+})
+
+describe('layoutProblems accept side boundaries', () => {
+  const minimal = (over: Partial<DrillLayout> = {}): DrillLayout => ({
+    version: 1,
+    area: { width: 10, length: 10 },
+    frames: [{ entities: [], zones: [], arrows: [] }],
+    ...over,
+  })
+
+  it('accepts areas at exactly the metre bounds', () => {
+    expect(layoutProblems(minimal({ area: { width: AREA_MIN_METRES, length: AREA_MIN_METRES } }))).toEqual([])
+    expect(layoutProblems(minimal({ area: { width: AREA_MAX_METRES, length: AREA_MAX_METRES } }))).toEqual([])
+  })
+
+  it('accepts exactly four phases sharing identity', () => {
+    const frame = { entities: [entity('c1')], zones: [], arrows: [] }
+    expect(
+      layoutProblems(minimal({ frames: Array.from({ length: LAYOUT_MAX_FRAMES }, () => structuredClone(frame)) })),
+    ).toEqual([])
+  })
+
+  it('accepts a phase at exactly the element caps', () => {
+    const full = minimal()
+    full.frames[0].entities = Array.from({ length: LAYOUT_MAX_ENTITIES_PER_FRAME }, (_, i) => entity(`e${i}`))
+    full.frames[0].zones = Array.from({ length: LAYOUT_MAX_ZONES_PER_FRAME }, (_, i) => ({
+      id: `z${i}`,
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+    }))
+    full.frames[0].arrows = Array.from({ length: LAYOUT_MAX_ARROWS_PER_FRAME }, (_, i) => ({
+      id: `a${i}`,
+      kind: 'pass' as const,
+      from: { x: 1, y: 1 },
+      to: { x: 2, y: 2 },
+    }))
+    expect(layoutProblems(full)).toEqual([])
+  })
+
+  it('accepts a three character label, a forty character id and rotation zero', () => {
+    const edge = minimal()
+    edge.frames[0].entities = [entity('x'.repeat(40), { kind: 'player', team: 'neutral', label: 'abc', rotation: 0 })]
+    expect(layoutProblems(edge)).toEqual([])
+  })
+})
+
 describe('layoutProblems shared identity across phases', () => {
   const mismatch = 'Phase 2 does not carry the same pieces as phase 1; phases move pieces, never add or remove them.'
 

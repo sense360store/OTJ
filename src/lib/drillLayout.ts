@@ -13,8 +13,12 @@
 //
 // parseDrillLayout is the single gate stored jsonb passes on the way in;
 // layoutProblems is the editor's detailed account of what is wrong. The
-// database enforces the same outer shape with drill_layout_ok (0047), the
-// browser twin discipline every jsonb column in this repo follows.
+// database enforces the storable envelope with drill_layout_ok (0047):
+// shape, value types, closed field lists, string caps and a total size
+// cap, so no free text channel survives a direct write. The rules that
+// need arithmetic (coordinate ranges, zone fit, rotation bounds, id
+// uniqueness, shared identity across phases) live only here, the browser
+// twin discipline every jsonb column in this repo follows.
 
 export const LAYOUT_VERSION = 1
 
@@ -53,7 +57,8 @@ export interface LayoutEntity {
   kind: LayoutEntityKind
   x: number
   y: number
-  // Degrees clockwise from facing up the area, for goals and mannequins.
+  // Degrees clockwise from facing up the area. Valid on any piece; the
+  // renderer honours it on directional pieces such as goals and mannequins.
   rotation?: number
   // Players only: which side the disc renders as.
   team?: LayoutTeam
@@ -109,6 +114,22 @@ const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Num
 
 const isId = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 40
 
+// The closed field lists, mirrored by drill_layout_ok in the database: an
+// unknown field is refused on both sides, so the only free text a layout
+// can carry is the capped labels and notes.
+const TOP_KEYS = ['version', 'area', 'frames']
+const AREA_KEYS = ['width', 'length']
+const FRAME_KEYS = ['entities', 'zones', 'arrows', 'note']
+const ENTITY_KEYS = ['id', 'kind', 'x', 'y', 'rotation', 'team', 'label']
+const ZONE_KEYS = ['id', 'x', 'y', 'width', 'height', 'label']
+const ARROW_KEYS = ['id', 'kind', 'from', 'to']
+const POINT_KEYS = ['x', 'y']
+
+const unknownKeyProblems = (v: Record<string, unknown>, allowed: string[], where: string): string[] =>
+  Object.keys(v)
+    .filter((k) => !allowed.includes(k))
+    .map((k) => `${where} carries an unknown field ${k}.`)
+
 function pointProblems(v: unknown, area: LayoutArea, where: string): string[] {
   if (!isRecord(v)) return [`${where} is not a point`]
   const out: string[] = []
@@ -122,7 +143,7 @@ function pointProblems(v: unknown, area: LayoutArea, where: string): string[] {
 // verdict.
 export function layoutProblems(value: unknown): string[] {
   if (!isRecord(value)) return ['The layout is not an object.']
-  const out: string[] = []
+  const out = unknownKeyProblems(value, TOP_KEYS, 'The layout')
   if (value.version !== LAYOUT_VERSION) out.push('The layout version is not 1.')
 
   const areaRaw = value.area
@@ -140,6 +161,7 @@ export function layoutProblems(value: unknown): string[] {
   } else {
     area = { width: areaRaw.width, length: areaRaw.length }
   }
+  if (isRecord(areaRaw)) out.push(...unknownKeyProblems(areaRaw, AREA_KEYS, 'The area'))
 
   const frames = value.frames
   if (!Array.isArray(frames) || frames.length < 1 || frames.length > LAYOUT_MAX_FRAMES) {
@@ -148,38 +170,45 @@ export function layoutProblems(value: unknown): string[] {
   }
 
   let firstIds: string[] | null = null
-  frames.forEach((frameRaw, fi) => {
+  // Index loops throughout, never forEach: forEach skips sparse array
+  // holes, and a hole must fail like any other malformed element or a
+  // parse blessed value could still throw downstream.
+  for (let fi = 0; fi < frames.length; fi++) {
+    const frameRaw: unknown = frames[fi]
     const phase = `Phase ${fi + 1}`
     if (!isRecord(frameRaw)) {
       out.push(`${phase} is not an object.`)
-      return
+      continue
     }
+    out.push(...unknownKeyProblems(frameRaw, FRAME_KEYS, phase))
     const entities = frameRaw.entities
     const zones = frameRaw.zones
     const arrows = frameRaw.arrows
     if (!Array.isArray(entities) || entities.length > LAYOUT_MAX_ENTITIES_PER_FRAME) {
       out.push(`${phase} holds at most ${LAYOUT_MAX_ENTITIES_PER_FRAME} pieces.`)
-      return
+      continue
     }
     if (!Array.isArray(zones) || zones.length > LAYOUT_MAX_ZONES_PER_FRAME) {
       out.push(`${phase} holds at most ${LAYOUT_MAX_ZONES_PER_FRAME} zones.`)
-      return
+      continue
     }
     if (!Array.isArray(arrows) || arrows.length > LAYOUT_MAX_ARROWS_PER_FRAME) {
       out.push(`${phase} holds at most ${LAYOUT_MAX_ARROWS_PER_FRAME} arrows.`)
-      return
+      continue
     }
     if (frameRaw.note !== undefined && (typeof frameRaw.note !== 'string' || frameRaw.note.length > LAYOUT_NOTE_MAX)) {
       out.push(`${phase}'s note is too long.`)
     }
 
     const ids = new Set<string>()
-    entities.forEach((e, ei) => {
+    for (let ei = 0; ei < entities.length; ei++) {
+      const e: unknown = entities[ei]
       const whereName = `${phase} piece ${ei + 1}`
       if (!isRecord(e) || !isId(e.id)) {
         out.push(`${whereName} has no usable id.`)
-        return
+        continue
       }
+      out.push(...unknownKeyProblems(e, ENTITY_KEYS, whereName))
       if (ids.has(e.id)) out.push(`${whereName} repeats the id ${e.id}.`)
       ids.add(e.id)
       if (!LAYOUT_ENTITY_KINDS.includes(e.kind as LayoutEntityKind)) out.push(`${whereName} has an unknown kind.`)
@@ -194,14 +223,16 @@ export function layoutProblems(value: unknown): string[] {
       if (e.label !== undefined && (typeof e.label !== 'string' || e.label.length > LAYOUT_LABEL_MAX)) {
         out.push(`${whereName}'s label is over ${LAYOUT_LABEL_MAX} characters.`)
       }
-    })
+    }
 
-    zones.forEach((z, zi) => {
+    for (let zi = 0; zi < zones.length; zi++) {
+      const z: unknown = zones[zi]
       const whereName = `${phase} zone ${zi + 1}`
       if (!isRecord(z) || !isId(z.id)) {
         out.push(`${whereName} has no usable id.`)
-        return
+        continue
       }
+      out.push(...unknownKeyProblems(z, ZONE_KEYS, whereName))
       if (ids.has(z.id)) out.push(`${whereName} repeats the id ${z.id}.`)
       ids.add(z.id)
       if (
@@ -221,20 +252,24 @@ export function layoutProblems(value: unknown): string[] {
       if (z.label !== undefined && (typeof z.label !== 'string' || z.label.length > LAYOUT_ZONE_LABEL_MAX)) {
         out.push(`${whereName}'s label is over ${LAYOUT_ZONE_LABEL_MAX} characters.`)
       }
-    })
+    }
 
-    arrows.forEach((a, ai) => {
+    for (let ai = 0; ai < arrows.length; ai++) {
+      const a: unknown = arrows[ai]
       const whereName = `${phase} arrow ${ai + 1}`
       if (!isRecord(a) || !isId(a.id)) {
         out.push(`${whereName} has no usable id.`)
-        return
+        continue
       }
+      out.push(...unknownKeyProblems(a, ARROW_KEYS, whereName))
       if (ids.has(a.id)) out.push(`${whereName} repeats the id ${a.id}.`)
       ids.add(a.id)
       if (!LAYOUT_ARROW_KINDS.includes(a.kind as LayoutArrowKind)) out.push(`${whereName} has an unknown kind.`)
+      if (isRecord(a.from)) out.push(...unknownKeyProblems(a.from, POINT_KEYS, `${whereName} start`))
+      if (isRecord(a.to)) out.push(...unknownKeyProblems(a.to, POINT_KEYS, `${whereName} end`))
       out.push(...pointProblems(a.from, area, `${whereName} start`))
       out.push(...pointProblems(a.to, area, `${whereName} end`))
-    })
+    }
 
     // Shared identity: later phases move the first phase's pieces, they do
     // not introduce or drop any. Zones and arrows may differ per phase.
@@ -247,7 +282,7 @@ export function layoutProblems(value: unknown): string[] {
     } else if (firstIds.length !== entityIds.length || firstIds.some((id, i) => id !== entityIds[i])) {
       out.push(`${phase} does not carry the same pieces as phase 1; phases move pieces, never add or remove them.`)
     }
-  })
+  }
 
   return out
 }
