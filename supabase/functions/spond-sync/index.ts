@@ -12,17 +12,32 @@
 //
 // What this is. Spond is where the club arranges sessions and parents
 // respond. A coach triggers this function to pull attendance for the
-// mapped Spond groups into spond_events, counts only. See CLAUDE.md,
-// Spond integration, for the standing policy.
+// mapped Spond groups into spond_events (four counts plus event facts)
+// and, for linked members only, per event response statuses into
+// spond_event_responses. See CLAUDE.md, Spond integration, for the
+// standing policy.
 //
-// THE CHILDREN'S DATA BOUNDARY. Spond event responses identify children
-// and their parents. The function derives four integer counts per event
-// in memory and discards everything else: never member ids, names,
-// emails, phone numbers, comments or any payload fragment, in any
-// column, any log line, or this function's response body. Spond
-// response bodies and headers are never logged; errors log the HTTP
-// status and our own context only. The derivation lives in
-// ../_shared/spond.ts and is pinned by spond_test.ts.
+// THE CHILDREN'S DATA BOUNDARY, as amended by owner decision of record
+// (docs/adr/ADR-0008, authoritative statement in
+// docs/security/spond-data-boundary.md). Spond event responses identify
+// children and their parents. The function derives four integer counts
+// per event in memory and, for member ids present in the club's
+// player_spond_links table ONLY, one response status row per event and
+// linked member: the opaque id plus one of Spond's four states, nothing
+// else. Ids without a link are counted into the aggregates and
+// discarded exactly as before the amendment, so guardian and adult
+// member ids never become rows. Names, emails, phone numbers, comments
+// and every other payload fragment remain forbidden in any column, any
+// log line, and this function's response body. Spond response bodies
+// and headers are never logged; errors log the HTTP status and our own
+// context only. The derivations live in ../_shared/spond.ts and are
+// pinned by spond_test.ts.
+//
+// The linked only filter reads player_spond_links through RLS as the
+// caller. Its select policy takes players.view, so a caller holding
+// sessions.create without players.view syncs counts and stores no
+// response rows: fail closed behaviour, never fixed by widening the
+// links read policy (docs/security/spond-data-boundary.md).
 //
 // Read only toward Spond. Authentication is the only non GET call. The
 // function never creates, modifies, cancels or responds to anything on
@@ -46,19 +61,23 @@
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
   buildEventRow,
+  buildResponseRows,
   claimEvent,
+  deriveMemberStatuses,
   eventsQuery,
   extractAccessToken,
   MAX_EVENTS_PER_GROUP,
   MAX_TOTAL_EVENTS,
+  readCappedJson,
   SPOND_API_BASE,
+  SPOND_MAX_BODY_BYTES,
   SPOND_TIMEOUT_MS,
   syncWindow,
   visibleGroupIds,
   WINDOW_BACK_DAYS,
   WINDOW_FORWARD_DAYS,
 } from '../_shared/spond.ts'
-import type { SpondEventRow, SpondMapping, SyncWindow } from '../_shared/spond.ts'
+import type { MemberStatus, SpondEventRow, SpondMapping, SpondResponseRow, SyncWindow } from '../_shared/spond.ts'
 
 const SPOND_EMAIL = Deno.env.get('SPOND_EMAIL') ?? ''
 const SPOND_PASSWORD = Deno.env.get('SPOND_PASSWORD') ?? ''
@@ -71,6 +90,9 @@ interface MappingOutcome {
   spond_name: string
   status: 'synced' | 'failed'
   events: number
+  // Response status rows stored for this mapping's events, linked
+  // members only. A count, never an id.
+  responses?: number
   warnings?: string[]
   error?: string
 }
@@ -108,12 +130,9 @@ async function spondLogin(): Promise<{ token: string } | { response: Response }>
       }),
     }
   }
-  let body: unknown = null
-  try {
-    body = await res.json()
-  } catch {
-    body = null
-  }
+  // Cap the body like the sibling functions: a login response is a few
+  // hundred bytes; anything huge is bounded rather than buffered whole.
+  const body = await readCappedJson(res, SPOND_MAX_BODY_BYTES)
   const token = extractAccessToken(body)
   if (!token) {
     console.error('spond-sync: login returned no usable token')
@@ -142,12 +161,7 @@ async function spondGroupIds(token: string): Promise<{ ids: Set<string> } | { re
       response: reply(502, { error: `Spond refused the group list (HTTP ${res.status}). Nothing was synced.` }),
     }
   }
-  let body: unknown = null
-  try {
-    body = await res.json()
-  } catch {
-    body = null
-  }
+  const body = await readCappedJson(res, SPOND_MAX_BODY_BYTES)
   return { ids: visibleGroupIds(body) }
 }
 
@@ -202,6 +216,20 @@ Deno.serve(async (req) => {
   if ('response' in resolved) return resolved.response
   const { caller } = resolved
 
+  // The capability gate FIRST, before the secret presence check and
+  // before Spond is contacted, the sibling functions' order: an
+  // unauthorised caller learns nothing about server configuration.
+  // has_perm is the live SECURITY DEFINER function the spond_events
+  // write policy calls, so a yes here means the writes below will pass
+  // RLS and a no refuses early.
+  const { data: canSync, error: permError } = await caller.db.rpc('has_perm', { capability: 'sessions.create' })
+  if (permError) {
+    return reply(500, { error: 'Could not check your access. Nothing was synced.' })
+  }
+  if (canSync !== true) {
+    return reply(403, { error: 'Syncing Spond attendance needs the sessions.create capability.' })
+  }
+
   // Fail closed while the dedicated organiser account is not configured.
   // The function can be deployed before the secrets exist; only a real
   // sync needs them.
@@ -210,18 +238,6 @@ Deno.serve(async (req) => {
       error:
         'The Spond account is not configured. An administrator must set the SPOND_EMAIL and SPOND_PASSWORD function secrets. Nothing was synced.',
     })
-  }
-
-  // The capability gate, before Spond is contacted at all. has_perm is
-  // the live SECURITY DEFINER function the spond_events write policy
-  // calls (signature has_perm(capability text)), so a yes here means the
-  // writes below will pass RLS and a no refuses early.
-  const { data: canSync, error: permError } = await caller.db.rpc('has_perm', { capability: 'sessions.create' })
-  if (permError) {
-    return reply(500, { error: 'Could not check your access. Nothing was synced.' })
-  }
-  if (canSync !== true) {
-    return reply(403, { error: 'Syncing Spond attendance needs the sessions.create capability.' })
   }
 
   // The club's mappings, read through RLS as the caller. The sync touches
@@ -239,6 +255,64 @@ Deno.serve(async (req) => {
     return reply(500, { error: 'Could not read the Spond group mappings. Nothing was synced.' })
   }
   const mappings = (mappingRows ?? []) as SpondMapping[]
+
+  // The linked member ids, the amended boundary's allow filter, read
+  // through RLS as the caller (players.view gates the select). Only ids
+  // in this set may become response rows; everyone else stays counts
+  // only. The read is trusted ONLY when the caller demonstrably holds
+  // players.view: an RLS empty read from a caller without it is
+  // indistinguishable from a genuinely empty link table, and treating
+  // it as authoritative would delete every stored status. So a missing
+  // capability or a failed read leaves linkedIds null and this run
+  // touches no response rows at all, while a players.view holder's
+  // empty set still replaces synced events' rows with nothing: that is
+  // how rows for severed links drain.
+  let linkedIds: ReadonlySet<string> | null = null
+  const { data: canReadLinks, error: viewPermError } = await caller.db.rpc('has_perm', {
+    capability: 'players.view',
+  })
+  if (viewPermError) {
+    console.error('spond-sync: players.view check failed')
+  } else if (canReadLinks === true) {
+    const { data: linkRows, error: linksError } = await caller.db
+      .from('player_spond_links')
+      .select('spond_member_id')
+    if (linksError) {
+      console.error('spond-sync: links read failed', { code: linksError.code })
+    } else {
+      linkedIds = new Set(((linkRows ?? []) as { spond_member_id: string }[]).map((r) => r.spond_member_id))
+    }
+  }
+
+  // Rows whose member id no longer has a link are pseudonymous child
+  // data past its purpose, and events outside the sync window are never
+  // upserted again, so the per event replacement below cannot reach
+  // them. One club scoped sweep removes them: the stored member ids are
+  // read back (the caller holds players.view here), the ids without a
+  // link are deleted in bounded batches. Failures warn in the log and
+  // self heal on the next run.
+  if (linkedIds !== null) {
+    const { data: storedRows, error: storedError } = await caller.db
+      .from('spond_event_responses')
+      .select('spond_member_id')
+    if (storedError) {
+      console.error('spond-sync: stored responses read failed', { code: storedError.code })
+    } else {
+      const stored = new Set(((storedRows ?? []) as { spond_member_id: string }[]).map((r) => r.spond_member_id))
+      const stale = [...stored].filter((id) => !linkedIds.has(id))
+      for (let i = 0; i < stale.length; i += 50) {
+        const batch = stale.slice(i, i + 50)
+        const { error: staleError } = await caller.db
+          .from('spond_event_responses')
+          .delete()
+          .in('spond_member_id', batch)
+        if (staleError) {
+          console.error('spond-sync: stale responses sweep failed', { code: staleError.code })
+          break
+        }
+      }
+    }
+  }
 
   const window = syncWindow(new Date())
   const windowReport = {
@@ -273,8 +347,14 @@ Deno.serve(async (req) => {
   // The row each event id first queued this run, the shared attribution
   // state claimEvent reads and rewrites.
   const queuedRows = new Map<string, SpondEventRow>()
+  // Each event's derived per member statuses (linked members only),
+  // keyed by Spond's text event id, set when the event first queues. A
+  // later mapping's claim of the same event carries the same payload,
+  // so the first derivation stands.
+  const statusesByEventId = new Map<string, MemberStatus[]>()
   let processed = 0
   let eventsTotal = 0
+  let responsesTotal = 0
   let stopped: string | null = null
 
   for (const mapping of mappings) {
@@ -344,6 +424,12 @@ Deno.serve(async (req) => {
         rewrites.set(claim.rewrite.spond_event_id, claim.rewrite)
         continue
       }
+      // First queue of this event this run: derive its linked members'
+      // statuses from the same response arrays the counts came from.
+      // The id arrays are the only part of the responses object read.
+      if (linkedIds !== null) {
+        statusesByEventId.set(row.spond_event_id, deriveMemberStatuses(event, linkedIds))
+      }
       rows.push(row)
     }
     if (malformed > 0) {
@@ -371,23 +457,61 @@ Deno.serve(async (req) => {
     // same conflict target setting team_id null. The write goes through
     // RLS as the caller.
     const upserts = [...rows, ...rewrites.values()]
+    let mappingResponses = 0
     if (upserts.length > 0) {
-      const { error: writeError } = await caller.db
+      // The returning select carries each row's database id, which the
+      // response rows reference; the read rides the club wide
+      // spond_events select policy.
+      const { data: written, error: writeError } = await caller.db
         .from('spond_events')
         .upsert(upserts, { onConflict: 'club_id,spond_event_id' })
+        .select('id, spond_event_id')
       if (writeError) {
         console.error('spond-sync: upsert failed', { mapping: mapping.id, code: writeError.code })
         failed('Could not write the synced events. Check your access and try again.', warnings)
         continue
       }
+
+      // Replace each synced event's response rows wholesale: delete then
+      // insert, the amended boundary's retention rule, so the rows never
+      // drift from Spond and rows for severed links drain to zero. Runs
+      // only when the links read succeeded; a response write failure
+      // warns and leaves the counts synced.
+      if (linkedIds !== null) {
+        const writtenRows = ((written ?? []) as { id: string; spond_event_id: string }[])
+        const responseRows: SpondResponseRow[] = writtenRows.flatMap((w) =>
+          buildResponseRows(caller.clubId, w.id, statusesByEventId.get(w.spond_event_id) ?? [], syncedAt),
+        )
+        const eventRowIds = writtenRows.map((w) => w.id)
+        if (eventRowIds.length > 0) {
+          const { error: clearError } = await caller.db
+            .from('spond_event_responses')
+            .delete()
+            .in('spond_event_id', eventRowIds)
+          if (clearError) {
+            console.error('spond-sync: responses clear failed', { mapping: mapping.id, code: clearError.code })
+            warnings.push('Could not update the response statuses for this group. The counts are synced.')
+          } else if (responseRows.length > 0) {
+            const { error: responsesError } = await caller.db.from('spond_event_responses').insert(responseRows)
+            if (responsesError) {
+              console.error('spond-sync: responses write failed', { mapping: mapping.id, code: responsesError.code })
+              warnings.push('Could not update the response statuses for this group. The counts are synced.')
+            } else {
+              mappingResponses = responseRows.length
+            }
+          }
+        }
+      }
     }
 
     eventsTotal += rows.length
+    responsesTotal += mappingResponses
     outcomes.push({
       id: mapping.id,
       spond_name: mapping.spond_name,
       status: 'synced',
       events: rows.length,
+      ...(mappingResponses > 0 ? { responses: mappingResponses } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
     })
   }
@@ -398,6 +522,10 @@ Deno.serve(async (req) => {
     window: windowReport,
     mappings: outcomes,
     events_total: eventsTotal,
+    // Counts only: how many linked member status rows this run stored,
+    // and how many links the filter held. Never an id.
+    responses_total: responsesTotal,
+    linked_members: linkedIds === null ? null : linkedIds.size,
     ...(stopped ? { stopped } : {}),
   })
 })

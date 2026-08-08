@@ -2,9 +2,11 @@
 // no database) and every fixture is synthetic: invented member ids and
 // invented names, never a real Spond payload, even redacted. They pin
 // the parts that can be wrong quietly: the counts derivation, the sync
-// window, the subgroup matching in the events query, and the upsert row
-// shape, including the children's data boundary expressed as a test.
-// Run with:
+// window, the subgroup matching in the events query, the upsert row
+// shape, and the per member response derivation of the amended boundary
+// (ADR-0008, docs/security/spond-data-boundary.md): linked member ids
+// and statuses only, everything else discarded, the forbidden list
+// provably absent from every row. Run with:
 //
 //   deno test --allow-env --allow-read supabase/functions/_shared/spond_test.ts
 //
@@ -12,13 +14,17 @@
 import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
   buildEventRow,
+  buildResponseRows,
   claimEvent,
   deriveCounts,
   deriveLocation,
+  deriveMemberStatuses,
   eventsQuery,
   extractAccessToken,
   MAX_EVENTS_PER_GROUP,
+  MAX_RESPONSE_IDS_PER_ARRAY,
   SPOND_EVENT_COLUMNS,
+  SPOND_RESPONSE_COLUMNS,
   spondTimestamp,
   syncWindow,
   visibleGroupIds,
@@ -341,4 +347,91 @@ Deno.test('claims track each event id independently', () => {
   assertEquals(claimEvent(queued, rowFor('team-2', 'EVT-SYNTH-B')), { outcome: 'queued' })
   assertEquals(queued.get('EVT-SYNTH-A')?.team_id, 'team-1')
   assertEquals(queued.get('EVT-SYNTH-B')?.team_id, 'team-2')
+})
+
+// ---- Per member responses, the amended boundary (ADR-0008) ------------------
+// The linked only rule expressed as tests: only ids present in the club's
+// link table become rows, everyone else (the guardian id above included)
+// stays counts only, and the forbidden list is provably absent from every
+// written row.
+
+const LINKED = new Set(['FAKE-MEMBER-1', 'FAKE-MEMBER-3'])
+
+Deno.test('statuses are derived for linked members only', () => {
+  const statuses = deriveMemberStatuses(SYNTHETIC_EVENT, LINKED)
+  assertEquals(statuses, [
+    { spond_member_id: 'FAKE-MEMBER-1', status: 'accepted' },
+    { spond_member_id: 'FAKE-MEMBER-3', status: 'declined' },
+  ])
+})
+
+Deno.test('an unlinked id, the guardian included, never becomes a status', () => {
+  const statuses = deriveMemberStatuses(SYNTHETIC_EVENT, LINKED)
+  const flat = JSON.stringify(statuses)
+  assert(!flat.includes('FAKE-MEMBER-2'))
+  assert(!flat.includes('FAKE-GUARDIAN-9'))
+})
+
+Deno.test('an empty link set derives nothing', () => {
+  assertEquals(deriveMemberStatuses(SYNTHETIC_EVENT, new Set()), [])
+})
+
+Deno.test('the waiting list array maps to the waiting status', () => {
+  const event = { responses: { waitinglistIds: ['FAKE-MEMBER-1'] } }
+  assertEquals(deriveMemberStatuses(event, LINKED), [{ spond_member_id: 'FAKE-MEMBER-1', status: 'waiting' }])
+})
+
+Deno.test('an id in two arrays keeps its first claim, in the fixed order', () => {
+  const event = { responses: { acceptedIds: ['FAKE-MEMBER-1'], declinedIds: ['FAKE-MEMBER-1'] } }
+  assertEquals(deriveMemberStatuses(event, LINKED), [{ spond_member_id: 'FAKE-MEMBER-1', status: 'accepted' }])
+})
+
+Deno.test('unconfirmedIds derives nothing, exactly as it counts nothing', () => {
+  const event = { responses: { unconfirmedIds: ['FAKE-MEMBER-1'] } }
+  assertEquals(deriveMemberStatuses(event, LINKED), [])
+})
+
+Deno.test('an id that does not fit the opaque token shape is discarded', () => {
+  const linked = new Set(['not a member id', 'FAKE-MEMBER-1'])
+  const event = { responses: { acceptedIds: ['not a member id', 'FAKE-MEMBER-1'] } }
+  assertEquals(deriveMemberStatuses(event, linked), [{ spond_member_id: 'FAKE-MEMBER-1', status: 'accepted' }])
+})
+
+Deno.test('missing or malformed response arrays derive nothing rather than failing', () => {
+  assertEquals(deriveMemberStatuses({}, LINKED), [])
+  assertEquals(deriveMemberStatuses(null, LINKED), [])
+  assertEquals(deriveMemberStatuses({ responses: 'not an object' }, LINKED), [])
+  assertEquals(deriveMemberStatuses({ responses: { acceptedIds: 'not an array' } }, LINKED), [])
+  assertEquals(deriveMemberStatuses({ responses: { acceptedIds: [42, null, {}] } }, LINKED), [])
+})
+
+Deno.test('each response array is read only up to its defensive cap', () => {
+  const linkedId = 'FAKE-MEMBER-1'
+  const huge = Array.from({ length: MAX_RESPONSE_IDS_PER_ARRAY + 50 }, (_, i) => `FAKE-FILLER-${i}`)
+  // The linked id sits past the cap, so it is never reached.
+  const event = { responses: { acceptedIds: [...huge, linkedId] } }
+  assertEquals(deriveMemberStatuses(event, new Set([linkedId])), [])
+})
+
+Deno.test('a response row carries exactly the allowed columns and only primitives', () => {
+  const rows = buildResponseRows('club-1', 'event-row-1', deriveMemberStatuses(SYNTHETIC_EVENT, LINKED), SYNCED_AT)
+  assertEquals(rows.length, 2)
+  for (const row of rows) {
+    assertEquals(Object.keys(row).sort(), [...SPOND_RESPONSE_COLUMNS].sort())
+    for (const [key, value] of Object.entries(row)) {
+      assert(['string'].includes(typeof value), `${key} must be a string, got ${typeof value}`)
+    }
+  }
+})
+
+Deno.test('the response rows carry linked ids and statuses, never names or payload fragments', () => {
+  const rows = buildResponseRows('club-1', 'event-row-1', deriveMemberStatuses(SYNTHETIC_EVENT, LINKED), SYNCED_AT)
+  const flat = JSON.stringify(rows)
+  assert(!flat.includes('Madeup'))
+  assert(!flat.includes('Childname'))
+  assert(!flat.includes('FAKE-MEMBER-2'))
+  assert(!flat.includes('FAKE-GUARDIAN-9'))
+  assert(!flat.includes('recipients'))
+  assert(!flat.includes('acceptedIds'))
+  assert(!flat.includes('Invented Sports Ground'))
 })
