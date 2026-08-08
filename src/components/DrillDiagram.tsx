@@ -29,7 +29,7 @@ const ARROW_HEAD = 10
 const WAVE_AMPLITUDE = 5
 const WAVE_LENGTH = 16
 
-function EntityGlyph({ e, k }: { e: LayoutEntity; k: number }) {
+export function EntityGlyph({ e, k }: { e: LayoutEntity; k: number }) {
   const cx = e.x * k
   const cy = e.y * k
   // Rotation turns the glyph about its own centre; 0 faces up the area.
@@ -88,7 +88,7 @@ function EntityGlyph({ e, k }: { e: LayoutEntity; k: number }) {
   }
 }
 
-function ZoneRect({ z, k }: { z: LayoutZone; k: number }) {
+export function ZoneRect({ z, k }: { z: LayoutZone; k: number }) {
   return (
     <g className="dg-zone">
       <rect x={z.x * k} y={z.y * k} width={z.width * k} height={z.height * k} />
@@ -101,7 +101,7 @@ function ZoneRect({ z, k }: { z: LayoutZone; k: number }) {
   )
 }
 
-function ArrowLine({ a, k, headId, doubleHeadId }: { a: LayoutArrow; k: number; headId: string; doubleHeadId: string }) {
+export function ArrowLine({ a, k, headId, doubleHeadId }: { a: LayoutArrow; k: number; headId: string; doubleHeadId: string }) {
   // A zero length arrow is legal in the model but has no direction to
   // draw: a lone head with arbitrary orientation would only mislead.
   if (a.from.x === a.to.x && a.from.y === a.to.y) return null

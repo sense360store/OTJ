@@ -64,7 +64,7 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
-import { parseDrillLayout } from './drillLayout'
+import { parseDrillLayout, type DrillLayout } from './drillLayout'
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
 import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
 import { newestFirst } from './contentOrder'
@@ -1300,6 +1300,10 @@ export interface DrillInput {
   theme: string
   format: string
   sourceUrl: string
+  // The structured diagram (PR 10's editor). Always null for imported
+  // drills, which never get the editor affordance: FA content is never
+  // retrofitted.
+  layout: DrillLayout | null
 }
 
 // The attribution label always derives from the link at write time, so the
@@ -1333,6 +1337,7 @@ function toDrillWriteRow(input: DrillInput) {
     harder: input.harder,
     theme: input.theme || null,
     format: input.format || null,
+    layout: input.layout,
     ...toSourceFields(input.sourceUrl),
   }
 }

@@ -8,6 +8,9 @@
 import { useRef, useState } from 'react'
 import { Icon } from './icons'
 import { Chip, ListInput, Loading, MediaThumb, MEDIA_META, Modal, UploadProgress } from './ui'
+import { canEditLayout } from '../lib/layoutEditor'
+import { DrillDiagram } from './DrillDiagram'
+import { DrillLayoutEditorModal } from './DrillLayoutEditor'
 import {
   mediaTypeForFile,
   oversizeMessage,
@@ -296,6 +299,7 @@ function fromDrill(drill?: Drill): DrillInput {
     theme: drill?.theme ?? '',
     format: drill?.format ?? '',
     sourceUrl: drill?.sourceUrl ?? '',
+    layout: drill?.layout ?? null,
   }
 }
 
@@ -308,6 +312,7 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
   const upload = useUploadMedia()
   const [form, setForm] = useState<DrillInput>(() => fromDrill(drill))
   const [error, setError] = useState<string | null>(null)
+  const [layoutOpen, setLayoutOpen] = useState(false)
   const pending = insert.isPending || update.isPending
   const set = <K extends keyof DrillInput>(k: K, v: DrillInput[K]) => setForm((f) => ({ ...f, [k]: v }))
   const toggleAge = (a: string) =>
@@ -460,6 +465,25 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
           onChange={(e) => set('setupNotes', e.target.value)}
         />
       </div>
+      {/* The diagram belongs to the club's own drills only. An imported
+          drill carries a source URL and keeps its FA image untouched,
+          never a recreated layout, so the affordance is absent there. */}
+      {canEditLayout(form.sourceUrl) && (
+        <div className="field">
+          <label>Diagram</label>
+          {form.layout && <DrillDiagram layout={form.layout} />}
+          <div className="row" style={{ gap: 8, marginTop: form.layout ? 8 : 0 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setLayoutOpen(true)}>
+              {form.layout ? 'Edit diagram' : 'Add diagram'}
+            </button>
+            {form.layout && (
+              <button className="btn btn-ghost btn-sm" onClick={() => set('layout', null)}>
+                Remove diagram
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div className="field">
         <label>Equipment</label>
         <ListInput value={form.equipment} onChange={(v) => set('equipment', v)} placeholder="Type and press enter to add" />
@@ -507,6 +531,13 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 10 }}>
           {error}
         </p>
+      )}
+      {layoutOpen && (
+        <DrillLayoutEditorModal
+          initial={form.layout}
+          onSave={(l) => set('layout', l)}
+          onClose={() => setLayoutOpen(false)}
+        />
       )}
     </Modal>
   )

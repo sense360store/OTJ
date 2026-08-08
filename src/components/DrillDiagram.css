@@ -54,6 +54,18 @@
 .drill-diagram-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
 .drill-diagram-area { font-size: 12px; color: var(--slate-2); }
 
+/* The editor canvas over the same glyphs. Touch action off so a drag
+   moves the piece, not the page, on a phone. */
+.drill-editor-canvas { touch-action: none; cursor: crosshair; }
+.drill-editor-piece { cursor: pointer; }
+.drill-editor-piece.selected { outline: none; }
+.drill-editor-piece.selected ellipse,
+.drill-editor-piece.selected path,
+.drill-editor-piece.selected rect,
+.drill-editor-piece.selected line,
+.drill-editor-piece.selected circle { filter: drop-shadow(0 0 3px var(--royal)); }
+.drill-editor-pending { fill: var(--royal); }
+
 @media print {
   .drill-diagram-frame { display: block; break-inside: avoid; }
   .drill-diagram-frame + .drill-diagram-frame { margin-top: 12px; }
