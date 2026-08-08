@@ -23,6 +23,7 @@ import {
   type ProgrammeRow,
   type SessionRow,
 } from './queries'
+import { FIXTURE_PASSING_SQUARE } from './drillLayoutFixtures'
 
 // A complete session row, the shape Supabase returns. Each test overrides only
 // the fields it asserts on.
@@ -215,6 +216,15 @@ describe('drill row to app mapping', () => {
   it('maps tags through and defaults a null column to an empty list', () => {
     expect(toDrill(drillRow({ tags: ['Defending', 'Marking'] })).tags).toEqual(['Defending', 'Marking'])
     expect(toDrill(drillRow({ tags: null })).tags).toEqual([])
+  })
+
+  it('routes the layout jsonb through the parse gate', () => {
+    // A null column (every FA import) stays null, a valid layout parses
+    // whole, and anything malformed reads as null so the detail falls
+    // back to the media rendering rather than a broken diagram.
+    expect(toDrill(drillRow()).layout).toBeNull()
+    expect(toDrill(drillRow({ layout: FIXTURE_PASSING_SQUARE })).layout).toEqual(FIXTURE_PASSING_SQUARE)
+    expect(toDrill(drillRow({ layout: { version: 99 } })).layout).toBeNull()
   })
 })
 

@@ -48,15 +48,18 @@ describe('wavyPath', () => {
     expect(d.endsWith('100 0')).toBe(true)
   })
 
-  it('alternates half waves to both sides of the line', () => {
+  it('alternates half waves to both sides and finishes with a straight tail', () => {
     const d = wavyPath({ x: 0, y: 0 }, { x: 64, y: 0 }, 5, 16)
-    // 64 units at wavelength 16 is 8 half waves; control points alternate
-    // above and below a horizontal line.
+    // 56 waved units at wavelength 16 is 7 half waves; control points
+    // alternate above and below a horizontal line, and the final segment
+    // runs straight into the endpoint so an auto oriented arrowhead takes
+    // the travel direction, not a wave tangent.
     const controls = [...d.matchAll(/Q (-?[\d.]+) (-?[\d.]+)/g)].map((m) => Number(m[2]))
-    expect(controls.length).toBe(8)
+    expect(controls.length).toBe(7)
     expect(controls.filter((y) => y > 0).length).toBe(4)
-    expect(controls.filter((y) => y < 0).length).toBe(4)
+    expect(controls.filter((y) => y < 0).length).toBe(3)
     expect(controls[0]).toBe(-controls[1])
+    expect(d.endsWith('L 64 0')).toBe(true)
   })
 
   it('always draws at least one wave, and a zero length dribble degrades to a point', () => {

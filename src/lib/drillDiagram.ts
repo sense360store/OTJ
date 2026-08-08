@@ -14,8 +14,9 @@ export function diagramScale(area: LayoutArea): number {
   return DIAGRAM_LONG_SIDE / Math.max(area.width, area.length)
 }
 
-// Pull an arrow's end back along its own line so the head's tip lands on
-// the target instead of overshooting it. A zero length arrow stays put.
+// Pull an arrow's end back along its own line so the head finishes at
+// the target instead of the shaft overshooting through it. A zero length
+// or shorter than the pull back arrow stays put.
 export function arrowShaft(from: LayoutPoint, to: LayoutPoint, pullBack: number): { from: LayoutPoint; to: LayoutPoint } {
   const dx = to.x - from.x
   const dy = to.y - from.y
@@ -26,8 +27,10 @@ export function arrowShaft(from: LayoutPoint, to: LayoutPoint, pullBack: number)
 }
 
 // The dribble's wavy line: quadratic half waves along the from to vector,
-// control points offset alternately to either side. Ends exactly on `to`
-// so the arrowhead sits where the shaft finishes.
+// control points offset alternately to either side, finishing with a
+// short straight run into `to`. The straight tail matters for the marker:
+// an auto oriented arrowhead takes the path's end tangent, and ending on
+// a wave would point the head up to half a wave off the travel direction.
 export function wavyPath(from: LayoutPoint, to: LayoutPoint, amplitude: number, wavelength: number): string {
   const dx = to.x - from.x
   const dy = to.y - from.y
@@ -38,8 +41,10 @@ export function wavyPath(from: LayoutPoint, to: LayoutPoint, amplitude: number, 
   const uy = dy / len
   const px = -uy
   const py = ux
-  const halves = Math.max(1, Math.round(len / (wavelength / 2)))
-  const step = len / halves
+  const tail = Math.min(wavelength / 2, len / 4)
+  const waved = len - tail
+  const halves = Math.max(1, Math.round(waved / (wavelength / 2)))
+  const step = waved / halves
   let d = `M ${round(from.x)} ${round(from.y)}`
   for (let i = 0; i < halves; i++) {
     const midAt = (i + 0.5) * step
@@ -51,6 +56,7 @@ export function wavyPath(from: LayoutPoint, to: LayoutPoint, amplitude: number, 
     const ey = from.y + uy * endAt
     d += ` Q ${round(cx)} ${round(cy)} ${round(ex)} ${round(ey)}`
   }
+  d += ` L ${round(to.x)} ${round(to.y)}`
   return d
 }
 

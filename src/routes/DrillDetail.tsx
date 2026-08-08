@@ -292,7 +292,9 @@ export function DrillDetail() {
               both still plays or opens its clip. */}
           {drill.layout ? (
             <div className="detail-media">
-              <DrillDiagram layout={drill.layout} />
+              {/* Keyed by drill so the phase choice resets when the screen
+                  swaps to another drill without remounting. */}
+              <DrillDiagram key={drill.id} layout={drill.layout} />
             </div>
           ) : (
           <div className="detail-media">

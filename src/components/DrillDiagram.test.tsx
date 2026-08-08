@@ -23,7 +23,7 @@ describe('DrillDiagram glyphs', () => {
     const html = square()
     expect(html.match(/dg-cone/g)).toHaveLength(4)
     expect(html.match(/dg-team-attack/g)).toHaveLength(4)
-    expect(html.match(/dg-ball/g)).toHaveLength(2) // the group and its inner dot class
+    expect(html.match(/class="dg-ball"/g)).toHaveLength(1)
     for (const label of ['>A<', '>B<', '>C<', '>D<']) expect(html).toContain(label)
   })
 
@@ -63,10 +63,13 @@ describe('DrillDiagram glyphs', () => {
 })
 
 describe('DrillDiagram arrow notation', () => {
-  it('a pass is a solid line with a single head', () => {
+  it('a pass is a solid line with the single head, never the double', () => {
     const html = square()
     expect(html.match(/dg-arrow-pass/g)).toHaveLength(4)
-    expect(html).toContain('marker-end')
+    // Every pass references the single head marker; the double head is
+    // defined but unreferenced in a drill with no shot.
+    expect(html.match(/class="dg-arrow dg-arrow-pass"[^>]*marker-end="url\(#dg-head-/g)).toHaveLength(4)
+    expect(html).not.toMatch(/marker-end="url\(#dg-head2-[^"]*"[^>]*class="dg-arrow dg-arrow-pass"/)
   })
 
   it('a run is dashed, a dribble is wavy, a shot carries the double head', () => {

@@ -102,6 +102,9 @@ function ZoneRect({ z, k }: { z: LayoutZone; k: number }) {
 }
 
 function ArrowLine({ a, k, headId, doubleHeadId }: { a: LayoutArrow; k: number; headId: string; doubleHeadId: string }) {
+  // A zero length arrow is legal in the model but has no direction to
+  // draw: a lone head with arbitrary orientation would only mislead.
+  if (a.from.x === a.to.x && a.from.y === a.to.y) return null
   const from = { x: a.from.x * k, y: a.from.y * k }
   const to = { x: a.to.x * k, y: a.to.y * k }
   const shaft = arrowShaft(from, to, ARROW_HEAD * 0.8)
@@ -146,11 +149,15 @@ export function DrillDiagramFrame({
   const k = diagramScale(layout.area)
   const w = layout.area.width * k
   const h = layout.area.length * k
+  // Padding covers the widest glyph half extent (a rotated full goal
+  // reaches 22 units past its centre), so a piece on the touchline never
+  // clips.
+  const pad = 24
   return (
     <figure className={'drill-diagram-frame' + (active ? ' active' : '')}>
       <svg
         className="drill-diagram-svg"
-        viewBox={`${-8} ${-8} ${w + 16} ${h + 16}`}
+        viewBox={`${-pad} ${-pad} ${w + pad * 2} ${h + pad * 2}`}
         role="img"
         aria-label={`Phase ${index + 1} diagram`}
       >
@@ -181,16 +188,20 @@ export function DrillDiagramFrame({
 
 export function DrillDiagram({ layout }: { layout: DrillLayout }) {
   const [phase, setPhase] = useState(0)
+  // Clamped, not trusted: the detail screen swaps drills without a
+  // remount, and a stale index past a shorter layout's last frame would
+  // otherwise leave every frame inactive and the card blank.
+  const active = Math.min(phase, layout.frames.length - 1)
   return (
     <div className="drill-diagram">
       {layout.frames.map((f, i) => (
-        <DrillDiagramFrame key={i} layout={layout} frame={f} index={i} active={i === phase} />
+        <DrillDiagramFrame key={i} layout={layout} frame={f} index={i} active={i === active} />
       ))}
       <div className="drill-diagram-foot">
         {layout.frames.length > 1 && (
           <div className="drill-diagram-stepper row wrap" style={{ gap: 8 }}>
             {layout.frames.map((_, i) => (
-              <Chip key={i} on={i === phase} onClick={() => setPhase(i)}>
+              <Chip key={i} on={i === active} onClick={() => setPhase(i)}>
                 Phase {i + 1}
               </Chip>
             ))}
