@@ -1072,3 +1072,140 @@ namespace:
    introduced by it. Closing it would mean content-addressing the object or
    recording an object version in the snapshot, which is a larger change than
    this boundary needs.
+
+---
+
+# Rights classification and the England Football lock (0043)
+
+## 47. What this migration exists to prevent
+
+Migration `0038` added the `rights` column, classified every existing row and
+proved the invariant that no England Football derived row is publishable. It
+proved that invariant once, at backfill time, and enforced it with nothing.
+The source and rights columns are ordinary editable columns covered by the
+same owner-or-manager UPDATE policy as everything else, so any member holding
+the write arm could have set `rights = 'public_full'` on an FA imported row
+through a hand written PostgREST call. The only reason it had not happened is
+that no screen offered it, which is exactly what the rights classification UI
+(PR 137) adds. That UI must therefore not deploy before this guard is live,
+which is why `0043` lands and applies first, on its own.
+
+## 48. Provenance is the source columns, never the rights value
+
+Provenance is derived from `source_url`, `source_label` and (drills)
+`source_key`:
+
+| Provenance | Evidence | Consequence |
+|---|---|---|
+| England Football | an England Football Learning host, or the England Football Learning label | locked at club only, enforced by the database |
+| third party | any other recorded source | classifiable; evidence, not proof of a restriction |
+| none | no recorded source | classifiable; the same rule 0038's backfill used |
+
+The database rule is `public.content_rights_fa_evidence(text, text, text)`,
+called by the five triggers. The client and Edge Function mirrors of this rule
+arrive with PR 137; the database is the boundary, and the mirrors are
+deliberately no wider than the database will accept.
+
+## 49. The write path is ordinary RLS
+
+Classification is a plain `UPDATE` of the `rights` column on the row's own
+table. The existing `*_update_owner_or_manager` policy is already exactly the
+right authority: the owner holding the create capability, or a manager holding
+the manage capability, in their own club. No service role path, no new
+capability, no new policy and no new RPC. A parent, a non-owner and a member
+of another club are refused by the policy that already exists, and the suite
+proves each.
+
+## 50. The England Football lock (migration 0043)
+
+Five `BEFORE INSERT OR UPDATE` triggers, one per rights carrying table
+(`drills`, `sessions`, `programmes`, `templates`, `media`), each a small
+SECURITY INVOKER function reading its own columns and calling two shared
+helpers: `content_rights_fa_evidence(url, key, label)` states what counts as
+England Football provenance, and `content_rights_fa_assert(...)` states the
+two refusals. Both refusals raise `42501`.
+
+**Rule 1.** A row whose recorded source is England Football derived cannot be
+raised above `internal_only`.
+
+**Rule 2.** That recorded source cannot be removed.
+
+Rule 2 is what makes rule 1 real. Without it a coach could clear the Source
+link field in the edit form (one save, rights untouched, so rule 1 never
+fires), reopen the form and classify the now source-free row as public (a
+second save, no evidence left for rule 1 to see). Two ordinary saves, no hand
+written call, and an England Football session is public. Rule 2 is also
+correct on its own terms: the club's permission to use England Football
+content is conditional on the source being recorded and displayed, so a write
+that strips the attribution is one to refuse whatever it does to rights.
+Swapping one England Football source for another stays allowed; only leaving
+the England Football set is refused.
+
+Both rules are data rules, not permissions: the owning coach, a manager, an
+admin and the service role are refused equally, and the suite proves the
+service role case explicitly. Lowering back to club only is always allowed,
+an ordinary edit that leaves the level and the source alone is untouched, and
+a row that tries to acquire an England Football source while already
+classified as publishable is refused too.
+
+### The host rule
+
+`0038`'s `content_rights_is_fa_url` extracted the host with `[^/:?#]+`, which
+stops at the first colon and treats userinfo as part of the host. The
+TypeScript readers use the WHATWG URL parser. They disagreed, and the
+disagreement ran the permissive way for the database:
+
+| URL | 0038 SQL | JS | 0043 SQL |
+|---|---|---|---|
+| `https://x@learn.englandfootball.com/a` | not FA | FA | FA |
+| `https://learn.englandfootball.com:8080@evil.test/` | FA | not FA | not FA |
+| `https:\learn.englandfootball.com` | not FA | FA | FA |
+| `'  https://learn.englandfootball.com/a'` | not FA | FA | FA |
+
+`0043` replaces the body: it takes the whole authority, translates
+backslashes, trims whitespace, drops userinfo at the last `@` and drops the
+port. A read only check of the hosted data before writing the migration found
+zero rows on any of the five tables carrying an `@`, a backslash or a port in
+`source_url`, so no existing classification changes.
+
+### Self verification
+
+The migration proves, before it commits: no existing England Football derived
+row is classified above club only; all five triggers are installed by name;
+the two helpers and `content_rights_is_fa_url` are still executable by
+`authenticated` (a SECURITY INVOKER trigger evaluates them as the writing
+role, the lesson 0042 learned with the media path CHECK constraint); and the
+corrected host rule matches the URL parser in both directions.
+
+## 51. Non England Football third party content
+
+A recorded non England Football source is evidence of third party origin, not
+proof of a restriction: the club may well own or be cleared for it. The
+database therefore does not lock it. The classification UI (PR 137) requires
+an explicit confirmation before a public level is saved on such a row; that
+is a client behaviour, not part of this boundary.
+
+## 52. What 0043 does NOT do
+
+- No row is reclassified, and no club is enabled.
+- No policy, grant, capability or role changes.
+- No change to `content_shares`, the lifecycle RPC, the read path, the secret
+  model, token handling, expiry, the kill switch or the anonymous read
+  posture.
+- No sharing UI, and no share is created.
+
+## 53. Rollout order
+
+1. This migration merges and is applied to hosted Supabase, a separate human
+   approved step.
+2. After the hosted apply, the exact version the migration ledger records for
+   `0043` is read back and reconciled into `EXPECTED_LAST_MIGRATION` in
+   `.github/scripts/content-sharing-deploy/verify_no_residue.py` (and its
+   test) in a separate small PR, before any Edge Function deployment.
+3. Only then does PR 137 (the sharing UI and the Edge Function changes)
+   merge and deploy.
+
+Rollback is documented in the migration header: drop the five triggers and
+their functions, drop the two helpers, and restore `content_rights_is_fa_url`
+from its `0038` body. Rolling back restores the pre `0043` position, so it is
+a break-glass step rather than a routine one.
