@@ -72,6 +72,7 @@ import { deserializeTokens, serializeTokens } from './tacticsBoard'
 import { isBoundary } from './venues'
 import type { Boundary, Venue, VenueArea } from './venues'
 import { sessionTeamsDiff } from './sessionTeams'
+import type { PlayerSpondLink, SpondLinkCandidate, SpondLinkInsertRow } from './spondLinking'
 import { sourceLabelForUrl } from './fa'
 import { seasonDatePayload } from './seasonForm'
 import { formatBytes } from './faAttach'
@@ -4178,6 +4179,134 @@ export function useSpondRosterImport() {
     // reads so the screen shows the true state. The Registered players page reads
     // ['registrations'], so invalidate that too, not only ['players'].
     onSettled: () => invalidatePlayerReads(qc),
+  })
+}
+
+// ---- Spond member links (ADR-0008, the amended boundary) -------------------
+// The link table maps player identities one to one to opaque Spond member
+// ids (migration 0045). Reads ride players.view; writes ride players.manage
+// with created_by pinned; both enforced by RLS, the hooks only report a zero
+// row write as a refusal. Candidates for the linking screen come from the
+// spond-link-members function transiently and are never cached beyond the
+// mutation result or persisted anywhere.
+
+export interface SpondLinkRow {
+  id: string
+  club_id: string
+  player_id: string
+  spond_member_id: string
+  matched_by: 'auto' | 'manual'
+  confirmed_at: string | null
+}
+
+export function toSpondLink(r: SpondLinkRow): PlayerSpondLink {
+  return {
+    id: r.id,
+    playerId: r.player_id,
+    spondMemberId: r.spond_member_id,
+    matchedBy: r.matched_by,
+    confirmedAt: r.confirmed_at,
+  }
+}
+
+export function usePlayerSpondLinks(enabled = true) {
+  return useQuery({
+    queryKey: ['spond_links'],
+    enabled,
+    queryFn: async (): Promise<PlayerSpondLink[]> => {
+      const { data, error } = await supabase
+        .from('player_spond_links')
+        .select('id, club_id, player_id, spond_member_id, matched_by, confirmed_at')
+      if (error) throw error
+      return (data as unknown as SpondLinkRow[]).map(toSpondLink)
+    },
+  })
+}
+
+interface LinkCandidatesBody {
+  ok?: boolean
+  message?: string
+  members?: { spond_member_id?: string; display_name?: string }[]
+  warnings?: string[]
+}
+
+export interface LinkCandidatesResult {
+  candidates: SpondLinkCandidate[]
+  message: string
+  warnings: string[]
+}
+
+// The transient candidate read: the function returns id and name pairs to
+// this authorised client only. The result lives in the mutation state for
+// the life of the modal and nowhere else; gcTime 0 drops it from the
+// mutation cache the moment the modal unmounts.
+export function useSpondLinkCandidates() {
+  return useMutation<LinkCandidatesResult, Error, { teamId: string }>({
+    gcTime: 0,
+    mutationFn: async ({ teamId }) => {
+      const { data, error } = await supabase.functions.invoke('spond-link-members', { body: { team_id: teamId } })
+      if (error) {
+        let message = 'Could not load the Spond members. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as LinkCandidatesBody
+      return {
+        candidates: (body.members ?? [])
+          .filter((m): m is { spond_member_id: string; display_name: string } =>
+            typeof m?.spond_member_id === 'string' && typeof m?.display_name === 'string')
+          .map((m) => ({ spondMemberId: m.spond_member_id, displayName: m.display_name })),
+        message: body.message ?? '',
+        warnings: body.warnings ?? [],
+      }
+    },
+  })
+}
+
+export function useInsertSpondLinks() {
+  const qc = useQueryClient()
+  const { user, profile } = useAuth()
+  return useMutation<void, Error, { rows: SpondLinkInsertRow[] }>({
+    mutationFn: async ({ rows }) => {
+      if (!user || !profile?.club_id) throw new Error('You must be signed in.')
+      if (rows.length === 0) return
+      // Fields listed explicitly, never spread: the wire payload's shape is
+      // closed by construction, so no wider object could ever smuggle an
+      // extra key past the 0045 column set.
+      const confirmedAt = new Date().toISOString()
+      const { error } = await supabase.from('player_spond_links').insert(
+        rows.map((r) => ({
+          player_id: r.player_id,
+          spond_member_id: r.spond_member_id,
+          matched_by: r.matched_by,
+          club_id: profile.club_id,
+          created_by: user.id,
+          confirmed_at: confirmedAt,
+        })),
+      )
+      if (error) throw error
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['spond_links'] }),
+  })
+}
+
+export function useDeleteSpondLink() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { data, error } = await supabase.from('player_spond_links').delete().eq('id', id).select('id')
+      if (error) throw error
+      if ((data ?? []).length === 0) throw new Error('Could not remove the link. Check your access.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['spond_links'] }),
   })
 }
 

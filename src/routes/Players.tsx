@@ -50,6 +50,7 @@ import {
   RestoreModal,
   WithdrawModal,
 } from '../components/PlayerActionModals'
+import { SpondLinkModal } from '../components/SpondLinkModal'
 
 type ModalState =
   | { kind: 'add' }
@@ -60,6 +61,7 @@ type ModalState =
   | { kind: 'delete'; player: RegisteredPlayer }
   | { kind: 'history'; player: RegisteredPlayer }
   | { kind: 'import' }
+  | { kind: 'spondLinks' }
   | { kind: 'importFile' }
   | { kind: 'renew' }
   | { kind: 'export' }
@@ -323,6 +325,17 @@ export function Players() {
     </button>
   ) : null
 
+  // Spond links are roster curation (players.manage) on a specific mapped
+  // team, season independent: the link table is per identity, not per
+  // registration (ADR-0008).
+  const showLinks = canManage && !!spondTeam && !!spondMapping
+  const linksButton = showLinks ? (
+    <button className="btn btn-ghost" onClick={() => open({ kind: 'spondLinks' })}>
+      <Icon.link />
+      Spond links
+    </button>
+  ) : null
+
   const renewButton = showRenew ? (
     <button className="btn btn-ghost" onClick={() => open({ kind: 'renew' })}>
       <Icon.calendar />
@@ -361,6 +374,7 @@ export function Players() {
         {seasonSelect}
         {addButton}
         {spondButton}
+        {linksButton}
         {renewButton}
         {importButton}
         {exportButton}
@@ -542,6 +556,7 @@ export function Players() {
       {modal?.kind === 'import' && spondTeam && spondMapping && (
         <ImportFromSpondModal team={spondTeam} mapping={spondMapping} seasonName={seasonName} onClose={close} />
       )}
+      {modal?.kind === 'spondLinks' && spondTeam && <SpondLinkModal team={spondTeam} onClose={close} />}
       {modal?.kind === 'renew' && (
         <RenewSeasonModal
           seasons={seasons}
