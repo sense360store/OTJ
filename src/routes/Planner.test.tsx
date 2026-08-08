@@ -393,8 +393,8 @@ describe('PlannerActionsView share control', () => {
 // without unmounting them (a failure re-enables them for a retry). readOnly is
 // the separate viewer state, unchanged by this work.
 const teams: Team[] = [
-  { id: 't1', name: 'Titans' },
-  { id: 't2', name: 'Trojans' },
+  { id: 't1', name: 'Titans', bibColour: null },
+  { id: 't2', name: 'Trojans', bibColour: null },
 ]
 
 function sessionFixture(over: Partial<Session> = {}): Session {
@@ -410,6 +410,7 @@ function sessionFixture(over: Partial<Session> = {}): Session {
     activities: [{ phase: 'Skill', drillId: 'd1', duration: 15 }],
     coachId: 'coach1',
     teamId: 't1',
+    teamIds: ['t1'],
     intentions: ['Play out from the back'],
     space: 'Third of a pitch',
     sourceUrl: '',
@@ -434,7 +435,7 @@ function renderFields(over: Partial<Parameters<typeof SessionFieldsView>[0]> = {
       attachedBoardName="4-3-3 shape"
       onField={noop}
       onIntentions={noop}
-      onTeam={noop}
+      onToggleTeam={noop}
       onRemoveBoard={noop}
       onOpenBoardPicker={noop}
       {...over}
@@ -446,10 +447,15 @@ describe('SessionFieldsView', () => {
   it('freezes every session field, the intentions input and the board controls while a write is pending', () => {
     const html = renderFields({ busy: true })
     const controls = fieldControls(html)
-    // Name, date, time, age group, venue, team, focus, space, the intentions
-    // input and the source link: every field control is present and disabled.
-    expect(controls.length).toBeGreaterThanOrEqual(10)
+    // Name, date, time, age group, venue, focus, space, the intentions input
+    // and the source link: every field control is present and disabled. The
+    // team selection is a chip group asserted separately below.
+    expect(controls.length).toBeGreaterThanOrEqual(9)
     expect(controls.every((c) => c.disabled)).toBe(true)
+    // The covered team chips edit the draft too, so they freeze with it.
+    const teamChips = [...html.matchAll(/<button\b[^>]*aria-pressed="(?:true|false)"[^>]*>/g)].map((m) => m[0])
+    expect(teamChips.length).toBe(2)
+    expect(teamChips.every((tag) => tag.includes('disabled'))).toBe(true)
     // The tactics board Change and Remove controls edit the draft too.
     expect(buttons(html).find((b) => b.label === 'Change')?.disabled).toBe(true)
     const removeBoardTag = html.match(/<button\b[^>]*aria-label="Remove board"[^>]*>/)?.[0] ?? ''
@@ -462,11 +468,27 @@ describe('SessionFieldsView', () => {
   it('keeps every field editable when idle, so a coach can edit and retry after a failure', () => {
     const html = renderFields({ busy: false })
     const controls = fieldControls(html)
-    expect(controls.length).toBeGreaterThanOrEqual(10)
+    expect(controls.length).toBeGreaterThanOrEqual(9)
     expect(controls.every((c) => !c.disabled)).toBe(true)
+    const teamChips = [...html.matchAll(/<button\b[^>]*aria-pressed="(?:true|false)"[^>]*>/g)].map((m) => m[0])
+    expect(teamChips.length).toBe(2)
+    expect(teamChips.every((tag) => !tag.includes('disabled'))).toBe(true)
     expect(buttons(html).find((b) => b.label === 'Change')?.disabled).toBe(false)
     const removeBoardTag = html.match(/<button\b[^>]*aria-label="Remove board"[^>]*>/)?.[0] ?? ''
     expect(removeBoardTag).not.toContain('disabled')
+  })
+
+  it('marks the covered teams: a covering chip pressed, the rest not', () => {
+    // The fixture covers t1 only, so Titans renders pressed and Trojans not.
+    const html = renderFields()
+    const pressed = [...html.matchAll(/<button\b[^>]*aria-pressed="true"[^>]*>([\s\S]*?)<\/button>/g)].map(
+      (m) => m[1],
+    )
+    const unpressed = [...html.matchAll(/<button\b[^>]*aria-pressed="false"[^>]*>([\s\S]*?)<\/button>/g)].map(
+      (m) => m[1],
+    )
+    expect(pressed.join(' ')).toContain('Titans')
+    expect(unpressed.join(' ')).toContain('Trojans')
   })
 
   it('renders a read-only viewer unchanged: disabled fields, pill intentions, no board controls', () => {

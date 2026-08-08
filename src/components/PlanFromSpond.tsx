@@ -143,7 +143,7 @@ export function PlanFromSpond({
   onPendingChange?: (pending: boolean) => void
 }) {
   const nav = useNav()
-  const { user, profile } = useAuth()
+  const { user } = useAuth()
   const { caps } = useMyCapabilities()
   const { sessions, upsertSession } = useSessions()
   const { data: events = [], isLoading, isError } = useSpondEvents()
@@ -198,11 +198,11 @@ export function PlanFromSpond({
   if (hideWhenEmpty && !isLoading && !isError && rows.length === 0) return null
 
   const plan = (event: SpondEvent) => {
-    const session = {
-      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null),
+    const draft = {
+      ...sessionFromSpondEvent(event, user?.id ?? ''),
       id: stableCreateId(ids.current, event.id),
     }
-    void submit(session)
+    void submit(draft)
   }
 
   return (

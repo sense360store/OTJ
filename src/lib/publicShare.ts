@@ -323,7 +323,7 @@ const FORBIDDEN = new Set<string>([
   'secret', 'coach_id', 'coachId', 'drill_id', 'drillId', 'session_id', 'programme_id',
   'idempotency_key', 'revoked_by', 'updated_by', 'rights_class_observed', 'player_id',
   'playerId', 'author', 'pdf_media_id', 'pdfMediaId', 'sessionId', 'programmeId',
-  'team_id', 'teamId', 'venue', 'start_time', 'startTime', 'date',
+  'team_id', 'teamId', 'teamIds', 'session_teams', 'venue', 'start_time', 'startTime', 'date',
   'spond_event_id', 'spondEventId', 'board_id', 'boardId', 'programme_week',
   'programmeWeek', 'live_activity_index', 'liveActivityIndex',
   'live_activity_started_at', 'liveActivityStartedAt',

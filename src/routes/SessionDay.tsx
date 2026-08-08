@@ -27,6 +27,7 @@ import {
   useTeamMap,
 } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
+import { sessionTeamsLabel, soleCoveredTeamId } from '../lib/sessionTeams'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
@@ -153,7 +154,7 @@ function SessionDayView({ session }: { session: Session }) {
   }
 
   const mins = sessionMinutes(session)
-  const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
+  const teamName = sessionTeamsLabel(session, teamById)
   const subBits = [fmtDate(session.date), session.time, session.venue, teamName].filter(Boolean)
   // A session created by applying a programme links back to its programme
   // and week; a hand-planned session has neither.
@@ -223,7 +224,7 @@ function SessionDayView({ session }: { session: Session }) {
 
       <SpondAttendanceCard
         spondEventId={session.spondEventId}
-        teamId={session.teamId}
+        teamId={soleCoveredTeamId(session)}
         date={session.date}
         time={session.time}
         canEdit={canManage}
@@ -511,7 +512,7 @@ function SessionBoardCard({
       {picking && (
         <BoardPickerModal
           currentId={session.boardId}
-          defaultTeamId={session.teamId}
+          defaultTeamId={soleCoveredTeamId(session)}
           onSelect={(id) => link.mutate({ sessionId: session.id, boardId: id })}
           onClose={() => setPicking(false)}
         />

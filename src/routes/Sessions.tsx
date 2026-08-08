@@ -10,6 +10,7 @@ import { useSessions } from '../context/SessionsContext'
 import { useMemberMap, useMyCapabilities, useMyTeams, useTeamMap, useTeams } from '../lib/queries'
 import { memberTeamIds, sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
+import { coversWholeClub, sessionCoversAnyTeam, sessionTeamsLabel } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, fmtDate, Loading, PHASE_COLOR } from '../components/ui'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
@@ -185,16 +186,19 @@ export function Sessions() {
   // whole club: a specific selection, not the all teams flag and not no team.
   const showParentToggle = !canPlan && !scope.allTeams && scope.teamIds.length > 0
   const teamChipLabel = scope.teamIds.length > 1 ? 'My teams' : 'My team'
-  const teamScoped = (s: Session) => s.teamId == null || effectiveIds.includes(s.teamId)
+  const teamScoped = (s: Session) => sessionCoversAnyTeam(s, effectiveIds) || coversWholeClub(s, Object.keys(teamById))
 
   // Coaches filter by ownership and an optional team; the club value selects
-  // sessions saved without a team. Parents see their team's schedule by
-  // default, the whole club when they toggle or hold no team.
+  // whole club slots (all teams, or a legacy no team row). A session matches
+  // a team when its covered set includes it, resolved through the frozen
+  // fallback for legacy rows. Parents see their team's schedule by default,
+  // the whole club when they toggle or hold no team.
   const list = canPlan
     ? sessions.filter(
         (s) =>
           (view === 'mine' ? s.coachId === user?.id : true) &&
-          (!teamId || (teamId === 'club' ? !s.teamId : s.teamId === teamId)),
+          (!teamId ||
+            (teamId === 'club' ? coversWholeClub(s, Object.keys(teamById)) : sessionCoversAnyTeam(s, [teamId]))),
       )
     : hasTeam && parentScope === 'team'
       ? sessions.filter(teamScoped)
@@ -280,7 +284,7 @@ export function Sessions() {
                 s={s}
                 nav={nav}
                 ownerName={mine ? null : memberById[s.coachId]?.fullName || (s.coachId ? 'Another coach' : 'Club session')}
-                teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
+                teamName={sessionTeamsLabel(s, teamById)}
                 canManage={caps.has('sessions.manage') || (canPlan && mine)}
                 coaching={canPlan}
                 onDelete={() => setDeleting(s)}

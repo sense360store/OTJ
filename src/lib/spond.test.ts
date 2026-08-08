@@ -213,11 +213,15 @@ describe('spondPlanSuggestions', () => {
 })
 
 describe('sessionFromSpondEvent', () => {
-  it("carries the event's date, time, team and link, owned by the coach", () => {
+  it("carries the event's date, time, covered team and link, owned by the coach", () => {
     const event = ev({ id: 'e1', startsAt: '2026-06-16T17:30:00', teamId: 'team-1', title: 'U8 Training' })
-    const s = sessionFromSpondEvent(event, 'coach-1', 'default-team')
+    const s = sessionFromSpondEvent(event, 'coach-1')
     expect(s.coachId).toBe('coach-1')
-    expect(s.teamId).toBe('team-1')
+    // The covered teams (ADR-0008): a team event plans a session covering
+    // that team. The frozen teamId is never seeded, so the planner cannot
+    // narrow a draft from it.
+    expect(s.teamId).toBeNull()
+    expect(s.teamIds).toEqual(['team-1'])
     expect(s.spondEventId).toBe('e1')
     expect(s.name).toBe('U8 Training')
     expect(s.date).toBe('2026-06-16')
@@ -226,9 +230,11 @@ describe('sessionFromSpondEvent', () => {
     expect(s.activities).toEqual([])
   })
 
-  it("falls back to the coach's default team for a club event with no team", () => {
-    const event = ev({ id: 'e2', startsAt: '2026-06-16T17:30:00', teamId: null })
-    expect(sessionFromSpondEvent(event, 'coach-1', 'default-team').teamId).toBe('default-team')
+  it('leaves a club event uncovered so the save and seed default it to every team', () => {
+    const event = ev({ id: 'e3', startsAt: '2026-06-16T17:30:00', teamId: null })
+    const s = sessionFromSpondEvent(event, 'coach-1')
+    expect(s.teamIds).toEqual([])
+    expect(s.teamId).toBeNull()
   })
 })
 

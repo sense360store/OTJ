@@ -16,6 +16,7 @@ import {
 } from '../lib/queries'
 import { blankSession, embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
+import { coveredTeamIds, soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -602,7 +603,7 @@ export function SessionFieldsView({
   attachedBoardName,
   onField,
   onIntentions,
-  onTeam,
+  onToggleTeam,
   onRemoveBoard,
   onOpenBoardPicker,
 }: {
@@ -613,7 +614,7 @@ export function SessionFieldsView({
   attachedBoardName?: string
   onField: (k: SessionFieldKey, v: string) => void
   onIntentions: (v: string[]) => void
-  onTeam: (v: string) => void
+  onToggleTeam: (id: string) => void
   onRemoveBoard: () => void
   onOpenBoardPicker: () => void
 }) {
@@ -658,22 +659,39 @@ export function SessionFieldsView({
           <input value={session.venue} disabled={frozen} onChange={(e) => onField('venue', e.target.value)} />
         </div>
       </div>
-      <div className="row" style={{ gap: 10 }}>
-        <div className="field" style={{ flex: 1 }}>
-          <label>Team</label>
-          <select value={session.teamId ?? ''} disabled={frozen} onChange={(e) => onTeam(e.target.value)}>
-            <option value="">Club (no team)</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
+      {/* The teams this whole club slot covers (ADR-0008): every team by
+          default, unticked down to a subset when a slot genuinely excludes
+          someone. At least one team stays selected; the toggle refuses to
+          empty the set. */}
+      <div className="field">
+        <label>Teams covered</label>
+        <div className="row wrap" style={{ gap: 6 }}>
+          {teams.map((t) => {
+            const on = session.teamIds.includes(t.id)
+            return (
+              <button
+                key={t.id}
+                type="button"
+                className={'chip' + (on ? ' on' : '')}
+                aria-pressed={on}
+                disabled={frozen}
+                onClick={() => onToggleTeam(t.id)}
+              >
+                {on && <Icon.check />}
                 {t.name}
-              </option>
-            ))}
-          </select>
+              </button>
+            )
+          })}
+          {teams.length === 0 && (
+            <span className="muted" style={{ fontSize: 13 }}>
+              No teams configured.
+            </span>
+          )}
         </div>
-        <div className="field" style={{ flex: 1 }}>
-          <label>Focus</label>
-          <input value={session.focus} disabled={frozen} onChange={(e) => onField('focus', e.target.value)} />
-        </div>
+      </div>
+      <div className="field">
+        <label>Focus</label>
+        <input value={session.focus} disabled={frozen} onChange={(e) => onField('focus', e.target.value)} />
       </div>
       <div className="field">
         <label>Space</label>
@@ -822,8 +840,28 @@ function PlannerEditor({
 
   const setField = (k: SessionFieldKey, v: string) => setSession((s) => ({ ...s, [k]: v }))
   const setIntentions = (v: string[]) => setSession((s) => ({ ...s, intentions: v }))
-  const setTeam = (v: string) => setSession((s) => ({ ...s, teamId: v || null }))
+  const toggleTeam = (id: string) => setSession((s) => ({ ...s, teamIds: toggleCoveredTeam(s.teamIds, id) }))
   const setBoard = (id: string | null) => setSession((s) => ({ ...s, boardId: id }))
+
+  // Seed the covered teams once teams load: a new session covers every team
+  // (the whole club slot default) and a legacy session reads through the
+  // frozen fallback (its one team, or all when it was a club session). Runs
+  // once, so a deliberate deselection is never re-seeded over.
+  const seededTeams = useRef(false)
+  useEffect(() => {
+    if (seededTeams.current || teams.length === 0) return
+    seededTeams.current = true
+    const allIds = teams.map((t) => t.id)
+    setSession((s) => (s.teamIds.length > 0 ? s : { ...s, teamIds: coveredTeamIds(s, allIds).sort() }))
+  }, [teams])
+  // The seed alone must not read as an edit: an untouched legacy session
+  // would otherwise be dirty on open and Share would force a converting
+  // save. The baseline is derived with the same seed applied, so only real
+  // edits differ from it.
+  const seededBaseline =
+    baseline !== null && existing && existing.teamIds.length === 0 && teams.length > 0 && baseline === sessionBaseline(existing)
+      ? sessionBaseline({ ...existing, teamIds: coveredTeamIds(existing, teams.map((t) => t.id)).sort() })
+      : baseline
   // The attached board's name, resolved from the club list for the label. A
   // board the coach cannot see (or one deleted) leaves boardId set but the
   // lookup empty, so the control falls back to a neutral label.
@@ -943,7 +981,7 @@ function PlannerEditor({
   // this path too. A new or dirty draft saves through the guarded seam first and
   // shares only after the save resolves, so the link is never built from stale
   // or pre-save data and a rapid double click fires one save (the shared guard).
-  const dirty = sessionDirty(session, baseline)
+  const dirty = sessionDirty(session, seededBaseline)
   const canShareDirect = shareDecision(savedId, dirty) === 'direct'
   const shareLabel = canShareDirect ? 'Share' : 'Save and share'
   const shareNote = canShareDirect ? SHARE_ACCOUNT_NOTE : `${SAVE_AND_SHARE_NOTE} ${SHARE_ACCOUNT_NOTE}`
@@ -1061,7 +1099,7 @@ function PlannerEditor({
             attachedBoardName={attachedBoard?.name}
             onField={setField}
             onIntentions={setIntentions}
-            onTeam={setTeam}
+            onToggleTeam={toggleTeam}
             onRemoveBoard={() => setBoard(null)}
             onOpenBoardPicker={() => setBoardPickerOpen(true)}
           />
@@ -1071,7 +1109,7 @@ function PlannerEditor({
               flight, so the draft cannot change under an in-flight save. */}
           <SpondAttendanceCard
             spondEventId={session.spondEventId}
-            teamId={session.teamId}
+            teamId={soleCoveredTeamId(session)}
             date={session.date}
             time={session.time}
             canEdit={!readOnly}
@@ -1111,7 +1149,7 @@ function PlannerEditor({
       {boardPickerOpen && (
         <BoardPickerModal
           currentId={session.boardId}
-          defaultTeamId={session.teamId}
+          defaultTeamId={soleCoveredTeamId(session)}
           onSelect={setBoard}
           onClose={() => setBoardPickerOpen(false)}
         />
@@ -1139,7 +1177,10 @@ export function Planner() {
     <PlannerEditor
       key={'new-' + (profile?.id ?? 'loading')}
       existing={null}
-      newDefaults={{ coachId: user?.id ?? '', teamId: profile?.team_id ?? null }}
+      // teamId deliberately null: a new session is a whole club slot and its
+      // covered teams seed to every team, never the coach's default team
+      // (ADR-0008). The frozen column would otherwise leak into the seed.
+      newDefaults={{ coachId: user?.id ?? '', teamId: null }}
     />
   )
 }

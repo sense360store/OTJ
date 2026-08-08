@@ -71,6 +71,7 @@ import type { Board, Token } from './tacticsBoard'
 import { deserializeTokens, serializeTokens } from './tacticsBoard'
 import { isBoundary } from './venues'
 import type { Boundary, Venue, VenueArea } from './venues'
+import { sessionTeamsDiff } from './sessionTeams'
 import { sourceLabelForUrl } from './fa'
 import { seasonDatePayload } from './seasonForm'
 import { formatBytes } from './faAttach'
@@ -194,12 +195,16 @@ export interface SessionRow {
   live_activity_started_at: string | null
   spond_event_id: string | null
   board_id: string | null
+  // The session_teams embed: the covered teams' ids, absent on rows built
+  // before the embed (old cache entries) and empty for legacy sessions.
+  session_teams?: { team_id: string }[] | null
 }
 
 interface TeamRow {
   id: string
   club_id: string
   name: string
+  bib_colour: string | null
   created_at: string
 }
 
@@ -247,9 +252,11 @@ const TEMPLATE_COLS =
   'id, club_id, name, focus, author, activities, created_by, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label'
 const PROGRAMME_COLS =
   'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at'
+// session_teams rides the session read as an embed, so coverage loads in
+// the same query and the covered set is always as fresh as the row.
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id'
-const TEAM_COLS = 'id, club_id, name, created_at'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, session_teams(team_id)'
+const TEAM_COLS = 'id, club_id, name, bib_colour, created_at'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
 const PROFILE_COLS =
@@ -400,6 +407,8 @@ export function toSession(r: SessionRow): Session {
     // ownership affordances treat the session as someone else's (club owned).
     coachId: r.coach_id ?? '',
     teamId: r.team_id,
+    // Sorted for stable equality: the embed's row order is unspecified.
+    teamIds: (r.session_teams ?? []).map((t) => t.team_id).sort(),
     intentions: r.intentions ?? [],
     space: r.space ?? '',
     sourceUrl: r.source_url ?? '',
@@ -414,7 +423,7 @@ export function toSession(r: SessionRow): Session {
 }
 
 function toTeam(r: TeamRow): Team {
-  return { id: r.id, name: r.name }
+  return { id: r.id, name: r.name, bibColour: r.bib_colour }
 }
 
 function toRole(r: RoleRow): RoleInfo {
@@ -1788,7 +1797,9 @@ export function useUpsertSession() {
 
       // The editable columns. Neither the update path nor the duplicate-key
       // recovery below sends coach_id or club_id, so a save never changes
-      // ownership or club; only the insert sets them, from the signed-in user.
+      // ownership or club; only the insert sets them, from the signed-in
+      // user. team_id is FROZEN (ADR-0008) and deliberately absent: the
+      // covered teams are session_teams rows, applied below after the write.
       const editable = {
         name: input.name,
         focus: input.focus,
@@ -1797,7 +1808,6 @@ export function useUpsertSession() {
         venue: input.venue,
         age_group: input.ageGroup,
         status: input.status,
-        team_id: input.teamId,
         activities,
         ...faFields,
       }
@@ -1829,7 +1839,61 @@ export function useUpsertSession() {
       // exists is a cache-derived hint for the fast path only; the server is
       // the authority through the duplicate-key recovery inside
       // upsertSessionWrite.
-      return upsertSessionWrite({ exists: existed.current.get(input.id) ?? false, insert, update, isUniqueViolation })
+      const saved = await upsertSessionWrite({
+        exists: existed.current.get(input.id) ?? false,
+        insert,
+        update,
+        isUniqueViolation,
+      })
+
+      // Apply the covered teams (session_teams pair rows) after the row
+      // lands. An empty selection means "unspecified": a fresh session
+      // defaults to covering every team (the whole club slot model), an
+      // edit leaves coverage untouched, so the create paths without a team
+      // select (template, programme, Spond) inherit the default here. Rows
+      // are diffed against a fresh read, never cleared and rewritten, so an
+      // unchanged save writes nothing and audits nothing, and a mutation
+      // response quirk can never route a covered session into the
+      // unspecified branch. A failure between the row write and the pair
+      // rows leaves coverage that is too wide, never too narrow: a session
+      // with no rows falls back to whole club until the retry heals it.
+      const { data: currentRows, error: readError } = await supabase
+        .from('session_teams')
+        .select('team_id')
+        .eq('session_id', saved.id)
+      if (readError) throw readError
+      const current = ((currentRows ?? []) as { team_id: string }[]).map((r) => r.team_id)
+      let desired = input.teamIds
+      if (desired.length === 0) {
+        if (current.length > 0 || saved.teamId) return { ...saved, teamIds: [...current].sort() }
+        const { data: allTeams, error: teamsError } = await supabase.from('teams').select('id')
+        if (teamsError) throw teamsError
+        desired = ((allTeams ?? []) as { id: string }[]).map((t) => t.id)
+        if (desired.length === 0) return saved
+      }
+      const { add, remove } = sessionTeamsDiff(current, desired)
+      if (remove.length > 0) {
+        const { error } = await supabase
+          .from('session_teams')
+          .delete()
+          .eq('session_id', saved.id)
+          .in('team_id', remove)
+        if (error) throw error
+      }
+      if (add.length > 0) {
+        if (!profile?.club_id) throw new Error('You must be signed in to save a session.')
+        const clubId = profile.club_id
+        // ignoreDuplicates makes a concurrent editor's identical add a no-op
+        // instead of failing the whole save on the pair primary key.
+        const { error } = await supabase
+          .from('session_teams')
+          .upsert(
+            add.map((teamId) => ({ session_id: saved.id, team_id: teamId, club_id: clubId })),
+            { onConflict: 'session_id,team_id', ignoreDuplicates: true },
+          )
+        if (error) throw error
+      }
+      return { ...saved, teamIds: [...desired].sort() }
     },
     // Optimistic and synchronous: the list and the per-id cache are both
     // seeded, so a screen arriving by session id straight after a successful
@@ -1848,6 +1912,15 @@ export function useUpsertSession() {
       qc.setQueryData<Session[]>(['sessions'], (old) => applySessionUpsert(old, input))
       qc.setQueryData<Session>(['sessions', input.id], input)
       return { prevEntry, prevOne, attempt }
+    },
+    onSuccess: (data) => {
+      // The server truth, covered teams included, replaces the optimistic
+      // input in both caches at once: a screen opening the session straight
+      // after a create (the planner after Use template) must see the applied
+      // coverage, not the input's empty selection, or its draft would seed
+      // from a stale shape and narrow the coverage on the next save.
+      qc.setQueryData<Session[]>(['sessions'], (old) => applySessionUpsert(old, data))
+      qc.setQueryData<Session>(['sessions', data.id], data)
     },
     onError: (_err, input, ctx) => {
       // Roll back only this session's entry, and only while this attempt is
@@ -2651,6 +2724,19 @@ export function useRenameTeam() {
   return useMutation<void, Error, { id: string; name: string }>({
     mutationFn: async ({ id, name }) => {
       const { error } = await supabase.from('teams').update({ name }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  })
+}
+
+// The team's default bib colour (0044), a label from the BIB_COLOURS
+// catalogue or null for none. Rides the same teams_manage policy as rename.
+export function useSetTeamBibColour() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; bibColour: string | null }>({
+    mutationFn: async ({ id, bibColour }) => {
+      const { error } = await supabase.from('teams').update({ bib_colour: bibColour }).eq('id', id)
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),

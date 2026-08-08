@@ -24,6 +24,7 @@ import {
   useTemplates,
 } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
+import { soleCoveredTeamId } from '../lib/sessionTeams'
 import { oldestFirst } from '../lib/contentOrder'
 import type { Programme, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -108,7 +109,8 @@ function WeekRow({
         <div className="row wrap" style={{ gap: 6 }}>
           {linked.map((s) => {
             const done = s.status === 'completed'
-            const team = s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'
+            const soleTeam = soleCoveredTeamId(s)
+            const team = soleTeam ? (teamById[soleTeam]?.name ?? null) : 'Club'
             return (
               <button
                 key={s.id}
@@ -242,10 +244,12 @@ function ProgrammeView({ p }: { p: Programme }) {
   // is done with a week once any of its sessions for that week completes.
   const linked = sessions.filter((s) => s.programmeId === p.id)
   const byWeek = (w: number) => linked.filter((s) => s.programmeWeek === w)
-  const teamIds = [...new Set(linked.map((s) => s.teamId ?? ''))]
+  // Grouped by the one team a session was applied to, resolved through the
+  // covered teams with the frozen fallback; a broader session groups as Club.
+  const teamIds = [...new Set(linked.map((s) => soleCoveredTeamId(s) ?? ''))]
   const manyTeams = teamIds.length > 1
   const progress = teamIds.map((id) => {
-    const ofTeam = linked.filter((s) => (s.teamId ?? '') === id)
+    const ofTeam = linked.filter((s) => (soleCoveredTeamId(s) ?? '') === id)
     const completed = new Set(ofTeam.filter((s) => s.status === 'completed').map((s) => s.programmeWeek)).size
     return { id, name: id ? (teamById[id]?.name ?? 'Team') : 'Club', completed }
   })

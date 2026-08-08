@@ -19,7 +19,7 @@ import type { Activity, Session, Template } from '../lib/data'
 
 export function useStartFromTemplate() {
   const nav = useNav()
-  const { user, profile } = useAuth()
+  const { user } = useAuth()
   const { upsertSession } = useSessions()
   // One id per template for the life of this screen, so a retry after an
   // ambiguous failure reuses it and cannot create a duplicate; a success
@@ -43,7 +43,13 @@ export function useStartFromTemplate() {
       status: 'upcoming',
       activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],
       coachId: user?.id ?? '',
-      teamId: profile?.team_id ?? null,
+      // Null, never the coach's default team: a session from a template is a
+      // whole club slot, and a set teamId would seed the planner's covered
+      // teams down to one team (ADR-0008).
+      teamId: null,
+      // Left empty: the save defaults a fresh session to covering every
+      // team, the whole club slot model, without this hook fetching teams.
+      teamIds: [],
       intentions: [...t.intentions],
       space: '',
       sourceUrl: '',

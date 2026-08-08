@@ -187,13 +187,19 @@ export function spondPlanSuggestions({
 // set so the session shows the attendance block. No drills are added; the
 // coach builds those in the planner. Rides the existing session create path
 // and its RLS, so no new policy. Pure so the test pins the carried fields.
-export function sessionFromSpondEvent(event: SpondEvent, coachId: string, defaultTeamId: string | null): Session {
+export function sessionFromSpondEvent(event: SpondEvent, coachId: string): Session {
   const { date, time } = spondEventLocalDateTime(event.startsAt)
   return {
-    ...blankSession(coachId, event.teamId ?? defaultTeamId),
+    ...blankSession(coachId, null),
     name: event.title,
     date,
     time,
+    // A team scoped Spond event plans a session covering that team; a shared
+    // (club) event leaves the selection empty, so the save and the planner
+    // seed default it to every team, the whole club slot model (ADR-0008).
+    // The coach's own default team deliberately plays no part, and the
+    // frozen teamId stays null.
+    teamIds: event.teamId ? [event.teamId] : [],
     spondEventId: event.id,
   }
 }

@@ -17,6 +17,7 @@ import { useSessions } from '../context/SessionsContext'
 import { useAuth } from '../hooks/useAuth'
 import { useDrillMap, useDrills, useMediaMap, useMemberMap, useMyCapabilities, useTeamMap, useTemplates } from '../lib/queries'
 import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
+import { sessionTeamsLabel } from '../lib/sessionTeams'
 import { compareNewestFirst } from '../lib/contentOrder'
 import type { Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -336,7 +337,7 @@ function CoachHome() {
   const effWeekView = canPlan ? weekView : 'all'
   const week = effWeekView === 'mine' ? weekAll.filter(isMine) : weekAll
 
-  const teamName = (s: Session) => (s.teamId ? (teamById[s.teamId]?.name ?? 'Team') : 'Club')
+  const teamName = (s: Session) => sessionTeamsLabel(s, teamById)
 
   // The latest drills and templates together, newest first through the same
   // comparator as the content lists, so Home and the Library agree on ties.

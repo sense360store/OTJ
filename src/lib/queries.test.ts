@@ -93,6 +93,16 @@ describe('session row to app mapping', () => {
     expect(s.venue).toBe('Ainley Top')
   })
 
+  it('maps the session_teams embed to sorted covered team ids', () => {
+    const s = toSession(sessionRow({ session_teams: [{ team_id: 'tb' }, { team_id: 'ta' }] }))
+    expect(s.teamIds).toEqual(['ta', 'tb'])
+  })
+
+  it('a row without the embed (a legacy cache entry) covers no explicit teams', () => {
+    const s = toSession(sessionRow({ session_teams: undefined }))
+    expect(s.teamIds).toEqual([])
+  })
+
   it('coerces a null start_time and age_group to empty strings', () => {
     const s = toSession(sessionRow({ start_time: null, age_group: null }))
     expect(s.time).toBe('')

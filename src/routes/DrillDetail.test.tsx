@@ -48,6 +48,7 @@ function session(over: Partial<Session> = {}): Session {
     activities: [],
     coachId: 'coach1',
     teamId: null,
+    teamIds: [],
     intentions: [],
     space: '',
     sourceUrl: '',

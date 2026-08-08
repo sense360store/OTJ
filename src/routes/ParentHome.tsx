@@ -24,6 +24,7 @@ import {
 import { useSessions } from '../context/SessionsContext'
 import { isSampleMedia, memberTeamIds } from '../lib/data'
 import type { Drill, Session } from '../lib/data'
+import { coversWholeClub, sessionCoversAnyTeam, sessionTeamsLabel } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { DrillCard, ErrorNote, fmtDate, Loading } from '../components/ui'
@@ -378,13 +379,13 @@ export function ParentHome() {
   const effectiveIds = memberTeamIds(scope, allTeamIds)
   const hasTeam = scope.allTeams || scope.teamIds.length > 0
 
-  // A session is in scope when it belongs to one of the member's teams, or it
-  // is a club session (no team, shared with everyone). With no team set, every
-  // session is in scope.
+  // A session is in scope when its covered teams include one of the member's,
+  // resolved through the frozen fallback for legacy rows: a whole club slot
+  // (all teams, or a legacy no team row) is shared with everyone. With no
+  // team set, every session is in scope.
   const inScope = (s: Session) => {
     if (!hasTeam) return true
-    if (s.teamId == null) return true
-    return effectiveIds.includes(s.teamId)
+    return sessionCoversAnyTeam(s, effectiveIds) || coversWholeClub(s, allTeamIds)
   }
   const relevant = sessions.filter(inScope)
 
@@ -397,7 +398,7 @@ export function ParentHome() {
   const past = relevant.filter(isPast)
   const lastRow = past.length ? past[past.length - 1] : null
 
-  const teamLabel = (s: Session) => (s.teamId ? (teamById[s.teamId]?.name ?? 'Team') : 'Club')
+  const teamLabel = (s: Session) => sessionTeamsLabel(s, teamById)
 
   const thisWeek: ParentSessionView[] = upcoming.slice(0, 3).map((s) => {
     const d = new Date(s.date + 'T00:00:00')

@@ -5,8 +5,9 @@
 // admin surface.
 import { useState } from 'react'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteTeam, useInsertTeam, useMyCapabilities, useProfiles, useRenameTeam, useTeams } from '../lib/queries'
+import { useDeleteTeam, useInsertTeam, useMyCapabilities, useProfiles, useRenameTeam, useSetTeamBibColour, useTeams } from '../lib/queries'
 import type { Team } from '../lib/data'
+import { BIB_COLOURS, bibSwatch } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal } from '../components/ui'
 
@@ -57,12 +58,40 @@ function DeleteTeamModal({
 
 function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
   const rename = useRenameTeam()
+  const setBib = useSetTeamBibColour()
   const [draft, setDraft] = useState(team.name)
   const changed = draft.trim() !== team.name && draft.trim() !== ''
+  const swatch = bibSwatch(team.bibColour)
   return (
-    <div className="row" style={{ gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)' }}>
-      <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} />
+    <div className="row" style={{ gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)', flexWrap: 'wrap' }}>
+      <div className="field" style={{ flex: '1 1 140px', marginBottom: 0 }}>
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label={'Name for ' + team.name} />
+      </div>
+      {/* The team's default bib colour (0044): a label the register reads,
+          saved as it changes. The swatch dot makes the choice visible at a
+          glance; None is a real choice for a team with no set bibs. */}
+      <div className="row" style={{ gap: 6 }}>
+        {swatch && (
+          <span
+            className="tag-dot"
+            style={{ background: swatch, border: '1px solid var(--line)' }}
+            aria-hidden="true"
+          ></span>
+        )}
+        <select
+          value={team.bibColour ?? ''}
+          aria-label={'Bib colour for ' + team.name}
+          disabled={setBib.isPending}
+          onChange={(e) => setBib.mutate({ id: team.id, bibColour: e.target.value || null })}
+          style={{ height: 38 }}
+        >
+          <option value="">No bibs</option>
+          {BIB_COLOURS.map((b) => (
+            <option key={b.value} value={b.value}>
+              {b.label}
+            </option>
+          ))}
+        </select>
       </div>
       <button
         className="btn btn-ghost btn-sm"
@@ -80,6 +109,11 @@ function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
       >
         <Icon.trash />
       </button>
+      {setBib.isError && (
+        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 12.5, margin: 0, flexBasis: '100%' }}>
+          Could not save the bib colour. Try again.
+        </p>
+      )}
     </div>
   )
 }
@@ -157,7 +191,10 @@ export function AdminTeams() {
           // Membership is a set now: count specific members plus everyone on
           // the all teams flag.
           memberCount={members.filter((m) => m.allTeams || m.teamIds.includes(removing.id)).length}
-          sessionCount={sessions.filter((s) => s.teamId === removing.id).length}
+          // Sessions referencing the team explicitly: a frozen legacy team_id
+          // or a session_teams row. Whole club coverage via the fallback is
+          // not a reference, so it neither counts nor breaks on delete.
+          sessionCount={sessions.filter((s) => s.teamId === removing.id || s.teamIds.includes(removing.id)).length}
           onClose={() => setRemoving(null)}
         />
       )}

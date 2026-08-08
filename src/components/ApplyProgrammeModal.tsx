@@ -14,6 +14,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useTeams, useUpsertSession } from '../lib/queries'
 import { logSessionWriteError, stableCreateId } from '../lib/sessionSubmit'
+import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import { Icon } from './icons'
 import { Modal } from './ui'
 import type { Activity, Programme, Session, Team, Template } from '../lib/data'
@@ -291,7 +292,7 @@ export function ApplyProgrammeModal({
   const teamName = teams.find((t) => t.id === teamId)?.name ?? 'This team'
   const clash = (week: number) => {
     const date = dateFor(week)
-    return sessions.some((s) => s.teamId === teamId && s.date === date)
+    return sessions.some((s) => sessionCoversAnyTeam(s, [teamId]) && s.date === date)
   }
 
   const confirm = async () => {
@@ -325,6 +326,9 @@ export function ApplyProgrammeModal({
           activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],
           coachId: user.id,
           teamId,
+          // The programme is applied to one chosen team; the created sessions
+          // cover that team. The frozen teamId above is never written.
+          teamIds: teamId ? [teamId] : [],
           intentions: [...t.intentions],
           space: '',
           sourceUrl: t.sourceUrl,

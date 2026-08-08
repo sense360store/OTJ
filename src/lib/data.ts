@@ -32,6 +32,10 @@ export const ROLE_LABELS: Record<Role, string> = {
 export interface Team {
   id: string
   name: string
+  // The team's default bib colour, a short label (for example "red"), null
+  // when unset. Register entries may override it per session. Arrives with
+  // migration 0044.
+  bibColour: string | null
 }
 
 // A child on a team's roster, the first child data the app holds. The shape
@@ -348,9 +352,16 @@ export interface Session {
   status: SessionStatus
   activities: Activity[]
   // Visibility is club-wide; coachId carries ownership for the edit and
-  // delete affordances and the My sessions filter. teamId is a filter.
+  // delete affordances and the My sessions filter.
   coachId: string
+  // FROZEN legacy single team (ADR-0008): read as "covers this one team"
+  // for rows predating session_teams, or the whole club when null. New code
+  // never writes it; the upsert does not send it.
   teamId: string | null
+  // The teams this session covers, from session_teams rows. Empty for a
+  // legacy row, where teamId above is the read fallback; the helpers in
+  // sessionTeams.ts resolve the covered set either way.
+  teamIds: string[]
   // FA session model fields: intentions render at the top FA style, space is
   // the setup area, source carries attribution.
   intentions: string[]
@@ -515,6 +526,11 @@ export function blankSession(coachId: string, teamId: string | null): Session {
     activities: [],
     coachId,
     teamId,
+    // Seeded by the planner once teams load: a new session defaults to
+    // covering every team (the whole club slot model). Left empty here so
+    // the create paths that never show a team select inherit the same
+    // default from the upsert instead of each fetching teams.
+    teamIds: [],
     intentions: [],
     space: '',
     sourceUrl: '',
