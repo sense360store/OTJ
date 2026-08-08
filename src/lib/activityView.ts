@@ -309,6 +309,9 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'player.withdrawn', label: 'Withdrawn' },
   { value: 'player.restored', label: 'Restored' },
   { value: 'player.deleted', label: 'Player deleted' },
+  { value: 'player.spond_linked', label: 'Spond link created' },
+  { value: 'player.spond_relinked', label: 'Spond link changed' },
+  { value: 'player.spond_unlinked', label: 'Spond link removed' },
   { value: 'players.import_completed', label: 'Import completed' },
   { value: 'players.import_failed', label: 'Import failed' },
   { value: 'players.exported', label: 'Players exported' },
@@ -345,6 +348,8 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'session.created', label: 'Session created' },
   { value: 'session.updated', label: 'Session updated' },
   { value: 'session.deleted', label: 'Session deleted' },
+  { value: 'session.team_added', label: 'Session team added' },
+  { value: 'session.team_removed', label: 'Session team removed' },
   { value: 'venue.created', label: 'Venue created' },
   { value: 'venue.updated', label: 'Venue updated' },
   { value: 'venue.deleted', label: 'Venue deleted' },
@@ -465,6 +470,10 @@ export function describeActivityEvent(
       return 'Session updated'
     case 'session.deleted':
       return 'Session deleted'
+    case 'session.team_added':
+      return 'Team added to the session'
+    case 'session.team_removed':
+      return 'Team removed from the session'
     case 'venue.created':
       return 'Venue created'
     case 'venue.updated':

@@ -181,6 +181,24 @@ select-gated table.
 | Storage avatars (`avatars/{user_id}/`): write | own folder | own folder | own folder | own folder |
 | Storage media bucket: anything unauthenticated | — | — | — | no |
 
+Training day logistics contract rows (ADR-0008; the venues, session_teams
+and Spond link migrations, provisional 0043 to 0045, land gated and the
+matching `tests/security/*.test.ts` files are an obligation of the PR that
+applies each one, per `docs/security/spond-data-boundary.md`):
+
+| Surface | admin | coach | parent | other club |
+|---|---|---|---|---|
+| venues / venue_areas: read | yes | yes | yes | no |
+| venues / venue_areas: write | yes (`club.manage`) | no | no | no |
+| venue_areas: store a malformed boundary | **no (check constraint, all callers)** | no | no | no |
+| session_teams: read | yes | yes | yes | no |
+| session_teams: write | any (`sessions.manage`) | own sessions only | no | no |
+| player_spond_links: read | yes | yes (`players.view`) | **no** | no |
+| player_spond_links: write | yes (`players.manage`, insert pins created_by) | no (`players.view` only; managers and admins hold `players.manage`) | no | no |
+| spond_event_responses: read | yes | yes (`players.view`) | **no** | no |
+| spond_event_responses: write | yes | yes (`sessions.create`, the sync path) | no | no |
+| either Spond table: store a name, contact or payload field | **no (no such column exists, pinned by the 0045 self verification)** | no | no | no |
+
 Capability consistency contract: the database catalogue is exactly the
 thirteen seeded keys; every capability string the frontend references
 exists in the catalogue; `RESERVED_CAPABILITIES` (`users.manage`,

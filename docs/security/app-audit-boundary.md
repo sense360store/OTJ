@@ -181,6 +181,9 @@ Written from launch (source values in parentheses where fixed):
 | `player.withdrawn` | registration UPDATE trigger |
 | `player.restored` | registration UPDATE trigger |
 | `player.deleted` | identity DELETE trigger |
+| `player.spond_linked` | Spond link INSERT trigger (0045, ADR-0008; the opaque member id is a value and is never recorded) |
+| `player.spond_relinked` | Spond link UPDATE trigger when the member id changes (field name only) |
+| `player.spond_unlinked` | Spond link DELETE trigger (suppressed under the player delete cascade, covered by `player.deleted`) |
 | `players.import_completed` | writer function, from `import_players` (csv_import, xlsx_import) |
 | `players.import_failed` | writer function, from `import_players` (csv_import, xlsx_import, matching the attempt's format) |
 | `players.exported` | writer function, from `export_players` (manual; entity_type `export`, entity_id null) |
@@ -194,7 +197,7 @@ The shape of a Spond roster run's audit output, for the avoidance of doubt: per 
 
 Not written: `players.import_started`. There is no operational need; the batch row records initiation.
 
-Reserved future actions, catalogued now so later phases extend rather than redesign (emitted from the wider rollout phase onward, per docs/roadmaps/registered-players-delivery-plan.md): `user.invited`, `user.removed`, `user.role_changed`, `user.capabilities_changed`; `team.created`, `team.updated`, `team.deleted`; `spond.mapping_changed`, `spond.sync_completed`; and create, update and delete actions for `drill.*`, `template.*`, `programme.*` and `session.*`. Many of these were realised in the wider audit rollout (0037).
+Reserved future actions, catalogued now so later phases extend rather than redesign (emitted from the wider rollout phase onward, per docs/roadmaps/registered-players-delivery-plan.md): `user.invited`, `user.removed`, `user.role_changed`, `user.capabilities_changed`; `team.created`, `team.updated`, `team.deleted`; `spond.mapping_changed`, `spond.sync_completed`; and create, update and delete actions for `drill.*`, `template.*`, `programme.*` and `session.*`. Many of these were realised in the wider audit rollout (0037). The training day logistics programme (ADR-0008) later added `venue.created/updated/deleted`, `venue.area_added/area_updated/area_removed` (0043), `session.team_added/team_removed` (0044) and the `player.spond_*` link lifecycle above (0045), each following the 0037 trigger conventions.
 
 The content share actions were originally reserved as `content_share.created`, `content_share.refreshed`, `content_share.revoked`. As of migration 0038 (Content Sharing PR 1) the realised set is wider: `content_share.created`, `content_share.refreshed`, `content_share.rotated`, `content_share.revoked` and `content_share.invalidated` are emitted by the lifecycle path, and `content_share.expired` is registered in the writer's allow list for the PR 2 scheduled cleanup and is not emitted yet. `content_share.rotated`, `content_share.invalidated` and `content_share.expired` are additions to the originally reserved three. See the content share audit section below.
 

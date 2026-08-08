@@ -181,10 +181,13 @@ capability patterns:
 
 ## Audit
 
-Per ADR-0006 conventions: link create and delete are audited as player
-events through the 0037 trigger pattern (entity the stable player id, field
-names only; the opaque member id is a value and is never recorded in
-`changed_fields`, `safe_changes` or `metadata`). Response rows are bulk sync
+Per ADR-0006 conventions: link create, re-link (the member id changing,
+recorded as the field name only) and delete are audited as player events
+through the 0037 trigger pattern (entity the stable player id, field names
+only; the opaque member id is a value and is never recorded in
+`changed_fields`, `safe_changes` or `metadata`). The link's player is
+frozen by a touch trigger: re-pointing a link to a different child is an
+audited unlink plus an audited link, never a silent update. Response rows are bulk sync
 output and carry no per row audit, mirroring `spond_events`; the reserved
 `spond.sync_completed` summary action remains available. Register ticks are
 proposed unaudited (ADR-0008, Unresolved items).

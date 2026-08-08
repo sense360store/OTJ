@@ -339,6 +339,15 @@ export function describeHistoryEntry(
         parts.push(`Registered date set: ${opts.formatDate(String(s.registered_date.new))}`)
       return parts.length > 0 ? parts.join('; ') : 'Registration updated'
     }
+    // The Spond link lifecycle (0045, per ADR-0008 and the amended boundary
+    // in docs/security/spond-data-boundary.md). The opaque member id is a
+    // value and is never recorded, so the copy names the act only.
+    case 'player.spond_linked':
+      return 'Linked to Spond'
+    case 'player.spond_relinked':
+      return 'Spond link changed'
+    case 'player.spond_unlinked':
+      return 'Spond link removed'
     default:
       return entry.action
   }
