@@ -177,20 +177,33 @@ function SessionDayView({ session }: { session: Session }) {
         </button>
       </div>
 
-      {canManage && (
+      {(canManage || caps.has('players.view')) && (
         <div className="row" style={{ gap: 9, marginBottom: 12 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => nav('planner', { sessionId: session.id })}>
-            <Icon.edit />
-            Edit plan
-          </button>
-          <button
-            className="btn btn-ghost btn-sm icon-only"
-            style={{ width: 38, padding: 0 }}
-            aria-label="Delete session"
-            onClick={() => setDeleting(true)}
-          >
-            <Icon.trash />
-          </button>
+          {/* The Register reads children's names through the players.view
+              gated read, so the button follows that capability, not session
+              ownership: any coach staffing the gate opens it. */}
+          {caps.has('players.view') && (
+            <button className="btn btn-ghost btn-sm" onClick={() => nav('register', { sessionId: session.id })}>
+              <Icon.users />
+              Register
+            </button>
+          )}
+          {canManage && (
+            <>
+              <button className="btn btn-ghost btn-sm" onClick={() => nav('planner', { sessionId: session.id })}>
+                <Icon.edit />
+                Edit plan
+              </button>
+              <button
+                className="btn btn-ghost btn-sm icon-only"
+                style={{ width: 38, padding: 0 }}
+                aria-label="Delete session"
+                onClick={() => setDeleting(true)}
+              >
+                <Icon.trash />
+              </button>
+            </>
+          )}
         </div>
       )}
 

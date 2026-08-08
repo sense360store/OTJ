@@ -181,10 +181,10 @@ select-gated table.
 | Storage avatars (`avatars/{user_id}/`): write | own folder | own folder | own folder | own folder |
 | Storage media bucket: anything unauthenticated | — | — | — | no |
 
-Training day logistics contract rows (ADR-0008; the venues, session_teams
-and Spond link migrations, provisional 0043 to 0045, land gated and the
-matching `tests/security/*.test.ts` files are an obligation of the PR that
-applies each one, per `docs/security/spond-data-boundary.md`):
+Training day logistics contract rows (ADR-0008; the venues, session_teams,
+Spond link and register migrations, provisional 0043 to 0046, land gated
+and the matching `tests/security/*.test.ts` files are an obligation of the
+PR that applies each one, per `docs/security/spond-data-boundary.md`):
 
 | Surface | admin | coach | parent | other club |
 |---|---|---|---|---|
@@ -198,6 +198,10 @@ applies each one, per `docs/security/spond-data-boundary.md`):
 | spond_event_responses: read | yes | yes (`players.view`) | **no** | no |
 | spond_event_responses: write | yes | yes (`sessions.create`, the sync path) | no | no |
 | either Spond table: store a name, contact or payload field | **no (no such column exists, pinned by the 0045 self verification)** | no | no | no |
+| register_entries: read | yes | yes (`players.view`) | **no** | no |
+| register_entries: write | yes | yes (`sessions.create`, club scoped, any coach; the upsert's conflict arm also needs `players.view`) | no | no |
+| register_entries: change a row's session, player or club | **no (touch trigger, P0001, all callers)** | no | no | no |
+| register_entries: store a name field | **no (no such column exists, pinned by the 0046 self verification)** | no | no | no |
 
 Capability consistency contract: the database catalogue is exactly the
 thirteen seeded keys; every capability string the frontend references

@@ -73,6 +73,7 @@ import { isBoundary } from './venues'
 import type { Boundary, Venue, VenueArea } from './venues'
 import { sessionTeamsDiff } from './sessionTeams'
 import type { PlayerSpondLink, SpondLinkCandidate, SpondLinkInsertRow } from './spondLinking'
+import type { RegisterEntry, SpondResponseLite } from './register'
 import { sourceLabelForUrl } from './fa'
 import { seasonDatePayload } from './seasonForm'
 import { formatBytes } from './faAttach'
@@ -4307,6 +4308,166 @@ export function useDeleteSpondLink() {
       if ((data ?? []).length === 0) throw new Error('Could not remove the link. Check your access.')
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['spond_links'] }),
+  })
+}
+
+// ---- The Register (ADR-0008) -----------------------------------------------
+// Reads load up front and edits are optimistic local state synced in the
+// background: pitch side signal is unverified, so a tick never waits on a
+// round trip. Reads ride players.view, writes sessions.create, both RLS
+// enforced (0046).
+
+interface SpondResponseRow {
+  spond_member_id: string
+  status: SpondResponseLite['status']
+}
+
+// The per member statuses for one synced event, keyed by the spond_events
+// row id a session references. Disabled (and empty) when the session has
+// no linked event or the viewer should not ask.
+export function useSpondEventResponses(spondEventId: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['spond_responses', spondEventId],
+    enabled: enabled && !!spondEventId,
+    queryFn: async (): Promise<SpondResponseLite[]> => {
+      const { data, error } = await supabase
+        .from('spond_event_responses')
+        .select('spond_member_id, status')
+        .eq('spond_event_id', spondEventId!)
+      if (error) throw error
+      return ((data ?? []) as unknown as SpondResponseRow[]).map((r) => ({
+        spondMemberId: r.spond_member_id,
+        status: r.status,
+      }))
+    },
+  })
+}
+
+interface RegisterEntryRow {
+  session_id: string
+  player_id: string
+  present: boolean
+  bib_colour_override: string | null
+  source: 'spond' | 'manual'
+}
+
+export const toRegisterEntry = (r: RegisterEntryRow): RegisterEntry => ({
+  sessionId: r.session_id,
+  playerId: r.player_id,
+  present: r.present,
+  bibColourOverride: r.bib_colour_override,
+  source: r.source,
+})
+
+export function useRegisterEntries(sessionId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['register_entries', sessionId],
+    enabled: enabled && !!sessionId,
+    queryFn: async (): Promise<RegisterEntry[]> => {
+      const { data, error } = await supabase
+        .from('register_entries')
+        .select('session_id, player_id, present, bib_colour_override, source')
+        .eq('session_id', sessionId!)
+      if (error) throw error
+      return ((data ?? []) as unknown as RegisterEntryRow[]).map(toRegisterEntry)
+    },
+  })
+}
+
+// The optimistic cache patch, pure and exported for tests: the entry for
+// (session, player) is replaced or created with the patch applied over the
+// current values, defaults for a row that does not exist yet.
+export function applyRegisterPatch(
+  entries: RegisterEntry[] | undefined,
+  input: SetRegisterEntryInput,
+): RegisterEntry[] {
+  const rest = (entries ?? []).filter((e) => e.playerId !== input.playerId)
+  const current = (entries ?? []).find((e) => e.playerId === input.playerId)
+  return [
+    ...rest,
+    {
+      sessionId: input.sessionId,
+      playerId: input.playerId,
+      present: input.present ?? current?.present ?? false,
+      bibColourOverride:
+        input.bibColourOverride !== undefined ? input.bibColourOverride : (current?.bibColourOverride ?? null),
+      source: current?.source ?? input.source ?? 'spond',
+    },
+  ]
+}
+
+export interface SetRegisterEntryInput {
+  sessionId: string
+  playerId: string
+  present?: boolean
+  bibColourOverride?: string | null
+  source?: 'spond' | 'manual'
+}
+
+// One upsert per tap, optimistic: the cache patches at once, the write
+// syncs behind, a failure rolls back and the settled invalidation refetches
+// the truth either way. The conflict target is the (session, player)
+// uniqueness, so a tap on a row that exists updates it. The payload carries
+// ONLY the fields the tap changed (the conflict update sets only supplied
+// columns; the insert path takes the table defaults for the rest), so two
+// coaches staffing one gate can tick and re-bib concurrently without one
+// slightly stale cache reverting the other's change whole row.
+export function useSetRegisterEntry() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, SetRegisterEntryInput, { prev: RegisterEntry[] | undefined }>({
+    mutationFn: async (input) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase.from('register_entries').upsert(
+        {
+          club_id: profile.club_id,
+          session_id: input.sessionId,
+          player_id: input.playerId,
+          ...(input.present !== undefined ? { present: input.present } : {}),
+          ...(input.bibColourOverride !== undefined ? { bib_colour_override: input.bibColourOverride } : {}),
+          ...(input.source !== undefined ? { source: input.source } : {}),
+        },
+        { onConflict: 'session_id,player_id' },
+      )
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      const key = ['register_entries', input.sessionId]
+      // Cancel in-flight refetches so a response computed before this tap
+      // cannot land on top of the optimistic patch.
+      await qc.cancelQueries({ queryKey: key })
+      const prev = qc.getQueryData<RegisterEntry[]>(key)
+      qc.setQueryData<RegisterEntry[]>(key, (old) => applyRegisterPatch(old, input))
+      return { prev }
+    },
+    onError: (_err, input, ctx) => {
+      if (ctx) qc.setQueryData(['register_entries', input.sessionId], ctx.prev)
+    },
+    onSettled: (_data, _err, input) => {
+      qc.invalidateQueries({ queryKey: ['register_entries', input.sessionId] })
+    },
+  })
+}
+
+// Removing a row is the quick add's undo: a mis-added guest leaves the
+// register entirely. Covered team players never need it (unticking is the
+// state, the row is harmless), so the screen offers it on manual rows only.
+export function useDeleteRegisterEntry() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { sessionId: string; playerId: string }>({
+    mutationFn: async ({ sessionId, playerId }) => {
+      const { data, error } = await supabase
+        .from('register_entries')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('player_id', playerId)
+        .select('id')
+      if (error) throw error
+      if ((data ?? []).length === 0) throw new Error('Could not remove the entry. Check your access.')
+    },
+    onSettled: (_data, _err, { sessionId }) => {
+      qc.invalidateQueries({ queryKey: ['register_entries', sessionId] })
+    },
   })
 }
 

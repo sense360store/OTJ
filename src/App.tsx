@@ -33,6 +33,7 @@ import { AdminTeams } from './routes/AdminTeams'
 import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
 import { AdminVenues } from './routes/AdminVenues'
+import { SessionRegister } from './routes/SessionRegister'
 import { AdminShares } from './routes/AdminShares'
 
 // The anonymous public share page is code-split with a dynamic import, so an
@@ -125,6 +126,11 @@ export function App() {
               /roster path redirects here so bookmarks keep working. */}
           <Route element={<RequireCap cap="players.view" />}>
             <Route path="players" element={<Players />} />
+            {/* The Register lists children's names resolved through the
+                players.view gated read, so the route shares the players
+                guard; ticking additionally needs sessions.create, decided
+                inside and enforced by the register_entries RLS. */}
+            <Route path="session-register/:sessionId" element={<SessionRegister />} />
           </Route>
           <Route path="roster" element={<Navigate to="/players" replace />} />
           {/* The club wide Activity feed reads the audit log, gated on
