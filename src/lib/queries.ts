@@ -64,6 +64,7 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
+import { parseDrillLayout } from './drillLayout'
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
 import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
 import { newestFirst } from './contentOrder'
@@ -110,6 +111,8 @@ export interface DrillRow {
   format: string | null
   source_url: string | null
   source_label: string | null
+  // Raw jsonb; parseDrillLayout is the single gate on the way in.
+  layout: unknown
 }
 
 interface MediaRow {
@@ -247,7 +250,7 @@ interface ClubRow {
 // ---- Column lists ------------------------------------------------------
 // Explicit so each read is checkable against the schema at a glance.
 const DRILL_COLS =
-  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at, setup_notes, easier, harder, theme, format, source_url, source_label'
+  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, media_id, created_by, created_at, setup_notes, easier, harder, theme, format, source_url, source_label, layout'
 const MEDIA_COLS =
   'id, club_id, name, type, kind, storage_path, embed_url, yt_url, size, dims, length, pages, created_by, created_at, source_url, source_label'
 const TEMPLATE_COLS =
@@ -329,6 +332,9 @@ export function toDrill(r: DrillRow): Drill {
     sourceUrl: r.source_url ?? '',
     sourceLabel: r.source_label ?? '',
     createdAt: r.created_at,
+    // The single gate: anything malformed reads as null and the detail
+    // falls back to the media rendering, never a broken diagram.
+    layout: parseDrillLayout(r.layout),
   }
 }
 

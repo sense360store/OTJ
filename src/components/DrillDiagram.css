@@ -1,0 +1,65 @@
+/* The drill layout renderer. Positions are scale true; colours ride the
+   theme tokens where they mean the same thing in both modes, with the
+   brand palette for the pieces. Print shows every phase in order and
+   hides the stepper, so a printed drill carries the whole movement. */
+
+.drill-diagram {
+  --dg-cone: #ef8e1b;
+  --dg-marker: #f4c020;
+  --dg-attack: #1f43d6;
+  --dg-defence: #e23b3b;
+  --dg-neutral: #f4c020;
+  --dg-zone: #16a34a;
+}
+
+.drill-diagram-frame { display: none; margin: 0; }
+.drill-diagram-frame.active { display: block; }
+
+.drill-diagram-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.dg-area { fill: none; stroke: var(--slate-2); stroke-width: 1.5; stroke-dasharray: 6 5; }
+
+.dg-cone { fill: var(--dg-cone); }
+.dg-marker { fill: var(--dg-marker); }
+.dg-goal { fill: none; stroke: var(--ink); stroke-width: 4; stroke-linecap: square; }
+.dg-mini-goal { stroke-width: 3; }
+.dg-mannequin circle, .dg-mannequin path { fill: var(--slate-2); }
+
+.dg-player circle { stroke: rgba(0, 0, 0, 0.18); stroke-width: 1; }
+.dg-team-attack circle { fill: var(--dg-attack); }
+.dg-team-defence circle { fill: var(--dg-defence); }
+.dg-team-neutral circle { fill: var(--dg-neutral); }
+.dg-player-label { font-family: 'Hanken Grotesk', sans-serif; font-size: 11px; font-weight: 800; fill: #fff; }
+.dg-team-neutral .dg-player-label { fill: #101631; }
+
+.dg-ball circle { fill: #fff; stroke: #101631; stroke-width: 1.5; }
+.dg-ball .dg-ball-dot { fill: #101631; stroke: none; }
+
+.dg-zone rect { fill: var(--dg-zone); fill-opacity: 0.1; stroke: var(--dg-zone); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.dg-zone-label { font-family: 'Hanken Grotesk', sans-serif; font-size: 12px; font-weight: 700; fill: var(--dg-zone); }
+
+.dg-arrow { stroke: var(--ink); stroke-width: 2.5; fill: none; }
+.dg-arrow-run { stroke-dasharray: 8 6; }
+.dg-arrow-shot { stroke-width: 3; }
+.dg-arrow-head { fill: var(--ink); }
+
+.drill-diagram-note { font-size: 13.5px; line-height: 1.5; color: var(--slate-2); margin-top: 8px; }
+.drill-diagram-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.drill-diagram-area { font-size: 12px; color: var(--slate-2); }
+
+@media print {
+  .drill-diagram-frame { display: block; break-inside: avoid; }
+  .drill-diagram-frame + .drill-diagram-frame { margin-top: 12px; }
+  .drill-diagram-stepper { display: none; }
+  .drill-diagram-svg { background: #fff; border-color: #ccc; }
+  .dg-goal { stroke: #101631; }
+  .dg-arrow { stroke: #101631; }
+  .dg-arrow-head { fill: #101631; }
+}

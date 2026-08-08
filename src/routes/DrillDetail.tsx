@@ -28,6 +28,7 @@ import {
   SourceLink,
   TopicTags,
 } from '../components/ui'
+import { DrillDiagram } from '../components/DrillDiagram'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { DeleteDrillModal } from '../components/DeleteDrillModal'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
@@ -284,6 +285,16 @@ export function DrillDetail() {
 
       <div className="detail-grid">
         <div>
+          {/* The discriminator: an authored drill with a layout renders its
+              diagram in the media slot; a null layout (every FA import,
+              forever) renders the media surface exactly as before. The
+              media info row below stays either way, so a drill carrying
+              both still plays or opens its clip. */}
+          {drill.layout ? (
+            <div className="detail-media">
+              <DrillDiagram layout={drill.layout} />
+            </div>
+          ) : (
           <div className="detail-media">
             {(embed || faVideo) && media ? (
               <div className="player">
@@ -304,6 +315,7 @@ export function DrillDetail() {
               </div>
             )}
           </div>
+          )}
           <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />
           {media && MediaIcon && (
             <div className="row" style={{ marginTop: 10, justifyContent: 'space-between' }}>

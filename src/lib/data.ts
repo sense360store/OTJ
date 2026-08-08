@@ -5,6 +5,8 @@
 // into these types. Taxonomy constants and sessionMinutes stay here because
 // they are static and shared, not server data.
 
+import type { DrillLayout } from './drillLayout'
+
 export type CornerKey = 'technical' | 'physical' | 'social' | 'psychological'
 export type Phase = 'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'
 export type Level = 'Foundation' | 'Developing' | 'Advanced'
@@ -286,6 +288,11 @@ export interface Drill {
   sourceLabel: string
   // Drives the "what's new" recency on Home.
   createdAt: string
+  // The structured layout of an authored drill (src/lib/drillLayout.ts),
+  // parsed through parseDrillLayout on read. Null for FA imported drills,
+  // forever: null is the discriminator the drill detail renders by, and
+  // FA drills are never retrofitted.
+  layout?: DrillLayout | null
 }
 
 export interface Activity {

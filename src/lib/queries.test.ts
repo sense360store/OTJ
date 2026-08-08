@@ -81,6 +81,7 @@ function drillRow(overrides: Partial<DrillRow> = {}): DrillRow {
     format: null,
     source_url: null,
     source_label: null,
+    layout: null,
     ...overrides,
   }
 }
