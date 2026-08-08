@@ -69,6 +69,8 @@ import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './share
 import { newestFirst } from './contentOrder'
 import type { Board, Token } from './tacticsBoard'
 import { deserializeTokens, serializeTokens } from './tacticsBoard'
+import { isBoundary } from './venues'
+import type { Boundary, Venue, VenueArea } from './venues'
 import { sourceLabelForUrl } from './fa'
 import { seasonDatePayload } from './seasonForm'
 import { formatBytes } from './faAttach'
@@ -2669,6 +2671,162 @@ export function useDeleteTeam() {
       qc.invalidateQueries({ queryKey: ['sessions'] })
       qc.invalidateQueries({ queryKey: ['profiles'] })
     },
+  })
+}
+
+// ---- Venues (club.manage) --------------------------------------------------
+// Venue config per migration 0043: venues carry a name and centre, venue
+// areas carry the boundary polygon as ordered [lat, lng] vertices. Reads are
+// club wide; writes ride the club.manage policies. The boundary jsonb is
+// guarded on the way in (isBoundary), so an unreadable stored value degrades
+// to a labelled null instead of breaking the screen.
+
+export interface VenueRow {
+  id: string
+  club_id: string
+  name: string
+  centre_lat: number
+  centre_lng: number
+  created_at: string
+}
+
+export interface VenueAreaRow {
+  id: string
+  club_id: string
+  venue_id: string
+  name: string
+  boundary: unknown
+  usable: boolean
+  created_at: string
+}
+
+const VENUE_COLS = 'id, club_id, name, centre_lat, centre_lng, created_at'
+const VENUE_AREA_COLS = 'id, club_id, venue_id, name, boundary, usable, created_at'
+
+export function toVenue(r: VenueRow): Venue {
+  return { id: r.id, name: r.name, centreLat: r.centre_lat, centreLng: r.centre_lng }
+}
+
+export function toVenueArea(r: VenueAreaRow): VenueArea {
+  return {
+    id: r.id,
+    venueId: r.venue_id,
+    name: r.name,
+    boundary: isBoundary(r.boundary) ? r.boundary : null,
+    usable: r.usable,
+  }
+}
+
+export function useVenues() {
+  return useQuery({
+    queryKey: ['venues'],
+    queryFn: async (): Promise<Venue[]> => {
+      const { data, error } = await supabase.from('venues').select(VENUE_COLS).order('name', { ascending: true })
+      if (error) throw error
+      return (data as unknown as VenueRow[]).map(toVenue)
+    },
+  })
+}
+
+export function useVenueAreas() {
+  return useQuery({
+    queryKey: ['venue_areas'],
+    queryFn: async (): Promise<VenueArea[]> => {
+      const { data, error } = await supabase
+        .from('venue_areas')
+        .select(VENUE_AREA_COLS)
+        .order('name', { ascending: true })
+      if (error) throw error
+      return (data as unknown as VenueAreaRow[]).map(toVenueArea)
+    },
+  })
+}
+
+export function useInsertVenue() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { name: string; centreLat: number; centreLng: number }>({
+    mutationFn: async ({ name, centreLat, centreLng }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase
+        .from('venues')
+        .insert({ club_id: profile.club_id, name, centre_lat: centreLat, centre_lng: centreLng })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+  })
+}
+
+export function useUpdateVenue() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name?: string; centreLat?: number; centreLng?: number }>({
+    mutationFn: async ({ id, name, centreLat, centreLng }) => {
+      const patch: Record<string, unknown> = {}
+      if (name !== undefined) patch.name = name
+      if (centreLat !== undefined) patch.centre_lat = centreLat
+      if (centreLng !== undefined) patch.centre_lng = centreLng
+      const { error } = await supabase.from('venues').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+  })
+}
+
+// Removing a venue cascades its areas and nulls sessions.venue_id through
+// the foreign keys; sessions keep working detached.
+export function useDeleteVenue() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('venues').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['venues'] })
+      qc.invalidateQueries({ queryKey: ['venue_areas'] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+}
+
+export function useInsertVenueArea() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { venueId: string; name: string; boundary: Boundary; usable: boolean }>({
+    mutationFn: async ({ venueId, name, boundary, usable }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in.')
+      const { error } = await supabase
+        .from('venue_areas')
+        .insert({ club_id: profile.club_id, venue_id: venueId, name, boundary, usable })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venue_areas'] }),
+  })
+}
+
+export function useUpdateVenueArea() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name?: string; boundary?: Boundary; usable?: boolean }>({
+    mutationFn: async ({ id, name, boundary, usable }) => {
+      const patch: Record<string, unknown> = {}
+      if (name !== undefined) patch.name = name
+      if (boundary !== undefined) patch.boundary = boundary
+      if (usable !== undefined) patch.usable = usable
+      const { error } = await supabase.from('venue_areas').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venue_areas'] }),
+  })
+}
+
+export function useDeleteVenueArea() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase.from('venue_areas').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venue_areas'] }),
   })
 }
 

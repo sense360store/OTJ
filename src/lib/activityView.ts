@@ -36,6 +36,9 @@ export type AuditEntityType =
   | 'template'
   | 'programme'
   | 'session'
+  // Venue config (0043_venues.sql): venue and area changes anchor to the
+  // venue; boundary edits record the field name only, never coordinates.
+  | 'venue'
 
 // The source (provenance) vocabulary, exactly the audit_events.source CHECK.
 export type AuditSource =
@@ -277,6 +280,7 @@ export const ENTITY_OPTIONS: { value: AuditEntityType; label: string }[] = [
   { value: 'template', label: 'Template' },
   { value: 'programme', label: 'Programme' },
   { value: 'session', label: 'Session' },
+  { value: 'venue', label: 'Venue' },
 ]
 
 export const SOURCE_OPTIONS: { value: AuditSource; label: string }[] = [
@@ -341,6 +345,12 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'session.created', label: 'Session created' },
   { value: 'session.updated', label: 'Session updated' },
   { value: 'session.deleted', label: 'Session deleted' },
+  { value: 'venue.created', label: 'Venue created' },
+  { value: 'venue.updated', label: 'Venue updated' },
+  { value: 'venue.deleted', label: 'Venue deleted' },
+  { value: 'venue.area_added', label: 'Venue area added' },
+  { value: 'venue.area_updated', label: 'Venue area updated' },
+  { value: 'venue.area_removed', label: 'Venue area removed' },
 ]
 
 // The source label, from the fixed vocabulary. Falls back to the raw value for
@@ -455,6 +465,18 @@ export function describeActivityEvent(
       return 'Session updated'
     case 'session.deleted':
       return 'Session deleted'
+    case 'venue.created':
+      return 'Venue created'
+    case 'venue.updated':
+      return 'Venue updated'
+    case 'venue.deleted':
+      return 'Venue deleted'
+    case 'venue.area_added':
+      return 'Venue area added'
+    case 'venue.area_updated':
+      return 'Venue area updated'
+    case 'venue.area_removed':
+      return 'Venue area removed'
     default:
       // A future action not yet mapped: show the bare action key. It is a fixed
       // enum string chosen by a server writer, never user or child data.
@@ -527,6 +549,8 @@ export function entityRef(
       return { kind: 'label', label: 'Programme' }
     case 'session':
       return { kind: 'label', label: 'Session' }
+    case 'venue':
+      return { kind: 'label', label: 'Venue' }
     default:
       return { kind: 'none' }
   }

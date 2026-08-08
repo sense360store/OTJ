@@ -32,6 +32,7 @@ import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
 import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
+import { AdminVenues } from './routes/AdminVenues'
 import { AdminShares } from './routes/AdminShares'
 
 // The anonymous public share page is code-split with a dynamic import, so an
@@ -142,6 +143,7 @@ export function App() {
           <Route element={<RequireCap cap="club.manage" />}>
             <Route path="admin/club" element={<AdminClub />} />
             <Route path="admin/spond" element={<AdminSpond />} />
+            <Route path="admin/venues" element={<AdminVenues />} />
           </Route>
           <Route element={<RequireCap cap="teams.manage" />}>
             <Route path="admin/teams" element={<AdminTeams />} />
