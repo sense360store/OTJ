@@ -1874,10 +1874,27 @@ export function useUpsertSession() {
 // Owner or admin only; the sessions delete RLS is the real enforcement.
 export function useDeleteSession() {
   const qc = useQueryClient()
+  const { profile } = useAuth()
   return useMutation<void, Error, { id: string }>({
     mutationFn: async ({ id }) => {
       const { error } = await supabase.from('sessions').delete().eq('id', id)
       if (error) throw error
+      // The session's setup photo objects are unreferenced now; cleanup is
+      // best effort (the storage delete policy is uploader-or-manager, so a
+      // photo someone else uploaded may survive as an orphan).
+      const clubId = profile?.club_id
+      if (clubId) {
+        const folder = sessionSetupFolder(clubId, id)
+        void supabase.storage
+          .from('media')
+          .list(folder, { limit: 20 })
+          .then(({ data }) => {
+            const paths = (data ?? [])
+              .filter((e) => !!e.name && !e.name.startsWith('.'))
+              .map((e) => `${folder}/${e.name}`)
+            if (paths.length > 0) void supabase.storage.from('media').remove(paths)
+          })
+      }
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   })
@@ -2868,6 +2885,148 @@ export function useRemoveAvatar() {
     onSuccess: async () => {
       qc.invalidateQueries({ queryKey: ['profiles'] })
       await refreshProfile()
+    },
+  })
+}
+
+// ---- Session setup photo ------------------------------------------------
+// A session can carry one setup photo: a picture of the day's pitch layout,
+// uploaded before players arrive. It is a storage object only, no media row
+// and no session column: the object lives in the media bucket under
+// {club_id}/session-setup/{session_id}/ and is found by listing that folder,
+// the avatar precedent applied to a session. Everything rides the existing
+// storage policies (0027): media.create inserts under the club prefix, the
+// uploader or media.manage deletes, and every club member reads, so parents
+// watching live see the photo with no new policy and no migration.
+// Replacement uploads a fresh random path first and removes the old objects
+// after, so a failed upload never loses the current photo.
+//
+// Accepted limits of the stopgap, inherent to storage-only state: authority
+// is club wide (any media.create holder could write another session's folder
+// through the API; the UI surfaces the affordance only to those managing the
+// session), a replaced or deleted photo that someone else uploaded can
+// survive as an orphan the messages below own up to, and cleanup on session
+// delete is best effort.
+
+export const SESSION_SETUP_SEGMENT = 'session-setup'
+
+export function sessionSetupFolder(clubId: string, sessionId: string): string {
+  return `${clubId}/${SESSION_SETUP_SEGMENT}/${sessionId}`
+}
+
+export function sessionSetupUploadPath(clubId: string, sessionId: string, filename: string): string {
+  return `${sessionSetupFolder(clubId, sessionId)}/${crypto.randomUUID()}-${sanitiseFilename(filename)}`
+}
+
+// Storage list entries for the folder reduced to the current photo's full
+// path: newest first, placeholder dot files ignored. More than one object
+// exists only transiently mid-replace or after a best-effort cleanup was
+// interrupted; newest wins either way, and the next replace clears the rest.
+export interface SetupListEntry {
+  name: string
+  created_at?: string | null
+}
+
+export function currentSetupPath(folder: string, entries: SetupListEntry[]): string | null {
+  const real = entries.filter((e) => !!e.name && !e.name.startsWith('.'))
+  if (real.length === 0) return null
+  const newest = [...real].sort((a, b) => {
+    const at = a.created_at ?? ''
+    const bt = b.created_at ?? ''
+    if (at !== bt) return at < bt ? 1 : -1
+    return a.name < b.name ? 1 : -1
+  })[0]
+  return `${folder}/${newest.name}`
+}
+
+export function setupImageProblem(file: File): string | null {
+  if (mediaTypeForFile(file) !== 'image') return 'Choose an image file.'
+  return oversizeMessage(file)
+}
+
+// The folder listing runs under the storage select policy, which is club
+// scoped with no capability, so every member (parents included) resolves the
+// same path a coach does. A missing folder lists as empty, not as an error.
+export function useSessionSetupImage(sessionId: string | undefined) {
+  const { profile } = useAuth()
+  const clubId = profile?.club_id
+  return useQuery({
+    queryKey: ['session-setup', sessionId],
+    enabled: !!sessionId && !!clubId,
+    queryFn: async (): Promise<string | null> => {
+      const folder = sessionSetupFolder(clubId!, sessionId!)
+      const { data, error } = await supabase.storage
+        .from('media')
+        .list(folder, { limit: 20, sortBy: { column: 'created_at', order: 'desc' } })
+      if (error) throw error
+      return currentSetupPath(folder, data ?? [])
+    },
+  })
+}
+
+export function useSetSessionSetupPhoto() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { sessionId: string; file: File }>({
+    mutationFn: async ({ sessionId, file }) => {
+      const clubId = profile?.club_id
+      if (!clubId) throw new Error('You must be signed in.')
+      const problem = setupImageProblem(file)
+      if (problem) throw new Error(problem)
+      const folder = sessionSetupFolder(clubId, sessionId)
+      const { data: existing } = await supabase.storage.from('media').list(folder, { limit: 20 })
+      const path = sessionSetupUploadPath(clubId, sessionId, file.name)
+      // For a File body the storage client takes the mimetype from the file
+      // itself, not from the contentType option, so a picker that hands over
+      // an empty or generic type (Android in particular) gets the file
+      // rewrapped with the type resolved from its extension. Without this an
+      // SVG stores as octet-stream and never renders in the <img>.
+      const contentType = contentTypeForFile(file)
+      const body =
+        contentType && file.type !== contentType ? new File([file], file.name, { type: contentType }) : file
+      const { error } = await supabase.storage.from('media').upload(path, body)
+      if (error) throw error
+      // The replaced objects are unreferenced now; removal is best effort.
+      const old = (existing ?? [])
+        .filter((e) => !!e.name && !e.name.startsWith('.'))
+        .map((e) => `${folder}/${e.name}`)
+      if (old.length > 0) void supabase.storage.from('media').remove(old)
+    },
+    onSettled: (_data, _error, { sessionId }) => {
+      qc.invalidateQueries({ queryKey: ['session-setup', sessionId] })
+    },
+  })
+}
+
+export function useRemoveSessionSetupPhoto() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { sessionId: string }>({
+    mutationFn: async ({ sessionId }) => {
+      const clubId = profile?.club_id
+      if (!clubId) throw new Error('You must be signed in.')
+      const folder = sessionSetupFolder(clubId, sessionId)
+      const { data: entries, error: listError } = await supabase.storage.from('media').list(folder, { limit: 20 })
+      if (listError) throw listError
+      const paths = (entries ?? [])
+        .filter((e) => !!e.name && !e.name.startsWith('.'))
+        .map((e) => `${folder}/${e.name}`)
+      if (paths.length === 0) return
+      const { data: removed, error } = await supabase.storage.from('media').remove(paths)
+      if (error) throw error
+      // The delete policy is uploader-or-manager, and remove filters rather
+      // than refuses, so objects someone else uploaded survive silently. Say
+      // what actually happened: nothing went, or an older photo resurfaced.
+      const gone = (removed ?? []).length
+      if (gone === 0) {
+        throw new Error('Someone else uploaded this photo, so only a media manager can remove it.')
+      }
+      if (gone < paths.length) {
+        throw new Error('An older photo uploaded by someone else is still here. A media manager can remove it.')
+      }
+    },
+    onSettled: (_data, _error, { sessionId }) => {
+      qc.invalidateQueries({ queryKey: ['session-setup', sessionId] })
     },
   })
 }

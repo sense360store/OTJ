@@ -13,7 +13,9 @@ import {
   useSession,
   useDrillMap,
   useMediaMap,
+  useMediaSrc,
   useMyCapabilities,
+  useSessionSetupImage,
   useTeamMap,
   useLiveSessionSync,
   useSetLiveActivity,
@@ -121,6 +123,91 @@ function LiveMediaPeek({ media, drill }: { media: MediaItem; drill: Drill }) {
             </div>
           </div>
           <MediaAttribution media={media} style={{ display: 'block', marginTop: 8 }} />
+        </Modal>
+      )}
+    </>
+  )
+}
+
+// The session's setup photo as a tappable strip like the media peek, shown
+// to driver and watcher alike. Presentational so the strip and its absence
+// render without hooks; the container resolves the storage path and signed
+// URL. Nothing renders until both resolve, so a session without a photo
+// costs no space.
+export function LiveSetupPeekView({
+  src,
+  onOpen,
+  onImgError,
+  onImgLoad,
+}: {
+  src: string | null
+  onOpen: () => void
+  onImgError?: () => void
+  onImgLoad?: () => void
+}) {
+  if (!src) return null
+  return (
+    <button
+      onClick={onOpen}
+      style={{
+        border: '1px solid var(--line)',
+        background: 'var(--card)',
+        borderRadius: 14,
+        padding: 10,
+        display: 'flex',
+        gap: 12,
+        alignItems: 'center',
+        cursor: 'pointer',
+        textAlign: 'left',
+      }}
+    >
+      <div style={{ width: 92, height: 58, borderRadius: 9, overflow: 'hidden', flex: '0 0 92px' }}>
+        <img
+          src={src}
+          alt="Session setup"
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          onError={onImgError}
+          onLoad={onImgLoad}
+        />
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Setup photo · tap to view</div>
+        <div className="muted" style={{ fontSize: 12.5 }}>
+          How the pitch is laid out today
+        </div>
+      </div>
+      <span style={{ color: 'var(--gold)' }}>
+        <Icon.image size={22} />
+      </span>
+    </button>
+  )
+}
+
+function LiveSetupPeek({ session }: { session: Session }) {
+  const { data: path } = useSessionSetupImage(session.id)
+  const { src, onError, onLoad } = useMediaSrc(path ?? undefined)
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <LiveSetupPeekView src={src} onOpen={() => setOpen(true)} onImgError={onError} onImgLoad={onLoad} />
+      {open && src && (
+        <Modal
+          title="Setup photo"
+          sub={session.name}
+          onClose={() => setOpen(false)}
+          footer={
+            <button className="btn btn-primary" onClick={() => setOpen(false)}>
+              Close
+            </button>
+          }
+        >
+          <img
+            src={src}
+            alt="Session setup"
+            style={{ width: '100%', borderRadius: 12, display: 'block' }}
+            onError={onError}
+            onLoad={onLoad}
+          />
         </Modal>
       )}
     </>
@@ -387,6 +474,9 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
 
           {/* media */}
           {media && drill && <LiveMediaPeek media={media} drill={drill} />}
+
+          {/* setup photo */}
+          <LiveSetupPeek session={session} />
 
           {/* coaching points */}
           {drill && (
@@ -657,6 +747,9 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
 
           {/* media */}
           {media && drill && <LiveMediaPeek media={media} drill={drill} />}
+
+          {/* setup photo */}
+          <LiveSetupPeek session={session} />
 
           {/* coaching points */}
           {drill && (

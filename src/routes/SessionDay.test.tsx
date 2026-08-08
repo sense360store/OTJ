@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { SessionBoardCardView } from './SessionDay'
+import { SessionBoardCardView, SessionSetupPhotoView } from './SessionDay'
 import { playerNameMap, type Board } from '../lib/tacticsBoard'
 
 // SessionBoardCardView is the session day's attached board section pulled out
@@ -102,6 +102,110 @@ describe('SessionBoardCardView', () => {
     )
     expect(html).toContain('Attach')
     expect(html).toContain('No board attached')
+  })
+
+  it('setup photo view: renders nothing with no photo and no rights', () => {
+    const html = renderToStaticMarkup(
+      <SessionSetupPhotoView
+        src={null}
+        hasPhoto={false}
+        canEdit={false}
+        busy={false}
+        errorText=""
+        onPick={noop}
+        onOpen={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(html).toBe('')
+  })
+
+  it('setup photo view: offers add with no photo but edit rights', () => {
+    const html = renderToStaticMarkup(
+      <SessionSetupPhotoView
+        src={null}
+        hasPhoto={false}
+        canEdit
+        busy={false}
+        errorText=""
+        onPick={noop}
+        onOpen={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(html).toContain('Add photo')
+    expect(html).toContain('No setup photo yet')
+    expect(html).not.toContain('Remove setup photo')
+  })
+
+  it('setup photo view: shows the image with replace and remove for an editor', () => {
+    const html = renderToStaticMarkup(
+      <SessionSetupPhotoView
+        src="https://signed.example/setup.jpg"
+        hasPhoto
+        canEdit
+        busy={false}
+        errorText=""
+        onPick={noop}
+        onOpen={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(html).toContain('https://signed.example/setup.jpg')
+    expect(html).toContain('Replace')
+    expect(html).toContain('Remove setup photo')
+    expect(html).toContain('Open setup photo full screen')
+  })
+
+  it('setup photo view: a viewer without rights sees the image and no controls', () => {
+    const html = renderToStaticMarkup(
+      <SessionSetupPhotoView
+        src="https://signed.example/setup.jpg"
+        hasPhoto
+        canEdit={false}
+        busy={false}
+        errorText=""
+        onPick={noop}
+        onOpen={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(html).toContain('https://signed.example/setup.jpg')
+    expect(html).not.toContain('Replace')
+    expect(html).not.toContain('Add photo')
+    expect(html).not.toContain('Remove setup photo')
+  })
+
+  it('setup photo view: surfaces an upload or removal error', () => {
+    const html = renderToStaticMarkup(
+      <SessionSetupPhotoView
+        src={null}
+        hasPhoto={false}
+        canEdit
+        busy={false}
+        errorText="Choose an image file."
+        onPick={noop}
+        onOpen={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(html).toContain('Choose an image file.')
+  })
+
+  it('setup photo view: disables the controls while a write is in flight', () => {
+    const html = renderToStaticMarkup(
+      <SessionSetupPhotoView
+        src="https://signed.example/setup.jpg"
+        hasPhoto
+        canEdit
+        busy
+        errorText=""
+        onPick={noop}
+        onOpen={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(/<button[^>]*disabled[^>]*>Replace<\/button>/.test(html)).toBe(true)
   })
 
   it('constrains the empty state placeholder icon and uses the muted theme colour', () => {

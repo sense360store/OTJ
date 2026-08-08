@@ -9,7 +9,7 @@
 // still renders at the far end of the pitch because cached data keeps
 // rendering even if a background refetch fails. Full offline support (PWA,
 // precached signed URLs) is out of scope and noted as possible future work.
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
@@ -20,16 +20,20 @@ import {
   useLinkSessionBoard,
   useLinkSessionSpondEvent,
   useMediaMap,
+  useMediaSrc,
   useMyCapabilities,
   usePlayers,
   useProgrammeMap,
+  useRemoveSessionSetupPhoto,
   useSession,
+  useSessionSetupImage,
+  useSetSessionSetupPhoto,
   useTeamMap,
 } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
+import { ActionError, Empty, ErrorNote, fmtDate, Loading, MediaThumb, Modal, PHASE_COLOR, SourceLink } from '../components/ui'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
@@ -238,6 +242,12 @@ function SessionDayView({ session }: { session: Session }) {
           the sessions.create gated players query, so a parent sees the shape
           and numbers with nothing to resolve against. */}
       <SessionBoardCard session={session} canManage={canManage} />
+
+      {/* The setup photo: one image of the day's pitch layout, a storage
+          object under the club prefix with no media row. Every member sees
+          it; upload and removal follow the storage policies, so the edit
+          affordances need media.create on top of managing the session. */}
+      <SessionSetupPhotoCard session={session} canManage={canManage} />
 
       <div className="sd-tabs">
         <button className={'sd-tab' + (tab === 'setup' ? ' on' : '')} onClick={() => setTab('setup')}>
@@ -515,6 +525,151 @@ function SessionBoardCard({
           onSelect={(id) => link.mutate({ sessionId: session.id, boardId: id })}
           onClose={() => setPicking(false)}
         />
+      )}
+    </>
+  )
+}
+
+// The setup photo card, presentational so every state renders without hooks
+// or a query client: no photo and no rights renders nothing, no photo with
+// rights renders the add affordance, a photo renders the image with replace
+// and remove for those who may. The container resolves the storage path and
+// signed URL and wires the mutations.
+export function SessionSetupPhotoView({
+  src,
+  hasPhoto,
+  canEdit,
+  busy,
+  errorText,
+  onPick,
+  onOpen,
+  onRemove,
+  onImgError,
+  onImgLoad,
+}: {
+  src: string | null
+  hasPhoto: boolean
+  canEdit: boolean
+  busy: boolean
+  errorText: string
+  onPick: () => void
+  onOpen: () => void
+  onRemove: () => void
+  onImgError?: () => void
+  onImgLoad?: () => void
+}) {
+  if (!hasPhoto && !canEdit) return null
+  return (
+    <div className="card sd-board-card">
+      <div className="sd-board-head">
+        <Icon.image size={20} style={{ color: 'var(--slate-2)', flex: '0 0 auto' }} />
+        <h4>Setup photo</h4>
+        {canEdit && (
+          <div className="sd-board-actions">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onPick} disabled={busy}>
+              {hasPhoto ? 'Replace' : 'Add photo'}
+            </button>
+            {hasPhoto && (
+              <button
+                type="button"
+                className="btn btn-quiet btn-sm icon-only"
+                aria-label="Remove setup photo"
+                onClick={onRemove}
+                disabled={busy}
+              >
+                <Icon.x />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {hasPhoto ? (
+        src ? (
+          <button
+            type="button"
+            className="sd-thumb"
+            aria-label="Open setup photo full screen"
+            onClick={onOpen}
+            style={{ width: '100%' }}
+          >
+            <img
+              src={src}
+              alt="Session setup"
+              style={{ width: '100%', borderRadius: 12, display: 'block' }}
+              onError={onImgError}
+              onLoad={onImgLoad}
+            />
+          </button>
+        ) : null
+      ) : (
+        <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
+          No setup photo yet. Add a picture of the day's pitch layout.
+        </p>
+      )}
+      {errorText && <ActionError>{errorText}</ActionError>}
+    </div>
+  )
+}
+
+function SessionSetupPhotoCard({ session, canManage }: { session: Session; canManage: boolean }) {
+  const { caps } = useMyCapabilities()
+  const { data: path } = useSessionSetupImage(session.id)
+  const { src, onError, onLoad } = useMediaSrc(path ?? undefined)
+  const set = useSetSessionSetupPhoto()
+  const remove = useRemoveSessionSetupPhoto()
+  const [viewing, setViewing] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  // The storage insert policy takes media.create under the club prefix, so
+  // the affordance follows what the policy will actually allow.
+  const canEdit = canManage && caps.has('media.create')
+  const busy = set.isPending || remove.isPending
+  const errorText = set.isError ? set.error.message : remove.isError ? remove.error.message : ''
+  return (
+    <>
+      <SessionSetupPhotoView
+        src={src}
+        hasPhoto={!!path}
+        canEdit={canEdit}
+        busy={busy}
+        errorText={errorText}
+        onPick={() => fileRef.current?.click()}
+        onOpen={() => setViewing(true)}
+        onRemove={() => remove.mutate({ sessionId: session.id })}
+        onImgError={onError}
+        onImgLoad={onLoad}
+      />
+      {canEdit && (
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (file) set.mutate({ sessionId: session.id, file })
+          }}
+        />
+      )}
+      {viewing && src && (
+        <Modal
+          title="Setup photo"
+          sub={session.name}
+          onClose={() => setViewing(false)}
+          footer={
+            <button className="btn btn-primary" onClick={() => setViewing(false)}>
+              Close
+            </button>
+          }
+        >
+          <img
+            src={src}
+            alt="Session setup"
+            style={{ width: '100%', borderRadius: 12, display: 'block' }}
+            onError={onError}
+            onLoad={onLoad}
+          />
+        </Modal>
       )}
     </>
   )
