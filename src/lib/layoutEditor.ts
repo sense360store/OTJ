@@ -42,14 +42,26 @@ function clampPoint(p: LayoutPoint, layout: DrillLayout): LayoutPoint {
   }
 }
 
+// Truncate to the cap without ever ending on an unpaired high surrogate:
+// a split emoji passes a length check but fails to serialize as well
+// formed JSON, and Postgres refuses the jsonb outright.
+function clip(s: string, max: number): string {
+  let out = s.slice(0, max)
+  while (out && /[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1)
+  return out
+}
+
 // Ids are layout local: e1, z1, a1 counting past everything ever used in
 // any phase, so a removed piece's id is not reused within the session.
+// Only sanely small suffixes count: an id crafted outside the editor with
+// an enormous number (legal to the database) must not turn the next id
+// into scientific notation and collide from then on.
 function nextId(layout: DrillLayout, prefix: string): string {
   let highest = 0
   for (const f of layout.frames) {
     for (const list of [f.entities, f.zones, f.arrows] as { id: string }[][]) {
       for (const item of list) {
-        const m = item.id.match(/^([a-z]+)(\d+)$/)
+        const m = item.id.match(/^([a-z]+)(\d{1,6})$/)
         if (m && m[1] === prefix) highest = Math.max(highest, Number(m[2]))
       }
     }
@@ -88,7 +100,7 @@ export function moveEntity(layout: DrillLayout, frame: number, id: string, to: L
 // The label is the piece's tag, the same in every phase; it is capped hard
 // so it can never hold a name.
 export function setEntityLabel(layout: DrillLayout, id: string, label: string): DrillLayout {
-  const value = label.slice(0, LAYOUT_LABEL_MAX)
+  const value = clip(label, LAYOUT_LABEL_MAX)
   return {
     ...layout,
     frames: layout.frames.map((f) => ({
@@ -171,7 +183,7 @@ export function moveZone(layout: DrillLayout, frame: number, id: string, to: Lay
 }
 
 export function setZoneLabel(layout: DrillLayout, frame: number, id: string, label: string): DrillLayout {
-  const value = label.slice(0, LAYOUT_ZONE_LABEL_MAX)
+  const value = clip(label, LAYOUT_ZONE_LABEL_MAX)
   return {
     ...layout,
     frames: layout.frames.map((f, i) =>
@@ -230,7 +242,7 @@ export function removePhase(layout: DrillLayout, frame: number): DrillLayout | n
 }
 
 export function setPhaseNote(layout: DrillLayout, frame: number, note: string): DrillLayout {
-  const value = note.slice(0, LAYOUT_NOTE_MAX)
+  const value = clip(note, LAYOUT_NOTE_MAX)
   return {
     ...layout,
     frames: layout.frames.map((f, i) => (i === frame ? { ...f, ...(value ? { note: value } : { note: undefined }) } : f)),

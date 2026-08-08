@@ -112,7 +112,13 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
-const isId = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 40
+// A lone surrogate half passes every length check but cannot serialize
+// as well formed JSON, and Postgres refuses the jsonb outright; refusing
+// it here keeps the contract that a client clean value is storable.
+const wellFormed = (s: string) =>
+  !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s)
+
+const isId = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 40 && wellFormed(v)
 
 // The closed field lists, mirrored by drill_layout_ok in the database: an
 // unknown field is refused on both sides, so the only free text a layout
@@ -196,7 +202,10 @@ export function layoutProblems(value: unknown): string[] {
       out.push(`${phase} holds at most ${LAYOUT_MAX_ARROWS_PER_FRAME} arrows.`)
       continue
     }
-    if (frameRaw.note !== undefined && (typeof frameRaw.note !== 'string' || frameRaw.note.length > LAYOUT_NOTE_MAX)) {
+    if (
+      frameRaw.note !== undefined &&
+      (typeof frameRaw.note !== 'string' || frameRaw.note.length > LAYOUT_NOTE_MAX || !wellFormed(frameRaw.note))
+    ) {
       out.push(`${phase}'s note is too long.`)
     }
 
@@ -220,7 +229,7 @@ export function layoutProblems(value: unknown): string[] {
         if (e.kind !== 'player') out.push(`${whereName} carries a team but is not a player.`)
         else if (!LAYOUT_TEAMS.includes(e.team as LayoutTeam)) out.push(`${whereName} has an unknown team.`)
       }
-      if (e.label !== undefined && (typeof e.label !== 'string' || e.label.length > LAYOUT_LABEL_MAX)) {
+      if (e.label !== undefined && (typeof e.label !== 'string' || e.label.length > LAYOUT_LABEL_MAX || !wellFormed(e.label))) {
         out.push(`${whereName}'s label is over ${LAYOUT_LABEL_MAX} characters.`)
       }
     }
@@ -249,7 +258,7 @@ export function layoutProblems(value: unknown): string[] {
       ) {
         out.push(`${whereName} does not fit inside the area.`)
       }
-      if (z.label !== undefined && (typeof z.label !== 'string' || z.label.length > LAYOUT_ZONE_LABEL_MAX)) {
+      if (z.label !== undefined && (typeof z.label !== 'string' || z.label.length > LAYOUT_ZONE_LABEL_MAX || !wellFormed(z.label))) {
         out.push(`${whereName}'s label is over ${LAYOUT_ZONE_LABEL_MAX} characters.`)
       }
     }

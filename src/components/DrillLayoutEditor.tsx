@@ -10,6 +10,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { diagramScale } from '../lib/drillDiagram'
 import {
   LAYOUT_ARROW_KINDS,
+  layoutProblems,
   LAYOUT_LABEL_MAX,
   LAYOUT_MAX_FRAMES,
   LAYOUT_NOTE_MAX,
@@ -77,6 +78,34 @@ const ARROW_TOOLS: { tool: LayoutArrowKind; label: string }[] = [
 
 const TEAM_LABEL: Record<LayoutTeam, string> = { attack: 'Attack', defence: 'Defence', neutral: 'Neutral' }
 
+// A field that commits on blur or Enter, never per keystroke: typing "15"
+// must not pass through a committed "1" (which would crush the whole
+// diagram into a one metre area), and a note must not spend the undo
+// history one character at a time. The key remounts the field when the
+// committed value changes from outside (undo, redo, selection change).
+function DraftInput({
+  value,
+  onCommit,
+  ...rest
+}: { value: string; onCommit: (v: string) => void } & Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  'value' | 'defaultValue' | 'onBlur' | 'onKeyDown'
+>) {
+  return (
+    <input
+      key={value}
+      defaultValue={value}
+      {...rest}
+      onBlur={(e) => {
+        if (e.target.value !== value) onCommit(e.target.value)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+      }}
+    />
+  )
+}
+
 // The interactive canvas: the same glyphs as the read only renderer, each
 // wrapped in a group that takes the pointer. Exported for the static
 // tests alongside the whole editor view.
@@ -85,19 +114,23 @@ export function EditorCanvas({
   frame,
   selection,
   pendingFrom,
+  placing,
   onTapCanvas,
   onPiecePointerDown,
   onPiecePointerMove,
   onPiecePointerUp,
+  onPiecePointerCancel,
 }: {
   layout: DrillLayout
   frame: number
   selection: EditorSelection | null
   pendingFrom: LayoutPoint | null
+  placing: boolean
   onTapCanvas: (at: LayoutPoint) => void
   onPiecePointerDown: (sel: EditorSelection) => (e: ReactPointerEvent) => void
   onPiecePointerMove: (sel: EditorSelection) => (e: ReactPointerEvent) => void
   onPiecePointerUp: (sel: EditorSelection) => (e: ReactPointerEvent) => void
+  onPiecePointerCancel: (sel: EditorSelection) => (e: ReactPointerEvent) => void
 }) {
   const uid = useId()
   const headId = `dge-head-${uid}`
@@ -129,9 +162,10 @@ export function EditorCanvas({
       role="application"
       aria-label="Layout editor canvas"
       onPointerDown={(e) => {
-        // Only a press on the background itself places or clears; a press
-        // that began on a piece is handled by the piece's own group.
-        if ((e.target as Element).closest('.drill-editor-piece')) return
+        // With a placement tool active every press places, so an arrow can
+        // start or end on a piece; in select mode a press on a piece is
+        // the piece's own gesture and only the background clears.
+        if (!placing && (e.target as Element).closest('.drill-editor-piece')) return
         const at = toMetres(e)
         if (at) onTapCanvas(at)
       }}
@@ -153,6 +187,7 @@ export function EditorCanvas({
           onPointerDown={onPiecePointerDown({ type: 'zone', id: z.id })}
           onPointerMove={onPiecePointerMove({ type: 'zone', id: z.id })}
           onPointerUp={onPiecePointerUp({ type: 'zone', id: z.id })}
+          onPointerCancel={onPiecePointerCancel({ type: 'zone', id: z.id })}
         >
           <ZoneRect z={z} k={k} />
         </g>
@@ -164,6 +199,7 @@ export function EditorCanvas({
           onPointerDown={onPiecePointerDown({ type: 'arrow', id: a.id })}
           onPointerMove={onPiecePointerMove({ type: 'arrow', id: a.id })}
           onPointerUp={onPiecePointerUp({ type: 'arrow', id: a.id })}
+          onPointerCancel={onPiecePointerCancel({ type: 'arrow', id: a.id })}
         >
           <ArrowLine a={a} k={k} headId={headId} doubleHeadId={doubleHeadId} />
         </g>
@@ -175,6 +211,7 @@ export function EditorCanvas({
           onPointerDown={onPiecePointerDown({ type: 'entity', id: e.id })}
           onPointerMove={onPiecePointerMove({ type: 'entity', id: e.id })}
           onPointerUp={onPiecePointerUp({ type: 'entity', id: e.id })}
+          onPointerCancel={onPiecePointerCancel({ type: 'entity', id: e.id })}
         >
           <EntityGlyph e={e} k={k} />
         </g>
@@ -216,6 +253,9 @@ export function DrillLayoutEditor({
 
   const layout = history.layout
   const activeFrame = Math.min(frame, layout.frames.length - 1)
+  // The pure model upholds this by construction; the gate is belt and
+  // braces so a value the parse gate would refuse can never be saved.
+  const valid = layoutProblems(layout).length === 0
   const apply = (next: DrillLayout | null) => {
     if (next) setHistory((h) => commit(h, next))
   }
@@ -223,6 +263,7 @@ export function DrillLayoutEditor({
   const tapCanvas = (at: LayoutPoint) => {
     if (tool === 'select') {
       setSelection(null)
+      setPendingFrom(null)
       return
     }
     if (tool === 'zone') {
@@ -259,6 +300,7 @@ export function DrillLayoutEditor({
   // drag moves through the pure model against the pre drag layout, and
   // only the pointer lifting commits it, so one drag is one undo step.
   const piecePointerDown = (sel: EditorSelection) => (e: ReactPointerEvent) => {
+    if (tool !== 'select') return
     const f = layout.frames[activeFrame]
     const origin =
       sel.type === 'entity'
@@ -296,6 +338,14 @@ export function DrillLayoutEditor({
     g.moved =
       sel.type === 'entity' ? moveEntity(g.base, activeFrame, sel.id, to) : moveZone(g.base, activeFrame, sel.id, to)
     setHistory((hist) => ({ ...hist, layout: g.moved! }))
+  }
+  const piecePointerCancel = (sel: EditorSelection) => () => {
+    const g = gesture.current
+    if (!g || g.sel.id !== sel.id) return
+    gesture.current = null
+    // A cancelled drag never commits: put the pre drag layout back so the
+    // half move cannot fuse into the previous undo step.
+    if (g.dragging) setHistory((hist) => ({ ...hist, layout: g.base }))
   }
   const piecePointerUp = (sel: EditorSelection) => () => {
     const g = gesture.current
@@ -365,10 +415,12 @@ export function DrillLayoutEditor({
           frame={activeFrame}
           selection={selection}
           pendingFrom={pendingFrom}
+          placing={tool !== 'select'}
           onTapCanvas={tapCanvas}
           onPiecePointerDown={piecePointerDown}
           onPiecePointerMove={piecePointerMove}
           onPiecePointerUp={piecePointerUp}
+          onPiecePointerCancel={piecePointerCancel}
         />
       </div>
 
@@ -417,32 +469,38 @@ export function DrillLayoutEditor({
       <div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
         <div className="field" style={{ width: 120 }}>
           <label>Area width, m</label>
-          <input
+          <DraftInput
             type="number"
-            value={layout.area.width}
+            value={String(layout.area.width)}
             min={2}
             max={150}
-            onChange={(e) => apply(setArea(layout, Number(e.target.value) || layout.area.width, layout.area.length))}
+            onCommit={(v) => {
+              const n = Number(v)
+              if (Number.isFinite(n) && n > 0) apply(setArea(layout, n, layout.area.length))
+            }}
           />
         </div>
         <div className="field" style={{ width: 120 }}>
           <label>Area length, m</label>
-          <input
+          <DraftInput
             type="number"
-            value={layout.area.length}
+            value={String(layout.area.length)}
             min={2}
             max={150}
-            onChange={(e) => apply(setArea(layout, layout.area.width, Number(e.target.value) || layout.area.length))}
+            onCommit={(v) => {
+              const n = Number(v)
+              if (Number.isFinite(n) && n > 0) apply(setArea(layout, layout.area.width, n))
+            }}
           />
         </div>
         <div className="field" style={{ flex: 1, minWidth: 200 }}>
           <label>Phase note</label>
-          <input
+          <DraftInput
             type="text"
             maxLength={LAYOUT_NOTE_MAX}
             value={layout.frames[activeFrame].note ?? ''}
             placeholder="What happens in this phase"
-            onChange={(e) => apply(setPhaseNote(layout, activeFrame, e.target.value))}
+            onCommit={(v) => apply(setPhaseNote(layout, activeFrame, v))}
           />
         </div>
       </div>
@@ -453,11 +511,11 @@ export function DrillLayoutEditor({
             <>
               <div className="field" style={{ width: 90 }}>
                 <label>Label</label>
-                <input
+                <DraftInput
                   type="text"
                   maxLength={LAYOUT_LABEL_MAX}
                   value={selectedEntity.label ?? ''}
-                  onChange={(e) => apply(setEntityLabel(layout, selection.id, e.target.value))}
+                  onCommit={(v) => apply(setEntityLabel(layout, selection.id, v))}
                 />
               </div>
               <div className="field" style={{ width: 140 }}>
@@ -484,31 +542,33 @@ export function DrillLayoutEditor({
             <>
               <div className="field" style={{ width: 100 }}>
                 <label>Zone width, m</label>
-                <input
+                <DraftInput
                   type="number"
-                  value={selectedZone.width}
-                  onChange={(e) =>
-                    apply(resizeZone(layout, activeFrame, selection.id, Number(e.target.value) || selectedZone.width, selectedZone.height))
-                  }
+                  value={String(selectedZone.width)}
+                  onCommit={(v) => {
+                    const n = Number(v)
+                    if (Number.isFinite(n) && n > 0) apply(resizeZone(layout, activeFrame, selection.id, n, selectedZone.height))
+                  }}
                 />
               </div>
               <div className="field" style={{ width: 100 }}>
                 <label>Zone height, m</label>
-                <input
+                <DraftInput
                   type="number"
-                  value={selectedZone.height}
-                  onChange={(e) =>
-                    apply(resizeZone(layout, activeFrame, selection.id, selectedZone.width, Number(e.target.value) || selectedZone.height))
-                  }
+                  value={String(selectedZone.height)}
+                  onCommit={(v) => {
+                    const n = Number(v)
+                    if (Number.isFinite(n) && n > 0) apply(resizeZone(layout, activeFrame, selection.id, selectedZone.width, n))
+                  }}
                 />
               </div>
               <div className="field" style={{ width: 160 }}>
                 <label>Zone label</label>
-                <input
+                <DraftInput
                   type="text"
                   maxLength={LAYOUT_ZONE_LABEL_MAX}
                   value={selectedZone.label ?? ''}
-                  onChange={(e) => apply(setZoneLabel(layout, activeFrame, selection.id, e.target.value))}
+                  onCommit={(v) => apply(setZoneLabel(layout, activeFrame, selection.id, v))}
                 />
               </div>
             </>
@@ -523,7 +583,7 @@ export function DrillLayoutEditor({
         <button className="btn btn-ghost" onClick={onCancel}>
           Cancel
         </button>
-        <button className="btn btn-primary" onClick={() => onSave(layout)}>
+        <button className="btn btn-primary" disabled={!valid} onClick={() => valid && onSave(layout)}>
           Save diagram
         </button>
       </div>

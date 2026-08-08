@@ -1317,7 +1317,11 @@ function toSourceFields(rawUrl: string): { source_url: string | null; source_lab
   }
 }
 
-function toDrillWriteRow(input: DrillInput) {
+// Exported for the boundary test: a sourced drill never writes a layout,
+// whatever the form state carried. The UI hides the diagram section on
+// imported drills, but hiding is not enforcement; this is, alongside the
+// matching cross field check in migration 0047.
+export function toDrillWriteRow(input: DrillInput) {
   return {
     title: input.title,
     summary: input.summary || null,
@@ -1337,7 +1341,10 @@ function toDrillWriteRow(input: DrillInput) {
     harder: input.harder,
     theme: input.theme || null,
     format: input.format || null,
-    layout: input.layout,
+    // Never retrofitted: a drill that carries a source URL is imported
+    // third party content and its layout is always null, even if stale
+    // form state still held a diagram when the source link was added.
+    layout: toSourceFields(input.sourceUrl).source_url ? null : input.layout,
     ...toSourceFields(input.sourceUrl),
   }
 }

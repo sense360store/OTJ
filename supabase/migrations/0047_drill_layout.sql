@@ -169,6 +169,14 @@ $$;
 alter table public.drills
   add column layout jsonb check (public.drill_layout_ok(layout));
 
+-- Never retrofitted, enforced cross field: an imported drill carries a
+-- source URL and never a layout, whoever writes the row. Every existing
+-- row satisfies this (imports have source_url and null layout; authored
+-- drills have no layout yet).
+alter table public.drills
+  add constraint drills_layout_never_imported
+  check (source_url is null or layout is null);
+
 comment on column public.drills.layout is
   $$The structured layout of an authored drill (ADR-0008): metres relative to the drill's declared area, entities, zones and typed arrows across one to four static phases. Null for every FA imported drill, forever; they keep their image and video media and are never retrofitted. drill_layout_ok enforces the storable envelope here (shape, types, closed field lists, string caps, size cap); the arithmetic rules live in src/lib/drillLayout.ts.$$;
 
@@ -262,6 +270,13 @@ begin
   end if;
   if not public.drill_layout_ok(null) then
     raise exception 'drill_layout: null must remain valid, it is the FA discriminator';
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'drills_layout_never_imported' and conrelid = 'public.drills'::regclass
+  ) then
+    raise exception 'drill_layout: the never retrofitted cross field constraint is missing';
   end if;
 end
 $$;

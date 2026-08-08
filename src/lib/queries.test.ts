@@ -15,6 +15,7 @@ import {
   toActivity,
   toActivityRow,
   toDrill,
+  toDrillWriteRow,
   toProgramme,
   toProgrammeList,
   toSession,
@@ -216,6 +217,36 @@ describe('drill row to app mapping', () => {
   it('maps tags through and defaults a null column to an empty list', () => {
     expect(toDrill(drillRow({ tags: ['Defending', 'Marking'] })).tags).toEqual(['Defending', 'Marking'])
     expect(toDrill(drillRow({ tags: null })).tags).toEqual([])
+  })
+
+  it('a sourced drill never writes a layout, whatever the form carried', () => {
+    // Hiding the diagram section is not enforcement; the write row is.
+    // Stale form state holding a diagram when a source link is added must
+    // not retrofit an imported drill.
+    const input = {
+      title: 'Imported',
+      summary: '',
+      corner: null,
+      skill: '',
+      level: 'Foundation' as const,
+      ages: [],
+      duration: 10,
+      players: '',
+      area: '',
+      equipment: [],
+      points: [],
+      tags: [],
+      mediaId: null,
+      setupNotes: '',
+      easier: [],
+      harder: [],
+      theme: '',
+      format: '',
+      sourceUrl: 'https://learn.englandfootball.com/x',
+      layout: FIXTURE_PASSING_SQUARE,
+    }
+    expect(toDrillWriteRow(input).layout).toBeNull()
+    expect(toDrillWriteRow({ ...input, sourceUrl: '' }).layout).toEqual(FIXTURE_PASSING_SQUARE)
   })
 
   it('routes the layout jsonb through the parse gate', () => {

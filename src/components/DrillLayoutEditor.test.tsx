@@ -77,10 +77,12 @@ describe('EditorCanvas', () => {
         frame={0}
         selection={null}
         pendingFrom={{ x: 2, y: 2 }}
+        placing
         onTapCanvas={() => {}}
         onPiecePointerDown={noop}
         onPiecePointerMove={noop}
         onPiecePointerUp={noop}
+        onPiecePointerCancel={noop}
       />,
     )
     expect(html).toContain('drill-editor-pending')
@@ -93,10 +95,12 @@ describe('EditorCanvas', () => {
         frame={0}
         selection={{ type: 'zone', id: 'z1' }}
         pendingFrom={null}
+        placing={false}
         onTapCanvas={() => {}}
         onPiecePointerDown={noop}
         onPiecePointerMove={noop}
         onPiecePointerUp={noop}
+        onPiecePointerCancel={noop}
       />,
     )
     expect(html).toContain('drill-editor-piece selected')

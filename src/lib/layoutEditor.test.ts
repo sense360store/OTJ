@@ -197,6 +197,26 @@ describe('history', () => {
   })
 })
 
+describe('text safety', () => {
+  it('never splits a surrogate pair: a clipped emoji label stays well formed and clean', () => {
+    let l = addEntity(emptyLayout(), 'player', { x: 1, y: 1 })!
+    l = setEntityLabel(l, 'e1', '\u{1F44D}\u{1F44D}')
+    expect(l.frames[0].entities[0].label).toBe('\u{1F44D}')
+    clean(l)
+    // The storage path: well formed JSON end to end.
+    expect(() => JSON.parse(JSON.stringify(l))).not.toThrow()
+  })
+
+  it('a crafted enormous id suffix cannot poison the id generator', () => {
+    let l = addEntity(emptyLayout(), 'cone', { x: 1, y: 1 })!
+    l.frames[0].entities[0].id = 'e' + '9'.repeat(22)
+    l = { ...l, frames: l.frames.map((f) => ({ ...f, entities: f.entities.map((e) => ({ ...e })) })) }
+    const next = addEntity(l, 'cone', { x: 2, y: 2 })!
+    expect(next.frames[0].entities[1].id).toBe('e1')
+    clean(next)
+  })
+})
+
 describe('canEditLayout', () => {
   it('offers the diagram on club authored drills only, never imported ones', () => {
     expect(canEditLayout('')).toBe(true)
