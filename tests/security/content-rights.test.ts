@@ -350,6 +350,11 @@ describe('England Football derived content is locked at club only', () => {
       ['https:\\learn.englandfootball.com\\a', true],
       ['https:/learn.englandfootball.com/a', true],
       ['https:learn.englandfootball.com/a', true],
+      // The WHATWG host parser percent-decodes, so an escaped hostname is
+      // still the England Football host to the JS readers.
+      ['https://%6cearn.englandfootball.com/a', true],
+      ['https://learn%2Eenglandfootball.com/a', true],
+      ['https://learn.englandfootball.com%40evil.test/', false],
       ['https://learn.englandfootball.com:8080@evil.test/', false],
       ['https://learn.englandfootball.com.evil.test/a', false],
       ['https://notenglandfootball.com/a', false],

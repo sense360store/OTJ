@@ -1163,8 +1163,13 @@ disagreement ran the permissive way for the database:
 | `'  https://learn.englandfootball.com/a'` | not FA | FA | FA |
 
 `0043` replaces the body: it takes the whole authority, translates
-backslashes, trims whitespace, drops userinfo at the last `@` and drops the
-port. A read only check of the hosted data before writing the migration found
+backslashes, trims whitespace, accepts any run of slashes after the scheme
+including none (the parser does the same for a special scheme), drops
+userinfo at the last `@`, drops the port and percent-decodes the remaining
+host (the parser decodes too, so `https://%6cearn.englandfootball.com` is
+the learning host to the JS readers). Where the SQL still cannot mirror the
+parser exactly, it errs the strict way: the database may refuse a row the
+readers would not lock, never the reverse. A read only check of the hosted data before writing the migration found
 zero rows on any of the five tables carrying an `@`, a backslash or a port in
 `source_url`, so no existing classification changes.
 
