@@ -110,3 +110,19 @@ revoke execute on function public.audit_storage_path_change_media() from anon, a
 revoke execute on function public.read_public_share(uuid, bytea) from anon, authenticated;
 revoke execute on function public.content_share_expiry_cleanup(interval) from anon, authenticated;
 revoke execute on function public.content_share_resolve_snapshot(jsonb, text, integer) from anon, authenticated;
+
+-- 0044 training day core. venues, session_teams and register_entries each
+-- revoke from anon and authenticated and then grant back exactly the verbs
+-- their policies allow, so the migration's end state in production is:
+-- anon holds NOTHING on any of the three (none of them has an anonymous read
+-- path), and coverage carries no UPDATE because a session_teams row is added
+-- or removed, never edited. The blanket grants above would resurrect ALL of
+-- that locally, including TRUNCATE and an anon read of the register, which is
+-- the child data surface. Restate the migration's posture so the local stack
+-- answers like production. See 0044_training_day_core.sql.
+revoke all on public.venues           from anon, authenticated;
+revoke all on public.session_teams    from anon, authenticated;
+revoke all on public.register_entries from anon, authenticated;
+grant select, insert, update, delete on public.venues to authenticated;
+grant select, insert, delete on public.session_teams to authenticated;
+grant select, insert, update, delete on public.register_entries to authenticated;
