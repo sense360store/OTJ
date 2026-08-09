@@ -32,6 +32,7 @@ import {
 } from '../lib/register'
 import { BIB_COLOURS, BIB_NONE, bibLabel } from '../lib/bibs'
 import { coveredTeamIds, coverageOf, coversWholeClub } from '../lib/sessionTeams'
+import { SESSION_ID_PARAM } from '../lib/routes'
 import type { Player, Session, Team } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal, fmtDate } from '../components/ui'
@@ -391,8 +392,10 @@ export function SessionRegisterCard({ session }: { session: Session }) {
 }
 
 export function SessionRegister() {
-  const { id } = useParams()
-  const { data: session, isLoading, isError } = useSession(id)
+  // The parameter name comes from the same module that declares the route,
+  // so the two cannot drift apart.
+  const sessionId = useParams()[SESSION_ID_PARAM]
+  const { data: session, isLoading, isError } = useSession(sessionId)
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
   if (!session)

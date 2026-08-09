@@ -40,7 +40,7 @@ export function useStartFromTemplate() {
       date: '2026-06-16',
       time: '17:30',
       ageGroup: 'U8s',
-      venue: 'Springmill 3G',
+      venue: '',
       focus: t.focus,
       status: 'upcoming',
       activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],

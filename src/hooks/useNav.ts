@@ -1,6 +1,7 @@
 // A thin wrapper that preserves the prototype's nav(screen, params) call sites
 // while driving real react-router URLs underneath.
 import { useNavigate } from 'react-router-dom'
+import { registerPath } from '../lib/routes'
 
 export interface NavParams {
   drillId?: string
@@ -47,7 +48,7 @@ export function useNav() {
         navigate(`/session-day/${params.sessionId}`)
         break
       case 'register':
-        navigate(`/session-day/${params.sessionId}/register`)
+        navigate(registerPath(params.sessionId ?? ''))
         break
       default:
         navigate('/')

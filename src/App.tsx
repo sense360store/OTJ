@@ -26,6 +26,7 @@ import { Media } from './routes/Media'
 import { LiveSession } from './routes/LiveSession'
 import { SessionDay } from './routes/SessionDay'
 import { SessionRegister } from './routes/SessionRegister'
+import { REGISTER_ROUTE } from './lib/routes'
 import { Account } from './routes/Account'
 import { Feedback } from './routes/Feedback'
 import { AdminClub } from './routes/AdminClub'
@@ -132,7 +133,7 @@ export function App() {
                 boundary again (sessions.create on register_entries), enforced
                 by RLS and reflected in the screen, which renders read only for
                 a holder who can see the roster but not write the register. */}
-            <Route path="session-day/:sessionId/register" element={<SessionRegister />} />
+            <Route path={REGISTER_ROUTE} element={<SessionRegister />} />
           </Route>
           <Route path="roster" element={<Navigate to="/players" replace />} />
           {/* The club wide Activity feed reads the audit log, gated on

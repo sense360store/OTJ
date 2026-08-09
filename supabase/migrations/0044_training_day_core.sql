@@ -23,7 +23,8 @@
 --   venues                 the club's real places, so every session at
 --                          Springmill agrees on the name
 --   sessions.venue_id      a real reference; sessions.venue text is
---                          FROZEN legacy and never written by new code
+--                          FROZEN legacy, never written with a value and
+--                          retired once a real venue is chosen
 --   session_teams          which teams a session covers (a session is a
 --                          whole club slot far more often than one team)
 --   teams.bib_colour       the team's default bib, from a closed list
@@ -114,7 +115,7 @@ alter table public.sessions
 create index on public.sessions (venue_id);
 
 comment on column public.sessions.venue is
-  $$FROZEN legacy free text venue label (0001_init). Retained so existing sessions keep reading as they did; new code never writes it and reads venue_id instead. No backfill: an old row keeps its text until someone edits the session.$$;
+  $$FROZEN legacy free text venue label (0001_init). New code never writes a VALUE here and reads venue_id instead; it clears this to null at the moment a real venue is chosen, so the read fallback cannot resurrect and contradict venue_id. No backfill: a session saved before venues existed keeps its typed text until someone positively picks a venue for it.$$;
 
 comment on column public.sessions.venue_id is
   $$The venue this session is at (0044). Null for an unset or legacy session. On delete set null on venue_id alone, so removing a venue leaves the sessions intact and unplaced.$$;
@@ -160,7 +161,7 @@ comment on table public.session_teams is
   $$The teams a session covers (0044). Coverage is a filter and a default, never access control: reads of session content stay club wide. Zero rows means unset, never all teams. Deleting a team removes its coverage rows and leaves the session; deleting a session removes its rows.$$;
 
 comment on column public.sessions.team_id is
-  $$FROZEN legacy single team column (0002_teams_roles). New code writes session_teams instead and never writes this. Existing rows keep their value, and a legacy row with a team_id reads as covering that one team until the session is edited. No backfill and no destructive drop is scheduled.$$;
+  $$FROZEN legacy single team column (0002_teams_roles). New code never writes a VALUE here; coverage is session_teams. A save clears this to null, because the client normalises a legacy row's team into its covered set on read, so leaving it set would mean a session whose coverage a coach cleared still read as covering the old team, with no way to clear it. Until a session is saved again, a legacy row with a team_id reads as covering that one team. No backfill and no destructive drop is scheduled.$$;
 
 -- ---------------------------------------------------------------------
 -- register_entries: who was actually there. The coach's own record.

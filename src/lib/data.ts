@@ -544,7 +544,10 @@ export function blankSession(coachId: string, teamId: string | null): Session {
     date: '2026-06-16',
     time: '17:30',
     ageGroup: 'U8s',
-    venue: 'Springmill 3G',
+    // No venue until someone picks one from the club's list. A seeded name
+    // would make every new session claim to be somewhere nobody chose, and
+    // the frozen free text column is never written with a value.
+    venue: '',
     focus: 'All-round',
     status: 'upcoming',
     activities: [],

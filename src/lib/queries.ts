@@ -437,9 +437,23 @@ export function toSession(r: SessionRow): Session {
     spondEventId: r.spond_event_id ?? null,
     boardId: r.board_id ?? null,
     venueId: r.venue_id ?? null,
+    // The EFFECTIVE coverage, normalised here at the read boundary so every
+    // consumer sees one answer: the session_teams rows, or the frozen
+    // team_id for a session saved before coverage existed, or nothing.
+    //
+    // Normalising here rather than in each screen is what lets a save clear
+    // team_id safely. Without it, an empty set reaching the write path could
+    // mean either "a coach cleared coverage" or "this session is legacy and
+    // nobody looked at its coverage", and retiring team_id would silently
+    // destroy the second one. After this, empty means empty.
+    //
     // Sorted so the covered set is a stable value: two reads of the same
     // coverage compare equal whatever order PostgREST returned the rows.
-    teamIds: [...new Set((r.session_teams ?? []).map((t) => t.team_id))].sort(),
+    teamIds: (() => {
+      const rows = [...new Set((r.session_teams ?? []).map((t) => t.team_id))].sort()
+      if (rows.length > 0) return rows
+      return r.team_id ? [r.team_id] : []
+    })(),
     rights: r.rights ?? 'internal_only',
   }
 }
@@ -1806,6 +1820,55 @@ interface UpsertCtx {
   attempt: number
 }
 
+// The editable session columns for an insert or an update, as one pure
+// value so the FROZEN column rules are testable rather than argued about.
+//
+// Neither the update path nor the duplicate-key recovery sends coach_id or
+// club_id, so a save never changes ownership or club; only the insert sets
+// them, from the signed-in user.
+//
+// The two FROZEN columns (0044) are the reason this is worth extracting. New
+// code never writes a VALUE to either; it retires them, so the read fallback
+// behind each cannot resurrect and contradict the real field.
+//
+//   team_id  cleared on every save. Coverage lives in session_teams, and
+//            toSession normalises a legacy row's frozen team into teamIds on
+//            the way in, so an empty covered set here means a coach cleared
+//            it, never "this legacy session was passed through untouched".
+//            Left set, a cleared session would keep reading as covering the
+//            old team and could never be cleared.
+//   venue    cleared only when a real venue is chosen, so a session saved
+//            before venues existed keeps its typed label until someone
+//            positively replaces it. Never written with a value, so a new
+//            session cannot claim to be somewhere nobody chose.
+export function toSessionWriteRow(input: Session): Record<string, unknown> {
+  return {
+    name: input.name,
+    focus: input.focus,
+    date: input.date || null,
+    start_time: input.time,
+    age_group: input.ageGroup,
+    status: input.status,
+    venue_id: input.venueId,
+    team_id: null,
+    ...(input.venueId ? { venue: null } : {}),
+    activities: input.activities.map(toActivityRow),
+    intentions: input.intentions,
+    space: input.space || null,
+    ...toSourceFields(input.sourceUrl),
+    // The programme link travels with the session on insert and update, so
+    // applying a programme tags the rows and a planner edit keeps them.
+    programme_id: input.programmeId,
+    programme_week: input.programmeWeek,
+    // The Spond event link travels the same way: linking in the planner
+    // edits the draft and saving writes it here.
+    spond_event_id: input.spondEventId,
+    // The attached tactics board, set in the planner draft or on the session
+    // day, travels with the session on insert and update.
+    board_id: input.boardId,
+  }
+}
+
 export function useUpsertSession() {
   const qc = useQueryClient()
   const { user, profile } = useAuth()
@@ -1819,41 +1882,7 @@ export function useUpsertSession() {
 
   return useMutation<Session, Error, Session, UpsertCtx>({
     mutationFn: async (input) => {
-      const activities = input.activities.map(toActivityRow)
-
-      const faFields = {
-        intentions: input.intentions,
-        space: input.space || null,
-        ...toSourceFields(input.sourceUrl),
-        // The programme link travels with the session on insert and update,
-        // so applying a programme tags the rows and a planner edit keeps them.
-        programme_id: input.programmeId,
-        programme_week: input.programmeWeek,
-        // The Spond event link travels the same way: linking in the planner
-        // edits the draft and saving writes it here.
-        spond_event_id: input.spondEventId,
-        // The attached tactics board, set in the planner draft or on the
-        // session day, travels with the session on insert and update.
-        board_id: input.boardId,
-      }
-
-      // The editable columns. Neither the update path nor the duplicate-key
-      // recovery below sends coach_id or club_id, so a save never changes
-      // ownership or club; only the insert sets them, from the signed-in user.
-      const editable = {
-        name: input.name,
-        focus: input.focus,
-        date: input.date || null,
-        start_time: input.time,
-        venue: input.venue,
-        age_group: input.ageGroup,
-        status: input.status,
-        // team_id is FROZEN (0044) and deliberately absent: coverage is
-        // session_teams rows, reconciled after the row write below.
-        venue_id: input.venueId,
-        activities,
-        ...faFields,
-      }
+      const editable = toSessionWriteRow(input)
 
       const update = async (): Promise<Session> => {
         const { data, error } = await supabase
