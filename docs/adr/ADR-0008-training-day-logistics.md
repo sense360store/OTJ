@@ -80,6 +80,21 @@ Shapes at decision level; the gated migrations carry the exact DDL.
 - `spond_event_responses`: one row per (event, linked member) with a status from the four Spond states and a `synced_at`. Composite club scoped FK to `spond_events` ON DELETE CASCADE, unique per (event, member). Written only by the sync path, which stores rows solely for member ids present in `player_spond_links`: ids without a link are counted into the aggregates and discarded, exactly as today. A newly created link surfaces statuses from the next sync onward. Each sync replaces the event's rows wholesale, so they never drift from Spond and rows for a severed link disappear at the next re-sync.
 - `register_entries` (the Register's own state, one row per session and player): present flag, per session bib colour override, source spond or manual (the quick add for a player who turns up without an RSVP). Composite club scoped FKs to `sessions` and `players`, both ON DELETE CASCADE.
 
+### The setup composer's storage
+
+The composed setup splits across two columns on `sessions`, added by the gated `0048_session_setup.sql`:
+
+- `setup_area_id`, a real reference to `venue_areas` through the club scoped composite foreign key, ON DELETE SET NULL. The area is a first class thing with its own identity, so it gets referential integrity rather than an id buried in a payload; deleting an area leaves the stations unanchored and the composer asks for an area again rather than drawing on the wrong grass.
+- `setup`, jsonb holding only the stations: axis aligned rectangles in metres in that area's own local frame, each optionally bound to a drill. The frame is the boundary polygon projected to metres and translated so its bounding box corner is the origin, derived in the browser whenever it is needed and never stored, so the column carries no projection the database would have to agree with. `session_setup_ok` bounds the outer shape (version, closed field lists, string caps, twelve stations, a size cap); the arithmetic lives in `src/lib/sessionSetup.ts`.
+
+A station crossing the drawn boundary is a warning and never a refusal, at every layer: the boundary is the owner's visual approximation of the usable green, drawn once and never resurveyed, and the coach standing on the grass is the authority on whether the far corner is really out. Nothing about the geometry is enforced in Postgres and none of it is attempted there.
+
+Stations carry a size, a position, an optional short label and an optional drill id. No names and no people: the Register is where people are.
+
+### The kit list
+
+The session kit is the union of the free text `drills.equipment` across the session's drills and the pieces each drill diagram counts (`0047`'s layout). Counted lines report the most a single drill needs rather than the sum, because the plan runs its drills one after another and the same cones are picked up and put down again; where a drill's equipment text names something its diagram already counts, the two fold into one line rather than reading twice. A setup that stands several stations at once is laid out from the same drills, so the same rule holds: what one station needs, the next one reuses.
+
 ### Retention and erasure
 
 Response rows live and die with their synced event: they cascade with the `spond_events` row and a re-sync replaces them wholesale. Deleting a player cascades the link row and the player's register entries; response rows are keyed by the opaque member id, not the player, so from that moment they resolve to nothing inside the app, and because the sync writes rows only for linked ids, the next re-sync removes them entirely. They are still treated as pseudonymous child data for retention purposes (an opaque identifier plus attendance history), consistent with how ADR-0006 treats child linked audit events: name free is not exempt. The link table is the erasure pivot: severing it is what disconnects every stored Spond fact from a child, and the sync's linked only filter is what makes the disconnection drain to zero rows on its own.

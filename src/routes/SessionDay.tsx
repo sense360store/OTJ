@@ -24,10 +24,13 @@ import {
   usePlayers,
   useProgrammeMap,
   useSession,
+  useSetSessionSetup,
   useTeamMap,
+  useVenueAreas,
 } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
 import { sessionTeamsLabel, soleCoveredTeamId } from '../lib/sessionTeams'
+import { areaFrame, schematicStations, sessionKit } from '../lib/sessionSetup'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
@@ -39,6 +42,9 @@ import { BoardPickerModal } from '../components/BoardPicker'
 import { ShareButton } from '../components/ShareButton'
 import { PublicShareControl } from '../components/PublicShareControl'
 import { TacticsBoardView } from '../components/TacticsBoardView'
+import { SetupPlanView } from '../components/SetupSchematic'
+import { SetupComposerModal } from '../components/SetupComposer'
+import { SetupSheet } from '../components/SetupSheet'
 import { playerNameMap, type Board, type PlayerNameMap } from '../lib/tacticsBoard'
 import './SessionDay.css'
 // The embedded board reuses the tactics board's pitch and disc styles.
@@ -123,20 +129,20 @@ function SessionDayView({ session }: { session: Session }) {
     return { rows, slides }
   }, [session.activities, drillById, mediaById])
 
-  // The kit list is the union of equipment across the session's drills, each
-  // item remembering which drills need it, in session order.
-  const kit = useMemo(() => {
-    const byName = new Map<string, string[]>()
-    for (const { drill } of rows) {
-      if (!drill) continue
-      for (const item of drill.equipment) {
-        const drills = byName.get(item) ?? []
-        if (!drills.includes(drill.title)) drills.push(drill.title)
-        byName.set(item, drills)
-      }
-    }
-    return [...byName.entries()].map(([name, drills]) => ({ name, drills }))
-  }, [rows])
+  // The kit list is the union of equipment across the session's drills plus
+  // the pieces every drill diagram counts, each line remembering which
+  // drills need it, in session order. Counts are the most a single drill
+  // needs, not the sum: the drills run one after another.
+  const kit = useMemo(
+    () =>
+      sessionKit(
+        rows
+          .map((r) => r.drill)
+          .filter((d): d is Drill => !!d)
+          .map((d) => ({ title: d.title, equipment: d.equipment, layout: d.layout ?? null })),
+      ),
+    [rows],
+  )
 
   const playersSummary = useMemo(() => {
     const distinct = [...new Set(rows.map((r) => r.drill?.players).filter((p): p is string => !!p))]
@@ -152,6 +158,16 @@ function SessionDayView({ session }: { session: Session }) {
     localStorage.removeItem(kitKey(session.id))
     setChecked([])
   }
+
+  // The composed setup, resolved once for the printable sheet; the Setup
+  // tab's card resolves the same thing for the screen.
+  const { data: venueAreas = [] } = useVenueAreas()
+  const setupArea = venueAreas.find((a) => a.id === session.setupAreaId)
+  const setupFrame = useMemo(() => (setupArea?.boundary ? areaFrame(setupArea.boundary) : null), [setupArea])
+  const sheetDrillAreas = useMemo(
+    () => Object.fromEntries(rows.filter((r) => r.drill).map((r) => [r.drill!.id, r.drill!.layout?.area ?? null])),
+    [rows],
+  )
 
   const mins = sessionMinutes(session)
   const teamName = sessionTeamsLabel(session, teamById)
@@ -253,6 +269,17 @@ function SessionDayView({ session }: { session: Session }) {
           and numbers with nothing to resolve against. */}
       <SessionBoardCard session={session} canManage={canManage} />
 
+      <SetupSheet
+        sessionName={session.name}
+        subtitle={subBits.join(' · ')}
+        areaName={setupArea?.name ?? ''}
+        frame={setupFrame}
+        stations={session.setup ? schematicStations(session.setup, drillById) : []}
+        drillAreas={sheetDrillAreas}
+        kit={kit}
+        activities={rows.map((r) => ({ title: actTitle(r.act), phase: r.act.phase, duration: r.act.duration }))}
+      />
+
       <div className="sd-tabs">
         <button className={'sd-tab' + (tab === 'setup' ? ' on' : '')} onClick={() => setTab('setup')}>
           <Icon.ruler />
@@ -274,6 +301,7 @@ function SessionDayView({ session }: { session: Session }) {
         </Empty>
       ) : tab === 'setup' ? (
         <div className="sd-list">
+          <SessionSetupCard session={session} canManage={canManage} drills={rows.map((r) => r.drill)} />
           {rows.map((r, i) => (
             <div className="sd-card" key={i}>
               <div className="sd-card-head">
@@ -347,7 +375,7 @@ function SessionDayView({ session }: { session: Session }) {
           </div>
           {kit.length === 0 ? (
             <Empty icon={Icon.cone} title="No kit needed">
-              None of this session's drills list equipment.
+              None of this session's drills lists equipment or carries a diagram.
             </Empty>
           ) : (
             <>
@@ -362,7 +390,9 @@ function SessionDayView({ session }: { session: Session }) {
                   >
                     <span className="sd-check">{on && <Icon.check />}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span className="sd-kit-name">{item.name}</span>
+                      <span className="sd-kit-name">
+                        {item.count === null ? item.name : `${item.count} ${item.name}`}
+                      </span>
                       <span className="sd-kit-drills" style={{ display: 'block' }}>
                         {item.drills.join(' · ')}
                       </span>
@@ -489,6 +519,92 @@ export function SessionBoardCardView({
         <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
           No board attached. Attach one to show the shape here.
         </p>
+      )}
+    </div>
+  )
+}
+
+// The composed setup, at the top of the Setup tab: the venue area with the
+// session's stations on it, scale true, and the same picture the printed
+// sheet and the live view show. Composing is a session write, so it
+// follows the same ownership as editing the plan; everyone else reads it.
+function SessionSetupCard({
+  session,
+  canManage,
+  drills,
+}: {
+  session: Session
+  canManage: boolean
+  drills: (Drill | null)[]
+}) {
+  const { data: areas = [] } = useVenueAreas()
+  const save = useSetSessionSetup()
+  const [composing, setComposing] = useState(false)
+  const area = areas.find((a) => a.id === session.setupAreaId)
+  const frame = useMemo(() => (area?.boundary ? areaFrame(area.boundary) : null), [area])
+  // Only the session's own drills can be bound, and their titles and
+  // declared areas are what the plan reads back.
+  const sessionDrills = useMemo(() => {
+    const seen = new Map<string, Drill>()
+    for (const d of drills) if (d && !seen.has(d.id)) seen.set(d.id, d)
+    return [...seen.values()]
+  }, [drills])
+  const drillById = useMemo(() => Object.fromEntries(sessionDrills.map((d) => [d.id, d])), [sessionDrills])
+  const drillAreas = useMemo(
+    () => Object.fromEntries(sessionDrills.map((d) => [d.id, d.layout?.area ?? null])),
+    [sessionDrills],
+  )
+  const setup = session.setup ?? null
+  if (!canManage && (!setup || !frame)) return null
+  return (
+    <div className="sd-card">
+      <div className="sd-card-head">
+        <h4>Setup plan</h4>
+        {canManage && (
+          <button className="btn btn-ghost btn-sm" onClick={() => setComposing(true)}>
+            <Icon.ruler />
+            {setup ? 'Edit setup' : 'Compose setup'}
+          </button>
+        )}
+      </div>
+      {setup && frame && area && (
+        <button className="btn btn-quiet btn-sm" style={{ marginBottom: 8 }} onClick={() => window.print()}>
+          <Icon.list />
+          Print setup sheet
+        </button>
+      )}
+      {setup && frame && area ? (
+        <SetupPlanView
+          frame={frame}
+          stations={schematicStations(setup, drillById)}
+          areaName={area.name}
+          drillAreas={drillAreas}
+        />
+      ) : setup && !frame ? (
+        <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
+          The area this setup was laid out on is no longer configured. Compose it again on a current area.
+        </p>
+      ) : (
+        <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
+          No setup composed. Lay the stations out on a venue area to see where everything goes.
+        </p>
+      )}
+      {composing && (
+        <SetupComposerModal
+          areas={areas}
+          initialAreaId={session.setupAreaId ?? null}
+          initialSetup={setup}
+          drills={sessionDrills}
+          saving={save.isPending}
+          errorText={save.isError ? save.error.message : ''}
+          onSave={(areaId, next) =>
+            save.mutate(
+              { sessionId: session.id, areaId, setup: next },
+              { onSuccess: () => setComposing(false) },
+            )
+          }
+          onClose={() => setComposing(false)}
+        />
       )}
     </div>
   )

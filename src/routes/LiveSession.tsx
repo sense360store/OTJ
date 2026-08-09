@@ -4,7 +4,7 @@
 // activity change writes the shared live state onto the session row. Everyone
 // else in the club who opens the same URL watches that row over Supabase
 // Realtime, with the clock computed locally from live_activity_started_at.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
@@ -17,12 +17,15 @@ import {
   useTeamMap,
   useLiveSessionSync,
   useSetLiveActivity,
+  useVenueAreas,
 } from '../lib/queries'
 import { embedSrc, sessionMinutes } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
+import { areaFrame } from '../lib/sessionSetup'
 import { isFaVideo } from '../lib/fa'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
+import { SetupSchematic } from '../components/SetupSchematic'
 import { fmtClock, MediaAttribution, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
 import { MediaPlayerSurface } from '../components/MediaPlayerModal'
 
@@ -387,6 +390,9 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
             </button>
           </div>
 
+          {/* where on the grass this activity is set up */}
+          <LiveSetupPeek session={session} drillId={act.drillId ?? null} />
+
           {/* media */}
           {media && drill && <LiveMediaPeek media={media} drill={drill} />}
 
@@ -690,6 +696,35 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
               )
             })()}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// The setup plan on the touchline: the venue area with the session's
+// stations, the one this activity runs at picked out. Read only and quiet:
+// it appears only when a setup was composed and this activity's drill is
+// bound to a station, so a session without one loses nothing.
+function LiveSetupPeek({ session, drillId }: { session: Session; drillId: string | null }) {
+  const { data: areas = [] } = useVenueAreas()
+  const area = areas.find((a) => a.id === session.setupAreaId)
+  const setup = session.setup ?? null
+  const frame = useMemo(() => (area?.boundary ? areaFrame(area.boundary) : null), [area])
+  const station = drillId ? setup?.stations.find((s) => s.drillId === drillId) : undefined
+  if (!setup || !frame || !station) return null
+  return (
+    <div className="live-card" style={{ padding: '14px 16px' }}>
+      <div className="eyebrow" style={{ marginBottom: 10 }}>
+        Where it is set up
+      </div>
+      <SetupSchematic
+        frame={frame}
+        stations={setup.stations.map((s, index) => ({ station: s, title: '', index }))}
+        selectedId={station.id}
+      />
+      <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+        {station.label ? station.label + ' · ' : ''}
+        {station.width} × {station.length} m on {area?.name}
       </div>
     </div>
   )

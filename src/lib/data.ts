@@ -6,6 +6,7 @@
 // they are static and shared, not server data.
 
 import type { DrillLayout } from './drillLayout'
+import type { SessionSetup } from './sessionSetup'
 
 export type CornerKey = 'technical' | 'physical' | 'social' | 'psychological'
 export type Phase = 'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'
@@ -393,6 +394,12 @@ export interface Session {
   // session day renders it read only inline. references boards on delete set
   // null, so deleting a board detaches it here (see 0022_session_board.sql).
   boardId: string | null
+  // The composed setup (ADR-0008): the venue area the session is laid out
+  // on and the stations on it, both null until a coach composes one. The
+  // stations are metres in that area's own local frame, so they mean
+  // nothing without it and are cleared together.
+  setupAreaId?: string | null
+  setup?: SessionSetup | null
 }
 
 // ---- Spond attendance (counts only) ----------------------------------------
@@ -548,6 +555,8 @@ export function blankSession(coachId: string, teamId: string | null): Session {
     liveActivityStartedAt: null,
     spondEventId: null,
     boardId: null,
+    setupAreaId: null,
+    setup: null,
   }
 }
 

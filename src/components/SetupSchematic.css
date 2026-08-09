@@ -1,0 +1,59 @@
+/* The setup schematic: the venue area drawn scale true with the session's
+   stations on it. Print keeps it on the page as ink on white, because the
+   sheet goes in a coach's pocket. */
+
+.setup-schematic {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.setup-schematic.interactive { touch-action: none; cursor: crosshair; }
+
+.setup-boundary {
+  fill: #16a34a;
+  fill-opacity: 0.12;
+  stroke: #16a34a;
+  stroke-width: 2;
+}
+
+.setup-station rect {
+  fill: var(--royal);
+  fill-opacity: 0.16;
+  stroke: var(--royal);
+  stroke-width: 2;
+}
+.setup-station.outside rect {
+  stroke: #ef8e1b;
+  fill: #ef8e1b;
+  fill-opacity: 0.16;
+  stroke-dasharray: 7 5;
+}
+.setup-station.selected rect { stroke-width: 4; }
+.interactive .setup-station { cursor: pointer; }
+
+.setup-station-num {
+  font-family: 'Archivo', sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+  fill: var(--ink);
+}
+.setup-station-label {
+  font-family: 'Hanken Grotesk', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  fill: var(--slate-2);
+}
+
+.setup-warning { color: #ef8e1b; font-size: 13px; }
+
+.setup-station-list { margin: 8px 0 0; padding-left: 0; list-style: none; font-size: 13.5px; line-height: 1.6; }
+.setup-station-list li + li { border-top: 1px solid var(--line); padding-top: 4px; margin-top: 4px; }
+
+@media print {
+  .setup-schematic { background: #fff; border-color: #ccc; break-inside: avoid; }
+  .setup-station-num { fill: #101631; }
+  .setup-station-label { fill: #444; }
+}

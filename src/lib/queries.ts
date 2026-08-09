@@ -65,6 +65,7 @@ import type {
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import { parseDrillLayout, type DrillLayout } from './drillLayout'
+import { parseSessionSetup, type SessionSetup } from './sessionSetup'
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
 import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
 import { newestFirst } from './contentOrder'
@@ -200,6 +201,9 @@ export interface SessionRow {
   live_activity_started_at: string | null
   spond_event_id: string | null
   board_id: string | null
+  setup_area_id: string | null
+  // Raw jsonb; parseSessionSetup is the single gate on the way in.
+  setup: unknown
   // The session_teams embed: the covered teams' ids, absent on rows built
   // before the embed (old cache entries) and empty for legacy sessions.
   session_teams?: { team_id: string }[] | null
@@ -260,7 +264,7 @@ const PROGRAMME_COLS =
 // session_teams rides the session read as an embed, so coverage loads in
 // the same query and the covered set is always as fresh as the row.
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, session_teams(team_id)'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, setup_area_id, setup, session_teams(team_id)'
 const TEAM_COLS = 'id, club_id, name, bib_colour, created_at'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
@@ -427,6 +431,10 @@ export function toSession(r: SessionRow): Session {
     liveActivityStartedAt: r.live_activity_started_at ?? null,
     spondEventId: r.spond_event_id ?? null,
     boardId: r.board_id ?? null,
+    setupAreaId: r.setup_area_id ?? null,
+    // The single gate: a malformed setup reads as none at all, so the
+    // session day shows the plain list rather than a broken schematic.
+    setup: parseSessionSetup(r.setup),
   }
 }
 
@@ -2323,6 +2331,31 @@ export function useLinkSessionBoard() {
         .select('id')
       if (error) throw error
       if (!data?.length) throw new Error('Only the session owner or an admin can attach a board.')
+    },
+    onSettled: (_data, _err, { sessionId }) => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      qc.invalidateQueries({ queryKey: ['sessions', sessionId] })
+    },
+  })
+}
+
+// Saves a session's composed setup: the venue area it is laid out on and
+// the stations on it, written together so the two can never disagree. Used
+// on the session day, where the change writes at once. The sessions update
+// RLS (owner, or admin) is the real enforcement; a blocked write updates no
+// rows and is reported. Clearing the area clears the stations with it: they
+// are metres in that area's own frame and mean nothing without it.
+export function useSetSessionSetup() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { sessionId: string; areaId: string | null; setup: SessionSetup | null }>({
+    mutationFn: async ({ sessionId, areaId, setup }) => {
+      const { data, error } = await supabase
+        .from('sessions')
+        .update({ setup_area_id: areaId, setup: areaId ? setup : null })
+        .eq('id', sessionId)
+        .select('id')
+      if (error) throw error
+      if (!data?.length) throw new Error('Only the session owner or an admin can compose the setup.')
     },
     onSettled: (_data, _err, { sessionId }) => {
       qc.invalidateQueries({ queryKey: ['sessions'] })

@@ -182,7 +182,8 @@ select-gated table.
 | Storage media bucket: anything unauthenticated | — | — | — | no |
 
 Training day logistics contract rows (ADR-0008; the venues, session_teams,
-Spond link and register migrations, provisional 0043 to 0046, land gated
+Spond link, register, drill layout and session setup migrations,
+provisional 0043 to 0048, land gated
 and the matching `tests/security/*.test.ts` files are an obligation of the
 PR that applies each one, per `docs/security/spond-data-boundary.md`):
 
@@ -202,6 +203,13 @@ PR that applies each one, per `docs/security/spond-data-boundary.md`):
 | register_entries: write | yes | yes (`sessions.create`, club scoped, any coach; the upsert's conflict arm also needs `players.view`) | no | no |
 | register_entries: change a row's session, player or club | **no (touch trigger, P0001, all callers)** | no | no | no |
 | register_entries: store a name field | **no (no such column exists, pinned by the 0046 self verification)** | no | no | no |
+| drills.layout: read | yes | yes | yes | no |
+| drills.layout: write | any (`drills.manage`) | own drills only (`drills.create`) | no | no |
+| drills.layout: attach a layout to an imported drill | **no (cross field check, all callers)** | no | no | no |
+| drills.layout: store a name in a label or note | **no (three character label cap and closed field lists, pinned by the 0047 self verification)** | no | no | no |
+| sessions.setup / setup_area_id: read | yes | yes | yes | no |
+| sessions.setup / setup_area_id: write | any (`sessions.manage`) | own sessions only | no | no |
+| sessions.setup: store a payload outside the station shape | **no (closed field lists and size cap, pinned by the 0048 self verification)** | no | no | no |
 
 Capability consistency contract: the database catalogue is exactly the
 thirteen seeded keys; every capability string the frontend references

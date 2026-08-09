@@ -324,15 +324,29 @@ const KIT_LABELS: Partial<Record<LayoutEntityKind, [string, string]>> = {
   ball: ['ball', 'balls'],
 }
 
-export function layoutKitLines(layout: DrillLayout): string[] {
+// The kit a layout needs, as counted items. The session kit list merges
+// these across drills; layoutKitLines renders the same items as text.
+export interface LayoutKitItem {
+  kind: LayoutEntityKind
+  // The singular and plural labels, so a merged count can pick either.
+  singular: string
+  plural: string
+  count: number
+}
+
+export function layoutKitItems(layout: DrillLayout): LayoutKitItem[] {
   const counts = layoutEntityCounts(layout)
-  const lines: string[] = []
+  const items: LayoutKitItem[] = []
   for (const kind of LAYOUT_ENTITY_KINDS) {
     const label = KIT_LABELS[kind]
     if (!label || counts[kind] === 0) continue
-    lines.push(`${counts[kind]} ${counts[kind] === 1 ? label[0] : label[1]}`)
+    items.push({ kind, singular: label[0], plural: label[1], count: counts[kind] })
   }
-  return lines
+  return items
+}
+
+export function layoutKitLines(layout: DrillLayout): string[] {
+  return layoutKitItems(layout).map((i) => `${i.count} ${i.count === 1 ? i.singular : i.plural}`)
 }
 
 // Whether a declared area fits inside a box of real metres, allowing the
