@@ -24,7 +24,9 @@ import {
   setStationLabel,
   SETUP_LABEL_MAX,
   SETUP_MAX_STATIONS,
+  schematicMetres,
   schematicStations,
+  setupForArea,
   setupProblems,
   stationInsideBoundary,
   stationSummary,
@@ -78,17 +80,12 @@ export function SetupComposerView({
   const selected = setup.stations.find((s) => s.id === selectedId) ?? null
   const outside = frame ? setup.stations.filter((s) => !stationInsideBoundary(s, frame)) : []
 
+  // The same projection the schematic draws with, so a drag can never
+  // land anywhere but under the finger.
   const eventMetres = (e: ReactPointerEvent): Metres | null => {
-    const svg = (e.currentTarget as Element).closest('svg')
-    const rect = svg?.getBoundingClientRect()
-    if (!rect || rect.width === 0 || !frame) return null
-    const k = 600 / Math.max(frame.width, frame.length, 1)
-    const pad = 14
-    const w = frame.width * k
-    const h = frame.length * k
-    const x = ((e.clientX - rect.left) * ((w + pad * 2) / rect.width) - pad) / k
-    const yDown = ((e.clientY - rect.top) * ((h + pad * 2) / rect.height) - pad) / k
-    return { x, y: frame.length - yDown }
+    const rect = (e.currentTarget as Element).closest('svg')?.getBoundingClientRect()
+    if (!rect || !frame) return null
+    return schematicMetres(frame, rect, e.clientX - rect.left, e.clientY - rect.top)
   }
 
   const down = (id: string) => (e: ReactPointerEvent) => {
@@ -135,12 +132,19 @@ export function SetupComposerView({
         <label>Area</label>
         <select value={areaId} onChange={(e) => onArea(e.target.value)}>
           <option value="">Choose an area</option>
-          {areas.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name} · {areaLabel(a.boundary)}
-            </option>
-          ))}
+          {areas
+            .filter((a) => a.usable || a.id === areaId)
+            .map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} · {areaLabel(a.boundary)}
+              </option>
+            ))}
         </select>
+        {setup.stations.length > 0 && (
+          <p className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
+            Changing the area starts the layout again: the stations are metres on this one.
+          </p>
+        )}
       </div>
 
       {!frame ? (
@@ -187,6 +191,7 @@ export function SetupComposerView({
                   onBlur={(e) => {
                     const n = Number(e.target.value)
                     if (Number.isFinite(n) && n > 0) onResize(selected.id, n, selected.length)
+                    else e.target.value = String(selected.width)
                   }}
                 />
               </div>
@@ -199,6 +204,7 @@ export function SetupComposerView({
                   onBlur={(e) => {
                     const n = Number(e.target.value)
                     if (Number.isFinite(n) && n > 0) onResize(selected.id, selected.width, n)
+                    else e.target.value = String(selected.length)
                   }}
                 />
               </div>
@@ -301,7 +307,7 @@ export function SetupComposerModal({
             disabled={saving || !valid}
             onClick={() => onSave(areaId || null, setup.stations.length ? setup : null)}
           >
-            {saving ? 'Saving…' : 'Save setup'}
+            {saving ? 'Saving…' : areaId ? 'Save setup' : 'Save without a setup'}
           </button>
         </>
       }
@@ -315,6 +321,10 @@ export function SetupComposerModal({
         drillById={drillById}
         selectedId={selectedId}
         onArea={(id) => {
+          // Stations are metres in one area's frame: on a different area
+          // they would draw off the schematic while still saving, so the
+          // layout starts again.
+          setSetup((prev) => setupForArea(prev, id === areaId))
           setAreaId(id)
           setSelectedId(null)
         }}

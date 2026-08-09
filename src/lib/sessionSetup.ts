@@ -25,7 +25,7 @@ import { boundaryToMetres, type Boundary } from './venues'
 
 export const SETUP_VERSION = 1
 export const SETUP_MAX_STATIONS = 12
-export const SETUP_LABEL_MAX = 30
+export const SETUP_LABEL_MAX = 20
 export const STATION_MIN_METRES = 1
 export const STATION_MAX_METRES = 150
 
@@ -128,8 +128,15 @@ export function stationFit(station: SetupStation, area: LayoutArea): StationFit 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v)
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-const wellFormed = (s: string) =>
-  !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s)
+const wellFormed = (s: string) => {
+  // A lone surrogate half and a C0 control both pass every length check
+  // and both fail to reach jsonb: Postgres refuses \u0000 outright. The
+  // control scan is a code point walk rather than a regex class, which
+  // the lint rule reads as a mistake.
+  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s)) return false
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) < 0x20) return false
+  return true
+}
 const isId = (v: unknown): v is string =>
   typeof v === 'string' && v.length >= 1 && v.length <= 40 && wellFormed(v)
 
@@ -197,6 +204,14 @@ export function parseSessionSetup(value: unknown): SessionSetup | null {
 }
 
 export const emptySetup = (): SessionSetup => ({ version: SETUP_VERSION, stations: [] })
+
+// Stations are metres in one area's own frame, so they mean nothing on a
+// different area: changing the area starts the layout again rather than
+// scattering the old rectangles across the new grass, where they would
+// draw off the schematic entirely while still saving.
+export function setupForArea(setup: SessionSetup, sameArea: boolean): SessionSetup {
+  return sameArea || setup.stations.length === 0 ? setup : emptySetup()
+}
 
 // ---- Editing ----------------------------------------------------------------
 
@@ -285,6 +300,42 @@ export function removeStation(setup: SessionSetup, id: string): SessionSetup {
 
 // ---- Rendering shapes -------------------------------------------------------
 
+// The schematic's projection: metres to viewBox units, the long side of
+// the area filling SCHEMATIC_LONG_SIDE with SCHEMATIC_PAD around it.
+// Owned here rather than in a component because both the drawing and the
+// pointer arithmetic read it, and a copy in each would drift silently.
+export const SCHEMATIC_LONG_SIDE = 600
+export const SCHEMATIC_PAD = 14
+
+export interface SchematicProjection {
+  k: number
+  width: number
+  length: number
+  pad: number
+}
+
+export function schematicProjection(frame: AreaFrame): SchematicProjection {
+  const k = SCHEMATIC_LONG_SIDE / Math.max(frame.width, frame.length, 1)
+  return { k, width: frame.width * k, length: frame.length * k, pad: SCHEMATIC_PAD }
+}
+
+// A pointer position over the schematic, in metres on the area. offsetX
+// and offsetY are the pointer's position within the drawn box. Metres
+// north grow up the field while the box's y grows down it, so the y
+// inverts about the frame's own length.
+export function schematicMetres(
+  frame: AreaFrame,
+  box: { width: number; height: number },
+  offsetX: number,
+  offsetY: number,
+): Metres | null {
+  if (box.width === 0 || box.height === 0) return null
+  const p = schematicProjection(frame)
+  const x = (offsetX * ((p.width + p.pad * 2) / box.width) - p.pad) / p.k
+  const yDown = (offsetY * ((p.length + p.pad * 2) / box.height) - p.pad) / p.k
+  return { x, y: frame.length - yDown }
+}
+
 // One station as the schematic draws it: the station itself, the bound
 // drill's title when it is still in the library, and its place in the
 // running order. Shaped here rather than in a component so both the
@@ -318,6 +369,7 @@ export interface KitLine {
 }
 
 export interface KitDrill {
+  id: string
   title: string
   equipment: string[]
   layout: DrillLayout | null
@@ -326,16 +378,36 @@ export interface KitDrill {
 const norm = (s: string) => s.trim().toLowerCase()
 
 // The session's kit: free text equipment across its drills, plus the
-// counted pieces every drill diagram declares. Counts are the largest a
-// single drill needs, not the sum: the drills run one after another and
-// the same cones are picked up and put down again. Where a drill's
-// equipment text names something its diagram already counts, the two fold
-// into one line rather than reading twice.
-export function sessionKit(drills: KitDrill[]): KitLine[] {
+// counted pieces every drill diagram declares.
+//
+// Counting has two cases and takes whichever is larger. Drills run one
+// after another, so a drill's own requirement is what it needs at its
+// turn and the same cones are picked up and put down again: the largest
+// single drill sets the floor. A composed setup, though, stands its
+// stations up at once before anyone arrives, so every station bound to a
+// drill needs its own set at the same time: those sum. Three stations of
+// the same four cone drill need twelve cones, and the printed sheet has
+// to say twelve.
+//
+// stationDrillIds is the drill each station is laid out for, in station
+// order, empty when no setup is composed. Where a drill's equipment text
+// names something its diagram already counts, the two fold into one line
+// rather than reading twice.
+export function sessionKit(drills: KitDrill[], stationDrillIds: string[] = []): KitLine[] {
   const lines: KitLine[] = []
   const byName = new Map<string, KitLine>()
   // Counted layout pieces first, so equipment text can fold into them.
   const aliases = new Map<string, KitLine>()
+  const byId = new Map(drills.map((d) => [d.id, d]))
+  // What the composed stations need standing at once, per piece kind.
+  const concurrent = new Map<string, number>()
+  for (const drillId of stationDrillIds) {
+    const layout = byId.get(drillId)?.layout
+    if (!layout) continue
+    for (const item of layoutKitItems(layout)) {
+      concurrent.set(item.kind, (concurrent.get(item.kind) ?? 0) + item.count)
+    }
+  }
   for (const drill of drills) {
     if (!drill.layout) continue
     for (const item of layoutKitItems(drill.layout)) {
@@ -347,7 +419,7 @@ export function sessionKit(drills: KitDrill[]): KitLine[] {
         aliases.set(norm(item.plural), line)
         lines.push(line)
       }
-      line.count = Math.max(line.count ?? 0, item.count)
+      line.count = Math.max(line.count ?? 0, item.count, concurrent.get(item.kind) ?? 0)
       if (!line.drills.includes(drill.title)) line.drills.push(drill.title)
     }
   }

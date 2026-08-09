@@ -102,6 +102,75 @@ describe('SetupSchematic', () => {
   })
 })
 
+describe('SetupComposerView area choice', () => {
+  it('offers only usable areas, plus whichever one this session already uses', () => {
+    const html = renderToStaticMarkup(
+      <SetupComposerView
+        areas={[{ ...areas[0], usable: false }, areas[1]]}
+        areaId="a2"
+        frame={frame}
+        setup={setup}
+        drills={drills}
+        drillById={drillById}
+        selectedId={null}
+        onArea={noop}
+        onSelect={noop}
+        onTapCanvas={noop}
+        onDragStation={noop}
+        onResize={noop}
+        onLabel={noop}
+        onBindDrill={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(html).not.toContain('Flushdyke')
+    expect(html).toContain('Haggs Hill main field')
+  })
+
+  it('says a change of area starts the layout again, while there is something to lose', () => {
+    const withStations = renderToStaticMarkup(
+      <SetupComposerView
+        areas={areas}
+        areaId="a2"
+        frame={frame}
+        setup={setup}
+        drills={drills}
+        drillById={drillById}
+        selectedId={null}
+        onArea={noop}
+        onSelect={noop}
+        onTapCanvas={noop}
+        onDragStation={noop}
+        onResize={noop}
+        onLabel={noop}
+        onBindDrill={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(withStations).toContain('Changing the area starts the layout again')
+    const empty = renderToStaticMarkup(
+      <SetupComposerView
+        areas={areas}
+        areaId="a2"
+        frame={frame}
+        setup={{ version: 1, stations: [] }}
+        drills={drills}
+        drillById={drillById}
+        selectedId={null}
+        onArea={noop}
+        onSelect={noop}
+        onTapCanvas={noop}
+        onDragStation={noop}
+        onResize={noop}
+        onLabel={noop}
+        onBindDrill={noop}
+        onRemove={noop}
+      />,
+    )
+    expect(empty).not.toContain('Changing the area starts the layout again')
+  })
+})
+
 describe('SetupComposerView', () => {
   const render = (over: Partial<Parameters<typeof SetupComposerView>[0]> = {}) =>
     renderToStaticMarkup(

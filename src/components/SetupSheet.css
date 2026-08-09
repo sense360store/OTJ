@@ -1,20 +1,19 @@
 /* The printable setup sheet: hidden on screen, one page in print. Ink on
-   white, no chrome, no colour dependence, so it reads from a pocket. */
+   white, no chrome, no colour dependence, so it reads from a pocket.
+
+   Every rule is scoped under the body class the sheet sets while it is
+   mounted, so nothing here reaches a route that never mounted one: the
+   public share print path and the drill diagrams keep their own rules,
+   including the club wide @page margin, which this file deliberately
+   does not restate. */
 
 .setup-sheet { display: none; }
 
 @media print {
-  /* Everything on the page except the sheet steps aside. Visibility
-     rather than display, so the rule holds wherever the sheet sits in the
-     tree; the sheet then takes the page on its own. */
-  body * { visibility: hidden; }
-  .setup-sheet, .setup-sheet * { visibility: visible; }
-  .setup-sheet {
+  body.otj-printing-setup > #root { display: none !important; }
+
+  body.otj-printing-setup > .setup-sheet {
     display: block;
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
     color: #101631;
     background: #fff;
     font-family: 'Hanken Grotesk', sans-serif;
@@ -22,23 +21,39 @@
     line-height: 1.4;
   }
 
-  .setup-sheet h1 { font-family: 'Archivo', sans-serif; font-size: 18pt; margin: 0 0 2pt; }
-  .setup-sheet-sub { margin: 0 0 8pt; font-size: 10pt; color: #444; }
-  .setup-sheet h2 {
+  body.otj-printing-setup > .setup-sheet h1 {
+    font-family: 'Archivo', sans-serif;
+    font-size: 18pt;
+    margin: 0 0 2pt;
+  }
+  body.otj-printing-setup > .setup-sheet h2 {
     font-family: 'Archivo', sans-serif;
     font-size: 11pt;
     margin: 8pt 0 4pt;
     border-bottom: 1px solid #ccc;
     padding-bottom: 2pt;
   }
-  .setup-sheet section { break-inside: avoid; }
-  .setup-sheet .setup-schematic { max-height: 96mm; }
+  body.otj-printing-setup > .setup-sheet section { break-inside: avoid; }
+  body.otj-printing-setup > .setup-sheet .setup-schematic { max-height: 96mm; }
 
-  .setup-sheet-stations, .setup-sheet-plan { margin: 4pt 0 0; padding-left: 14pt; font-size: 10pt; }
-  .setup-sheet-kit { margin: 4pt 0 0; padding-left: 14pt; font-size: 10pt; columns: 2; }
-  .setup-sheet-meta { color: #555; }
-  .setup-sheet-cols { display: flex; gap: 12pt; align-items: flex-start; }
-  .setup-sheet-cols > section { flex: 1; }
-
-  @page { margin: 12mm; }
+  body.otj-printing-setup > .setup-sheet .setup-sheet-sub { margin: 0 0 8pt; font-size: 10pt; color: #444; }
+  body.otj-printing-setup > .setup-sheet .setup-sheet-stations,
+  body.otj-printing-setup > .setup-sheet .setup-sheet-plan {
+    margin: 4pt 0 0;
+    padding-left: 14pt;
+    font-size: 10pt;
+  }
+  body.otj-printing-setup > .setup-sheet .setup-sheet-kit {
+    margin: 4pt 0 0;
+    padding-left: 14pt;
+    font-size: 10pt;
+    columns: 2;
+  }
+  body.otj-printing-setup > .setup-sheet .setup-sheet-meta { color: #555; }
+  body.otj-printing-setup > .setup-sheet .setup-sheet-cols {
+    display: flex;
+    gap: 12pt;
+    align-items: flex-start;
+  }
+  body.otj-printing-setup > .setup-sheet .setup-sheet-cols > section { flex: 1; }
 }

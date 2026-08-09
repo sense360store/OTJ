@@ -89,7 +89,7 @@ The composed setup splits across two columns on `sessions`, added by the gated `
 
 A station crossing the drawn boundary is a warning and never a refusal, at every layer: the boundary is the owner's visual approximation of the usable green, drawn once and never resurveyed, and the coach standing on the grass is the authority on whether the far corner is really out. Nothing about the geometry is enforced in Postgres and none of it is attempted there.
 
-Stations carry a size, a position, an optional short label and an optional drill id. No names and no people: the Register is where people are.
+Stations carry a size, a position, an optional label and an optional drill id. No names and no people: the Register is where people are. The label names a place, not a person ("Rondo grid", "Far corner"), and is capped at twenty characters in the schema, the same cap a drill diagram's zone label carries. The cap is schema rather than a UI convention because of the 0028 board token precedent, where a label field became a name channel and the remediation was destructive: a session's setup is club readable, renders to parents on the session day and the touchline, and prints on a sheet that leaves the building.
 
 ### The kit list
 

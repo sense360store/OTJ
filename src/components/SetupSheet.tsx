@@ -4,6 +4,13 @@
 // whole session whatever tab is open: the plan on the area, the stations
 // in order, the kit to bring, and the running order.
 //
+// The sheet mounts outside the app's root through a portal, and the page
+// that renders it marks the body while it is mounted. Print then hides
+// the root and shows the sheet, both scoped to that mark, so no print
+// rule reaches a route that never mounted a sheet: the public share
+// page, the drill diagrams and every other print path are untouched.
+// Without a document (the static test renderer) it renders in place.
+//
 // Presentational and exported for the static tests.
 import type { LayoutArea } from '../lib/drillLayout'
 import {
@@ -13,8 +20,12 @@ import {
   type KitLine,
   type SchematicStation,
 } from '../lib/sessionSetup'
+import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { SetupSchematic } from './SetupSchematic'
 import './SetupSheet.css'
+
+export const PRINT_BODY_CLASS = 'otj-printing-setup'
 
 export interface SheetActivity {
   title: string
@@ -41,7 +52,13 @@ export function SetupSheet({
   kit: KitLine[]
   activities: SheetActivity[]
 }) {
-  return (
+  const hasDocument = typeof document !== 'undefined'
+  useEffect(() => {
+    if (!hasDocument) return
+    document.body.classList.add(PRINT_BODY_CLASS)
+    return () => document.body.classList.remove(PRINT_BODY_CLASS)
+  }, [hasDocument])
+  const sheet = (
     <div className="setup-sheet" aria-hidden="true">
       <h1>{sessionName}</h1>
       <p className="setup-sheet-sub">{subtitle}</p>
@@ -95,4 +112,5 @@ export function SetupSheet({
       </div>
     </div>
   )
+  return hasDocument ? createPortal(sheet, document.body) : sheet
 }

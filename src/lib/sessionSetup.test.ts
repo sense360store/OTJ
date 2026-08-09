@@ -12,8 +12,11 @@ import {
   resizeStation,
   sessionKit,
   setStationDrill,
+  schematicMetres,
+  schematicProjection,
   setStationLabel,
   SETUP_LABEL_MAX,
+  setupForArea,
   SETUP_MAX_STATIONS,
   setupProblems,
   stationFit,
@@ -227,11 +230,49 @@ describe('editing', () => {
   })
 })
 
+describe('schematic projection', () => {
+  it('a pointer lands back on the metres it was taken from', () => {
+    // The drag path and the tap path share this helper, so one round trip
+    // covers both. A browser sizes the svg to the viewBox aspect.
+    const frame = areaFrame(HAGGS_HILL)
+    const p = schematicProjection(frame)
+    const box = { width: p.width + p.pad * 2, height: p.length + p.pad * 2 }
+    for (const point of [
+      { x: 0, y: 0 },
+      { x: 20, y: 80 },
+      { x: frame.width, y: frame.length },
+      { x: 57.3, y: 12.9 },
+    ]) {
+      // Metres to the box, the way the schematic draws them.
+      const offsetX = point.x * p.k + p.pad
+      const offsetY = (frame.length - point.y) * p.k + p.pad
+      const back = schematicMetres(frame, box, offsetX, offsetY)!
+      expect(back.x).toBeCloseTo(point.x, 6)
+      expect(back.y).toBeCloseTo(point.y, 6)
+    }
+  })
+
+  it('reports nothing before the schematic has been measured', () => {
+    expect(schematicMetres(areaFrame(FLUSHDYKE), { width: 0, height: 0 }, 10, 10)).toBeNull()
+  })
+})
+
+describe('setupForArea', () => {
+  it('keeps the stations on the same area and starts again on a different one', () => {
+    const setup: SessionSetup = { version: 1, stations: [station()] }
+    expect(setupForArea(setup, true)).toBe(setup)
+    expect(setupForArea(setup, false).stations).toEqual([])
+    // Nothing to lose, nothing to warn about.
+    const empty = emptySetup()
+    expect(setupForArea(empty, false)).toBe(empty)
+  })
+})
+
 describe('sessionKit', () => {
   it('counts layout pieces at the most a single drill needs, not the sum', () => {
     const kit = sessionKit([
-      { title: 'Passing square', equipment: [], layout: FIXTURE_PASSING_SQUARE },
-      { title: 'Small sided game', equipment: [], layout: FIXTURE_SMALL_SIDED_GAME },
+      { id: 'd1', title: 'Passing square', equipment: [], layout: FIXTURE_PASSING_SQUARE },
+      { id: 'd2', title: 'Small sided game', equipment: [], layout: FIXTURE_SMALL_SIDED_GAME },
     ])
     const cones = kit.find((k) => k.name === 'cones')!
     // Four cones in the square, none in the game: four is the requirement.
@@ -244,7 +285,7 @@ describe('sessionKit', () => {
   })
 
   it('carries free text equipment with no count', () => {
-    const kit = sessionKit([{ title: 'Rondo', equipment: ['Bibs', 'Whistle'], layout: null }])
+    const kit = sessionKit([{ id: 'd3', title: 'Rondo', equipment: ['Bibs', 'Whistle'], layout: null }])
     expect(kit.map((k) => [k.name, k.count])).toEqual([
       ['Bibs', null],
       ['Whistle', null],
@@ -253,7 +294,7 @@ describe('sessionKit', () => {
 
   it('folds equipment text into the counted line it names, rather than listing twice', () => {
     const kit = sessionKit([
-      { title: 'Passing square', equipment: ['Cones', 'Bibs'], layout: FIXTURE_PASSING_SQUARE },
+      { id: 'd1', title: 'Passing square', equipment: ['Cones', 'Bibs'], layout: FIXTURE_PASSING_SQUARE },
     ])
     expect(kit.filter((k) => k.name.toLowerCase().includes('cone'))).toHaveLength(1)
     expect(kit.find((k) => k.name === 'cones')!.count).toBe(4)
@@ -262,14 +303,42 @@ describe('sessionKit', () => {
 
   it('merges the same free text across drills and keeps session order', () => {
     const kit = sessionKit([
-      { title: 'A', equipment: ['Bibs'], layout: null },
-      { title: 'B', equipment: ['bibs'], layout: null },
+      { id: 'd4', title: 'A', equipment: ['Bibs'], layout: null },
+      { id: 'd5', title: 'B', equipment: ['bibs'], layout: null },
     ])
     expect(kit).toHaveLength(1)
     expect(kit[0].drills).toEqual(['A', 'B'])
   })
 
+  it('sums across stations standing at once, because a carousel needs every set', () => {
+    const drills = [{ id: 'd1', title: 'Passing square', equipment: [], layout: FIXTURE_PASSING_SQUARE }]
+    // Three stations of the same four cone drill need twelve cones out at
+    // once, not four picked up and put down again.
+    const kit = sessionKit(drills, ['d1', 'd1', 'd1'])
+    expect(kit.find((k) => k.name === 'cones')!.count).toBe(12)
+    expect(kit.find((k) => k.name === 'balls')!.count).toBe(3)
+    // One station is the sequential case again.
+    expect(sessionKit(drills, ['d1']).find((k) => k.name === 'cones')!.count).toBe(4)
+    // A station bound to nothing, or to a drill outside the session, adds
+    // nothing rather than throwing.
+    expect(sessionKit(drills, ['ghost']).find((k) => k.name === 'cones')!.count).toBe(4)
+  })
+
+  it('takes the larger of what one drill needs and what the stations need at once', () => {
+    const kit = sessionKit(
+      [
+        { id: 'd1', title: 'Passing square', equipment: [], layout: FIXTURE_PASSING_SQUARE },
+        { id: 'd2', title: 'Small sided game', equipment: [], layout: FIXTURE_SMALL_SIDED_GAME },
+      ],
+      ['d2'],
+    )
+    // The game station needs two goals at once; the square, run at its own
+    // turn, still sets the cone requirement.
+    expect(kit.find((k) => k.name === 'goals')!.count).toBe(2)
+    expect(kit.find((k) => k.name === 'cones')!.count).toBe(4)
+  })
+
   it('is empty for a session of drills with neither equipment nor a diagram', () => {
-    expect(sessionKit([{ title: 'Talk', equipment: [], layout: null }])).toEqual([])
+    expect(sessionKit([{ id: 'd6', title: 'Talk', equipment: [], layout: null }])).toEqual([])
   })
 })

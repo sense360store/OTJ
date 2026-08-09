@@ -133,15 +133,22 @@ function SessionDayView({ session }: { session: Session }) {
   // the pieces every drill diagram counts, each line remembering which
   // drills need it, in session order. Counts are the most a single drill
   // needs, not the sum: the drills run one after another.
+  // Stations standing at once need their own sets at once, so the
+  // composed setup feeds the count alongside the running order.
+  const stationDrillIds = useMemo(
+    () => (session.setup?.stations ?? []).map((st) => st.drillId).filter((id): id is string => !!id),
+    [session.setup],
+  )
   const kit = useMemo(
     () =>
       sessionKit(
         rows
           .map((r) => r.drill)
           .filter((d): d is Drill => !!d)
-          .map((d) => ({ title: d.title, equipment: d.equipment, layout: d.layout ?? null })),
+          .map((d) => ({ id: d.id, title: d.title, equipment: d.equipment, layout: d.layout ?? null })),
+        stationDrillIds,
       ),
-    [rows],
+    [rows, stationDrillIds],
   )
 
   const playersSummary = useMemo(() => {

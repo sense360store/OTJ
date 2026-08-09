@@ -40,8 +40,12 @@
 -- strictly stricter.
 --
 -- CARRIES NO PERSON DATA. A station holds a size, a position, an
--- optional 30 character label and an optional drill id. No names, no
--- children, no attendance: the Register (0046) is where people are.
+-- optional 20 character label and an optional drill id. No names, no
+-- children, no attendance: the Register (0046) is where people are. The
+-- label names a place, not a person ("Rondo grid", "Far corner"), and is
+-- capped at the same 20 characters as a drill diagram's zone label so it
+-- cannot become a roster in disguise; the 0028 board token precedent is
+-- why the cap is schema and not a UI convention.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
@@ -50,8 +54,16 @@
 -- venue_areas was created in 0043 with only its primary key. This adds
 -- nothing to the data, it only makes the reference below expressible.
 -- ---------------------------------------------------------------------
-alter table public.venue_areas
-  add constraint venue_areas_id_club_unique unique (id, club_id);
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'venue_areas_id_club_unique' and conrelid = 'public.venue_areas'::regclass
+  ) then
+    alter table public.venue_areas add constraint venue_areas_id_club_unique unique (id, club_id);
+  end if;
+end
+$$;
 
 -- ---------------------------------------------------------------------
 -- The setup shape guard.
@@ -94,7 +106,7 @@ as $$
         when (s.station ->> 'length')::numeric not between 1 and 150 then true
         when s.station -> 'label' is not null and (
           jsonb_typeof(s.station -> 'label') is distinct from 'string'
-          or char_length(s.station ->> 'label') > 30
+          or char_length(s.station ->> 'label') > 20
         ) then true
         when s.station -> 'drillId' is not null and (
           jsonb_typeof(s.station -> 'drillId') is distinct from 'string'
@@ -114,9 +126,14 @@ alter table public.sessions
   add column setup_area_id uuid,
   add column setup jsonb check (public.session_setup_ok(setup));
 
+-- The column list on set null is load bearing, not decoration: a bare
+-- "on delete set null" on a composite foreign key nulls every referencing
+-- column, club_id included, and the delete then fails on club_id's not
+-- null constraint, making the area undeletable. Same form as 0032.
 alter table public.sessions
   add constraint sessions_setup_area_fk
-  foreign key (setup_area_id, club_id) references public.venue_areas (id, club_id) on delete set null;
+  foreign key (setup_area_id, club_id) references public.venue_areas (id, club_id)
+  on delete set null (setup_area_id);
 
 create index on public.sessions (setup_area_id);
 
@@ -216,7 +233,7 @@ begin
   if public.session_setup_ok('{"version":1,"stations":[{"id":"s1","x":0,"y":0,"width":10,"length":151}]}'::jsonb) then
     raise exception 'session_setup: the check accepted a station above the size bound';
   end if;
-  if public.session_setup_ok(('{"version":1,"stations":[{"id":"s1","x":0,"y":0,"width":10,"length":10,"label":"' || repeat('x', 31) || '"}]}')::jsonb) then
+  if public.session_setup_ok(('{"version":1,"stations":[{"id":"s1","x":0,"y":0,"width":10,"length":10,"label":"' || repeat('x', 21) || '"}]}')::jsonb) then
     raise exception 'session_setup: the check accepted an over long label';
   end if;
   if public.session_setup_ok('{"version":1,"stations":[{"id":"s1","x":0,"y":0,"width":10,"length":10,"drillId":""}]}'::jsonb) then
@@ -225,6 +242,22 @@ begin
   if public.session_setup_ok((
     '{"version":1,"stations":[{"id":"s1","x":' || v_big || ',"y":' || v_big || ',"width":10,"length":10}]}')::jsonb) then
     raise exception 'session_setup: the check accepted an oversized payload';
+  end if;
+
+  -- The area reference nulls only itself on delete. Confirmed here
+  -- because the failure mode (nulling club_id and refusing the delete)
+  -- is invisible until an admin tries to remove a venue.
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'sessions_setup_area_fk'
+      and conrelid = 'public.sessions'::regclass
+      and confdeltype = 'n'
+      and confdelsetcols = array[
+        (select attnum from pg_attribute
+         where attrelid = 'public.sessions'::regclass and attname = 'setup_area_id')
+      ]
+  ) then
+    raise exception 'session_setup: the area reference must set null on setup_area_id alone';
   end if;
 
   -- And accepts what the client validates clean.

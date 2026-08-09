@@ -126,6 +126,24 @@ describe('session row to app mapping', () => {
   })
 })
 
+describe('session setup mapping', () => {
+  it('routes the setup jsonb through the parse gate', () => {
+    // A null column is the normal case; a valid setup parses whole; a
+    // malformed one reads as no setup at all, so the session day shows
+    // the plain list rather than a broken schematic.
+    expect(toSession(sessionRow()).setup).toBeNull()
+    const setup = { version: 1, stations: [{ id: 's1', x: 1, y: 2, width: 10, length: 10 }] }
+    expect(toSession(sessionRow({ setup })).setup).toEqual(setup)
+    expect(toSession(sessionRow({ setup: { version: 9, stations: [] } })).setup).toBeNull()
+    expect(toSession(sessionRow({ setup: 'not a setup' })).setup).toBeNull()
+  })
+
+  it('carries the area reference through unchanged', () => {
+    expect(toSession(sessionRow({ setup_area_id: 'area-1' })).setupAreaId).toBe('area-1')
+    expect(toSession(sessionRow()).setupAreaId).toBeNull()
+  })
+})
+
 describe('activity mapping round-trips', () => {
   it('app to row to app preserves a drill activity', () => {
     const activity = { phase: 'Game' as const, duration: 20, drillId: 'd7' }

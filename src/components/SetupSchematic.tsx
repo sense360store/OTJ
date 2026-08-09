@@ -11,6 +11,8 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useRef } from 'react'
 import {
+  schematicMetres,
+  schematicProjection,
   stationInsideBoundary,
   stationSummary,
   type AreaFrame,
@@ -19,9 +21,6 @@ import {
 } from '../lib/sessionSetup'
 import type { LayoutArea } from '../lib/drillLayout'
 import './SetupSchematic.css'
-
-const LONG_SIDE = 600
-const PAD = 14
 
 export function SetupSchematic({
   frame,
@@ -43,9 +42,7 @@ export function SetupSchematic({
   onStationPointerCancel?: (id: string) => (e: ReactPointerEvent) => void
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const k = LONG_SIDE / Math.max(frame.width, frame.length, 1)
-  const w = frame.width * k
-  const h = frame.length * k
+  const { k, width: w, length: h, pad: PAD } = schematicProjection(frame)
   const interactive = !!onTapCanvas
   // Metres north grow up the field; SVG y grows down the screen.
   const sy = (yMetres: number) => h - yMetres * k
@@ -53,10 +50,8 @@ export function SetupSchematic({
 
   const toMetres = (e: ReactPointerEvent): Metres | null => {
     const rect = svgRef.current?.getBoundingClientRect()
-    if (!rect || rect.width === 0) return null
-    const x = ((e.clientX - rect.left) * ((w + PAD * 2) / rect.width) - PAD) / k
-    const yDown = ((e.clientY - rect.top) * ((h + PAD * 2) / rect.height) - PAD) / k
-    return { x, y: frame.length - yDown }
+    if (!rect) return null
+    return schematicMetres(frame, rect, e.clientX - rect.left, e.clientY - rect.top)
   }
 
   return (
