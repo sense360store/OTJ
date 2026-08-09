@@ -685,6 +685,7 @@ export function SessionFieldsView({
   busy,
   teams,
   venues,
+  venuesUnavailable,
   attachedBoardName,
   onField,
   onIntentions,
@@ -699,6 +700,9 @@ export function SessionFieldsView({
   busy: boolean
   teams: Team[]
   venues: Venue[]
+  // True when the venue list could not be read. "We could not load the
+  // venues" must not render as "your club has none".
+  venuesUnavailable: boolean
   attachedBoardName?: string
   onField: (k: SessionFieldKey, v: string) => void
   onIntentions: (v: string[]) => void
@@ -774,7 +778,9 @@ export function SessionFieldsView({
         )}
         {venues.length === 0 && (
           <span className="muted" style={{ fontSize: 12.5, marginTop: 6, display: 'block' }}>
-            No venues yet. An admin adds them under Admin, Venues.
+            {venuesUnavailable
+              ? 'Could not load the venues. The one already saved on this session is unchanged.'
+              : 'No venues yet. An admin adds them under Admin, Venues.'}
           </span>
         )}
       </div>
@@ -896,7 +902,8 @@ function PlannerEditor({
   const { caps } = useMyCapabilities()
   const { upsertSession } = useSessions()
   const { data: teams = [] } = useTeams()
-  const { data: venues = [] } = useVenues()
+  const venuesQuery = useVenues()
+  const venues = venuesQuery.data ?? []
   const { data: boards = [] } = useBoards()
   const memberById = useMemberMap()
 
@@ -1196,6 +1203,7 @@ function PlannerEditor({
             busy={busy}
             teams={teams}
             venues={venues}
+            venuesUnavailable={venuesQuery.isError}
             attachedBoardName={attachedBoard?.name}
             onField={setField}
             onIntentions={setIntentions}

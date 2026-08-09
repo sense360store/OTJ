@@ -36,6 +36,7 @@ export type AuditEntityType =
   | 'template'
   | 'programme'
   | 'session'
+  | 'venue'
 
 // The source (provenance) vocabulary, exactly the audit_events.source CHECK.
 export type AuditSource =
@@ -277,6 +278,7 @@ export const ENTITY_OPTIONS: { value: AuditEntityType; label: string }[] = [
   { value: 'template', label: 'Template' },
   { value: 'programme', label: 'Programme' },
   { value: 'session', label: 'Session' },
+  { value: 'venue', label: 'Venue' },
 ]
 
 export const SOURCE_OPTIONS: { value: AuditSource; label: string }[] = [
@@ -324,8 +326,11 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'user.team_assigned', label: 'Added to a team' },
   { value: 'user.team_removed', label: 'Removed from a team' },
   { value: 'team.created', label: 'Team created' },
-  { value: 'team.updated', label: 'Team renamed' },
+  { value: 'team.updated', label: 'Team updated' },
   { value: 'team.deleted', label: 'Team deleted' },
+  { value: 'venue.created', label: 'Venue added' },
+  { value: 'venue.updated', label: 'Venue renamed' },
+  { value: 'venue.deleted', label: 'Venue removed' },
   { value: 'spond.mapping_created', label: 'Spond mapping created' },
   { value: 'spond.mapping_changed', label: 'Spond mapping updated' },
   { value: 'spond.mapping_removed', label: 'Spond mapping removed' },
@@ -341,6 +346,8 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'session.created', label: 'Session created' },
   { value: 'session.updated', label: 'Session updated' },
   { value: 'session.deleted', label: 'Session deleted' },
+  { value: 'session.team_added', label: 'Team added to a session' },
+  { value: 'session.team_removed', label: 'Team removed from a session' },
 ]
 
 // The source label, from the fixed vocabulary. Falls back to the raw value for
@@ -420,11 +427,19 @@ export function describeActivityEvent(
     case 'team.created':
       return 'Team created'
     case 'team.updated':
-      // The only safe field on the teams allow list is the name, so an audited
-      // team update is always a rename.
-      return 'Team renamed'
+      // The teams allow list carries the name and, since 0044, the default bib
+      // colour, so the label stays general rather than naming one of them.
+      return 'Team updated'
     case 'team.deleted':
       return 'Team deleted'
+    case 'venue.created':
+      return 'Venue added'
+    case 'venue.updated':
+      // The venues allow list is the name alone, so an audited venue update is
+      // always a rename.
+      return 'Venue renamed'
+    case 'venue.deleted':
+      return 'Venue removed'
     case 'spond.mapping_created':
       return 'Spond mapping created'
     case 'spond.mapping_changed':
@@ -455,6 +470,10 @@ export function describeActivityEvent(
       return 'Session updated'
     case 'session.deleted':
       return 'Session deleted'
+    case 'session.team_added':
+      return 'Team added to a session'
+    case 'session.team_removed':
+      return 'Team removed from a session'
     default:
       // A future action not yet mapped: show the bare action key. It is a fixed
       // enum string chosen by a server writer, never user or child data.
@@ -527,6 +546,8 @@ export function entityRef(
       return { kind: 'label', label: 'Programme' }
     case 'session':
       return { kind: 'label', label: 'Session' }
+    case 'venue':
+      return { kind: 'label', label: 'Venue' }
     default:
       return { kind: 'none' }
   }

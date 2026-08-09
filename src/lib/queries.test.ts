@@ -142,10 +142,11 @@ describe('session row to app mapping', () => {
 describe('the session write row and the two FROZEN columns', () => {
   const draft = () => toSession(sessionRow({ team_id: 't9', venue: 'Ainley Top', session_teams: [{ team_id: 't1' }] }))
 
-  it('never writes a team id, so the frozen column cannot contradict coverage', () => {
-    const row = toSessionWriteRow(draft())
-    expect(row.team_id).toBeNull()
-    expect('team_id' in row).toBe(true)
+  it('does not touch the frozen team column, which is retired separately', () => {
+    // Retiring it here would run BEFORE the replacement coverage rows are
+    // written, so a failed coverage write would leave a legacy session with no
+    // record of its team at all. retireLegacySessionTeam runs after reconcile.
+    expect('team_id' in toSessionWriteRow(draft())).toBe(false)
   })
 
   it('writes the chosen venue and retires the frozen label with it', () => {
@@ -196,7 +197,6 @@ describe('the session write row and the two FROZEN columns', () => {
       'spond_event_id',
       'start_time',
       'status',
-      'team_id',
       'venue',
       'venue_id',
     ])

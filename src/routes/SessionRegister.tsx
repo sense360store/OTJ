@@ -195,7 +195,7 @@ export function RegisterScreenView({
         )}
       </div>
 
-      {unset ? (
+      {unset && view.groups.length === 0 ? (
         <Empty icon={Icon.users} title="This session has no teams yet">
           Choose the teams it covers in the planner and the register fills itself in.
         </Empty>
@@ -204,7 +204,14 @@ export function RegisterScreenView({
           No registered players are on the teams this session covers.
         </Empty>
       ) : (
-        view.groups.map((g) => (
+        <>
+          {unset && (
+            <p className="reg-empty">
+              This session has no teams set, so only the players someone has already added appear. Choose its teams in
+              the planner to list the rest.
+            </p>
+          )}
+          {view.groups.map((g) => (
           <div className="reg-group" key={g.teamId ?? 'unassigned'}>
             <div className="reg-group-head">
               <h3>{g.teamName}</h3>
@@ -226,8 +233,9 @@ export function RegisterScreenView({
                 />
               ))
             )}
-          </div>
-        ))
+            </div>
+          ))}
+        </>
       )}
     </div>
   )
@@ -250,14 +258,19 @@ function RegisterScreen({ session }: { session: Session }) {
   const removeEntry = useRemoveRegisterEntry()
   const [adding, setAdding] = useState(false)
 
-  const players = useMemo(() => activeRoster(roster.data ?? []), [roster.data])
+  const entries = useMemo(() => register.data ?? [], [register.data])
+  const players = useMemo(
+    () => activeRoster(roster.data ?? [], entries),
+    [roster.data, entries],
+  )
 
-  // A failed register read must never render as "everybody is absent":
-  // the coach would be writing on top of state they never saw.
-  if (register.isError || roster.isError) return <ErrorNote />
+  // A failed read must never render as "everybody is absent": the coach would
+  // be writing on top of state they never saw. The season read counts, because
+  // the roster query is disabled without a season id and would otherwise
+  // degrade silently to an empty club.
+  const rosterFailed = roster.isError || season.isError
+  if (register.isError || rosterFailed) return <ErrorNote />
   if (register.isLoading || roster.isLoading || season.isLoading) return <Loading />
-
-  const entries = register.data ?? []
   const allTeamIds = teams.map((t) => t.id)
   const pool = quickAddPool(players, coveredTeamIds(session), entries, coversWholeClub(session, allTeamIds))
 
@@ -299,7 +312,9 @@ function RegisterScreen({ session }: { session: Session }) {
         onQuickAdd={() => setAdding(true)}
       />
 
-      {setEntry.isError && <ErrorNote>That change did not save. Tap again to retry.</ErrorNote>}
+      {(setEntry.isError || removeEntry.isError) && (
+        <ErrorNote>That change did not save. Tap again to retry.</ErrorNote>
+      )}
 
       {adding && (
         <QuickAddView
@@ -351,7 +366,8 @@ export function SessionRegisterCard({ session }: { session: Session }) {
   const season = useCurrentSeason(canSee)
   const roster = useRegisteredPlayers(season.data?.id ?? null, canSee)
   const register = useRegisterEntries(session.id, canSee)
-  const players = useMemo(() => activeRoster(roster.data ?? []), [roster.data])
+  const entries = useMemo(() => register.data ?? [], [register.data])
+  const players = useMemo(() => activeRoster(roster.data ?? [], entries), [roster.data, entries])
 
   if (!canSee) return null
 
@@ -365,8 +381,9 @@ export function SessionRegisterCard({ session }: { session: Session }) {
       />
     )
   }
-  // A failed read shows as unknown rather than as a confident zero.
-  if (register.isError || roster.isError) {
+  // A failed read shows as unknown rather than as a confident zero. The
+  // season read counts for the same reason it does on the screen.
+  if (register.isError || roster.isError || season.isError) {
     return (
       <RegisterCardView
         summary="Could not load the register"
@@ -379,7 +396,7 @@ export function SessionRegisterCard({ session }: { session: Session }) {
     players,
     coverage.teamIds,
     teams,
-    register.data ?? [],
+    entries,
     coversWholeClub(session, teams.map((t) => t.id)),
   )
   return (

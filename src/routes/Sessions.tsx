@@ -10,6 +10,7 @@ import { useSessions } from '../context/SessionsContext'
 import { useMemberMap, useMyCapabilities, useMyTeams, useTeamMap, useTeams, useVenueMap } from '../lib/queries'
 import { memberTeamIds, sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
+import { venueNameFor } from '../lib/venues'
 import {
   coversWholeClub,
   sessionCoversAnyTeam,
@@ -191,7 +192,7 @@ export function Sessions() {
   // sessions (no team) are shared with everyone, so they stay in scope. With
   // no team set there is nothing to narrow to, so the club schedule shows with
   // the gentle note. Teams gate no access; this only narrows the view.
-  const venueNameOf = (s: Session) => (s.venueId ? (venueById[s.venueId]?.name ?? '') : '') || s.venue
+  const venueNameOf = (s: Session) => venueNameFor(s, venueById)
   const scope = myTeams ?? { teamIds: [], allTeams: false }
   const effectiveIds = memberTeamIds(scope, Object.keys(teamById))
   const hasTeam = scope.allTeams || scope.teamIds.length > 0

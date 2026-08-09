@@ -444,6 +444,7 @@ function renderFields(over: Partial<Parameters<typeof SessionFieldsView>[0]> = {
       busy={false}
       teams={teams}
       venues={venues}
+      venuesUnavailable={false}
       attachedBoardName="4-3-3 shape"
       onField={noop}
       onIntentions={noop}

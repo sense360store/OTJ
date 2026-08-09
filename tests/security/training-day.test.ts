@@ -26,6 +26,7 @@ import {
   expectRlsInsertRefusal,
   expectTriggerRefusal,
   runId,
+  runSqlInContainer,
   seedPlayer,
   serviceClient,
   signIn,
@@ -133,6 +134,37 @@ describe('training day row level security', () => {
       .select('id')
     expect(removeErr).toBeNull()
     expect(removed).toEqual([])
+  })
+
+  it('refuses a venue name made only of whitespace, for every caller', async () => {
+    // btrim with no second argument strips the space character only, so a
+    // tab or newline name would otherwise pass the not-blank check and the
+    // club would carry a venue nobody can see the name of.
+    for (const name of ['   ', '\t', '\n', ' \t\r\n ']) {
+      const { error } = await serviceClient().from('venues').insert({ club_id: CLUB_A, name })
+      expectCheckConstraintRefusal(error, 'venues_name_not_blank')
+    }
+  })
+
+  it('grants anon nothing on any of the three new tables', async () => {
+    const rows = runSqlInContainer(
+      `select coalesce(string_agg(distinct table_name || ':' || privilege_type, ','), 'none')
+         from information_schema.role_table_grants
+        where table_schema = 'public'
+          and table_name in ('venues','session_teams','register_entries')
+          and grantee = 'anon';`,
+    ).trim()
+    expect(rows).toBe('none')
+  })
+
+  it('grants no UPDATE on coverage: a row is added or removed, never edited', async () => {
+    const rows = runSqlInContainer(
+      `select coalesce(string_agg(privilege_type, ','), 'none')
+         from information_schema.role_table_grants
+        where table_schema = 'public' and table_name = 'session_teams'
+          and grantee = 'authenticated';`,
+    ).trim()
+    expect(rows.split(',').sort().join(',')).toBe('DELETE,INSERT,SELECT')
   })
 
   it('a parent cannot create a venue', async () => {

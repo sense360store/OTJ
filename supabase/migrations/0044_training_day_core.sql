@@ -46,6 +46,17 @@
 -- arrivals, not only the session's owner.
 -- =====================================================================
 
+-- ONE transaction, as 0041, 0042 and 0043 are. The self verification at the
+-- end runs in the same transaction as every statement above it, so a failed
+-- assertion rolls the whole release back rather than leaving a half applied
+-- schema live. This matters because the header instructs a by-hand apply: on
+-- a statement-at-a-time path an assertion that fires late (the confdelsetcols
+-- check, or the row level security count) would otherwise leave the new
+-- column, the foreign key, the three tables, their policies and grants and a
+-- replaced audit_sessions permanently in place, with a corrective re-run
+-- blocked because the create table and the add column are not idempotent.
+begin;
+
 -- ---------------------------------------------------------------------
 -- Enabling constraint. The club scoped composite foreign key pattern
 -- (0032) needs the parent's (id, club_id) to be unique. players and
@@ -86,14 +97,18 @@ create table public.venues (
   id         uuid primary key default gen_random_uuid(),
   club_id    uuid not null references public.clubs (id) on delete cascade,
   name       text not null,
-  created_by uuid references public.profiles (id) on delete set null,
   created_at timestamptz not null default now(),
   constraint venues_name_unique_per_club unique (club_id, name),
-  constraint venues_name_not_blank check (btrim(name) <> ''),
+  -- btrim with no second argument strips the space character only, so a name
+  -- made of tabs or newlines would pass. Name the whitespace explicitly.
+  constraint venues_name_not_blank check (btrim(name, E' \t\r\n') <> ''),
   -- The club scoped composite reference pattern needs this on the parent.
   constraint venues_id_club_unique unique (id, club_id)
 );
-create index on public.venues (club_id);
+-- No standalone club_id index: venues_name_unique_per_club is a btree on
+-- (club_id, name), whose leading column already serves club scoped lookups.
+-- No created_by column either. Venues are club.manage configuration with no
+-- ownership concept, and audit_venues already records who created each one.
 
 comment on table public.venues is
   $$Club venue config (0044): the named places the club trains at. Reads are club wide, because a coach needs to know where a session is; writes take club.manage. Carries no person data.$$;
@@ -289,9 +304,17 @@ create policy "register_entries_update" on public.register_entries
 create policy "register_entries_delete" on public.register_entries
   for delete using ( club_id = public.my_club() and public.has_perm('sessions.create') );
 
--- No sequence or table grants beyond the defaults the other app tables
--- use; PostgREST reaches these through the authenticated role. Coverage
--- has no update grant: a row is added or removed, never edited.
+-- Revoke first, then grant exactly what the policies allow. Every table
+-- added since 0030 does this: a stack whose default privileges auto grant
+-- ALL to anon and authenticated would otherwise leave a wider grant behind
+-- these statements than the file appears to give.
+revoke all on public.venues           from anon, authenticated;
+revoke all on public.session_teams    from anon, authenticated;
+revoke all on public.register_entries from anon, authenticated;
+
+-- PostgREST reaches these through the authenticated role. anon receives
+-- nothing: none of these tables has an anonymous read path. Coverage has no
+-- update grant, because a row is added or removed, never edited.
 grant select, insert, update, delete on public.venues to authenticated;
 grant select, insert, delete on public.session_teams to authenticated;
 grant select, insert, update, delete on public.register_entries to authenticated;
@@ -365,6 +388,42 @@ $$;
 create trigger audit_session_teams
   after insert or delete on public.session_teams
   for each row execute function public.audit_session_teams();
+
+-- audit_teams gains bib_colour on its update allow list. A team's default
+-- bib is club configuration written under teams.manage, so changing it
+-- belongs in the trail beside a rename. Field NAMES only, never values, as
+-- everywhere else. The body is otherwise 0037's verbatim; the existing
+-- trigger picks up the replacement.
+create or replace function public.audit_teams()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_club   uuid;
+  v_id     uuid;
+  v_action text;
+  v_changed text[] := '{}';
+begin
+  if tg_op = 'INSERT' then
+    v_club := new.club_id; v_id := new.id; v_action := 'team.created';
+  elsif tg_op = 'DELETE' then
+    v_club := old.club_id; v_id := old.id; v_action := 'team.deleted';
+  else
+    v_club := new.club_id; v_id := new.id;
+    if new.name is distinct from old.name then v_changed := array_append(v_changed, 'name'); end if;
+    if new.bib_colour is distinct from old.bib_colour then v_changed := array_append(v_changed, 'bib_colour'); end if;
+    if array_length(v_changed, 1) is null then return new; end if;
+    v_action := 'team.updated';
+  end if;
+
+  perform public.audit_domain_event(v_club, auth.uid(), v_action, 'team', v_id, v_id, nullif(v_changed, '{}'));
+
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
 
 -- audit_sessions gains venue_id on its update allow list. 0037's rule
 -- keeps an id whose parent is itself audited: venues are audited above,
@@ -493,5 +552,52 @@ begin
                and tgname like 'audit%') then
     raise exception 'training_day_core: register_entries must not be audited per tick';
   end if;
+  -- A team's default bib is club configuration; changing it must leave a
+  -- trail beside a rename.
+  if position('bib_colour' in pg_get_functiondef('public.audit_teams()'::regprocedure)) = 0 then
+    raise exception 'training_day_core: audit_teams must record a bib_colour change';
+  end if;
+
+  -- anon holds nothing on any of the three tables: none of them has an
+  -- anonymous read path, and a stack with permissive default privileges
+  -- would otherwise leave one behind the grants above.
+  select count(*) into n
+    from information_schema.role_table_grants
+   where table_schema = 'public'
+     and table_name in ('venues','session_teams','register_entries')
+     and grantee = 'anon';
+  if n <> 0 then
+    raise exception 'training_day_core: anon must hold no grant on the new tables (got %)', n;
+  end if;
+
+  -- Coverage rows are added and removed, never edited.
+  if exists (select 1 from information_schema.role_table_grants
+              where table_schema='public' and table_name='session_teams'
+                and grantee='authenticated' and privilege_type='UPDATE') then
+    raise exception 'training_day_core: session_teams must not grant UPDATE';
+  end if;
+
+  -- The venue name check must bite on whitespace that is not a space.
+  begin
+    insert into public.venues (club_id, name)
+    values ((select id from public.clubs limit 1), E'\t');
+    raise exception 'training_day_core: a whitespace only venue name was accepted';
+  exception
+    when check_violation then null;
+    when not_null_violation then null;
+  end;
+
+  -- The migration fabricates no coverage and no attendance.
+  if (select count(*) from public.session_teams) <> 0 then
+    raise exception 'training_day_core: the migration must not create coverage rows';
+  end if;
+  if (select count(*) from public.register_entries) <> 0 then
+    raise exception 'training_day_core: the migration must not create register rows';
+  end if;
+  if (select count(*) from public.sessions where venue_id is not null) <> 0 then
+    raise exception 'training_day_core: the migration must not place any session at a venue';
+  end if;
 end
 $$;
+
+commit;

@@ -15,11 +15,21 @@ import { useNavigate } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useSessions } from '../context/SessionsContext'
 import { useAuth } from '../hooks/useAuth'
-import { useDrillMap, useDrills, useMediaMap, useMemberMap, useMyCapabilities, useTeamMap, useTemplates } from '../lib/queries'
+import {
+  useDrillMap,
+  useDrills,
+  useMediaMap,
+  useMemberMap,
+  useMyCapabilities,
+  useTeamMap,
+  useTemplates,
+  useVenueMap,
+} from '../lib/queries'
 import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
 import { compareNewestFirst } from '../lib/contentOrder'
 import type { Session, Template } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
+import { venueNameFor } from '../lib/venues'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { Chip, DrillCard, Empty, ErrorNote, Loading, MediaThumb } from '../components/ui'
@@ -64,6 +74,7 @@ function NextSessionHero({
   isOwn,
   canManage,
   teamName,
+  venueName,
   todayStr,
   nav,
 }: {
@@ -71,6 +82,9 @@ function NextSessionHero({
   isOwn: boolean
   canManage: boolean
   teamName: string
+  // The resolved venue, empty when unknown. Reading s.venue directly here
+  // would show the frozen legacy label and lose the chosen venue entirely.
+  venueName: string
   todayStr: string
   nav: Nav
 }) {
@@ -98,10 +112,10 @@ function NextSessionHero({
           {s.time}
           {mins ? ` · ${mins} min` : ''}
         </span>
-        {s.venue && (
+        {venueName && (
           <span className="row">
             <Icon.pin />
-            {s.venue}
+            {venueName}
           </span>
         )}
         <span className="row">
@@ -299,6 +313,7 @@ function CoachHome() {
   const { user, profile } = useAuth()
   const { caps } = useMyCapabilities()
   const teamById = useTeamMap()
+  const venueById = useVenueMap()
   const memberById = useMemberMap()
   // The This week list honours the Sessions screen's default: yours first,
   // one tap to the whole club.
@@ -338,6 +353,7 @@ function CoachHome() {
   const week = effWeekView === 'mine' ? weekAll.filter(isMine) : weekAll
 
   const teamName = (s: Session) => sessionTeamsLabel(s, teamById)
+  const venueName = (s: Session) => venueNameFor(s, venueById)
 
   // The latest drills and templates together, newest first through the same
   // comparator as the content lists, so Home and the Library agree on ties.
@@ -389,6 +405,7 @@ function CoachHome() {
             isOwn={isMine(next)}
             canManage={caps.has('sessions.manage') || (canPlan && isMine(next))}
             teamName={teamName(next)}
+            venueName={venueName(next)}
             todayStr={todayStr}
             nav={nav}
           />

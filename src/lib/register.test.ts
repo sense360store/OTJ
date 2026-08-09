@@ -74,6 +74,18 @@ describe('activeRoster', () => {
     expect(activeRoster(rows).map((p) => p.id)).toEqual(['p1', 'p2'])
   })
 
+  it('keeps a withdrawn child who was already marked on this register', () => {
+    // Dropping them would silently rewrite the record of a session that has
+    // already happened, and change its counts.
+    const rows = [
+      registration('p1', 'Alpha Synthetic', 'registered'),
+      registration('p3', 'Gamma Synthetic', 'withdrawn'),
+    ]
+    expect(activeRoster(rows, [entry('p3', { present: true })]).map((p) => p.id)).toEqual(['p1', 'p3'])
+    // A withdrawn child nobody marked is still off the roster.
+    expect(activeRoster(rows, [entry('p1')]).map((p) => p.id)).toEqual(['p1'])
+  })
+
   it('carries the seasonal team and shirt through to the register shape', () => {
     const rows = [{ ...registration('p1', 'Alpha Synthetic', 'registered', 't2'), shirtNumber: 9 }]
     expect(activeRoster(rows)[0]).toEqual({

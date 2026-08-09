@@ -79,9 +79,18 @@ export function rosterForSession(
 // it never appears on a register and cannot be quick added. Pending is
 // included: a child whose paperwork is still moving is still standing in
 // front of the coach.
-export function activeRoster(rows: RegisteredPlayer[]): Player[] {
+//
+// The one exception is a child who was already marked on this register and
+// has since been withdrawn. Dropping them would silently rewrite a record of
+// who was at a session that already happened, and change its counts, so an
+// existing entry keeps them listed. Passing no entries keeps the plain rule.
+export function activeRoster(
+  rows: RegisteredPlayer[],
+  entries: Pick<RegisterEntry, 'playerId'>[] = [],
+): Player[] {
+  const marked = new Set(entries.map((e) => e.playerId))
   return rows
-    .filter((r) => r.status !== 'withdrawn')
+    .filter((r) => r.status !== 'withdrawn' || marked.has(r.playerId))
     .map((r) => ({
       id: r.playerId,
       teamId: r.teamId,

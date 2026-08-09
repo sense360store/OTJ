@@ -20,11 +20,13 @@ import {
   useMyTeams,
   useProgrammeMap,
   useTeamMap,
+  useVenueMap,
 } from '../lib/queries'
 import { useSessions } from '../context/SessionsContext'
 import { isSampleMedia, memberTeamIds } from '../lib/data'
 import type { Drill, Session } from '../lib/data'
 import { sessionTeamsLabel, sessionVisibleToTeams } from '../lib/sessionTeams'
+import { venueNameFor } from '../lib/venues'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { DrillCard, ErrorNote, fmtDate, Loading } from '../components/ui'
@@ -365,6 +367,7 @@ export function ParentHome() {
   const mediaById = useMediaMap()
   const programmeById = useProgrammeMap()
   const teamById = useTeamMap()
+  const venueById = useVenueMap()
 
   if (sessionsLoading || teamsLoading || drillsLoading) return <Loading />
   if (sessionsError || teamsError || drillsError) return <ErrorNote />
@@ -407,7 +410,7 @@ export function ParentHome() {
       dow: d.toLocaleDateString('en-GB', { weekday: 'short' }),
       day: String(d.getDate()),
       time: s.time,
-      venue: s.venue,
+      venue: venueNameFor(s, venueById),
       teamLabel: teamLabel(s),
       focus: s.focus,
       intentions: s.intentions,

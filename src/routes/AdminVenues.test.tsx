@@ -27,6 +27,21 @@ describe('DeleteVenueModalView', () => {
     expect(html).toContain('keep their date, plan and')
   })
 
+  it('says the number is unknown rather than zero when the session list has not loaded', () => {
+    const html = renderToStaticMarkup(
+      <DeleteVenueModalView
+        venue={{ id: 'v1', name: 'Springmill 3G' }}
+        sessionCount={null}
+        busy={false}
+        failed={false}
+        onCancel={noop}
+        onConfirm={noop}
+      />,
+    )
+    expect(html).toContain('not known here')
+    expect(html).not.toContain('0 session')
+  })
+
   it('agrees with itself about one session', () => {
     const html = renderToStaticMarkup(
       <DeleteVenueModalView
@@ -38,7 +53,8 @@ describe('DeleteVenueModalView', () => {
         onConfirm={noop}
       />,
     )
-    expect(html).toContain('1 session are')
+    expect(html).toContain('1 session is at this venue')
+    expect(html).toContain('It keeps its')
   })
 
   it('freezes both controls while the removal is in flight', () => {

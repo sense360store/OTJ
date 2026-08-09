@@ -27,7 +27,7 @@ export function DeleteVenueModalView({
   onConfirm,
 }: {
   venue: Venue
-  sessionCount: number
+  sessionCount: number | null
   busy: boolean
   failed: boolean
   onCancel: () => void
@@ -56,9 +56,19 @@ export function DeleteVenueModalView({
       }
     >
       <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-        {sessionCount} session{sessionCount !== 1 ? 's' : ''} are at this venue. They keep their date, plan and
-        register, and show no venue until someone picks one. Nothing is removed but the venue itself.
+        {sessionCount === null
+          ? 'Any session at this venue keeps its date, plan and register, and shows no venue until someone picks one. Nothing is removed but the venue itself.'
+          : `${sessionCount} session${sessionCount !== 1 ? 's are' : ' is'} at this venue. ${
+              sessionCount === 1 ? 'It keeps its' : 'They keep their'
+            } date, plan and register, and ${
+              sessionCount === 1 ? 'shows' : 'show'
+            } no venue until someone picks one. Nothing is removed but the venue itself.`}
       </p>
+      {sessionCount === null && (
+        <p className="muted" style={{ fontSize: 13 }}>
+          The session list has not loaded, so the number affected is not known here.
+        </p>
+      )}
       {failed && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
           Could not remove the venue. Try again.
@@ -74,7 +84,10 @@ function DeleteVenueModal({
   onClose,
 }: {
   venue: Venue
-  sessionCount: number
+  // Null when the sessions read has not landed or failed: "we do not know how
+  // many" must not render as the confident "0 sessions" that would make this
+  // look like a harmless delete.
+  sessionCount: number | null
   onClose: () => void
 }) {
   const del = useDeleteVenue()
@@ -125,7 +138,7 @@ function VenueRow({ venue, onDelete }: { venue: Venue; onDelete: () => void }) {
 
 export function AdminVenues() {
   const { data: venues = [], isLoading, isError } = useVenues()
-  const { sessions } = useSessions()
+  const { sessions, loading: sessionsLoading, error: sessionsError } = useSessions()
   const insert = useInsertVenue()
   const [name, setName] = useState('')
   const [removing, setRemoving] = useState<Venue | null>(null)
@@ -194,7 +207,9 @@ export function AdminVenues() {
       {removing && (
         <DeleteVenueModal
           venue={removing}
-          sessionCount={sessions.filter((s) => s.venueId === removing.id).length}
+          sessionCount={
+            sessionsLoading || sessionsError ? null : sessions.filter((s) => s.venueId === removing.id).length
+          }
           onClose={() => setRemoving(null)}
         />
       )}

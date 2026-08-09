@@ -1831,12 +1831,10 @@ interface UpsertCtx {
 // code never writes a VALUE to either; it retires them, so the read fallback
 // behind each cannot resurrect and contradict the real field.
 //
-//   team_id  cleared on every save. Coverage lives in session_teams, and
-//            toSession normalises a legacy row's frozen team into teamIds on
-//            the way in, so an empty covered set here means a coach cleared
-//            it, never "this legacy session was passed through untouched".
-//            Left set, a cleared session would keep reading as covering the
-//            old team and could never be cleared.
+//   team_id  NOT touched here. Coverage lives in session_teams, and retiring
+//            the frozen team before those rows exist would destroy a legacy
+//            session's only record of its team if the coverage write then
+//            failed. retireLegacySessionTeam runs after reconcile succeeds.
 //   venue    cleared only when a real venue is chosen, so a session saved
 //            before venues existed keeps its typed label until someone
 //            positively replaces it. Never written with a value, so a new
@@ -1850,7 +1848,6 @@ export function toSessionWriteRow(input: Session): Record<string, unknown> {
     age_group: input.ageGroup,
     status: input.status,
     venue_id: input.venueId,
-    team_id: null,
     ...(input.venueId ? { venue: null } : {}),
     activities: input.activities.map(toActivityRow),
     intentions: input.intentions,
@@ -1917,8 +1914,12 @@ export function useUpsertSession() {
         update,
         isUniqueViolation,
       })
-      const teamIds = await reconcileSessionTeams(saved.id, saved.teamIds, input.teamIds, profile?.club_id ?? null)
-      return { ...saved, teamIds }
+      const teamIds = await reconcileSessionTeams(saved.id, input.teamIds, profile?.club_id ?? null)
+      // Only now, with coverage recorded, is the frozen column safe to clear.
+      // Only a legacy row still carries one, so this fires once per session
+      // ever, never on a session created since 0044.
+      if (saved.teamId) await retireLegacySessionTeam(saved.id)
+      return { ...saved, teamId: null, teamIds }
     },
     // Optimistic and synchronous: the list and the per-id cache are both
     // seeded, so a screen arriving by session id straight after a successful
@@ -1975,11 +1976,21 @@ export function useUpsertSession() {
 // real rows behind that this diff never removes.
 export async function reconcileSessionTeams(
   sessionId: string,
-  currentIds: string[],
   desiredIds: string[],
   clubId: string | null,
 ): Promise<string[]> {
   const desired = [...new Set(desiredIds)].sort()
+  // The CURRENT set is read here rather than taken from the caller, and it is
+  // the rows themselves, never the normalised coverage. A caller passing the
+  // normalised set would hide the case this diff exists to handle: a legacy
+  // session reads as covering its frozen team while having no row at all, so
+  // the diff would find nothing to add and the row would never be written.
+  const { data: rows, error: readError } = await supabase
+    .from('session_teams')
+    .select('team_id')
+    .eq('session_id', sessionId)
+  if (readError) throw readError
+  const currentIds = [...new Set((rows as { team_id: string }[]).map((r) => r.team_id))]
   const toAdd = desired.filter((id) => !currentIds.includes(id))
   const toRemove = currentIds.filter((id) => !desired.includes(id))
   if (toAdd.length > 0) {
@@ -2001,6 +2012,17 @@ export async function reconcileSessionTeams(
     if (error) throw error
   }
   return desired
+}
+
+// Retire a legacy session's frozen team_id, once, AFTER its replacement
+// coverage rows are recorded. Splitting it from the main write is what makes
+// the transition safe without a transaction across two tables: if this fails,
+// the session simply keeps both, coverage rows win on read, and the next save
+// retires it. If it ran first and the coverage write then failed, a legacy
+// session would be left with no record of its team at all.
+export async function retireLegacySessionTeam(sessionId: string): Promise<void> {
+  const { error } = await supabase.from('sessions').update({ team_id: null }).eq('id', sessionId)
+  if (error) throw error
 }
 
 // Owner or admin only; the sessions delete RLS is the real enforcement.
