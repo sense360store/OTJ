@@ -13,9 +13,12 @@ import {
   useMyCapabilities,
   useSession,
   useTeams,
+  useVenues,
 } from '../lib/queries'
 import { blankSession, embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
+import type { Venue } from '../lib/venues'
+import { toggleCoveredTeam } from '../lib/sessionTeams'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -587,7 +590,88 @@ export function AddActivityBar({
   )
 }
 
-type SessionFieldKey = 'name' | 'date' | 'time' | 'ageGroup' | 'venue' | 'focus' | 'space' | 'sourceUrl'
+type SessionFieldKey = 'name' | 'date' | 'time' | 'ageGroup' | 'focus' | 'space' | 'sourceUrl'
+
+// The covered teams control. Coverage is a set, not one team: a Thursday
+// night that runs Titans and Trojans together is the normal case, and the
+// register lists exactly what is ticked here. Nothing ticked is a real
+// state and says so, rather than being read as the whole club.
+export function CoveredTeamsField({
+  teams,
+  selected,
+  disabled,
+  readOnly,
+  onToggle,
+  onAll,
+}: {
+  teams: Team[]
+  selected: string[]
+  disabled: boolean
+  readOnly: boolean
+  onToggle: (teamId: string) => void
+  onAll: () => void
+}) {
+  const all = teams.length > 0 && teams.every((t) => selected.includes(t.id))
+  if (readOnly) {
+    const names = teams.filter((t) => selected.includes(t.id)).map((t) => t.name)
+    return (
+      <div className="field">
+        <label>Teams</label>
+        {names.length === 0 ? (
+          <span className="muted" style={{ fontSize: 13 }}>
+            Not set
+          </span>
+        ) : (
+          <div className="row wrap" style={{ gap: 6 }}>
+            {(all ? ['All teams'] : names).map((n) => (
+              <span key={n} className="pill">
+                {n}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+  return (
+    <div className="field">
+      <label>Teams</label>
+      <div className="row wrap" style={{ gap: 7 }}>
+        <button
+          type="button"
+          className={'chip' + (all ? ' on' : '')}
+          style={{ minHeight: 44 }}
+          aria-pressed={all}
+          disabled={disabled || teams.length === 0}
+          onClick={onAll}
+        >
+          All teams
+        </button>
+        {teams.map((t) => {
+          const on = selected.includes(t.id)
+          return (
+            <button
+              key={t.id}
+              type="button"
+              className={'chip' + (on ? ' on' : '')}
+              style={{ minHeight: 44 }}
+              aria-pressed={on}
+              disabled={disabled}
+              onClick={() => onToggle(t.id)}
+            >
+              {t.name}
+            </button>
+          )
+        })}
+      </div>
+      {selected.length === 0 && (
+        <span className="muted" style={{ fontSize: 12.5, marginTop: 6, display: 'block' }}>
+          No teams selected, so the register will list nobody.
+        </span>
+      )}
+    </div>
+  )
+}
 
 // The planner's session details card: the totals header, every session field
 // and the tactics board control. Pulled out as a presentational component so
@@ -600,10 +684,13 @@ export function SessionFieldsView({
   readOnly,
   busy,
   teams,
+  venues,
   attachedBoardName,
   onField,
   onIntentions,
-  onTeam,
+  onVenue,
+  onToggleTeam,
+  onAllTeams,
   onRemoveBoard,
   onOpenBoardPicker,
 }: {
@@ -611,10 +698,13 @@ export function SessionFieldsView({
   readOnly: boolean
   busy: boolean
   teams: Team[]
+  venues: Venue[]
   attachedBoardName?: string
   onField: (k: SessionFieldKey, v: string) => void
   onIntentions: (v: string[]) => void
-  onTeam: (v: string) => void
+  onVenue: (v: string | null) => void
+  onToggleTeam: (teamId: string) => void
+  onAllTeams: () => void
   onRemoveBoard: () => void
   onOpenBoardPicker: () => void
 }) {
@@ -655,27 +745,47 @@ export function SessionFieldsView({
           </select>
         </div>
         <div className="field" style={{ flex: 1 }}>
-          <label>Venue</label>
-          <input value={session.venue} disabled={frozen} onChange={(e) => onField('venue', e.target.value)} />
-        </div>
-      </div>
-      <div className="row" style={{ gap: 10 }}>
-        <div className="field" style={{ flex: 1 }}>
-          <label>Team</label>
-          <select value={session.teamId ?? ''} disabled={frozen} onChange={(e) => onTeam(e.target.value)}>
-            <option value="">Club (no team)</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field" style={{ flex: 1 }}>
           <label>Focus</label>
           <input value={session.focus} disabled={frozen} onChange={(e) => onField('focus', e.target.value)} />
         </div>
       </div>
+      {/* Venue is one of the club's real places now, not free text, so
+          every session at Springmill agrees on the name. A session saved
+          before venues existed keeps its typed venue as a read only line
+          until someone picks a real one. */}
+      <div className="field">
+        <label>Venue</label>
+        <select
+          value={session.venueId ?? ''}
+          disabled={frozen}
+          onChange={(e) => onVenue(e.target.value || null)}
+        >
+          <option value="">Not set</option>
+          {venues.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name}
+            </option>
+          ))}
+        </select>
+        {!session.venueId && session.venue && (
+          <span className="muted" style={{ fontSize: 12.5, marginTop: 6, display: 'block' }}>
+            Previously typed as “{session.venue}”. Pick a venue to replace it.
+          </span>
+        )}
+        {venues.length === 0 && (
+          <span className="muted" style={{ fontSize: 12.5, marginTop: 6, display: 'block' }}>
+            No venues yet. An admin adds them under Admin, Venues.
+          </span>
+        )}
+      </div>
+      <CoveredTeamsField
+        teams={teams}
+        selected={session.teamIds}
+        disabled={busy}
+        readOnly={readOnly}
+        onToggle={onToggleTeam}
+        onAll={onAllTeams}
+      />
       <div className="field">
         <label>Space</label>
         <input
@@ -786,6 +896,7 @@ function PlannerEditor({
   const { caps } = useMyCapabilities()
   const { upsertSession } = useSessions()
   const { data: teams = [] } = useTeams()
+  const { data: venues = [] } = useVenues()
   const { data: boards = [] } = useBoards()
   const memberById = useMemberMap()
 
@@ -794,6 +905,18 @@ function PlannerEditor({
       ? (JSON.parse(JSON.stringify(existing)) as Session)
       : blankSession(newDefaults?.coachId ?? '', newDefaults?.teamId ?? null),
   )
+
+  // A new session whose coach has no team on their profile starts covering
+  // the whole club, seeded once the team list arrives. Seeding here rather
+  // than at save time means the chips show what will be written; nothing is
+  // invented later. An existing session, and a draft a coach has already
+  // touched, are left alone.
+  const coverageSeeded = useRef(!!existing || !!newDefaults?.teamId)
+  useEffect(() => {
+    if (coverageSeeded.current || teams.length === 0) return
+    coverageSeeded.current = true
+    setSession((s) => (s.teamIds.length > 0 ? s : { ...s, teamIds: teams.map((t) => t.id) }))
+  }, [teams])
   const [addOpen, setAddOpen] = useState(false)
   const [boardPickerOpen, setBoardPickerOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -823,7 +946,16 @@ function PlannerEditor({
 
   const setField = (k: SessionFieldKey, v: string) => setSession((s) => ({ ...s, [k]: v }))
   const setIntentions = (v: string[]) => setSession((s) => ({ ...s, intentions: v }))
-  const setTeam = (v: string) => setSession((s) => ({ ...s, teamId: v || null }))
+  const setVenue = (v: string | null) => setSession((s) => ({ ...s, venueId: v }))
+  const toggleTeam = (teamId: string) =>
+    setSession((s) => ({ ...s, teamIds: toggleCoveredTeam(s.teamIds, teamId) }))
+  // All teams is a toggle: pressed when everything is already ticked it
+  // clears the lot, which is how a coach starts again from one team.
+  const allTeams = () =>
+    setSession((s) => {
+      const every = teams.length > 0 && teams.every((t) => s.teamIds.includes(t.id))
+      return { ...s, teamIds: every ? [] : teams.map((t) => t.id) }
+    })
   const setBoard = (id: string | null) => setSession((s) => ({ ...s, boardId: id }))
   // The attached board's name, resolved from the club list for the label. A
   // board the coach cannot see (or one deleted) leaves boardId set but the
@@ -1063,10 +1195,13 @@ function PlannerEditor({
             readOnly={readOnly}
             busy={busy}
             teams={teams}
+            venues={venues}
             attachedBoardName={attachedBoard?.name}
             onField={setField}
             onIntentions={setIntentions}
-            onTeam={setTeam}
+            onVenue={setVenue}
+            onToggleTeam={toggleTeam}
+            onAllTeams={allTeams}
             onRemoveBoard={() => setBoard(null)}
             onOpenBoardPicker={() => setBoardPickerOpen(true)}
           />

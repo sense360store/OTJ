@@ -25,6 +25,8 @@ function session(overrides: Partial<Session> = {}): Session {
     liveActivityStartedAt: null,
     spondEventId: null,
     boardId: null,
+  venueId: null,
+  teamIds: [],
     rights: 'internal_only',
     ...overrides,
   }

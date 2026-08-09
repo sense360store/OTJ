@@ -4,11 +4,13 @@ import { MemoryRouter } from 'react-router-dom'
 import {
   ActivityCardView,
   AddActivityBar,
+  CoveredTeamsField,
   PlannerActionsView,
   PlannerHeaderView,
   PlannerWorkspace,
   SessionFieldsView,
 } from './Planner'
+import type { Venue } from '../lib/venues'
 import type { PlannerAction } from '../lib/sessionSubmit'
 import { SESSION_SHARE_ERROR } from '../lib/sessionSubmit'
 import { SHARE_ACCOUNT_NOTE, type ShareFeedback } from '../lib/share'
@@ -233,10 +235,11 @@ function renderActions(over: Partial<Parameters<typeof PlannerActionsView>[0]> =
 
 // The buttons in document order, with their disabled state, so assertions can
 // target one button rather than the whole markup string.
-function buttons(html: string): { label: string; disabled: boolean }[] {
+function buttons(html: string): { label: string; disabled: boolean; tag: string }[] {
   return [...html.matchAll(/<button[^>]*>.*?<\/button>/gs)].map((m) => ({
     label: m[0].replace(/<[^>]+>/g, ''),
     disabled: m[0].includes('disabled'),
+    tag: m[0].match(/<button[^>]*>/)?.[0] ?? m[0],
   }))
 }
 
@@ -395,8 +398,12 @@ describe('PlannerActionsView share control', () => {
 // without unmounting them (a failure re-enables them for a retry). readOnly is
 // the separate viewer state, unchanged by this work.
 const teams: Team[] = [
-  { id: 't1', name: 'Titans' },
-  { id: 't2', name: 'Trojans' },
+  { id: 't1', name: 'Titans', bibColour: null },
+  { id: 't2', name: 'Trojans', bibColour: null },
+]
+const venues: Venue[] = [
+  { id: 'v1', name: 'Springmill 3G', centreLat: null, centreLng: null },
+  { id: 'v2', name: 'Ossett Academy', centreLat: null, centreLng: null },
 ]
 
 function sessionFixture(over: Partial<Session> = {}): Session {
@@ -410,6 +417,8 @@ function sessionFixture(over: Partial<Session> = {}): Session {
     focus: 'Passing',
     status: 'upcoming',
     activities: [{ phase: 'Skill', drillId: 'd1', duration: 15 }],
+    teamIds: [],
+    venueId: null,
     coachId: 'coach1',
     teamId: 't1',
     intentions: ['Play out from the back'],
@@ -434,10 +443,13 @@ function renderFields(over: Partial<Parameters<typeof SessionFieldsView>[0]> = {
       readOnly={false}
       busy={false}
       teams={teams}
+      venues={venues}
       attachedBoardName="4-3-3 shape"
       onField={noop}
       onIntentions={noop}
-      onTeam={noop}
+      onVenue={noop}
+      onToggleTeam={noop}
+      onAllTeams={noop}
       onRemoveBoard={noop}
       onOpenBoardPicker={noop}
       {...over}
@@ -449,10 +461,13 @@ describe('SessionFieldsView', () => {
   it('freezes every session field, the intentions input and the board controls while a write is pending', () => {
     const html = renderFields({ busy: true })
     const controls = fieldControls(html)
-    // Name, date, time, age group, venue, team, focus, space, the intentions
-    // input and the source link: every field control is present and disabled.
-    expect(controls.length).toBeGreaterThanOrEqual(10)
+    // Name, date, time, age group, focus, venue, space, the intentions input
+    // and the source link: every field control is present and disabled.
+    expect(controls.length).toBeGreaterThanOrEqual(9)
     expect(controls.every((c) => c.disabled)).toBe(true)
+    // The covered teams chips edit the draft too, so they freeze with it.
+    expect(buttons(html).find((b) => b.label === 'Titans')?.disabled).toBe(true)
+    expect(buttons(html).find((b) => b.label === 'All teams')?.disabled).toBe(true)
     // The tactics board Change and Remove controls edit the draft too.
     expect(buttons(html).find((b) => b.label === 'Change')?.disabled).toBe(true)
     const removeBoardTag = html.match(/<button\b[^>]*aria-label="Remove board"[^>]*>/)?.[0] ?? ''
@@ -465,8 +480,9 @@ describe('SessionFieldsView', () => {
   it('keeps every field editable when idle, so a coach can edit and retry after a failure', () => {
     const html = renderFields({ busy: false })
     const controls = fieldControls(html)
-    expect(controls.length).toBeGreaterThanOrEqual(10)
+    expect(controls.length).toBeGreaterThanOrEqual(9)
     expect(controls.every((c) => !c.disabled)).toBe(true)
+    expect(buttons(html).find((b) => b.label === 'Titans')?.disabled).toBe(false)
     expect(buttons(html).find((b) => b.label === 'Change')?.disabled).toBe(false)
     const removeBoardTag = html.match(/<button\b[^>]*aria-label="Remove board"[^>]*>/)?.[0] ?? ''
     expect(removeBoardTag).not.toContain('disabled')
@@ -483,6 +499,78 @@ describe('SessionFieldsView', () => {
     expect(html).not.toContain('>Change<')
     expect(html).not.toContain('aria-label="Remove board"')
     expect(html).toContain('4-3-3 shape')
+  })
+
+  it('offers the club venues rather than free text, keeping the old typed value visible', () => {
+    const html = renderFields()
+    expect(html).toContain('Springmill 3G')
+    expect(html).toContain('Ossett Academy')
+    // A session saved before venues existed shows what was typed, so the
+    // information is not lost while nobody has picked a real venue yet.
+    expect(html).toContain('Previously typed as')
+  })
+
+  it('drops the legacy note once a real venue is chosen', () => {
+    const html = renderFields({ session: sessionFixture({ venueId: 'v1' }) })
+    expect(html).not.toContain('Previously typed as')
+  })
+
+  it('says where venues come from when the club has none', () => {
+    expect(renderFields({ venues: [] })).toContain('Admin, Venues')
+  })
+})
+
+describe('CoveredTeamsField', () => {
+  function renderCover(over: Partial<Parameters<typeof CoveredTeamsField>[0]> = {}): string {
+    return renderToStaticMarkup(
+      <CoveredTeamsField
+        teams={teams}
+        selected={['t1']}
+        disabled={false}
+        readOnly={false}
+        onToggle={noop}
+        onAll={noop}
+        {...over}
+      />,
+    )
+  }
+
+  it('shows a chip per team with the covered ones pressed', () => {
+    const html = renderCover()
+    const all = buttons(html)
+    expect(all.find((b) => b.label === 'Titans')?.tag).toContain('aria-pressed="true"')
+    expect(all.find((b) => b.label === 'Trojans')?.tag).toContain('aria-pressed="false"')
+    expect(all.find((b) => b.label === 'All teams')?.tag).toContain('aria-pressed="false"')
+  })
+
+  it('presses All teams only when every team is covered', () => {
+    const html = renderCover({ selected: ['t1', 't2'] })
+    expect(buttons(html).find((b) => b.label === 'All teams')?.tag).toContain('aria-pressed="true"')
+  })
+
+  it('warns rather than pretending an empty selection means the whole club', () => {
+    // The failure this guards: absence read as "everyone", which would put
+    // every child in the club on a register meant for one team.
+    expect(renderCover({ selected: [] })).toContain('the register will list nobody')
+  })
+
+  it('renders a viewer the covered names with nothing to press', () => {
+    const html = renderCover({ readOnly: true })
+    expect(html).toContain('Titans')
+    expect(html).not.toContain('<button')
+  })
+
+  it('names a whole club session as All teams for a viewer', () => {
+    expect(renderCover({ readOnly: true, selected: ['t1', 't2'] })).toContain('All teams')
+  })
+
+  it('tells a viewer when coverage was never set', () => {
+    expect(renderCover({ readOnly: true, selected: [] })).toContain('Not set')
+  })
+
+  it('is reachable with a thumb: every chip meets the 44px target', () => {
+    const html = renderCover()
+    for (const b of buttons(html)) expect(b.tag).toContain('min-height:44px')
   })
 })
 

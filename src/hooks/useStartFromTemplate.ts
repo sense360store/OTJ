@@ -54,6 +54,10 @@ export function useStartFromTemplate() {
       liveActivityStartedAt: null,
       spondEventId: null,
       boardId: null,
+    venueId: null,
+    // Unspecified: the upsert defaults a new session to covering the
+    // whole club, which is what a club training night nearly always is.
+    teamIds: [],
       // Club only until classified; the upsert never writes the column.
       rights: 'internal_only',
     }

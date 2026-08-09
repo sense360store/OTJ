@@ -25,6 +25,7 @@ import { ProgrammeDetail } from './routes/ProgrammeDetail'
 import { Media } from './routes/Media'
 import { LiveSession } from './routes/LiveSession'
 import { SessionDay } from './routes/SessionDay'
+import { SessionRegister } from './routes/SessionRegister'
 import { Account } from './routes/Account'
 import { Feedback } from './routes/Feedback'
 import { AdminClub } from './routes/AdminClub'
@@ -124,6 +125,13 @@ export function App() {
               /roster path redirects here so bookmarks keep working. */}
           <Route element={<RequireCap cap="players.view" />}>
             <Route path="players" element={<Players />} />
+            {/* The register lists children by name, so it sits behind the same
+                players.view gate as the roster: without it there is nothing to
+                read and no reason to ask. Marking someone in is a separate
+                boundary again (sessions.create on register_entries), enforced
+                by RLS and reflected in the screen, which renders read only for
+                a holder who can see the roster but not write the register. */}
+            <Route path="session-day/:sessionId/register" element={<SessionRegister />} />
           </Route>
           <Route path="roster" element={<Navigate to="/players" replace />} />
           {/* The club wide Activity feed reads the audit log, gated on

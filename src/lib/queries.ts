@@ -65,6 +65,8 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
+import { isBoundary, type Boundary, type Venue, type VenueArea } from './venues'
+import type { RegisterEntry } from './register'
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
 import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
 import { newestFirst } from './contentOrder'
@@ -204,12 +206,17 @@ export interface SessionRow {
   spond_event_id: string | null
   board_id: string | null
   rights: ContentRights
+  venue_id: string | null
+  // The coverage embed rides the session read, so a screen never has to
+  // fetch coverage separately and can never render a stale set.
+  session_teams?: { team_id: string }[] | null
 }
 
 interface TeamRow {
   id: string
   club_id: string
   name: string
+  bib_colour: string | null
   created_at: string
 }
 
@@ -257,9 +264,11 @@ const TEMPLATE_COLS =
   'id, club_id, name, focus, author, activities, created_by, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label, rights'
 const PROGRAMME_COLS =
   'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at, rights'
+// session_teams rides the session read as an embed, so coverage is always
+// exactly as fresh as the row it belongs to.
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, rights'
-const TEAM_COLS = 'id, club_id, name, created_at'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, rights, venue_id, session_teams(team_id)'
+const TEAM_COLS = 'id, club_id, name, bib_colour, created_at'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
 const PROFILE_COLS =
@@ -427,12 +436,16 @@ export function toSession(r: SessionRow): Session {
     liveActivityStartedAt: r.live_activity_started_at ?? null,
     spondEventId: r.spond_event_id ?? null,
     boardId: r.board_id ?? null,
+    venueId: r.venue_id ?? null,
+    // Sorted so the covered set is a stable value: two reads of the same
+    // coverage compare equal whatever order PostgREST returned the rows.
+    teamIds: [...new Set((r.session_teams ?? []).map((t) => t.team_id))].sort(),
     rights: r.rights ?? 'internal_only',
   }
 }
 
 function toTeam(r: TeamRow): Team {
-  return { id: r.id, name: r.name }
+  return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null }
 }
 
 function toRole(r: RoleRow): RoleInfo {
@@ -1835,7 +1848,9 @@ export function useUpsertSession() {
         venue: input.venue,
         age_group: input.ageGroup,
         status: input.status,
-        team_id: input.teamId,
+        // team_id is FROZEN (0044) and deliberately absent: coverage is
+        // session_teams rows, reconciled after the row write below.
+        venue_id: input.venueId,
         activities,
         ...faFields,
       }
@@ -1867,7 +1882,14 @@ export function useUpsertSession() {
       // exists is a cache-derived hint for the fast path only; the server is
       // the authority through the duplicate-key recovery inside
       // upsertSessionWrite.
-      return upsertSessionWrite({ exists: existed.current.get(input.id) ?? false, insert, update, isUniqueViolation })
+      const saved = await upsertSessionWrite({
+        exists: existed.current.get(input.id) ?? false,
+        insert,
+        update,
+        isUniqueViolation,
+      })
+      const teamIds = await reconcileSessionTeams(saved.id, saved.teamIds, input.teamIds, profile?.club_id ?? null)
+      return { ...saved, teamIds }
     },
     // Optimistic and synchronous: the list and the per-id cache are both
     // seeded, so a screen arriving by session id straight after a successful
@@ -1909,6 +1931,47 @@ export function useUpsertSession() {
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
   })
+}
+
+// Bring a session's covered teams to exactly the set the caller asked for.
+//
+// The desired set is taken literally, empty included: a coach who clears
+// every team means it, and the register then says the session has no teams
+// rather than quietly listing the whole club. Whatever default a new
+// session starts from is chosen in the planner, where the coach can see it
+// before saving.
+//
+// currentIds must be server truth (the row read back by the write), not a
+// cache: a stale cache that had not yet seen the coverage rows would leave
+// real rows behind that this diff never removes.
+export async function reconcileSessionTeams(
+  sessionId: string,
+  currentIds: string[],
+  desiredIds: string[],
+  clubId: string | null,
+): Promise<string[]> {
+  const desired = [...new Set(desiredIds)].sort()
+  const toAdd = desired.filter((id) => !currentIds.includes(id))
+  const toRemove = currentIds.filter((id) => !desired.includes(id))
+  if (toAdd.length > 0) {
+    if (!clubId) throw new Error('You must be signed in to save a session.')
+    const { error } = await supabase
+      .from('session_teams')
+      .upsert(
+        toAdd.map((team_id) => ({ session_id: sessionId, team_id, club_id: clubId })),
+        { onConflict: 'session_id,team_id', ignoreDuplicates: true },
+      )
+    if (error) throw error
+  }
+  if (toRemove.length > 0) {
+    const { error } = await supabase
+      .from('session_teams')
+      .delete()
+      .eq('session_id', sessionId)
+      .in('team_id', toRemove)
+    if (error) throw error
+  }
+  return desired
 }
 
 // Owner or admin only; the sessions delete RLS is the real enforcement.
@@ -4906,6 +4969,311 @@ export function useRevokeManagedShare() {
       void qc.invalidateQueries({
         queryKey: vars.sourceId ? shareStatusKey(vars.kind, vars.sourceId) : ['content-share-status'],
       })
+    },
+  })
+}
+
+// ---- Venues (club.manage) --------------------------------------------------
+// The club's real places (0044). Reads are club wide because a coach needs
+// to know where the session is; writes are the admin surface.
+
+export interface VenueRow {
+  id: string
+  club_id: string
+  name: string
+  centre_lat: number | string | null
+  centre_lng: number | string | null
+  created_at: string
+}
+
+export interface VenueAreaRow {
+  id: string
+  club_id: string
+  venue_id: string
+  name: string
+  boundary: unknown
+  usable: boolean
+  created_at: string
+}
+
+const VENUE_COLS = 'id, club_id, name, centre_lat, centre_lng, created_at'
+const VENUE_AREA_COLS = 'id, club_id, venue_id, name, boundary, usable, created_at'
+
+export function toVenue(r: VenueRow): Venue {
+  return {
+    id: r.id,
+    name: r.name,
+    // Postgres numeric arrives as a string through PostgREST; a value that
+    // will not parse reads as null rather than NaN.
+    centreLat: r.centre_lat === null ? null : Number(r.centre_lat),
+    centreLng: r.centre_lng === null ? null : Number(r.centre_lng),
+  }
+}
+
+export function toVenueArea(r: VenueAreaRow): VenueArea {
+  return {
+    id: r.id,
+    venueId: r.venue_id,
+    name: r.name,
+    // A stored boundary that will not parse reads as null and the screen
+    // says so, rather than rendering nonsense. The column check makes this
+    // unreachable in practice.
+    boundary: isBoundary(r.boundary) ? r.boundary : null,
+    usable: r.usable,
+  }
+}
+
+export function useVenues(enabled = true) {
+  return useQuery({
+    queryKey: ['venues'],
+    enabled,
+    queryFn: async (): Promise<Venue[]> => {
+      const { data, error } = await supabase.from('venues').select(VENUE_COLS).order('name', { ascending: true })
+      if (error) throw error
+      return (data as unknown as VenueRow[]).map(toVenue)
+    },
+  })
+}
+
+export function useVenueAreas(enabled = true) {
+  return useQuery({
+    queryKey: ['venue_areas'],
+    enabled,
+    queryFn: async (): Promise<VenueArea[]> => {
+      const { data, error } = await supabase
+        .from('venue_areas')
+        .select(VENUE_AREA_COLS)
+        .order('name', { ascending: true })
+      if (error) throw error
+      return (data as unknown as VenueAreaRow[]).map(toVenueArea)
+    },
+  })
+}
+
+export function useVenueMap(): Record<string, Venue> {
+  const { data } = useVenues()
+  return useMemo(() => Object.fromEntries((data ?? []).map((v) => [v.id, v])), [data])
+}
+
+export function useInsertVenue() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { name: string; centreLat: number | null; centreLng: number | null }>({
+    mutationFn: async ({ name, centreLat, centreLng }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in to add a venue.')
+      const { error } = await supabase
+        .from('venues')
+        .insert({ club_id: profile.club_id, name, centre_lat: centreLat, centre_lng: centreLng })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+  })
+}
+
+export function useUpdateVenue() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name: string; centreLat: number | null; centreLng: number | null }>({
+    mutationFn: async ({ id, name, centreLat, centreLng }) => {
+      const { error } = await supabase
+        .from('venues')
+        .update({ name, centre_lat: centreLat, centre_lng: centreLng })
+        .eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+  })
+}
+
+// Removing a venue cascades its areas and nulls sessions.venue_id (the
+// composite reference names that column alone, so club_id survives).
+export function useDeleteVenue() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, string>({
+    mutationFn: async (id) => {
+      const { error } = await supabase.from('venues').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['venues'] })
+      qc.invalidateQueries({ queryKey: ['venue_areas'] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+}
+
+export function useInsertVenueArea() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { venueId: string; name: string; boundary: Boundary; usable: boolean }>({
+    mutationFn: async ({ venueId, name, boundary, usable }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in to add an area.')
+      const { error } = await supabase
+        .from('venue_areas')
+        .insert({ club_id: profile.club_id, venue_id: venueId, name, boundary, usable })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venue_areas'] }),
+  })
+}
+
+export function useUpdateVenueArea() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name: string; boundary: Boundary; usable: boolean }>({
+    mutationFn: async ({ id, name, boundary, usable }) => {
+      const { error } = await supabase.from('venue_areas').update({ name, boundary, usable }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venue_areas'] }),
+  })
+}
+
+export function useDeleteVenueArea() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, string>({
+    mutationFn: async (id) => {
+      const { error } = await supabase.from('venue_areas').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venue_areas'] }),
+  })
+}
+
+// ---- Team bib colour (teams.manage) ----------------------------------------
+
+export function useSetTeamBibColour() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { teamId: string; bibColour: string | null }>({
+    mutationFn: async ({ teamId, bibColour }) => {
+      const { error } = await supabase.from('teams').update({ bib_colour: bibColour }).eq('id', teamId)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  })
+}
+
+// ---- The register (players.view to read, sessions.create to write) ---------
+
+interface RegisterEntryRow {
+  session_id: string
+  player_id: string
+  present: boolean
+  bib_colour_override: string | null
+  source: 'roster' | 'manual'
+}
+
+export function toRegisterEntry(r: RegisterEntryRow): RegisterEntry {
+  return {
+    sessionId: r.session_id,
+    playerId: r.player_id,
+    present: r.present,
+    bibColourOverride: r.bib_colour_override,
+    source: r.source,
+  }
+}
+
+export function registerKey(sessionId: string) {
+  return ['register_entries', sessionId] as const
+}
+
+// The register for one session. The caller must surface isError rather
+// than treating a failed read as an empty register: "nobody is here" and
+// "we could not load who is here" look identical otherwise, and the
+// second one must never be written on top of.
+export function useRegisterEntries(sessionId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: registerKey(sessionId ?? ''),
+    enabled: enabled && !!sessionId,
+    queryFn: async (): Promise<RegisterEntry[]> => {
+      const { data, error } = await supabase
+        .from('register_entries')
+        .select('session_id, player_id, present, bib_colour_override, source')
+        .eq('session_id', sessionId as string)
+      if (error) throw error
+      return (data as unknown as RegisterEntryRow[]).map(toRegisterEntry)
+    },
+  })
+}
+
+export interface SetRegisterEntryInput {
+  sessionId: string
+  playerId: string
+  present?: boolean
+  bibColourOverride?: string | null
+  source?: 'roster' | 'manual'
+}
+
+// Apply one partial change to the cached register. Pure, and idempotent:
+// the optimistic path applies it and the settled refetch may apply it
+// again over the same cache.
+export function applyRegisterPatch(
+  entries: RegisterEntry[] | undefined,
+  input: SetRegisterEntryInput,
+): RegisterEntry[] {
+  const list = entries ?? []
+  const existing = list.find((e) => e.playerId === input.playerId)
+  const next: RegisterEntry = {
+    sessionId: input.sessionId,
+    playerId: input.playerId,
+    present: input.present ?? existing?.present ?? false,
+    bibColourOverride:
+      input.bibColourOverride !== undefined ? input.bibColourOverride : (existing?.bibColourOverride ?? null),
+    source: input.source ?? existing?.source ?? 'roster',
+  }
+  return existing ? list.map((e) => (e.playerId === input.playerId ? next : e)) : [...list, next]
+}
+
+// Mark one player. The write carries ONLY the fields the tap changed, so
+// two coaches on one gate cannot revert each other: a whole row write
+// would carry a stale present value alongside a fresh bib change.
+export function useSetRegisterEntry() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, SetRegisterEntryInput, { prev: RegisterEntry[] | undefined }>({
+    mutationFn: async (input) => {
+      if (!profile?.club_id) throw new Error('You must be signed in to mark the register.')
+      const row: Record<string, unknown> = {
+        session_id: input.sessionId,
+        player_id: input.playerId,
+        club_id: profile.club_id,
+      }
+      if (input.present !== undefined) row.present = input.present
+      if (input.bibColourOverride !== undefined) row.bib_colour_override = input.bibColourOverride
+      if (input.source !== undefined) row.source = input.source
+      const { error } = await supabase
+        .from('register_entries')
+        .upsert(row, { onConflict: 'session_id,player_id' })
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      const key = registerKey(input.sessionId)
+      await qc.cancelQueries({ queryKey: key })
+      const prev = qc.getQueryData<RegisterEntry[]>(key)
+      qc.setQueryData<RegisterEntry[]>(key, (old) => applyRegisterPatch(old, input))
+      return { prev }
+    },
+    onError: (_err, input, ctx) => {
+      if (ctx) qc.setQueryData(registerKey(input.sessionId), ctx.prev)
+    },
+    onSettled: (_d, _e, input) => {
+      qc.invalidateQueries({ queryKey: registerKey(input.sessionId) })
+    },
+  })
+}
+
+// Undo a quick add. Only offered for a row whose stored source is manual.
+export function useRemoveRegisterEntry() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { sessionId: string; playerId: string }>({
+    mutationFn: async ({ sessionId, playerId }) => {
+      const { error } = await supabase
+        .from('register_entries')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('player_id', playerId)
+      if (error) throw error
+    },
+    onSettled: (_d, _e, { sessionId }) => {
+      qc.invalidateQueries({ queryKey: registerKey(sessionId) })
     },
   })
 }
