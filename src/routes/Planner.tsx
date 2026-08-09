@@ -53,6 +53,7 @@ import { MediaPlayerModal } from '../components/MediaPlayerModal'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { downloadSessionIcs } from '../lib/ics'
 import { PlanFromSpond } from '../components/PlanFromSpond'
+import { RightsControl } from '../components/RightsControl'
 
 interface DragHandlers {
   onDragStart: DragEventHandler<HTMLDivElement>
@@ -434,7 +435,7 @@ export function PlannerActionsView({
   canStart: boolean
   pending: PlannerAction | null
   failed: PlannerAction | null
-  // "Share" for a saved, clean session (no write) or "Save and share" for a new
+  // "Copy the club link" for a saved, clean session (no write) or "Save and copy
   // or dirty draft; the note explains the effect and the account requirement.
   shareLabel: string
   shareNote: string
@@ -945,7 +946,11 @@ function PlannerEditor({
   // or pre-save data and a rapid double click fires one save (the shared guard).
   const dirty = sessionDirty(session, baseline)
   const canShareDirect = shareDecision(savedId, dirty) === 'direct'
-  const shareLabel = canShareDirect ? 'Share' : 'Save and share'
+  // Named for what it does, not just "Share". The session day page's Share
+  // action opens the dialog that offers the club link AND the public link; this
+  // one only ever copies the club link, and two identically labelled buttons
+  // that do different things is the confusion this whole change removes.
+  const shareLabel = canShareDirect ? 'Copy the club link' : 'Save and copy the club link'
   const shareNote = canShareDirect ? SHARE_ACCOUNT_NOTE : `${SAVE_AND_SHARE_NOTE} ${SHARE_ACCOUNT_NOTE}`
   const onShare = () => {
     if (busy) return
@@ -1065,6 +1070,22 @@ function PlannerEditor({
             onRemoveBoard={() => setBoard(null)}
             onOpenBoardPicker={() => setBoardPickerOpen(true)}
           />
+
+          {/* The session's sharing level, in the ordinary edit flow. It saves on
+              its own and writes only the rights column, so a planner Save never
+              changes it and nothing is promoted as a side effect. Only a saved
+              session has a row to classify. */}
+          {existing && !readOnly && (
+            <div className="card side-card">
+              <RightsControl
+                kind="session"
+                id={existing.id}
+                current={existing.rights}
+                source={{ sourceUrl: existing.sourceUrl, sourceLabel: existing.sourceLabel }}
+                canEdit
+              />
+            </div>
+          )}
 
           {/* Linking edits the draft like every other planner field; Save
               writes it with the session. It freezes while a write is in

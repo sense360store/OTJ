@@ -47,6 +47,9 @@ import {
   type DrillRow,
   evaluateDrillEligibility,
   invalidMediaPaths,
+  anyRestricted,
+  rowProvenance,
+  type SharePreviewProvenance,
   buildShareListFilter,
   deriveShareStatus,
   toPublicProjectionByKind,
@@ -73,8 +76,13 @@ const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_BODY_BYTES = 8 * 1024
 
+// source_key is read for PROVENANCE only. An FA imported drill carries its
+// England Football identity there, so reading it keeps this function's
+// provenance answer aligned with what migration 0043 actually refuses. It is
+// never projected: the builder copies an explicit allow list, and source_key is
+// in FORBIDDEN_ANYWHERE, so a future leak trips the scanner rather than shipping.
 const DRILL_COLS =
-  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, media_id, rights'
+  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, source_key, media_id, rights'
 const MEDIA_COLS = 'id, club_id, name, type, storage_path, yt_url, embed_url, source_url, source_label, rights'
 const SESSION_COLS =
   'id, club_id, name, focus, age_group, intentions, space, activities, board_id, source_url, source_label, rights'
@@ -87,7 +95,12 @@ const BOARD_COLS = 'id, formation, tokens, created_by'
 // snapshot path at all.
 const PROGRAMME_COLS =
   'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, rights'
-const TEMPLATE_COLS = 'id, club_id, name, focus, activities, programme_week, created_at, rights'
+// source_url and source_label are read for PROVENANCE only: they decide whether
+// a blocked week is England Football derived or simply club only, so the coach
+// facing reason can tell the two apart. They are never projected; the builder's
+// week allow list does not copy them.
+const TEMPLATE_COLS =
+  'id, club_id, name, focus, activities, programme_week, created_at, rights, source_url, source_label'
 
 type Kind = 'drill' | 'session' | 'programme'
 const KINDS: Kind[] = ['drill', 'session', 'programme']
@@ -323,6 +336,41 @@ function rightsSummary(drill: DrillRow, media: MediaRow | null): Record<string, 
   }
 }
 
+// The bounded provenance summary returned with a preview.
+//
+// Why it exists. `blocked` says which LAYER refused the share, and nothing
+// about where that layer's content came from, so the client had to guess and
+// guessed England Football every time. A coach's own programme, written from
+// scratch with no source recorded, was told it used restricted third party
+// content. This carries just enough to tell classification apart from proven
+// provenance, and no more.
+//
+// What crosses the wire. One enum for the SOURCE row, and one boolean per
+// nested layer meaning "at least one club only row at this layer is England
+// Football derived". No id, title, path, name, count or owner: a coach learns
+// that one or more drills in a programme are restricted, never which, and never
+// whose. Provenance is derived from the recorded source URL, never from the
+// rights value, which is the whole point.
+function provenanceOf(
+  source: { source_url: string | null; source_label: string | null; source_key?: string | null },
+  nested: {
+    templates?: ReadonlyArray<{ rights: ContentRights; source_url?: string | null; source_label?: string | null }>
+    drills?: ReadonlyArray<{ rights: ContentRights; source_url: string | null; source_label: string | null; source_key?: string | null }>
+    media?: ReadonlyArray<{ rights: ContentRights; source_url: string | null; source_label: string | null }>
+    pdf?: ReadonlyArray<{ rights: ContentRights; source_url: string | null; source_label: string | null }>
+  } = {},
+): SharePreviewProvenance {
+  return {
+    source: rowProvenance(source),
+    restricted: {
+      template: anyRestricted(nested.templates ?? []),
+      drill: anyRestricted(nested.drills ?? []),
+      media: anyRestricted(nested.media ?? []),
+      pdf: anyRestricted(nested.pdf ?? []),
+    },
+  }
+}
+
 // The rows a session share projects: the session, the club scoped drills its
 // activities reference, those drills' media, and the optional attached board.
 interface LoadedSession {
@@ -501,6 +549,7 @@ async function handlePreview(
     eligible: elig.eligible,
     blocked: elig.blocked,
     rights: rightsSummary(drill, media),
+    provenance: provenanceOf(drill, { media: media ? [media] : [] }),
     preview,
   })
 }
@@ -520,6 +569,7 @@ async function handlePreviewSession(admin: AdminClient, clubId: string, sourceId
     eligible: elig.eligible,
     blocked: elig.blocked,
     rights: { source: session.rights as ContentRights },
+    provenance: provenanceOf(session, { drills, media }),
     preview,
   })
 }
@@ -530,6 +580,12 @@ async function handlePreviewProgramme(admin: AdminClient, clubId: string, source
   if (loaded instanceof Response) return loaded
   const { programme, templates, drills, media } = loaded
   const elig = withPathBlockers(evaluateProgrammeEligibility(programme, templates, drills, media), media)
+  // The attached PDF gets its own layer so the copy can name it specifically,
+  // but it stays in the media layer too: one row can be both the programme's
+  // PDF and a drill's media, and removing it from the media layer would make a
+  // restricted file report as merely club only under whichever reason won.
+  const pdfRows = programme.pdf_media_id ? media.filter((m) => m.id === programme.pdf_media_id) : []
+  const provenance = provenanceOf(programme, { templates, drills, media, pdf: pdfRows })
   let preview: unknown = null
   if (elig.eligible) {
     // The builder can still refuse on a cap only measurable after projection
@@ -545,6 +601,7 @@ async function handlePreviewProgramme(admin: AdminClient, clubId: string, source
         eligible: false,
         blocked: [programmeBuildReason(err)],
         rights: { source: programme.rights as ContentRights },
+        provenance,
         preview: null,
       })
     }
@@ -554,6 +611,7 @@ async function handlePreviewProgramme(admin: AdminClient, clubId: string, source
     eligible: elig.eligible,
     blocked: elig.blocked,
     rights: { source: programme.rights as ContentRights },
+    provenance,
     preview,
   })
 }

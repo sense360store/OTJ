@@ -354,6 +354,14 @@ describe('England Football derived content is locked at club only', () => {
       // still the England Football host to the JS readers.
       ['https://%6cearn.englandfootball.com/a', true],
       ['https://learn%2Eenglandfootball.com/a', true],
+      // The WHATWG parser removes every ASCII tab and newline anywhere in the
+      // URL before parsing, so one tab must not unlock a row.
+      ['\thttps://learn.englandfootball.com/a', true],
+      ['https://learn.england\nfootball.com/a', true],
+      ['\r\n https://cdn.englandfootball.com/a', true],
+      // Removed, not treated as a separator: the tab does not end the host,
+      // it disappears, and what is left is a different host.
+      ['https://learn.englandfootball.com\t.evil.test/a', false],
       ['https://learn.englandfootball.com%40evil.test/', false],
       ['https://learn.englandfootball.com:8080@evil.test/', false],
       ['https://learn.englandfootball.com.evil.test/a', false],

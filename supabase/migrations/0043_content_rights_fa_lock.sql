@@ -80,10 +80,13 @@
 --   https://learn.englandfootball.com:8080@evil.com/   SQL: FA. JS: not FA.
 --   https:\\learn.englandfootball.com\a     SQL: not FA.  JS: FA.
 --   '  https://learn.englandfootball.com/a' SQL: not FA.  JS: FA.
+--   E'\thttps://learn.englandfootball.com/a'  SQL: not FA.  JS: FA.
 --
--- The body below takes the whole authority, translates backslashes (which
--- the WHATWG parser accepts for a special scheme), trims leading and
--- trailing whitespace (which it also strips), accepts any run of slashes
+-- The body below removes every ASCII tab and newline anywhere in the string
+-- (the WHATWG parser does, so one tab must not unlock a row), takes the
+-- whole authority, translates backslashes (which the WHATWG parser accepts
+-- for a special scheme), trims leading and trailing C0 controls and spaces
+-- (which it also strips, and only those: DEL it keeps), accepts any run of slashes
 -- after the scheme including none (the WHATWG parser does the same for a
 -- special scheme, so https:\learn..., https:/learn... and https:learn...
 -- all carry the host to the JS readers), drops userinfo at the LAST @,
@@ -130,18 +133,35 @@ immutable
 set search_path = ''
 as $$
 declare
+  v_src text;
   v_host text;
   v_decoded text := '';
   v_i integer := 1;
   v_len integer;
   v_c text;
 begin
+  -- The WHATWG parser removes every ASCII tab and newline ANYWHERE in the
+  -- URL, then strips leading and trailing C0 controls and spaces. Plain
+  -- btrim strips spaces only, which left the database saying "not England
+  -- Football" for a URL the JS readers parse straight to the learning host:
+  -- one tab, and the row was not locked. That is the permissive direction,
+  -- the one this migration exists to close, so the removal is done first
+  -- and on the whole string. The trim is C0 and space only, deliberately
+  -- not [[:cntrl:]], which would also strip DEL: the parser keeps DEL, and
+  -- stripping it here would be permissive again.
+  v_src := regexp_replace(
+    translate(p_url, E'\t\n\r', ''),
+    E'^[\x01-\x1f ]+|[\x01-\x1f ]+$',
+    '',
+    'g'
+  );
+
   v_host :=
     regexp_replace(
       regexp_replace(
         coalesce(
           substring(
-            translate(btrim(p_url), E'\\', '/')
+            translate(v_src, E'\\', '/')
             -- zero or more slashes after the scheme, as the WHATWG parser
             -- accepts for a special scheme (https:/h and https:h both
             -- carry the host), with backslashes already translated above
@@ -185,7 +205,7 @@ end;
 $$;
 
 comment on function public.content_rights_is_fa_url(text) is
-  $$True when a URL's host is an England Football Learning host (learn.englandfootball.com or cdn.englandfootball.com). Body corrected in 0043_content_rights_fa_lock.sql to match the WHATWG URL parsing src/lib/fa.ts isFaUrl and supabase/functions/_shared/share.ts isFaSourceUrl use: backslashes translated, whitespace trimmed, any run of slashes after the scheme accepted including none, userinfo dropped at the last @, port dropped, percent escapes in the host decoded. Used by the 0038 rights backfill and self verification, and by the 0043 England Football lock. See docs/security/content-sharing-boundary.md.$$;
+  $$True when a URL's host is an England Football Learning host (learn.englandfootball.com or cdn.englandfootball.com). Body corrected in 0043_content_rights_fa_lock.sql to match the WHATWG URL parsing src/lib/fa.ts isFaUrl and supabase/functions/_shared/share.ts isFaSourceUrl use: tabs and newlines removed anywhere, backslashes translated, leading and trailing C0 controls and spaces trimmed, any run of slashes after the scheme accepted including none, userinfo dropped at the last @, port dropped, percent escapes in the host decoded. Used by the 0038 rights backfill and self verification, and by the 0043 England Football lock. See docs/security/content-sharing-boundary.md.$$;
 
 -- ---------------------------------------------------------------------
 -- PART 2: the evidence rule and the two refusals, each stated once
@@ -438,6 +458,10 @@ begin
      or not public.content_rights_is_fa_url('https:learn.englandfootball.com/a')
      or not public.content_rights_is_fa_url('https://%6cearn.englandfootball.com/a')
      or not public.content_rights_is_fa_url('https://learn%2Eenglandfootball.com/a')
+     or not public.content_rights_is_fa_url(E'\thttps://learn.englandfootball.com/a')
+     or not public.content_rights_is_fa_url(E'https://learn.england\nfootball.com/a')
+     or not public.content_rights_is_fa_url(E'\r\n https://cdn.englandfootball.com/a')
+     or public.content_rights_is_fa_url(E'https://learn.englandfootball.com\t.evil.test/a')
      or public.content_rights_is_fa_url('https://learn.englandfootball.com:8080@evil.test/')
      or public.content_rights_is_fa_url('https://learn.englandfootball.com.evil.test/a')
      or public.content_rights_is_fa_url('https://notenglandfootball.com/a')

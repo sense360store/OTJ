@@ -23,7 +23,7 @@
 //     knowing.
 //
 // Rotate and refresh stay with the share's owner on the drill, session or
-// programme page (PublicShareControl). shares.manage is scoped to review and
+// programme page (the Share dialog). shares.manage is scoped to review and
 // revoke, and the server enforces exactly that scope.
 //
 // Nothing secret bearing is rendered here. The list DTO carries no token hash,

@@ -246,6 +246,10 @@ export interface MediaItem {
   // Shown as a small line wherever the image renders large.
   sourceUrl?: string
   sourceLabel?: string
+  // The sharing level this row carries (see src/lib/contentRights.ts). The
+  // server is the authority; this is what the edit form and the share flow
+  // display. Reads that predate the column present as club only.
+  rights: ContentRights
   // Drives the newest first list order. Optional because older fixtures and
   // derived items may not carry it; the sort treats a missing value as oldest.
   createdAt?: string
@@ -280,6 +284,14 @@ export interface Drill {
   format: string
   sourceUrl: string
   sourceLabel: string
+  // The FA importer's stable identity for the activity, which begins with the
+  // England Football source URL. Read for provenance only, so the sharing level
+  // control locks exactly what migration 0043 refuses.
+  sourceKey: string
+  // The sharing level this row carries (see src/lib/contentRights.ts). The
+  // server is the authority; this is what the edit form and the share flow
+  // display. Reads that predate the column present as club only.
+  rights: ContentRights
   // Drives the "what's new" recency on Home.
   createdAt: string
 }
@@ -313,6 +325,10 @@ export interface Template {
   programmeWeek: number | null
   sourceUrl: string
   sourceLabel: string
+  // The sharing level this row carries (see src/lib/contentRights.ts). The
+  // server is the authority; this is what the edit form and the share flow
+  // display. Reads that predate the column present as club only.
+  rights: ContentRights
   // Drives the "what's new" recency on Home.
   createdAt: string
 }
@@ -333,6 +349,10 @@ export interface Programme {
   sourceUrl: string
   sourceLabel: string
   createdBy?: string
+  // The sharing level this row carries (see src/lib/contentRights.ts). The
+  // server is the authority; this is what the edit form and the share flow
+  // display. Reads that predate the column present as club only.
+  rights: ContentRights
   // Drives the newest first list order.
   createdAt: string
 }
@@ -375,6 +395,10 @@ export interface Session {
   // session day renders it read only inline. references boards on delete set
   // null, so deleting a board detaches it here (see 0022_session_board.sql).
   boardId: string | null
+  // The sharing level this row carries (see src/lib/contentRights.ts). The
+  // server is the authority; this is what the edit form and the share flow
+  // display. Reads that predate the column present as club only.
+  rights: ContentRights
 }
 
 // ---- Spond attendance (counts only) ----------------------------------------
@@ -525,6 +549,10 @@ export function blankSession(coachId: string, teamId: string | null): Session {
     liveActivityStartedAt: null,
     spondEventId: null,
     boardId: null,
+    // A new session is club only until someone classifies it. The upsert never
+    // writes the column, so this mirrors the database default rather than
+    // choosing a value.
+    rights: 'internal_only',
   }
 }
 

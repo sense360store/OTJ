@@ -219,87 +219,15 @@ export const SECRET_ONCE_NOTE =
   'This link is shown once. Copy it now. If you lose it, replace the link to get a new one.'
 export const KILL_SWITCH_NOTE =
   'Public sharing is turned off for your club. An admin can turn it on.'
-export const BLOCKED_FA_NOTE =
-  'This uses England Football or other restricted content, which we can only share inside the club.'
 // Shown on the public page beside the Print / Save as PDF action. A printed or
 // saved copy leaves the platform: revoking the link cannot reach it.
 export const PRINT_WARNING = 'A downloaded or printed copy cannot be turned off or recalled.'
 
-// Map a server block reason to calm coach copy for a DRILL share.
-export function blockedReasonCopy(reasons: string[]): string {
-  if (reasons.includes('media_internal_only') || reasons.includes('source_internal_only')) {
-    return BLOCKED_FA_NOTE
-  }
-  if (reasons.includes('media_missing')) {
-    return 'A file this drill uses is missing, so it cannot be shared publicly.'
-  }
-  return 'This drill cannot be shared publicly.'
-}
-
-// Map a server block reason to calm coach copy for a SESSION share. Restricted
-// (England Football or internal) content is the headline case; missing content
-// and unsupported items get their own plain wording. Never leaks a reason code.
-export function blockedSessionReasonCopy(reasons: string[]): string {
-  if (
-    reasons.includes('source_internal_only') ||
-    reasons.includes('drill_internal_only') ||
-    reasons.includes('media_internal_only')
-  ) {
-    return BLOCKED_FA_NOTE
-  }
-  if (
-    reasons.includes('drill_missing') ||
-    reasons.includes('media_missing') ||
-    reasons.includes('board_missing')
-  ) {
-    return 'Something this session uses is missing, so it cannot be shared publicly.'
-  }
-  if (reasons.includes('unsupported_item')) {
-    return 'This session has an activity we cannot share publicly yet.'
-  }
-  return 'This session cannot be shared publicly.'
-}
-
-// Map a server block reason to calm coach copy for a PROGRAMME share. A
-// programme aggregates far more than a session (every week template, every
-// drill those weeks use, every one of those drills' media, and the attached
-// PDF), so the blockers name which layer failed in plain words. Never leaks a
-// reason code, and never says which specific week or drill, which would tell a
-// coach more about another coach's content than the screen otherwise shows.
-export function blockedProgrammeReasonCopy(reasons: string[]): string {
-  if (
-    reasons.includes('source_internal_only') ||
-    reasons.includes('template_internal_only') ||
-    reasons.includes('drill_internal_only') ||
-    reasons.includes('media_internal_only') ||
-    reasons.includes('pdf_internal_only')
-  ) {
-    return BLOCKED_FA_NOTE
-  }
-  if (
-    reasons.includes('drill_missing') ||
-    reasons.includes('media_missing') ||
-    reasons.includes('pdf_missing')
-  ) {
-    return 'Something this programme uses is missing, so it cannot be shared publicly.'
-  }
-  if (reasons.includes('unsupported_item')) {
-    return 'This programme has an activity we cannot share publicly yet.'
-  }
-  if (reasons.includes('no_weeks')) {
-    return 'This programme has no weeks yet, so there is nothing to share.'
-  }
-  if (reasons.includes('too_many_weeks')) {
-    return 'This programme has more weeks than we can share in one link.'
-  }
-  if (reasons.includes('too_many_media')) {
-    return 'This programme uses more files than we can share in one link.'
-  }
-  if (reasons.includes('snapshot_too_large')) {
-    return 'This programme is too large to share in one link.'
-  }
-  return 'This programme cannot be shared publicly.'
-}
+// Blocker copy moved to src/lib/shareBlockers.ts. It used to live here as three
+// per kind functions that mapped every *_internal_only reason to one England
+// Football sentence, which told a coach their own club written content came
+// from England Football. Reason ordering and provenance now decide the wording;
+// see shareBlockers.ts for why.
 
 // -------------------------------------------------------------------------
 // Snapshot validation (defensive, before rendering)

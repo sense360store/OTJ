@@ -28,6 +28,7 @@ import {
 // the fields it asserts on.
 function sessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
+    rights: 'internal_only',
     id: 's1',
     club_id: 'c1',
     coach_id: 'coach1',
@@ -57,6 +58,8 @@ function sessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
 
 function drillRow(overrides: Partial<DrillRow> = {}): DrillRow {
   return {
+    rights: 'internal_only',
+    source_key: null,
     id: 'd1',
     club_id: 'c1',
     title: 'Rondo',
@@ -241,6 +244,7 @@ describe('programme list ordering (useProgrammes transformation)', () => {
   // fell back to id (a created_at that never got mapped) would fail here.
   function programmeRow(overrides: Partial<ProgrammeRow> = {}): ProgrammeRow {
     return {
+      rights: 'internal_only',
       id: 'p1',
       club_id: 'c1',
       name: 'Ball mastery',
