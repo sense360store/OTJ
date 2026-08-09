@@ -201,9 +201,23 @@ export function syncWindow(now: Date): SyncWindow {
 // get_events parameter names and construction order: max, scheduled,
 // maxStartTimestamp, minStartTimestamp, groupId, then subGroupId. The
 // scheduled value mirrors the library's wire format byte for byte
-// (Python str(False) is "False"): scheduled events have no responses
-// yet, so they are excluded exactly as the library excludes them by
-// default.
+// (Python str(True) is "True").
+//
+// SCHEDULED IS SENT TRUE, and that is the whole of this fix. In the
+// reference library `scheduled` is an INCLUSION flag, not a filter:
+// "Include scheduled events (events whose invitations are queued to be
+// sent in the future). Defaults to False for performance reasons."
+// Sending False therefore excluded every event whose invitations Spond
+// has queued rather than already sent, which at this club is exactly the
+// recurring weekly training. Fixtures and galas, whose invitations go out
+// at once, arrived; training never did, and a coach could not Plan from
+// Spond for the one thing they run every week.
+//
+// True is a superset, not a different set: normal events still come back
+// unchanged, so this widens what is synced and narrows nothing. The
+// window, the caps and the subgroup filter are untouched, and a scheduled
+// event carries no responses yet, which deriveCounts already reads as
+// four zeroes.
 //
 // Subgroup matching: when the mapping names a subgroup, the query adds
 // the subGroupId filter, the recipients model the library exposes
@@ -220,7 +234,7 @@ export function eventsQuery(
 ): URLSearchParams {
   const params = new URLSearchParams()
   params.set('max', String(MAX_EVENTS_PER_GROUP))
-  params.set('scheduled', 'False')
+  params.set('scheduled', 'True')
   params.set('maxStartTimestamp', window.to)
   params.set('minStartTimestamp', window.from)
   params.set('groupId', mapping.spond_group_id)

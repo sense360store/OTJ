@@ -243,6 +243,83 @@ describe('sessionFromSpondEvent', () => {
   })
 })
 
+// ---- The hotfix, from the coach's side -------------------------------------
+//
+// A training event that Spond had queued the invitations for was never
+// synced, so it never reached this screen. Once the sync includes it, it
+// must behave like any other event: it appears as a suggestion with no
+// replies yet, and NOTHING is created until the coach presses Plan this.
+
+describe('a scheduled training event, once synced', () => {
+  const now = new Date('2026-06-13T12:00:00Z')
+  const opts = {
+    plannedEventIds: new Set<string>(),
+    scopeTeamIds: ['team-1'],
+    showAllTeams: false,
+    trainingOnly: false,
+    now,
+  }
+  // No replies yet: exactly what the sync stores for an event whose
+  // invitations Spond has not sent.
+  const scheduledTraining = ev({
+    id: 'scheduled-training',
+    startsAt: '2026-06-19T17:30:00Z',
+    teamId: 'team-1',
+    title: 'Titans training',
+    accepted: 0,
+    declined: 0,
+    unanswered: 0,
+    waiting: 0,
+  })
+
+  it('appears in Plan from Spond alongside the fixtures that already worked', () => {
+    const events = [ev({ id: 'gala', startsAt: '2026-06-20T09:00:00Z', teamId: 'team-1', title: 'Summer gala' }), scheduledTraining]
+    expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual(['scheduled-training', 'gala'])
+  })
+
+  it('survives the training only filter, which is the filter a coach reaches for', () => {
+    const events = [ev({ id: 'gala', startsAt: '2026-06-20T09:00:00Z', teamId: 'team-1', title: 'Summer gala' }), scheduledTraining]
+    expect(spondPlanSuggestions({ ...opts, events, trainingOnly: true }).map((e) => e.id)).toEqual([
+      'scheduled-training',
+    ])
+    expect(isTrainingEvent('Titans training')).toBe(true)
+  })
+
+  it('zero replies do not hide it: no reply is a normal state, not an absent event', () => {
+    expect(spondPlanSuggestions({ ...opts, events: [scheduledTraining] }).map((e) => e.id)).toEqual([
+      'scheduled-training',
+    ])
+  })
+
+  it('a suggestion is only ever a suggestion: nothing is created by listing it', () => {
+    // spondPlanSuggestions returns the events themselves, unchanged. It
+    // builds no session, mutates nothing, and cannot: Plan this is the only
+    // path to a session and it goes through sessionFromSpondEvent.
+    const before = JSON.stringify(scheduledTraining)
+    const out = spondPlanSuggestions({ ...opts, events: [scheduledTraining] })
+    expect(out[0]).toBe(scheduledTraining)
+    expect(JSON.stringify(scheduledTraining)).toBe(before)
+  })
+
+  it('Plan this, and only Plan this, produces the session', () => {
+    const session = sessionFromSpondEvent(scheduledTraining, 'coach-1', null, ['team-1', 'team-2'])
+    expect(session.spondEventId).toBe('scheduled-training')
+    expect(session.name).toBe('Titans training')
+    expect(session.teamIds).toEqual(['team-1'])
+    expect(session.coachId).toBe('coach-1')
+    expect(session.activities).toEqual([])
+  })
+
+  it('once a coach has planned it, it stops being suggested to them', () => {
+    const out = spondPlanSuggestions({
+      ...opts,
+      events: [scheduledTraining],
+      plannedEventIds: new Set(['scheduled-training']),
+    })
+    expect(out).toEqual([])
+  })
+})
+
 describe('mappingForTeam', () => {
   const mapping = (over: Partial<SpondMapping>): SpondMapping => ({
     id: 'm1',
