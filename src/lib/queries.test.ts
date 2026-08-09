@@ -174,6 +174,37 @@ describe('the session write row and the two FROZEN columns', () => {
     expect('coach_id' in row).toBe(false)
     expect('club_id' in row).toBe(false)
   })
+
+  it('is a CLOSED column list, so it cannot regress to spreading the draft', () => {
+    // The guard this exists for: someone writing { ...input, venue_id } would
+    // pass every assertion above and still ship camelCase keys, coach_id,
+    // club_id and a resurrected venue string to PostgREST. Pinning the exact
+    // key set makes that a failing test rather than a silent regression.
+    expect(Object.keys(toSessionWriteRow({ ...draft(), venueId: 'v1' })).sort()).toEqual([
+      'activities',
+      'age_group',
+      'board_id',
+      'date',
+      'focus',
+      'intentions',
+      'name',
+      'programme_id',
+      'programme_week',
+      'source_label',
+      'source_url',
+      'space',
+      'spond_event_id',
+      'start_time',
+      'status',
+      'team_id',
+      'venue',
+      'venue_id',
+    ])
+    // Nothing camelCase reaches the row, which a spread of the draft would.
+    for (const key of Object.keys(toSessionWriteRow(draft()))) {
+      expect(key).toBe(key.toLowerCase())
+    }
+  })
 })
 
 describe('activity mapping round-trips', () => {
