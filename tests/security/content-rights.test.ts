@@ -344,8 +344,29 @@ describe('England Football derived content is locked at club only', () => {
       ['https://x@learn.englandfootball.com/a', true],
       ['https://learn.englandfootball.com:443/a', true],
       ['  https://cdn.englandfootball.com/a  ', true],
+      // The WHATWG parser accepts backslashes and any run of slashes after
+      // a special scheme, including none; all of these carry the host to
+      // the JS readers, so the database must lock them too.
+      ['https:\\learn.englandfootball.com\\a', true],
+      ['https:/learn.englandfootball.com/a', true],
+      ['https:learn.englandfootball.com/a', true],
+      // The WHATWG host parser percent-decodes, so an escaped hostname is
+      // still the England Football host to the JS readers.
+      ['https://%6cearn.englandfootball.com/a', true],
+      ['https://learn%2Eenglandfootball.com/a', true],
+      // The WHATWG parser removes every ASCII tab and newline anywhere in the
+      // URL before parsing, so one tab must not unlock a row.
+      ['\thttps://learn.englandfootball.com/a', true],
+      ['https://learn.england\nfootball.com/a', true],
+      ['\r\n https://cdn.englandfootball.com/a', true],
+      // Removed, not treated as a separator: the tab does not end the host,
+      // it disappears, and what is left is a different host.
+      ['https://learn.englandfootball.com\t.evil.test/a', false],
+      ['https://learn.englandfootball.com%40evil.test/', false],
       ['https://learn.englandfootball.com:8080@evil.test/', false],
+      ['https://learn.englandfootball.com.evil.test/a', false],
       ['https://notenglandfootball.com/a', false],
+      ['learn.englandfootball.com/a', false],
     ]
     for (const [url, expected] of cases) {
       const { data, error } = await svc.rpc('content_rights_is_fa_url', { p_url: url })

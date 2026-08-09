@@ -1180,14 +1180,33 @@ disagreement ran the permissive way for the database:
 |---|---|---|---|
 | `https://x@learn.englandfootball.com/a` | not FA | FA | FA |
 | `https://learn.englandfootball.com:8080@evil.test/` | FA | not FA | not FA |
-| `https:\learn.englandfootball.com` | not FA | FA | FA |
+| `https:\learn.englandfootball.com` | not FA | FA | FA |
+| `https:learn.englandfootball.com/a` | not FA | FA | FA |
+| `https://%6cearn.englandfootball.com/a` | not FA | FA | FA |
 | `'  https://learn.englandfootball.com/a'` | not FA | FA | FA |
+| a URL carrying a tab or a newline anywhere | not FA | FA | FA |
 
-0043 replaces the body: it takes the whole authority, translates backslashes,
-trims whitespace, drops userinfo at the last `@` and drops the port. A read only
-check of the hosted data before writing the migration found zero rows on any of
-the five tables carrying an `@`, a backslash or a port in `source_url`, so no
-existing classification changes.
+0043 replaces the body. It removes every ASCII tab and newline anywhere in the
+string (the parser removes them before parsing, so a single tab must not decide
+whether a row is locked), trims leading and trailing C0 controls and spaces
+(only those: the parser keeps DEL, so stripping it here would be permissive),
+takes the whole authority, translates backslashes, accepts any run of slashes
+after the scheme including none (the parser does the same for a special scheme,
+so `https:\learn...`, `https:/learn...` and `https:learn...` all carry the host
+to the JS readers), drops userinfo at the last `@`, drops the port, and
+percent-decodes the remaining host (the parser decodes too, so
+`https://%6cearn.englandfootball.com` is the learning host to the JS readers).
+
+Where the SQL still cannot mirror the parser exactly it errs the strict way: the
+database may refuse a row the readers would not lock, never the reverse. That
+direction was checked rather than assumed, by running the function against the
+WHATWG parser over 105,000 generated URLs built from schemes, slash runs,
+userinfo, percent escapes, ports, tails and control character noise: no case ran
+the permissive way, and every divergence was the database being stricter, all of
+it the non special scheme class (`foo:learn...`, which the parser treats as an
+opaque path). A read only check of the hosted data before writing the migration
+found zero rows on any of the five tables carrying an `@`, a backslash or a port
+in `source_url`, so no existing classification changes.
 
 ### Self verification
 

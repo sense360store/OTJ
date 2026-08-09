@@ -80,13 +80,24 @@
 --   https://learn.englandfootball.com:8080@evil.com/   SQL: FA. JS: not FA.
 --   https:\\learn.englandfootball.com\a     SQL: not FA.  JS: FA.
 --   '  https://learn.englandfootball.com/a' SQL: not FA.  JS: FA.
+--   E'\thttps://learn.englandfootball.com/a'  SQL: not FA.  JS: FA.
 --
--- The body below takes the whole authority, translates backslashes (which
--- the WHATWG parser accepts for a special scheme), trims leading and
--- trailing whitespace (which it also strips), drops userinfo at the LAST @,
--- and drops the port. A read only check over the hosted data before writing
--- this found zero rows on any of the five tables carrying an @, a backslash
--- or a port in source_url, so no existing classification changes.
+-- The body below removes every ASCII tab and newline anywhere in the string
+-- (the WHATWG parser does, so one tab must not unlock a row), takes the
+-- whole authority, translates backslashes (which the WHATWG parser accepts
+-- for a special scheme), trims leading and trailing C0 controls and spaces
+-- (which it also strips, and only those: DEL it keeps), accepts any run of slashes
+-- after the scheme including none (the WHATWG parser does the same for a
+-- special scheme, so https:\learn..., https:/learn... and https:learn...
+-- all carry the host to the JS readers), drops userinfo at the LAST @,
+-- drops the port, and percent-decodes the remaining host (the WHATWG host
+-- parser decodes too, so https://%6cearn.englandfootball.com is the
+-- learning host to the JS readers). Where the SQL still cannot mirror the parser exactly (a
+-- non special scheme such as foo:learn...), it errs the strict way: the
+-- database may refuse a row the readers would not lock, never the reverse.
+-- A read only check over the hosted data before writing this found zero
+-- rows on any of the five tables carrying an @, a backslash or a port in
+-- source_url, so no existing classification changes.
 --
 -- ROLLBACK
 --
@@ -117,36 +128,84 @@ begin;
 
 create or replace function public.content_rights_is_fa_url(p_url text)
 returns boolean
-language sql
+language plpgsql
 immutable
 set search_path = ''
 as $$
-  select coalesce(
-    lower(
+declare
+  v_src text;
+  v_host text;
+  v_decoded text := '';
+  v_i integer := 1;
+  v_len integer;
+  v_c text;
+begin
+  -- The WHATWG parser removes every ASCII tab and newline ANYWHERE in the
+  -- URL, then strips leading and trailing C0 controls and spaces. Plain
+  -- btrim strips spaces only, which left the database saying "not England
+  -- Football" for a URL the JS readers parse straight to the learning host:
+  -- one tab, and the row was not locked. That is the permissive direction,
+  -- the one this migration exists to close, so the removal is done first
+  -- and on the whole string. The trim is C0 and space only, deliberately
+  -- not [[:cntrl:]], which would also strip DEL: the parser keeps DEL, and
+  -- stripping it here would be permissive again.
+  v_src := regexp_replace(
+    translate(p_url, E'\t\n\r', ''),
+    E'^[\x01-\x1f ]+|[\x01-\x1f ]+$',
+    '',
+    'g'
+  );
+
+  v_host :=
+    regexp_replace(
       regexp_replace(
-        regexp_replace(
-          coalesce(
-            substring(
-              translate(btrim(p_url), E'\\', '/')
-              from '^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]*)'
-            ),
-            ''
+        coalesce(
+          substring(
+            translate(v_src, E'\\', '/')
+            -- zero or more slashes after the scheme, as the WHATWG parser
+            -- accepts for a special scheme (https:/h and https:h both
+            -- carry the host), with backslashes already translated above
+            from '^[a-zA-Z][a-zA-Z0-9+.-]*:/*([^/?#]*)'
           ),
-          -- userinfo, up to and including the LAST @ in the authority
-          '^.*@',
           ''
         ),
-        -- the port
-        ':[0-9]*$',
+        -- userinfo, up to and including the LAST @ in the authority
+        '^.*@',
         ''
-      )
-    ) in ('learn.englandfootball.com', 'cdn.englandfootball.com'),
-    false
-  )
+      ),
+      -- the port
+      ':[0-9]*$',
+      ''
+    );
+
+  -- The WHATWG host parser percent-decodes, so %6cearn.englandfootball.com
+  -- IS learn.englandfootball.com to the TypeScript readers. Decode valid
+  -- %XX escapes the same way. Userinfo and the port were split on literal
+  -- @ and : above, matching the parser, which also splits before decoding
+  -- (an encoded %40 never introduces userinfo there or here; decoded it
+  -- becomes an @ in the host, which matches no England Football host, and
+  -- which the WHATWG parser rejects outright as a forbidden code point).
+  v_len := length(v_host);
+  while v_i <= v_len loop
+    v_c := substr(v_host, v_i, 1);
+    if v_c = '%' and v_i + 2 <= v_len
+       and substr(v_host, v_i + 1, 2) ~ '^[0-9a-fA-F]{2}$' then
+      v_decoded := v_decoded
+        || convert_from(decode(substr(v_host, v_i + 1, 2), 'hex'), 'LATIN1');
+      v_i := v_i + 3;
+    else
+      v_decoded := v_decoded || v_c;
+      v_i := v_i + 1;
+    end if;
+  end loop;
+
+  return lower(v_decoded)
+    in ('learn.englandfootball.com', 'cdn.englandfootball.com');
+end;
 $$;
 
 comment on function public.content_rights_is_fa_url(text) is
-  $$True when a URL's host is an England Football Learning host (learn.englandfootball.com or cdn.englandfootball.com). Body corrected in 0043_content_rights_fa_lock.sql to match the WHATWG URL parsing src/lib/fa.ts isFaUrl and supabase/functions/_shared/share.ts isFaSourceUrl use: backslashes translated, whitespace trimmed, userinfo dropped at the last @, port dropped. Used by the 0038 rights backfill and self verification, and by the 0043 England Football lock. See docs/security/content-sharing-boundary.md.$$;
+  $$True when a URL's host is an England Football Learning host (learn.englandfootball.com or cdn.englandfootball.com). Body corrected in 0043_content_rights_fa_lock.sql to match the WHATWG URL parsing src/lib/fa.ts isFaUrl and supabase/functions/_shared/share.ts isFaSourceUrl use: tabs and newlines removed anywhere, backslashes translated, leading and trailing C0 controls and spaces trimmed, any run of slashes after the scheme accepted including none, userinfo dropped at the last @, port dropped, percent escapes in the host decoded. Used by the 0038 rights backfill and self verification, and by the 0043 England Football lock. See docs/security/content-sharing-boundary.md.$$;
 
 -- ---------------------------------------------------------------------
 -- PART 2: the evidence rule and the two refusals, each stated once
@@ -394,8 +453,20 @@ begin
   if not public.content_rights_is_fa_url('https://x@learn.englandfootball.com/a')
      or not public.content_rights_is_fa_url('https://learn.englandfootball.com:443/a')
      or not public.content_rights_is_fa_url('  https://cdn.englandfootball.com/a  ')
+     or not public.content_rights_is_fa_url(E'https:\\learn.englandfootball.com\\a')
+     or not public.content_rights_is_fa_url('https:/learn.englandfootball.com/a')
+     or not public.content_rights_is_fa_url('https:learn.englandfootball.com/a')
+     or not public.content_rights_is_fa_url('https://%6cearn.englandfootball.com/a')
+     or not public.content_rights_is_fa_url('https://learn%2Eenglandfootball.com/a')
+     or not public.content_rights_is_fa_url(E'\thttps://learn.englandfootball.com/a')
+     or not public.content_rights_is_fa_url(E'https://learn.england\nfootball.com/a')
+     or not public.content_rights_is_fa_url(E'\r\n https://cdn.englandfootball.com/a')
+     or public.content_rights_is_fa_url(E'https://learn.englandfootball.com\t.evil.test/a')
      or public.content_rights_is_fa_url('https://learn.englandfootball.com:8080@evil.test/')
+     or public.content_rights_is_fa_url('https://learn.englandfootball.com.evil.test/a')
      or public.content_rights_is_fa_url('https://notenglandfootball.com/a')
+     or public.content_rights_is_fa_url('learn.englandfootball.com/a')
+     or public.content_rights_is_fa_url('https://learn.englandfootball.com%40evil.test/')
      or public.content_rights_is_fa_url(null)
   then
     raise exception '0043 self verification failed: the England Football host rule does not match the URL parser';
