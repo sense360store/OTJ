@@ -111,10 +111,14 @@ export function RegisterRowView({
 
 export function QuickAddView({
   pool,
+  rosterEmpty,
   onAdd,
   onClose,
 }: {
   pool: Player[]
+  // True when the club has no registered players at all, which needs a
+  // different answer from "they are all already listed".
+  rosterEmpty: boolean
   onAdd: (playerId: string) => void
   onClose: () => void
 }) {
@@ -129,7 +133,11 @@ export function QuickAddView({
       </div>
       {shown.length === 0 ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
-          {pool.length === 0 ? 'Everyone in the club is already on this register.' : 'No player matches that.'}
+          {pool.length > 0
+            ? 'No player matches that.'
+            : rosterEmpty
+              ? 'Nobody is registered for this season yet. Add players under Players first.'
+              : 'Everyone in the club is already on this register.'}
         </p>
       ) : (
         <div className="reg-quickadd">
@@ -295,6 +303,7 @@ function RegisterScreen({ session }: { session: Session }) {
       {adding && (
         <QuickAddView
           pool={pool}
+          rosterEmpty={players.length === 0}
           onClose={() => setAdding(false)}
           onAdd={(playerId) => {
             setEntry.mutate({ sessionId: session.id, playerId, present: true, source: 'manual' })

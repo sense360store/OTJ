@@ -116,13 +116,19 @@ describe('RegisterRowView', () => {
 })
 
 describe('QuickAddView', () => {
-  it('lists the pool and says when there is nobody left to add', () => {
-    expect(renderToStaticMarkup(<QuickAddView pool={players} onAdd={noop} onClose={noop} />)).toContain(
-      'Alpha Synthetic',
+  it('lists the pool', () => {
+    expect(
+      renderToStaticMarkup(<QuickAddView pool={players} rosterEmpty={false} onAdd={noop} onClose={noop} />),
+    ).toContain('Alpha Synthetic')
+  })
+
+  it('tells a club with no roster where to start, not that everyone is listed', () => {
+    expect(renderToStaticMarkup(<QuickAddView pool={[]} rosterEmpty onAdd={noop} onClose={noop} />)).toContain(
+      'Nobody is registered for this season yet',
     )
-    expect(renderToStaticMarkup(<QuickAddView pool={[]} onAdd={noop} onClose={noop} />)).toContain(
-      'Everyone in the club is already on this register',
-    )
+    expect(
+      renderToStaticMarkup(<QuickAddView pool={[]} rosterEmpty={false} onAdd={noop} onClose={noop} />),
+    ).toContain('Everyone in the club is already on this register')
   })
 })
 

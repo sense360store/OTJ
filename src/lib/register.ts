@@ -147,6 +147,13 @@ export function buildRegister(
     .map((t) => t.id)
   if (wholeClub) orderedTeamIds.push(null)
 
+  // Anyone listed whose team is not among those groups still gets one. A
+  // child standing in front of the coach must never be silently dropped
+  // because the team cache has not caught up with the roster.
+  for (const p of listed) {
+    if (!orderedTeamIds.includes(p.teamId)) orderedTeamIds.push(p.teamId)
+  }
+
   const guestTeamIds: (string | null)[] = []
   for (const g of guests) {
     const key = g.teamId

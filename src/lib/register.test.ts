@@ -153,6 +153,16 @@ describe('buildRegister', () => {
     ])
   })
 
+  it('never drops a listed child whose team is missing from the team list', () => {
+    // The failure this guards: a stale team cache silently omitting a
+    // child who is standing in front of the coach.
+    const stray = player('p8', 'Stray Synthetic', 'gone')
+    const view = buildRegister([alpha, stray], ['t1', 'gone'], teams, [], false)
+    const ids = view.groups.flatMap((g) => g.rows.map((r) => r.player.id))
+    expect(ids).toContain('p8')
+    expect(view.playerTotal).toBe(2)
+  })
+
   it('takes no Spond argument and needs no linking to be complete', () => {
     // buildRegister's whole signature: players, coverage, teams, entries,
     // wholeClub. Five arguments, none of them Spond.
