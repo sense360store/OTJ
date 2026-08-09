@@ -10,6 +10,7 @@ import { useSessions } from '../context/SessionsContext'
 import { useMyCapabilities, useProgrammes, useTemplates } from '../lib/queries'
 import { FA_PROGRAMME_IMPORT_CAPS, hasAllCaps } from '../lib/data'
 import type { Programme, Session } from '../lib/data'
+import { coveredTeamIds } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading } from '../components/ui'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
@@ -19,7 +20,7 @@ import { ImportProgrammeModal } from '../components/ImportProgrammeModal'
 // weeks for the one team, or the team count when applied more widely.
 function progressHint(p: Programme, linked: Session[]): string | null {
   if (linked.length === 0) return null
-  const teams = new Set(linked.map((s) => s.teamId ?? ''))
+  const teams = new Set(linked.flatMap(coveredTeamIds))
   if (teams.size > 1) return `Applied to ${teams.size} teams`
   const completed = new Set(linked.filter((s) => s.status === 'completed').map((s) => s.programmeWeek)).size
   return `${completed} of ${p.weeks} weeks completed`

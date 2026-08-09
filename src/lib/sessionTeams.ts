@@ -49,11 +49,33 @@ export function sessionCoversAnyTeam(session: SessionCoverage, teamIds: string[]
   return coveredTeamIds(session).some((id) => teamIds.includes(id))
 }
 
+// Whether a team filter on a SCHEDULE should show this session.
+//
+// Deliberately more generous than sessionCoversAnyTeam: a session nobody
+// has tagged yet stays visible to everyone, exactly as a team-less session
+// did before coverage existed. Hiding it would make a coach's session
+// vanish from their own schedule because they had not ticked a team.
+//
+// The register uses the strict rule instead, because there the cost runs
+// the other way: listing children who were never expected.
+export function sessionVisibleToTeams(session: SessionCoverage, teamIds: string[]): boolean {
+  const coverage = coverageOf(session)
+  if (coverage.kind === 'unset') return true
+  return coverage.teamIds.some((id) => teamIds.includes(id))
+}
+
 // The one team a session is for, or null when it covers several, none, or
 // the whole club. Screens use it to default a team scoped affordance.
 export function soleCoveredTeamId(session: SessionCoverage): string | null {
   const covered = coveredTeamIds(session)
   return covered.length === 1 ? covered[0] : null
+}
+
+// A stable key for "these sessions cover the same teams", for grouping a
+// programme's applied sessions. Unset sessions share the empty key, so a
+// programme applied before anyone set coverage still groups as one.
+export function coverageKey(session: SessionCoverage): string {
+  return [...coveredTeamIds(session)].sort().join(',')
 }
 
 // The label every session surface shows.

@@ -402,8 +402,8 @@ const teams: Team[] = [
   { id: 't2', name: 'Trojans', bibColour: null },
 ]
 const venues: Venue[] = [
-  { id: 'v1', name: 'Springmill 3G', centreLat: null, centreLng: null },
-  { id: 'v2', name: 'Ossett Academy', centreLat: null, centreLng: null },
+  { id: 'v1', name: 'Springmill 3G' },
+  { id: 'v2', name: 'Ossett Academy' },
 ]
 
 function sessionFixture(over: Partial<Session> = {}): Session {

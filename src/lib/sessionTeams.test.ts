@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  coverageKey,
   coverageOf,
   coversWholeClub,
   coveredTeamIds,
   sessionCoversAnyTeam,
   sessionTeamsLabel,
+  sessionVisibleToTeams,
   soleCoveredTeamId,
   toggleCoveredTeam,
 } from './sessionTeams'
@@ -78,6 +80,33 @@ describe('sessionCoversAnyTeam', () => {
     expect(sessionCoversAnyTeam(cover([], 't1'), ['t1'])).toBe(true)
     expect(sessionCoversAnyTeam(cover([]), allIds)).toBe(false)
     expect(sessionCoversAnyTeam(cover(['t1']), [])).toBe(false)
+  })
+})
+
+describe('sessionVisibleToTeams: the schedule filter, deliberately generous', () => {
+  it('shows a session covering one of my teams, and hides one covering none', () => {
+    expect(sessionVisibleToTeams(cover(['t1', 't2']), ['t2'])).toBe(true)
+    expect(sessionVisibleToTeams(cover(['t1']), ['t2'])).toBe(false)
+    expect(sessionVisibleToTeams(cover([], 't1'), ['t1'])).toBe(true)
+  })
+
+  it('keeps an untagged session visible rather than vanishing it', () => {
+    // The register hides an unset session's players; a schedule must not
+    // hide the session itself, or a coach loses their own night because
+    // they never ticked a team.
+    expect(sessionVisibleToTeams(cover([]), ['t1'])).toBe(true)
+    expect(sessionVisibleToTeams(cover([]), [])).toBe(true)
+    // The strict rule, used by the register, still says nothing is covered.
+    expect(sessionCoversAnyTeam(cover([]), ['t1'])).toBe(false)
+  })
+})
+
+describe('coverageKey', () => {
+  it('is the same for the same set whatever the order, and empty for unset', () => {
+    expect(coverageKey(cover(['t2', 't1']))).toBe(coverageKey(cover(['t1', 't2'])))
+    expect(coverageKey(cover(['t1']))).not.toBe(coverageKey(cover(['t1', 't2'])))
+    expect(coverageKey(cover([]))).toBe('')
+    expect(coverageKey(cover([], 't1'))).toBe('t1')
   })
 })
 

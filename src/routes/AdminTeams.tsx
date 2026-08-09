@@ -5,8 +5,18 @@
 // admin surface.
 import { useState } from 'react'
 import { useSessions } from '../context/SessionsContext'
-import { useDeleteTeam, useInsertTeam, useMyCapabilities, useProfiles, useRenameTeam, useTeams } from '../lib/queries'
+import {
+  useDeleteTeam,
+  useInsertTeam,
+  useMyCapabilities,
+  useProfiles,
+  useRenameTeam,
+  useSetTeamBibColour,
+  useTeams,
+} from '../lib/queries'
 import type { Team } from '../lib/data'
+import { BIB_COLOURS, bibSwatch } from '../lib/bibs'
+import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import { ErrorNote, Loading, Modal } from '../components/ui'
 
@@ -46,6 +56,10 @@ function DeleteTeamModal({
         players on this team become Unassigned, keeping their registration, shirt number and history. No sessions, people
         or players are removed.
       </p>
+      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+        A session that covered only this team is left with no teams set, and its register lists nobody until a coach
+        picks the teams again. It never widens to the whole club.
+      </p>
       {del.isError && (
         <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
           Could not remove the team. Try again.
@@ -55,15 +69,69 @@ function DeleteTeamModal({
   )
 }
 
+// The team's default bib colour, the one a whole squad wears unless a
+// coach overrides someone on the night. Presentational so the swatch and
+// the option list render without a query client.
+export function BibColourField({
+  value,
+  disabled,
+  label,
+  onChange,
+}: {
+  value: string | null
+  disabled: boolean
+  label: string
+  onChange: (v: string | null) => void
+}) {
+  return (
+    <div className="row" style={{ gap: 7, alignItems: 'center' }}>
+      {value && (
+        <span
+          aria-hidden="true"
+          style={{
+            width: 16,
+            height: 16,
+            borderRadius: '50%',
+            border: '1px solid var(--line)',
+            background: bibSwatch(value) ?? 'transparent',
+            flex: '0 0 16px',
+          }}
+        />
+      )}
+      <select
+        value={value ?? ''}
+        aria-label={label}
+        disabled={disabled}
+        style={{ minHeight: 44, width: 128 }}
+        onChange={(e) => onChange(e.target.value || null)}
+      >
+        <option value="">No bib</option>
+        {BIB_COLOURS.map((b) => (
+          <option key={b.value} value={b.value}>
+            {b.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
   const rename = useRenameTeam()
+  const setBib = useSetTeamBibColour()
   const [draft, setDraft] = useState(team.name)
   const changed = draft.trim() !== team.name && draft.trim() !== ''
   return (
-    <div className="row" style={{ gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)' }}>
-      <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+    <div className="row wrap" style={{ gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)' }}>
+      <div className="field" style={{ flex: 1, minWidth: 150, marginBottom: 0 }}>
         <input value={draft} onChange={(e) => setDraft(e.target.value)} />
       </div>
+      <BibColourField
+        value={team.bibColour}
+        disabled={setBib.isPending}
+        label={'Default bib colour for ' + team.name}
+        onChange={(v) => setBib.mutate({ teamId: team.id, bibColour: v })}
+      />
       <button
         className="btn btn-ghost btn-sm"
         disabled={!changed || rename.isPending}
@@ -157,7 +225,7 @@ export function AdminTeams() {
           // Membership is a set now: count specific members plus everyone on
           // the all teams flag.
           memberCount={members.filter((m) => m.allTeams || m.teamIds.includes(removing.id)).length}
-          sessionCount={sessions.filter((s) => s.teamId === removing.id).length}
+          sessionCount={sessions.filter((s) => sessionCoversAnyTeam(s, [removing.id])).length}
           onClose={() => setRemoving(null)}
         />
       )}

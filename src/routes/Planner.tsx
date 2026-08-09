@@ -18,7 +18,7 @@ import {
 import { blankSession, embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
-import { toggleCoveredTeam } from '../lib/sessionTeams'
+import { soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -1227,7 +1227,7 @@ function PlannerEditor({
               flight, so the draft cannot change under an in-flight save. */}
           <SpondAttendanceCard
             spondEventId={session.spondEventId}
-            teamId={session.teamId}
+            teamId={soleCoveredTeamId(session)}
             date={session.date}
             time={session.time}
             canEdit={!readOnly}
@@ -1248,7 +1248,7 @@ function PlannerEditor({
             onSave={save}
             onShare={onShare}
             onSessionDay={() => nav('sessionDay', { sessionId: session.id })}
-            onCalendar={() => downloadSessionIcs(session)}
+            onCalendar={() => downloadSessionIcs(session, venues.find((v) => v.id === session.venueId)?.name ?? null)}
             onLoadTemplate={() => nav('templates')}
             onDelete={() => setDeleteOpen(true)}
           />
@@ -1267,7 +1267,7 @@ function PlannerEditor({
       {boardPickerOpen && (
         <BoardPickerModal
           currentId={session.boardId}
-          defaultTeamId={session.teamId}
+          defaultTeamId={soleCoveredTeamId(session)}
           onSelect={setBoard}
           onClose={() => setBoardPickerOpen(false)}
         />

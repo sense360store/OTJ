@@ -255,6 +255,11 @@ const FORBIDDEN = new Set<string>([
   'spond_event_id', 'spondEventId', 'board_id', 'boardId', 'programme_week',
   'programmeWeek', 'live_activity_index', 'liveActivityIndex',
   'live_activity_started_at', 'liveActivityStartedAt',
+  // Training day columns (0044): venue, coverage, bibs and the register.
+  'venue_id', 'venueId', 'teamIds', 'session_teams', 'sessionTeams',
+  'bib_colour', 'bibColour', 'bib_colour_override', 'bibColourOverride',
+  'register_entries', 'registerEntries', 'present',
+  'marked_by', 'markedBy', 'marked_at', 'markedAt',
   'builder', 'public', '_mid', '_path',
 ])
 

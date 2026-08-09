@@ -31,6 +31,7 @@ import { Feedback } from './routes/Feedback'
 import { AdminClub } from './routes/AdminClub'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
+import { AdminVenues } from './routes/AdminVenues'
 import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
 import { AdminShares } from './routes/AdminShares'
@@ -149,6 +150,7 @@ export function App() {
           <Route path="feedback" element={<Feedback />} />
           <Route element={<RequireCap cap="club.manage" />}>
             <Route path="admin/club" element={<AdminClub />} />
+            <Route path="admin/venues" element={<AdminVenues />} />
             <Route path="admin/spond" element={<AdminSpond />} />
           </Route>
           <Route element={<RequireCap cap="teams.manage" />}>

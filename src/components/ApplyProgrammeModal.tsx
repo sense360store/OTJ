@@ -14,6 +14,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useTeams, useUpsertSession } from '../lib/queries'
 import { logSessionWriteError, stableCreateId } from '../lib/sessionSubmit'
+import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import { Icon } from './icons'
 import { Modal } from './ui'
 import type { Activity, Programme, Session, Team, Template } from '../lib/data'
@@ -291,7 +292,7 @@ export function ApplyProgrammeModal({
   const teamName = teams.find((t) => t.id === teamId)?.name ?? 'This team'
   const clash = (week: number) => {
     const date = dateFor(week)
-    return sessions.some((s) => s.teamId === teamId && s.date === date)
+    return sessions.some((s) => sessionCoversAnyTeam(s, [teamId]) && s.date === date)
   }
 
   const confirm = async () => {
@@ -335,10 +336,10 @@ export function ApplyProgrammeModal({
           liveActivityStartedAt: null,
           spondEventId: null,
           boardId: null,
-    venueId: null,
-    // Unspecified: the upsert defaults a new session to covering the
-    // whole club, which is what a club training night nearly always is.
-    teamIds: [],
+          venueId: null,
+          // A programme is applied to one team, so that is what the
+          // sessions it creates cover.
+          teamIds: [teamId],
           // Club only until classified; the upsert never writes the column.
           rights: 'internal_only',
         }

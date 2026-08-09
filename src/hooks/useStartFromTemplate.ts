@@ -14,6 +14,7 @@ import { useAuth } from './useAuth'
 import { useNav } from './useNav'
 import { useGuardedSubmit } from './useGuardedSubmit'
 import { useSessions } from '../context/SessionsContext'
+import { useTeams } from '../lib/queries'
 import { stableCreateId } from '../lib/sessionSubmit'
 import type { Activity, Session, Template } from '../lib/data'
 
@@ -21,6 +22,7 @@ export function useStartFromTemplate() {
   const nav = useNav()
   const { user, profile } = useAuth()
   const { upsertSession } = useSessions()
+  const { data: teams = [] } = useTeams()
   // One id per template for the life of this screen, so a retry after an
   // ambiguous failure reuses it and cannot create a duplicate; a success
   // navigates away and unmounts, so using the same template again later mints
@@ -54,10 +56,12 @@ export function useStartFromTemplate() {
       liveActivityStartedAt: null,
       spondEventId: null,
       boardId: null,
-    venueId: null,
-    // Unspecified: the upsert defaults a new session to covering the
-    // whole club, which is what a club training night nearly always is.
-    teamIds: [],
+      venueId: null,
+      // The coach's own team when their profile names one, the whole club
+      // otherwise, the same default a fresh planner draft starts from. Never
+      // left unset: this session is saved before the coach sees it, and an
+      // unset session's register lists nobody.
+      teamIds: profile?.team_id ? [profile.team_id] : teams.map((t) => t.id),
       // Club only until classified; the upsert never writes the column.
       rights: 'internal_only',
     }

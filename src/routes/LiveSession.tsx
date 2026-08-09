@@ -21,6 +21,7 @@ import {
 import { embedSrc, sessionMinutes } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
+import { sessionTeamsLabel } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import { fmtClock, MediaAttribution, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
 import { MediaPlayerSurface } from '../components/MediaPlayerModal'
@@ -209,7 +210,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
   const teamById = useTeamMap()
   const setLive = useSetLiveActivity()
   // A session without a team is a club-wide event, shown as Club.
-  const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
+  const teamName = sessionTeamsLabel(session, teamById)
   const acts = session.activities
   const load = (): LiveSaved | null => {
     try {
@@ -476,7 +477,7 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
   const mediaById = useMediaMap()
   const actTitle = useActivityTitle()
   const teamById = useTeamMap()
-  const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
+  const teamName = sessionTeamsLabel(session, teamById)
   const acts = session.activities
   const live = session.liveActivityIndex
 

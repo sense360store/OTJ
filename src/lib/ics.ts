@@ -44,7 +44,10 @@ export function sessionCalendarDates(s: Session): { start: Date; end: Date } | n
   return { start, end: new Date(start.getTime() + mins * 60_000) }
 }
 
-export function buildSessionIcs(s: Session): string | null {
+// venueName is the resolved venue for a session, which the caller looks up
+// from the club's venues. A session saved before venues existed falls back to
+// its frozen free text label, so an old calendar entry keeps its location.
+export function buildSessionIcs(s: Session, venueName?: string | null): string | null {
   const dates = sessionCalendarDates(s)
   if (!dates) return null
   const description = [s.focus, `${s.activities.length} activities, ${sessionMinutes(s)} min`]
@@ -62,7 +65,7 @@ export function buildSessionIcs(s: Session): string | null {
     `DTSTART:${fmtLocal(dates.start)}`,
     `DTEND:${fmtLocal(dates.end)}`,
     `SUMMARY:${esc(s.name)}`,
-    ...(s.venue ? [`LOCATION:${esc(s.venue)}`] : []),
+    ...((venueName || s.venue) ? [`LOCATION:${esc(venueName || s.venue)}`] : []),
     ...(description ? [`DESCRIPTION:${esc(description)}`] : []),
     'END:VEVENT',
     'END:VCALENDAR',
@@ -70,8 +73,8 @@ export function buildSessionIcs(s: Session): string | null {
   return lines.map(fold).join('\r\n') + '\r\n'
 }
 
-export function downloadSessionIcs(s: Session): void {
-  const ics = buildSessionIcs(s)
+export function downloadSessionIcs(s: Session, venueName?: string | null): void {
+  const ics = buildSessionIcs(s, venueName)
   if (!ics) return
   const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' })
   const url = URL.createObjectURL(blob)

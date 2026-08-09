@@ -44,6 +44,18 @@ describe('buildSessionIcs', () => {
     expect(buildSessionIcs(session({ venue: 'Ainley Top' }))).toContain('LOCATION:Ainley Top')
   })
 
+  it('prefers the resolved venue over the frozen free text label', () => {
+    expect(buildSessionIcs(session({ venue: 'Ainley Top' }), 'Springmill 3G')).toContain('LOCATION:Springmill 3G')
+  })
+
+  it('falls back to the frozen label for a session saved before venues existed', () => {
+    expect(buildSessionIcs(session({ venue: 'Ainley Top' }), null)).toContain('LOCATION:Ainley Top')
+  })
+
+  it('writes no LOCATION when neither is set', () => {
+    expect(buildSessionIcs(session({ venue: '' }), null)).not.toContain('LOCATION')
+  })
+
   it('escapes commas and semicolons in the summary', () => {
     expect(buildSessionIcs(session({ name: 'U10, Reds; finishing' }))).toContain(
       'SUMMARY:U10\\, Reds\\; finishing',

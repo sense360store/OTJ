@@ -24,6 +24,7 @@ import {
 import { useSessions } from '../context/SessionsContext'
 import { isSampleMedia, memberTeamIds } from '../lib/data'
 import type { Drill, Session } from '../lib/data'
+import { sessionTeamsLabel, sessionVisibleToTeams } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { DrillCard, ErrorNote, fmtDate, Loading } from '../components/ui'
@@ -383,8 +384,7 @@ export function ParentHome() {
   // session is in scope.
   const inScope = (s: Session) => {
     if (!hasTeam) return true
-    if (s.teamId == null) return true
-    return effectiveIds.includes(s.teamId)
+    return sessionVisibleToTeams(s, effectiveIds)
   }
   const relevant = sessions.filter(inScope)
 
@@ -397,7 +397,7 @@ export function ParentHome() {
   const past = relevant.filter(isPast)
   const lastRow = past.length ? past[past.length - 1] : null
 
-  const teamLabel = (s: Session) => (s.teamId ? (teamById[s.teamId]?.name ?? 'Team') : 'Club')
+  const teamLabel = (s: Session) => sessionTeamsLabel(s, teamById)
 
   const thisWeek: ParentSessionView[] = upcoming.slice(0, 3).map((s) => {
     const d = new Date(s.date + 'T00:00:00')

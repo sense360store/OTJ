@@ -40,6 +40,7 @@ const ADMIN_SECTION: NavSection = {
     { id: 'admin-club', label: 'Club', icon: Icon.star, to: '/admin/club' },
     { id: 'admin-users', label: 'Users', icon: Icon.users, to: '/admin/users' },
     { id: 'admin-teams', label: 'Teams', icon: Icon.flag, to: '/admin/teams' },
+    { id: 'admin-venues', label: 'Venues', icon: Icon.ruler, to: '/admin/venues' },
     { id: 'admin-seasons', label: 'Seasons', icon: Icon.calendar, to: '/admin/seasons' },
     { id: 'admin-spond', label: 'Spond', icon: Icon.link, to: '/admin/spond' },
     { id: 'admin-shares', label: 'Shared links', icon: Icon.share, to: '/admin/shares' },
@@ -112,6 +113,7 @@ export const ITEM_CAP: Record<string, string> = {
   // The admin seasons surface is admin only (seasons.manage), so the item shows
   // only to holders even though the rest of the Admin section is club.manage.
   'admin-seasons': 'seasons.manage',
+  'admin-venues': 'club.manage',
   'admin-spond': 'club.manage',
   // The club wide Shared links screen is gated on shares.manage (managers and
   // admins), not club.manage, so a club.manage holder without it sees neither

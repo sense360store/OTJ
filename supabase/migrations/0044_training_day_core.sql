@@ -20,8 +20,8 @@
 -- hosted does not have. One apply, one release, one rollback.
 --
 -- WHAT THIS ADDS
---   venues, venue_areas    the club's real places, with owner drawn
---                          boundary polygons on the areas
+--   venues                 the club's real places, so every session at
+--                          Springmill agrees on the name
 --   sessions.venue_id      a real reference; sessions.venue text is
 --                          FROZEN legacy and never written by new code
 --   session_teams          which teams a session covers (a session is a
@@ -29,10 +29,14 @@
 --   teams.bib_colour       the team's default bib, from a closed list
 --   register_entries       who was actually there, and what they wore
 --
--- WHAT THIS DOES NOT ADD, ON PURPOSE. No Spond member links and no per
--- player RSVP. The register is the coach's own record and must be fully
--- usable with no Spond configuration at all; Spond RSVP arrives in
--- Release B as context beside attendance, never as attendance.
+-- WHAT THIS DOES NOT ADD, ON PURPOSE
+--   No Spond member links and no per player RSVP. The register is the
+--   coach's own record and must be fully usable with no Spond
+--   configuration at all; Spond RSVP arrives later as context beside
+--   attendance, never as attendance.
+--   No venue areas and no boundary geometry. A venue here is a name a
+--   coach picks. Measured areas belong to the session setup work and
+--   arrive with the screens that use them, not before.
 --
 -- CHILD DATA. register_entries names no child: it holds player ids and
 -- rides the same players.view gate as the roster it resolves against, so
@@ -75,86 +79,23 @@ comment on function public.is_bib_colour(text) is
   $$The closed bib colour vocabulary shared by teams.bib_colour and register_entries.bib_colour_override. Mirrored by BIB_COLOURS in src/lib/bibs.ts; this function is the authority. See 0044_training_day_core.sql.$$;
 
 -- ---------------------------------------------------------------------
--- venue_boundary_ok: the structural shape check for a boundary polygon.
--- An array of 3 to 64 vertices, each an array of exactly two numbers,
--- latitude then longitude, within world bounds. CASE makes the
--- evaluation order contractual: the length check runs only on an array
--- and the range casts only on numbers, so no input shape raises instead
--- of returning false.
--- ---------------------------------------------------------------------
-create or replace function public.venue_boundary_ok(p jsonb)
-returns boolean
-language sql
-immutable
-set search_path = ''
-as $$
-  select case
-    when jsonb_typeof(p) <> 'array' then false
-    when jsonb_array_length(p) not between 3 and 64 then false
-    else not exists (
-      select 1
-      from jsonb_array_elements(p) as v(vertex)
-      where case
-        when jsonb_typeof(v.vertex) <> 'array' then true
-        when jsonb_array_length(v.vertex) <> 2 then true
-        when jsonb_typeof(v.vertex -> 0) <> 'number' then true
-        when jsonb_typeof(v.vertex -> 1) <> 'number' then true
-        when (v.vertex ->> 0)::numeric not between -90 and 90 then true
-        when (v.vertex ->> 1)::numeric not between -180 and 180 then true
-        else false
-      end
-    )
-  end
-$$;
-
--- ---------------------------------------------------------------------
--- venues: a place the club trains. The centre is a display and default
--- convenience; the measured geometry lives on venue_areas.
+-- venues: a place the club trains, identified by name.
 -- ---------------------------------------------------------------------
 create table public.venues (
   id         uuid primary key default gen_random_uuid(),
   club_id    uuid not null references public.clubs (id) on delete cascade,
   name       text not null,
-  centre_lat numeric(9,6),
-  centre_lng numeric(9,6),
   created_by uuid references public.profiles (id) on delete set null,
   created_at timestamptz not null default now(),
   constraint venues_name_unique_per_club unique (club_id, name),
-  constraint venues_centre_lat_range check (centre_lat is null or centre_lat between -90 and 90),
-  constraint venues_centre_lng_range check (centre_lng is null or centre_lng between -180 and 180),
+  constraint venues_name_not_blank check (btrim(name) <> ''),
+  -- The club scoped composite reference pattern needs this on the parent.
   constraint venues_id_club_unique unique (id, club_id)
 );
 create index on public.venues (club_id);
 
 comment on table public.venues is
-  $$Club venue config: a named place with an optional lat/lng centre. Measured geometry lives on venue_areas. Reads are club wide; writes take club.manage. Carries no person data.$$;
-
--- ---------------------------------------------------------------------
--- venue_areas: a bounded area of a venue. Boundaries are owner drawn
--- visual approximations of the usable grass, treated as given: never
--- resurveyed or corrected in code.
--- ---------------------------------------------------------------------
-create table public.venue_areas (
-  id         uuid primary key default gen_random_uuid(),
-  club_id    uuid not null references public.clubs (id) on delete cascade,
-  venue_id   uuid not null,
-  name       text not null,
-  boundary   jsonb not null,
-  usable     boolean not null default true,
-  created_at timestamptz not null default now(),
-  constraint venue_areas_venue_fk
-    foreign key (venue_id, club_id) references public.venues (id, club_id) on delete cascade,
-  constraint venue_areas_name_unique_per_venue unique (venue_id, name),
-  constraint venue_areas_boundary_shape check (public.venue_boundary_ok(boundary)),
-  -- Release C's session setup will reference an area club scoped; the
-  -- constraint is free now and saves an enabling migration later.
-  constraint venue_areas_id_club_unique unique (id, club_id)
-);
-create index on public.venue_areas (club_id);
-create index on public.venue_areas (venue_id);
-
-comment on table public.venue_areas is
-  $$A venue's bounded area: ordered lat/lng vertices (closing vertex omitted), 3 to 64 of them, shape enforced by venue_boundary_ok. Boundaries are owner drawn visual approximations of the usable area, not survey data; do not resurvey or correct them in code. Carries no person data.$$;
+  $$Club venue config (0044): the named places the club trains at. Reads are club wide, because a coach needs to know where a session is; writes take club.manage. Carries no person data.$$;
 
 -- ---------------------------------------------------------------------
 -- sessions.venue_id, and the free text column frozen behind it.
@@ -194,6 +135,12 @@ comment on column public.teams.bib_colour is
 -- session_teams: which teams a session covers. A session is a whole club
 -- slot far more often than a single team one, which the single nullable
 -- sessions.team_id could not express.
+--
+-- Absence is absence. Zero rows means coverage was never set, NOT the
+-- whole club: reading empty as everyone would mean deleting a team
+-- silently widened every session that covered only that team from one
+-- squad to every child in the club. src/lib/sessionTeams.ts holds the
+-- same rule on the client.
 -- ---------------------------------------------------------------------
 create table public.session_teams (
   session_id uuid not null,
@@ -210,7 +157,7 @@ create index on public.session_teams (club_id);
 create index on public.session_teams (team_id);
 
 comment on table public.session_teams is
-  $$The teams a session covers (0044). Coverage is a filter and a default, never access control: reads of session content stay club wide. Deleting a team removes its coverage rows and leaves the session; deleting a session removes its rows.$$;
+  $$The teams a session covers (0044). Coverage is a filter and a default, never access control: reads of session content stay club wide. Zero rows means unset, never all teams. Deleting a team removes its coverage rows and leaves the session; deleting a session removes its rows.$$;
 
 comment on column public.sessions.team_id is
   $$FROZEN legacy single team column (0002_teams_roles). New code writes session_teams instead and never writes this. Existing rows keep their value, and a legacy row with a team_id reads as covering that one team until the session is edited. No backfill and no destructive drop is scheduled.$$;
@@ -250,22 +197,27 @@ comment on table public.register_entries is
   $$The session register (0044): who was present and what bib they wore. Holds player ids only and never a name, so it carries the same child data weight as the roster it resolves against: select is gated players.view and parents never read it. Writes take sessions.create club wide, because any coach on the day marks arrivals, not only the session's owner. Erasing a child or deleting a session removes the rows by cascade. Not audited per tick by deliberate decision: the row is the record and a tick is a high frequency operational touch.$$;
 
 -- ---------------------------------------------------------------------
--- Immutability: a register row's identity and club never change. Also
--- stamps who marked it and when, so the row carries its own provenance
--- without an audit event per tick.
+-- Provenance and immutability. Every write stamps who marked it and
+-- when, so the row carries its own provenance without an audit event per
+-- tick, and a client cannot forge either. A row's identity and club
+-- never change.
+--
+-- Not SECURITY DEFINER: this reads nothing outside the row it is
+-- rewriting, so it needs no elevated rights.
 -- ---------------------------------------------------------------------
 create or replace function public.register_entries_touch()
 returns trigger
 language plpgsql
-security definer
 set search_path = ''
 as $$
 begin
-  if new.session_id is distinct from old.session_id
-     or new.player_id is distinct from old.player_id
-     or new.club_id is distinct from old.club_id then
-    raise exception 'a register entry cannot change its session, player or club'
-      using errcode = 'P0001';
+  if tg_op = 'UPDATE' then
+    if new.session_id is distinct from old.session_id
+       or new.player_id is distinct from old.player_id
+       or new.club_id is distinct from old.club_id then
+      raise exception 'a register entry cannot change its session, player or club'
+        using errcode = 'P0001';
+    end if;
   end if;
   new.marked_by := auth.uid();
   new.marked_at := now();
@@ -274,15 +226,14 @@ end;
 $$;
 
 create trigger register_entries_touch
-  before update on public.register_entries
+  before insert or update on public.register_entries
   for each row execute function public.register_entries_touch();
 
 -- ---------------------------------------------------------------------
 -- Row level security.
 -- ---------------------------------------------------------------------
-alter table public.venues          enable row level security;
-alter table public.venue_areas     enable row level security;
-alter table public.session_teams   enable row level security;
+alter table public.venues           enable row level security;
+alter table public.session_teams    enable row level security;
 alter table public.register_entries enable row level security;
 
 -- Venues: club wide read (a coach needs to see where the session is),
@@ -290,12 +241,6 @@ alter table public.register_entries enable row level security;
 create policy "venues_select_club" on public.venues
   for select using ( club_id = public.my_club() );
 create policy "venues_manage" on public.venues
-  for all using ( club_id = public.my_club() and public.has_perm('club.manage') )
-  with check ( club_id = public.my_club() and public.has_perm('club.manage') );
-
-create policy "venue_areas_select_club" on public.venue_areas
-  for select using ( club_id = public.my_club() );
-create policy "venue_areas_manage" on public.venue_areas
   for all using ( club_id = public.my_club() and public.has_perm('club.manage') )
   with check ( club_id = public.my_club() and public.has_perm('club.manage') );
 
@@ -344,9 +289,9 @@ create policy "register_entries_delete" on public.register_entries
   for delete using ( club_id = public.my_club() and public.has_perm('sessions.create') );
 
 -- No sequence or table grants beyond the defaults the other app tables
--- use; PostgREST reaches these through the authenticated role.
+-- use; PostgREST reaches these through the authenticated role. Coverage
+-- has no update grant: a row is added or removed, never edited.
 grant select, insert, update, delete on public.venues to authenticated;
-grant select, insert, update, delete on public.venue_areas to authenticated;
 grant select, insert, delete on public.session_teams to authenticated;
 grant select, insert, update, delete on public.register_entries to authenticated;
 
@@ -371,8 +316,6 @@ begin
   else
     v_club := new.club_id; v_id := new.id;
     if new.name is distinct from old.name then v_changed := array_append(v_changed, 'name'); end if;
-    if new.centre_lat is distinct from old.centre_lat then v_changed := array_append(v_changed, 'centre_lat'); end if;
-    if new.centre_lng is distinct from old.centre_lng then v_changed := array_append(v_changed, 'centre_lng'); end if;
     if array_length(v_changed, 1) is null then return new; end if;
     v_action := 'venue.updated';
   end if;
@@ -385,37 +328,6 @@ $$;
 create trigger audit_venues
   after insert or update or delete on public.venues
   for each row execute function public.audit_venues();
-
-create or replace function public.audit_venue_areas()
-returns trigger
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_club uuid; v_id uuid; v_action text; v_changed text[] := '{}';
-begin
-  if tg_op = 'INSERT' then
-    v_club := new.club_id; v_id := new.id; v_action := 'venue_area.created';
-  elsif tg_op = 'DELETE' then
-    v_club := old.club_id; v_id := old.id; v_action := 'venue_area.deleted';
-  else
-    v_club := new.club_id; v_id := new.id;
-    if new.name is distinct from old.name then v_changed := array_append(v_changed, 'name'); end if;
-    if new.boundary is distinct from old.boundary then v_changed := array_append(v_changed, 'boundary'); end if;
-    if new.usable is distinct from old.usable then v_changed := array_append(v_changed, 'usable'); end if;
-    if array_length(v_changed, 1) is null then return new; end if;
-    v_action := 'venue_area.updated';
-  end if;
-  perform public.audit_domain_event(v_club, auth.uid(), v_action, 'venue_area', v_id, null, nullif(v_changed, '{}'));
-  if tg_op = 'DELETE' then return old; end if;
-  return new;
-end;
-$$;
-
-create trigger audit_venue_areas
-  after insert or update or delete on public.venue_areas
-  for each row execute function public.audit_venue_areas();
 
 -- Coverage changes ride the session's own entity, carrying the team id
 -- the way every other team scoped event does.
@@ -482,6 +394,9 @@ begin
     if array_length(v_changed, 1) is null then return new; end if;
     v_action := 'session.updated';
   end if;
+  -- team_id is a safe first class id already used across the audit trail, so
+  -- the session's team rides the event; the live pointer, notes and content
+  -- never do.
   perform public.audit_domain_event(v_club, auth.uid(), v_action, 'session', v_id, v_team, nullif(v_changed, '{}'));
   if tg_op = 'DELETE' then return old; end if;
   return new;
@@ -498,7 +413,6 @@ declare
 begin
   -- Tables and columns exist.
   if to_regclass('public.venues') is null
-     or to_regclass('public.venue_areas') is null
      or to_regclass('public.session_teams') is null
      or to_regclass('public.register_entries') is null then
     raise exception 'training_day_core: a table was not created';
@@ -514,10 +428,10 @@ begin
 
   -- RLS is on everywhere.
   select count(*) into n from pg_class
-   where relname in ('venues','venue_areas','session_teams','register_entries')
+   where relname in ('venues','session_teams','register_entries')
      and relnamespace = 'public'::regnamespace and relrowsecurity;
-  if n <> 4 then
-    raise exception 'training_day_core: row level security is not enabled on all four tables (got %)', n;
+  if n <> 3 then
+    raise exception 'training_day_core: row level security is not enabled on all three tables (got %)', n;
   end if;
 
   -- The register's select gate must stay narrower than its writes, so no
@@ -530,6 +444,12 @@ begin
                  where schemaname='public' and tablename='register_entries'
                    and cmd='SELECT' and qual like '%players.view%') then
     raise exception 'training_day_core: the register select gate must require players.view';
+  end if;
+  -- Coverage select must stay exactly club wide, matching the sessions it
+  -- describes; a capability there would hide sessions from their own club.
+  if exists (select 1 from pg_policies
+             where schemaname='public' and tablename='session_teams' and cmd='ALL') then
+    raise exception 'training_day_core: session_teams must not carry a FOR ALL policy';
   end if;
 
   -- The venue reference nulls only itself on delete; a bare set null
@@ -554,30 +474,17 @@ begin
     raise exception 'training_day_core: the bib vocabulary refused red';
   end if;
 
-  -- The boundary shape check bites and accepts.
-  if public.venue_boundary_ok('[[53.1,-1.5],[53.2,-1.5]]'::jsonb) then
-    raise exception 'training_day_core: the boundary check accepted two vertices';
-  end if;
-  if public.venue_boundary_ok('[[91,0],[0,0],[1,1]]'::jsonb) then
-    raise exception 'training_day_core: the boundary check accepted an out of range latitude';
-  end if;
-  if not public.venue_boundary_ok('[[53.1,-1.5],[53.2,-1.5],[53.2,-1.4]]'::jsonb) then
-    raise exception 'training_day_core: the boundary check refused a valid triangle';
-  end if;
-
   -- The composite club scoped references are declared.
   if not exists (select 1 from pg_constraint where conname = 'register_entries_session_fk')
      or not exists (select 1 from pg_constraint where conname = 'register_entries_player_fk')
      or not exists (select 1 from pg_constraint where conname = 'session_teams_session_fk')
-     or not exists (select 1 from pg_constraint where conname = 'session_teams_team_fk')
-     or not exists (select 1 from pg_constraint where conname = 'venue_areas_venue_fk') then
+     or not exists (select 1 from pg_constraint where conname = 'session_teams_team_fk') then
     raise exception 'training_day_core: a composite club scoped foreign key is missing';
   end if;
 
   -- Audit triggers exist for the configuration tables and not for the
   -- register, which is deliberately unaudited per tick.
   if not exists (select 1 from pg_trigger where tgname = 'audit_venues')
-     or not exists (select 1 from pg_trigger where tgname = 'audit_venue_areas')
      or not exists (select 1 from pg_trigger where tgname = 'audit_session_teams') then
     raise exception 'training_day_core: an audit trigger is missing';
   end if;
