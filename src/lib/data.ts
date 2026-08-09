@@ -32,6 +32,9 @@ export const ROLE_LABELS: Record<Role, string> = {
 export interface Team {
   id: string
   name: string
+  // The team's default bib colour (0044), null when unset. A register
+  // entry may override it for one player on one session.
+  bibColour: string | null
 }
 
 // A child on a team's roster, the first child data the app holds. The shape
@@ -370,7 +373,15 @@ export interface Session {
   // Visibility is club-wide; coachId carries ownership for the edit and
   // delete affordances and the My sessions filter. teamId is a filter.
   coachId: string
+  // FROZEN legacy single team (0002). Read as a fallback for sessions
+  // saved before coverage existed; new code writes teamIds instead.
   teamId: string | null
+  // The teams this session covers (0044). Empty means the session
+  // predates coverage, and the frozen teamId above answers instead.
+  teamIds: string[]
+  // The venue this session is at (0044), null when unset. The free text
+  // `venue` above is the frozen legacy label.
+  venueId: string | null
   // FA session model fields: intentions render at the top FA style, space is
   // the setup area, source carries attribution.
   intentions: string[]
@@ -533,7 +544,10 @@ export function blankSession(coachId: string, teamId: string | null): Session {
     date: '2026-06-16',
     time: '17:30',
     ageGroup: 'U8s',
-    venue: 'Springmill 3G',
+    // No venue until someone picks one from the club's list. A seeded name
+    // would make every new session claim to be somewhere nobody chose, and
+    // the frozen free text column is never written with a value.
+    venue: '',
     focus: 'All-round',
     status: 'upcoming',
     activities: [],
@@ -549,6 +563,12 @@ export function blankSession(coachId: string, teamId: string | null): Session {
     liveActivityStartedAt: null,
     spondEventId: null,
     boardId: null,
+    venueId: null,
+    // Coverage starts at the coach's own team when their profile names one.
+    // With no team on the profile it starts unset, and the planner seeds the
+    // whole club once the team list arrives, so what saves is what the coach
+    // saw selected.
+    teamIds: teamId ? [teamId] : [],
     // A new session is club only until someone classifies it. The upsert never
     // writes the column, so this mirrors the database default rather than
     // choosing a value.

@@ -25,8 +25,10 @@ import {
   useProgrammeMap,
   useSession,
   useTeamMap,
+  useVenueMap,
 } from '../lib/queries'
 import { sessionMinutes } from '../lib/data'
+import { sessionTeamsLabel, soleCoveredTeamId } from '../lib/sessionTeams'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
@@ -36,6 +38,7 @@ import type { DiagramSlide } from '../components/DiagramViewer'
 import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { ShareAction } from '../components/ShareModal'
+import { SessionRegisterCard } from './SessionRegister'
 import { TacticsBoardView } from '../components/TacticsBoardView'
 import { playerNameMap, type Board, type PlayerNameMap } from '../lib/tacticsBoard'
 import './SessionDay.css'
@@ -152,8 +155,12 @@ function SessionDayView({ session }: { session: Session }) {
   }
 
   const mins = sessionMinutes(session)
-  const teamName = session.teamId ? teamById[session.teamId]?.name : 'Club'
-  const subBits = [fmtDate(session.date), session.time, session.venue, teamName].filter(Boolean)
+  // Venue comes from the venues table now. The frozen free-text
+  // sessions.venue is still read as a fallback so a session saved before
+  // 0044 keeps showing where it was.
+  const venueById = useVenueMap()
+  const venueName = (session.venueId ? venueById[session.venueId]?.name : null) ?? session.venue
+  const subBits = [fmtDate(session.date), session.time, venueName, sessionTeamsLabel(session, teamById)].filter(Boolean)
   // A session created by applying a programme links back to its programme
   // and week; a hand-planned session has neither.
   const programmeById = useProgrammeMap()
@@ -228,9 +235,14 @@ function SessionDayView({ session }: { session: Session }) {
         </button>
       )}
 
+      {/* The register stands alone and needs nothing configured. It sits
+          above the Spond card deliberately: Spond is context, the coach's own
+          record is the thing they act on. */}
+      <SessionRegisterCard session={session} />
+
       <SpondAttendanceCard
         spondEventId={session.spondEventId}
-        teamId={session.teamId}
+        teamId={soleCoveredTeamId(session)}
         date={session.date}
         time={session.time}
         canEdit={canManage}
@@ -518,7 +530,7 @@ function SessionBoardCard({
       {picking && (
         <BoardPickerModal
           currentId={session.boardId}
-          defaultTeamId={session.teamId}
+          defaultTeamId={soleCoveredTeamId(session)}
           onSelect={(id) => link.mutate({ sessionId: session.id, boardId: id })}
           onClose={() => setPicking(false)}
         />

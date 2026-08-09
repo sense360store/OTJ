@@ -12,8 +12,10 @@ import { useMemo, useRef, useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useTeams, useUpsertSession } from '../lib/queries'
+import { useTeams, useUpsertSession, useVenues } from '../lib/queries'
+import type { Venue } from '../lib/venues'
 import { logSessionWriteError, stableCreateId } from '../lib/sessionSubmit'
+import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import { Icon } from './icons'
 import { Modal } from './ui'
 import type { Activity, Programme, Session, Team, Template } from '../lib/data'
@@ -87,8 +89,9 @@ export function ApplyProgrammeFormView({
   onWeekday,
   time,
   onTime,
-  venue,
-  onVenue,
+  venues,
+  venueId,
+  onVenueId,
   weekRows,
   teamName,
   onWeekDate,
@@ -110,8 +113,9 @@ export function ApplyProgrammeFormView({
   onWeekday: (v: number) => void
   time: string
   onTime: (v: string) => void
-  venue: string
-  onVenue: (v: string) => void
+  venues: Venue[]
+  venueId: string
+  onVenueId: (v: string) => void
   weekRows: ApplyWeekRow[]
   teamName: string
   onWeekDate: (week: number, iso: string) => void
@@ -180,7 +184,19 @@ export function ApplyProgrammeFormView({
       </div>
       <div className="field">
         <label>Venue</label>
-        <input value={venue} disabled={saving} onChange={(e) => onVenue(e.target.value)} />
+        <select value={venueId} disabled={saving} onChange={(e) => onVenueId(e.target.value)}>
+          <option value="">Not set</option>
+          {venues.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name}
+            </option>
+          ))}
+        </select>
+        {venues.length === 0 && (
+          <span className="muted" style={{ fontSize: 12.5, marginTop: 6, display: 'block' }}>
+            No venues yet. An admin adds them under Admin, Venues.
+          </span>
+        )}
       </div>
 
       <div className="field">
@@ -252,6 +268,7 @@ export function ApplyProgrammeModal({
   const { sessions } = useSessions()
   const { data: teams = [] } = useTeams()
   const upsert = useUpsertSession()
+  const { data: venues = [] } = useVenues()
 
   const weekCount = Math.max(programme.weeks, ...Object.keys(weekTemplates).map(Number), 1)
   const weeks = Array.from({ length: weekCount }, (_, i) => i + 1)
@@ -261,7 +278,7 @@ export function ApplyProgrammeModal({
   const [startDate, setStartDate] = useState(() => isoAddDays(todayIso(), 7))
   const [weekday, setWeekday] = useState(() => weekdayOf(isoAddDays(todayIso(), 7)))
   const [time, setTime] = useState('17:30')
-  const [venue, setVenue] = useState('Springmill 3G')
+  const [venueId, setVenueId] = useState('')
   const [ageGroup, setAgeGroup] = useState('U8s')
   // Per-week date edits survive until the series itself moves.
   const [overrides, setOverrides] = useState<Record<number, string>>({})
@@ -291,7 +308,7 @@ export function ApplyProgrammeModal({
   const teamName = teams.find((t) => t.id === teamId)?.name ?? 'This team'
   const clash = (week: number) => {
     const date = dateFor(week)
-    return sessions.some((s) => s.teamId === teamId && s.date === date)
+    return sessions.some((s) => sessionCoversAnyTeam(s, [teamId]) && s.date === date)
   }
 
   const confirm = async () => {
@@ -319,7 +336,9 @@ export function ApplyProgrammeModal({
           date: dateFor(week),
           time,
           ageGroup,
-          venue,
+          // The frozen free text label is never written with a value; the
+          // venue is the real reference below.
+          venue: '',
           focus: t.focus || programme.focus,
           status: 'upcoming',
           activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],
@@ -335,6 +354,10 @@ export function ApplyProgrammeModal({
           liveActivityStartedAt: null,
           spondEventId: null,
           boardId: null,
+          venueId: venueId || null,
+          // A programme is applied to one team, so that is what the
+          // sessions it creates cover.
+          teamIds: [teamId],
           // Club only until classified; the upsert never writes the column.
           rights: 'internal_only',
         }
@@ -416,8 +439,9 @@ export function ApplyProgrammeModal({
       onWeekday={pickWeekday}
       time={time}
       onTime={setTime}
-      venue={venue}
-      onVenue={setVenue}
+      venues={venues}
+      venueId={venueId}
+      onVenueId={setVenueId}
       weekRows={weekRows}
       teamName={teamName}
       onWeekDate={(week, iso) => setOverrides((o) => ({ ...o, [week]: iso }))}

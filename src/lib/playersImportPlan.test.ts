@@ -23,8 +23,8 @@ const ID_UNKNOWN = '99999999-9999-4999-8999-999999999999' // not in the club
 
 const HEADER = 'Player ID,Player Name,Season,Team,Registration Status,Shirt Number,Registered Date'
 const TEAMS: Team[] = [
-  { id: 'titans', name: 'Titans' },
-  { id: 'trojans', name: 'Trojans' },
+  { id: 'titans', name: 'Titans', bibColour: null },
+  { id: 'trojans', name: 'Trojans', bibColour: null },
 ]
 
 function reg(p: Partial<RegisteredPlayer> & { playerId: string; displayName: string }): RegisteredPlayer {

@@ -7,9 +7,16 @@ import { useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useMemberMap, useMyCapabilities, useMyTeams, useTeamMap, useTeams } from '../lib/queries'
+import { useMemberMap, useMyCapabilities, useMyTeams, useTeamMap, useTeams, useVenueMap } from '../lib/queries'
 import { memberTeamIds, sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
+import { venueNameFor } from '../lib/venues'
+import {
+  coversWholeClub,
+  sessionCoversAnyTeam,
+  sessionTeamsLabel,
+  sessionVisibleToTeams,
+} from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, fmtDate, Loading, PHASE_COLOR } from '../components/ui'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
@@ -24,6 +31,7 @@ function SessionCard({
   nav,
   ownerName,
   teamName,
+  venueName,
   canManage,
   coaching,
   onDelete,
@@ -32,6 +40,9 @@ function SessionCard({
   nav: Nav
   ownerName: string | null
   teamName: string | null
+  // The resolved venue name. Falls back to the frozen free text label for a
+  // session saved before venues existed, and is empty when neither is set.
+  venueName: string
   canManage: boolean
   // Parents do not get the planner link at all (the route redirects them);
   // the session day view is their detail.
@@ -65,10 +76,12 @@ function SessionCard({
       </div>
 
       <div className="row wrap" style={{ gap: 7 }}>
-        <span className="pill">
-          <Icon.pin />
-          {s.venue}
-        </span>
+        {venueName && (
+          <span className="pill">
+            <Icon.pin />
+            {venueName}
+          </span>
+        )}
         {teamName && (
           <span className="pill">
             <Icon.flag />
@@ -129,7 +142,7 @@ function SessionCard({
           style={{ width: 38, padding: 0, alignSelf: 'stretch', height: 'auto' }}
           aria-label="Add to calendar"
           title="Add to calendar"
-          onClick={() => downloadSessionIcs(s)}
+          onClick={() => downloadSessionIcs(s, venueName)}
         >
           <Icon.calendar />
         </button>
@@ -159,6 +172,7 @@ export function Sessions() {
   const { sessions, loading, error } = useSessions()
   const { data: teams = [] } = useTeams()
   const teamById = useTeamMap()
+  const venueById = useVenueMap()
   const memberById = useMemberMap()
   // The parent's team scope: their child's team(s), or every team via the all
   // teams flag. The read rides the same member_teams policy ParentHome uses.
@@ -178,6 +192,7 @@ export function Sessions() {
   // sessions (no team) are shared with everyone, so they stay in scope. With
   // no team set there is nothing to narrow to, so the club schedule shows with
   // the gentle note. Teams gate no access; this only narrows the view.
+  const venueNameOf = (s: Session) => venueNameFor(s, venueById)
   const scope = myTeams ?? { teamIds: [], allTeams: false }
   const effectiveIds = memberTeamIds(scope, Object.keys(teamById))
   const hasTeam = scope.allTeams || scope.teamIds.length > 0
@@ -185,16 +200,22 @@ export function Sessions() {
   // whole club: a specific selection, not the all teams flag and not no team.
   const showParentToggle = !canPlan && !scope.allTeams && scope.teamIds.length > 0
   const teamChipLabel = scope.teamIds.length > 1 ? 'My teams' : 'My team'
-  const teamScoped = (s: Session) => s.teamId == null || effectiveIds.includes(s.teamId)
+  const teamScoped = (s: Session) => sessionVisibleToTeams(s, effectiveIds)
 
-  // Coaches filter by ownership and an optional team; the club value selects
-  // sessions saved without a team. Parents see their team's schedule by
-  // default, the whole club when they toggle or hold no team.
+  // Coaches filter by ownership and an optional team; the club value now
+  // selects sessions covering every team, which is what a club night is,
+  // rather than sessions saved with no team at all. Parents see their
+  // team's schedule by default, the whole club when they toggle or hold
+  // no team.
+  const allTeamIds = Object.keys(teamById)
   const list = canPlan
     ? sessions.filter(
         (s) =>
           (view === 'mine' ? s.coachId === user?.id : true) &&
-          (!teamId || (teamId === 'club' ? !s.teamId : s.teamId === teamId)),
+          (!teamId ||
+            (teamId === 'club'
+              ? coversWholeClub(s, allTeamIds)
+              : sessionCoversAnyTeam(s, [teamId]))),
       )
     : hasTeam && parentScope === 'team'
       ? sessions.filter(teamScoped)
@@ -280,7 +301,8 @@ export function Sessions() {
                 s={s}
                 nav={nav}
                 ownerName={mine ? null : memberById[s.coachId]?.fullName || (s.coachId ? 'Another coach' : 'Club session')}
-                teamName={s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'}
+                teamName={sessionTeamsLabel(s, teamById)}
+                venueName={venueNameOf(s)}
                 canManage={caps.has('sessions.manage') || (canPlan && mine)}
                 coaching={canPlan}
                 onDelete={() => setDeleting(s)}

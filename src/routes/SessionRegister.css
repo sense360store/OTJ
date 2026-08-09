@@ -1,0 +1,226 @@
+/* The register, held in one hand at the gate. Every interactive element is
+   at least 44px tall, the whole name row is the tick target, and the bib
+   control sits in its own tap area so a mis-tap changes a colour rather
+   than someone's attendance. Works at 360px wide. */
+
+.reg {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 720px;
+  margin-top: 16px;
+}
+
+.reg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  padding: 8px 0;
+}
+.reg-count {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-display, inherit);
+  font-weight: 800;
+  font-size: 19px;
+}
+.reg-head .btn {
+  min-height: 44px;
+}
+
+.reg-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.reg-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.reg-group-head h3 {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate);
+}
+.reg-group-count {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--slate);
+}
+.reg-empty {
+  font-size: 13.5px;
+  color: var(--slate);
+  padding: 4px 2px 2px;
+}
+
+.reg-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  overflow: hidden;
+}
+.reg-row.on {
+  border-color: var(--c-physical);
+  background: color-mix(in srgb, var(--c-physical) 7%, var(--card));
+}
+
+/* The tick target: the name, the number and everything around them. */
+.reg-tick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.reg-check {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 9px;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.reg-check svg {
+  width: 16px;
+  height: 16px;
+}
+.reg-row.on .reg-check {
+  background: var(--c-physical);
+  border-color: var(--c-physical);
+}
+.reg-name {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.reg-name-main {
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1.25;
+}
+.reg-name-sub {
+  font-size: 12px;
+  color: var(--slate);
+}
+
+/* The bib control, in its own tap area at the end of the row. */
+.reg-bib {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px 8px 0;
+  flex: 0 0 auto;
+}
+.reg-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  flex: 0 0 16px;
+}
+.reg-bib select {
+  min-height: 44px;
+  max-width: 118px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 0 8px;
+}
+
+.reg-bib-static {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--slate);
+}
+
+.reg-remove {
+  flex: 0 0 44px;
+  width: 44px;
+  min-height: 56px;
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--line);
+  color: var(--slate);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.reg-remove svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The session day entry point. */
+.reg-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.reg-card-title {
+  display: block;
+  font-weight: 800;
+  font-size: 15px;
+}
+.reg-card-sub {
+  display: block;
+  font-size: 13px;
+  color: var(--slate);
+  margin-top: 2px;
+}
+
+/* Quick add. */
+.reg-quickadd {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  overflow: auto;
+}
+.reg-quickadd-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: inherit;
+  font-weight: 800;
+  font-size: 14.5px;
+  text-align: left;
+  cursor: pointer;
+}

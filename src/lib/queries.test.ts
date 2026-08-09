@@ -18,6 +18,7 @@ import {
   toProgramme,
   toProgrammeList,
   toSession,
+  toSessionWriteRow,
   upsertSessionWrite,
   type DrillRow,
   type ProgrammeRow,
@@ -52,6 +53,7 @@ function sessionRow(overrides: Partial<SessionRow> = {}): SessionRow {
     live_activity_started_at: null,
     spond_event_id: null,
     board_id: null,
+    venue_id: null,
     ...overrides,
   }
 }
@@ -96,6 +98,29 @@ describe('session row to app mapping', () => {
     expect(s.venue).toBe('Ainley Top')
   })
 
+  it('reads coverage from the session_teams rows, deduplicated and sorted', () => {
+    const s = toSession(
+      sessionRow({ session_teams: [{ team_id: 't2' }, { team_id: 't1' }, { team_id: 't2' }] }),
+    )
+    expect(s.teamIds).toEqual(['t1', 't2'])
+  })
+
+  it('falls back to the frozen team_id for a session saved before coverage existed', () => {
+    // Normalising here is what lets a save clear team_id safely: after this,
+    // an empty covered set reaching the write path means a coach cleared it,
+    // never "nobody has looked at this legacy session's coverage yet".
+    expect(toSession(sessionRow({ team_id: 't9', session_teams: [] })).teamIds).toEqual(['t9'])
+    expect(toSession(sessionRow({ team_id: 't9', session_teams: null })).teamIds).toEqual(['t9'])
+  })
+
+  it('prefers explicit rows over the frozen column', () => {
+    expect(toSession(sessionRow({ team_id: 't9', session_teams: [{ team_id: 't1' }] })).teamIds).toEqual(['t1'])
+  })
+
+  it('covers nothing when there is neither, which is never read as the whole club', () => {
+    expect(toSession(sessionRow({ team_id: null, session_teams: [] })).teamIds).toEqual([])
+  })
+
   it('coerces a null start_time and age_group to empty strings', () => {
     const s = toSession(sessionRow({ start_time: null, age_group: null }))
     expect(s.time).toBe('')
@@ -111,6 +136,74 @@ describe('session row to app mapping', () => {
     const row = sessionRow({ activities: [{ phase: 'Skill', duration: 10, drill_id: 'ghost-drill' }] })
     expect(() => toSession(row)).not.toThrow()
     expect(toSession(row).activities[0]).toEqual({ phase: 'Skill', duration: 10, drillId: 'ghost-drill' })
+  })
+})
+
+describe('the session write row and the two FROZEN columns', () => {
+  const draft = () => toSession(sessionRow({ team_id: 't9', venue: 'Ainley Top', session_teams: [{ team_id: 't1' }] }))
+
+  it('does not touch the frozen team column, which is retired separately', () => {
+    // Retiring it here would run BEFORE the replacement coverage rows are
+    // written, so a failed coverage write would leave a legacy session with no
+    // record of its team at all. retireLegacySessionTeam runs after reconcile.
+    expect('team_id' in toSessionWriteRow(draft())).toBe(false)
+  })
+
+  it('writes the chosen venue and retires the frozen label with it', () => {
+    const row = toSessionWriteRow({ ...draft(), venueId: 'v1' })
+    expect(row.venue_id).toBe('v1')
+    expect(row.venue).toBeNull()
+  })
+
+  it('leaves the frozen label alone when no venue is chosen', () => {
+    // A session saved before venues existed keeps what someone typed until
+    // they positively replace it, and a new session never claims a venue.
+    const row = toSessionWriteRow({ ...draft(), venueId: null })
+    expect(row.venue_id).toBeNull()
+    expect('venue' in row).toBe(false)
+  })
+
+  it('never writes a venue string, whatever the draft carries', () => {
+    for (const venueId of [null, 'v1']) {
+      const row = toSessionWriteRow({ ...draft(), venue: 'Springmill 3G', venueId })
+      expect(row.venue).not.toBe('Springmill 3G')
+    }
+  })
+
+  it('sends neither ownership nor club, so a save cannot move a session', () => {
+    const row = toSessionWriteRow(draft())
+    expect('coach_id' in row).toBe(false)
+    expect('club_id' in row).toBe(false)
+  })
+
+  it('is a CLOSED column list, so it cannot regress to spreading the draft', () => {
+    // The guard this exists for: someone writing { ...input, venue_id } would
+    // pass every assertion above and still ship camelCase keys, coach_id,
+    // club_id and a resurrected venue string to PostgREST. Pinning the exact
+    // key set makes that a failing test rather than a silent regression.
+    expect(Object.keys(toSessionWriteRow({ ...draft(), venueId: 'v1' })).sort()).toEqual([
+      'activities',
+      'age_group',
+      'board_id',
+      'date',
+      'focus',
+      'intentions',
+      'name',
+      'programme_id',
+      'programme_week',
+      'source_label',
+      'source_url',
+      'space',
+      'spond_event_id',
+      'start_time',
+      'status',
+      'venue',
+      'venue_id',
+    ])
+    // Nothing camelCase reaches the row, which a spread of the draft would.
+    for (const key of Object.keys(toSessionWriteRow(draft()))) {
+      expect(key).toBe(key.toLowerCase())
+    }
   })
 })
 

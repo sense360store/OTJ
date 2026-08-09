@@ -199,7 +199,7 @@ export function PlanFromSpond({
 
   const plan = (event: SpondEvent) => {
     const session = {
-      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null),
+      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null, Object.keys(teamById)),
       id: stableCreateId(ids.current, event.id),
     }
     void submit(session)

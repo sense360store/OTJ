@@ -29,6 +29,7 @@ import type { Programme, Session, Template } from '../lib/data'
 import { Icon } from '../components/icons'
 import { ActionError, Empty, ErrorNote, fmtDate, Loading, Modal, PHASE_COLOR, SourceLink } from '../components/ui'
 import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
+import { coverageKey, sessionTeamsLabel } from '../lib/sessionTeams'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
 import { TemplateFormModal } from '../components/TemplateFormModal'
 import { ApplyProgrammeModal } from '../components/ApplyProgrammeModal'
@@ -107,7 +108,7 @@ function WeekRow({
         <div className="row wrap" style={{ gap: 6 }}>
           {linked.map((s) => {
             const done = s.status === 'completed'
-            const team = s.teamId ? (teamById[s.teamId]?.name ?? null) : 'Club'
+            const team = sessionTeamsLabel(s, teamById)
             return (
               <button
                 key={s.id}
@@ -241,12 +242,15 @@ function ProgrammeView({ p }: { p: Programme }) {
   // is done with a week once any of its sessions for that week completes.
   const linked = sessions.filter((s) => s.programmeId === p.id)
   const byWeek = (w: number) => linked.filter((s) => s.programmeWeek === w)
-  const teamIds = [...new Set(linked.map((s) => s.teamId ?? ''))]
-  const manyTeams = teamIds.length > 1
-  const progress = teamIds.map((id) => {
-    const ofTeam = linked.filter((s) => (s.teamId ?? '') === id)
-    const completed = new Set(ofTeam.filter((s) => s.status === 'completed').map((s) => s.programmeWeek)).size
-    return { id, name: id ? (teamById[id]?.name ?? 'Team') : 'Club', completed }
+  // Grouped by the set of teams a session covers, not by a single team:
+  // one programme can run for Titans, for Titans and Trojans together, and
+  // for the whole club, and each is its own line of progress.
+  const groupKeys = [...new Set(linked.map(coverageKey))]
+  const manyTeams = groupKeys.length > 1
+  const progress = groupKeys.map((key) => {
+    const ofGroup = linked.filter((s) => coverageKey(s) === key)
+    const completed = new Set(ofGroup.filter((s) => s.status === 'completed').map((s) => s.programmeWeek)).size
+    return { id: key, name: sessionTeamsLabel(ofGroup[0], teamById), completed }
   })
 
   return (

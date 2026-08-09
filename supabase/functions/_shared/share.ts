@@ -1343,6 +1343,14 @@ const FORBIDDEN_ANYWHERE = [
   'spond_event_id', 'spondEventId', 'board_id', 'boardId', 'programme_week',
   'programmeWeek', 'live_activity_index', 'liveActivityIndex',
   'live_activity_started_at', 'liveActivityStartedAt',
+  // Training day columns (0044). A session's venue, the teams it covers and
+  // above all its register are club operational data about children and
+  // where they are on a given evening. None of it is projected; naming it
+  // here means a future field rename trips the scanner rather than leaks.
+  'venue_id', 'venueId', 'teamIds', 'session_teams', 'sessionTeams',
+  'bib_colour', 'bibColour', 'bib_colour_override', 'bibColourOverride',
+  'register_entries', 'registerEntries', 'present',
+  'marked_by', 'markedBy', 'marked_at', 'markedAt',
 ]
 
 function assertKeysWithin(obj: Record<string, unknown>, allowed: Set<string>, where: string): void {

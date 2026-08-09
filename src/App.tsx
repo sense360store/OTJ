@@ -25,11 +25,14 @@ import { ProgrammeDetail } from './routes/ProgrammeDetail'
 import { Media } from './routes/Media'
 import { LiveSession } from './routes/LiveSession'
 import { SessionDay } from './routes/SessionDay'
+import { SessionRegister } from './routes/SessionRegister'
+import { REGISTER_ROUTE } from './lib/routes'
 import { Account } from './routes/Account'
 import { Feedback } from './routes/Feedback'
 import { AdminClub } from './routes/AdminClub'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
+import { AdminVenues } from './routes/AdminVenues'
 import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
 import { AdminShares } from './routes/AdminShares'
@@ -124,6 +127,13 @@ export function App() {
               /roster path redirects here so bookmarks keep working. */}
           <Route element={<RequireCap cap="players.view" />}>
             <Route path="players" element={<Players />} />
+            {/* The register lists children by name, so it sits behind the same
+                players.view gate as the roster: without it there is nothing to
+                read and no reason to ask. Marking someone in is a separate
+                boundary again (sessions.create on register_entries), enforced
+                by RLS and reflected in the screen, which renders read only for
+                a holder who can see the roster but not write the register. */}
+            <Route path={REGISTER_ROUTE} element={<SessionRegister />} />
           </Route>
           <Route path="roster" element={<Navigate to="/players" replace />} />
           {/* The club wide Activity feed reads the audit log, gated on
@@ -141,6 +151,7 @@ export function App() {
           <Route path="feedback" element={<Feedback />} />
           <Route element={<RequireCap cap="club.manage" />}>
             <Route path="admin/club" element={<AdminClub />} />
+            <Route path="admin/venues" element={<AdminVenues />} />
             <Route path="admin/spond" element={<AdminSpond />} />
           </Route>
           <Route element={<RequireCap cap="teams.manage" />}>

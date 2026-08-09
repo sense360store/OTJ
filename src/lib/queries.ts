@@ -65,6 +65,8 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
+import type { Venue } from './venues'
+import type { RegisterEntry } from './register'
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
 import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
 import { newestFirst } from './contentOrder'
@@ -204,12 +206,17 @@ export interface SessionRow {
   spond_event_id: string | null
   board_id: string | null
   rights: ContentRights
+  venue_id: string | null
+  // The coverage embed rides the session read, so a screen never has to
+  // fetch coverage separately and can never render a stale set.
+  session_teams?: { team_id: string }[] | null
 }
 
 interface TeamRow {
   id: string
   club_id: string
   name: string
+  bib_colour: string | null
   created_at: string
 }
 
@@ -257,9 +264,11 @@ const TEMPLATE_COLS =
   'id, club_id, name, focus, author, activities, created_by, created_at, intentions, programme, week, programme_id, programme_week, source_url, source_label, rights'
 const PROGRAMME_COLS =
   'id, club_id, name, focus, summary, intentions, weeks, pdf_media_id, source_url, source_label, created_by, created_at, rights'
+// session_teams rides the session read as an embed, so coverage is always
+// exactly as fresh as the row it belongs to.
 const SESSION_COLS =
-  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, rights'
-const TEAM_COLS = 'id, club_id, name, created_at'
+  'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, rights, venue_id, session_teams(team_id)'
+const TEAM_COLS = 'id, club_id, name, bib_colour, created_at'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
 const PROFILE_COLS =
@@ -427,12 +436,30 @@ export function toSession(r: SessionRow): Session {
     liveActivityStartedAt: r.live_activity_started_at ?? null,
     spondEventId: r.spond_event_id ?? null,
     boardId: r.board_id ?? null,
+    venueId: r.venue_id ?? null,
+    // The EFFECTIVE coverage, normalised here at the read boundary so every
+    // consumer sees one answer: the session_teams rows, or the frozen
+    // team_id for a session saved before coverage existed, or nothing.
+    //
+    // Normalising here rather than in each screen is what lets a save clear
+    // team_id safely. Without it, an empty set reaching the write path could
+    // mean either "a coach cleared coverage" or "this session is legacy and
+    // nobody looked at its coverage", and retiring team_id would silently
+    // destroy the second one. After this, empty means empty.
+    //
+    // Sorted so the covered set is a stable value: two reads of the same
+    // coverage compare equal whatever order PostgREST returned the rows.
+    teamIds: (() => {
+      const rows = [...new Set((r.session_teams ?? []).map((t) => t.team_id))].sort()
+      if (rows.length > 0) return rows
+      return r.team_id ? [r.team_id] : []
+    })(),
     rights: r.rights ?? 'internal_only',
   }
 }
 
 function toTeam(r: TeamRow): Team {
-  return { id: r.id, name: r.name }
+  return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null }
 }
 
 function toRole(r: RoleRow): RoleInfo {
@@ -1793,6 +1820,52 @@ interface UpsertCtx {
   attempt: number
 }
 
+// The editable session columns for an insert or an update, as one pure
+// value so the FROZEN column rules are testable rather than argued about.
+//
+// Neither the update path nor the duplicate-key recovery sends coach_id or
+// club_id, so a save never changes ownership or club; only the insert sets
+// them, from the signed-in user.
+//
+// The two FROZEN columns (0044) are the reason this is worth extracting. New
+// code never writes a VALUE to either; it retires them, so the read fallback
+// behind each cannot resurrect and contradict the real field.
+//
+//   team_id  NOT touched here. Coverage lives in session_teams, and retiring
+//            the frozen team before those rows exist would destroy a legacy
+//            session's only record of its team if the coverage write then
+//            failed. retireLegacySessionTeam runs after reconcile succeeds.
+//   venue    cleared only when a real venue is chosen, so a session saved
+//            before venues existed keeps its typed label until someone
+//            positively replaces it. Never written with a value, so a new
+//            session cannot claim to be somewhere nobody chose.
+export function toSessionWriteRow(input: Session): Record<string, unknown> {
+  return {
+    name: input.name,
+    focus: input.focus,
+    date: input.date || null,
+    start_time: input.time,
+    age_group: input.ageGroup,
+    status: input.status,
+    venue_id: input.venueId,
+    ...(input.venueId ? { venue: null } : {}),
+    activities: input.activities.map(toActivityRow),
+    intentions: input.intentions,
+    space: input.space || null,
+    ...toSourceFields(input.sourceUrl),
+    // The programme link travels with the session on insert and update, so
+    // applying a programme tags the rows and a planner edit keeps them.
+    programme_id: input.programmeId,
+    programme_week: input.programmeWeek,
+    // The Spond event link travels the same way: linking in the planner
+    // edits the draft and saving writes it here.
+    spond_event_id: input.spondEventId,
+    // The attached tactics board, set in the planner draft or on the session
+    // day, travels with the session on insert and update.
+    board_id: input.boardId,
+  }
+}
+
 export function useUpsertSession() {
   const qc = useQueryClient()
   const { user, profile } = useAuth()
@@ -1806,39 +1879,7 @@ export function useUpsertSession() {
 
   return useMutation<Session, Error, Session, UpsertCtx>({
     mutationFn: async (input) => {
-      const activities = input.activities.map(toActivityRow)
-
-      const faFields = {
-        intentions: input.intentions,
-        space: input.space || null,
-        ...toSourceFields(input.sourceUrl),
-        // The programme link travels with the session on insert and update,
-        // so applying a programme tags the rows and a planner edit keeps them.
-        programme_id: input.programmeId,
-        programme_week: input.programmeWeek,
-        // The Spond event link travels the same way: linking in the planner
-        // edits the draft and saving writes it here.
-        spond_event_id: input.spondEventId,
-        // The attached tactics board, set in the planner draft or on the
-        // session day, travels with the session on insert and update.
-        board_id: input.boardId,
-      }
-
-      // The editable columns. Neither the update path nor the duplicate-key
-      // recovery below sends coach_id or club_id, so a save never changes
-      // ownership or club; only the insert sets them, from the signed-in user.
-      const editable = {
-        name: input.name,
-        focus: input.focus,
-        date: input.date || null,
-        start_time: input.time,
-        venue: input.venue,
-        age_group: input.ageGroup,
-        status: input.status,
-        team_id: input.teamId,
-        activities,
-        ...faFields,
-      }
+      const editable = toSessionWriteRow(input)
 
       const update = async (): Promise<Session> => {
         const { data, error } = await supabase
@@ -1867,7 +1908,18 @@ export function useUpsertSession() {
       // exists is a cache-derived hint for the fast path only; the server is
       // the authority through the duplicate-key recovery inside
       // upsertSessionWrite.
-      return upsertSessionWrite({ exists: existed.current.get(input.id) ?? false, insert, update, isUniqueViolation })
+      const saved = await upsertSessionWrite({
+        exists: existed.current.get(input.id) ?? false,
+        insert,
+        update,
+        isUniqueViolation,
+      })
+      const teamIds = await reconcileSessionTeams(saved.id, input.teamIds, profile?.club_id ?? null)
+      // Only now, with coverage recorded, is the frozen column safe to clear.
+      // Only a legacy row still carries one, so this fires once per session
+      // ever, never on a session created since 0044.
+      if (saved.teamId) await retireLegacySessionTeam(saved.id)
+      return { ...saved, teamId: null, teamIds }
     },
     // Optimistic and synchronous: the list and the per-id cache are both
     // seeded, so a screen arriving by session id straight after a successful
@@ -1909,6 +1961,68 @@ export function useUpsertSession() {
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
   })
+}
+
+// Bring a session's covered teams to exactly the set the caller asked for.
+//
+// The desired set is taken literally, empty included: a coach who clears
+// every team means it, and the register then says the session has no teams
+// rather than quietly listing the whole club. Whatever default a new
+// session starts from is chosen in the planner, where the coach can see it
+// before saving.
+//
+// currentIds must be server truth (the row read back by the write), not a
+// cache: a stale cache that had not yet seen the coverage rows would leave
+// real rows behind that this diff never removes.
+export async function reconcileSessionTeams(
+  sessionId: string,
+  desiredIds: string[],
+  clubId: string | null,
+): Promise<string[]> {
+  const desired = [...new Set(desiredIds)].sort()
+  // The CURRENT set is read here rather than taken from the caller, and it is
+  // the rows themselves, never the normalised coverage. A caller passing the
+  // normalised set would hide the case this diff exists to handle: a legacy
+  // session reads as covering its frozen team while having no row at all, so
+  // the diff would find nothing to add and the row would never be written.
+  const { data: rows, error: readError } = await supabase
+    .from('session_teams')
+    .select('team_id')
+    .eq('session_id', sessionId)
+  if (readError) throw readError
+  const currentIds = [...new Set((rows as { team_id: string }[]).map((r) => r.team_id))]
+  const toAdd = desired.filter((id) => !currentIds.includes(id))
+  const toRemove = currentIds.filter((id) => !desired.includes(id))
+  if (toAdd.length > 0) {
+    if (!clubId) throw new Error('You must be signed in to save a session.')
+    const { error } = await supabase
+      .from('session_teams')
+      .upsert(
+        toAdd.map((team_id) => ({ session_id: sessionId, team_id, club_id: clubId })),
+        { onConflict: 'session_id,team_id', ignoreDuplicates: true },
+      )
+    if (error) throw error
+  }
+  if (toRemove.length > 0) {
+    const { error } = await supabase
+      .from('session_teams')
+      .delete()
+      .eq('session_id', sessionId)
+      .in('team_id', toRemove)
+    if (error) throw error
+  }
+  return desired
+}
+
+// Retire a legacy session's frozen team_id, once, AFTER its replacement
+// coverage rows are recorded. Splitting it from the main write is what makes
+// the transition safe without a transaction across two tables: if this fails,
+// the session simply keeps both, coverage rows win on read, and the next save
+// retires it. If it ran first and the coverage write then failed, a legacy
+// session would be left with no record of its team at all.
+export async function retireLegacySessionTeam(sessionId: string): Promise<void> {
+  const { error } = await supabase.from('sessions').update({ team_id: null }).eq('id', sessionId)
+  if (error) throw error
 }
 
 // Owner or admin only; the sessions delete RLS is the real enforcement.
@@ -4906,6 +5020,220 @@ export function useRevokeManagedShare() {
       void qc.invalidateQueries({
         queryKey: vars.sourceId ? shareStatusKey(vars.kind, vars.sourceId) : ['content-share-status'],
       })
+    },
+  })
+}
+
+// ---- Venues (club.manage) --------------------------------------------------
+// The club's real places (0044). Reads are club wide because a coach needs
+// to know where the session is; writes are the admin surface.
+
+export interface VenueRow {
+  id: string
+  club_id: string
+  name: string
+  created_at: string
+}
+
+const VENUE_COLS = 'id, club_id, name, created_at'
+
+export function toVenue(r: VenueRow): Venue {
+  return { id: r.id, name: r.name }
+}
+
+export function useVenues(enabled = true) {
+  return useQuery({
+    queryKey: ['venues'],
+    enabled,
+    queryFn: async (): Promise<Venue[]> => {
+      const { data, error } = await supabase.from('venues').select(VENUE_COLS).order('name', { ascending: true })
+      if (error) throw error
+      return (data as unknown as VenueRow[]).map(toVenue)
+    },
+  })
+}
+
+export function useVenueMap(): Record<string, Venue> {
+  const { data } = useVenues()
+  return useMemo(() => Object.fromEntries((data ?? []).map((v) => [v.id, v])), [data])
+}
+
+export function useInsertVenue() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, { name: string }>({
+    mutationFn: async ({ name }) => {
+      if (!profile?.club_id) throw new Error('You must be signed in to add a venue.')
+      const { error } = await supabase.from('venues').insert({ club_id: profile.club_id, name })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+  })
+}
+
+export function useRenameVenue() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { id: string; name: string }>({
+    mutationFn: async ({ id, name }) => {
+      const { error } = await supabase.from('venues').update({ name }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+  })
+}
+
+// Removing a venue nulls sessions.venue_id (the composite reference names
+// that column alone, so club_id survives and the sessions stay put).
+export function useDeleteVenue() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, string>({
+    mutationFn: async (id) => {
+      const { error } = await supabase.from('venues').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['venues'] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+}
+
+// ---- Team bib colour (teams.manage) ----------------------------------------
+
+export function useSetTeamBibColour() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { teamId: string; bibColour: string | null }>({
+    mutationFn: async ({ teamId, bibColour }) => {
+      const { error } = await supabase.from('teams').update({ bib_colour: bibColour }).eq('id', teamId)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  })
+}
+
+// ---- The register (players.view to read, sessions.create to write) ---------
+
+interface RegisterEntryRow {
+  session_id: string
+  player_id: string
+  present: boolean
+  bib_colour_override: string | null
+  source: 'roster' | 'manual'
+}
+
+export function toRegisterEntry(r: RegisterEntryRow): RegisterEntry {
+  return {
+    sessionId: r.session_id,
+    playerId: r.player_id,
+    present: r.present,
+    bibColourOverride: r.bib_colour_override,
+    source: r.source,
+  }
+}
+
+export function registerKey(sessionId: string) {
+  return ['register_entries', sessionId] as const
+}
+
+// The register for one session. The caller must surface isError rather
+// than treating a failed read as an empty register: "nobody is here" and
+// "we could not load who is here" look identical otherwise, and the
+// second one must never be written on top of.
+export function useRegisterEntries(sessionId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: registerKey(sessionId ?? ''),
+    enabled: enabled && !!sessionId,
+    queryFn: async (): Promise<RegisterEntry[]> => {
+      const { data, error } = await supabase
+        .from('register_entries')
+        .select('session_id, player_id, present, bib_colour_override, source')
+        .eq('session_id', sessionId as string)
+      if (error) throw error
+      return (data as unknown as RegisterEntryRow[]).map(toRegisterEntry)
+    },
+  })
+}
+
+export interface SetRegisterEntryInput {
+  sessionId: string
+  playerId: string
+  present?: boolean
+  bibColourOverride?: string | null
+  source?: 'roster' | 'manual'
+}
+
+// Apply one partial change to the cached register. Pure, and idempotent:
+// the optimistic path applies it and the settled refetch may apply it
+// again over the same cache.
+export function applyRegisterPatch(
+  entries: RegisterEntry[] | undefined,
+  input: SetRegisterEntryInput,
+): RegisterEntry[] {
+  const list = entries ?? []
+  const existing = list.find((e) => e.playerId === input.playerId)
+  const next: RegisterEntry = {
+    sessionId: input.sessionId,
+    playerId: input.playerId,
+    present: input.present ?? existing?.present ?? false,
+    bibColourOverride:
+      input.bibColourOverride !== undefined ? input.bibColourOverride : (existing?.bibColourOverride ?? null),
+    source: input.source ?? existing?.source ?? 'roster',
+  }
+  return existing ? list.map((e) => (e.playerId === input.playerId ? next : e)) : [...list, next]
+}
+
+// Mark one player. The write carries ONLY the fields the tap changed, so
+// two coaches on one gate cannot revert each other: a whole row write
+// would carry a stale present value alongside a fresh bib change.
+export function useSetRegisterEntry() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<void, Error, SetRegisterEntryInput, { prev: RegisterEntry[] | undefined }>({
+    mutationFn: async (input) => {
+      if (!profile?.club_id) throw new Error('You must be signed in to mark the register.')
+      const row: Record<string, unknown> = {
+        session_id: input.sessionId,
+        player_id: input.playerId,
+        club_id: profile.club_id,
+      }
+      if (input.present !== undefined) row.present = input.present
+      if (input.bibColourOverride !== undefined) row.bib_colour_override = input.bibColourOverride
+      if (input.source !== undefined) row.source = input.source
+      const { error } = await supabase
+        .from('register_entries')
+        .upsert(row, { onConflict: 'session_id,player_id' })
+      if (error) throw error
+    },
+    onMutate: async (input) => {
+      const key = registerKey(input.sessionId)
+      await qc.cancelQueries({ queryKey: key })
+      const prev = qc.getQueryData<RegisterEntry[]>(key)
+      qc.setQueryData<RegisterEntry[]>(key, (old) => applyRegisterPatch(old, input))
+      return { prev }
+    },
+    onError: (_err, input, ctx) => {
+      if (ctx) qc.setQueryData(registerKey(input.sessionId), ctx.prev)
+    },
+    onSettled: (_d, _e, input) => {
+      qc.invalidateQueries({ queryKey: registerKey(input.sessionId) })
+    },
+  })
+}
+
+// Undo a quick add. Only offered for a row whose stored source is manual.
+export function useRemoveRegisterEntry() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { sessionId: string; playerId: string }>({
+    mutationFn: async ({ sessionId, playerId }) => {
+      const { error } = await supabase
+        .from('register_entries')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('player_id', playerId)
+      if (error) throw error
+    },
+    onSettled: (_d, _e, { sessionId }) => {
+      qc.invalidateQueries({ queryKey: registerKey(sessionId) })
     },
   })
 }

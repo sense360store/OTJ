@@ -182,15 +182,25 @@ export function spondPlanSuggestions({
 }
 
 // The pre filled session "Plan this" creates: the tapping coach owns it, the
-// date and time come from the event, the team is the event's team or the
-// coach's default when the event is a club event with no team, and the link is
-// set so the session shows the attendance block. No drills are added; the
-// coach builds those in the planner. Rides the existing session create path
-// and its RLS, so no new policy. Pure so the test pins the carried fields.
-export function sessionFromSpondEvent(event: SpondEvent, coachId: string, defaultTeamId: string | null): Session {
+// date and time come from the event, and the link is set so the session shows
+// the attendance block. Coverage is the event's team, or the coach's default
+// when the event is a club event with no team, or the whole club when neither
+// names one, matching a fresh planner draft. It is never left unset: this
+// session is saved before the coach sees it, and an unset session's register
+// lists nobody. No drills are added; the coach builds those in the planner.
+// Rides the existing session create path and its RLS, so no new policy. Pure
+// so the test pins the carried fields.
+export function sessionFromSpondEvent(
+  event: SpondEvent,
+  coachId: string,
+  defaultTeamId: string | null,
+  allTeamIds: string[] = [],
+): Session {
   const { date, time } = spondEventLocalDateTime(event.startsAt)
+  const teamId = event.teamId ?? defaultTeamId
   return {
-    ...blankSession(coachId, event.teamId ?? defaultTeamId),
+    ...blankSession(coachId, teamId),
+    teamIds: teamId ? [teamId] : allTeamIds,
     name: event.title,
     date,
     time,
