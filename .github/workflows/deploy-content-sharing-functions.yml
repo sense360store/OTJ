@@ -3,9 +3,11 @@ name: Deploy content-sharing Edge Functions
 # Manual, production-environment-gated deploy of the two Content Sharing Edge
 # Functions (manage-content-share and read-content-share) directly from the
 # checked-out repository files. This workflow ONLY deploys those two functions
-# and runs read-only verification and safe smoke tests. It never enables public
-# sharing, never reclassifies content, never creates a share, and never applies
-# a migration or changes a database grant. See
+# and runs read-only verification and safe smoke tests. It never enables or
+# disables public sharing for any club, never reclassifies content, never
+# creates a share, and never applies a migration or changes a database grant.
+# It verifies that the set of clubs with public sharing enabled is exactly the
+# reviewed allowlist, before and after the deploy. See
 # docs/operations/content-sharing-edge-function-deploy.md.
 #
 # Secrets are read only through environment variables and are never printed.
@@ -154,14 +156,15 @@ jobs:
             supabase/functions/_shared/share.ts \
             supabase/functions/_shared/fa.ts
 
-      - name: Verify hosted ledger and inert state BEFORE deploying (read-only)
+      - name: Verify hosted ledger and reviewed state BEFORE deploying (read-only)
         shell: bash
         # The pre-deploy gate. Identical assertions to the post-deploy check,
         # run while BOTH functions are still untouched: the migration ledger's
-        # newest version must be exactly the reviewed one, every club must still
-        # have public sharing disabled, there must be no share, no dependency
-        # row, no content_share audit event, no reclassified drill or media and
-        # no content_share cron job.
+        # newest version must be exactly the reviewed one, the set of clubs with
+        # public sharing enabled must be exactly the reviewed allowlist in
+        # EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS, there must be no share, no
+        # dependency row, no content_share audit event, no reclassified drill or
+        # media and no content_share cron job.
         #
         # Why before and not only after: a deploy against a schema this commit
         # was never reviewed against is exactly the thing that must not happen,
@@ -313,6 +316,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Content-sharing functions deployed and verified. Public sharing remains DISABLED."
+          echo "Content-sharing functions deployed and verified. The enabled club set is unchanged."
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Public sharing remains DISABLED (public_sharing_enabled=false on every club). No share was created." >> "$GITHUB_STEP_SUMMARY"
+          echo "Public sharing is enabled only for the reviewed allowlisted club ids, unchanged by this run. No share was created." >> "$GITHUB_STEP_SUMMARY"

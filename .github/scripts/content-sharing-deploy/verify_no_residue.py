@@ -2,9 +2,11 @@
 """Read-only proof that the deploy left no hosted residue (STAGE 9).
 
 Runs a small set of SELECT-only queries through psql against a full PostgreSQL
-connection string and asserts the sharing feature is still fully inert:
+connection string and asserts the hosted sharing state is exactly the reviewed
+one and no share machinery has been left behind:
 
-  - public_sharing_enabled is false for every club;
+  - the set of clubs with public_sharing_enabled is EXACTLY the reviewed
+    allowlist of club ids (see EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS);
   - content_shares has zero rows;
   - content_share_dependencies has zero rows;
   - no content_share audit event exists;
@@ -63,6 +65,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -84,6 +87,36 @@ import urllib.parse
 # always: apply -> read back the recorded version -> set this constant to
 # exactly that value in a reviewed pull request -> only then deploy.
 EXPECTED_LAST_MIGRATION = "20260809081118"  # 0043_content_rights_fa_lock
+
+# The EXACT set of club ids permitted to have public_sharing_enabled true.
+# This is a deployment review pin in the same sense as
+# EXPECTED_LAST_MIGRATION, and it is asserted as SET EQUALITY, never as a
+# count, a minimum, a maximum or a "contains".
+#
+# Provenance. During the initial dark rollout the gate asserted that NO club
+# had public sharing enabled: the feature shipped with its machinery in place
+# and switched off, so the deploy could prove it changed nothing observable.
+# That phase is over. Ossett Town Juniors
+# (11111111-1111-1111-1111-111111111111) was deliberately enabled afterwards,
+# a product decision, not residue. The hosted state was read back and the
+# gate now permits exactly that reviewed set: Ossett enabled, every other
+# club (including Zzz Other Club,
+# 7007e5b0-bc23-4a4b-a82d-81acb8979782) disabled.
+#
+# The property that matters is unchanged and is the whole point of pinning
+# the identities rather than the count: an unexpected club being enabled, the
+# expected club being disabled, or one enabled club being swapped for another
+# all still stop the deploy, before anything is deployed. Any intended change
+# to the enabled set is a separate reviewed reconciliation pull request that
+# reads hosted back first, exactly as a migration apply is.
+#
+# clubs.public_sharing_enabled remains the authoritative per club kill
+# switch; this constant only records which clubs the deploy was reviewed
+# against. Nothing here reads or writes that switch.
+EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS = (
+    "11111111-1111-1111-1111-111111111111",  # Ossett Town Juniors
+)
+
 DB_URL_ENV = "SUPABASE_DB_URL"
 
 # Bounded connection timeout (seconds) and an overall subprocess wall-clock cap.
@@ -106,6 +139,8 @@ READ_ONLY_EPILOGUE = "rollback;\n"
 # string; has_cron is a JSON boolean.
 RESIDUE_SELECT = """select json_build_object(
   'clubs_enabled',       (select count(*) from public.clubs where public_sharing_enabled),
+  'enabled_club_ids',    (select coalesce(json_agg(c.id::text order by c.id::text), '[]'::json)
+                          from public.clubs c where c.public_sharing_enabled),
   'shares',              (select count(*) from public.content_shares),
   'deps',                (select count(*) from public.content_share_dependencies),
   'share_audit',         (select count(*) from public.audit_events where entity_type='content_share'),
@@ -320,11 +355,48 @@ def as_int(row: dict, key: str) -> int:
     return int(val) if val is not None else -1
 
 
+# A club id is a canonical lowercase UUID. Anything else is malformed and the
+# comparison fails closed rather than guessing what was meant.
+_UUID_RE = re.compile(r"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
+
+
+def canonical_club_ids(value: object) -> list[str] | None:
+    """Canonicalise a club id list for exact set comparison.
+
+    Returns the ids lowercased and sorted, or None when the value cannot be
+    trusted: not a list, a non-string element, anything that is not a
+    canonical UUID, or a duplicate id. None always fails the assertion; it is
+    never treated as "no clubs enabled", which would turn a malformed or
+    missing read into a silent pass.
+
+    Sorting is what makes the comparison order independent, so a future
+    allowlist of several clubs cannot pass or fail on the order the database
+    happened to return.
+    """
+    if not isinstance(value, list):
+        return None
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            return None
+        ident = item.strip().lower()
+        if not _UUID_RE.match(ident):
+            return None
+        out.append(ident)
+    if len(set(out)) != len(out):
+        return None
+    return sorted(out)
+
+
+def expected_enabled_club_ids() -> list[str]:
+    """The reviewed allowlist, canonicalised the same way as the hosted read."""
+    return sorted(c.strip().lower() for c in EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS)
+
+
 def assert_clean(data: dict) -> list[str]:
     errors: list[str] = []
     r = data.get("residue", {})
     checks = {
-        "clubs_enabled": 0,
         "shares": 0,
         "deps": 0,
         "share_audit": 0,
@@ -335,6 +407,41 @@ def assert_clean(data: dict) -> list[str]:
         got = as_int(r, key)
         if got != want:
             errors.append(f"{key} expected {want}, got {got}")
+
+    # The enabled club set: EXACT equality against the reviewed allowlist.
+    # Never a count on its own, never a subset, never a superset.
+    expected_ids = expected_enabled_club_ids()
+    actual_ids = canonical_club_ids(r.get("enabled_club_ids"))
+    if actual_ids is None:
+        errors.append(
+            "enabled club ids are missing or malformed "
+            f"(got {r.get('enabled_club_ids')!r}); expected exactly {expected_ids}"
+        )
+    elif actual_ids != expected_ids:
+        missing = [c for c in expected_ids if c not in actual_ids]
+        unexpected = [c for c in actual_ids if c not in expected_ids]
+        detail = []
+        if unexpected:
+            detail.append(f"unexpectedly enabled {unexpected}")
+        if missing:
+            detail.append(f"expected but not enabled {missing}")
+        errors.append(
+            "public sharing enabled club set changed: "
+            + ", ".join(detail)
+            + f" (hosted {actual_ids}, reviewed {expected_ids})"
+        )
+    # The count is kept as a consistency check on the same read, so a stale or
+    # disagreeing count is caught rather than quietly ignored. It never
+    # replaces the id assertion above.
+    count = as_int(r, "clubs_enabled")
+    if count != len(expected_ids):
+        errors.append(f"clubs_enabled expected {len(expected_ids)}, got {count}")
+    elif actual_ids is not None and count != len(actual_ids):
+        errors.append(
+            f"clubs_enabled ({count}) disagrees with the enabled club ids returned "
+            f"({len(actual_ids)}): {actual_ids}"
+        )
+
     if str(r.get("last_migration")) != EXPECTED_LAST_MIGRATION:
         errors.append(
             f"migration ledger changed: newest is {r.get('last_migration')!r}, "
@@ -372,6 +479,8 @@ def main(argv: list[str]) -> int:
     r = data.get("residue", {})
     print("Hosted state before deploy:" if phase == "pre" else "Hosted state after deploy:")
     print(f"  clubs with public_sharing_enabled : {as_int(r, 'clubs_enabled')}")
+    print(f"    enabled club ids                : {r.get('enabled_club_ids')}")
+    print(f"    reviewed allowlist              : {expected_enabled_club_ids()}")
     print(f"  content_shares rows               : {as_int(r, 'shares')}")
     print(f"  content_share_dependencies rows   : {as_int(r, 'deps')}")
     print(f"  content_share audit events        : {as_int(r, 'share_audit')}")
@@ -393,7 +502,14 @@ def main(argv: list[str]) -> int:
             )
             sfh.write(f"\n### {heading}\n\n")
             sfh.write("| Check | Value | Expected |\n|---|---|---|\n")
-            sfh.write(f"| clubs public_sharing_enabled | {as_int(r,'clubs_enabled')} | 0 |\n")
+            sfh.write(
+                f"| clubs public_sharing_enabled | {as_int(r,'clubs_enabled')} | "
+                f"{len(expected_enabled_club_ids())} |\n"
+            )
+            sfh.write(
+                f"| enabled club ids | {canonical_club_ids(r.get('enabled_club_ids'))} | "
+                f"{expected_enabled_club_ids()} |\n"
+            )
             sfh.write(f"| content_shares rows | {as_int(r,'shares')} | 0 |\n")
             sfh.write(f"| content_share_dependencies rows | {as_int(r,'deps')} | 0 |\n")
             sfh.write(f"| content_share audit events | {as_int(r,'share_audit')} | 0 |\n")
@@ -408,9 +524,9 @@ def main(argv: list[str]) -> int:
             print(f"FAIL: {e}")
         return 1
     if phase == "pre":
-        print("PASS: hosted ledger is the reviewed one and hosted state is inert; safe to deploy")
+        print("PASS: hosted ledger and enabled club set are the reviewed ones, and no share residue exists; safe to deploy")
     else:
-        print("PASS: no hosted residue; sharing remains fully disabled and inert")
+        print("PASS: no hosted residue; the enabled club set is unchanged and no share was created")
     return 0
 
 
