@@ -245,7 +245,7 @@ appear exactly once. The apply also verified its five FA lock triggers
 `internal_only`.
 
 The superseded value, `20260727110609` (`0042_public_media_path_boundary`,
-applied 2026-07-26 as part of the Content Sharing PR 4 rollout), is now rejected
+applied 2026-07-27 as part of the Content Sharing PR 4 rollout), is now rejected
 by the gate; a test pins that it is.
 
 ### If the run fails at inventory verification
