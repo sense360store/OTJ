@@ -16,6 +16,7 @@ import {
   useRegisteredPlayers,
   useSeasons,
   useSpondMappings,
+  useSpondLinks,
   useTeams,
 } from '../lib/queries'
 import {
@@ -210,6 +211,7 @@ export function Players() {
   const { data: currentSeason, isLoading: currentLoading } = useCurrentSeason(canView)
   const { data: teams = [] } = useTeams()
   const { data: mappings = [] } = useSpondMappings()
+  const spondLinks = useSpondLinks(canManage)
 
   const requestedSeasonId = filters.seasonId ?? currentSeason?.id ?? null
   const selectedSeason = seasons.find((s) => s.id === requestedSeasonId) ?? currentSeason ?? null
@@ -257,6 +259,7 @@ export function Players() {
   // default), and renders only on the current season with a specific mapped
   // team selected (Spond stays current-season only, server chosen).
   const showSpond = canImport && isCurrent && writable && !!spondTeam && !!spondMapping
+  const showSpondLinks = canManage && mappings.length > 0 && spondLinks.data?.available !== false
   const showAdd = canManage && isCurrent && writable
   // Renew is a season level bulk action (players.manage), independent of the
   // page's selected season, available whenever there is more than one season to
@@ -323,6 +326,17 @@ export function Players() {
     </button>
   ) : null
 
+  // Spond links is deliberately NOT gated on the team filter: a linking
+  // affordance that appears only once a specific team is selected is one
+  // nobody finds. Any players.manage holder sees it whenever the club has
+  // at least one mapping, and the screen itself picks the team.
+  const linksButton = showSpondLinks ? (
+    <Link to="/players/spond-links" className="btn btn-ghost">
+      <Icon.link />
+      Spond links
+    </Link>
+  ) : null
+
   const renewButton = showRenew ? (
     <button className="btn btn-ghost" onClick={() => open({ kind: 'renew' })}>
       <Icon.calendar />
@@ -361,6 +375,7 @@ export function Players() {
         {seasonSelect}
         {addButton}
         {spondButton}
+        {linksButton}
         {renewButton}
         {importButton}
         {exportButton}

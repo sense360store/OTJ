@@ -8,15 +8,20 @@
 // by the spond_groups_manage RLS (club.manage); the UI only decides what to
 // surface. REVIEW: capability gated admin surface.
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
+  useCurrentSeason,
   useDeleteSpondMapping,
   useInsertSpondMapping,
   useMyCapabilities,
+  useRegisteredPlayers,
   useSpondEvents,
+  useSpondLinks,
   useSpondMappings,
   useSpondSync,
   useTeams,
 } from '../lib/queries'
+import { linkedCounts } from '../lib/spondRsvp'
 import type { SpondSyncResult } from '../lib/queries'
 import type { SpondMapping, Team } from '../lib/data'
 import { parseSpondMappingInput, SPOND_COUNT_LABELS, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
@@ -277,6 +282,44 @@ function SyncCard() {
   )
 }
 
+// Who is linked to whom, and the way into the screen that changes it. An
+// admin thinking about Spond comes here, so this is the second permanent
+// entry point beside the one on the roster. Numbers only: no name and no
+// member id renders on this page.
+function LinksCard() {
+  const season = useCurrentSeason()
+  const roster = useRegisteredPlayers(season.data?.id ?? null)
+  const links = useSpondLinks()
+  const available = links.data?.available !== false
+  const active = (roster.data ?? []).filter((p) => p.status !== 'withdrawn')
+  const linkedIds = new Set((links.data?.links ?? []).map((l) => l.playerId))
+  const counts = linkedCounts(active, linkedIds)
+  return (
+    <div className="card" style={{ padding: 18, marginBottom: 18 }}>
+      <h3 style={{ fontSize: 17, marginBottom: 4 }}>Member links</h3>
+      <p className="muted" style={{ fontSize: 13.5, marginTop: 0, marginBottom: 12 }}>
+        Which Spond member is which child. Linking lets a register show what each parent replied; it never marks
+        anybody present, and a club with no links keeps the full register.
+      </p>
+      {!available ? (
+        <p className="muted" style={{ fontSize: 13.5, marginBottom: 0 }}>
+          Member linking is not available yet.
+        </p>
+      ) : (
+        <>
+          <p style={{ fontSize: 14, fontWeight: 700, marginTop: 0, marginBottom: 12 }}>
+            {counts.linked} of {counts.total} registered players linked
+          </p>
+          <Link to="/players/spond-links" className="btn btn-ghost">
+            <Icon.link />
+            Manage links
+          </Link>
+        </>
+      )}
+    </div>
+  )
+}
+
 function EventsCard() {
   const { data: events = [], isLoading, isError } = useSpondEvents()
   return (
@@ -341,6 +384,7 @@ export function AdminSpond() {
       </div>
       <MappingsCard />
       <SyncCard />
+      <LinksCard />
       <EventsCard />
     </div>
   )

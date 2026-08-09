@@ -147,3 +147,101 @@ describe('RegisterCardView', () => {
     expect(html).not.toContain('0 of 0 in')
   })
 })
+
+// ---- Spond RSVP as context, never attendance -------------------------------
+//
+// The questions here are the ones a wrong answer would make dangerous:
+// does the pill ever change what the register composes or how it reads,
+// and does a broken Spond read take the register with it.
+
+describe('RSVP context beside the register', () => {
+  const row = buildRegister(players, ['t1'], teams, entries, false).groups[0].rows[0]
+
+  it('renders nothing at all when there is no reply, exactly as before', () => {
+    const without = renderToStaticMarkup(
+      <RegisterRowView row={row} canMark onToggle={noop} onBib={noop} />,
+    )
+    const withNull = renderToStaticMarkup(
+      <RegisterRowView row={row} canMark rsvp={null} onToggle={noop} onBib={noop} />,
+    )
+    expect(withNull).toBe(without)
+    expect(without).not.toContain('reg-rsvp')
+  })
+
+  it('shows the reply as words, never as a tick or a yes', () => {
+    const html = renderToStaticMarkup(
+      <RegisterRowView
+        row={row}
+        canMark
+        rsvp={{ status: 'accepted', syncedAt: new Date().toISOString() }}
+        onToggle={noop}
+        onBib={noop}
+      />,
+    )
+    expect(html).toContain('Going')
+    expect(html).not.toMatch(/>\s*Yes\s*</)
+    // Outside the tick button, so it can never take the tap.
+    expect(html.indexOf('reg-rsvp')).toBeGreaterThan(html.indexOf('</button>'))
+  })
+
+  it('a declined child keeps their place, their tick and their prominence', () => {
+    const html = renderToStaticMarkup(
+      <RegisterRowView
+        row={row}
+        canMark
+        rsvp={{ status: 'declined', syncedAt: new Date().toISOString() }}
+        onToggle={noop}
+        onBib={noop}
+      />,
+    )
+    expect(html).toContain('Not going')
+    // Still ticked (this row is present), still tappable, not dimmed.
+    expect(html).toContain('reg-row on')
+    expect(html).toContain('aria-pressed="true"')
+    expect(html).not.toContain('disabled')
+  })
+
+  it('the reply never announces itself as part of the attendance control', () => {
+    const html = renderToStaticMarkup(
+      <RegisterRowView
+        row={row}
+        canMark
+        rsvp={{ status: 'unanswered', syncedAt: new Date().toISOString() }}
+        onToggle={noop}
+        onBib={noop}
+      />,
+    )
+    expect(html).toContain('aria-label="Spond reply: no reply"')
+    expect(html).toContain('aria-label="Mark Alpha Synthetic present"')
+  })
+
+  it('a screen with replies renders the same rows, in the same order, as one without', () => {
+    const bare = screen()
+    const withRsvp = screen({
+      rsvpByPlayer: {
+        p1: { status: 'declined', syncedAt: new Date().toISOString() },
+        p2: { status: 'accepted', syncedAt: new Date().toISOString() },
+      },
+    })
+    const names = (html: string) => [...html.matchAll(/reg-name-main">([^<]+)</g)].map((m) => m[1])
+    expect(names(withRsvp)).toEqual(names(bare))
+    expect(withRsvp).toContain('Not going')
+    // The count is attendance, never the replies.
+    expect(names(bare).length).toBe(2)
+  })
+
+  it('an absent lookup leaves the register byte identical to today', () => {
+    expect(screen({ rsvpByPlayer: undefined })).toBe(screen())
+    expect(screen({ rsvpByPlayer: {} })).toBe(screen())
+  })
+
+  it('says so when the replies are stale, and stays quiet when they are fresh', () => {
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+    expect(screen({ rsvpByPlayer: { p1: { status: 'accepted', syncedAt: old } } })).toContain(
+      'Spond replies from 3 days ago',
+    )
+    expect(
+      screen({ rsvpByPlayer: { p1: { status: 'accepted', syncedAt: new Date().toISOString() } } }),
+    ).not.toContain('Spond replies from')
+  })
+})

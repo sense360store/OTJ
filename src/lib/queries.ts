@@ -67,6 +67,9 @@ import type {
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
+import { buildRsvpByPlayer } from './spondRsvp'
+import type { LinkCandidate, SpondLink } from './spondLinking'
+import type { Rsvp, RsvpLinkRow, RsvpResponseRow } from './spondRsvp'
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
 import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
 import { newestFirst } from './contentOrder'
@@ -5117,6 +5120,293 @@ export function useSetTeamBibColour() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  })
+}
+
+// ---- Spond RSVP context (0045) ---------------------------------------------
+//
+// Sibling of the register, never a child of it. The register's cache key
+// prefix is swept by an invalidation on EVERY tick and its optimistic
+// writer puts a RegisterEntry[] into that prefix, so a nested key would
+// make contamination a matter of care rather than structure.
+//
+// RSVP is context. Nothing in this section reads or writes
+// register_entries, appears in useSetRegisterEntry, or reaches
+// applyRegisterPatch.
+
+// Does this error mean "the table is not there yet"? Exactly three codes
+// do: 42P01 is Postgres undefined_table, PGRST205 is PostgREST's table
+// not found in the schema cache, and PGRST200 is an unresolvable embed,
+// which is what a stale schema cache returns. Nothing else counts, so a
+// permission error or a network failure is still a real failure.
+//
+// This exists so the client can be merged and deployed before the
+// migration is applied by hand: a pre apply app renders exactly today's
+// register, and the moment 0045 lands the next mount starts returning
+// context with no redeploy.
+export function isMissingRelation(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code
+  return code === '42P01' || code === 'PGRST205' || code === 'PGRST200'
+}
+
+export function spondRsvpKey(sessionId: string) {
+  return ['spond_rsvp', sessionId] as const
+}
+
+// PostgREST serves at most this many rows and TRUNCATES a larger result
+// silently rather than erroring, so every read below asks for an explicit
+// range and pages.
+const RSVP_PAGE = 1000
+const RSVP_MAX_ROWS = 5000
+
+async function readAllPages<T>(
+  read: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<T[]> {
+  const out: T[] = []
+  for (let from = 0; from < RSVP_MAX_ROWS; from += RSVP_PAGE) {
+    const { data, error } = await read(from, from + RSVP_PAGE - 1)
+    if (error) throw error
+    const page = (data ?? []) as T[]
+    out.push(...page)
+    if (page.length < RSVP_PAGE) break
+  }
+  return out
+}
+
+// What each player's parent replied for this session's linked Spond
+// event. Two plain reads joined in a pure function rather than one
+// embedded query: an embed depends on PostgREST resolving a composite
+// relationship, and a resolution that silently stopped working would
+// render as no context forever, which is indistinguishable from a club
+// that has linked nobody.
+//
+// Both reads are gated on players.view by RLS. The query never fires for
+// a session with no linked event, or for a caller without the
+// capability, so a club that never used Spond makes no request at all.
+export function useSessionSpondRsvp(sessionId: string | undefined, spondEventId: string | null, enabled = true) {
+  const { caps } = useMyCapabilities()
+  const canRead = caps.has('players.view')
+  return useQuery({
+    queryKey: spondRsvpKey(sessionId ?? ''),
+    enabled: enabled && !!sessionId && !!spondEventId && canRead,
+    // A pre apply database answers "no such table". That is not a
+    // failure worth retrying four times on every mount.
+    retry: (count, error) => !isMissingRelation(error) && count < 2,
+    queryFn: async (): Promise<Record<string, Rsvp>> => {
+      try {
+        const [responses, links] = await Promise.all([
+          readAllPages<RsvpResponseRow>((from, to) =>
+            supabase
+              .from('spond_event_responses')
+              .select('spond_member_id, status, synced_at')
+              .eq('spond_event_id', spondEventId as string)
+              .order('spond_member_id', { ascending: true })
+              .range(from, to),
+          ),
+          readAllPages<RsvpLinkRow>((from, to) =>
+            supabase
+              .from('player_spond_links')
+              .select('spond_member_id, player_id')
+              .order('spond_member_id', { ascending: true })
+              .range(from, to),
+          ),
+        ])
+        return buildRsvpByPlayer(responses, links)
+      } catch (e) {
+        // Not applied yet degrades to silence, which renders identically
+        // to a child with no link. Every other failure is a real one and
+        // is surfaced as such to the hook, which the register still
+        // never gates on.
+        if (isMissingRelation(e)) return {}
+        throw e
+      }
+    },
+  })
+}
+
+// ---- Spond member links (players.view to read, players.manage to write) ----
+
+export function spondLinksKey() {
+  return ['spond_links'] as const
+}
+
+interface SpondLinkRow {
+  spond_member_id: string
+  player_id: string
+  matched_by: 'suggested' | 'chosen'
+  created_at: string
+}
+
+// Every binding in the club. Small by construction (one per child at
+// most) and read club wide, because the management screen shows progress
+// per team and must also show a link whose child has moved team.
+//
+// `available` is false when 0045 has not been applied yet. The management
+// screen must be able to tell that apart from "this club has linked
+// nobody": silence is the right answer for context beside a register and
+// the wrong answer for a screen whose entire job is the missing thing.
+export interface SpondLinksRead {
+  links: SpondLink[]
+  available: boolean
+}
+
+export function useSpondLinks(enabled = true) {
+  const { caps } = useMyCapabilities()
+  return useQuery({
+    queryKey: spondLinksKey(),
+    enabled: enabled && caps.has('players.view'),
+    retry: (count, error) => !isMissingRelation(error) && count < 2,
+    queryFn: async (): Promise<SpondLinksRead> => {
+      const { data, error } = await supabase
+        .from('player_spond_links')
+        .select('spond_member_id, player_id, matched_by, created_at')
+        .order('spond_member_id', { ascending: true })
+        .range(0, RSVP_MAX_ROWS - 1)
+      if (error) {
+        if (isMissingRelation(error)) return { links: [], available: false }
+        throw error
+      }
+      return {
+        available: true,
+        links: (data as unknown as SpondLinkRow[]).map((r) => ({
+          spondMemberId: r.spond_member_id,
+          playerId: r.player_id,
+          matchedBy: r.matched_by,
+          createdAt: r.created_at,
+        })),
+      }
+    },
+  })
+}
+
+export interface LinkWriteInput {
+  spondMemberId: string
+  playerId: string
+  matchedBy: 'suggested' | 'chosen'
+}
+
+export interface LinkWriteResult {
+  written: number
+  // The bindings somebody else claimed between the screen loading and the
+  // press. Reported by member id so the caller can name them from the
+  // candidate list it already holds.
+  conflicted: string[]
+}
+
+// The insert. The row carries EXACTLY four fields and is built by an
+// explicit list rather than a spread, so no Spond display name can ride
+// along from the candidate object even by accident. created_by is stamped
+// by the database.
+function linkRow(input: LinkWriteInput, clubId: string): Record<string, unknown> {
+  return {
+    club_id: clubId,
+    spond_member_id: input.spondMemberId,
+    player_id: input.playerId,
+    matched_by: input.matchedBy,
+  }
+}
+
+// Write one or many links. A duplicate key means somebody else linked
+// that member or that child first; rather than rolling the whole batch
+// back with nothing to act on, the conflicting rows are dropped and the
+// rest retried once, and the caller is told which failed.
+export function useInsertSpondLinks() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<LinkWriteResult, Error, LinkWriteInput[]>({
+    mutationFn: async (inputs) => {
+      if (!profile?.club_id) throw new Error('You must be signed in to link Spond members.')
+      if (inputs.length === 0) return { written: 0, conflicted: [] }
+      const clubId = profile.club_id
+      const { error } = await supabase.from('player_spond_links').insert(inputs.map((i) => linkRow(i, clubId)))
+      if (!error) return { written: inputs.length, conflicted: [] }
+      if (error.code !== '23505') throw error
+
+      // One row at a time on conflict, so a single contested member does
+      // not cost the manager every other decision they just made.
+      const conflicted: string[] = []
+      let written = 0
+      for (const input of inputs) {
+        const { error: rowError } = await supabase.from('player_spond_links').insert(linkRow(input, clubId))
+        if (!rowError) {
+          written++
+        } else if (rowError.code === '23505') {
+          conflicted.push(input.spondMemberId)
+        } else {
+          throw rowError
+        }
+      }
+      return { written, conflicted }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: spondLinksKey() }),
+  })
+}
+
+// Remove a binding. The database drains that member's stored RSVP in the
+// same statement, so nothing here has to sweep anything.
+export function useDeleteSpondLink() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, { spondMemberId: string }>({
+    mutationFn: async ({ spondMemberId }) => {
+      const { error } = await supabase
+        .from('player_spond_links')
+        .delete()
+        .eq('spond_member_id', spondMemberId)
+      if (error) throw error
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: spondLinksKey() })
+      // A drained member's context is gone; let any open register refetch.
+      qc.invalidateQueries({ queryKey: ['spond_rsvp'] })
+    },
+  })
+}
+
+export interface LinkCandidatesResult {
+  members: LinkCandidate[]
+  truncated: boolean
+  warnings: string[]
+}
+
+// Load one team's Spond members through spond-link-members. A MUTATION,
+// not a query, deliberately: it costs a Spond login round trip and should
+// be a decision the manager makes, not a side effect of arriving on a
+// screen. gcTime 0 means the display names it returns are dropped from
+// the cache as soon as nothing renders them, so a transient name cannot
+// outlive the visit.
+export function useLoadSpondLinkCandidates() {
+  return useMutation<LinkCandidatesResult, Error, { teamId: string }>({
+    gcTime: 0,
+    mutationFn: async ({ teamId }) => {
+      const { data, error } = await supabase.functions.invoke('spond-link-members', {
+        body: { team_id: teamId },
+      })
+      if (error) {
+        let message = 'Could not load the Spond members. Try again.'
+        const ctx = (error as { context?: Response }).context
+        if (ctx) {
+          try {
+            const body = (await ctx.json()) as { error?: string }
+            if (body?.error) message = body.error
+          } catch {
+            // keep the generic message
+          }
+        }
+        throw new Error(message)
+      }
+      const body = (data ?? {}) as {
+        members?: { spond_member_id?: string; display_name?: string }[]
+        truncated?: boolean
+        warnings?: string[]
+      }
+      return {
+        members: (body.members ?? [])
+          .filter((m) => typeof m.spond_member_id === 'string' && typeof m.display_name === 'string')
+          .map((m) => ({ spondMemberId: m.spond_member_id as string, displayName: m.display_name as string })),
+        truncated: body.truncated === true,
+        warnings: body.warnings ?? [],
+      }
+    },
   })
 }
 

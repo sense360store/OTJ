@@ -36,6 +36,7 @@ import { AdminVenues } from './routes/AdminVenues'
 import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
 import { AdminShares } from './routes/AdminShares'
+import SpondLinks from './routes/SpondLinks'
 
 // The anonymous public share page is code-split with a dynamic import, so an
 // external recipient opening one shared drill on mobile data does not download
@@ -127,6 +128,17 @@ export function App() {
               /roster path redirects here so bookmarks keep working. */}
           <Route element={<RequireCap cap="players.view" />}>
             <Route path="players" element={<Players />} />
+            {/* Binding a Spond member to a child is a roster identity
+                write, so the screen sits behind players.manage, the exact
+                capability the player_spond_links insert policy names. It
+                is a route rather than a modal on the roster: a linking
+                affordance that only appears once a specific team filter is
+                set is one nobody finds, and the screen needs a reload, a
+                retry and a place to list links whose Spond member has
+                gone. */}
+            <Route element={<RequireCap cap="players.manage" />}>
+              <Route path="players/spond-links" element={<SpondLinks />} />
+            </Route>
             {/* The register lists children by name, so it sits behind the same
                 players.view gate as the roster: without it there is nothing to
                 read and no reason to ask. Marking someone in is a separate
