@@ -400,6 +400,7 @@ do $$
 declare
   n int;
   cols text[];
+  v_probe text;
 begin
   -- The tables exist and RLS is on. Without the second half every policy
   -- below is decoration.
@@ -534,55 +535,76 @@ begin
   end if;
 
   -- The member id column refuses everything that is not an opaque id.
-  -- Both directions, because a check that accepts nothing would pass a
-  -- one sided probe.
+  --
+  -- Asserted THREE ways, because each alone can lie. The regex is checked
+  -- directly, so the vocabulary assertion can never be vacuous. The check
+  -- constraint is confirmed to be attached to the column, so a correct
+  -- regex living nowhere is caught. And a real insert is attempted, so the
+  -- whole stack is shown to bite; its player_id is a literal uuid rather
+  -- than a row from players, because on a database with no roster the
+  -- select form would fail on NOT NULL and prove nothing about the check.
+  -- A check constraint is evaluated before the foreign key triggers, so
+  -- reaching a foreign_key_violation here means the check did NOT fire and
+  -- is itself a failure.
+  for v_probe in
+    select unnest(array['Jack Thompson', 'Jack_Thompson', 'jack.thompson',
+                        'parent@example.invalid', '+447700900000', 'abcdef0123456789', ''])
+  loop
+    if v_probe ~ '^[0-9A-F]{16,64}$' then
+      raise exception 'spond_links: the member id vocabulary accepted %', v_probe;
+    end if;
+  end loop;
+  if not ('0123456789ABCDEF0123456789ABCDEF' ~ '^[0-9A-F]{16,64}$')
+     or not ('0123456789ABCDEF' ~ '^[0-9A-F]{16,64}$') then
+    raise exception 'spond_links: the member id vocabulary refuses a real Spond id';
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.player_spond_links'::regclass
+       and conname = 'player_spond_links_spond_member_id_check'
+       and contype = 'c'
+       and pg_get_constraintdef(oid) like '%[0-9A-F]%'
+  ) or not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.spond_event_responses'::regclass
+       and conname = 'spond_event_responses_spond_member_id_check'
+       and contype = 'c'
+       and pg_get_constraintdef(oid) like '%[0-9A-F]%'
+  ) then
+    raise exception 'spond_links: the member id check must be attached to both columns';
+  end if;
+
   begin
     insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)
-    values ((select id from public.clubs limit 1), 'Jack Thompson',
-            (select id from public.players limit 1), 'chosen');
+    values (gen_random_uuid(), 'Jack Thompson', gen_random_uuid(), 'chosen');
     raise exception 'spond_links: the member id column accepted a name';
   exception
     when check_violation then null;
-    when not_null_violation then null;
-    when foreign_key_violation then raise exception 'spond_links: the member id check did not fire before the foreign key';
+    when foreign_key_violation then
+      raise exception 'spond_links: the member id check did not fire before the foreign key';
   end;
-  begin
-    insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)
-    values ((select id from public.clubs limit 1), 'parent@example.invalid',
-            (select id from public.players limit 1), 'chosen');
-    raise exception 'spond_links: the member id column accepted an email address';
-  exception
-    when check_violation then null;
-    when not_null_violation then null;
-    when foreign_key_violation then raise exception 'spond_links: the member id check did not fire before the foreign key';
-  end;
-  begin
-    insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)
-    values ((select id from public.clubs limit 1), 'abcdef0123456789',
-            (select id from public.players limit 1), 'chosen');
-    raise exception 'spond_links: the member id column accepted lowercase hex';
-  exception
-    when check_violation then null;
-    when not_null_violation then null;
-    when foreign_key_violation then raise exception 'spond_links: the member id check did not fire before the foreign key';
-  end;
-  -- And accepts a real one, so the check is a boundary and not a wall.
-  if not ('0123456789ABCDEF0123456789ABCDEF' ~ '^[0-9A-F]{16,64}$') then
-    raise exception 'spond_links: the member id check refuses a real Spond id';
+
+  -- The status vocabulary is closed to Spond four reply states.
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.spond_event_responses'::regclass
+       and conname = 'spond_event_responses_status_check'
+       and contype = 'c'
+       and pg_get_constraintdef(oid) like '%accepted%declined%unanswered%waiting%'
+  ) then
+    raise exception 'spond_links: the response status vocabulary must be closed to the four Spond states';
   end if;
 
-  -- A response for a member nobody linked is unrepresentable. This is
-  -- the invariant the whole release rests on, so it is probed, not
-  -- assumed from the constraint's existence.
+  -- And a response row is refused outright when its event or its link does
+  -- not exist. The structural assertion above is what proves the LINK arm
+  -- specifically; this proves the refusal is real and not merely declared.
   begin
     insert into public.spond_event_responses (club_id, spond_event_id, spond_member_id, status, synced_at)
-    values ((select id from public.clubs limit 1),
-            coalesce((select id from public.spond_events limit 1), gen_random_uuid()),
-            '0123456789ABCDEF0123456789ABCDEF', 'accepted', now());
-    raise exception 'spond_links: a response for an unlinked member was accepted';
+    values (gen_random_uuid(), gen_random_uuid(), '0123456789ABCDEF0123456789ABCDEF', 'accepted', now());
+    raise exception 'spond_links: a response with no event and no link was accepted';
   exception
     when foreign_key_violation then null;
-    when not_null_violation then null;
   end;
 
   -- The migration invents no links and no responses, and touches no
