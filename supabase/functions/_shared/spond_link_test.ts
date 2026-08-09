@@ -1,0 +1,218 @@
+// Tests for the Release B Spond logic: the linked member response
+// derivation, the response row shape, and the linking candidate
+// reduction. Hermetic (no network, no database) and every fixture is
+// synthetic: invented ids and invented names, never a real Spond
+// payload, even redacted. Run with:
+//
+//   deno test --allow-env --allow-read supabase/functions/_shared/spond_link_test.ts
+//
+// The underscore folder is not deployed; this file ships nowhere.
+import { assert, assertEquals } from 'jsr:@std/assert@1'
+import {
+  buildResponseRows,
+  deriveMemberStatuses,
+  MAX_RESPONSE_IDS_PER_ARRAY,
+  reduceLinkCandidate,
+  SPOND_MEMBER_ID_PATTERN,
+  SPOND_RESPONSE_COLUMNS,
+} from './spond.ts'
+
+// ---- Synthetic fixtures ----------------------------------------------------
+
+// Invented member ids, uppercase hex like Spond's own, 32 characters.
+const LINKED_A = '0123456789ABCDEF0123456789ABCDEF'
+const LINKED_B = 'FEDCBA9876543210FEDCBA9876543210'
+const UNLINKED = 'AAAABBBBCCCCDDDDEEEEFFFF00001111'
+const SYNCED_AT = '2026-08-09T18:00:00.000Z'
+
+const LINKED = new Set([LINKED_A, LINKED_B])
+
+// The response block of a Spond event, invented throughout. It carries an
+// unlinked member and an unconfirmed array so the tests can prove neither
+// reaches a row.
+const SYNTHETIC_RESPONSES = {
+  acceptedIds: [LINKED_A, UNLINKED],
+  declinedIds: [LINKED_B],
+  unansweredIds: [],
+  waitinglistIds: [],
+  unconfirmedIds: [UNLINKED],
+}
+
+// A Spond group member as the reference library's model describes one,
+// with invented content throughout. The guardian block and the contact
+// fields exist here precisely so the boundary tests can prove they never
+// leave the reduction.
+const SYNTHETIC_MEMBER = {
+  id: LINKED_A,
+  firstName: 'Madeup',
+  lastName: 'Childname',
+  email: 'never@example.invalid',
+  phoneNumber: '+440000000000',
+  subGroups: ['SUBGROUP-SYNTH-1'],
+  guardians: [
+    {
+      id: 'GUARDIAN-SYNTH-1',
+      firstName: 'Invented',
+      lastName: 'Guardianname',
+      email: 'guardian@example.invalid',
+      phoneNumber: '+440000000001',
+    },
+  ],
+  address: { line1: '1 Made Up Lane', city: 'Nowhere' },
+}
+
+// ---- The linked only rule --------------------------------------------------
+
+Deno.test('only linked members get a status', () => {
+  const statuses = deriveMemberStatuses(SYNTHETIC_RESPONSES, LINKED)
+  assertEquals(statuses.map((s) => s.spond_member_id), [LINKED_A, LINKED_B])
+  assertEquals(statuses.map((s) => s.status), ['accepted', 'declined'])
+})
+
+Deno.test('an empty link set yields nothing, and is not the same as unknown', () => {
+  // Empty means "this club has linked nobody", which is a real fact with a
+  // real consequence: no rows. UNKNOWN is represented by the caller never
+  // calling this at all (see the three state rule in spond-sync), which is
+  // why this function takes a Set and not a nullable one.
+  assertEquals(deriveMemberStatuses(SYNTHETIC_RESPONSES, new Set()), [])
+})
+
+Deno.test('unconfirmedIds is never read', () => {
+  const statuses = deriveMemberStatuses({ unconfirmedIds: [LINKED_A] }, LINKED)
+  assertEquals(statuses, [])
+})
+
+Deno.test('a member in two arrays keeps its first claim, so no row is targeted twice', () => {
+  const statuses = deriveMemberStatuses(
+    { acceptedIds: [LINKED_A], declinedIds: [LINKED_A], unansweredIds: [LINKED_A] },
+    LINKED,
+  )
+  assertEquals(statuses, [{ spond_member_id: LINKED_A, status: 'accepted' }])
+})
+
+Deno.test('the derivation is deterministic: same payload and link set, same order', () => {
+  const once = deriveMemberStatuses(SYNTHETIC_RESPONSES, LINKED)
+  const twice = deriveMemberStatuses(SYNTHETIC_RESPONSES, LINKED)
+  assertEquals(JSON.stringify(once), JSON.stringify(twice))
+})
+
+Deno.test('a malformed or missing responses block yields nothing rather than throwing', () => {
+  for (const bad of [null, undefined, 'not an object', 42, [], { acceptedIds: 'nope' }]) {
+    assertEquals(deriveMemberStatuses(bad, LINKED), [])
+  }
+})
+
+Deno.test('a non string or malformed id is dropped before it can reach a row', () => {
+  const statuses = deriveMemberStatuses(
+    { acceptedIds: [null, 42, {}, 'Jack Thompson', 'short', LINKED_A] },
+    new Set([...LINKED, 'Jack Thompson', 'short']),
+  )
+  assertEquals(statuses, [{ spond_member_id: LINKED_A, status: 'accepted' }])
+})
+
+Deno.test('each array is capped', () => {
+  const many = Array.from({ length: MAX_RESPONSE_IDS_PER_ARRAY + 50 }, () => LINKED_A)
+  // All duplicates, so the cap is observed through the slice not throwing
+  // and the dedupe leaving exactly one.
+  assertEquals(deriveMemberStatuses({ acceptedIds: many }, LINKED).length, 1)
+})
+
+// ---- The row shape ---------------------------------------------------------
+
+Deno.test('a response row contains exactly the allowed columns', () => {
+  const rows = buildResponseRows('club-1', 'event-row-1', deriveMemberStatuses(SYNTHETIC_RESPONSES, LINKED), SYNCED_AT)
+  assertEquals(SPOND_RESPONSE_COLUMNS.length, 5)
+  for (const row of rows) {
+    assertEquals(Object.keys(row).sort(), [...SPOND_RESPONSE_COLUMNS].sort())
+    for (const value of Object.values(row)) {
+      assert(typeof value === 'string', 'a response row must carry primitives only')
+    }
+  }
+})
+
+Deno.test('every row carries this run stamp, which is what makes the tail delete safe', () => {
+  const rows = buildResponseRows('club-1', 'event-row-1', deriveMemberStatuses(SYNTHETIC_RESPONSES, LINKED), SYNCED_AT)
+  assertEquals(rows.length, 2)
+  for (const row of rows) {
+    assertEquals(row.synced_at, SYNCED_AT)
+    assertEquals(row.club_id, 'club-1')
+    assertEquals(row.spond_event_id, 'event-row-1')
+  }
+})
+
+Deno.test('no unlinked member and no payload fragment reaches a row', () => {
+  const flat = JSON.stringify(
+    buildResponseRows('club-1', 'event-row-1', deriveMemberStatuses(SYNTHETIC_RESPONSES, LINKED), SYNCED_AT),
+  )
+  assert(!flat.includes(UNLINKED), 'a row leaked an unlinked member id')
+  assert(!flat.includes('unconfirmedIds'), 'a row leaked a response array name')
+  assert(!flat.includes('acceptedIds'), 'a row leaked a response array name')
+})
+
+// ---- The linking candidate -------------------------------------------------
+
+Deno.test('a candidate carries exactly the id and the display name', () => {
+  const candidate = reduceLinkCandidate(SYNTHETIC_MEMBER)
+  assert(candidate !== null)
+  assertEquals(Object.keys(candidate).sort(), ['display_name', 'spond_member_id'])
+  assertEquals(candidate.spond_member_id, LINKED_A)
+  assertEquals(candidate.display_name, 'Madeup Childname')
+})
+
+Deno.test('the candidate carries no guardian, contact, subgroup or address field', () => {
+  const flat = JSON.stringify(reduceLinkCandidate(SYNTHETIC_MEMBER))
+  for (const forbidden of [
+    'guardians',
+    'Guardianname',
+    'GUARDIAN-SYNTH-1',
+    'email',
+    'never@example.invalid',
+    'guardian@example.invalid',
+    'phoneNumber',
+    '+440000000000',
+    '+440000000001',
+    'subGroups',
+    'SUBGROUP-SYNTH-1',
+    'address',
+    'Made Up Lane',
+    'Nowhere',
+  ]) {
+    assert(!flat.includes(forbidden), `the candidate leaked ${forbidden}`)
+  }
+})
+
+Deno.test('a member whose id the links table would refuse is never offered', () => {
+  for (const id of ['Jack Thompson', 'jack.thompson', 'parent@example.invalid', 'short', '', null, 42]) {
+    assertEquals(reduceLinkCandidate({ ...SYNTHETIC_MEMBER, id }), null, `offered a candidate with id ${String(id)}`)
+  }
+})
+
+Deno.test('a member with no usable name is dropped rather than offered nameless', () => {
+  assertEquals(reduceLinkCandidate({ id: LINKED_A }), null)
+  assertEquals(reduceLinkCandidate({ id: LINKED_A, firstName: '  ', lastName: '' }), null)
+})
+
+Deno.test('a lowercase id is normalised to the stored form rather than refused', () => {
+  const candidate = reduceLinkCandidate({ ...SYNTHETIC_MEMBER, id: LINKED_A.toLowerCase() })
+  assert(candidate !== null)
+  assertEquals(candidate.spond_member_id, LINKED_A)
+})
+
+// ---- The member id pattern, the column boundary in code --------------------
+
+Deno.test('the member id pattern refuses anything that could be a person', () => {
+  for (const value of [
+    'Jack Thompson',
+    'Jack_Thompson',
+    'Jack-Thompson',
+    'jackthompson',
+    'parent@example.invalid',
+    '+447700900000',
+    '1 Made Up Lane',
+    '',
+  ]) {
+    assert(!SPOND_MEMBER_ID_PATTERN.test(value), `the pattern accepted ${value}`)
+  }
+  assert(SPOND_MEMBER_ID_PATTERN.test(LINKED_A), 'the pattern refused a real shaped id')
+  assert(SPOND_MEMBER_ID_PATTERN.test('0123456789ABCDEF'), 'the pattern refused the minimum length')
+})

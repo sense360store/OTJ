@@ -46,7 +46,9 @@
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
   buildEventRow,
+  buildResponseRows,
   claimEvent,
+  deriveMemberStatuses,
   eventsQuery,
   extractAccessToken,
   groupSubgroupIds,
@@ -62,6 +64,18 @@ import {
   WINDOW_FORWARD_DAYS,
 } from '../_shared/spond.ts'
 import type { SpondEventRow, SpondMapping, SyncWindow } from '../_shared/spond.ts'
+
+// The page size PostgREST serves and the point at which it TRUNCATES a
+// larger result silently rather than erroring (max_rows). Every read here
+// that could exceed it asks for an explicit range and pages, because a
+// silently short link set is the one input that could make this function
+// delete live context.
+const PAGE = 1000
+
+// The hard cap on links read in one run. A grassroots club is a few
+// hundred children; reaching this means something is wrong, and a
+// possibly partial set is treated as UNKNOWN, never as the truth.
+const MAX_LINKED_MEMBERS = 2000
 
 const SPOND_EMAIL = Deno.env.get('SPOND_EMAIL') ?? ''
 const SPOND_PASSWORD = Deno.env.get('SPOND_PASSWORD') ?? ''
@@ -244,18 +258,12 @@ Deno.serve(async (req) => {
   if ('response' in resolved) return resolved.response
   const { caller } = resolved
 
-  // Fail closed while the dedicated organiser account is not configured.
-  // The function can be deployed before the secrets exist; only a real
-  // sync needs them.
-  if (!SPOND_EMAIL || !SPOND_PASSWORD) {
-    return reply(503, {
-      error:
-        'The Spond account is not configured. An administrator must set the SPOND_EMAIL and SPOND_PASSWORD function secrets. Nothing was synced.',
-    })
-  }
-
-  // The capability gate, before Spond is contacted at all. has_perm is
-  // the live SECURITY DEFINER function the spond_events write policy
+  // The capability gate, before Spond is contacted at all AND before the
+  // secrets are looked at, so a caller who may not sync learns nothing
+  // about how the server is configured. (This orders the two gates the
+  // way spond-roster-import already does; a misconfigured club whose
+  // caller lacks the capability now sees 403 rather than 503.) has_perm
+  // is the live SECURITY DEFINER function the spond_events write policy
   // calls (signature has_perm(capability text)), so a yes here means the
   // writes below will pass RLS and a no refuses early.
   const { data: canSync, error: permError } = await caller.db.rpc('has_perm', { capability: 'sessions.create' })
@@ -264,6 +272,16 @@ Deno.serve(async (req) => {
   }
   if (canSync !== true) {
     return reply(403, { error: 'Syncing Spond attendance needs the sessions.create capability.' })
+  }
+
+  // Fail closed while the dedicated organiser account is not configured.
+  // The function can be deployed before the secrets exist; only a real
+  // sync needs them.
+  if (!SPOND_EMAIL || !SPOND_PASSWORD) {
+    return reply(503, {
+      error:
+        'The Spond account is not configured. An administrator must set the SPOND_EMAIL and SPOND_PASSWORD function secrets. Nothing was synced.',
+    })
   }
 
   // The club's mappings, read through RLS as the caller. The sync touches
@@ -309,6 +327,65 @@ Deno.serve(async (req) => {
   // failed, not silently skipped, and the rest continue.
   const groups = await spondGroupIds(login.token)
   if ('response' in groups) return groups.response
+
+  // ---------------------------------------------------------------
+  // The linked member set. THREE STATES, and the distinction between
+  // two of them is the most important line in this function:
+  //
+  //   null       UNKNOWN. We could not prove the link set. Touch NO
+  //              response row: no upsert, no delete, nothing. The counts
+  //              still sync.
+  //   empty Set  KNOWN and empty. This club has linked nobody.
+  //   non empty  KNOWN. Exactly these members may have stored context.
+  //
+  // Collapsing unknown into empty (the shape `linked ?? new Set()`
+  // invites) would delete every stored response in the club on a
+  // transient read error. An inability to prove the linked set is never
+  // read as "the linked set is empty".
+  //
+  // Reading the links needs players.view, which a syncing coach may not
+  // hold. That is a normal outcome, not a failure: the counts sync and
+  // the response context is left exactly as it was.
+  let linked: ReadonlySet<string> | null = null
+  {
+    const { data: canReadLinks, error: linkPermError } = await caller.db
+      .rpc('has_perm', { capability: 'players.view' })
+    if (!linkPermError && canReadLinks === true) {
+      const ids = new Set<string>()
+      let offset = 0
+      let ok = true
+      for (;;) {
+        // An explicit range on every page: an unbounded read is silently
+        // truncated at max_rows, and a short link set is the one input
+        // that could make the reconcile below delete live rows.
+        const { data: page, error: pageError } = await caller.db
+          .from('player_spond_links')
+          .select('spond_member_id')
+          .eq('club_id', caller.clubId)
+          .order('spond_member_id', { ascending: true })
+          .range(offset, offset + PAGE - 1)
+        if (pageError) {
+          console.error('spond-sync: link read failed', { code: pageError.code })
+          ok = false
+          break
+        }
+        for (const row of (page ?? []) as { spond_member_id: string }[]) ids.add(row.spond_member_id)
+        if ((page ?? []).length < PAGE) break
+        offset += PAGE
+        if (offset >= MAX_LINKED_MEMBERS) {
+          // A possibly partial set is UNKNOWN, never the truth.
+          console.error('spond-sync: link read hit its cap; response context skipped')
+          ok = false
+          break
+        }
+      }
+      if (ok) linked = ids
+    }
+  }
+  // How many response rows this run wrote, and whether it touched them at
+  // all. Deliberately NOT how many members are linked: that figure is
+  // withheld by the players.view gate this caller may not hold.
+  let responsesWritten = 0
 
   const syncedAt = new Date().toISOString()
   const outcomes: MappingOutcome[] = []
@@ -394,6 +471,10 @@ Deno.serve(async (req) => {
     // null) and the rewrite rides this mapping's upsert. The map keys
     // rewrites by event id so one upsert never targets a row twice.
     const rows: SpondEventRow[] = []
+    // The response arrays of each event this mapping newly queued, kept
+    // beside the row so the reconcile below can read them without a
+    // second pass over the payload. Nothing else from the event is kept.
+    const queuedResponses = new Map<string, unknown>()
     const rewrites = new Map<string, SpondEventRow>()
     let malformed = 0
     let alreadySynced = 0
@@ -418,6 +499,7 @@ Deno.serve(async (req) => {
         continue
       }
       rows.push(row)
+      queuedResponses.set(row.spond_event_id, (event as { responses?: unknown } | null)?.responses)
     }
     if (malformed > 0) {
       warnings.push(`Skipped ${malformed} event${malformed === 1 ? '' : 's'} with no usable id, title or start time.`)
@@ -444,14 +526,69 @@ Deno.serve(async (req) => {
     // same conflict target setting team_id null. The write goes through
     // RLS as the caller.
     const upserts = [...rows, ...rewrites.values()]
+    // The returning projection is the only change to this write: no
+    // column, no value and no conflict target moves. It exists so the
+    // response reconcile below knows each event's row id without a
+    // second read.
+    const eventRowIdBySpondId = new Map<string, string>()
     if (upserts.length > 0) {
-      const { error: writeError } = await caller.db
+      const { data: written, error: writeError } = await caller.db
         .from('spond_events')
         .upsert(upserts, { onConflict: 'club_id,spond_event_id' })
+        .select('id, spond_event_id')
       if (writeError) {
         console.error('spond-sync: upsert failed', { mapping: mapping.id, code: writeError.code })
         failed('Could not write the synced events. Check your access and try again.', warnings)
         continue
+      }
+      for (const row of (written ?? []) as { id: string; spond_event_id: string }[]) {
+        eventRowIdBySpondId.set(row.spond_event_id, row.id)
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // RSVP context for LINKED members only. Skipped entirely when the
+    // link set is unknown (see the three state rule above), so a failed
+    // link read leaves every stored response exactly as it was.
+    //
+    // Per event: upsert what this run saw stamped with syncedAt, then
+    // delete only the strictly older tail for that event. Properties
+    // this buys over a delete then insert: no window in which the event
+    // has no context, idempotent on a re-run, safe under two overlapping
+    // syncs without a lock (each deletes only rows older than its own
+    // stamp), and no id list in the predicate to grow or be truncated.
+    //
+    // A failure here warns and moves on. The event's counts are already
+    // written, the previous context is still in place, and the next run
+    // self heals it. Attendance is untouched either way: this function
+    // never reads or writes register_entries.
+    if (linked !== null) {
+      for (const row of rows) {
+        const eventRowId = eventRowIdBySpondId.get(row.spond_event_id)
+        if (!eventRowId) continue
+        const statuses = deriveMemberStatuses(queuedResponses.get(row.spond_event_id), linked)
+        const responseRows = buildResponseRows(caller.clubId, eventRowId, statuses, syncedAt)
+        if (responseRows.length > 0) {
+          const { error: rsvpError } = await caller.db
+            .from('spond_event_responses')
+            .upsert(responseRows, { onConflict: 'spond_event_id,spond_member_id' })
+          if (rsvpError) {
+            console.error('spond-sync: response upsert failed', { mapping: mapping.id, code: rsvpError.code })
+            continue  // leave the tail alone: the previous context stays
+          }
+          responsesWritten += responseRows.length
+        }
+        // The tail runs even with nothing to upsert: an event every
+        // linked member has left should lose its stored context, not
+        // keep the last run's.
+        const { error: tailError } = await caller.db
+          .from('spond_event_responses')
+          .delete()
+          .eq('spond_event_id', eventRowId)
+          .lt('synced_at', syncedAt)
+        if (tailError) {
+          console.error('spond-sync: response tail delete failed', { mapping: mapping.id, code: tailError.code })
+        }
       }
     }
 
@@ -644,6 +781,14 @@ Deno.serve(async (req) => {
     mappings: outcomes,
     whole_group: wholeGroupOutcomes,
     events_total: eventsTotal,
+    // How many rows of RSVP context this run wrote, and whether it
+    // touched the context at all. 'skipped' means the link set could not
+    // be proved (often simply that this coach does not hold players.view)
+    // and nothing was written or deleted. The number of LINKED members is
+    // deliberately not reported: that is what the players.view gate
+    // withholds.
+    responses_written: responsesWritten,
+    responses_context: linked === null ? 'skipped' : 'updated',
     ...(stopped ? { stopped } : {}),
   })
 })
