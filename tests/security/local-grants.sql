@@ -126,3 +126,19 @@ revoke all on public.register_entries from anon, authenticated;
 grant select, insert, update, delete on public.venues to authenticated;
 grant select, insert, delete on public.session_teams to authenticated;
 grant select, insert, update, delete on public.register_entries to authenticated;
+
+-- 0045 spond links. player_spond_links and spond_event_responses each revoke
+-- from anon and authenticated and then grant back exactly the verbs their
+-- policies allow, so the migration's end state in production is: anon holds
+-- NOTHING on either (neither has an anonymous read path, and both carry
+-- pseudonymous child data), and a link carries no UPDATE because a link is
+-- created or removed, never edited. The blanket grants above would resurrect
+-- ALL of that locally, including TRUNCATE, an anon read of who is linked to
+-- which child, and the UPDATE that the absent update policy is meant to make
+-- unreachable. Restate the migration's posture so the local stack answers
+-- like production. See 0045_spond_links.sql and
+-- docs/security/spond-data-boundary.md.
+revoke all on public.player_spond_links    from anon, authenticated;
+revoke all on public.spond_event_responses from anon, authenticated;
+grant select, insert, delete         on public.player_spond_links    to authenticated;
+grant select, insert, update, delete on public.spond_event_responses to authenticated;

@@ -1351,6 +1351,13 @@ const FORBIDDEN_ANYWHERE = [
   'bib_colour', 'bibColour', 'bib_colour_override', 'bibColourOverride',
   'register_entries', 'registerEntries', 'present',
   'marked_by', 'markedBy', 'marked_at', 'markedAt',
+  // Spond member links and per child RSVP (0045). An opaque member id
+  // resolves to a named child through the roster, and RSVP says which
+  // children replied to which session. None of it is projected; naming it
+  // here means a future field rename trips the scanner rather than leaks.
+  'spond_member_id', 'spondMemberId', 'player_spond_links', 'playerSpondLinks',
+  'spond_event_responses', 'spondEventResponses', 'matched_by', 'matchedBy',
+  'rsvp', 'rsvpStatus',
 ]
 
 function assertKeysWithin(obj: Record<string, unknown>, allowed: Set<string>, where: string): void {
