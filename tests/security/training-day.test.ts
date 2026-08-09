@@ -356,6 +356,97 @@ describe('training day row level security', () => {
     expect(after!.marked_by).toBe(coachOneId)
   })
 
+  it('a partial upsert changes only the field it names, so two coaches cannot revert each other', async () => {
+    // The pitch side race this pins: one coach ticks a child in while
+    // another sets that child's bib. Both writes go through the same
+    // upsert the client uses, each carrying ONLY the field its tap
+    // changed. A whole row write would carry a stale value for the other
+    // field and silently undo it, which is why the client sends partials.
+    // This test exists because that guarantee depends on how PostgREST
+    // translates a partial payload into ON CONFLICT DO UPDATE SET, which
+    // is worth proving rather than assuming.
+    const racePlayer = seedPlayer({
+      club: CLUB_A,
+      season: seasonA,
+      display: `${playerPrefix} race`,
+      teamId: TEST_TEAM,
+    }).playerId
+
+    const { error: tickErr } = await coachOne
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: racePlayer, club_id: CLUB_A, present: true },
+        { onConflict: 'session_id,player_id' },
+      )
+    expect(tickErr).toBeNull()
+
+    // A second coach sets the bib only. present is absent from this payload.
+    const { error: bibErr } = await coachTwo
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: racePlayer, club_id: CLUB_A, bib_colour_override: 'red' },
+        { onConflict: 'session_id,player_id' },
+      )
+    expect(bibErr).toBeNull()
+
+    const { data: after } = await serviceClient()
+      .from('register_entries')
+      .select('present, bib_colour_override, source')
+      .eq('session_id', ownSession)
+      .eq('player_id', racePlayer)
+      .single()
+    expect(after!.present).toBe(true)
+    expect(after!.bib_colour_override).toBe('red')
+
+    // And the reverse order: ticking after a bib was set keeps the bib.
+    const { error: tickAgainErr } = await coachOne
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: racePlayer, club_id: CLUB_A, present: false },
+        { onConflict: 'session_id,player_id' },
+      )
+    expect(tickAgainErr).toBeNull()
+    const { data: after2 } = await serviceClient()
+      .from('register_entries')
+      .select('present, bib_colour_override')
+      .eq('session_id', ownSession)
+      .eq('player_id', racePlayer)
+      .single()
+    expect(after2!.present).toBe(false)
+    expect(after2!.bib_colour_override).toBe('red')
+  })
+
+  it('a quick add records its source, and a later partial write does not reset it', async () => {
+    const guest = seedPlayer({
+      club: CLUB_A,
+      season: seasonA,
+      display: `${playerPrefix} guest`,
+    }).playerId
+    await coachOne
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: guest, club_id: CLUB_A, present: true, source: 'manual' },
+        { onConflict: 'session_id,player_id' },
+      )
+    await coachOne
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: guest, club_id: CLUB_A, bib_colour_override: 'blue' },
+        { onConflict: 'session_id,player_id' },
+      )
+    const { data } = await serviceClient()
+      .from('register_entries')
+      .select('source, present, bib_colour_override')
+      .eq('session_id', ownSession)
+      .eq('player_id', guest)
+      .single()
+    // source is what makes the row removable as a quick add; losing it
+    // would strip the coach's undo.
+    expect(data!.source).toBe('manual')
+    expect(data!.present).toBe(true)
+    expect(data!.bib_colour_override).toBe('blue')
+  })
+
   it('a parent cannot read the register: it says which children were where', async () => {
     const { data, error } = await parent.from('register_entries').select('session_id, player_id')
     expect(error).toBeNull()
