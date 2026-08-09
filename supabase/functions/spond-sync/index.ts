@@ -15,14 +15,27 @@
 // mapped Spond groups into spond_events, counts only. See CLAUDE.md,
 // Spond integration, for the standing policy.
 //
-// THE CHILDREN'S DATA BOUNDARY. Spond event responses identify children
-// and their parents. The function derives four integer counts per event
-// in memory and discards everything else: never member ids, names,
-// emails, phone numbers, comments or any payload fragment, in any
-// column, any log line, or this function's response body. Spond
-// response bodies and headers are never logged; errors log the HTTP
-// status and our own context only. The derivation lives in
-// ../_shared/spond.ts and is pinned by spond_test.ts.
+// THE CHILDREN'S DATA BOUNDARY, amended by 0045_spond_links.sql. Spond
+// event responses identify children and their parents. This function
+// still NEVER reads a name, an email, a phone number, a comment, a
+// guardian or the recipients object, and none of those reaches any
+// column, any log line or this function's response body. It derives the
+// four integer counts per event in memory as before.
+//
+// What changed: for LINKED members only, it also writes one closed reply
+// state per event to spond_event_responses. The only Spond identifier it
+// stores is the opaque member id, and only for a member a human bound to
+// a roster child in the management screen. A row for an UNLINKED member
+// is unrepresentable, not merely avoided: spond_event_responses_link_fk
+// refuses it. When the link set cannot be proved (see the three state
+// rule below) this function writes and deletes NOTHING.
+//
+// RSVP is context, never attendance. Nothing here reads, writes,
+// defaults or constrains register_entries; the register is the coach's
+// own record. Spond response bodies and headers are never logged; errors
+// log the HTTP status and our own context only. The derivations live in
+// ../_shared/spond.ts and are pinned by spond_test.ts and
+// spond_link_test.ts. See docs/security/spond-data-boundary.md.
 //
 // Read only toward Spond. Authentication is the only non GET call. The
 // function never creates, modifies, cancels or responds to anything on
@@ -552,11 +565,21 @@ Deno.serve(async (req) => {
     // link read leaves every stored response exactly as it was.
     //
     // Per event: upsert what this run saw stamped with syncedAt, then
-    // delete only the strictly older tail for that event. Properties
-    // this buys over a delete then insert: no window in which the event
-    // has no context, idempotent on a re-run, safe under two overlapping
-    // syncs without a lock (each deletes only rows older than its own
-    // stamp), and no id list in the predicate to grow or be truncated.
+    // delete only the strictly older tail for that event. Properties this
+    // buys over a delete then insert: no window in which the event has no
+    // context, idempotent on a re-run, and no id list in the predicate to
+    // grow or be truncated.
+    //
+    // Two overlapping runs, precisely. Neither can empty an event and
+    // neither can write an unlinked member, because the upsert always
+    // lands before the delete and the link foreign key refuses the rest.
+    // What they CAN do is disagree about freshness: the upsert sets
+    // synced_at unconditionally, so an older run landing second lowers a
+    // row's stamp to its own, and the event then holds that run's
+    // slightly older view of who replied. It self heals on the next sync,
+    // which is why this is left rather than serialised behind a lock; the
+    // cost of being wrong is a stale reply shown as context, never a lost
+    // register and never a deleted link.
     //
     // A failure here warns and moves on. The event's counts are already
     // written, the previous context is still in place, and the next run

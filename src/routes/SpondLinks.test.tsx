@@ -148,6 +148,7 @@ describe('LinkSectionsView', () => {
       <LinkSectionsView
         sections={buildLinkSections(candidates, links, roster)}
         busy={false}
+        complete
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -180,6 +181,7 @@ describe('LinkSectionsView', () => {
     const html = renderToStaticMarkup(
       <LinkSectionsView
         sections={buildLinkSections([candidate(M1, 'Alpha Synthetic')], [], roster)}
+        complete
         busy
         onAccept={noop}
         onChoose={noop}
@@ -187,5 +189,52 @@ describe('LinkSectionsView', () => {
       />,
     )
     expect(html).toContain('disabled')
+  })
+})
+
+// ---- What an incomplete Spond read must NOT be allowed to imply --------
+//
+// This is the review finding worth a test of its own: a short or empty
+// member list made every stored link look like a dead orphan and invited
+// the manager to unlink it, which drains that child's stored replies for
+// a reason that was never true.
+
+describe('an incomplete member list is never treated as evidence', () => {
+  const incomplete = (candidates: LinkCandidate[], links: SpondLink[]) =>
+    renderToStaticMarkup(
+      <LinkSectionsView
+        sections={buildLinkSections(candidates, links, roster)}
+        busy={false}
+        complete={false}
+        onAccept={noop}
+        onChoose={noop}
+        onUnlink={noop}
+      />,
+    )
+
+  it('does not offer to unlink a member who is merely missing from a short list', () => {
+    const html = incomplete([], [link(M2, 'p2')])
+    expect(html).not.toContain('Links with no Spond member')
+    expect(html).toContain('came back incomplete')
+  })
+
+  it('does not claim everyone is linked when it never saw everyone', () => {
+    const html = incomplete([], [])
+    expect(html).not.toContain('Every Spond member in this group is linked')
+  })
+
+  it('a complete list still surfaces a genuine orphan', () => {
+    const html = renderToStaticMarkup(
+      <LinkSectionsView
+        sections={buildLinkSections([candidate(M1, 'Alpha Synthetic')], [link(M2, 'p2')], roster)}
+        busy={false}
+        complete
+        onAccept={noop}
+        onChoose={noop}
+        onUnlink={noop}
+      />,
+    )
+    expect(html).toContain('Links with no Spond member')
+    expect(html).not.toContain('came back incomplete')
   })
 })

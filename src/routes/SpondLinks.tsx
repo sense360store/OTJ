@@ -37,6 +37,13 @@ import {
 } from '../lib/spondLinking'
 import { linkedCounts } from '../lib/spondRsvp'
 import type { RegisteredPlayer, Team } from '../lib/data'
+
+// One team's loaded members for this visit, with whether the list is
+// provably the whole group.
+interface LoadedTeam {
+  members: LinkCandidate[]
+  complete: boolean
+}
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
 import './SpondLinks.css'
@@ -173,12 +180,19 @@ export function LinkedRowView({
 export function LinkSectionsView({
   sections,
   busy,
+  complete,
   onAccept,
   onChoose,
   onUnlink,
 }: {
   sections: LinkSections
   busy: boolean
+  // Whether the loaded member list is provably the whole group. When it is
+  // not, a stored link whose member is simply missing from a short list
+  // looks exactly like one whose member has left, and unlinking it would
+  // drain that child's stored replies for a reason that was never true.
+  // So the orphan section is suppressed and says why.
+  complete: boolean
   onAccept: (memberId: string, playerId: string) => void
   onChoose: (memberId: string) => void
   onUnlink: (memberId: string) => void
@@ -188,7 +202,11 @@ export function LinkSectionsView({
       <section className="sl-section">
         <h3>Needs a decision</h3>
         {sections.needsDecision.length === 0 ? (
-          <p className="sl-empty">Every Spond member in this group is linked.</p>
+          <p className="sl-empty">
+            {complete
+              ? 'Every Spond member in this group is linked.'
+              : 'Nothing to decide from the members that came back.'}
+          </p>
         ) : (
           sections.needsDecision.map((row) => (
             <NeedsDecisionRowView
@@ -224,7 +242,14 @@ export function LinkSectionsView({
         )}
       </section>
 
-      {sections.orphans.length > 0 && (
+      {!complete && (
+        <p className="sl-note">
+          The member list came back incomplete, so existing links are not being judged against it. Nothing here says a
+          link is stale.
+        </p>
+      )}
+
+      {complete && sections.orphans.length > 0 && (
         <section className="sl-section">
           <h3>Links with no Spond member</h3>
           <p className="sl-empty">
@@ -315,9 +340,15 @@ export default function SpondLinks() {
   const [teamId, setTeamId] = useState<string | null>(null)
   // Candidates per team for this visit only, so moving between two teams
   // does not pay two Spond logins. Never persisted: the names live here.
-  const [loaded, setLoaded] = useState<Record<string, LinkCandidate[]>>({})
+  // The whole result is kept, not just the members, because whether the
+  // list was COMPLETE decides whether an existing link may be judged
+  // against it at all.
+  const [loaded, setLoaded] = useState<Record<string, LoadedTeam>>({})
   const [picking, setPicking] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  // Set while a Change is mid flight, so the generic "nothing else was
+  // affected" note is suppressed: in that compound path it is false.
+  const [changing, setChanging] = useState(false)
 
   const mappedTeams = useMemo(() => {
     const mapped = new Set((mappings.data ?? []).map((m) => m.teamId))
@@ -325,6 +356,7 @@ export default function SpondLinks() {
   }, [teams.data, mappings.data])
 
   const allLinks = useMemo(() => links.data?.links ?? [], [links.data])
+  const loadedTeam = teamId ? (loaded[teamId] ?? null) : null
   // False only while the migration is not applied yet.
   const linksAvailable = links.data?.available !== false
   const linkedPlayerIds = useMemo(() => new Set(allLinks.map((l) => l.playerId)), [allLinks])
@@ -339,15 +371,29 @@ export default function SpondLinks() {
   )
 
   const teamRoster = useMemo(() => rosterFor(teamId), [rosterFor, teamId])
-  const candidates = teamId ? (loaded[teamId] ?? null) : null
+  const candidates = loadedTeam ? loadedTeam.members : null
   const sections = useMemo(
     () => buildLinkSections(candidates ?? [], allLinks, teamRoster),
     [candidates, allLinks, teamRoster],
   )
 
-  if (capsPending || teams.isLoading || mappings.isLoading) return <Loading />
+  // The roster and the season count. Without them every Spond member
+  // would be judged against an unknown pool and labelled "Not on the
+  // roster", which is the one wrong answer a manager would act on by
+  // adding children who are already there.
+  if (capsPending || teams.isLoading || mappings.isLoading || season.isLoading || roster.isLoading) return <Loading />
   if (!canManage) return null
   if (teams.isError || mappings.isError) return <ErrorNote />
+  if (season.isError || roster.isError) {
+    return <ErrorNote>Could not read the club roster, so no Spond member can be matched against it.</ErrorNote>
+  }
+  if (!season.data) {
+    return (
+      <Empty icon={Icon.users} title="The club has no current season">
+        Spond members are matched against the current season's roster. An admin sets one up under Seasons first.
+      </Empty>
+    )
+  }
 
   const busy = insert.isPending || remove.isPending || load.isPending
 
@@ -357,7 +403,13 @@ export default function SpondLinks() {
       { teamId: id },
       {
         onSuccess: (result) => {
-          setLoaded((prev) => ({ ...prev, [id]: result.members }))
+          // A truncated list, or a mapping whose group came back with no
+          // members at all, is not proof of anything about existing links.
+          const emptyGroup = result.members.length === 0
+          setLoaded((prev) => ({
+            ...prev,
+            [id]: { members: result.members, complete: !result.truncated && !emptyGroup },
+          }))
           if (result.warnings.length > 0) setNote(result.warnings.join(' '))
         },
       },
@@ -371,16 +423,25 @@ export default function SpondLinks() {
       rows.map((r) => ({ ...r, matchedBy })),
       {
         onSuccess: (result) => {
-          if (result.conflicted.length === 0) return
-          // Name the ones that failed from the list already on screen, so
-          // the manager knows exactly what to look at again.
-          const names = result.conflicted
-            .map((id) => (candidates ?? []).find((c) => c.spondMemberId === id)?.displayName)
-            .filter(Boolean)
-          setNote(
-            `${result.written} linked. ${result.conflicted.length} skipped because somebody else linked them first` +
-              (names.length > 0 ? `: ${names.join(', ')}.` : '.'),
-          )
+          if (result.conflicted.length === 0 && result.failed.length === 0) return
+          // Name what did not land, from the list already on screen, so the
+          // manager knows exactly what to look at again. Both buckets are
+          // reported: a partial batch that says only "nothing saved" would
+          // be false about the rows that did land.
+          const nameOf = (id: string) =>
+            (candidates ?? []).find((c) => c.spondMemberId === id)?.displayName ?? 'a Spond member'
+          const parts = [`${result.written} linked.`]
+          if (result.conflicted.length > 0) {
+            parts.push(
+              `${result.conflicted.length} skipped because somebody else linked them first: ${result.conflicted
+                .map(nameOf)
+                .join(', ')}.`,
+            )
+          }
+          if (result.failed.length > 0) {
+            parts.push(`${result.failed.length} did not save: ${result.failed.map(nameOf).join(', ')}. Try again.`)
+          }
+          setNote(parts.join(' '))
         },
       },
     )
@@ -453,7 +514,7 @@ export default function SpondLinks() {
               {load.error.message} <button className="btn btn-quiet btn-sm" onClick={() => teamId && doLoad(teamId)}>Retry</button>
             </ErrorNote>
           )}
-          {(insert.isError || remove.isError) && (
+          {(insert.isError || remove.isError) && !changing && (
             <ErrorNote>That change did not save. Nothing else was affected. Try again.</ErrorNote>
           )}
           {note && <p className="sl-note">{note}</p>}
@@ -466,6 +527,7 @@ export default function SpondLinks() {
             <LinkSectionsView
               sections={sections}
               busy={busy}
+              complete={loadedTeam?.complete ?? false}
               onAccept={(memberId, playerId) => write([{ spondMemberId: memberId, playerId }], 'suggested')}
               onChoose={(memberId) => setPicking(memberId)}
               onUnlink={(memberId) => remove.mutate({ spondMemberId: memberId })}
@@ -485,19 +547,31 @@ export default function SpondLinks() {
             setPicking(null)
             if (existingLink) {
               // A link has no update path, so changing one is a delete
-              // then an insert. The half done case is reported plainly:
-              // "nothing saved" would be wrong, because the old link is
-              // already gone and the manager needs to know to pick again.
+              // then an insert. Every way the insert half can fail says
+              // the same true thing: the old link is gone and this member
+              // is unlinked. "Nothing else was affected" would be false
+              // here, so the generic note is suppressed while it runs.
+              const stranded =
+                'The old link was removed but the new one did not save. This Spond member is now unlinked; choose the child again.'
+              setChanging(true)
+              setNote(null)
               remove.mutate(
                 { spondMemberId: memberId },
                 {
                   onSuccess: () =>
                     insert.mutate([{ spondMemberId: memberId, playerId, matchedBy: 'chosen' }], {
-                      onError: () =>
-                        setNote(
-                          'The old link was removed but the new one did not save. This Spond member is unlinked; choose the child again.',
-                        ),
+                      // A conflict is not an error to the mutation, so it
+                      // has to be read off the result as well.
+                      onSuccess: (result) => {
+                        setChanging(false)
+                        if (result.written === 0) setNote(stranded)
+                      },
+                      onError: () => {
+                        setChanging(false)
+                        setNote(stranded)
+                      },
                     }),
+                  onError: () => setChanging(false),
                 },
               )
             } else {

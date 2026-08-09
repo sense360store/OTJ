@@ -119,6 +119,9 @@
   font-weight: 800;
   font-size: 15px;
   line-height: 1.25;
+  /* A long surname breaks rather than running under the reply pill, the
+     same treatment .pc-name and .ip-name already give a child's name. */
+  overflow-wrap: anywhere;
 }
 .reg-name-sub {
   font-size: 12px;
@@ -188,7 +191,7 @@
    colour is recognisable from its swatch and a name is not. */
 @media (max-width: 420px) {
   .reg-bib select {
-    max-width: 96px;
+    max-width: 72px;
   }
   .reg-tick {
     gap: 9px;

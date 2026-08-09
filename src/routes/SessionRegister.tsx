@@ -226,7 +226,18 @@ export function RegisterScreenView({
   // arguments and the rows are already ordered before this line runs, so
   // a refresh cannot reorder the list under a thumb.
   const rsvp = rsvpByPlayer ?? {}
-  const staleNote = rsvpStaleNote(rsvp)
+  // Only the replies actually on screen count towards the freshness line.
+  // The lookup is built from a club wide link read, so it can carry a
+  // child this session does not cover, and a note about a reply nobody can
+  // see would be a claim the screen cannot back up.
+  const shown: Record<string, Rsvp> = {}
+  for (const g of view.groups) {
+    for (const row of g.rows) {
+      const r = rsvp[row.player.id]
+      if (r) shown[row.player.id] = r
+    }
+  }
+  const staleNote = rsvpStaleNote(shown)
 
   return (
     <div className="reg">

@@ -43,7 +43,7 @@ child.
 
 ## What is persisted, exhaustively
 
-Three tables hold anything Spond derived. Nothing else does.
+Four tables hold anything Spond derived. Nothing else does.
 
 | Table | Holds | Never holds |
 |---|---|---|
@@ -86,9 +86,11 @@ not outlive the screen.
   schedule and never as part of the attendance sync.
 - `spond-link-members` reads the same two fields and returns them to the
   linking screen. It persists nothing.
-- `spond-sync` never reads a name at all. It reads four response arrays for
-  their member ids and their lengths, and nothing else in the payload. The
-  event `recipients` object, which embeds member names, is never read.
+- `spond-sync` never reads a name at all. Of the member facing payload it
+  reads only the four response arrays, for their member ids and their
+  lengths. The event facts it stores (title, times, location, type) are read
+  by `buildEventRow` and name nobody. The event `recipients` object, which
+  embeds member names, is never read.
 
 ## What is never persisted
 

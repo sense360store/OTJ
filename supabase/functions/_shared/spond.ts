@@ -10,14 +10,23 @@
 //
 // THE CHILDREN'S DATA BOUNDARY, the rule that shapes this module. Spond
 // event responses identify children and their parents: member ids in
-// the response arrays, names elsewhere in the payload. This app never
-// holds any of that. The four counts are derived in memory as array
-// lengths and everything else is discarded. buildEventRow is the only
-// place a Spond event becomes a database row, and SPOND_EVENT_COLUMNS
-// is the complete set of columns it may carry: no member ids, no names,
-// no payload fragments. The event's recipients object, which embeds
-// member names, is never read at all; subgroup scoping is delegated to
-// Spond's own subGroupId filter (see eventsQuery).
+// the response arrays, names elsewhere in the payload. No name, guardian,
+// contact detail, comment or payload fragment is ever stored by anything
+// here. The four counts are derived in memory as array lengths.
+// buildEventRow is the only place a Spond EVENT becomes a database row,
+// and SPOND_EVENT_COLUMNS is the complete set of columns it may carry:
+// no member ids, no names, no payload fragments. The event's recipients
+// object, which embeds member names, is never read at all; subgroup
+// scoping is delegated to Spond's own subGroupId filter (see
+// eventsQuery).
+//
+// Since 0045_spond_links.sql this module also shapes the per member
+// reply rows, in the Release B section at the end of the file:
+// buildResponseRows is the only place a member's reply becomes a row,
+// SPOND_RESPONSE_COLUMNS is its complete column set, and only members a
+// human has LINKED to a roster child appear in one. The opaque member id
+// is the sole Spond identifier either row shape may carry. See
+// docs/security/spond-data-boundary.md.
 //
 // Read only toward Spond: authentication is the only non GET call the
 // function makes, and nothing here builds a write. The endpoint paths,

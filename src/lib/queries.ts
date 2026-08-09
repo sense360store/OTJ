@@ -2364,7 +2364,13 @@ export function useLinkSessionSpondEvent() {
       if (error) throw error
       if (!data?.length) throw new Error('Only the session owner or an admin can change its Spond link.')
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      // The register's RSVP context is keyed by event, so changing which
+      // event a session points at already reads a different entry. Drop
+      // the old one rather than leaving it to gcTime.
+      qc.invalidateQueries({ queryKey: ['spond_rsvp'] })
+    },
   })
 }
 
@@ -5149,8 +5155,15 @@ export function isMissingRelation(e: unknown): boolean {
   return code === '42P01' || code === 'PGRST205' || code === 'PGRST200'
 }
 
-export function spondRsvpKey(sessionId: string) {
-  return ['spond_rsvp', sessionId] as const
+// The EVENT is part of the key, not just the session. The rows this hook
+// stores are per Spond event, so keying on the session alone would leave
+// the previous event's replies in the cache when a session is unlinked
+// (enabled: false stops fetching, it does not clear) or repointed, and
+// they would render beside named children for a session that no longer
+// has that event. Absence must have exactly one appearance, and a
+// different event, or none, must therefore read a different entry.
+export function spondRsvpKey(sessionId: string, spondEventId: string | null) {
+  return ['spond_rsvp', sessionId, spondEventId] as const
 }
 
 // PostgREST serves at most this many rows and TRUNCATES a larger result
@@ -5187,7 +5200,7 @@ export function useSessionSpondRsvp(sessionId: string | undefined, spondEventId:
   const { caps } = useMyCapabilities()
   const canRead = caps.has('players.view')
   return useQuery({
-    queryKey: spondRsvpKey(sessionId ?? ''),
+    queryKey: spondRsvpKey(sessionId ?? '', spondEventId),
     enabled: enabled && !!sessionId && !!spondEventId && canRead,
     // A pre apply database answers "no such table". That is not a
     // failure worth retrying four times on every mount.
@@ -5291,6 +5304,10 @@ export interface LinkWriteResult {
   // press. Reported by member id so the caller can name them from the
   // candidate list it already holds.
   conflicted: string[]
+  // Rows that failed for some other reason during the row by row retry.
+  // Reported rather than thrown, because throwing out of a partly applied
+  // loop would tell the manager nothing was saved when some of it was.
+  failed: string[]
 }
 
 // The insert. The row carries EXACTLY four fields and is built by an
@@ -5316,27 +5333,27 @@ export function useInsertSpondLinks() {
   return useMutation<LinkWriteResult, Error, LinkWriteInput[]>({
     mutationFn: async (inputs) => {
       if (!profile?.club_id) throw new Error('You must be signed in to link Spond members.')
-      if (inputs.length === 0) return { written: 0, conflicted: [] }
+      if (inputs.length === 0) return { written: 0, conflicted: [], failed: [] }
       const clubId = profile.club_id
       const { error } = await supabase.from('player_spond_links').insert(inputs.map((i) => linkRow(i, clubId)))
-      if (!error) return { written: inputs.length, conflicted: [] }
+      if (!error) return { written: inputs.length, conflicted: [], failed: [] }
       if (error.code !== '23505') throw error
 
       // One row at a time on conflict, so a single contested member does
-      // not cost the manager every other decision they just made.
+      // not cost the manager every other decision they just made. Nothing
+      // throws out of this loop: by the time it is running, rows may
+      // already have landed, and an exception here would report that
+      // nothing saved when some of it did.
       const conflicted: string[] = []
+      const failed: string[] = []
       let written = 0
       for (const input of inputs) {
         const { error: rowError } = await supabase.from('player_spond_links').insert(linkRow(input, clubId))
-        if (!rowError) {
-          written++
-        } else if (rowError.code === '23505') {
-          conflicted.push(input.spondMemberId)
-        } else {
-          throw rowError
-        }
+        if (!rowError) written++
+        else if (rowError.code === '23505') conflicted.push(input.spondMemberId)
+        else failed.push(input.spondMemberId)
       }
-      return { written, conflicted }
+      return { written, conflicted, failed }
     },
     onSettled: () => qc.invalidateQueries({ queryKey: spondLinksKey() }),
   })
@@ -5364,6 +5381,9 @@ export function useDeleteSpondLink() {
 
 export interface LinkCandidatesResult {
   members: LinkCandidate[]
+  // True when the list is known to be short of the group. A member list
+  // that is not provably complete must never be used to decide that a
+  // stored link has no member behind it.
   truncated: boolean
   warnings: string[]
 }

@@ -133,3 +133,15 @@ describe('linkedCounts', () => {
     expect(linkedCounts([], new Set())).toEqual({ linked: 0, total: 0 })
   })
 })
+
+describe('the RSVP cache key', () => {
+  it('carries the event, so one event replies cannot render against another', async () => {
+    const { spondRsvpKey } = await import('./queries')
+    // Two events on one session must not share a cache entry, and a
+    // session with no event must not read the last one's.
+    expect(spondRsvpKey('s1', 'e1')).not.toEqual(spondRsvpKey('s1', 'e2'))
+    expect(spondRsvpKey('s1', null)).not.toEqual(spondRsvpKey('s1', 'e1'))
+    // And the prefix stays sweepable by useDeleteSpondLink.
+    expect(spondRsvpKey('s1', 'e1')[0]).toBe('spond_rsvp')
+  })
+})

@@ -235,6 +235,16 @@ describe('RSVP context beside the register', () => {
     expect(screen({ rsvpByPlayer: {} })).toBe(screen())
   })
 
+  it('the stale line counts only replies actually on this register', () => {
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+    // p9 is linked and replied to this event, but is not on a team this
+    // session covers, so no pill of theirs renders. A freshness claim
+    // about a reply nobody can see is one the screen cannot back up.
+    expect(screen({ rsvpByPlayer: { p9: { status: 'accepted', syncedAt: old } } })).not.toContain(
+      'Spond replies from',
+    )
+  })
+
   it('says so when the replies are stale, and stays quiet when they are fresh', () => {
     const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
     expect(screen({ rsvpByPlayer: { p1: { status: 'accepted', syncedAt: old } } })).toContain(
