@@ -77,16 +77,17 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0043_content_rights_fa_lock was applied to the hosted
-# project and recorded under this exact version, read back from
+# below is RECONCILED: 0044_training_day_core was applied to the hosted project
+# and recorded under this exact version, read back from
 # supabase_migrations.schema_migrations immediately after the apply and
-# confirmed to appear exactly once and to be the newest row.
+# confirmed to appear exactly once and to be the newest row, with the
+# previously pinned 20260809081118 now the second newest of 39.
 #
 # The ledger version is assigned BY THE APPLY (the connector stamps it from the
 # server clock), so it cannot be known before the apply happens. The order is
 # always: apply -> read back the recorded version -> set this constant to
 # exactly that value in a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260809081118"  # 0043_content_rights_fa_lock
+EXPECTED_LAST_MIGRATION = "20260809184949"  # 0044_training_day_core
 
 # The EXACT set of club ids permitted to have public_sharing_enabled true.
 # This is a deployment review pin in the same sense as
