@@ -401,12 +401,62 @@ class TestPhaseArgument(unittest.TestCase):
         self.assertIn('str(r.get("last_migration")) != EXPECTED_LAST_MIGRATION', src)
         self.assertNotIn("startswith(EXPECTED_LAST_MIGRATION", src)
         self.assertNotIn(">= EXPECTED_LAST_MIGRATION", src)
-        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260727110609")
+        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260809081118")
+
+    def test_the_superseded_ledger_version_now_fails_the_gate(self):
+        """0042's version must no longer satisfy the pin.
+
+        The reconciliation is only real if the value it replaced is now
+        rejected: a gate that still accepted 20260727110609 would prove the
+        constant had been widened rather than moved.
+        """
+        payload = {
+            "residue": dict(CLEAN_RESIDUE, last_migration="20260727110609"),
+            "has_cron": False,
+            "cron_jobs": 0,
+        }
+        for phase in ("pre", "post"):
+            with sample_file(payload) as path:
+                rc, out = self._run(["verify_no_residue.py", "--sample", path, "--phase", phase])
+            self.assertEqual(rc, 1, f"{phase} phase must reject the superseded version")
+            self.assertIn("migration ledger changed", out)
+            self.assertIn("20260809081118", out)
+
+    def test_the_reconciled_ledger_version_passes_when_all_else_is_clean(self):
+        """20260809081118 is what a clean hosted ledger now reads."""
+        payload = {
+            "residue": dict(CLEAN_RESIDUE, last_migration="20260809081118"),
+            "has_cron": False,
+            "cron_jobs": 0,
+        }
+        for phase in ("pre", "post"):
+            with sample_file(payload) as path:
+                rc, out = self._run(["verify_no_residue.py", "--sample", path, "--phase", phase])
+            self.assertEqual(rc, 0, f"{phase} phase must accept the reconciled version")
+            self.assertIn("20260809081118", out)
+
+    def test_a_later_or_prefixed_version_is_still_refused(self):
+        """Exact equality, not >= and not a prefix.
+
+        A newer unreviewed migration and a longer string sharing the pin's
+        prefix must both fail, which is what separates this gate from the
+        loose checks the header forbids.
+        """
+        for wrong in ("20260810000000", "202608090811180", "2026080908111"):
+            payload = {
+                "residue": dict(CLEAN_RESIDUE, last_migration=wrong),
+                "has_cron": False,
+                "cron_jobs": 0,
+            }
+            with sample_file(payload) as path:
+                rc, out = self._run(["verify_no_residue.py", "--sample", path, "--phase", "pre"])
+            self.assertEqual(rc, 1, f"{wrong} must fail the exact-equality gate")
+            self.assertIn("migration ledger changed", out)
 
 
 # The runner must stay at the very BOTTOM of this file. It previously sat above
 # TestPhaseArgument, so unittest.main() ran before that class was defined and
-# its six tests, including the exact-equality guard on EXPECTED_LAST_MIGRATION,
+# its tests, including the exact-equality guard on EXPECTED_LAST_MIGRATION,
 # never executed in CI. test_every_test_class_runs below fails if a class is
 # ever added after this point again.
 class TestSuiteCompleteness(unittest.TestCase):

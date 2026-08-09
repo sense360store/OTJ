@@ -232,8 +232,21 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260727110609` (`0042_public_media_path_boundary`, applied
-2026-07-26 as part of the Content Sharing PR 4 rollout).
+Current value: `20260809081118` (`0043_content_rights_fa_lock`, applied
+2026-08-09 under its own production approval).
+
+Hosted ledger newest migration: **`20260809081118` / `content_rights_fa_lock`**.
+That value was read back from `supabase_migrations.schema_migrations` after the
+apply, not predicted before it, and was confirmed to be the newest row and to
+appear exactly once. The apply also verified its five FA lock triggers
+(`content_rights_fa_lock_drills`, `_sessions`, `_programmes`, `_templates`,
+`_media`), that the three lock helper functions remain executable by
+`authenticated`, and that no England Football derived row sits above
+`internal_only`.
+
+The superseded value, `20260727110609` (`0042_public_media_path_boundary`,
+applied 2026-07-26 as part of the Content Sharing PR 4 rollout), is now rejected
+by the gate; a test pins that it is.
 
 ### If the run fails at inventory verification
 
@@ -316,7 +329,7 @@ hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260727110609` (0042, applied as part of the media path hardening rollout);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260809081118` (0043, the content rights FA lock);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
@@ -374,7 +387,7 @@ password or the environment. Its offline test suite
   the workflow verifies this after deploy.
 - It does not apply a migration, change a grant, or create a cleanup schedule;
   the workflow verifies the migration ledger's newest version is exactly the
-  reviewed one (`0041` after Content Sharing PR 4) and no `pg_cron` job
+  reviewed one (`0043` after the content rights FA lock) and no `pg_cron` job
   references content sharing, both BEFORE and after the deploy. The check is an
   exact equality, so applying a migration without updating
   `EXPECTED_LAST_MIGRATION` fails the deploy before anything is changed, and so

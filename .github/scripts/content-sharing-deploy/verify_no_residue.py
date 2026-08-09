@@ -10,7 +10,7 @@ connection string and asserts the sharing feature is still fully inert:
   - no content_share audit event exists;
   - every drill is internal_only;
   - every media row is internal_only;
-  - the migration ledger's newest version is exactly 0041 (public_programme_read);
+  - the migration ledger's newest version is exactly 0043 (content_rights_fa_lock);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
 Runs TWICE in the deploy workflow, with identical assertions:
@@ -74,7 +74,7 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0042_public_media_path_boundary was applied to the hosted
+# below is RECONCILED: 0043_content_rights_fa_lock was applied to the hosted
 # project and recorded under this exact version, read back from
 # supabase_migrations.schema_migrations immediately after the apply and
 # confirmed to appear exactly once and to be the newest row.
@@ -83,7 +83,7 @@ import urllib.parse
 # server clock), so it cannot be known before the apply happens. The order is
 # always: apply -> read back the recorded version -> set this constant to
 # exactly that value in a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260727110609"  # 0042_public_media_path_boundary
+EXPECTED_LAST_MIGRATION = "20260809081118"  # 0043_content_rights_fa_lock
 DB_URL_ENV = "SUPABASE_DB_URL"
 
 # Bounded connection timeout (seconds) and an overall subprocess wall-clock cap.
