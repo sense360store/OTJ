@@ -201,7 +201,9 @@ assertions and only the wording differing:
 | `--phase pre` | before either function is deployed | stops the run against a schema this commit was not reviewed against, or a hosted project that is no longer inert, while nothing has been changed |
 | `--phase post` | after the deploy | proves the deploy itself left no residue |
 
-Both assert: every club has `public_sharing_enabled` false; `content_shares` and
+Both assert: the set of clubs with `public_sharing_enabled` true is **exactly**
+the reviewed allowlist `EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS`;
+`content_shares` and
 `content_share_dependencies` are empty; there is no `content_share` audit event;
 every drill and every media row is `internal_only`; there is no `content_share`
 pg_cron job; and the migration ledger's newest version is **exactly**
@@ -247,6 +249,35 @@ appear exactly once. The apply also verified its five FA lock triggers
 The superseded value, `20260727110609` (`0042_public_media_path_boundary`,
 applied 2026-07-27 as part of the Content Sharing PR 4 rollout), is now rejected
 by the gate; a test pins that it is.
+
+### The reviewed enabled club set
+
+Public sharing is intentionally enabled only for the reviewed allowlisted club
+ids. The deploy verifier requires the hosted enabled set to match that reviewed
+set exactly, before and after deployment.
+
+Current value, `EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS` in
+`verify_no_residue.py`:
+
+| Club | Id | `public_sharing_enabled` |
+|---|---|---|
+| Ossett Town Juniors | `11111111-1111-1111-1111-111111111111` | true, reviewed |
+| Zzz Other Club | `7007e5b0-bc23-4a4b-a82d-81acb8979782` | false |
+
+The assertion is exact set equality on club **ids**, never a count on its own,
+never a minimum, never a name match. An unexpected club enabled, the reviewed
+club disabled, or one swapped for another all fail the gate before anything is
+deployed, and fail it identically afterwards.
+
+During the initial dark rollout this gate asserted that no club was enabled,
+which was correct while the feature shipped switched off. Ossett was enabled
+deliberately after that phase, so the count-zero form became obsolete; pinning
+the exact ids keeps the same strictness against the current intended state.
+
+Changing which clubs are enabled follows the same discipline as a migration
+apply: change the hosted state under its own approval, read the enabled set
+back, then open a small reconciliation pull request updating this constant and
+its tests. Running the deploy before that reconciliation merges fails closed.
 
 ### If the run fails at inventory verification
 
@@ -319,10 +350,11 @@ authoritative deployment record unless byte equality is actually proven.
 
 The final step runs
 `.github/scripts/content-sharing-deploy/verify_no_residue.py`, a read-only
-proof that the deploy left the sharing feature fully inert. It checks, on the
-hosted project:
+proof that the deploy changed nothing it was not reviewed to change. It checks,
+on the hosted project:
 
-- `public_sharing_enabled` is `false` for every club;
+- the set of clubs with `public_sharing_enabled` true is exactly the reviewed
+  allowlist (see "The reviewed enabled club set" above);
 - `content_shares` has zero rows;
 - `content_share_dependencies` has zero rows;
 - no `content_share` audit event exists;
@@ -378,8 +410,10 @@ password or the environment. Its offline test suite
 
 ## What the workflow does NOT do
 
-- It does not enable public sharing. `clubs.public_sharing_enabled` stays
-  `false` on every club; the workflow verifies this read-only after deploy.
+- It does not enable or disable public sharing for any club.
+  `clubs.public_sharing_enabled` is untouched; the workflow verifies read-only,
+  before and after the deploy, that the enabled set is exactly the reviewed
+  allowlist.
 - It does not create, refresh, rotate or revoke any share. The smoke tests send
   a random, never-printed secret against an unknown share id and expect the
   neutral unavailable response.
@@ -414,9 +448,18 @@ known-good commit is the rollback.
 ## Emergency disable
 
 Public reading is gated by the per-club kill switch
-`clubs.public_sharing_enabled`. It is `false` today. If a public share is ever
-enabled and must be stopped, set `public_sharing_enabled = false` for the
-affected club (an admin-only `club.manage` action). With the switch off, the
+`clubs.public_sharing_enabled`, which remains the authoritative switch. It is
+`true` for Ossett Town Juniors and `false` for every other club. To stop public
+reading, set `public_sharing_enabled = false` for the affected club (an
+admin-only `club.manage` action). With the switch off, the
 public reader returns the neutral unavailable response for every share without
 touching any share row. This disables public reads without redeploying or
 deleting the functions.
+
+Do this first and reconcile afterwards. Turning a club off (or on) puts the
+hosted enabled set out of step with
+`EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS`, so the next deploy fails closed at
+the pre-deploy gate until a small reconciliation pull request updates that
+constant to the new reviewed set. That ordering is deliberate: an emergency
+stop must never wait on a code change, and a deploy must never run against a
+club state nobody reviewed.
