@@ -234,10 +234,10 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260809081118` (`0043_content_rights_fa_lock`, applied
+Current value: `20260809184949` (`0044_training_day_core`, applied
 2026-08-09 under its own production approval).
 
-Hosted ledger newest migration: **`20260809081118` / `content_rights_fa_lock`**.
+Hosted ledger newest migration: **`20260809184949` / `training_day_core`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
 apply, not predicted before it, and was confirmed to be the newest row and to
 appear exactly once. The apply also verified its five FA lock triggers
@@ -361,7 +361,7 @@ on the hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260809081118` (0043, the content rights FA lock);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260809184949` (0044, the training day core);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
