@@ -1,0 +1,538 @@
+name: Deploy spond-link-members Edge Function
+
+# Manual, production-environment-gated deploy of the spond-link-members Edge
+# Function directly from the checked-out repository files, mirroring
+# deploy-spond-sync.yml. It deploys ONLY spond-link-members. It applies no
+# migration, changes no grant, alters no secret and creates nothing. It never
+# invokes the function, so merging or running this workflow links nobody and
+# writes no player_spond_links row: linking stays a manager's action in the app.
+#
+# What spond-link-members is, and what these gates protect. It is a READ ONLY
+# discovery function. An authorised manager asks it which Spond members a team's
+# mapped group contains, so they can bind each one to a roster child by hand. It
+# requires the caller's JWT, requires players.manage BEFORE it reveals whether
+# the club has Spond configured or the team is mapped, reduces each member to an
+# opaque member id plus a transient display name, and stores nothing at all. The
+# assertions below are structural proofs of that posture against the source
+# actually being deployed, not restatements of its comments.
+#
+# Why a workflow rather than an inline deploy. spond-link-members bundles
+# _shared/fa.ts, which carries resolveCaller, the auth boundary, and
+# _shared/spond.ts, which carries reduceLinkCandidate and the member id
+# pattern. CLAUDE.md records that a deploy pasting file contents inline can be
+# silently truncated or replaced with a placeholder while still reporting
+# success. Deploying from disk removes that failure mode entirely rather than
+# relying on catching it afterwards.
+#
+# Secrets are read only through environment variables and are never printed.
+# No step uses `set -x`; every script uses `set -euo pipefail`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project:
+        description: "Type the target Supabase project ref to confirm (must equal uynorsnrvocksgqweucu)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-spond-link-members-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy spond-link-members
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      CONFIRM_PROJECT: ${{ inputs.confirm_project }}
+      # A project ref is not a credential; it appears in every function URL.
+      # Hardcoded so a valid token cannot deploy to the wrong project.
+      EXPECTED_PROJECT_REF: uynorsnrvocksgqweucu
+      SUPABASE_CLI_VERSION: 2.105.0
+      FUNCTION_SLUG: spond-link-members
+    steps:
+      - name: Check out the selected commit
+        uses: actions/checkout@v4
+
+      - name: Confirm target project (double gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CONFIRM_PROJECT}" ]; then
+            echo "confirm_project input is empty"; exit 1
+          fi
+          if [ "${CONFIRM_PROJECT}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "confirm_project does not match the expected project ref"; exit 1
+          fi
+          if [ -z "${SUPABASE_PROJECT_ID}" ]; then
+            echo "SUPABASE_PROJECT_ID secret is not set"; exit 1
+          fi
+          if [ "${SUPABASE_PROJECT_ID}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "the configured project secret does not match the expected project ref"; exit 1
+          fi
+
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.105.0
+
+      - name: Assert Supabase CLI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          have="$(supabase --version)"
+          echo "Supabase CLI: ${have}"
+          if [ "${have}" != "${SUPABASE_CLI_VERSION}" ]; then
+            echo "Expected pinned Supabase CLI ${SUPABASE_CLI_VERSION}, got ${have}"; exit 1
+          fi
+
+      - name: Derive the import graph and hash it
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree is not clean; refusing to deploy"; git status --porcelain; exit 1
+          fi
+          # The bundle is DISCOVERED by walking the entrypoint's relative
+          # imports transitively, never listed by hand. A new relative import
+          # added later therefore joins the hashed set automatically, and the
+          # readback step below compares exactly the same set. graph.txt is the
+          # single source of truth for both.
+          python3 - <<'PY' > graph.txt
+          import re, pathlib, collections, sys
+
+          ENTRY = pathlib.Path('supabase/functions/spond-link-members/index.ts')
+          ROOT = pathlib.Path('.').resolve()
+
+          def code(src: str) -> str:
+              """Blank comments only, so an import written in prose is never walked."""
+              out, i, n, prev = list(src), 0, len(src), ''
+              while i < n:
+                  c, two = src[i], src[i:i + 2]
+                  if two == '//':
+                      j = src.find('\n', i); j = n if j == -1 else j
+                      for k in range(i, j): out[k] = ' '
+                      i = j; continue
+                  if two == '/*':
+                      j = src.find('*/', i + 2); j = n if j == -1 else j + 2
+                      for k in range(i, j):
+                          if src[k] != '\n': out[k] = ' '
+                      i = j; continue
+                  if c in ('"', "'", '`'):
+                      q, j = c, i + 1
+                      while j < n:
+                          if src[j] == '\\': j += 2; continue
+                          if src[j] == q: break
+                          j += 1
+                      i = min(j + 1, n); prev = 'x'; continue
+                  if c == '/' and (prev in '=(,:[!&|?{};' or prev == ''):
+                      j = i + 1
+                      while j < n and src[j] != '\n':
+                          if src[j] == '\\': j += 2; continue
+                          if src[j] == '/': break
+                          j += 1
+                      if j < n and src[j] == '/':
+                          i = j + 1
+                          while i < n and src[i].isalpha(): i += 1
+                          prev = 'x'; continue
+                  if not c.isspace(): prev = c
+                  i += 1
+              return ''.join(out)
+
+          # Every specifier-bearing form. \s spans newlines, so multiline import
+          # clauses and `import type { ... } from` are covered by the `from` arm.
+          SPEC = [
+              re.compile(r"""\bfrom\s*['"]([^'"]+)['"]"""),        # import/export ... from
+              re.compile(r"""\bimport\s*\(\s*['"]([^'"]+)['"]"""), # dynamic import()
+              re.compile(r"""\bimport\s+['"]([^'"]+)['"]"""),      # side-effect import
+              re.compile(r"""\brequire\s*\(\s*['"]([^'"]+)['"]"""),
+          ]
+
+          def specifiers(src: str):
+              seen = []
+              for pat in SPEC:
+                  seen += pat.findall(src)
+              return seen
+
+          def resolve(base: pathlib.Path, rel: str) -> pathlib.Path:
+              """Resolve a repo-relative specifier, or raise. Deno requires explicit
+              extensions, so the bare path is the expected case; the extension and
+              directory-index candidates exist only so an unusual-but-valid layout
+              resolves rather than silently dropping out of the graph."""
+              cands = [base.parent / rel]
+              if not rel.endswith(('.ts', '.tsx', '.js', '.mjs', '.json')):
+                  cands += [base.parent / (rel + ext) for ext in ('.ts', '.tsx', '.js', '.mjs')]
+                  cands += [base.parent / rel / 'index.ts']
+              for c in cands:
+                  if c.is_file():
+                      return c.resolve()
+              raise SystemExit('relative import does not resolve: %s -> %s' % (base, rel))
+
+          if not ENTRY.exists():
+              raise SystemExit('entrypoint missing: %s' % ENTRY)
+
+          seen, order, queue = set(), [], collections.deque([ENTRY])
+          while queue:
+              f = queue.popleft().resolve()
+              if f in seen: continue
+              seen.add(f); order.append(f)
+              for spec in specifiers(code(f.read_text(encoding='utf-8'))):
+                  # Only repo-relative specifiers are bundled source. npm:, jsr:,
+                  # node:, http(s):, data: and bare package names are remote and are
+                  # deliberately not walked.
+                  if not (spec.startswith('./') or spec.startswith('../')):
+                      continue
+                  queue.append(resolve(f, spec))
+
+          for f in order:
+              print(f.relative_to(ROOT))
+          PY
+          echo "import graph:"; cat graph.txt
+          count="$(wc -l < graph.txt)"
+          if [ "${count}" -lt 1 ]; then echo "empty import graph"; exit 1; fi
+          SHA="$(git rev-parse HEAD)"
+          {
+            echo "## spond-link-members Edge Function deploy"
+            echo ""
+            echo "- Commit: \`${SHA}\`"
+            echo "- Project: \`${EXPECTED_PROJECT_REF}\`"
+            echo "- Supabase CLI: \`${SUPABASE_CLI_VERSION}\`"
+            echo "- Files in the function's relative import graph: ${count}"
+            echo ""
+            echo "### Source hashes (the integrity record)"
+            echo '```'
+            xargs sha256sum < graph.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assert the read only discovery posture, structurally
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Every assertion runs against EXECUTABLE source: comments, string
+          # literals and regex literals are removed first, so a sentence in a
+          # header comment can neither satisfy nor trip a check. Naive greps
+          # over these heavily commented files would do both.
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          IDX = pathlib.Path('supabase/functions/spond-link-members/index.ts')
+          GRAPH = [pathlib.Path(l) for l in
+                   pathlib.Path('graph.txt').read_text(encoding='utf-8').split()]
+
+          def code(src: str) -> str:
+              """Blank COMMENTS ONLY, preserving string and regex literals.
+
+              Comments are the false positive source in these heavily documented
+              files: a sentence in a header must never satisfy or trip a check.
+              String literals are the opposite, they are the evidence itself
+              ('players.manage', 'spond_groups', 'POST'), so they are kept.
+              Offsets are preserved so ordering assertions stay meaningful.
+              """
+              out, i, n, prev = list(src), 0, len(src), ''
+              while i < n:
+                  c, two = src[i], src[i:i + 2]
+                  if two == '//':
+                      j = src.find('\n', i); j = n if j == -1 else j
+                      for k in range(i, j): out[k] = ' '
+                      i = j; continue
+                  if two == '/*':
+                      j = src.find('*/', i + 2); j = n if j == -1 else j + 2
+                      for k in range(i, j):
+                          if src[k] != '\n': out[k] = ' '
+                      i = j; continue
+                  if c in ('"', "'", '`'):          # keep, but do not scan inside
+                      q, j = c, i + 1
+                      while j < n:
+                          if src[j] == '\\': j += 2; continue
+                          if src[j] == q: break
+                          j += 1
+                      i = min(j + 1, n); prev = 'x'; continue
+                  if c == '/' and (prev in '=(,:[!&|?{};' or prev == ''):
+                      j = i + 1                      # regex literal, keep, skip over
+                      while j < n and src[j] != '\n':
+                          if src[j] == '\\': j += 2; continue
+                          if src[j] == '/': break
+                          j += 1
+                      if j < n and src[j] == '/':
+                          i = j + 1
+                          while i < n and src[i].isalpha(): i += 1
+                          prev = 'x'; continue
+                  if not c.isspace(): prev = c
+                  i += 1
+              return ''.join(out)
+
+          def calls(src: str, name: str):
+              """Every call to `name`, captured by balanced parentheses.
+
+              This codebase omits semicolons, so a regex to the next ';' runs
+              past the statement and swallows unrelated code.
+              """
+              found, i = [], 0
+              while True:
+                  m = re.search(re.escape(name) + r"\w*\s*\(", src[i:])
+                  if not m: return found
+                  s0 = i + m.end() - 1
+                  depth, j = 0, s0
+                  while j < len(src):
+                      if src[j] == '(': depth += 1
+                      elif src[j] == ')':
+                          depth -= 1
+                          if depth == 0: break
+                      j += 1
+                  found.append(src[s0:j + 1])
+                  i = j + 1
+
+          idx = code(IDX.read_text(encoding='utf-8'))
+          fails = []
+          def need(cond, msg):
+              if not cond: fails.append(msg)
+
+          # 1. The players.manage capability gate exists, in executable source.
+          need(re.search(r"rpc\(\s*'has_perm'\s*,\s*\{\s*capability:\s*'players\.manage'\s*\}", idx) is not None,
+               "no players.manage has_perm gate in executable source")
+
+          # 2. The gate runs BEFORE Spond is contacted. Compared on CALL SITES,
+          #    not definitions: spondLogin is defined above where it is called.
+          m_perm = re.search(r"rpc\(\s*'has_perm'", idx)
+          m_login = re.search(r"await\s+spondLogin\s*\(", idx)
+          m_groups = re.search(r"await\s+spondGroups\s*\(", idx)
+          need(m_perm and m_login and m_perm.start() < m_login.start(),
+               "the capability gate does not precede the Spond login call")
+          need(m_perm and m_groups and m_perm.start() < m_groups.start(),
+               "the capability gate does not precede the Spond group fetch")
+
+          # 3. Caller resolution goes through the shared JWT/RLS path.
+          need(re.search(r"resolveCaller\s*\(\s*req\s*\)", idx) is not None,
+               "resolveCaller(req) is not used")
+          need('caller.db' in idx, "the caller's RLS client is not used")
+
+          # 4. No service role anywhere in the bundle's executable source.
+          for f in GRAPH:
+              ex = code(f.read_text(encoding='utf-8')).upper().replace('-', '_')
+              need('SERVICE_ROLE' not in ex, f"a service role reference appears in {f}")
+
+          # 5. The mapping read is scoped by club AND team.
+          need(".from('spond_groups')" in idx, "no spond_groups mapping read found")
+          head = idx[idx.find(".from('spond_groups')"):][:400] if ".from('spond_groups')" in idx else ''
+          need(".eq('club_id'" in head, "the mapping read is not scoped by club_id")
+          need(".eq('team_id'" in head, "the mapping read is not scoped by team_id")
+
+          # 6. Member reduction goes through the shared boundary helper.
+          need(re.search(r"reduceLinkCandidate\s*\(", idx) is not None,
+               "members are not reduced through reduceLinkCandidate")
+
+          # 7 & 8. The candidate shape is exactly {spond_member_id, display_name}
+          #        and the id stays constrained by the Release B pattern.
+          shared_raw = pathlib.Path('supabase/functions/_shared/spond.ts').read_text(encoding='utf-8')
+          iface = re.search(r"export interface LinkCandidate\s*\{([^}]*)\}", shared_raw)
+          need(iface is not None, "LinkCandidate interface not found")
+          if iface:
+              fields = sorted(re.findall(r"(\w+)\s*:", iface.group(1)))
+              need(fields == ['display_name', 'spond_member_id'],
+                   f"LinkCandidate carries unexpected fields: {fields}")
+          body = re.search(r"export function reduceLinkCandidate[\s\S]*?\n\}", code(shared_raw))
+          need(body is not None, "reduceLinkCandidate body not found")
+          if body:
+              need('SPOND_MEMBER_ID_PATTERN' in body.group(0),
+                   "reduceLinkCandidate no longer constrains the member id")
+
+          # 9. No Supabase mutation of any kind in this function.
+          for bad in ('.insert(', '.update(', '.upsert(', '.delete('):
+              need(bad not in idx, f"spond-link-members must not call {bad}")
+
+          # 10. Exactly one explicit outbound method, the Spond login POST.
+          methods = re.findall(r"method\s*:\s*'([A-Z]+)'", idx)
+          need(methods == ['POST'],
+               f"expected exactly one explicit POST (the Spond login), got {methods}")
+
+          # 11. Only the two read endpoints are reached.
+          eps = sorted(set(re.findall(r"SPOND_API_BASE\}([A-Za-z0-9/_.-]*)", idx)))
+          need(eps == ['auth2/login', 'groups/'], f"unexpected Spond endpoints: {eps}")
+
+          # 12. Nothing candidate shaped is ever logged. Checked against the
+          #     EXPRESSIONS a console call passes, not its literal message: the
+          #     function's own log lines say "spond-link-members: ..." and "no
+          #     usable token", so a plain substring test over the whole call
+          #     flags the constant text and blocks a perfectly safe deploy.
+          #     Quoted message contents are blanked; template ${...} holes are
+          #     kept, because that is where interpolated data would appear.
+          def exprs(call: str) -> str:
+              out, i, n = list(call), 0, len(call)
+              while i < n:
+                  c = call[i]
+                  if c in ('"', "'"):
+                      j = i + 1
+                      while j < n and call[j] != c:
+                          j += 2 if call[j] == '\\' else 1
+                      for k in range(i + 1, min(j, n)): out[k] = ' '
+                      i = min(j + 1, n); continue
+                  if c == '`':
+                      j = i + 1
+                      while j < n and call[j] != '`':
+                          if call[j] == '\\': j += 2; continue
+                          if call[j:j + 2] == '${':
+                              d, k = 1, j + 2
+                              while k < n and d:
+                                  if call[k] == '{': d += 1
+                                  elif call[k] == '}': d -= 1
+                                  k += 1
+                              j = k; continue
+                          out[j] = ' '; j += 1
+                      i = min(j + 1, n); continue
+                  i += 1
+              return ''.join(out)
+
+          for call in calls(idx, 'console.'):
+              passed = exprs(call)
+              for leak in ('candidate', 'display_name', 'spond_member_id', 'member',
+                           'payload', 'guardian', 'email', 'phone', 'firstName', 'lastName'):
+                  need(leak not in passed,
+                       f"a console call may log {leak}: {call.strip()[:90]}")
+
+          if fails:
+              print("REFUSING TO DEPLOY, the source does not carry the expected posture:")
+              for f in fails: print("  -", f)
+              sys.exit(1)
+          print("all structural assertions passed on the source being deployed")
+          PY
+
+      - name: Deploy spond-link-members (verify_jwt = true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No --no-verify-jwt: the function requires a signed in caller, and
+          # the post-deploy assertion below proves it.
+          supabase functions deploy spond-link-members --project-ref "${SUPABASE_PROJECT_ID}"
+
+      - name: Assert the deployed JWT posture and record the version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          supabase functions list --project-ref "${SUPABASE_PROJECT_ID}" --output json > "$tmp"
+          python3 - "$tmp" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          fns = json.load(open(sys.argv[1]))
+          rows = fns if isinstance(fns, list) else fns.get('functions', [])
+          match = [f for f in rows if f.get('slug') == 'spond-link-members']
+          if not match:
+              print('spond-link-members not found in the deployed function list'); sys.exit(1)
+          fn = match[0]
+          if fn.get('verify_jwt') is not True:
+              print('spond-link-members must require a JWT; got %r' % (fn.get('verify_jwt'),)); sys.exit(1)
+          if fn.get('status') != 'ACTIVE':
+              print('spond-link-members is not ACTIVE; got %r' % (fn.get('status'),)); sys.exit(1)
+          print('### Hosted function state')
+          print('')
+          print('- slug: %s' % fn.get('slug'))
+          print('- version: %s' % fn.get('version'))
+          print('- verify_jwt: %s' % fn.get('verify_jwt'))
+          print('- status: %s' % fn.get('status'))
+          PY
+
+      - name: Read the deployed source back, from an empty directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The download goes into a GENUINELY EMPTY scratch directory, never
+          # into or over the checkout. That is the whole point: if the hosted
+          # download omits a file, downloading on top of the checkout leaves the
+          # original in place, the existence test passes, git diff reports no
+          # change, and a PARTIAL readback is announced as byte for byte
+          # identical. Downloading into an empty tree makes an omission visible
+          # as an omission.
+          #
+          # The checkout is never modified to perform the readback, so no
+          # `git checkout --` restore is needed or done.
+          DL_DIR="$(mktemp -d)"
+          export DL_DIR
+          trap 'rm -rf "$DL_DIR"' EXIT
+          if [ -n "$(ls -A "$DL_DIR")" ]; then
+            echo "scratch download directory is not empty; refusing to treat it as evidence"; exit 1
+          fi
+          if ! ( cd "$DL_DIR" && supabase functions download spond-link-members --project-ref "${SUPABASE_PROJECT_ID}" ) > "$DL_DIR/../download.log" 2>&1; then
+            {
+              echo "### Deployed source readback"
+              echo ""
+              echo "**NOT BYTE-FOR-BYTE CONFIRMED.** The CLI could not download the"
+              echo "function, so there is no hosted source to compare. The source"
+              echo "hashes and the deployed version recorded above are the"
+              echo "integrity record instead."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "downloaded tree:"; find "$DL_DIR" -type f | sed "s#${DL_DIR}/##" | head -50
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import pathlib, sys, hashlib
+
+          import os
+          DOWNLOAD_ROOT = pathlib.Path(os.environ['DL_DIR']).resolve()
+          GRAPH = [l for l in pathlib.Path('graph.txt').read_text(encoding='utf-8').split() if l]
+          REPO = pathlib.Path('.').resolve()
+
+          def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+
+          missing, differing, identical = [], [], []
+          for rel in GRAPH:
+              got = DOWNLOAD_ROOT / rel
+              want = REPO / rel
+              # The downloaded tree is the ONLY evidence of hosted source. A file absent
+              # from it is missing, full stop: the checked-out copy is never consulted as
+              # a stand-in, which is what previously let a partial download read as
+              # identical.
+              if not got.is_file():
+                  missing.append(rel); continue
+              (identical if sha(got) == sha(want) else differing).append(rel)
+
+          downloaded = sorted(str(p.relative_to(DOWNLOAD_ROOT))
+                              for p in DOWNLOAD_ROOT.rglob('*') if p.is_file())
+          extra = [d for d in downloaded if d not in GRAPH]
+
+          confirmed = not missing and not differing and len(identical) == len(GRAPH)
+
+          print("### Deployed source readback")
+          print("")
+          print(f"- expected files (import graph): {len(GRAPH)}")
+          print(f"- found in download and identical: {len(identical)}")
+          print(f"- found in download but DIFFERING: {len(differing)}")
+          print(f"- MISSING from download: {len(missing)}")
+          if extra:
+              print(f"- additional downloaded files not in the graph: {len(extra)}")
+              for e in extra[:20]:
+                  print(f"    - `{e}`")
+              print("  These are reported only. An extra file can never stand in for an")
+              print("  expected one: each expected path is looked up by its own name.")
+          for rel in missing:
+              print(f"    - MISSING: `{rel}`")
+          for rel in differing:
+              print(f"    - DIFFERS: `{rel}`")
+          print("")
+          if confirmed:
+              print("**BYTE-FOR-BYTE CONFIRMED** across every file in the import graph.")
+          else:
+              print("**NOT BYTE-FOR-BYTE CONFIRMED.** The CLI may return a normalised or")
+              print("partial bundle rather than the original sources; that is common and")
+              print("is not by itself evidence of a bad deploy. It is explicitly NOT a")
+              print("byte for byte confirmation, and the source hashes plus the deployed")
+              print("version recorded above are the integrity record instead.")
+          sys.exit(0)
+          PY
+          # The verdict is reported, never fatal: a normalised bundle is a
+          # normal CLI outcome. What must never happen is a partial readback
+          # being described as confirmation, and it now cannot be.
+
+      - name: Done
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "spond-link-members deployed from disk with verify_jwt=true."
+          echo "No migration, no grant, no secret change, no Spond write, no database write, and the function was not invoked."
