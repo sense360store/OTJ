@@ -118,16 +118,30 @@ then deletes only rows for that event that are strictly older. This has no
 empty window, is idempotent, and leaves the previous context intact when a
 write fails rather than emptying the event.
 
-**What two overlapping runs can and cannot do, stated exactly.** Neither run
-can empty an event, because the upsert always lands before the delete, and
-neither can store a member nobody linked, because the response foreign key
-refuses it. Those two properties hold without a lock.
+**What two overlapping runs can and cannot do, stated exactly.** Exactly one
+property holds without a lock: no run can store a member nobody linked,
+because `spond_event_responses_link_fk` refuses the row. That is a database
+guarantee, not an ordering argument.
 
-They are not the same as being race free, and an earlier draft of this
-decision overstated it. The residual is real and accepted: the upsert sets
-`synced_at` unconditionally, so an OLDER run committing after a NEWER one
-lowers a row's stamp to its own, and the event then holds that older view of
-who replied. Recorded as known debt rather than claimed away.
+Two earlier drafts of this decision overstated the rest. The first claimed the
+reconcile was "safe under two overlapping runs without a lock". The second
+narrowed that but still claimed neither run could empty an event, reasoning
+that "the upsert always lands before the delete". That ordering is a **within
+run** property — `syncedAt` is one constant per invocation — and it does not
+generalise across runs. Both residuals below are real and accepted.
+
+**Residual 1, stale stamp.** The upsert sets `synced_at` unconditionally, so
+an older run committing after a newer one lowers a row's stamp and the event
+holds that older view of who replied.
+
+**Residual 2, transient emptying.** The same cause, one step further. Run B
+(newer, `T2`) upserts an event's rows; run A (older, `T1`) then upserts the
+same rows, dropping their stamps to `T1` because `ON CONFLICT DO UPDATE`
+overwrites `synced_at` downward; B's tail delete, keyed on the stamp alone
+with no member restriction, then matches them all, and the event is left with
+no stored context at all until the next sync.
+
+Recorded as known debt rather than claimed away.
 
 It is left unserialised deliberately. The cost of being wrong is a stale reply
 shown as context, the next successful sync self heals it, and **attendance is

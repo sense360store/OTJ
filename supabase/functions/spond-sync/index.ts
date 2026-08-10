@@ -431,17 +431,36 @@ Deno.serve(async (req) => {
   // leaving them without context would miss the case Release B exists
   // for. Factored rather than copied so the two paths cannot drift.
   //
-  // Two overlapping runs, precisely, and the residual this leaves. The
-  // upsert always lands before the delete and the link foreign key
-  // refuses an unlinked member, so neither run can empty an event and
-  // neither can write a member nobody linked. What two runs CAN do is
-  // disagree about freshness: the upsert sets synced_at unconditionally,
-  // so an OLDER run committing after a NEWER one lowers a row's stamp to
-  // its own and the event then holds that older view of who replied. This
-  // is accepted, recorded debt, not an impossibility: it is not serialised
-  // behind a lock because the cost of being wrong is a stale reply shown
-  // as context, and the next successful sync self heals it. Attendance is
-  // never affected: this function reads and writes no register_entries.
+  // Two overlapping runs, precisely, and the TWO residuals this leaves.
+  //
+  // ONE thing genuinely holds without a lock: no run can store a member
+  // nobody linked, because spond_event_responses_link_fk refuses the row.
+  // That is a database guarantee, not an ordering argument.
+  //
+  // "The upsert always lands before the delete" is a WITHIN RUN property
+  // only. syncedAt is one constant per invocation, so this function's two
+  // callers cannot fight each other. It does NOT generalise across runs,
+  // and an earlier version of this comment wrongly said it did.
+  //
+  // Residual 1, stale stamp. The upsert sets synced_at unconditionally, so
+  // an OLDER run committing after a NEWER one lowers a row's stamp and the
+  // event holds that older view of who replied.
+  //
+  // Residual 2, transient emptying. Same cause, one step further. Run B
+  // (newer, T2) upserts an event's rows; run A (older, T1) then upserts the
+  // same rows, dropping their stamps to T1 because ON CONFLICT DO UPDATE
+  // overwrites synced_at downward; B's tail delete, keyed on the stamp
+  // alone with no member restriction, then matches them all and the event
+  // is left with no stored context at all.
+  //
+  // Both are accepted, recorded debt, NOT impossibilities. Neither is
+  // serialised behind a lock because the cost of being wrong is missing or
+  // stale context, the next successful sync self heals it, and the register
+  // simply shows no reply pill in the meantime. Attendance is never
+  // affected: this function reads and writes no register_entries. Closing
+  // residual 2 needs no lock either, only a tail delete that excludes the
+  // member ids just written; that is a deliberate follow-up, not a silent
+  // change inside a forward port.
   //
   // A failure here warns and moves on. The event's counts are already
   // written, the previous context is still in place, and the next run

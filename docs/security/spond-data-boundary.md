@@ -149,12 +149,14 @@ even if its own filtering were wrong.
   prove the linked set is never read as "the linked set is empty".
 - It reconciles an event by upserting what it saw with this run's timestamp and
   then deleting only strictly older rows for that event, so a partial failure
-  leaves the previous context intact rather than emptying the event. Two
-  overlapping runs cannot empty an event and cannot store an unlinked member.
-  They **can** disagree about freshness: an older run committing after a newer
-  one lowers `synced_at` and restores that older view of who replied. That is
-  accepted, recorded debt, self healing on the next sync, and it cannot touch
-  attendance. See ADR-0008 decision 7.
+  leaves the previous context intact rather than emptying the event. Of the
+  concurrency properties, exactly one holds without a lock: two overlapping
+  runs cannot store an unlinked member, because the response foreign key
+  refuses the row. They **can** leave an event holding an older view of who
+  replied, and they **can** transiently leave it holding none at all, both
+  because the upsert overwrites `synced_at` downward and the tail delete keys
+  on that stamp alone. Both are accepted, recorded debt, self healing on the
+  next sync, and neither can touch attendance. See ADR-0008 decision 7.
 - It reconciles **both** event sources on the same terms: events found through a
   subgroup mapping, and events addressed to the whole parent group, which is
   where this club's weekly training is discovered and which store `team_id`
