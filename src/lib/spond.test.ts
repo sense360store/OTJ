@@ -126,16 +126,23 @@ describe('spondEventInTeam', () => {
   })
 })
 
-describe('isTrainingEvent', () => {
-  it('matches training in the title, case insensitive', () => {
-    expect(isTrainingEvent('U8 Training')).toBe(true)
-    expect(isTrainingEvent('Monday training night')).toBe(true)
-    expect(isTrainingEvent('TRAINING')).toBe(true)
+describe('isTrainingEvent, re-exported from the canonical classifier', () => {
+  // The signature is now an event, not a bare title, because Spond's own
+  // spond_type is a stronger fact than the title and the classifier must be
+  // able to read it. The rules themselves are pinned in eventKind.test.ts.
+  it('matches training titles, case insensitive', () => {
+    expect(isTrainingEvent({ title: 'U8 Training' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Monday training night' })).toBe(true)
+    expect(isTrainingEvent({ title: 'TRAINING' })).toBe(true)
   })
 
-  it('does not match events without training in the title', () => {
-    expect(isTrainingEvent('Friendly vs Horbury')).toBe(false)
-    expect(isTrainingEvent('End of season tournament')).toBe(false)
+  it('keeps fixtures and galas out', () => {
+    expect(isTrainingEvent({ title: 'Friendly vs Horbury' })).toBe(false)
+    expect(isTrainingEvent({ title: 'End of season tournament' })).toBe(false)
+  })
+
+  it('lets Spond overrule a misleading title', () => {
+    expect(isTrainingEvent({ title: 'Titans training', spondType: 'MATCH' })).toBe(false)
   })
 })
 
@@ -157,7 +164,7 @@ describe('spondPlanSuggestions', () => {
     plannedEventIds: new Set<string>(),
     scopeTeamIds: ['team-1'],
     showAllTeams: false,
-    trainingOnly: false,
+    kind: 'all' as const,
     now,
   }
 
@@ -178,13 +185,20 @@ describe('spondPlanSuggestions', () => {
     expect(spondPlanSuggestions({ ...opts, events, showAllTeams: true }).map((e) => e.id)).toEqual(['mine', 'other'])
   })
 
-  it('shows every in scope event by default, and narrows to training titles once the filter is on', () => {
+  it('suggests training by default, and widens to every in scope event when asked', () => {
+    // The Training-first correction. This used to be the other way round:
+    // the surface opened on every synced event and a coach had to find a
+    // Training only toggle, so the gala and the presentation evening sat in
+    // the way of the night they came to plan.
     const events = [
       ev({ id: 'train', startsAt: '2026-06-16T17:30:00Z', teamId: 'team-1', title: 'U8 Training' }),
       ev({ id: 'match', startsAt: '2026-06-17T17:30:00Z', teamId: 'team-1', title: 'Friendly vs Horbury' }),
     ]
-    expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual(['train', 'match'])
-    expect(spondPlanSuggestions({ ...opts, events, trainingOnly: true }).map((e) => e.id)).toEqual(['train'])
+    const noKind = { ...opts, events }
+    delete (noKind as { kind?: unknown }).kind
+    expect(spondPlanSuggestions(noKind).map((e) => e.id)).toEqual(['train'])
+    expect(spondPlanSuggestions({ ...opts, events, kind: 'training' }).map((e) => e.id)).toEqual(['train'])
+    expect(spondPlanSuggestions({ ...opts, events, kind: 'all' }).map((e) => e.id)).toEqual(['train', 'match'])
   })
 
   it("drops an event the coach has already planned, and keeps the rest", () => {
@@ -256,7 +270,7 @@ describe('a scheduled training event, once synced', () => {
     plannedEventIds: new Set<string>(),
     scopeTeamIds: ['team-1'],
     showAllTeams: false,
-    trainingOnly: false,
+    kind: 'all' as const,
     now,
   }
   // No replies yet: exactly what the sync stores for an event whose
@@ -277,12 +291,12 @@ describe('a scheduled training event, once synced', () => {
     expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual(['scheduled-training', 'gala'])
   })
 
-  it('survives the training only filter, which is the filter a coach reaches for', () => {
+  it('survives the Training filter, which is now the view a coach lands on', () => {
     const events = [ev({ id: 'gala', startsAt: '2026-06-20T09:00:00Z', teamId: 'team-1', title: 'Summer gala' }), scheduledTraining]
-    expect(spondPlanSuggestions({ ...opts, events, trainingOnly: true }).map((e) => e.id)).toEqual([
+    expect(spondPlanSuggestions({ ...opts, events, kind: 'training' }).map((e) => e.id)).toEqual([
       'scheduled-training',
     ])
-    expect(isTrainingEvent('Titans training')).toBe(true)
+    expect(isTrainingEvent({ title: 'Titans training' })).toBe(true)
   })
 
   it('zero replies do not hide it: no reply is a normal state, not an absent event', () => {

@@ -16,6 +16,14 @@ import { useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useSpondEvents } from '../lib/queries'
 import { bySpondEventCloseness, SPOND_COUNT_LABELS, spondEventInTeam, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
+import {
+  ALL_EVENTS_LABEL,
+  DEFAULT_EVENT_KIND,
+  type EventKind,
+  isSpondMatch,
+  matchesEventKind,
+  TRAINING_LABEL,
+} from '../lib/eventKind'
 import { Icon } from './icons'
 import { Chip, Modal } from './ui'
 
@@ -43,10 +51,15 @@ export function MatchBadge() {
   )
 }
 
-// The picker. Defaults to the session's team, nearest event to the session
-// date first. Club events, those with no team because more than one mapping
-// matched them, show under every team's filter; the all club events toggle
-// remains for finding another team's events.
+// The picker. Defaults to Training and to the session's team, nearest event
+// to the session date first. Club events, those with no team because more
+// than one mapping matched them, show under every team's filter; the all club
+// events toggle remains for finding another team's events.
+//
+// Training first here for the same reason as everywhere else: the thing being
+// linked is a training session, so the list a coach scrolls should be the
+// training nights. All events is one tap away for the session that really is
+// arranged as a fixture.
 function LinkSpondEventModal({
   teamId,
   date,
@@ -61,11 +74,13 @@ function LinkSpondEventModal({
   onClose: () => void
 }) {
   const { data: events = [], isPending, isError } = useSpondEvents()
+  const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
   const [showAll, setShowAll] = useState(!teamId)
   const shown = useMemo(() => {
-    const pool = showAll || !teamId ? events : events.filter((e) => spondEventInTeam(e, teamId))
+    const inTeam = showAll || !teamId ? events : events.filter((e) => spondEventInTeam(e, teamId))
+    const pool = inTeam.filter((e) => matchesEventKind(e, kind))
     return [...pool].sort(bySpondEventCloseness(date, time))
-  }, [events, showAll, teamId, date, time])
+  }, [events, kind, showAll, teamId, date, time])
 
   return (
     <Modal
@@ -73,16 +88,24 @@ function LinkSpondEventModal({
       sub="Attendance counts from the linked event show on this session."
       onClose={onClose}
     >
-      {teamId && (
-        <div className="row" style={{ gap: 7, marginBottom: 12 }}>
-          <Chip on={!showAll} onClick={() => setShowAll(false)}>
-            Team events
-          </Chip>
-          <Chip on={showAll} onClick={() => setShowAll(true)}>
-            All club events
-          </Chip>
-        </div>
-      )}
+      <div className="row wrap" style={{ gap: 7, marginBottom: 12 }}>
+        <Chip on={kind === 'training'} onClick={() => setKind('training')}>
+          {TRAINING_LABEL}
+        </Chip>
+        <Chip on={kind === 'all'} onClick={() => setKind('all')}>
+          {ALL_EVENTS_LABEL}
+        </Chip>
+        {teamId && (
+          <>
+            <Chip on={!showAll} onClick={() => setShowAll(false)}>
+              Team events
+            </Chip>
+            <Chip on={showAll} onClick={() => setShowAll(true)}>
+              All club events
+            </Chip>
+          </>
+        )}
+      </div>
       {isPending ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
           Loading…
@@ -94,7 +117,7 @@ function LinkSpondEventModal({
       ) : shown.length === 0 ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
           {events.length > 0
-            ? 'No synced events for this team. Try all club events.'
+            ? `No synced events here. Try ${ALL_EVENTS_LABEL}, or all club events.`
             : 'Nothing synced yet. An admin presses Sync now on the Spond screen first.'}
         </p>
       ) : (
@@ -118,6 +141,7 @@ function LinkSpondEventModal({
             >
               <span className="row" style={{ gap: 8 }}>
                 <b style={{ fontSize: 14, flex: 1, minWidth: 0 }}>{e.title}</b>
+                {isSpondMatch(e) && <MatchBadge />}
                 {e.cancelled && <CancelledBadge />}
               </span>
               <span className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>

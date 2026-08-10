@@ -126,22 +126,19 @@ export function spondEventLocalDateTime(startsAt: string): { date: string; time:
   return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${min}` }
 }
 
-// Whether an event reads as training. The sync stores Spond's own
-// classification in spond_type, but this club creates plain events, so
-// spond_type is null in practice (never "MATCH"). The training filter is
-// therefore a title heuristic rather than a spond_type check: a title that
-// contains "training", case insensitive.
-export function isTrainingEvent(title: string): boolean {
-  return title.toLowerCase().includes('training')
-}
+// The training classifier lives in ./eventKind, which is the single seam every
+// surface uses. Imported for use below and re-exported so existing Spond
+// callers keep a stable import; there is no second implementation.
+import { DEFAULT_EVENT_KIND, type EventKind, isTrainingEvent, matchesEventKind } from './eventKind'
+export { isTrainingEvent, matchesEventKind }
 
 // The "Plan from Spond" suggestions: synced events a coach could turn into a
 // session, ordered upcoming soonest first then recent past most recent first.
 // Drops events the coach has already planned (a session they own linked to
 // it), narrows to their teams plus club events (team_id null) unless the all
-// teams toggle widens it, and applies the training title heuristic when the
-// toggle is on. Pure so the screen wires it to live data and the test pins the
-// scope and ordering.
+// teams toggle widens it, and narrows to the requested event kind, which is
+// Training unless the caller widens it. Pure so the screen wires it to live
+// data and the test pins the scope and ordering.
 export interface SpondPlanOptions {
   events: SpondEvent[]
   // Event ids the current coach already owns a session linked to. One event
@@ -153,9 +150,11 @@ export interface SpondPlanOptions {
   scopeTeamIds: string[]
   // Widen to every team's events, the club wide toggle.
   showAllTeams: boolean
-  // The training title heuristic, off by default so a coach sees every
-  // unplanned event and opts into the filter.
-  trainingOnly: boolean
+  // Which kind of event to suggest. Defaults to Training: a coach opening
+  // this is choosing a night to plan, and a Training Hub session is
+  // training. All events is the deliberate widening, not the starting
+  // point, which is the correction this parameter carries.
+  kind?: EventKind
   now?: Date
 }
 
@@ -164,13 +163,16 @@ export function spondPlanSuggestions({
   plannedEventIds,
   scopeTeamIds,
   showAllTeams,
-  trainingOnly,
+  kind = DEFAULT_EVENT_KIND,
   now = new Date(),
 }: SpondPlanOptions): SpondEvent[] {
   const at = now.getTime()
   const inScope = (e: SpondEvent) => showAllTeams || e.teamId === null || scopeTeamIds.includes(e.teamId)
   const pool = events.filter(
-    (e) => !plannedEventIds.has(e.id) && inScope(e) && (!trainingOnly || isTrainingEvent(e.title)),
+    (e) =>
+      !plannedEventIds.has(e.id) &&
+      inScope(e) &&
+      matchesEventKind(e, kind),
   )
   const upcoming = pool
     .filter((e) => Date.parse(e.startsAt) >= at)

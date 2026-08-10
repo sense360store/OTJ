@@ -132,6 +132,7 @@ Work one phase per branch, one pull request per phase. Each phase is independent
 10. **Feedback log.** A club visible log of requests and bug reports that any member files, parents included, with status moved by admins.
 11. **Mobile navigation.** The bottom nav extended to cover the admin and secondary screens.
 12. **Training day.** Venues the club picks from, the set of teams a session covers, a team default bib colour, and the pitch side register: who is here, what they wear, and quick add for whoever turns up. It works with nothing configured beyond a roster.
+13. **Training first.** One classifier behind every event list, Training as the default view with All events as the widening, ownership demoted to a secondary narrowing, and the register organised around who accepted in Spond. See Training first below.
 
 ### Phase 1 detail
 - Scaffold per Bootstrap above.
@@ -221,6 +222,18 @@ Spond is where the club arranges sessions and parents respond. The Hub mirrors a
 - A dedicated Spond organiser account is used, never a personal login. Its credentials live only in the `SPOND_EMAIL` and `SPOND_PASSWORD` function secrets, never in the repo and never in the client. The sync fails closed when they are missing.
 - Sync direction is Spond to app only. Sessions are arranged and answered in Spond; the Hub holds a synced copy of the counts.
 - An event matched by more than one mapping in a run is shared and becomes a club event, stored with no team. `spond_type` stores Spond's own event classification ("EVENT" or "MATCH") as an event fact about the event itself, not member data.
+
+---
+
+## Training first
+
+The product is a training hub, so training is what every list of events leads with.
+
+- Wherever a list can hold training alongside fixtures, galas and the rest, the default view is **Training** and the one widening is **All events**. No screen defaults to My sessions, All sessions, All teams or a list led by fixtures. Team is a narrowing within the kind and never changes it; ownership ("Mine") is a secondary narrowing that starts off. Ownership still decides who may edit or delete, which is a different question entirely.
+- Classification has one implementation, `src/lib/eventKind.ts`. The order is: Spond's own `spond_type` of "MATCH" wins, then a non training word in the label, then training. `spond_type` "EVENT" is Spond's catch-all and is never treated as proof of training. The word list is a heuristic and is deliberately incomplete; it fails towards showing a row rather than hiding one. The classifier reads either a session's `name` or an event's `title`, so two shapes never mean two classifiers.
+- `src/lib/eventFilter.ts` composes kind, team and ownership in that order, and `pickNextEvent` decides what a schedule leads with. Home, Sessions, Plan from Spond, the Spond event picker and the admin synced events list all go through those two modules. `src/lib/eventKind.invariant.test.ts` fails the build if a screen grows its own title check, retypes the labels, or opens on a literal instead of the shared default. This is a filtering rule and needs no migration; nothing about it reaches the database.
+- The register organises the night the same way: **Going** (the parent accepted in Spond) is the default and **Everyone** is the widening, held in `src/lib/registerScope.ts` so `src/lib/register.ts` stays Spond-blind. Going never means the coach ticked someone in, and a child already marked present is never hidden by it. A child with no Spond link is not a child who did not reply: they carry no pill and they live under Everyone. The Going view is offered only where this session actually has replies, so a club with no Spond, a failed read and a read still in flight all keep the complete register on screen.
+- Bibs need no per player setup: a register entry's override wins, otherwise the team's default colour, otherwise none, with a stored override of `none` meaning no bib rather than fall back.
 
 ---
 

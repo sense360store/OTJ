@@ -41,12 +41,19 @@ import {
   type RegisterEntry,
   type RegisterRow,
 } from '../lib/register'
+import {
+  applyRegisterScope,
+  DEFAULT_REGISTER_SCOPE,
+  hasRsvpContext,
+  REGISTER_SCOPE_LABELS,
+  type RegisterScope,
+} from '../lib/registerScope'
 import { BIB_COLOURS, BIB_NONE, bibLabel } from '../lib/bibs'
 import { coveredTeamIds, coverageOf, coversWholeClub } from '../lib/sessionTeams'
 import { SESSION_ID_PARAM } from '../lib/routes'
 import type { Player, Session, Team } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Empty, ErrorNote, Loading, Modal, fmtDate } from '../components/ui'
+import { Chip, Empty, ErrorNote, Loading, Modal, fmtDate } from '../components/ui'
 import './SessionDay.css'
 import './SessionRegister.css'
 
@@ -197,6 +204,11 @@ export function RegisterScreenView({
   entries,
   canMark,
   rsvpByPlayer,
+  scope = DEFAULT_REGISTER_SCOPE,
+  onScope,
+  onRefresh,
+  refreshing = false,
+  refreshFailed = false,
   onToggle,
   onBib,
   onRemove,
@@ -210,6 +222,18 @@ export function RegisterScreenView({
   // Optional, and absent is the normal case: no Spond, no link, still
   // loading and failed all arrive here as no entry for that player.
   rsvpByPlayer?: Record<string, Rsvp>
+  // Which set is listed. Going by default, and ignored entirely when there
+  // is no context to build Going from, so absence can never render as an
+  // empty register.
+  scope?: RegisterScope
+  onScope?: (v: RegisterScope) => void
+  // Pull the stored replies again. Absent where nothing can be refreshed.
+  onRefresh?: () => void
+  refreshing?: boolean
+  // The last refresh failed. The screen keeps the context it already had:
+  // a failed refresh degrades to slightly older replies, never to none and
+  // never to an error page.
+  refreshFailed?: boolean
   onToggle: (row: RegisterRow) => void
   onBib: (row: RegisterRow, value: string) => void
   onRemove: (row: RegisterRow) => void
@@ -220,12 +244,19 @@ export function RegisterScreenView({
   const wholeClub = coversWholeClub(session, allTeamIds)
   // A squad's worth of rows: cheap enough to compose on every render, and
   // memoising it would need the covered ids flattened into a dep key.
-  const view = buildRegister(players, covered, teams, entries, wholeClub)
+  const full = buildRegister(players, covered, teams, entries, wholeClub)
   const unset = coverageOf(session).kind === 'unset'
   // Composition never sees Spond: buildRegister still takes its five
   // arguments and the rows are already ordered before this line runs, so
   // a refresh cannot reorder the list under a thumb.
   const rsvp = rsvpByPlayer ?? {}
+  // The Going view exists only where there is something to build it from.
+  // Every way context can be absent, a club with no Spond included, lands
+  // here as false, which pins the screen to the complete register.
+  const hasContext = hasRsvpContext(rsvp)
+  const effectiveScope: RegisterScope = hasContext ? scope : 'all'
+  const scoped = applyRegisterScope(full, effectiveScope, rsvp)
+  const view = scoped.view
   // Only the replies actually on screen count towards the freshness line.
   // The lookup is built from a club wide link read, so it can carry a
   // child this session does not cover, and a note about a reply nobody can
@@ -251,17 +282,52 @@ export function RegisterScreenView({
         )}
       </div>
 
+      {/* The night's organisation, and only where Spond can answer it. A
+          club with no Spond never sees this row and never leaves the
+          complete register. */}
+      {hasContext && (
+        <div className="reg-scope">
+          <Chip on={effectiveScope === 'going'} onClick={() => onScope?.('going')}>
+            {REGISTER_SCOPE_LABELS.going}
+          </Chip>
+          <Chip on={effectiveScope === 'all'} onClick={() => onScope?.('all')}>
+            {REGISTER_SCOPE_LABELS.all}
+          </Chip>
+          {/* A narrowed register always says out loud that it is narrowed. */}
+          {scoped.hidden > 0 && <span className="pill">{scoped.hidden} hidden</span>}
+          {onRefresh && (
+            <button
+              className="btn btn-quiet btn-sm"
+              style={{ marginLeft: 'auto' }}
+              disabled={refreshing}
+              onClick={onRefresh}
+            >
+              <Icon.rotate />
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Only when it matters: fresh context needs no label, stale
           context must not pass itself off as fresh. */}
       {staleNote && <p className="reg-stale">{staleNote}</p>}
+      {refreshFailed && <p className="reg-stale">Could not refresh from Spond. Showing the last synced replies.</p>}
 
-      {unset && view.groups.length === 0 ? (
+      {unset && full.groups.length === 0 ? (
         <Empty icon={Icon.users} title="This session has no teams yet">
           Choose the teams it covers in the planner and the register fills itself in.
         </Empty>
-      ) : view.groups.length === 0 ? (
+      ) : full.groups.length === 0 ? (
         <Empty icon={Icon.users} title="Nobody to show">
           No registered players are on the teams this session covers.
+        </Empty>
+      ) : view.groups.length === 0 ? (
+        // The register is not empty; this view of it is. Saying so, and
+        // naming the way back, is the difference between a filter and a
+        // claim that nobody is coming.
+        <Empty icon={Icon.users} title="No accepted replies yet">
+          {`Nobody has accepted this event in Spond. Tap ${REGISTER_SCOPE_LABELS.all} for the full register.`}
         </Empty>
       ) : (
         <>
@@ -322,6 +388,7 @@ function RegisterScreen({ session }: { session: Session }) {
   const setEntry = useSetRegisterEntry()
   const removeEntry = useRemoveRegisterEntry()
   const [adding, setAdding] = useState(false)
+  const [scope, setScope] = useState<RegisterScope>(DEFAULT_REGISTER_SCOPE)
 
   const entries = useMemo(() => register.data ?? [], [register.data])
   const players = useMemo(
@@ -362,6 +429,18 @@ function RegisterScreen({ session }: { session: Session }) {
         entries={entries}
         canMark={canMark}
         rsvpByPlayer={rsvp.data}
+        scope={scope}
+        onScope={setScope}
+        // Refetches the stored mirror, which is what the app holds: no
+        // client code calls Spond, so this is the freshest truth available
+        // here. isRefetching rather than isFetching, so a first load is not
+        // reported as a refresh. isRefetchError is TanStack's own name for
+        // "errored while still holding data", which is the degrade this
+        // screen wants: the previous replies stay in rsvp.data and stay on
+        // screen, and the note beside them says they may be a little old.
+        onRefresh={() => void rsvp.refetch()}
+        refreshing={rsvp.isRefetching}
+        refreshFailed={rsvp.isRefetchError}
         onToggle={(row) =>
           setEntry.mutate({
             sessionId: session.id,

@@ -25,9 +25,17 @@ import { linkedCounts } from '../lib/spondRsvp'
 import type { SpondSyncResult } from '../lib/queries'
 import type { SpondMapping, Team } from '../lib/data'
 import { parseSpondMappingInput, SPOND_COUNT_LABELS, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
+import {
+  ALL_EVENTS_LABEL,
+  DEFAULT_EVENT_KIND,
+  type EventKind,
+  isSpondMatch,
+  matchesEventKind,
+  TRAINING_LABEL,
+} from '../lib/eventKind'
 import { Icon } from '../components/icons'
 import { CancelledBadge, MatchBadge } from '../components/SpondAttendance'
-import { ErrorNote, fmtDate, Loading, Modal } from '../components/ui'
+import { Chip, ErrorNote, fmtDate, Loading, Modal } from '../components/ui'
 
 // The add form. One source input takes a raw group id, a raw group-S-subgroup
 // pair, or the full client URL; parseSpondMappingInput resolves it and the
@@ -322,6 +330,12 @@ function LinksCard() {
 
 function EventsCard() {
   const { data: events = [], isLoading, isError } = useSpondEvents()
+  // Training first here too. An admin checking the mirror is nearly always
+  // asking whether the training nights came through; All events is the tap
+  // that answers everything else, and both use the same classifier the
+  // coaches' screens use, so the two never disagree about a given row.
+  const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
+  const shown = events.filter((e) => matchesEventKind(e, kind))
   return (
     <div className="card" style={{ padding: 18 }}>
       <h3 style={{ fontSize: 17, marginBottom: 4 }}>Synced events</h3>
@@ -329,6 +343,14 @@ function EventsCard() {
         What the mirror holds: counts and event facts only. Sessions link to these from the planner and the session day
         view.
       </p>
+      <div className="row" style={{ gap: 7, marginBottom: 10 }}>
+        <Chip on={kind === 'training'} onClick={() => setKind('training')}>
+          {TRAINING_LABEL}
+        </Chip>
+        <Chip on={kind === 'all'} onClick={() => setKind('all')}>
+          {ALL_EVENTS_LABEL}
+        </Chip>
+      </div>
       {isLoading ? (
         <Loading />
       ) : isError ? (
@@ -337,12 +359,16 @@ function EventsCard() {
         <p className="muted" style={{ fontSize: 13.5 }}>
           Nothing synced yet.
         </p>
+      ) : shown.length === 0 ? (
+        <p className="muted" style={{ fontSize: 13.5 }}>
+          {`Nothing here. ${events.length} synced event${events.length === 1 ? '' : 's'} under ${ALL_EVENTS_LABEL}.`}
+        </p>
       ) : (
-        events.map((e) => (
+        shown.map((e) => (
           <div key={e.id} style={{ padding: '10px 0', borderTop: '1px solid var(--line)' }}>
             <div className="row" style={{ gap: 8 }}>
               <b style={{ fontSize: 14, flex: 1, minWidth: 0 }}>{e.title}</b>
-              {e.spondType === 'MATCH' && <MatchBadge />}
+              {isSpondMatch(e) && <MatchBadge />}
               {e.cancelled && <CancelledBadge />}
               <span className="pill">{spondTeamLabel(e.teamName)}</span>
             </div>

@@ -26,6 +26,8 @@ import {
   useVenueMap,
 } from '../lib/queries'
 import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
+import { ALL_EVENTS_LABEL, TRAINING_LABEL } from '../lib/eventKind'
+import { applyEventFilter, DEFAULT_EVENT_FILTER, pickNextEvent, type EventFilterState } from '../lib/eventFilter'
 import { compareNewestFirst } from '../lib/contentOrder'
 import type { Session, Template } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
@@ -315,9 +317,10 @@ function CoachHome() {
   const teamById = useTeamMap()
   const venueById = useVenueMap()
   const memberById = useMemberMap()
-  // The This week list honours the Sessions screen's default: yours first,
-  // one tap to the whole club.
-  const [weekView, setWeekView] = useState<'mine' | 'all'>('mine')
+  // The This week list honours the Sessions screen's default, which is
+  // Training across the club. Mine is the secondary narrowing, off unless
+  // asked for; the two screens share the constant so they cannot drift.
+  const [filter, setFilter] = useState<EventFilterState>(DEFAULT_EVENT_FILTER)
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -342,15 +345,20 @@ function CoachHome() {
   // The sessions read is club-wide and ordered by date and time; upcoming
   // keeps today's sessions all day so the hero holds while one runs.
   const upcoming = sessions.filter((s) => s.status === 'upcoming' && s.date >= todayStr)
-  const next = canPlan ? upcoming.find(isMine) : upcoming[0]
+  // The hero leads with your own next training, and with the club's when you
+  // own none. Leading with ownership alone told a coach who owns no session
+  // that nothing was scheduled on a night the club was training; the shared
+  // rule in ../lib/eventFilter states the whole preference order.
+  const next = canPlan ? pickNextEvent(upcoming, user?.id) : upcoming[0]
   const liveNow = sessions.find((s) => s.liveActivityIndex != null)
   // A brand-new coach has no sessions at all, upcoming or past.
   const fresh = canPlan && !sessions.some(isMine)
 
   const weekEnd = addDaysIso(todayStr, 7)
   const weekAll = upcoming.filter((s) => s.date < weekEnd)
-  const effWeekView = canPlan ? weekView : 'all'
-  const week = effWeekView === 'mine' ? weekAll.filter(isMine) : weekAll
+  // Parents get the club's week whole; they own nothing to narrow to and
+  // the kind filter is a coach's tool, so their list stays unfiltered.
+  const week = canPlan ? applyEventFilter(weekAll, filter, { userId: user?.id }) : weekAll
 
   const teamName = (s: Session) => sessionTeamsLabel(s, teamById)
   const venueName = (s: Session) => venueNameFor(s, venueById)
@@ -422,11 +430,15 @@ function CoachHome() {
             </span>
             {canPlan && (
               <>
-                <Chip on={weekView === 'mine'} onClick={() => setWeekView('mine')}>
-                  Mine
+                <Chip on={filter.kind === 'training'} onClick={() => setFilter((f) => ({ ...f, kind: 'training' }))}>
+                  {TRAINING_LABEL}
                 </Chip>
-                <Chip on={weekView === 'all'} onClick={() => setWeekView('all')}>
-                  All
+                <Chip on={filter.kind === 'all'} onClick={() => setFilter((f) => ({ ...f, kind: 'all' }))}>
+                  {ALL_EVENTS_LABEL}
+                </Chip>
+                {/* Ownership, deliberately last and off by default. */}
+                <Chip on={filter.mine} onClick={() => setFilter((f) => ({ ...f, mine: !f.mine }))}>
+                  Mine
                 </Chip>
               </>
             )}
@@ -434,9 +446,13 @@ function CoachHome() {
           <div className="week-list">
             {week.length === 0 ? (
               <div className="week-empty">
-                {effWeekView === 'mine'
-                  ? 'Nothing of yours in the next seven days. Tap All for the whole club.'
-                  : 'Nothing on the club calendar in the next seven days.'}
+                {!canPlan
+                  ? 'Nothing on the club calendar in the next seven days.'
+                  : filter.mine
+                    ? 'Nothing of yours in the next seven days. Turn Mine off for the whole club.'
+                    : filter.kind === 'training'
+                      ? `No training in the next seven days. Tap ${ALL_EVENTS_LABEL} for fixtures and the rest.`
+                      : 'Nothing on the club calendar in the next seven days.'}
               </div>
             ) : (
               week.map((s) => (

@@ -216,8 +216,13 @@ describe('RSVP context beside the register', () => {
   })
 
   it('a screen with replies renders the same rows, in the same order, as one without', () => {
+    // Under Everyone, which is what a screen with no Spond always shows.
+    // Replies decorate the rows; they never recompose or reorder them, and
+    // buildRegister still never sees them. The Going view narrows what is
+    // LISTED, which is a separate step covered below.
     const bare = screen()
     const withRsvp = screen({
+      scope: 'all',
       rsvpByPlayer: {
         p1: { status: 'declined', syncedAt: new Date().toISOString() },
         p2: { status: 'accepted', syncedAt: new Date().toISOString() },
@@ -253,5 +258,147 @@ describe('RSVP context beside the register', () => {
     expect(
       screen({ rsvpByPlayer: { p1: { status: 'accepted', syncedAt: new Date().toISOString() } } }),
     ).not.toContain('Spond replies from')
+  })
+})
+
+// ---- Organising tonight: the Going view -----------------------------------
+//
+// Going means the parent accepted in Spond. It never means the coach has
+// ticked the child in, and it never becomes a claim about who is present.
+// The rules themselves are pinned in lib/registerScope.test.ts; here the
+// questions are what a coach sees, what they can still tap, and whether a
+// club with no Spond can ever be shown an empty register.
+
+describe('the Going view', () => {
+  const names = (html: string) => [...html.matchAll(/reg-name-main">([^<]+)</g)].map((m) => m[1])
+  const fresh = () => new Date().toISOString()
+
+  it('offers no Going toggle at all to a club with no Spond context', () => {
+    // The safety property. No Spond, no linked event, no links, a read
+    // still in flight and a read that failed are one case, and that case
+    // shows the complete register.
+    const html = screen()
+    expect(html).not.toContain('Going')
+    expect(html).not.toContain('Everyone')
+    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic'])
+  })
+
+  it('cannot be forced into an empty register by asking for Going without context', () => {
+    // Even if a caller passes the scope explicitly, missing context wins.
+    // "Nobody is coming" must not be renderable out of absence.
+    const html = screen({ scope: 'going', rsvpByPlayer: {} })
+    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic'])
+  })
+
+  it('defaults to Going once this session has replies to show', () => {
+    const html = screen({
+      entries: [],
+      rsvpByPlayer: { p2: { status: 'accepted', syncedAt: fresh() } },
+    })
+    expect(html).toContain('aria-pressed="true">Going</button>')
+    expect(html).toContain('aria-pressed="false">Everyone</button>')
+    expect(names(html)).toEqual(['Beta Synthetic'])
+  })
+
+  it('lists an accepted child nobody has ticked in yet', () => {
+    // Going is about what the parent said, not about what the coach has
+    // done. An empty register with two accepted children lists both.
+    const html = screen({
+      entries: [],
+      rsvpByPlayer: {
+        p1: { status: 'accepted', syncedAt: fresh() },
+        p2: { status: 'accepted', syncedAt: fresh() },
+      },
+    })
+    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic'])
+    expect(html).toContain('0 of 2 in')
+  })
+
+  it('keeps a child the coach has already ticked in, whatever they replied', () => {
+    // p1 is present and declined. Nothing the coach recorded disappears.
+    const html = screen({
+      rsvpByPlayer: { p1: { status: 'declined', syncedAt: fresh() } },
+    })
+    expect(names(html)).toContain('Alpha Synthetic')
+    expect(html).toContain('Not going')
+  })
+
+  it('leaves an unlinked child out of Going without ever calling them No reply', () => {
+    // p2 has no link, so there is no reply of theirs to have. p1 is linked
+    // and has not answered, which is a different fact and the only one of
+    // the two that gets a pill.
+    const html = screen({
+      entries: [],
+      scope: 'going',
+      rsvpByPlayer: { p1: { status: 'unanswered', syncedAt: fresh() } },
+    })
+    expect(names(html)).not.toContain('Beta Synthetic')
+    expect(html).not.toContain('No reply')
+  })
+
+  it('finds the unlinked child under Everyone, still with no pill', () => {
+    const html = screen({
+      entries: [],
+      scope: 'all',
+      rsvpByPlayer: { p1: { status: 'accepted', syncedAt: fresh() } },
+    })
+    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic'])
+    expect(html).toContain('Going')
+    // One pill, for the one child who has a reply.
+    expect([...html.matchAll(/reg-rsvp/g)]).toHaveLength(1)
+  })
+
+  it('says how many it is holding back rather than narrowing silently', () => {
+    const html = screen({
+      entries: [],
+      rsvpByPlayer: { p1: { status: 'accepted', syncedAt: fresh() } },
+    })
+    expect(html).toContain('1 hidden')
+  })
+
+  it('stays fully markable in Going, which is where a coach spends the night', () => {
+    const html = screen({
+      entries: [],
+      rsvpByPlayer: { p1: { status: 'accepted', syncedAt: fresh() } },
+    })
+    expect(html).toContain('aria-label="Mark Alpha Synthetic present"')
+    expect(html).toContain('aria-label="Bib colour for Alpha Synthetic"')
+    expect(html).toContain('Add player')
+  })
+
+  it('points an empty Going view at Everyone instead of claiming nobody is coming', () => {
+    const html = screen({
+      entries: [],
+      rsvpByPlayer: { p1: { status: 'declined', syncedAt: fresh() } },
+    })
+    expect(html).toContain('Everyone')
+    expect(html).not.toMatch(/nobody is coming/i)
+    expect(html).toContain('2 hidden')
+  })
+})
+
+describe('refreshing the Spond context on the night', () => {
+  const fresh = () => new Date().toISOString()
+  const context = { p1: { status: 'accepted' as const, syncedAt: fresh() } }
+
+  it('offers Refresh only where there is context to refresh', () => {
+    expect(screen({ onRefresh: () => {} })).not.toContain('Refresh')
+    expect(screen({ rsvpByPlayer: context, onRefresh: () => {} })).toContain('Refresh')
+  })
+
+  it('says it is working without taking the register away', () => {
+    const html = screen({ rsvpByPlayer: context, onRefresh: () => {}, refreshing: true })
+    expect(html).toContain('Refreshing')
+    expect(html).toContain('Alpha Synthetic')
+  })
+
+  it('keeps every reply it already had when a refresh fails', () => {
+    // The rule: a failed refresh degrades to the last known context, never
+    // to no context and never to an error page. The coach keeps working.
+    const html = screen({ rsvpByPlayer: context, onRefresh: () => {}, refreshFailed: true })
+    expect(html).toContain('Going')
+    expect(html).toContain('Alpha Synthetic')
+    expect(html).toContain('Could not refresh')
+    expect(html).not.toContain('Something went wrong')
   })
 })
