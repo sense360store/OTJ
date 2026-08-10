@@ -106,26 +106,93 @@ jobs:
           # readback step below compares exactly the same set. graph.txt is the
           # single source of truth for both.
           python3 - <<'PY' > graph.txt
-          import re, pathlib, collections
-          start = pathlib.Path('supabase/functions/spond-link-members/index.ts')
-          if not start.exists():
-              raise SystemExit('entrypoint missing: %s' % start)
-          pat = re.compile(r"""from\s+['"](\.\.?/[^'"]+)['"]""")
-          seen, order, queue = set(), [], collections.deque([start])
+          import re, pathlib, collections, sys
+
+          ENTRY = pathlib.Path('supabase/functions/spond-link-members/index.ts')
+          ROOT = pathlib.Path('.').resolve()
+
+          def code(src: str) -> str:
+              """Blank comments only, so an import written in prose is never walked."""
+              out, i, n, prev = list(src), 0, len(src), ''
+              while i < n:
+                  c, two = src[i], src[i:i + 2]
+                  if two == '//':
+                      j = src.find('\n', i); j = n if j == -1 else j
+                      for k in range(i, j): out[k] = ' '
+                      i = j; continue
+                  if two == '/*':
+                      j = src.find('*/', i + 2); j = n if j == -1 else j + 2
+                      for k in range(i, j):
+                          if src[k] != '\n': out[k] = ' '
+                      i = j; continue
+                  if c in ('"', "'", '`'):
+                      q, j = c, i + 1
+                      while j < n:
+                          if src[j] == '\\': j += 2; continue
+                          if src[j] == q: break
+                          j += 1
+                      i = min(j + 1, n); prev = 'x'; continue
+                  if c == '/' and (prev in '=(,:[!&|?{};' or prev == ''):
+                      j = i + 1
+                      while j < n and src[j] != '\n':
+                          if src[j] == '\\': j += 2; continue
+                          if src[j] == '/': break
+                          j += 1
+                      if j < n and src[j] == '/':
+                          i = j + 1
+                          while i < n and src[i].isalpha(): i += 1
+                          prev = 'x'; continue
+                  if not c.isspace(): prev = c
+                  i += 1
+              return ''.join(out)
+
+          # Every specifier-bearing form. \s spans newlines, so multiline import
+          # clauses and `import type { ... } from` are covered by the `from` arm.
+          SPEC = [
+              re.compile(r"""\bfrom\s*['"]([^'"]+)['"]"""),        # import/export ... from
+              re.compile(r"""\bimport\s*\(\s*['"]([^'"]+)['"]"""), # dynamic import()
+              re.compile(r"""\bimport\s+['"]([^'"]+)['"]"""),      # side-effect import
+              re.compile(r"""\brequire\s*\(\s*['"]([^'"]+)['"]"""),
+          ]
+
+          def specifiers(src: str):
+              seen = []
+              for pat in SPEC:
+                  seen += pat.findall(src)
+              return seen
+
+          def resolve(base: pathlib.Path, rel: str) -> pathlib.Path:
+              """Resolve a repo-relative specifier, or raise. Deno requires explicit
+              extensions, so the bare path is the expected case; the extension and
+              directory-index candidates exist only so an unusual-but-valid layout
+              resolves rather than silently dropping out of the graph."""
+              cands = [base.parent / rel]
+              if not rel.endswith(('.ts', '.tsx', '.js', '.mjs', '.json')):
+                  cands += [base.parent / (rel + ext) for ext in ('.ts', '.tsx', '.js', '.mjs')]
+                  cands += [base.parent / rel / 'index.ts']
+              for c in cands:
+                  if c.is_file():
+                      return c.resolve()
+              raise SystemExit('relative import does not resolve: %s -> %s' % (base, rel))
+
+          if not ENTRY.exists():
+              raise SystemExit('entrypoint missing: %s' % ENTRY)
+
+          seen, order, queue = set(), [], collections.deque([ENTRY])
           while queue:
               f = queue.popleft().resolve()
-              if f in seen:
-                  continue
-              seen.add(f)
-              order.append(f)
-              for rel in pat.findall(f.read_text(encoding='utf-8')):
-                  nxt = (f.parent / rel)
-                  if not nxt.exists():
-                      raise SystemExit('relative import does not resolve: %s -> %s' % (f, rel))
-                  queue.append(nxt)
-          repo = pathlib.Path('.').resolve()
+              if f in seen: continue
+              seen.add(f); order.append(f)
+              for spec in specifiers(code(f.read_text(encoding='utf-8'))):
+                  # Only repo-relative specifiers are bundled source. npm:, jsr:,
+                  # node:, http(s):, data: and bare package names are remote and are
+                  # deliberately not walked.
+                  if not (spec.startswith('./') or spec.startswith('../')):
+                      continue
+                  queue.append(resolve(f, spec))
+
           for f in order:
-              print(f.relative_to(repo))
+              print(f.relative_to(ROOT))
           PY
           echo "import graph:"; cat graph.txt
           count="$(wc -l < graph.txt)"
@@ -372,50 +439,96 @@ jobs:
           print('- status: %s' % fn.get('status'))
           PY
 
-      - name: Read the deployed source back and compare it
+      - name: Read the deployed source back, from an empty directory
         shell: bash
         run: |
           set -euo pipefail
-          out="$(mktemp -d)"
-          trap 'rm -rf "$out"' EXIT
-          # download writes the deployed sources under supabase/functions/. Work
-          # against the checkout and restore it afterwards, comparing exactly the
-          # files the import graph produced.
-          if ! supabase functions download spond-link-members --project-ref "${SUPABASE_PROJECT_ID}" > "$out/download.log" 2>&1; then
+          # The download goes into a GENUINELY EMPTY scratch directory, never
+          # into or over the checkout. That is the whole point: if the hosted
+          # download omits a file, downloading on top of the checkout leaves the
+          # original in place, the existence test passes, git diff reports no
+          # change, and a PARTIAL readback is announced as byte for byte
+          # identical. Downloading into an empty tree makes an omission visible
+          # as an omission.
+          #
+          # The checkout is never modified to perform the readback, so no
+          # `git checkout --` restore is needed or done.
+          DL_DIR="$(mktemp -d)"
+          export DL_DIR
+          trap 'rm -rf "$DL_DIR"' EXIT
+          if [ -n "$(ls -A "$DL_DIR")" ]; then
+            echo "scratch download directory is not empty; refusing to treat it as evidence"; exit 1
+          fi
+          if ! ( cd "$DL_DIR" && supabase functions download spond-link-members --project-ref "${SUPABASE_PROJECT_ID}" ) > "$DL_DIR/../download.log" 2>&1; then
             {
               echo "### Deployed source readback"
               echo ""
-              echo "Readback UNAVAILABLE (the CLI could not download the function). The source hashes above plus the deployed version are the integrity record. This is NOT a byte for byte confirmation."
+              echo "**NOT BYTE-FOR-BYTE CONFIRMED.** The CLI could not download the"
+              echo "function, so there is no hosted source to compare. The source"
+              echo "hashes and the deployed version recorded above are the"
+              echo "integrity record instead."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          status=0
-          missing=0
-          while read -r f; do
-            [ -z "$f" ] && continue
-            if [ ! -f "$f" ]; then echo "readback missing ${f}"; missing=1; continue; fi
-            if git diff --quiet -- "$f"; then
-              echo "identical: ${f}"
-            else
-              echo "DIFFERS: ${f}"; status=1
-            fi
-          done < graph.txt
-          git checkout -- supabase/functions || true
-          {
-            echo "### Deployed source readback"
-            echo ""
-            if [ "$missing" = "1" ]; then
-              echo "The readback did not return every file in the import graph, so this is NOT a byte for byte confirmation."
-            elif [ "$status" = "0" ]; then
-              echo "Byte for byte identical to the deployed commit, across every file in the import graph."
-            else
-              echo "The downloaded source DIFFERS from the commit. This is often bundler normalisation rather than a bad deploy, but it is explicitly NOT a byte for byte confirmation and must be read before trusting the deploy."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          # A differing or partial readback is reported honestly, not silently
-          # described as identical, and not treated as fatal: the CLI may return
-          # a normalised bundle. The source hashes and the version are the record.
-          exit 0
+          echo "downloaded tree:"; find "$DL_DIR" -type f | sed "s#${DL_DIR}/##" | head -50
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import pathlib, sys, hashlib
+
+          import os
+          DOWNLOAD_ROOT = pathlib.Path(os.environ['DL_DIR']).resolve()
+          GRAPH = [l for l in pathlib.Path('graph.txt').read_text(encoding='utf-8').split() if l]
+          REPO = pathlib.Path('.').resolve()
+
+          def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+
+          missing, differing, identical = [], [], []
+          for rel in GRAPH:
+              got = DOWNLOAD_ROOT / rel
+              want = REPO / rel
+              # The downloaded tree is the ONLY evidence of hosted source. A file absent
+              # from it is missing, full stop: the checked-out copy is never consulted as
+              # a stand-in, which is what previously let a partial download read as
+              # identical.
+              if not got.is_file():
+                  missing.append(rel); continue
+              (identical if sha(got) == sha(want) else differing).append(rel)
+
+          downloaded = sorted(str(p.relative_to(DOWNLOAD_ROOT))
+                              for p in DOWNLOAD_ROOT.rglob('*') if p.is_file())
+          extra = [d for d in downloaded if d not in GRAPH]
+
+          confirmed = not missing and not differing and len(identical) == len(GRAPH)
+
+          print("### Deployed source readback")
+          print("")
+          print(f"- expected files (import graph): {len(GRAPH)}")
+          print(f"- found in download and identical: {len(identical)}")
+          print(f"- found in download but DIFFERING: {len(differing)}")
+          print(f"- MISSING from download: {len(missing)}")
+          if extra:
+              print(f"- additional downloaded files not in the graph: {len(extra)}")
+              for e in extra[:20]:
+                  print(f"    - `{e}`")
+              print("  These are reported only. An extra file can never stand in for an")
+              print("  expected one: each expected path is looked up by its own name.")
+          for rel in missing:
+              print(f"    - MISSING: `{rel}`")
+          for rel in differing:
+              print(f"    - DIFFERS: `{rel}`")
+          print("")
+          if confirmed:
+              print("**BYTE-FOR-BYTE CONFIRMED** across every file in the import graph.")
+          else:
+              print("**NOT BYTE-FOR-BYTE CONFIRMED.** The CLI may return a normalised or")
+              print("partial bundle rather than the original sources; that is common and")
+              print("is not by itself evidence of a bad deploy. It is explicitly NOT a")
+              print("byte for byte confirmation, and the source hashes plus the deployed")
+              print("version recorded above are the integrity record instead.")
+          sys.exit(0)
+          PY
+          # The verdict is reported, never fatal: a normalised bundle is a
+          # normal CLI outcome. What must never happen is a partial readback
+          # being described as confirmation, and it now cannot be.
 
       - name: Done
         shell: bash
