@@ -9,10 +9,12 @@
 // The underscore folder is not deployed; this file ships nowhere.
 import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
+  buildEventRow,
   buildResponseRows,
   deriveMemberStatuses,
   MAX_RESPONSE_IDS_PER_ARRAY,
   reduceLinkCandidate,
+  SPOND_EVENT_COLUMNS,
   SPOND_MEMBER_ID_PATTERN,
   SPOND_RESPONSE_COLUMNS,
 } from './spond.ts'
@@ -215,4 +217,77 @@ Deno.test('the member id pattern refuses anything that could be a person', () =>
   }
   assert(SPOND_MEMBER_ID_PATTERN.test(LINKED_A), 'the pattern refused a real shaped id')
   assert(SPOND_MEMBER_ID_PATTERN.test('0123456789ABCDEF'), 'the pattern refused the minimum length')
+})
+
+// ---- Release B beside the whole group event path ---------------------------
+//
+// Brought forward onto current main. Main added a second event source, the
+// whole group pass, which is where this club's weekly TRAINING is discovered:
+// an event addressed to the parent group rather than to any subgroup, stored
+// with team_id null. Release B's reconcile originally ran only inside the per
+// mapping loop, so training, the one session a coach actually runs a register
+// for, would have been the only thing in the club with no replies beside the
+// names. These pin that the two fit together and that neither weakened the
+// other.
+
+// A whole group training event, invented throughout, in the shape the group
+// wide query returns: no subgroup, and a responses block like any other.
+const SYNTHETIC_WHOLE_GROUP_TRAINING = {
+  id: 'EVT-SYNTH-WHOLE-GROUP-TRAINING',
+  heading: 'Training',
+  startTimestamp: '2026-08-11T17:45:00Z',
+  endTimestamp: '2026-08-11T18:45:00Z',
+  responses: SYNTHETIC_RESPONSES,
+  recipients: {
+    group: { id: 'GRP-SYNTH-1', members: [{ id: LINKED_A, firstName: 'Invented', lastName: 'Childname' }] },
+  },
+}
+
+Deno.test('a whole group training event is a club event: team_id null, same column set', () => {
+  const row = buildEventRow('club-1', null, SYNTHETIC_WHOLE_GROUP_TRAINING, SYNCED_AT)
+  assert(row !== null)
+  assertEquals(row.team_id, null)
+  assertEquals(row.title, 'Training')
+  // Release B did not widen the aggregate event row by a single column.
+  assertEquals(Object.keys(row).sort(), [...SPOND_EVENT_COLUMNS].sort())
+})
+
+Deno.test('linked members get RSVP context on a whole group event, exactly as on a subgroup one', () => {
+  // The reconcile is one implementation with two callers; this proves the
+  // derivation it runs is source agnostic, so training gets context too.
+  const statuses = deriveMemberStatuses(SYNTHETIC_WHOLE_GROUP_TRAINING.responses, LINKED)
+  const rows = buildResponseRows('club-1', 'EVENT-ROW-UUID-WHOLE-GROUP', statuses, SYNCED_AT)
+  assertEquals(rows.length, 2)
+  assertEquals(new Set(rows.map((r) => r.spond_member_id)), new Set([LINKED_A, LINKED_B]))
+  for (const r of rows) {
+    assertEquals(Object.keys(r).sort(), [...SPOND_RESPONSE_COLUMNS].sort())
+    assertEquals(r.synced_at, SYNCED_AT)
+  }
+})
+
+Deno.test('the unlinked member is absent from a whole group event too', () => {
+  // The sixth, unmapped subgroup's children are exactly the people who will
+  // not be linked. A whole group event must not become a way to store them.
+  const statuses = deriveMemberStatuses(SYNTHETIC_WHOLE_GROUP_TRAINING.responses, LINKED)
+  const rows = buildResponseRows('club-1', 'EVENT-ROW-UUID-WHOLE-GROUP', statuses, SYNCED_AT)
+  const flat = JSON.stringify(rows)
+  assert(!flat.includes(UNLINKED), 'an unlinked member reached a whole group response row')
+})
+
+Deno.test('no name or payload fragment reaches a whole group event row or its responses', () => {
+  const row = buildEventRow('club-1', null, SYNTHETIC_WHOLE_GROUP_TRAINING, SYNCED_AT)
+  const statuses = deriveMemberStatuses(SYNTHETIC_WHOLE_GROUP_TRAINING.responses, LINKED)
+  const rows = buildResponseRows('club-1', 'EVENT-ROW-UUID-WHOLE-GROUP', statuses, SYNCED_AT)
+  const flat = JSON.stringify(row) + JSON.stringify(rows)
+  for (const leak of ['Invented', 'Childname', 'recipients', 'acceptedIds', 'unconfirmedIds', 'GRP-SYNTH-1']) {
+    assert(!flat.includes(leak), `the whole group path leaked ${leak}`)
+  }
+})
+
+Deno.test('an unknown link set writes nothing for a whole group event either', () => {
+  // The three state rule is what the reconcile guards on before it runs at
+  // all. Empty means "the club linked nobody", and yields no rows rather
+  // than deleting anything.
+  const statuses = deriveMemberStatuses(SYNTHETIC_WHOLE_GROUP_TRAINING.responses, new Set<string>())
+  assertEquals(buildResponseRows('club-1', 'EVENT-ROW-UUID-WHOLE-GROUP', statuses, SYNCED_AT), [])
 })

@@ -115,9 +115,25 @@ No new capability key is introduced.
 
 Per event, the sync upserts the rows it saw stamped with this run's timestamp,
 then deletes only rows for that event that are strictly older. This has no
-empty window, is idempotent, is safe under two overlapping runs without a lock,
-and leaves the previous context intact when a write fails rather than emptying
-the event.
+empty window, is idempotent, and leaves the previous context intact when a
+write fails rather than emptying the event.
+
+**What two overlapping runs can and cannot do, stated exactly.** Neither run
+can empty an event, because the upsert always lands before the delete, and
+neither can store a member nobody linked, because the response foreign key
+refuses it. Those two properties hold without a lock.
+
+They are not the same as being race free, and an earlier draft of this
+decision overstated it. The residual is real and accepted: the upsert sets
+`synced_at` unconditionally, so an OLDER run committing after a NEWER one
+lowers a row's stamp to its own, and the event then holds that older view of
+who replied. Recorded as known debt rather than claimed away.
+
+It is left unserialised deliberately. The cost of being wrong is a stale reply
+shown as context, the next successful sync self heals it, and **attendance is
+never affected**: the sync reads and writes no `register_entries`, so a raced
+RSVP cannot tick, clear or reorder anything a coach recorded. A lock is not
+added to Release B for this alone.
 
 ### 8. An unprovable link set means "do nothing", never "delete everything".
 
