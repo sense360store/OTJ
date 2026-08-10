@@ -606,7 +606,8 @@ Deno.test('the whole group pass reads no member data from the group payload', ()
 
 const OPEN_GATE = {
   subgroupIds: [...SG_MAPPED, SG_UNMAPPED],
-  mappedSubgroupIds: SG_MAPPED,
+  // Every mapped subgroup answered its own query in the mappings loop.
+  answeredSubgroupIds: SG_MAPPED,
   hasWholeGroupMapping: false,
   truncated: false,
 }
@@ -615,7 +616,8 @@ Deno.test('the gate opens for the real topology and names the unmapped subgroup 
   const gate = wholeGroupGate(OPEN_GATE)
   assert(gate.ok)
   // The sixth subgroup is asked precisely because nothing maps to it.
-  assertEquals(gate.unmapped, [SG_UNMAPPED])
+  assertEquals(gate.unasked, [SG_UNMAPPED])
+  assertEquals(gate.total, 6)
 })
 
 Deno.test('the gate shuts when the subgroup list is unknown', () => {
@@ -646,15 +648,68 @@ Deno.test('the gate stands aside when a whole group mapping already exists', () 
 })
 
 Deno.test('a group with no subgroups at all is a real answer: everything is whole group', () => {
-  const gate = wholeGroupGate({ ...OPEN_GATE, subgroupIds: [], mappedSubgroupIds: [] })
+  const gate = wholeGroupGate({ ...OPEN_GATE, subgroupIds: [], answeredSubgroupIds: [] })
   assert(gate.ok)
-  assertEquals(gate.unmapped, [])
+  assertEquals(gate.unasked, [])
+  assertEquals(gate.total, 0)
 })
 
 Deno.test('a mapped subgroup Spond no longer lists does not reopen the gate', () => {
   // The mapping names a subgroup the group no longer has. The unmapped set
   // is still derived from what Spond lists, so nothing is left unasked.
-  const gate = wholeGroupGate({ ...OPEN_GATE, mappedSubgroupIds: [...SG_MAPPED, 'SG-SYNTH-GONE'] })
+  const gate = wholeGroupGate({ ...OPEN_GATE, answeredSubgroupIds: [...SG_MAPPED, 'SG-SYNTH-GONE'] })
   assert(gate.ok)
-  assertEquals(gate.unmapped, [SG_UNMAPPED])
+  assertEquals(gate.unasked, [SG_UNMAPPED])
+})
+
+// ---- A mapped subgroup that did not answer --------------------------------
+//
+// Found by the adversarial review and confirmed rather than refuted. A mapped
+// subgroup whose own events query failed (a timeout, a 403, a non array body)
+// is CONFIGURED but told us nothing. Keying the pass on the mappings would
+// count it as asked, exclude it from the re-ask, and then the group wide
+// query would return that team's own fixtures, match them against nothing,
+// and store them as team_id null All teams events, overwriting the correct
+// team a previous clean run stored. The gate is therefore keyed on what
+// ANSWERED, never on what was configured.
+
+Deno.test('a mapped subgroup whose query failed is asked again, not assumed asked', () => {
+  // Titans (SG_MAPPED[0]) timed out in the mappings loop, so it answered
+  // nothing. The other four answered.
+  const gate = wholeGroupGate({ ...OPEN_GATE, answeredSubgroupIds: SG_MAPPED.slice(1) })
+  assert(gate.ok)
+  // Both the failed mapped subgroup and the unmapped one are re-asked.
+  assertEquals(gate.unasked, [SG_MAPPED[0], SG_UNMAPPED])
+})
+
+Deno.test("a failed mapped subgroup's events never reach the whole group result", () => {
+  // The full sequence the review described. Titans' query failed, so its
+  // fixture id is absent from what the mappings loop saw.
+  const titansFixture = 'EVT-SYNTH-FIXTURE-TITANS'
+  const seenFromMappings = new Set([FIXTURE_ID])
+  const groupWide = [TRAINING_ID, FIXTURE_ID, titansFixture, UNMAPPED_ID]
+
+  // Without the re-ask, the Titans fixture looks exactly like a whole group
+  // event. This is the bug, pinned.
+  assert(wholeGroupEventIds(groupWide, seenFromMappings).includes(titansFixture))
+
+  // With the gate keyed on what answered, Titans is re-asked, its ids join
+  // the seen set, and only the genuine whole group event survives.
+  const gate = wholeGroupGate({ ...OPEN_GATE, answeredSubgroupIds: SG_MAPPED.slice(1) })
+  assert(gate.ok)
+  assert(gate.unasked.includes(SG_MAPPED[0]), 'the failed mapped subgroup must be re-asked')
+  const afterReask = new Set([...seenFromMappings, titansFixture, UNMAPPED_ID])
+  assertEquals(wholeGroupEventIds(groupWide, afterReask), [TRAINING_ID])
+})
+
+Deno.test('if the re-ask also fails the pass stores nothing, rather than guessing', () => {
+  // The function treats a failed re-ask as unmappedFailed and skips the group
+  // wide query entirely. Pinned here at the discriminator level: with the
+  // failed subgroup's events still unseen, nothing may be inferred, so the
+  // only safe result is to store no whole group events at all.
+  const stillUnseen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  const groupWide = [TRAINING_ID, 'EVT-SYNTH-FIXTURE-TITANS']
+  // The discriminator alone would emit the Titans fixture, which is exactly
+  // why the function must not reach it after a failed re-ask.
+  assert(wholeGroupEventIds(groupWide, stillUnseen).includes('EVT-SYNTH-FIXTURE-TITANS'))
 })

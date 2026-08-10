@@ -327,6 +327,12 @@ Deno.serve(async (req) => {
   // never seen, and calling it a whole group event would store a subgroup's
   // event as an All teams one.
   const truncatedGroups = new Set<string>()
+  // The subgroups that actually ANSWERED an events query this run. A mapped
+  // subgroup whose query failed is configured but told us nothing, so it is
+  // not in here and the whole group pass re-asks it. Keying that pass on the
+  // mappings instead would treat a failed subgroup as asked, and the group
+  // wide query would then store that team's own fixtures as club events.
+  const answeredSubgroups = new Set<string>()
   let processed = 0
   let eventsTotal = 0
   let stopped: string | null = null
@@ -372,6 +378,7 @@ Deno.serve(async (req) => {
         if (typeof eventId === 'string' && eventId) subgroupSeen.add(eventId)
       }
       if (fetched.events.length >= MAX_EVENTS_PER_GROUP) truncatedGroups.add(mapping.spond_group_id)
+      answeredSubgroups.add(mapping.spond_subgroup_id)
     }
 
     const warnings: string[] = []
@@ -500,9 +507,7 @@ Deno.serve(async (req) => {
     const subgroupIds = groups.subgroupsByGroup.get(groupId) ?? null
     const gate = wholeGroupGate({
       subgroupIds,
-      mappedSubgroupIds: groupMappings
-        .map((m) => m.spond_subgroup_id)
-        .filter((id): id is string => typeof id === 'string' && !!id),
+      answeredSubgroupIds: [...answeredSubgroups],
       hasWholeGroupMapping: groupMappings.some((m) => !m.spond_subgroup_id),
       truncated: truncatedGroups.has(groupId),
     })
@@ -511,14 +516,15 @@ Deno.serve(async (req) => {
       continue
     }
 
-    // Ask the subgroups this run has not already asked. Only event ids are
+    // Ask every subgroup that has not already answered: the unmapped ones,
+    // and any mapped one whose own query failed above. Only event ids are
     // read from these responses: no row is built and nothing is stored.
     const mapped = new Set(
       groupMappings.map((m) => m.spond_subgroup_id).filter((id): id is string => typeof id === 'string' && !!id),
     )
-    const unmapped = gate.unmapped
+    const unasked = gate.unasked
     let unmappedFailed = false
-    for (const subgroupId of unmapped) {
+    for (const subgroupId of unasked) {
       const fetched = await spondEvents(
         login.token,
         { id: `subgroup:${subgroupId}`, spond_group_id: groupId, spond_subgroup_id: subgroupId },
@@ -601,11 +607,18 @@ Deno.serve(async (req) => {
 
     eventsTotal += rows.length
     const notes: string[] = []
-    if (unmapped.length > 0) {
+    const unmappedCount = unasked.filter((id) => !mapped.has(id)).length
+    const reasked = unasked.length - unmappedCount
+    if (unmappedCount > 0) {
       notes.push(
-        unmapped.length === 1
+        unmappedCount === 1
           ? '1 subgroup is not mapped to a team; its own events were excluded.'
-          : `${unmapped.length} subgroups are not mapped to a team; their own events were excluded.`,
+          : `${unmappedCount} subgroups are not mapped to a team; their own events were excluded.`,
+      )
+    }
+    if (reasked > 0) {
+      notes.push(
+        `${reasked} mapped subgroup${reasked === 1 ? '' : 's'} did not answer above and ${reasked === 1 ? 'was' : 'were'} asked again here, so ${reasked === 1 ? 'its' : 'their'} events are not mistaken for whole group events.`,
       )
     }
     if (malformed > 0) {
@@ -615,7 +628,7 @@ Deno.serve(async (req) => {
     record({
       status: 'synced',
       whole_group_events: rows.length,
-      subgroups_total: mapped.size + unmapped.length,
+      subgroups_total: gate.total,
       subgroups_mapped: mapped.size,
       group_wide_returned: byId.size,
       ...(notes.length > 0 ? { notes } : {}),

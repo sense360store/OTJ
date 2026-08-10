@@ -451,11 +451,20 @@ export function groupSubgroupIds(groups: unknown, groupId: string): string[] | n
 // subgroup's private event in front of every team and every parent. In
 // every one of those cases the correct answer is to sync no whole group
 // events at all and say so, never to guess.
-export type WholeGroupGate = { ok: true; unmapped: string[] } | { ok: false; reason: string }
+// `unasked` is every subgroup that has not already ANSWERED this run, which
+// is deliberately not the same as every subgroup that is unmapped. A mapped
+// subgroup whose events query failed was configured but told us nothing, so
+// it is unasked: its events are absent from what we saw for a reason that
+// has nothing to do with recipients scope. Keying this on the mappings
+// instead would silently exclude it from the re-ask and let the group wide
+// query store that team's own fixtures as All teams club events.
+export type WholeGroupGate =
+  | { ok: true; unasked: string[]; total: number }
+  | { ok: false; reason: string }
 
 export function wholeGroupGate(input: {
   subgroupIds: string[] | null
-  mappedSubgroupIds: string[]
+  answeredSubgroupIds: string[]
   hasWholeGroupMapping: boolean
   truncated: boolean
 }): WholeGroupGate {
@@ -483,8 +492,12 @@ export function wholeGroupGate(input: {
         `A subgroup returned the maximum of ${MAX_EVENTS_PER_GROUP} events, so its list is incomplete and whole group events were not synced.`,
     }
   }
-  const mapped = new Set(input.mappedSubgroupIds)
-  return { ok: true, unmapped: input.subgroupIds.filter((id) => !mapped.has(id)) }
+  const answered = new Set(input.answeredSubgroupIds)
+  return {
+    ok: true,
+    unasked: input.subgroupIds.filter((id) => !answered.has(id)),
+    total: input.subgroupIds.length,
+  }
 }
 
 // The event ids a group wide query returned that no subgroup query
