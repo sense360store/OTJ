@@ -116,8 +116,13 @@ function LinkSpondEventModal({
         </p>
       ) : shown.length === 0 ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
+          {/* Name only the widenings this picker is actually offering: the
+              team chips are absent for a session with no team, and pointing
+              at a control that is not on screen is worse than saying less. */}
           {events.length > 0
-            ? `No synced events here. Try ${ALL_EVENTS_LABEL}, or all club events.`
+            ? teamId
+              ? `No synced events here. Try ${ALL_EVENTS_LABEL}, or all club events.`
+              : `No synced events here. Try ${ALL_EVENTS_LABEL}.`
             : 'Nothing synced yet. An admin presses Sync now on the Spond screen first.'}
         </p>
       ) : (

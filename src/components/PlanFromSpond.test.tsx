@@ -96,6 +96,14 @@ describe('PlanFromSpondView', () => {
     expect(html).toContain('All teams')
   })
 
+  it('names only the widenings it is actually offering', () => {
+    // A coach whose scope is already the whole club gets no All teams
+    // chip, so the empty copy must not send them looking for one.
+    const html = render({ rows: [], eventsExist: true, showAllToggle: false })
+    expect(html).toContain('No unplanned events here')
+    expect(html).not.toContain('All teams')
+  })
+
   it('labels the planning row and disables every plan control while a create is in flight', () => {
     const html = render({
       rows: [ev({ id: 'e1' }), ev({ id: 'e2', title: 'U8 Match' })],

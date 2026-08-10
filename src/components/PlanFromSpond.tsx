@@ -96,8 +96,12 @@ export function PlanFromSpondView({
         </p>
       ) : rows.length === 0 ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
+          {/* Name only the widenings actually on screen: the All teams chip
+              is absent for a coach whose scope is already the whole club. */}
           {eventsExist
-            ? `No unplanned events here. Try ${ALL_EVENTS_LABEL}, or All teams.`
+            ? showAllToggle
+              ? `No unplanned events here. Try ${ALL_EVENTS_LABEL}, or All teams.`
+              : `No unplanned events here. Try ${ALL_EVENTS_LABEL}.`
             : 'Nothing synced yet. An admin presses Sync now on the Spond screen first.'}
         </p>
       ) : (
