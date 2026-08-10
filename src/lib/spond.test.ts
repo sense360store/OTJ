@@ -11,6 +11,7 @@ import {
   spondTeamLabel,
   syncedAgo,
 } from './spond'
+import { isTrainingEvent as canonicalIsTrainingEvent } from './eventKind'
 import type { SpondEvent, SpondMapping } from './data'
 
 // A synced event fixture: counts and event facts only, the shape the
@@ -143,6 +144,12 @@ describe('isTrainingEvent, re-exported from the canonical classifier', () => {
 
   it('lets Spond overrule a misleading title', () => {
     expect(isTrainingEvent({ title: 'Titans training', spondType: 'MATCH' })).toBe(false)
+  })
+
+  it('is the very same function, not a second one that agrees today', () => {
+    // Identity, not behaviour. A shim that merely behaved the same would be
+    // exactly the duplicate classifier this whole arrangement forbids.
+    expect(isTrainingEvent).toBe(canonicalIsTrainingEvent)
   })
 })
 
