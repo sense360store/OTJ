@@ -1,0 +1,245 @@
+name: Deploy spond-roster-import Edge Function
+
+# Manual, production-environment-gated deploy of the spond-roster-import Edge
+# Function directly from the checked-out repository files, mirroring
+# deploy-spond-sync.yml. It deploys ONLY spond-roster-import. It applies no
+# migration, changes no grant, creates nothing, and never invokes the function:
+# running an import stays a manager's action in the app, so no roster data is
+# written by this workflow.
+#
+# Why a workflow rather than an inline deploy. spond-roster-import bundles
+# _shared/fa.ts, which carries resolveCaller, the auth boundary, and
+# _shared/spond.ts: a little over 100 KB in total. CLAUDE.md records that a
+# deploy pasting file contents inline can be silently truncated or replaced
+# with a placeholder while still reporting success. Deploying from disk removes
+# that failure mode entirely rather than relying on catching it afterwards.
+#
+# Secrets are read only through environment variables and are never printed.
+# No step uses `set -x`; every script uses `set -euo pipefail`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project:
+        description: "Type the target Supabase project ref to confirm (must equal uynorsnrvocksgqweucu)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-spond-roster-import-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy spond-roster-import
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      CONFIRM_PROJECT: ${{ inputs.confirm_project }}
+      # A project ref is not a credential; it appears in every function URL.
+      # Hardcoded so a valid token cannot deploy to the wrong project.
+      EXPECTED_PROJECT_REF: uynorsnrvocksgqweucu
+      SUPABASE_CLI_VERSION: 2.105.0
+    steps:
+      - name: Check out the selected commit
+        uses: actions/checkout@v4
+
+      - name: Confirm target project (double gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CONFIRM_PROJECT}" ]; then
+            echo "confirm_project input is empty"; exit 1
+          fi
+          if [ "${CONFIRM_PROJECT}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "confirm_project does not match the expected project ref"; exit 1
+          fi
+          if [ -z "${SUPABASE_PROJECT_ID}" ]; then
+            echo "SUPABASE_PROJECT_ID secret is not set"; exit 1
+          fi
+          if [ "${SUPABASE_PROJECT_ID}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "the configured project secret does not match the expected project ref"; exit 1
+          fi
+
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.105.0
+
+      - name: Assert Supabase CLI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          have="$(supabase --version)"
+          echo "Supabase CLI: ${have}"
+          if [ "${have}" != "${SUPABASE_CLI_VERSION}" ]; then
+            echo "Expected pinned Supabase CLI ${SUPABASE_CLI_VERSION}, got ${have}"; exit 1
+          fi
+
+      - name: Verify working tree and hash the deploy source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree is not clean; refusing to deploy"; git status --porcelain; exit 1
+          fi
+          SHA="$(git rev-parse HEAD)"
+          {
+            echo "## spond-roster-import Edge Function deploy"
+            echo ""
+            echo "- Commit: \`${SHA}\`"
+            echo "- Project: \`${EXPECTED_PROJECT_REF}\`"
+            echo "- Supabase CLI: \`${SUPABASE_CLI_VERSION}\`"
+            echo ""
+            echo "### Source hashes (the integrity record)"
+            echo '```'
+            sha256sum supabase/functions/spond-roster-import/index.ts \
+                      supabase/functions/_shared/spond.ts \
+                      supabase/functions/_shared/fa.ts
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assert the deploy source carries the guard, and writes no roster row it should not
+        shell: bash
+        run: |
+          set -euo pipefail
+          idx=supabase/functions/spond-roster-import/index.ts
+          shared=supabase/functions/_shared/spond.ts
+
+          # Positive 1: the registrations read is CLUB WIDE for the current
+          # season. The old implementation filtered by team, which is exactly
+          # what let a child who moved subgroup be imported a second time. A
+          # deploy carrying a team scoped read would be a no-op against the bug.
+          if grep -nE "\.eq\('season_id', seasonId\)" -A 2 "$idx" | grep -qE "\.eq\('team_id', teamId\)"; then
+            echo "the registrations read is still team scoped; refusing to deploy"; exit 1
+          fi
+
+          # Positive 2: the cross team refusal exists end to end.
+          for needle in "registeredElsewhere" "registered_elsewhere" "elsewhereNames"; do
+            if ! grep -qF "$needle" "$idx"; then
+              echo "the deploy source is missing ${needle}; refusing to deploy"; exit 1
+            fi
+          done
+          if ! grep -qF "registeredElsewhere" "$shared"; then
+            echo "_shared/spond.ts is missing the registeredElsewhere plan field; refusing to deploy"; exit 1
+          fi
+
+          # Positive 3: both roster reads are paged. An unpaged read truncates at
+          # db.max_rows and a registration past the cap is absent from the cross
+          # team set, so the guard would silently stop guarding.
+          pages="$(grep -c "range(from, from + PAGE - 1)" "$idx" || true)"
+          echo "paged roster reads: ${pages}"
+          if [ "${pages}" != "2" ]; then
+            echo "expected both roster reads to be paged; refusing to deploy"; exit 1
+          fi
+
+          # Negative 1: the import still never moves, unregisters or deletes a
+          # child. It inserts through the RPC and nothing else.
+          if grep -nE "\.from\('player_registrations'\)" "$idx" | grep -qE "\.update\(|\.delete\(|\.upsert\("; then
+            echo "the import must not update, upsert or delete a registration; refusing to deploy"; exit 1
+          fi
+          if grep -nE "\.from\('players'\)" "$idx" | grep -qE "\.update\(|\.delete\(|\.upsert\("; then
+            echo "the import must not update, upsert or delete a player; refusing to deploy"; exit 1
+          fi
+
+          # Negative 2: the commit path is still the transactional RPC, not a per
+          # member loop.
+          if ! grep -qF "rpc('spond_import_roster'" "$idx"; then
+            echo "the commit path is not spond_import_roster; refusing to deploy"; exit 1
+          fi
+
+      - name: Deploy spond-roster-import (verify_jwt = true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No --no-verify-jwt: the function requires a signed in caller, and
+          # the post-deploy assertion below proves it.
+          supabase functions deploy spond-roster-import --project-ref "${SUPABASE_PROJECT_ID}"
+
+      - name: Assert the deployed JWT posture and record the version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          supabase functions list --project-ref "${SUPABASE_PROJECT_ID}" --output json > "$tmp"
+          python3 - "$tmp" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          fns = json.load(open(sys.argv[1]))
+          rows = fns if isinstance(fns, list) else fns.get('functions', [])
+          match = [f for f in rows if f.get('slug') == 'spond-roster-import']
+          if not match:
+              print('spond-roster-import not found in the deployed function list'); sys.exit(1)
+          fn = match[0]
+          if fn.get('verify_jwt') is not True:
+              print('spond-roster-import must require a JWT; got %r' % (fn.get('verify_jwt'),)); sys.exit(1)
+          if fn.get('status') != 'ACTIVE':
+              print('spond-roster-import is not ACTIVE; got %r' % (fn.get('status'),)); sys.exit(1)
+          print('### Hosted function state')
+          print('')
+          print('- version: %s' % fn.get('version'))
+          print('- verify_jwt: %s' % fn.get('verify_jwt'))
+          print('- status: %s' % fn.get('status'))
+          PY
+
+      - name: Read the deployed source back and prove it is not the old implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          if ! supabase functions download spond-roster-import --project-ref "${SUPABASE_PROJECT_ID}" > "$out/download.log" 2>&1; then
+            {
+              echo "### Deployed source readback"
+              echo "Readback unavailable (bundled deploy). The source hashes above plus the deployed version are the integrity record."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          got="supabase/functions/spond-roster-import/index.ts"
+          guard_ok=1
+          if [ -f "$got" ]; then
+            # The content check that matters: the DEPLOYED source carries the
+            # guard and is not the old team-only implementation.
+            grep -qF "registeredElsewhere" "$got" || guard_ok=0
+            grep -qF "elsewhereNames" "$got" || guard_ok=0
+          else
+            guard_ok=0
+          fi
+          status=0
+          for f in spond-roster-import/index.ts _shared/spond.ts _shared/fa.ts; do
+            path="supabase/functions/${f}"
+            if [ ! -f "$path" ]; then echo "readback missing ${f}"; status=1; continue; fi
+            if git diff --quiet -- "$path"; then echo "identical: ${f}"; else echo "DIFFERS: ${f}"; status=1; fi
+          done
+          git checkout -- supabase/functions || true
+          {
+            echo "### Deployed source readback"
+            if [ "$guard_ok" = "1" ]; then
+              echo "The deployed source carries the cross team guard (registeredElsewhere, elsewhereNames). It is NOT the old team-only implementation."
+            else
+              echo "**The deployed source does NOT carry the guard.** Treat this deploy as failed and investigate."
+            fi
+            if [ "$status" = "0" ]; then
+              echo ""
+              echo "Byte for byte identical to the deployed commit."
+            else
+              echo ""
+              echo "The downloaded source differs from the commit. This is often bundler normalisation, but it is NOT a byte for byte confirmation."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$guard_ok" != "1" ]; then exit 1; fi
+          # A differing readback is reported, not fatal: the CLI may return a
+          # normalised bundle. The source hashes and the version are the record.
+          exit 0
+
+      - name: Done
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "spond-roster-import deployed from disk with verify_jwt=true. No migration, no grant, no secret change and no roster write was made."
