@@ -40,6 +40,13 @@ export const WINDOW_FORWARD_DAYS = 90
 export const MAX_EVENTS_PER_GROUP = 100
 export const MAX_TOTAL_EVENTS = 500
 
+// Defensive cap on how many subgroup queries one parent group costs in a
+// run. The whole group pass below queries every subgroup Spond lists for
+// the group, mapped or not, so this bounds a group whose subgroup list is
+// unexpectedly long. A group with more subgroups than this is reported and
+// its whole group pass is skipped, never guessed at.
+export const MAX_SUBGROUP_QUERIES = 20
+
 // Timeout on every Spond request.
 export const SPOND_TIMEOUT_MS = 15_000
 
@@ -140,9 +147,11 @@ export const SPOND_EVENT_COLUMNS = [
   'spond_type',
 ] as const
 
-// team_id is null only for a club event, one matched by more than one
-// mapping in a run (see claimEvent); buildEventRow itself always writes
-// the mapping's team.
+// team_id is null for a club event, which arises two ways: an event
+// matched by more than one mapping in a run (see claimEvent), or an event
+// addressed to the whole parent group rather than to any subgroup (see
+// the whole group pass in spond-sync). A subgroup mapping's event always
+// carries that mapping's team.
 export interface SpondEventRow {
   club_id: string
   spond_event_id: string
@@ -281,7 +290,7 @@ export function deriveLocation(location: unknown): string | null {
 // the same defensive read the reference library's ical example uses.
 export function buildEventRow(
   clubId: string,
-  teamId: string,
+  teamId: string | null,
   event: unknown,
   syncedAt: string,
 ): SpondEventRow | null {
@@ -363,6 +372,86 @@ export function visibleGroupIds(groups: unknown): Set<string> {
     if (typeof id === 'string' && id) ids.add(id)
   }
   return ids
+}
+
+// =====================================================================
+// The whole group pass: events addressed to the parent group itself.
+//
+// THE SCOPING FACT THIS EXISTS FOR. subGroupId is a restriction, not a
+// widening: the reference library documents it as "Restrict to events
+// within this subgroup", and production proved that literal. Every one of
+// this club's mappings names a subgroup, so every query carried
+// subGroupId, and an event addressed to the whole parent group (the
+// club's weekly training) was returned by none of them. Fixtures, which
+// are addressed to a subgroup, arrived; training never did. Sending
+// scheduled=True was necessary and not sufficient: it fixed which events
+// Spond will consider, not which recipients scope is asked for.
+//
+// WHY THIS IS NOT SIMPLY "DROP subGroupId". A query without subGroupId
+// returns the whole group's events AND every subgroup's events together,
+// with nothing in the response saying which. Storing all of it would
+// destroy team attribution, and storing "whatever the mapped subgroup
+// queries missed" would be worse: this club's Spond group has six
+// subgroups and five are mapped, so the sixth subgroup's events would
+// land in the Hub as club wide "All teams" events, visible to every team
+// and every parent. The unmapped subgroup is the leak this design exists
+// to prevent.
+//
+// THE DISCRIMINATOR, and why it reads no person data. The event payload
+// gives no usable answer: the reference library's Event model carries no
+// recipients, group or subGroups field at all, and the raw recipients
+// object embeds member names, which this function never reads. The group
+// does give an answer. The reference library's Group model carries
+// `subgroups: list[Subgroup] = Field(alias="subGroups")` and Subgroup is
+// exactly `{uid (alias "id"), name}`: group structure, not membership. So
+// the complete subgroup id list comes from the groups/ response the sync
+// already fetches for visibleGroupIds, and only the ids are read, never a
+// subgroup name, never the members array beside it.
+//
+// An event is therefore addressed to the whole group when the group wide
+// query returned it and NO subgroup query did, with every subgroup asked,
+// mapped or not. That is a fact about recipients scope derived entirely
+// from event ids and subgroup ids.
+// =====================================================================
+
+// The complete subgroup id list for one parent group, read from the
+// groups/ response. Group structure only: subGroups[].id, never a name,
+// never a member.
+//
+// Null is the FAIL CLOSED signal and is not the same as an empty list.
+// Null means the group is absent from the response or its subGroups is
+// not an array, so the subgroup set is unknown; the caller must then skip
+// the whole group pass entirely, because "returned by no subgroup query"
+// is only trustworthy when every subgroup was actually asked. An empty
+// array is a real answer, a group with no subgroups at all, and every
+// event in it is a whole group event.
+export function groupSubgroupIds(groups: unknown, groupId: string): string[] | null {
+  if (!Array.isArray(groups)) return null
+  const group = groups.find((g) => asRecord(g).id === groupId)
+  if (group === undefined) return null
+  const subs = asRecord(group).subGroups
+  if (!Array.isArray(subs)) return null
+  const ids: string[] = []
+  for (const sub of subs) {
+    const id = asRecord(sub).id
+    if (typeof id === 'string' && id && !ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
+
+// The event ids a group wide query returned that no subgroup query
+// returned. Pure, so the test can pin the six subgroups and five mappings
+// case directly: an event seen only under the unmapped sixth subgroup is
+// absent from this result and never becomes a club event.
+export function wholeGroupEventIds(groupWideIds: Iterable<string>, seenInAnySubgroup: Set<string>): string[] {
+  const out: string[] = []
+  const emitted = new Set<string>()
+  for (const id of groupWideIds) {
+    if (seenInAnySubgroup.has(id) || emitted.has(id)) continue
+    emitted.add(id)
+    out.push(id)
+  }
+  return out
 }
 
 // =====================================================================

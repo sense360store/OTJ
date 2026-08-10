@@ -17,11 +17,13 @@ import {
   deriveLocation,
   eventsQuery,
   extractAccessToken,
+  groupSubgroupIds,
   MAX_EVENTS_PER_GROUP,
   SPOND_EVENT_COLUMNS,
   spondTimestamp,
   syncWindow,
   visibleGroupIds,
+  wholeGroupEventIds,
 } from './spond.ts'
 import type { SpondEventRow } from './spond.ts'
 
@@ -441,4 +443,156 @@ Deno.test('claims track each event id independently', () => {
   assertEquals(claimEvent(queued, rowFor('team-2', 'EVT-SYNTH-B')), { outcome: 'queued' })
   assertEquals(queued.get('EVT-SYNTH-A')?.team_id, 'team-1')
   assertEquals(queued.get('EVT-SYNTH-B')?.team_id, 'team-2')
+})
+
+// ---- The whole group pass: six subgroups, five mapped ----------------------
+//
+// The production topology this exists for, with invented ids throughout. The
+// club's Spond group has SIX subgroups and only FIVE are mapped to a team.
+// Training is addressed to the parent group itself, so no subgroup query
+// returns it; a fixture is addressed to one subgroup; and the sixth,
+// unmapped subgroup has an event of its own that must never reach the Hub,
+// because a club event is visible to every team and every parent.
+
+const GROUP_ID = 'GRP-SYNTH-U8'
+const SG_MAPPED = ['SG-SYNTH-1', 'SG-SYNTH-2', 'SG-SYNTH-3', 'SG-SYNTH-4', 'SG-SYNTH-5']
+const SG_UNMAPPED = 'SG-SYNTH-6-UNMAPPED'
+
+// A groups/ entry as the reference library's Group model reads it: subGroups
+// entries are {id, name}, beside a members array carrying invented names. The
+// discriminator must take the subgroup ids and touch nothing else.
+const SYNTHETIC_GROUP = {
+  id: GROUP_ID,
+  name: 'Invented Town u8 25 - 26',
+  subGroups: [...SG_MAPPED, SG_UNMAPPED].map((id) => ({ id, name: `Invented squad ${id}` })),
+  members: [
+    { id: 'FAKE-MEMBER-1', firstName: 'Invented', lastName: 'Child', subGroups: [SG_MAPPED[0]] },
+    { id: 'FAKE-MEMBER-2', firstName: 'Made', lastName: 'Up', subGroups: [SG_UNMAPPED] },
+  ],
+}
+
+// What each query returns. Training appears ONLY in the group wide result,
+// which is the scoping fact this whole change exists for.
+const TRAINING_ID = 'EVT-SYNTH-TRAINING-WHOLE-GROUP'
+const FIXTURE_ID = 'EVT-SYNTH-FIXTURE-MAPPED'
+const UNMAPPED_ID = 'EVT-SYNTH-UNMAPPED-SUBGROUP-ONLY'
+const GROUP_WIDE_RETURNED = [TRAINING_ID, FIXTURE_ID, UNMAPPED_ID]
+
+Deno.test('the subgroup list is read from the group, ids only, never a name or a member', () => {
+  const ids = groupSubgroupIds([SYNTHETIC_GROUP], GROUP_ID)
+  assertEquals(ids, [...SG_MAPPED, SG_UNMAPPED])
+  // Nothing that could identify a person, and no subgroup label, comes back.
+  const asText = JSON.stringify(ids)
+  for (const leak of ['Invented', 'Made', 'Up', 'Child', 'FAKE-MEMBER', 'squad', 'name']) {
+    assert(!asText.includes(leak), `subgroup ids must not carry ${leak}`)
+  }
+})
+
+Deno.test('an unreadable subgroup list fails closed as null, which is not an empty list', () => {
+  // Absent group, absent subGroups, and a non array subGroups: all unknown.
+  assertEquals(groupSubgroupIds([SYNTHETIC_GROUP], 'GRP-SYNTH-OTHER'), null)
+  assertEquals(groupSubgroupIds([{ id: GROUP_ID }], GROUP_ID), null)
+  assertEquals(groupSubgroupIds([{ id: GROUP_ID, subGroups: 'nonsense' }], GROUP_ID), null)
+  assertEquals(groupSubgroupIds(null, GROUP_ID), null)
+  // A group genuinely without subgroups is a real answer, not unknown.
+  assertEquals(groupSubgroupIds([{ id: GROUP_ID, subGroups: [] }], GROUP_ID), [])
+})
+
+Deno.test('whole group training appears: no subgroup query returned it', () => {
+  // Every subgroup asked, mapped and unmapped, exactly as the pass does.
+  const seen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  assertEquals(wholeGroupEventIds(GROUP_WIDE_RETURNED, seen), [TRAINING_ID])
+})
+
+Deno.test('a mapped subgroup fixture stays on its team and is never re-claimed', () => {
+  // The fixture was returned by its subgroup query, so the pass skips it and
+  // the team the mapping gave it stands.
+  const seen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  assert(!wholeGroupEventIds(GROUP_WIDE_RETURNED, seen).includes(FIXTURE_ID))
+  const queued = new Map<string, SpondEventRow>()
+  claimEvent(queued, rowFor('team-titans', FIXTURE_ID))
+  assertEquals(queued.get(FIXTURE_ID)?.team_id, 'team-titans')
+})
+
+Deno.test('an unmapped subgroup event never becomes an All teams club event', () => {
+  // The sixth subgroup is asked even though no team maps to it, precisely so
+  // its events are excluded here rather than surfacing club wide.
+  const seen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  const whole = wholeGroupEventIds(GROUP_WIDE_RETURNED, seen)
+  assert(!whole.includes(UNMAPPED_ID), 'an unmapped subgroup event must not be stored as a club event')
+  assertEquals(whole, [TRAINING_ID])
+})
+
+Deno.test('asking only the five MAPPED subgroups would leak the sixth: the bug this design refuses', () => {
+  // This is the shortcut the design rejects, pinned so it cannot be
+  // reintroduced. With only the mapped subgroups asked, the unmapped
+  // subgroup's own event looks exactly like a whole group event.
+  const mappedOnly = new Set([FIXTURE_ID])
+  assert(wholeGroupEventIds(GROUP_WIDE_RETURNED, mappedOnly).includes(UNMAPPED_ID))
+})
+
+Deno.test('a whole group event is stored as a club event, team_id null', () => {
+  const row = buildEventRow('club-1', null, { ...SYNTHETIC_SCHEDULED_TRAINING, id: TRAINING_ID }, SYNCED_AT)
+  assert(row !== null)
+  assertEquals(row.team_id, null)
+  assertEquals(row.spond_event_id, TRAINING_ID)
+  // The boundary is unchanged by the null team: exactly the same columns.
+  assertEquals(Object.keys(row).sort(), [...SPOND_EVENT_COLUMNS].sort())
+})
+
+Deno.test('the whole group pass produces no duplicate event ids', () => {
+  // A group wide response repeating an id, and an id already queued by a
+  // mapping, both collapse to one row.
+  const seen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  assertEquals(wholeGroupEventIds([TRAINING_ID, TRAINING_ID, TRAINING_ID], seen), [TRAINING_ID])
+  const queued = new Map<string, SpondEventRow>()
+  const training = buildEventRow('club-1', null, { ...SYNTHETIC_SCHEDULED_TRAINING, id: TRAINING_ID }, SYNCED_AT)!
+  assertEquals(claimEvent(queued, training).outcome, 'queued')
+  assertEquals(claimEvent(queued, { ...training }).outcome, 'already_synced')
+  assertEquals(queued.size, 1)
+})
+
+Deno.test('a shared multi-team event still becomes club level through the mapping path', () => {
+  // The whole group pass does not disturb the existing shared rule: an event
+  // two mapped subgroups both return is still rewritten to team_id null.
+  const queued = new Map<string, SpondEventRow>()
+  claimEvent(queued, rowFor('team-1', FIXTURE_ID))
+  const claim = claimEvent(queued, rowFor('team-2', FIXTURE_ID))
+  assert(claim.outcome === 'shared')
+  assertEquals(claim.rewrite.team_id, null)
+  // And because a subgroup returned it, the pass leaves it alone entirely.
+  assert(!wholeGroupEventIds(GROUP_WIDE_RETURNED, new Set([FIXTURE_ID, UNMAPPED_ID])).includes(FIXTURE_ID))
+})
+
+Deno.test('the whole group query is the same read, with the subgroup filter dropped and nothing else', () => {
+  const whole = eventsQuery({ spond_group_id: GROUP_ID, spond_subgroup_id: null }, WINDOW)
+  const scoped = eventsQuery({ spond_group_id: GROUP_ID, spond_subgroup_id: SG_MAPPED[0] }, WINDOW)
+  // Only subGroupId differs: the window, the caps and scheduled are untouched.
+  assertEquals(whole.get('subGroupId'), null)
+  assertEquals(scoped.get('subGroupId'), SG_MAPPED[0])
+  for (const key of ['max', 'scheduled', 'maxStartTimestamp', 'minStartTimestamp', 'groupId']) {
+    assertEquals(whole.get(key), scoped.get(key), `${key} must not change`)
+  }
+  assertEquals(whole.get('scheduled'), 'True')
+  assertEquals(whole.get('groupId'), GROUP_ID)
+})
+
+Deno.test('the whole group pass reads no member data from the group payload', () => {
+  // The only thing taken from a groups/ entry is the subgroup id list. The
+  // members array beside it, guardians included, is never consulted.
+  const withGuardians = {
+    ...SYNTHETIC_GROUP,
+    members: [
+      {
+        id: 'FAKE-MEMBER-3',
+        firstName: 'Invented',
+        lastName: 'Child',
+        email: 'never@example.invalid',
+        phoneNumber: '+44 0000 000000',
+        guardians: [{ id: 'FAKE-GUARDIAN-9', firstName: 'Invented', lastName: 'Guardian' }],
+        subGroups: [SG_UNMAPPED],
+      },
+    ],
+  }
+  assertEquals(groupSubgroupIds([withGuardians], GROUP_ID), [...SG_MAPPED, SG_UNMAPPED])
 })
