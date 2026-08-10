@@ -284,10 +284,12 @@ Deno.test('no name or payload fragment reaches a whole group event row or its re
   }
 })
 
-Deno.test('an unknown link set writes nothing for a whole group event either', () => {
-  // The three state rule is what the reconcile guards on before it runs at
-  // all. Empty means "the club linked nobody", and yields no rows rather
-  // than deleting anything.
+Deno.test('a KNOWN EMPTY link set writes no rows for a whole group event', () => {
+  // Known empty, not unknown: the two are different states and only this one
+  // reaches the derivation at all. "The club linked nobody" yields no rows.
+  // UNKNOWN never gets here, because reconcileResponses returns before the
+  // loop when linked === null, which is what stops a failed or capped link
+  // read from deleting live context.
   const statuses = deriveMemberStatuses(SYNTHETIC_WHOLE_GROUP_TRAINING.responses, new Set<string>())
   assertEquals(buildResponseRows('club-1', 'EVENT-ROW-UUID-WHOLE-GROUP', statuses, SYNCED_AT), [])
 })

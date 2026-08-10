@@ -382,9 +382,20 @@ Deno.serve(async (req) => {
           ok = false
           break
         }
-        for (const row of (page ?? []) as { spond_member_id: string }[]) ids.add(row.spond_member_id)
-        if ((page ?? []).length < PAGE) break
-        offset += PAGE
+        const rows = (page ?? []) as { spond_member_id: string }[]
+        for (const row of rows) ids.add(row.spond_member_id)
+        // Stop on the first EMPTY page and advance by the rows actually
+        // returned, never by PAGE. Inferring "short page, therefore last
+        // page" is only correct while PAGE happens to equal the server's
+        // max_rows: lower max_rows and a truncated first page reads as the
+        // end of the set, `ok` stays true, and the reconcile then treats
+        // every link past the cut as absent and DELETES their live context.
+        // A silently short link set is the one input this code must never
+        // mistake for the truth, so the terminator cannot depend on a
+        // server setting matching a constant here. This is the
+        // useClubPlayerIdentities pattern in src/lib/queries.ts.
+        if (rows.length === 0) break
+        offset += rows.length
         if (offset >= MAX_LINKED_MEMBERS) {
           // A possibly partial set is UNKNOWN, never the truth.
           console.error('spond-sync: link read hit its cap; response context skipped')
@@ -628,32 +639,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ---------------------------------------------------------------
-    // RSVP context for LINKED members only. Skipped entirely when the
-    // link set is unknown (see the three state rule above), so a failed
-    // link read leaves every stored response exactly as it was.
-    //
-    // Per event: upsert what this run saw stamped with syncedAt, then
-    // delete only the strictly older tail for that event. Properties this
-    // buys over a delete then insert: no window in which the event has no
-    // context, idempotent on a re-run, and no id list in the predicate to
-    // grow or be truncated.
-    //
-    // Two overlapping runs, precisely. Neither can empty an event and
-    // neither can write an unlinked member, because the upsert always
-    // lands before the delete and the link foreign key refuses the rest.
-    // What they CAN do is disagree about freshness: the upsert sets
-    // synced_at unconditionally, so an older run landing second lowers a
-    // row's stamp to its own, and the event then holds that run's
-    // slightly older view of who replied. It self heals on the next sync,
-    // which is why this is left rather than serialised behind a lock; the
-    // cost of being wrong is a stale reply shown as context, never a lost
-    // register and never a deleted link.
-    //
-    // A failure here warns and moves on. The event's counts are already
-    // written, the previous context is still in place, and the next run
-    // self heals it. Attendance is untouched either way: this function
-    // never reads or writes register_entries.
+    // RSVP context for this mapping's events. The rationale lives once, on
+    // reconcileResponses above, so it cannot drift from the whole group
+    // pass's identical call.
     await reconcileResponses(rows, eventRowIdBySpondId, queuedResponses, mapping.id)
 
     eventsTotal += rows.length
@@ -780,15 +768,22 @@ Deno.serve(async (req) => {
     // here any more than it is there, and deriveMemberStatuses reduces this
     // to linked member ids and a closed reply state before anything is
     // stored.
+    // Keyed only by the events this pass actually CLASSIFIED as whole group,
+    // never by everything the group wide query returned. The unmapped
+    // subgroup's own events are in byId and are deliberately not carried
+    // here: nothing downstream would store them, and not holding their
+    // responses at all is the stronger statement.
+    const wholeGroupIds = wholeGroupEventIds(byId.keys(), subgroupSeen)
     const wholeGroupResponses = new Map<string, unknown>()
-    for (const [eventId, event] of byId) {
+    for (const eventId of wholeGroupIds) {
+      const event = byId.get(eventId)
       wholeGroupResponses.set(eventId, (event as { responses?: unknown } | null)?.responses)
     }
 
     const rows: SpondEventRow[] = []
     let malformed = 0
     let capped = false
-    for (const eventId of wholeGroupEventIds(byId.keys(), subgroupSeen)) {
+    for (const eventId of wholeGroupIds) {
       // An event a mapping already queued keeps the attribution it was
       // given; the pass never rewrites a team.
       if (queuedRows.has(eventId)) continue
