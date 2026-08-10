@@ -281,41 +281,61 @@ Deno.serve(async (req) => {
   // names are club wide under players.view; nothing new is readable) and
   // persists nothing. Past seasons are untouched: season_id pins the current
   // season, so a child on last season's Trojans is not a cross team case.
-  const { data: regRows, error: regError } = await caller.db
-    .from('player_registrations')
-    .select('player_id, team_id')
-    .eq('club_id', caller.clubId)
-    .eq('season_id', seasonId)
-  if (regError) {
-    return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
-  }
-  const registrations = (regRows ?? []) as { player_id: string; team_id: string | null }[]
-  let existingNames: string[] = []
-  let elsewhereNames: string[] = []
-  if (registrations.length > 0) {
-    const { data: nameRows, error: nameError } = await caller.db
-      .from('players')
-      .select('id, display_name')
-      .in(
-        'id',
-        registrations.map((r) => r.player_id),
-      )
-    if (nameError) {
+  // BOTH reads are paged. PostgREST caps a single response at db.max_rows
+  // (1000, supabase/config.toml), and a silently truncated read here is not a
+  // cosmetic miss: a registration past the cap is absent from the cross team
+  // set, so the very child this guard exists to protect would be imported
+  // again as a duplicate. Advance by the rows actually returned and stop on
+  // the first empty page, which stays correct whatever the server cap is.
+  // This is the useClubPlayerIdentities pattern in src/lib/queries.ts.
+  const PAGE = 1000
+  const registrations: { player_id: string; team_id: string | null }[] = []
+  for (let from = 0; ; ) {
+    const { data, error } = await caller.db
+      .from('player_registrations')
+      .select('player_id, team_id')
+      .eq('club_id', caller.clubId)
+      .eq('season_id', seasonId)
+      .order('player_id', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) {
       return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
     }
-    const nameById = new Map<string, string>()
-    for (const row of (nameRows ?? []) as { id: string; display_name: string }[]) {
-      nameById.set(row.id, row.display_name)
+    const rows = (data ?? []) as { player_id: string; team_id: string | null }[]
+    for (const row of rows) registrations.push(row)
+    if (rows.length === 0) break
+    from += rows.length
+  }
+
+  const nameById = new Map<string, string>()
+  if (registrations.length > 0) {
+    for (let from = 0; ; ) {
+      const { data, error } = await caller.db
+        .from('players')
+        .select('id, display_name')
+        .eq('club_id', caller.clubId)
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1)
+      if (error) {
+        return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
+      }
+      const rows = (data ?? []) as { id: string; display_name: string }[]
+      for (const row of rows) nameById.set(row.id, row.display_name)
+      if (rows.length === 0) break
+      from += rows.length
     }
-    for (const reg of registrations) {
-      const name = nameById.get(reg.player_id)
-      if (name === undefined) continue
-      // An Unassigned registration (team_id null) is not another team, so it is
-      // deliberately neither side: importing such a child here is a genuine
-      // first assignment, which the RPC handles as it always did.
-      if (reg.team_id === teamId) existingNames.push(name)
-      else if (reg.team_id !== null) elsewhereNames.push(name)
-    }
+  }
+
+  const existingNames: string[] = []
+  const elsewhereNames: string[] = []
+  for (const reg of registrations) {
+    const name = nameById.get(reg.player_id)
+    if (name === undefined) continue
+    // An Unassigned registration (team_id null) is not another team, so it is
+    // deliberately neither side: importing such a child here is a genuine
+    // first assignment, which the RPC handles as it always did.
+    if (reg.team_id === teamId) existingNames.push(name)
+    else if (reg.team_id !== null) elsewhereNames.push(name)
   }
 
   // Reduce each member to name plus optional number and plan the inserts
