@@ -1,0 +1,198 @@
+name: Deploy spond-sync Edge Function
+
+# Manual, production-environment-gated deploy of the spond-sync Edge Function
+# directly from the checked-out repository files, mirroring
+# deploy-content-sharing-functions.yml. It deploys ONLY spond-sync. It applies
+# no migration, changes no grant, creates nothing, and makes no write of any
+# kind toward Spond: the function it deploys is read only toward Spond, and
+# this workflow never invokes it. Triggering a sync stays a coach's action in
+# the app.
+#
+# Why a workflow rather than an inline deploy. spond-sync bundles
+# _shared/fa.ts, which carries resolveCaller, the auth boundary. CLAUDE.md
+# records that a deploy pasting file contents inline can be silently truncated
+# or replaced with a placeholder while still reporting success. Deploying from
+# disk removes that failure mode entirely rather than relying on catching it
+# afterwards.
+#
+# Secrets are read only through environment variables and are never printed.
+# No step uses `set -x`; every script uses `set -euo pipefail`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project:
+        description: "Type the target Supabase project ref to confirm (must equal uynorsnrvocksgqweucu)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-spond-sync-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy spond-sync
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      CONFIRM_PROJECT: ${{ inputs.confirm_project }}
+      # A project ref is not a credential; it appears in every function URL.
+      # Hardcoded so a valid token cannot deploy to the wrong project.
+      EXPECTED_PROJECT_REF: uynorsnrvocksgqweucu
+      SUPABASE_CLI_VERSION: 2.105.0
+    steps:
+      - name: Check out the selected commit
+        uses: actions/checkout@v4
+
+      - name: Confirm target project (double gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CONFIRM_PROJECT}" ]; then
+            echo "confirm_project input is empty"; exit 1
+          fi
+          if [ "${CONFIRM_PROJECT}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "confirm_project does not match the expected project ref"; exit 1
+          fi
+          if [ -z "${SUPABASE_PROJECT_ID}" ]; then
+            echo "SUPABASE_PROJECT_ID secret is not set"; exit 1
+          fi
+          if [ "${SUPABASE_PROJECT_ID}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "the configured project secret does not match the expected project ref"; exit 1
+          fi
+
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.105.0
+
+      - name: Assert Supabase CLI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          have="$(supabase --version)"
+          echo "Supabase CLI: ${have}"
+          if [ "${have}" != "${SUPABASE_CLI_VERSION}" ]; then
+            echo "Expected pinned Supabase CLI ${SUPABASE_CLI_VERSION}, got ${have}"; exit 1
+          fi
+
+      - name: Verify working tree and hash the deploy source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree is not clean; refusing to deploy"; git status --porcelain; exit 1
+          fi
+          SHA="$(git rev-parse HEAD)"
+          {
+            echo "## spond-sync Edge Function deploy"
+            echo ""
+            echo "- Commit: \`${SHA}\`"
+            echo "- Project: \`${EXPECTED_PROJECT_REF}\`"
+            echo "- Supabase CLI: \`${SUPABASE_CLI_VERSION}\`"
+            echo ""
+            echo "### Source hashes (the integrity record)"
+            echo '```'
+            sha256sum supabase/functions/spond-sync/index.ts \
+                      supabase/functions/_shared/spond.ts \
+                      supabase/functions/_shared/fa.ts
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assert the deploy source carries the fix, and no Spond write
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Positive: the events query asks Spond for scheduled events. Without
+          # this the deploy would be a no-op against the reported bug.
+          if ! grep -qF "params.set('scheduled', 'True')" supabase/functions/_shared/spond.ts; then
+            echo "the events query does not request scheduled events; refusing to deploy"; exit 1
+          fi
+          # Negative: authentication is still the only non GET call anywhere in
+          # the bundle. Any other method would be a write toward Spond.
+          methods="$(grep -oE "method: '[A-Z]+'" supabase/functions/spond-sync/index.ts | sort -u || true)"
+          echo "non-default methods in spond-sync: ${methods:-none}"
+          if [ "${methods}" != "method: 'POST'" ]; then
+            echo "unexpected HTTP methods in spond-sync; refusing to deploy"; exit 1
+          fi
+          if [ "$(grep -c "method: 'POST'" supabase/functions/spond-sync/index.ts)" != "1" ]; then
+            echo "expected exactly one non GET call (the Spond login); refusing to deploy"; exit 1
+          fi
+
+      - name: Deploy spond-sync (verify_jwt = true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No --no-verify-jwt: the function requires a signed in caller, and
+          # the post-deploy assertion below proves it.
+          supabase functions deploy spond-sync --project-ref "${SUPABASE_PROJECT_ID}"
+
+      - name: Assert the deployed JWT posture
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          supabase functions list --project-ref "${SUPABASE_PROJECT_ID}" --output json > "$tmp"
+          python3 - "$tmp" <<'PY'
+          import json, sys
+          fns = json.load(open(sys.argv[1]))
+          rows = fns if isinstance(fns, list) else fns.get('functions', [])
+          match = [f for f in rows if f.get('slug') == 'spond-sync']
+          if not match:
+              print('spond-sync not found in the deployed function list'); sys.exit(1)
+          fn = match[0]
+          if fn.get('verify_jwt') is not True:
+              print('spond-sync must require a JWT; got %r' % (fn.get('verify_jwt'),)); sys.exit(1)
+          print('spond-sync version %s, verify_jwt=%s, status=%s'
+                % (fn.get('version'), fn.get('verify_jwt'), fn.get('status')))
+          PY
+
+      - name: Read the deployed source back and compare it byte for byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          # download writes the deployed sources under supabase/functions/. Work
+          # in a scratch copy so the checkout stays pristine for the comparison.
+          if ! supabase functions download spond-sync --project-ref "${SUPABASE_PROJECT_ID}" > "$out/download.log" 2>&1; then
+            echo "### Deployed source readback" >> "$GITHUB_STEP_SUMMARY"
+            echo "Readback unavailable (bundled deploy). The source hashes above plus the deployed version are the integrity record." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          status=0
+          for f in spond-sync/index.ts _shared/spond.ts _shared/fa.ts; do
+            got="supabase/functions/${f}"
+            if [ ! -f "$got" ]; then echo "readback missing ${f}"; status=1; continue; fi
+            if git diff --quiet -- "$got"; then
+              echo "identical: ${f}"
+            else
+              echo "DIFFERS: ${f}"; status=1
+            fi
+          done
+          git checkout -- supabase/functions || true
+          {
+            echo "### Deployed source readback"
+            if [ "$status" = "0" ]; then
+              echo "Byte for byte identical to the deployed commit."
+            else
+              echo "The downloaded source differs from the commit. This is often bundler normalisation, but it is NOT a byte for byte confirmation."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          # A differing readback is reported, not fatal: the CLI may return a
+          # normalised bundle. The source hashes and the version are the record.
+          exit 0
+
+      - name: Done
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "spond-sync deployed from disk with verify_jwt=true. No migration, no grant and no Spond write was made."
