@@ -12,21 +12,37 @@
 // THE RULE. Going means the parent accepted in Spond. It does not mean
 // the coach ticked the child in. Those are different facts:
 //
-//   - Accepted and not ticked  → in Going. Expected, not arrived.
-//   - No reply and not ticked  → not in Going. Nobody said they were
+//   - Accepted and untouched   → in Going. Expected, not arrived.
+//   - No reply and untouched   → not in Going. Nobody said they were
 //     coming, so they are not part of tonight's expected list.
-//   - Anything and ticked      → in Going. Never hide what the coach has
-//     already recorded; a row vanishing under a thumb is the one thing a
-//     pitch side screen must not do.
+//   - Anything the coach has
+//     touched                  → in Going. Ticked in, ticked and unticked
+//     again, quick added, given a bib: any register entry pins the row.
+//     A row vanishing under a thumb is the one thing a pitch side screen
+//     must not do, and the sharpest case is a coach quick adding a child
+//     who turned up, mis-tapping, and watching the row they just made
+//     disappear. This is stickiness, never membership: touching a row
+//     pins it, and admits nobody who was not already there.
 //   - No Spond link at all     → not in Going, and NOT "no reply". They
 //     have no reply to give. Everyone is where they live.
 //
-// THE SAFETY PROPERTY. Going is only ever offered when this session
-// actually has replies to show (hasRsvpContext). A club with no Spond, a
-// session with no linked event, a read still in flight and a read that
-// failed all produce no context, which produces no toggle, which leaves
-// the complete register on screen. Missing context can therefore never
-// render as "nobody is coming".
+// THE SAFETY PROPERTY. Going is only ever offered when THIS REGISTER has
+// replies to show (hasRsvpContext, measured against the composed view and
+// not against the club wide lookup). A club with no Spond, a session with
+// no linked event, a session none of whose children are linked, a read
+// still in flight and a read that failed all produce no context, which
+// produces no toggle, which leaves the complete register on screen.
+// Missing context can therefore never render as "nobody is coming".
+//
+// THE ONE MOVE THIS DOES NOT PREVENT, stated rather than hidden. The
+// register paints before the replies arrive, because gating it on Spond
+// is forbidden. So on a linked session the first paint is the complete
+// register and the next is the Going view, and the list shrinks once,
+// early, before a coach has started tapping. Every later change is held:
+// a row the coach has touched is pinned by hasEntry, so nothing they did
+// leaves the screen. Removing the load time narrowing as well would mean
+// either waiting for Spond, which the policy forbids, or never defaulting
+// to Going, which is the product decision this module implements.
 // =====================================================================
 import type { RegisterGroup, RegisterView } from './register'
 import type { Rsvp } from './spondRsvp'
@@ -42,11 +58,20 @@ export const REGISTER_SCOPE_LABELS: Record<RegisterScope, string> = {
 
 export const DEFAULT_REGISTER_SCOPE: RegisterScope = 'going'
 
-// Whether there is anything for the Going view to be built from. Empty
-// covers every way context can be absent, which is deliberate: no Spond,
-// no linked event, no links, still loading and failed are one case here.
-export function hasRsvpContext(rsvpByPlayer: Record<string, Rsvp>): boolean {
-  return Object.keys(rsvpByPlayer).length > 0
+// Whether there is anything for the Going view to be built from, ON THIS
+// REGISTER. The lookup is joined from a club wide link read, so it can
+// carry children this session does not cover, and counting those was
+// wrong in exactly the way this module exists to prevent: a Titans
+// session linked to a shared club event would see Trojans replies, engage
+// Going, find no Titans child accepted, and render an empty register
+// under the words "nobody has accepted". The gate is the intersection.
+//
+// Empty covers every way context can be absent, which is deliberate: no
+// Spond, no linked event, no link for anyone here, still loading and
+// failed are one case.
+export function hasRsvpContext(rsvpByPlayer: Record<string, Rsvp>, view?: RegisterView): boolean {
+  if (!view) return Object.keys(rsvpByPlayer).length > 0
+  return view.groups.some((g) => g.rows.some((r) => rsvpByPlayer[r.player.id] !== undefined))
 }
 
 export interface ScopedRegister {
@@ -71,7 +96,7 @@ export function applyRegisterScope(
   const groups: RegisterGroup[] = []
   for (const g of view.groups) {
     const rows = g.rows.filter((r) => {
-      if (r.present) return true
+      if (r.hasEntry) return true
       if (rsvpByPlayer[r.player.id]?.status === 'accepted') return true
       hidden++
       return false

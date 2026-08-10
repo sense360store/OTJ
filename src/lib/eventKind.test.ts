@@ -81,6 +81,48 @@ describe('the documented fallback for rows carrying no Spond classification', ()
   })
 })
 
+describe('the title branch may only ever hide a fixture, never a session', () => {
+  // The stated principle is that the heuristic fails towards showing a
+  // row: one extra row in a Training list is cheap, a hidden session is
+  // not. The exclusion branch is the half that can hide, so every case
+  // below is a real training title that a bare word match got wrong.
+
+  it('reads a session the coach called training as training, whatever else the title says', () => {
+    // The general rule that catches most of these at once: if the coach
+    // said training, session, practice or warm up, that settles it.
+    expect(isTrainingEvent({ title: 'Cup week training' })).toBe(true)
+    expect(isTrainingEvent({ title: 'League restart training' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Presentation practice' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Tournament prep session' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Match day warm up' })).toBe(true)
+  })
+
+  it('keeps a pre match and post match session, which are training', () => {
+    // supabase/seed.sql seeds "Saturday Pre-Match", a full session with
+    // an activities array. A bare \bmatch\b hid it from the default view
+    // of both Sessions and Home.
+    expect(isTrainingEvent({ title: 'Saturday Pre-Match' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Pre match' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Post-match recovery' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Matchday routine' })).toBe(true)
+  })
+
+  it('still keeps a plain match out', () => {
+    expect(isTrainingEvent({ title: 'U8 Match' })).toBe(false)
+    expect(isTrainingEvent({ title: 'League match vs Ossett Albion' })).toBe(false)
+  })
+
+  it('catches the plurals, which used to walk straight through', () => {
+    // "Summer gala" and "Summer galas" gave opposite answers, because the
+    // trailing s defeated the word boundary.
+    expect(isTrainingEvent({ title: 'Summer galas' })).toBe(false)
+    expect(isTrainingEvent({ title: 'U8 Matches' })).toBe(false)
+    expect(isTrainingEvent({ title: 'Friendlies at Horbury' })).toBe(false)
+    expect(isTrainingEvent({ title: 'Player trials' })).toBe(false)
+    expect(isTrainingEvent({ title: 'Two tournaments' })).toBe(false)
+  })
+})
+
 describe('one classifier serves both shapes in this codebase', () => {
   // A Hub session calls its label `name`; a synced Spond event calls it
   // `title`. Two shapes must not mean two classifiers, so the seam reads

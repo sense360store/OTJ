@@ -85,10 +85,25 @@ const SEARCH_CALL = new RegExp(
   'i',
 )
 
-// A regex literal mentioning one of the words. The seam's own expression is
-// built from NON_TRAINING_WORDS at runtime, so no literal anywhere in the
+// A regex literal mentioning one of the words. The seam's own expressions
+// are built from the word lists at runtime, so no literal anywhere in the
 // codebase should carry one.
-const CLASSIFYING_REGEX = new RegExp(String.raw`/[^/\n]*\b(${WORD_ALT})\b[^/\n]*/[gimsuy]*`, 'i')
+//
+// Anchored on the assignment or call that precedes it, because JSX text
+// between two self-closing tags (`<Icon.cone />Training night<Icon.chevR />`)
+// reads exactly like a regex literal and is not one. Without the anchor,
+// ordinary future copy would fail the build with a message about
+// classifiers, and an invariant that cries wolf gets deleted.
+const CLASSIFYING_REGEX = new RegExp(String.raw`[=(,]\s*/[^/\n]*\b(${WORD_ALT})\b[^/\n]*/[gimsuy]*`, 'i')
+
+// The same regex written the long way round. `new RegExp('gala|friendly')`
+// takes its pattern as a STRING, so the literal blanking that protects the
+// check above would hide it: this is the most likely shape of a copy,
+// because it is the shape the seam itself uses.
+const CLASSIFYING_REGEXP_CALL = new RegExp(
+  String.raw`new RegExp\(\s*['"\`][^'"\`]*\b(${WORD_ALT})\b`,
+  'i',
+)
 
 // A comparison whose other side is an event's label. `filter.kind ===
 // 'training'` reads the view state and is fine; `s.name === 'Training'`
@@ -112,12 +127,35 @@ describe('the training vocabulary lives in exactly one file', () => {
   })
 
   it('no other file searches a string for a classifying word', () => {
+    // Non test files only. A render test asserting on the word "Training"
+    // in its output is checking copy, not classifying anything, and
+    // flagging those would make the check noise.
     const offenders: string[] = []
-    for (const f of sourceFiles()) {
+    for (const f of sourceFiles().filter((f) => !isTest(f))) {
       const src = stripComments(readFileSync(join(SRC, f), 'utf8'))
       const hit =
-        src.match(SEARCH_CALL) ?? blankStrings(src).match(CLASSIFYING_REGEX) ?? src.match(LABEL_COMPARISON)
+        src.match(SEARCH_CALL) ??
+        src.match(CLASSIFYING_REGEXP_CALL) ??
+        blankStrings(src).match(CLASSIFYING_REGEX) ??
+        src.match(LABEL_COMPARISON)
       if (hit) offenders.push(`${f}: ${hit[0]}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('no other file carries a copy of the word list', () => {
+    // A copied vocabulary is a copied classifier with the predicate still
+    // to be written. One classifying word standing alone is ordinary (a
+    // fixture title, an option value); two or more in one file is a list.
+    const offenders: string[] = []
+    for (const f of sourceFiles().filter((f) => !isTest(f))) {
+      const src = stripComments(readFileSync(join(SRC, f), 'utf8'))
+      const words = new Set(
+        literals(src)
+          .map((l) => l.trim().toLowerCase())
+          .filter((l) => CLASSIFYING_WORDS.includes(l)),
+      )
+      if (words.size > 1) offenders.push(`${f}: ${[...words].join(', ')}`)
     }
     expect(offenders).toEqual([])
   })
@@ -129,12 +167,37 @@ describe('the training vocabulary lives in exactly one file', () => {
     expect(SEARCH_CALL.test("e.title.toLowerCase().includes('training')")).toBe(true)
     expect(SEARCH_CALL.test('s.name.startsWith("Gala")')).toBe(true)
     expect(CLASSIFYING_REGEX.test('const RE = /friendly|fixture/i')).toBe(true)
+    expect(CLASSIFYING_REGEXP_CALL.test("const RE = new RegExp('friendly|gala', 'i')")).toBe(true)
     expect(LABEL_COMPARISON.test("if (e.title === 'Training')")).toBe(true)
     // And the shapes it must not catch, which is what keeps it from being
     // deleted as noise.
     expect(SEARCH_CALL.test("filter.kind === 'training'")).toBe(false)
     expect(LABEL_COMPARISON.test("filter.kind === 'training'")).toBe(false)
     expect(CLASSIFYING_REGEX.test("const DEFAULT: EventKind = 'training'")).toBe(false)
+    // JSX text is not a regex literal, however much it looks like one.
+    expect(CLASSIFYING_REGEX.test('<span><Icon.cone />Training night<Icon.chevR /></span>')).toBe(false)
+  })
+
+  it('states what it does not catch, so nobody mistakes it for a proof', () => {
+    // Named limits, because an invariant that is trusted beyond its reach
+    // is worse than one nobody trusts. Each of these is a real second
+    // classifier this test would let through.
+    const WALKS_PAST = [
+      // The word arrives through a variable rather than a literal.
+      "const W = words; W.some((w) => e.title.toLowerCase().includes(w))",
+      // The comparison is separated from the label by a call.
+      "if (s.name.toLowerCase() === 'training') return true",
+      // The word is assembled rather than written.
+      "const w = 'gal' + 'a'",
+    ]
+    for (const src of WALKS_PAST) {
+      const missed =
+        !SEARCH_CALL.test(src) &&
+        !CLASSIFYING_REGEXP_CALL.test(src) &&
+        !CLASSIFYING_REGEX.test(blankStrings(src)) &&
+        !LABEL_COMPARISON.test(src)
+      expect(missed).toBe(true)
+    }
   })
 
   it("no other file tests for Spond's MATCH classification itself", () => {

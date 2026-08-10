@@ -197,17 +197,19 @@ export function PlanFromSpond({
   const plannedEventIds = new Set(
     sessions.filter((s) => s.coachId === user?.id && s.spondEventId).map((s) => s.spondEventId as string),
   )
-  const rows = spondPlanSuggestions({
-    events,
-    plannedEventIds,
-    scopeTeamIds,
-    showAllTeams: showAll,
-    kind,
-  })
+  const suggest = (forKind: EventKind) =>
+    spondPlanSuggestions({ events, plannedEventIds, scopeTeamIds, showAllTeams: showAll, kind: forKind })
+  const rows = suggest(kind)
 
   // On the Sessions screen the surface only earns space when it has something
   // to suggest; on the planner it shows the empty guidance instead.
-  if (hideWhenEmpty && !isLoading && !isError && rows.length === 0) return null
+  //
+  // Measured against All events, deliberately. Judging it on the Training
+  // view would hide the whole card on a week whose only unplanned events
+  // are fixtures, and the card is where the All events chip that would
+  // reveal them lives, so hiding it would take the widening with it.
+  const anythingToSuggest = kind === 'all' ? rows.length > 0 : suggest('all').length > 0
+  if (hideWhenEmpty && !isLoading && !isError && !anythingToSuggest) return null
 
   const plan = (event: SpondEvent) => {
     const session = {

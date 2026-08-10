@@ -23,6 +23,7 @@ function row(id: string, present = false): RegisterRow {
     bibSwatch: '#e23b3b',
     overridden: false,
     manual: false,
+    hasEntry: present,
   }
 }
 
@@ -77,6 +78,24 @@ describe('Going means the parent accepted, not that the coach ticked', () => {
     expect(ids(out.view)).not.toContain('cara')
   })
 
+  it('keeps a row the coach has touched, even after they untick it', () => {
+    // The pitch side failure this stops: a coach quick adds a child who
+    // turned up, mis-taps, and the row they just created disappears. Any
+    // row carrying a register entry is a row the coach put there on
+    // purpose, so Going keeps it whatever the entry now says.
+    const v = view([{ ...row('walkup'), hasEntry: true }, row('nobody')])
+    const out = applyRegisterScope(v, 'going', {})
+    expect(ids(out.view)).toEqual(['walkup'])
+    expect(out.hidden).toBe(1)
+  })
+
+  it('is stickiness, not membership: an untouched no reply child is still out', () => {
+    // Which is what keeps "Going means the parent accepted" true. Touching
+    // a row pins it; it never admits anybody in the first place.
+    const v = view([row('quiet')])
+    expect(ids(applyRegisterScope(v, 'going', { quiet: rsvp('unanswered') }).view)).toEqual([])
+  })
+
   it('counts what it hides so the number is never silently lost', () => {
     const v = view([row('anna'), row('ben'), row('cara')])
     const out = applyRegisterScope(v, 'going', { anna: rsvp('accepted') })
@@ -107,6 +126,30 @@ describe('a child with no Spond link is not a child who did not reply', () => {
     const context = { quiet: rsvp('unanswered') }
     expect(ids(applyRegisterScope(v, 'going', context).view)).toEqual([])
     expect(context).not.toHaveProperty('unlinked')
+  })
+})
+
+describe('the gate is the replies on THIS register, not the club', () => {
+  it('ignores a reply from a child this session does not cover', () => {
+    // The lookup is joined from a club wide link read. A Titans session
+    // linked to a shared club event sees Trojans replies; counting those
+    // would engage Going, find no Titans child accepted, and render an
+    // empty register under the words "nobody has accepted".
+    const v = view([row('anna'), row('ben')])
+    expect(hasRsvpContext({ someone_elses_child: rsvp('accepted') }, v)).toBe(false)
+  })
+
+  it('opens Going as soon as one child on this register has a reply', () => {
+    const v = view([row('anna'), row('ben')])
+    expect(hasRsvpContext({ anna: rsvp('unanswered') }, v)).toBe(true)
+  })
+
+  it('counts an unanswered reply as context, because it is one', () => {
+    // A linked child who has not answered is a fact about tonight. It is
+    // the absence of any link at all that means no context.
+    const v = view([row('anna')])
+    expect(hasRsvpContext({ anna: rsvp('unanswered') }, v)).toBe(true)
+    expect(hasRsvpContext({}, v)).toBe(false)
   })
 })
 

@@ -247,22 +247,26 @@ export function RegisterScreenView({
   const full = buildRegister(players, covered, teams, entries, wholeClub)
   const unset = coverageOf(session).kind === 'unset'
   // Composition never sees Spond: buildRegister still takes its five
-  // arguments and the rows are already ordered before this line runs, so
-  // a refresh cannot reorder the list under a thumb.
+  // arguments and the rows are ordered before this line runs, so nothing
+  // Spond does can reorder them. What Spond CAN now do is narrow which of
+  // them are listed, and that is what the scope below is; the pinning
+  // rules in ../lib/registerScope are what stop a row the coach has
+  // touched leaving the screen under their thumb.
   const rsvp = rsvpByPlayer ?? {}
-  // The Going view exists only where there is something to build it from.
-  // Every way context can be absent, a club with no Spond included, lands
-  // here as false, which pins the screen to the complete register.
-  const hasContext = hasRsvpContext(rsvp)
+  // The Going view exists only where there is something to build it from,
+  // measured against THIS register rather than the club. Every way context
+  // can be absent, a club with no Spond included, lands here as false,
+  // which pins the screen to the complete register.
+  const hasContext = hasRsvpContext(rsvp, full)
   const effectiveScope: RegisterScope = hasContext ? scope : 'all'
   const scoped = applyRegisterScope(full, effectiveScope, rsvp)
   const view = scoped.view
-  // Only the replies actually on screen count towards the freshness line.
-  // The lookup is built from a club wide link read, so it can carry a
+  // Only the replies actually on this register count towards the freshness
+  // line. The lookup is built from a club wide link read, so it can carry a
   // child this session does not cover, and a note about a reply nobody can
   // see would be a claim the screen cannot back up.
   const shown: Record<string, Rsvp> = {}
-  for (const g of view.groups) {
+  for (const g of full.groups) {
     for (const row of g.rows) {
       const r = rsvp[row.player.id]
       if (r) shown[row.player.id] = r
@@ -273,7 +277,12 @@ export function RegisterScreenView({
   return (
     <div className="reg">
       <div className="reg-head">
-        <div className="reg-count">{registerSummary(view)}</div>
+        {/* The whole register, always. This is the coach's record for the
+            session and it must read the same here as it does on the card
+            one tap earlier; narrowing the view narrows the rows below, not
+            the record. The hidden pill beside the toggle accounts for the
+            difference between this number and what is listed. */}
+        <div className="reg-count">{registerSummary(full)}</div>
         {canMark && (
           <button className="btn btn-ghost btn-sm" onClick={onQuickAdd}>
             <Icon.plus />
@@ -325,9 +334,13 @@ export function RegisterScreenView({
       ) : view.groups.length === 0 ? (
         // The register is not empty; this view of it is. Saying so, and
         // naming the way back, is the difference between a filter and a
-        // claim that nobody is coming.
-        <Empty icon={Icon.users} title="No accepted replies yet">
-          {`Nobody has accepted this event in Spond. Tap ${REGISTER_SCOPE_LABELS.all} for the full register.`}
+        // claim that nobody is coming. A session with no teams set is a
+        // different problem with a different fix, and it keeps its own
+        // explanation rather than being told to look at Everyone.
+        <Empty icon={Icon.users} title={unset ? 'This session has no teams set' : 'No accepted replies yet'}>
+          {unset
+            ? `Only the players someone has already added appear. Choose its teams in the planner to list the rest, or tap ${REGISTER_SCOPE_LABELS.all} to see them.`
+            : `Nobody on this register has accepted in Spond yet. Tap ${REGISTER_SCOPE_LABELS.all} for the full register.`}
         </Empty>
       ) : (
         <>

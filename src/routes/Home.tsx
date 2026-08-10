@@ -26,7 +26,7 @@ import {
   useVenueMap,
 } from '../lib/queries'
 import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
-import { ALL_EVENTS_LABEL, TRAINING_LABEL } from '../lib/eventKind'
+import { ALL_EVENTS_LABEL, isTrainingEvent, TRAINING_LABEL } from '../lib/eventKind'
 import { applyEventFilter, DEFAULT_EVENT_FILTER, pickNextEvent, type EventFilterState } from '../lib/eventFilter'
 import { compareNewestFirst } from '../lib/contentOrder'
 import type { Session, Template } from '../lib/data'
@@ -74,6 +74,7 @@ function countdownLabel(dateStr: string, todayStr: string): string {
 function NextSessionHero({
   s,
   isOwn,
+  isTraining,
   canManage,
   teamName,
   venueName,
@@ -82,6 +83,11 @@ function NextSessionHero({
 }: {
   s: Session
   isOwn: boolean
+  // The hero prefers training over a sooner fixture, so the eyebrow says
+  // which "next" it means. Calling Tuesday's training "your next session"
+  // while a friendly sits between now and it would be a claim the row does
+  // not satisfy.
+  isTraining: boolean
   canManage: boolean
   teamName: string
   // The resolved venue, empty when unknown. Reading s.venue directly here
@@ -100,7 +106,14 @@ function NextSessionHero({
   return (
     <div className="hero">
       <div className="eyebrow">
-        {isOwn ? 'Your next session' : 'Next club session'} · {live ? 'Live now' : countdownLabel(s.date, todayStr)}
+        {isOwn
+          ? isTraining
+            ? 'Your next training'
+            : 'Your next session'
+          : isTraining
+            ? 'Next club training'
+            : 'Next club session'}{' '}
+        · {live ? 'Live now' : countdownLabel(s.date, todayStr)}
       </div>
       <h2>{s.name}</h2>
       {s.focus && <div style={{ fontWeight: 700, color: 'var(--gold)', fontSize: 15 }}>{s.focus}</div>}
@@ -411,6 +424,7 @@ function CoachHome() {
           <NextSessionHero
             s={next}
             isOwn={isMine(next)}
+            isTraining={isTrainingEvent(next)}
             canManage={caps.has('sessions.manage') || (canPlan && isMine(next))}
             teamName={teamName(next)}
             venueName={venueName(next)}

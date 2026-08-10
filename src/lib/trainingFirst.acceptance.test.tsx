@@ -208,6 +208,22 @@ describe('9. one classifier answers for every surface', () => {
   it("lets Spond's own classification overrule a title that reads like training", () => {
     expect(isTrainingEvent({ title: 'Titans training', spondType: 'MATCH' })).toBe(false)
   })
+
+  it('never hides a real training session behind a word in its name', () => {
+    // The default view is only worth having if a coach can trust it, so
+    // the heuristic is allowed to show a gala and never to hide a session.
+    // "Saturday Pre-Match" is seeded in supabase/seed.sql as a full
+    // session and was hidden from Sessions and Home by a bare word match.
+    for (const name of [
+      'Saturday Pre-Match',
+      'Match day warm up',
+      'Cup week training',
+      'League restart training',
+      'Post-match recovery',
+    ]) {
+      expect(isTrainingEvent({ name })).toBe(true)
+    }
+  })
 })
 
 // ---- 10 to 15. Tonight, organised from Spond -------------------------
@@ -329,6 +345,20 @@ describe('14. a club with no Spond gets the complete register and no Going view'
     // Missing context beats a requested scope, every time. "Nobody is
     // coming" must not be renderable out of absence.
     expect(names(registerScreen({ scope: 'going', rsvpByPlayer: {} }))).toHaveLength(3)
+  })
+
+  it('ignores replies belonging to children this session does not cover', () => {
+    // A Titans session linked to a shared club event receives replies for
+    // Trojans and Gladiators children, because the lookup is joined from a
+    // club wide link read. Counting those as context would engage Going,
+    // find nobody here accepted, and render an empty register under the
+    // words "nobody has accepted".
+    const html = registerScreen({
+      scope: 'going',
+      rsvpByPlayer: { 'a-child-on-another-team': { status: 'accepted', syncedAt: fresh } },
+    })
+    expect(names(html)).toHaveLength(3)
+    expect(html).not.toContain('accepted')
   })
 })
 
