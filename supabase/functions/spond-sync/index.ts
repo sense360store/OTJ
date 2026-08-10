@@ -49,12 +49,15 @@ import {
   claimEvent,
   eventsQuery,
   extractAccessToken,
+  groupSubgroupIds,
   MAX_EVENTS_PER_GROUP,
   MAX_TOTAL_EVENTS,
   SPOND_API_BASE,
   SPOND_TIMEOUT_MS,
   syncWindow,
   visibleGroupIds,
+  wholeGroupEventIds,
+  wholeGroupGate,
   WINDOW_BACK_DAYS,
   WINDOW_FORWARD_DAYS,
 } from '../_shared/spond.ts'
@@ -73,6 +76,22 @@ interface MappingOutcome {
   events: number
   warnings?: string[]
   error?: string
+}
+
+// The per parent group summary the whole group pass reports: the Spond
+// group id we were already given in the mapping, counts, and plain
+// reasons. The counts are what prove the scoping fact on a real sync:
+// group_wide_returned against the subgroup queries' reach. Never any
+// Spond payload content, and never a subgroup name.
+interface WholeGroupOutcome {
+  spond_group_id: string
+  status: 'synced' | 'skipped' | 'failed'
+  whole_group_events: number
+  reason?: string
+  notes?: string[]
+  subgroups_total?: number
+  subgroups_mapped?: number
+  group_wide_returned?: number
 }
 
 // The exact header shape the reference library sends on every
@@ -124,8 +143,19 @@ async function spondLogin(): Promise<{ token: string } | { response: Response }>
 
 // The groups the organiser account can see: GET groups/, ported from the
 // reference library's get_groups. The response carries member names; only
-// the group ids are read and the rest is discarded untouched.
-async function spondGroupIds(token: string): Promise<{ ids: Set<string> } | { response: Response }> {
+// the group ids and each group's subgroup ids are read, and the rest,
+// the members array included, is discarded untouched.
+//
+// The subgroup ids come from the group's own subGroups array (the
+// reference library's Group.subgroups, aliased from "subGroups", whose
+// entries are Subgroup {id, name}). Only the ids are taken, never a
+// subgroup name and never anything from the members beside them. They are
+// derived here and the response body is dropped, so no member data
+// outlives this function. A group whose subGroups is unreadable maps to
+// null, the fail closed signal the whole group pass refuses to guess past.
+async function spondGroupIds(
+  token: string,
+): Promise<{ ids: Set<string>; subgroupsByGroup: Map<string, string[] | null> } | { response: Response }> {
   let res: Response
   try {
     res = await fetch(`${SPOND_API_BASE}groups/`, {
@@ -148,7 +178,10 @@ async function spondGroupIds(token: string): Promise<{ ids: Set<string> } | { re
   } catch {
     body = null
   }
-  return { ids: visibleGroupIds(body) }
+  const ids = visibleGroupIds(body)
+  const subgroupsByGroup = new Map<string, string[] | null>()
+  for (const id of ids) subgroupsByGroup.set(id, groupSubgroupIds(body, id))
+  return { ids, subgroupsByGroup }
 }
 
 // Events for one mapping: GET sponds/ with the query eventsQuery builds
@@ -157,14 +190,23 @@ async function spondGroupIds(token: string): Promise<{ ids: Set<string> } | { re
 // plainly with no retry; other failures fail this mapping and the rest
 // continue. The events array is capped defensively in case the server
 // ignores the max parameter.
+// The scope of one events query: a mapping's group and subgroup, or the
+// synthetic whole group and unmapped subgroup scopes the whole group pass
+// builds. `id` is our own label for logging, never anything from Spond.
+interface EventScope {
+  id: string
+  spond_group_id: string
+  spond_subgroup_id: string | null
+}
+
 async function spondEvents(
   token: string,
-  mapping: SpondMapping,
+  scope: EventScope,
   window: SyncWindow,
 ): Promise<{ events: unknown[] } | { error: string; stop?: boolean }> {
   let res: Response
   try {
-    res = await fetch(`${SPOND_API_BASE}sponds/?${eventsQuery(mapping, window)}`, {
+    res = await fetch(`${SPOND_API_BASE}sponds/?${eventsQuery(scope, window)}`, {
       headers: spondHeaders(token),
       signal: AbortSignal.timeout(SPOND_TIMEOUT_MS),
     })
@@ -172,12 +214,12 @@ async function spondEvents(
     return { error: 'Could not reach Spond for this group within the timeout.' }
   }
   if (res.status === 429 || res.status >= 500) {
-    console.error('spond-sync: events fetch failed', { mapping: mapping.id, status: res.status })
+    console.error('spond-sync: events fetch failed', { scope: scope.id, status: res.status })
     await res.body?.cancel()
     return { error: `Sync stopped: Spond returned HTTP ${res.status}. Try again later.`, stop: true }
   }
   if (!res.ok) {
-    console.error('spond-sync: events fetch refused', { mapping: mapping.id, status: res.status })
+    console.error('spond-sync: events fetch refused', { scope: scope.id, status: res.status })
     await res.body?.cancel()
     return { error: `Spond refused this group's events (HTTP ${res.status}).` }
   }
@@ -273,6 +315,24 @@ Deno.serve(async (req) => {
   // The row each event id first queued this run, the shared attribution
   // state claimEvent reads and rewrites.
   const queuedRows = new Map<string, SpondEventRow>()
+  // Every event id a MAPPED subgroup query returned this run, recorded
+  // before the caps and the row build can drop an event, so a truncated or
+  // malformed event still counts as "a subgroup returned this". The whole
+  // group pass reads it as one half of its discriminator. Ids only; nothing
+  // else from these events is kept.
+  const subgroupSeen = new Set<string>()
+  // Parent groups where a subgroup query came back at the per query cap, so
+  // its event list is truncated and subgroupSeen is incomplete for them. The
+  // whole group pass fails closed on these: an event beyond the cap was
+  // never seen, and calling it a whole group event would store a subgroup's
+  // event as an All teams one.
+  const truncatedGroups = new Set<string>()
+  // The subgroups that actually ANSWERED an events query this run. A mapped
+  // subgroup whose query failed is configured but told us nothing, so it is
+  // not in here and the whole group pass re-asks it. Keying that pass on the
+  // mappings instead would treat a failed subgroup as asked, and the group
+  // wide query would then store that team's own fixtures as club events.
+  const answeredSubgroups = new Set<string>()
   let processed = 0
   let eventsTotal = 0
   let stopped: string | null = null
@@ -306,6 +366,19 @@ Deno.serve(async (req) => {
       if (fetched.stop) stopped = fetched.error
       failed(fetched.error)
       continue
+    }
+
+    // What this subgroup query returned, recorded before anything can drop
+    // an event. A whole group mapping (no subgroup) is deliberately not
+    // recorded: its results already include the parent group's own events,
+    // so counting them here would hide exactly what the pass looks for.
+    if (mapping.spond_subgroup_id) {
+      for (const event of fetched.events) {
+        const eventId = (event as Record<string, unknown> | null)?.id
+        if (typeof eventId === 'string' && eventId) subgroupSeen.add(eventId)
+      }
+      if (fetched.events.length >= MAX_EVENTS_PER_GROUP) truncatedGroups.add(mapping.spond_group_id)
+      answeredSubgroups.add(mapping.spond_subgroup_id)
     }
 
     const warnings: string[] = []
@@ -392,11 +465,184 @@ Deno.serve(async (req) => {
     })
   }
 
-  const failures = outcomes.filter((o) => o.status === 'failed').length
+  // ---- The whole group pass -------------------------------------------
+  // Events addressed to the parent group itself rather than to any
+  // subgroup: at this club, the weekly training. See ../_shared/spond.ts
+  // for the scoping fact this implements and why the discriminator reads
+  // subgroup ids and nothing else.
+  //
+  // Per parent group: ask every subgroup Spond lists, mapped or not, then
+  // ask the group with no subGroupId at all. An event the group wide query
+  // returned that no subgroup query returned is addressed to the whole
+  // group, and is stored as a club event with team_id null. Anything a
+  // subgroup returned belongs to that subgroup: a mapped one already has
+  // its team from the loop above, and an UNMAPPED one is deliberately
+  // dropped. That is what stops this club's sixth, unmapped subgroup
+  // surfacing in the Hub as an "All teams" event.
+  const wholeGroupOutcomes: WholeGroupOutcome[] = []
+  const parentGroupIds: string[] = []
+  for (const mapping of mappings) {
+    if (!parentGroupIds.includes(mapping.spond_group_id)) parentGroupIds.push(mapping.spond_group_id)
+  }
+
+  for (const groupId of parentGroupIds) {
+    const record = (outcome: Omit<WholeGroupOutcome, 'spond_group_id'>) =>
+      wholeGroupOutcomes.push({ spond_group_id: groupId, ...outcome })
+    const skip = (reason: string) => record({ status: 'skipped', reason, whole_group_events: 0 })
+
+    if (stopped) {
+      skip(stopped)
+      continue
+    }
+    if (!groups.ids.has(groupId)) {
+      skip('The Spond organiser account cannot see this group.')
+      continue
+    }
+
+    // FAIL CLOSED, the rule the unmapped subgroup makes necessary. Every
+    // condition that stops us asking every subgroup completely skips the
+    // group wide query entirely: see wholeGroupGate in ../_shared/spond.ts,
+    // where those rules live so they can be tested directly.
+    const groupMappings = mappings.filter((m) => m.spond_group_id === groupId)
+    const subgroupIds = groups.subgroupsByGroup.get(groupId) ?? null
+    const gate = wholeGroupGate({
+      subgroupIds,
+      answeredSubgroupIds: [...answeredSubgroups],
+      hasWholeGroupMapping: groupMappings.some((m) => !m.spond_subgroup_id),
+      truncated: truncatedGroups.has(groupId),
+    })
+    if (!gate.ok) {
+      skip(gate.reason)
+      continue
+    }
+
+    // Ask every subgroup that has not already answered: the unmapped ones,
+    // and any mapped one whose own query failed above. Only event ids are
+    // read from these responses: no row is built and nothing is stored.
+    const mapped = new Set(
+      groupMappings.map((m) => m.spond_subgroup_id).filter((id): id is string => typeof id === 'string' && !!id),
+    )
+    const unasked = gate.unasked
+    let unmappedFailed = false
+    for (const subgroupId of unasked) {
+      const fetched = await spondEvents(
+        login.token,
+        { id: `subgroup:${subgroupId}`, spond_group_id: groupId, spond_subgroup_id: subgroupId },
+        window,
+      )
+      if ('error' in fetched) {
+        if (fetched.stop) stopped = fetched.error
+        unmappedFailed = true
+        break
+      }
+      for (const event of fetched.events) {
+        const eventId = (event as Record<string, unknown> | null)?.id
+        if (typeof eventId === 'string' && eventId) subgroupSeen.add(eventId)
+      }
+      if (fetched.events.length >= MAX_EVENTS_PER_GROUP) truncatedGroups.add(groupId)
+    }
+    if (unmappedFailed) {
+      skip('A subgroup could not be read, so whole group events were not synced.')
+      continue
+    }
+    // FAIL CLOSED on truncation. A subgroup query that came back at the cap
+    // has an incomplete event list, so an event it did not return may still
+    // belong to it. Storing that as a club event is the same leak by another
+    // route, so the group wide query is not run at all.
+    if (truncatedGroups.has(groupId)) {
+      skip(
+        `A subgroup returned the maximum of ${MAX_EVENTS_PER_GROUP} events, so its list is incomplete and whole group events were not synced.`,
+      )
+      continue
+    }
+
+    const fetchedWhole = await spondEvents(
+      login.token,
+      { id: `whole-group:${groupId}`, spond_group_id: groupId, spond_subgroup_id: null },
+      window,
+    )
+    if ('error' in fetchedWhole) {
+      if (fetchedWhole.stop) stopped = fetchedWhole.error
+      record({ status: 'failed', reason: fetchedWhole.error, whole_group_events: 0 })
+      continue
+    }
+
+    const byId = new Map<string, unknown>()
+    for (const event of fetchedWhole.events) {
+      const eventId = (event as Record<string, unknown> | null)?.id
+      if (typeof eventId === 'string' && eventId && !byId.has(eventId)) byId.set(eventId, event)
+    }
+
+    const rows: SpondEventRow[] = []
+    let malformed = 0
+    let capped = false
+    for (const eventId of wholeGroupEventIds(byId.keys(), subgroupSeen)) {
+      // An event a mapping already queued keeps the attribution it was
+      // given; the pass never rewrites a team.
+      if (queuedRows.has(eventId)) continue
+      if (processed >= MAX_TOTAL_EVENTS) {
+        capped = true
+        break
+      }
+      processed++
+      const row = buildEventRow(caller.clubId, null, byId.get(eventId), syncedAt)
+      if (!row) {
+        malformed++
+        continue
+      }
+      queuedRows.set(eventId, row)
+      rows.push(row)
+    }
+
+    if (rows.length > 0) {
+      const { error: writeError } = await caller.db
+        .from('spond_events')
+        .upsert(rows, { onConflict: 'club_id,spond_event_id' })
+      if (writeError) {
+        console.error('spond-sync: whole group upsert failed', { group: groupId, code: writeError.code })
+        record({ status: 'failed', reason: 'Could not write the whole group events.', whole_group_events: 0 })
+        continue
+      }
+    }
+
+    eventsTotal += rows.length
+    const notes: string[] = []
+    const unmappedCount = unasked.filter((id) => !mapped.has(id)).length
+    const reasked = unasked.length - unmappedCount
+    if (unmappedCount > 0) {
+      notes.push(
+        unmappedCount === 1
+          ? '1 subgroup is not mapped to a team; its own events were excluded.'
+          : `${unmappedCount} subgroups are not mapped to a team; their own events were excluded.`,
+      )
+    }
+    if (reasked > 0) {
+      notes.push(
+        `${reasked} mapped subgroup${reasked === 1 ? '' : 's'} did not answer above and ${reasked === 1 ? 'was' : 'were'} asked again here, so ${reasked === 1 ? 'its' : 'their'} events are not mistaken for whole group events.`,
+      )
+    }
+    if (malformed > 0) {
+      notes.push(`Skipped ${malformed} event${malformed === 1 ? '' : 's'} with no usable id, title or start time.`)
+    }
+    if (capped) notes.push(`Stopped at this run's cap of ${MAX_TOTAL_EVENTS} events.`)
+    record({
+      status: 'synced',
+      whole_group_events: rows.length,
+      subgroups_total: gate.total,
+      subgroups_mapped: mapped.size,
+      group_wide_returned: byId.size,
+      ...(notes.length > 0 ? { notes } : {}),
+    })
+  }
+
+  const failures =
+    outcomes.filter((o) => o.status === 'failed').length +
+    wholeGroupOutcomes.filter((o) => o.status === 'failed').length
   return reply(200, {
     ok: failures === 0 && !stopped,
     window: windowReport,
     mappings: outcomes,
+    whole_group: wholeGroupOutcomes,
     events_total: eventsTotal,
     ...(stopped ? { stopped } : {}),
   })

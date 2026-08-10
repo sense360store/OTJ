@@ -17,11 +17,14 @@ import {
   deriveLocation,
   eventsQuery,
   extractAccessToken,
+  groupSubgroupIds,
   MAX_EVENTS_PER_GROUP,
   SPOND_EVENT_COLUMNS,
   spondTimestamp,
   syncWindow,
   visibleGroupIds,
+  wholeGroupEventIds,
+  wholeGroupGate,
 } from './spond.ts'
 import type { SpondEventRow } from './spond.ts'
 
@@ -441,4 +444,272 @@ Deno.test('claims track each event id independently', () => {
   assertEquals(claimEvent(queued, rowFor('team-2', 'EVT-SYNTH-B')), { outcome: 'queued' })
   assertEquals(queued.get('EVT-SYNTH-A')?.team_id, 'team-1')
   assertEquals(queued.get('EVT-SYNTH-B')?.team_id, 'team-2')
+})
+
+// ---- The whole group pass: six subgroups, five mapped ----------------------
+//
+// The production topology this exists for, with invented ids throughout. The
+// club's Spond group has SIX subgroups and only FIVE are mapped to a team.
+// Training is addressed to the parent group itself, so no subgroup query
+// returns it; a fixture is addressed to one subgroup; and the sixth,
+// unmapped subgroup has an event of its own that must never reach the Hub,
+// because a club event is visible to every team and every parent.
+
+const GROUP_ID = 'GRP-SYNTH-U8'
+const SG_MAPPED = ['SG-SYNTH-1', 'SG-SYNTH-2', 'SG-SYNTH-3', 'SG-SYNTH-4', 'SG-SYNTH-5']
+const SG_UNMAPPED = 'SG-SYNTH-6-UNMAPPED'
+
+// A groups/ entry as the reference library's Group model reads it: subGroups
+// entries are {id, name}, beside a members array carrying invented names. The
+// discriminator must take the subgroup ids and touch nothing else.
+const SYNTHETIC_GROUP = {
+  id: GROUP_ID,
+  name: 'Invented Town u8 25 - 26',
+  subGroups: [...SG_MAPPED, SG_UNMAPPED].map((id) => ({ id, name: `Invented squad ${id}` })),
+  members: [
+    { id: 'FAKE-MEMBER-1', firstName: 'Invented', lastName: 'Child', subGroups: [SG_MAPPED[0]] },
+    { id: 'FAKE-MEMBER-2', firstName: 'Made', lastName: 'Up', subGroups: [SG_UNMAPPED] },
+  ],
+}
+
+// What each query returns. Training appears ONLY in the group wide result,
+// which is the scoping fact this whole change exists for.
+const TRAINING_ID = 'EVT-SYNTH-TRAINING-WHOLE-GROUP'
+const FIXTURE_ID = 'EVT-SYNTH-FIXTURE-MAPPED'
+const UNMAPPED_ID = 'EVT-SYNTH-UNMAPPED-SUBGROUP-ONLY'
+const GROUP_WIDE_RETURNED = [TRAINING_ID, FIXTURE_ID, UNMAPPED_ID]
+
+Deno.test('the subgroup list is read from the group, ids only, never a name or a member', () => {
+  const ids = groupSubgroupIds([SYNTHETIC_GROUP], GROUP_ID)
+  assertEquals(ids, [...SG_MAPPED, SG_UNMAPPED])
+  // Nothing that could identify a person, and no subgroup label, comes back.
+  const asText = JSON.stringify(ids)
+  for (const leak of ['Invented', 'Made', 'Up', 'Child', 'FAKE-MEMBER', 'squad', 'name']) {
+    assert(!asText.includes(leak), `subgroup ids must not carry ${leak}`)
+  }
+})
+
+Deno.test('an unreadable subgroup list fails closed as null, which is not an empty list', () => {
+  // Absent group, absent subGroups, and a non array subGroups: all unknown.
+  assertEquals(groupSubgroupIds([SYNTHETIC_GROUP], 'GRP-SYNTH-OTHER'), null)
+  assertEquals(groupSubgroupIds([{ id: GROUP_ID }], GROUP_ID), null)
+  assertEquals(groupSubgroupIds([{ id: GROUP_ID, subGroups: 'nonsense' }], GROUP_ID), null)
+  assertEquals(groupSubgroupIds(null, GROUP_ID), null)
+  // A group genuinely without subgroups is a real answer, not unknown.
+  assertEquals(groupSubgroupIds([{ id: GROUP_ID, subGroups: [] }], GROUP_ID), [])
+})
+
+Deno.test('whole group training appears: no subgroup query returned it', () => {
+  // Every subgroup asked, mapped and unmapped, exactly as the pass does.
+  const seen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  assertEquals(wholeGroupEventIds(GROUP_WIDE_RETURNED, seen), [TRAINING_ID])
+})
+
+Deno.test('a mapped subgroup fixture stays on its team and is never re-claimed', () => {
+  // The fixture was returned by its subgroup query, so the pass skips it and
+  // the team the mapping gave it stands.
+  const seen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  assert(!wholeGroupEventIds(GROUP_WIDE_RETURNED, seen).includes(FIXTURE_ID))
+  const queued = new Map<string, SpondEventRow>()
+  claimEvent(queued, rowFor('team-titans', FIXTURE_ID))
+  assertEquals(queued.get(FIXTURE_ID)?.team_id, 'team-titans')
+})
+
+Deno.test('an unmapped subgroup event never becomes an All teams club event', () => {
+  // The sixth subgroup is asked even though no team maps to it, precisely so
+  // its events are excluded here rather than surfacing club wide.
+  const seen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  const whole = wholeGroupEventIds(GROUP_WIDE_RETURNED, seen)
+  assert(!whole.includes(UNMAPPED_ID), 'an unmapped subgroup event must not be stored as a club event')
+  assertEquals(whole, [TRAINING_ID])
+})
+
+Deno.test('asking only the five MAPPED subgroups would leak the sixth: the bug this design refuses', () => {
+  // This is the shortcut the design rejects, pinned so it cannot be
+  // reintroduced. With only the mapped subgroups asked, the unmapped
+  // subgroup's own event looks exactly like a whole group event.
+  const mappedOnly = new Set([FIXTURE_ID])
+  assert(wholeGroupEventIds(GROUP_WIDE_RETURNED, mappedOnly).includes(UNMAPPED_ID))
+})
+
+Deno.test('a whole group event is stored as a club event, team_id null', () => {
+  const row = buildEventRow('club-1', null, { ...SYNTHETIC_SCHEDULED_TRAINING, id: TRAINING_ID }, SYNCED_AT)
+  assert(row !== null)
+  assertEquals(row.team_id, null)
+  assertEquals(row.spond_event_id, TRAINING_ID)
+  // The boundary is unchanged by the null team: exactly the same columns.
+  assertEquals(Object.keys(row).sort(), [...SPOND_EVENT_COLUMNS].sort())
+})
+
+Deno.test('the whole group pass produces no duplicate event ids', () => {
+  // A group wide response repeating an id, and an id already queued by a
+  // mapping, both collapse to one row.
+  const seen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  assertEquals(wholeGroupEventIds([TRAINING_ID, TRAINING_ID, TRAINING_ID], seen), [TRAINING_ID])
+  const queued = new Map<string, SpondEventRow>()
+  const training = buildEventRow('club-1', null, { ...SYNTHETIC_SCHEDULED_TRAINING, id: TRAINING_ID }, SYNCED_AT)!
+  assertEquals(claimEvent(queued, training).outcome, 'queued')
+  assertEquals(claimEvent(queued, { ...training }).outcome, 'already_synced')
+  assertEquals(queued.size, 1)
+})
+
+Deno.test('a shared multi-team event still becomes club level through the mapping path', () => {
+  // The whole group pass does not disturb the existing shared rule: an event
+  // two mapped subgroups both return is still rewritten to team_id null.
+  const queued = new Map<string, SpondEventRow>()
+  claimEvent(queued, rowFor('team-1', FIXTURE_ID))
+  const claim = claimEvent(queued, rowFor('team-2', FIXTURE_ID))
+  assert(claim.outcome === 'shared')
+  assertEquals(claim.rewrite.team_id, null)
+  // And because a subgroup returned it, the pass leaves it alone entirely.
+  assert(!wholeGroupEventIds(GROUP_WIDE_RETURNED, new Set([FIXTURE_ID, UNMAPPED_ID])).includes(FIXTURE_ID))
+})
+
+Deno.test('the whole group query is the same read, with the subgroup filter dropped and nothing else', () => {
+  const whole = eventsQuery({ spond_group_id: GROUP_ID, spond_subgroup_id: null }, WINDOW)
+  const scoped = eventsQuery({ spond_group_id: GROUP_ID, spond_subgroup_id: SG_MAPPED[0] }, WINDOW)
+  // Only subGroupId differs: the window, the caps and scheduled are untouched.
+  assertEquals(whole.get('subGroupId'), null)
+  assertEquals(scoped.get('subGroupId'), SG_MAPPED[0])
+  for (const key of ['max', 'scheduled', 'maxStartTimestamp', 'minStartTimestamp', 'groupId']) {
+    assertEquals(whole.get(key), scoped.get(key), `${key} must not change`)
+  }
+  assertEquals(whole.get('scheduled'), 'True')
+  assertEquals(whole.get('groupId'), GROUP_ID)
+})
+
+Deno.test('the whole group pass reads no member data from the group payload', () => {
+  // The only thing taken from a groups/ entry is the subgroup id list. The
+  // members array beside it, guardians included, is never consulted.
+  const withGuardians = {
+    ...SYNTHETIC_GROUP,
+    members: [
+      {
+        id: 'FAKE-MEMBER-3',
+        firstName: 'Invented',
+        lastName: 'Child',
+        email: 'never@example.invalid',
+        phoneNumber: '+44 0000 000000',
+        guardians: [{ id: 'FAKE-GUARDIAN-9', firstName: 'Invented', lastName: 'Guardian' }],
+        subGroups: [SG_UNMAPPED],
+      },
+    ],
+  }
+  assertEquals(groupSubgroupIds([withGuardians], GROUP_ID), [...SG_MAPPED, SG_UNMAPPED])
+})
+
+// ---- The fail closed gate --------------------------------------------------
+//
+// The pass may only run when every subgroup was asked AND asked completely.
+// Each rule below exists because breaking it would store a subgroup's own
+// event as a club event, visible to every team and every parent.
+
+const OPEN_GATE = {
+  subgroupIds: [...SG_MAPPED, SG_UNMAPPED],
+  // Every mapped subgroup answered its own query in the mappings loop.
+  answeredSubgroupIds: SG_MAPPED,
+  hasWholeGroupMapping: false,
+  truncated: false,
+}
+
+Deno.test('the gate opens for the real topology and names the unmapped subgroup to ask', () => {
+  const gate = wholeGroupGate(OPEN_GATE)
+  assert(gate.ok)
+  // The sixth subgroup is asked precisely because nothing maps to it.
+  assertEquals(gate.unasked, [SG_UNMAPPED])
+  assertEquals(gate.total, 6)
+})
+
+Deno.test('the gate shuts when the subgroup list is unknown', () => {
+  const gate = wholeGroupGate({ ...OPEN_GATE, subgroupIds: null })
+  assert(!gate.ok)
+  assert(gate.reason.includes('readable subgroup list'))
+})
+
+Deno.test('the gate shuts when a subgroup answer was truncated at the cap', () => {
+  // An incomplete subgroup list means an event it did not return may still
+  // belong to it, so no whole group event may be inferred this run.
+  const gate = wholeGroupGate({ ...OPEN_GATE, truncated: true })
+  assert(!gate.ok)
+  assert(gate.reason.includes(String(MAX_EVENTS_PER_GROUP)))
+})
+
+Deno.test('the gate shuts when there are more subgroups than the query cap', () => {
+  const many = Array.from({ length: 50 }, (_, i) => `SG-SYNTH-MANY-${i}`)
+  const gate = wholeGroupGate({ ...OPEN_GATE, subgroupIds: many })
+  assert(!gate.ok)
+  assert(gate.reason.includes('subgroups'))
+})
+
+Deno.test('the gate stands aside when a whole group mapping already exists', () => {
+  const gate = wholeGroupGate({ ...OPEN_GATE, hasWholeGroupMapping: true })
+  assert(!gate.ok)
+  assert(gate.reason.includes('whole group mapping'))
+})
+
+Deno.test('a group with no subgroups at all is a real answer: everything is whole group', () => {
+  const gate = wholeGroupGate({ ...OPEN_GATE, subgroupIds: [], answeredSubgroupIds: [] })
+  assert(gate.ok)
+  assertEquals(gate.unasked, [])
+  assertEquals(gate.total, 0)
+})
+
+Deno.test('a mapped subgroup Spond no longer lists does not reopen the gate', () => {
+  // The mapping names a subgroup the group no longer has. The unmapped set
+  // is still derived from what Spond lists, so nothing is left unasked.
+  const gate = wholeGroupGate({ ...OPEN_GATE, answeredSubgroupIds: [...SG_MAPPED, 'SG-SYNTH-GONE'] })
+  assert(gate.ok)
+  assertEquals(gate.unasked, [SG_UNMAPPED])
+})
+
+// ---- A mapped subgroup that did not answer --------------------------------
+//
+// Found by the adversarial review and confirmed rather than refuted. A mapped
+// subgroup whose own events query failed (a timeout, a 403, a non array body)
+// is CONFIGURED but told us nothing. Keying the pass on the mappings would
+// count it as asked, exclude it from the re-ask, and then the group wide
+// query would return that team's own fixtures, match them against nothing,
+// and store them as team_id null All teams events, overwriting the correct
+// team a previous clean run stored. The gate is therefore keyed on what
+// ANSWERED, never on what was configured.
+
+Deno.test('a mapped subgroup whose query failed is asked again, not assumed asked', () => {
+  // Titans (SG_MAPPED[0]) timed out in the mappings loop, so it answered
+  // nothing. The other four answered.
+  const gate = wholeGroupGate({ ...OPEN_GATE, answeredSubgroupIds: SG_MAPPED.slice(1) })
+  assert(gate.ok)
+  // Both the failed mapped subgroup and the unmapped one are re-asked.
+  assertEquals(gate.unasked, [SG_MAPPED[0], SG_UNMAPPED])
+})
+
+Deno.test("a failed mapped subgroup's events never reach the whole group result", () => {
+  // The full sequence the review described. Titans' query failed, so its
+  // fixture id is absent from what the mappings loop saw.
+  const titansFixture = 'EVT-SYNTH-FIXTURE-TITANS'
+  const seenFromMappings = new Set([FIXTURE_ID])
+  const groupWide = [TRAINING_ID, FIXTURE_ID, titansFixture, UNMAPPED_ID]
+
+  // Without the re-ask, the Titans fixture looks exactly like a whole group
+  // event. This is the bug, pinned.
+  assert(wholeGroupEventIds(groupWide, seenFromMappings).includes(titansFixture))
+
+  // With the gate keyed on what answered, Titans is re-asked, its ids join
+  // the seen set, and only the genuine whole group event survives.
+  const gate = wholeGroupGate({ ...OPEN_GATE, answeredSubgroupIds: SG_MAPPED.slice(1) })
+  assert(gate.ok)
+  assert(gate.unasked.includes(SG_MAPPED[0]), 'the failed mapped subgroup must be re-asked')
+  const afterReask = new Set([...seenFromMappings, titansFixture, UNMAPPED_ID])
+  assertEquals(wholeGroupEventIds(groupWide, afterReask), [TRAINING_ID])
+})
+
+Deno.test('if the re-ask also fails the pass stores nothing, rather than guessing', () => {
+  // The function treats a failed re-ask as unmappedFailed and skips the group
+  // wide query entirely. Pinned here at the discriminator level: with the
+  // failed subgroup's events still unseen, nothing may be inferred, so the
+  // only safe result is to store no whole group events at all.
+  const stillUnseen = new Set([FIXTURE_ID, UNMAPPED_ID])
+  const groupWide = [TRAINING_ID, 'EVT-SYNTH-FIXTURE-TITANS']
+  // The discriminator alone would emit the Titans fixture, which is exactly
+  // why the function must not reach it after a failed re-ask.
+  assert(wholeGroupEventIds(groupWide, stillUnseen).includes('EVT-SYNTH-FIXTURE-TITANS'))
 })
