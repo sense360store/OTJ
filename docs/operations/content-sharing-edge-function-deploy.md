@@ -234,21 +234,27 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260809184949` (`0044_training_day_core`, applied
-2026-08-09 under its own production approval).
+Current value: `20260810182333` (`0045_spond_links`, applied
+2026-08-10 under its own production approval).
 
-Hosted ledger newest migration: **`20260809184949` / `training_day_core`**.
+Hosted ledger newest migration: **`20260810182333` / `spond_links`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
-apply, not predicted before it, and was confirmed to be the newest row and to
-appear exactly once. The apply also verified its five FA lock triggers
-(`content_rights_fa_lock_drills`, `_sessions`, `_programmes`, `_templates`,
-`_media`), that the three lock helper functions remain executable by
-`authenticated`, and that no England Football derived row sits above
-`internal_only`.
+apply, not predicted before it, and was confirmed to be the unique newest row.
+The apply's readback also confirmed that `player_spond_links` and
+`spond_event_responses` both exist with row level security enabled and three
+and four policies respectively; that `authenticated` holds `DELETE, INSERT,
+SELECT` on the links and `DELETE, INSERT, SELECT, UPDATE` on the responses, so
+the links carry no `UPDATE`; that `anon` holds nothing on either; that the
+expected cascade and composite foreign keys exist; that both tables are empty;
+and that existing player and registration data was untouched.
 
-The superseded value, `20260727110609` (`0042_public_media_path_boundary`,
-applied 2026-07-27 as part of the Content Sharing PR 4 rollout), is now rejected
-by the gate; a test pins that it is.
+The superseded value, `20260809184949` (`0044_training_day_core`, applied
+2026-08-09 as Release A of Training Day), is now rejected by the gate; a test
+pins that it is, alongside the earlier `20260809081118` and `20260727110609`.
+
+Moving this constant is a **reconciliation**, never a deployment: it records an
+already applied, already reviewed hosted state so the fail closed verifier
+checks against the right one. It applies nothing and changes no schema.
 
 ### The reviewed enabled club set
 
@@ -361,7 +367,7 @@ on the hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260809184949` (0044, the training day core);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260810182333` (0045, the Spond member links);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
