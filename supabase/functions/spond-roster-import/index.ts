@@ -272,26 +272,50 @@ Deno.serve(async (req) => {
   // and re running the import adds nobody twice. The team and shirt now live on
   // the registration since the PR 2 split, so the existing names come from the
   // current season registrations for this team, joined to the identity names.
+  // Read the club's CURRENT SEASON registrations across every team, not just
+  // this one, and partition them. Team scoped alone is what let a child who
+  // moved subgroup be imported a second time: their name was registered, but
+  // to their old team, so this team's snapshot never saw it.
+  //
+  // This widens a read the caller already holds (registrations and identity
+  // names are club wide under players.view; nothing new is readable) and
+  // persists nothing. Past seasons are untouched: season_id pins the current
+  // season, so a child on last season's Trojans is not a cross team case.
   const { data: regRows, error: regError } = await caller.db
     .from('player_registrations')
-    .select('player_id')
+    .select('player_id, team_id')
     .eq('club_id', caller.clubId)
     .eq('season_id', seasonId)
-    .eq('team_id', teamId)
   if (regError) {
     return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
   }
-  const existingIds = (regRows ?? []).map((r) => (r as { player_id: string }).player_id)
+  const registrations = (regRows ?? []) as { player_id: string; team_id: string | null }[]
   let existingNames: string[] = []
-  if (existingIds.length > 0) {
+  let elsewhereNames: string[] = []
+  if (registrations.length > 0) {
     const { data: nameRows, error: nameError } = await caller.db
       .from('players')
-      .select('display_name')
-      .in('id', existingIds)
+      .select('id, display_name')
+      .in(
+        'id',
+        registrations.map((r) => r.player_id),
+      )
     if (nameError) {
       return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
     }
-    existingNames = (nameRows ?? []).map((r) => (r as { display_name: string }).display_name)
+    const nameById = new Map<string, string>()
+    for (const row of (nameRows ?? []) as { id: string; display_name: string }[]) {
+      nameById.set(row.id, row.display_name)
+    }
+    for (const reg of registrations) {
+      const name = nameById.get(reg.player_id)
+      if (name === undefined) continue
+      // An Unassigned registration (team_id null) is not another team, so it is
+      // deliberately neither side: importing such a child here is a genuine
+      // first assignment, which the RPC handles as it always did.
+      if (reg.team_id === teamId) existingNames.push(name)
+      else if (reg.team_id !== null) elsewhereNames.push(name)
+    }
   }
 
   // Reduce each member to name plus optional number and plan the inserts
@@ -301,7 +325,20 @@ Deno.serve(async (req) => {
   // a name in the same subgroup (Spond member ids are never persisted): the
   // second is treated as already present. Genuine same name members are
   // represented by a manual add or an id keyed spreadsheet import.
-  const plan = planRosterImport(members, existingNames)
+  const plan = planRosterImport(members, existingNames, elsewhereNames)
+
+  // A member already registered to another team this season is NOT imported and
+  // NOT moved. Their team is a question only a proved identity can answer, and
+  // a Spond member id is never persisted, so the run reports the count and
+  // leaves the decision to a manager. Counts only: no name reaches this warning,
+  // the response or any log line.
+  if (plan.registeredElsewhere > 0) {
+    warnings.push(
+      plan.registeredElsewhere === 1
+        ? '1 member is already registered to another team this season and was not imported. Nothing was moved or duplicated. Check the Registered players page and use Move team if they have changed team.'
+        : `${plan.registeredElsewhere} members are already registered to another team this season and were not imported. Nothing was moved or duplicated. Check the Registered players page and use Move team if they have changed team.`,
+    )
+  }
 
   // Commit through the transactional spond_import_roster RPC (0036), not a per
   // member add_player loop. In one transaction, gated on players.import and the
@@ -342,6 +379,9 @@ Deno.serve(async (req) => {
     added,
     already_present: alreadyPresent,
     skipped,
+    // Server derived count of members left alone because their name is already
+    // registered to another team this season. A count, never a name.
+    registered_elsewhere: plan.registeredElsewhere,
     warnings,
   })
 })

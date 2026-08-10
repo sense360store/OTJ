@@ -4035,6 +4035,11 @@ export interface RosterImportResult {
   added: number
   alreadyPresent: number
   skipped: number
+  // Members left alone because that name is already registered to ANOTHER team
+  // in this season. They are neither imported nor moved: a name is not an
+  // identity, so which team they belong to is a manager's decision. A count
+  // only, never a name.
+  registeredElsewhere: number
   // The no mapping outcome carries a message instead of counts.
   message: string
   warnings: string[]
@@ -4045,6 +4050,7 @@ interface RosterImportBody {
   added?: number
   already_present?: number
   skipped?: number
+  registered_elsewhere?: number
   message?: string
   warnings?: string[]
 }
@@ -4080,6 +4086,7 @@ export function useSpondRosterImport() {
         added: body.added ?? 0,
         alreadyPresent: body.already_present ?? 0,
         skipped: body.skipped ?? 0,
+        registeredElsewhere: body.registered_elsewhere ?? 0,
         message: body.message ?? '',
         warnings: body.warnings ?? [],
       }

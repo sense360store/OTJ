@@ -15,6 +15,7 @@ import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
   MAX_ROSTER_MEMBERS,
   memberSubgroupIds,
+  normaliseRosterName,
   planRosterImport,
   readCappedJson,
   reduceMember,
@@ -310,4 +311,112 @@ Deno.test('readCappedJson returns null for malformed JSON within the cap', async
 
 Deno.test('readCappedJson returns null for an empty body', async () => {
   assertEquals(await readCappedJson(new Response(''), SPOND_MAX_BODY_BYTES), null)
+})
+
+// ---- The cross team guard --------------------------------------------------
+//
+// A child who moves between Spond subgroups was invisible to the team scoped
+// de-dupe: importing their NEW team found no registration for that name on
+// that team, so the run created a SECOND identity and a SECOND current season
+// registration. These pin the refusal that closes it, and pin just as hard
+// that the refusal never becomes a move: nothing here proves the Spond member
+// and the existing child are the same person.
+
+// The production shape, with invented names. Raife is registered to Trojans
+// this season and Spond now lists him under Titans.
+const TITANS_MEMBERS = [
+  { firstName: 'Rafferty', lastName: 'Mackenzie' },
+  { firstName: 'Nia', lastName: 'Adeyemi' },
+]
+const ON_TITANS = ['Nia Adeyemi']
+const ON_OTHER_TEAMS = ['Rafferty Mackenzie']
+
+Deno.test('a child who moved subgroup is not imported again and not duplicated', () => {
+  const plan = planRosterImport(TITANS_MEMBERS, ON_TITANS, ON_OTHER_TEAMS)
+  // Rafferty is registered to another team this season: left alone entirely.
+  assertEquals(plan.registeredElsewhere, 1)
+  assertEquals(plan.alreadyPresent, 1)
+  assertEquals(plan.added, 0)
+  // The commit payload carries nobody, so no second identity can be created.
+  assertEquals(plan.inserts, [])
+})
+
+Deno.test('the guard refuses, it never moves: the plan has no move or delete concept', () => {
+  const plan = planRosterImport(TITANS_MEMBERS, ON_TITANS, ON_OTHER_TEAMS)
+  // The plan's only instruction to the database is inserts. There is no field
+  // that could carry a team move, an unregistration or a deletion, so a name
+  // match cannot relocate or remove a child by any path.
+  assertEquals(Object.keys(plan).sort(), ['added', 'alreadyPresent', 'inserts', 'registeredElsewhere', 'skipped'])
+  assertEquals(plan.inserts, [])
+})
+
+Deno.test('a member already on THIS team is already present, never a cross team case', () => {
+  // The same name on this team and on another: this team wins, so a child
+  // correctly registered here is never miscounted as having moved.
+  const plan = planRosterImport([{ firstName: 'Nia', lastName: 'Adeyemi' }], ['Nia Adeyemi'], ['Nia Adeyemi'])
+  assertEquals(plan.alreadyPresent, 1)
+  assertEquals(plan.registeredElsewhere, 0)
+  assertEquals(plan.added, 0)
+})
+
+Deno.test('a genuinely new child still imports with the guard in place', () => {
+  const plan = planRosterImport([{ firstName: 'Tomas', lastName: 'Silva' }], ON_TITANS, ON_OTHER_TEAMS)
+  assertEquals(plan.added, 1)
+  assertEquals(plan.registeredElsewhere, 0)
+  assertEquals(plan.inserts, [{ display_name: 'Tomas Silva', shirt_number: null }])
+})
+
+Deno.test('an Unassigned registration is not another team, so that child still imports', () => {
+  // The Edge Function passes only rows with a non null team_id as elsewhere, so
+  // a child with no team is a genuine first assignment, not a cross team case.
+  const plan = planRosterImport([{ firstName: 'Tomas', lastName: 'Silva' }], [], [])
+  assertEquals(plan.added, 1)
+  assertEquals(plan.registeredElsewhere, 0)
+})
+
+Deno.test('the guard is idempotent: re-running changes nothing and still imports nobody', () => {
+  const first = planRosterImport(TITANS_MEMBERS, ON_TITANS, ON_OTHER_TEAMS)
+  const second = planRosterImport(TITANS_MEMBERS, ON_TITANS, ON_OTHER_TEAMS)
+  assertEquals(first, second)
+  assertEquals(second.inserts, [])
+  assertEquals(second.registeredElsewhere, 1)
+})
+
+Deno.test('a member absent from Spond is simply not in the plan: absence removes nobody', () => {
+  // Two children are registered on this team; Spond lists only one of them.
+  // The plan carries no removal of any kind for the missing child.
+  const plan = planRosterImport([{ firstName: 'Nia', lastName: 'Adeyemi' }], ['Nia Adeyemi', 'Elowen Pryce'], [])
+  assertEquals(plan.inserts, [])
+  assertEquals(plan.added, 0)
+  // Nothing anywhere in the plan names or counts the absent child.
+  assert(!JSON.stringify(plan).includes('Elowen'))
+})
+
+Deno.test('the cross team key folds case and whitespace, matching the RPC exactly', () => {
+  // The RPC dedupes on lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')).
+  // A looser key here would send a candidate the RPC then classifies
+  // differently, which is how a duplicate slips through.
+  assertEquals(normaliseRosterName('  Rafferty   Mackenzie '), 'rafferty mackenzie')
+  const plan = planRosterImport([{ firstName: 'RAFFERTY', lastName: 'MACKENZIE' }], [], ['  rafferty   mackenzie '])
+  assertEquals(plan.registeredElsewhere, 1)
+  assertEquals(plan.added, 0)
+})
+
+Deno.test('the guard carries no guardian, contact or payload data', () => {
+  const member = {
+    firstName: 'Rafferty',
+    lastName: 'Mackenzie',
+    email: 'never@example.invalid',
+    phoneNumber: '+44 0000 000000',
+    guardians: [{ firstName: 'Invented', lastName: 'Guardian', email: 'guardian@example.invalid' }],
+    subGroups: ['SG-SYNTH-1'],
+  }
+  const plan = planRosterImport([member], [], ['Rafferty Mackenzie'])
+  const flat = JSON.stringify(plan)
+  for (const leak of ['example.invalid', '+44', 'Guardian', 'guardians', 'subGroups', 'SG-SYNTH-1']) {
+    assert(!flat.includes(leak), `the plan leaked ${leak}`)
+  }
+  // And the refusal is a count, carrying no name at all.
+  assertEquals(plan.registeredElsewhere, 1)
+  assertEquals(flat.includes('Rafferty'), false)
 })
