@@ -432,6 +432,19 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # to verify_jwt = false. A positive post-deploy inventory check confirms
 # read-content-share is anon reachable while every other function is not.
 # =====================================================================
+# Every Spond reading function requires a signed in caller. Two of them
+# read a member's display name (spond-roster-import, which persists one to
+# the roster, and spond-link-members, which persists nothing), so their JWT
+# posture is declared explicitly here rather than left to the default.
+[functions.spond-sync]
+verify_jwt = true
+
+[functions.spond-roster-import]
+verify_jwt = true
+
+[functions.spond-link-members]
+verify_jwt = true
+
 [functions.manage-content-share]
 verify_jwt = true
 

@@ -3,7 +3,15 @@
 // It needs nothing configured to work. Open a session, see the children
 // it covers grouped by team, tap a row to mark someone in, set a bib if
 // it differs from the team's, and add anyone who turns up unexpectedly.
-// No Spond, no linking, no RSVP: this is the coach's own record.
+// No Spond and no linking required: this is the coach's own record.
+//
+// Where Spond IS configured and a child IS linked, their parent's reply
+// appears as one small pill beside the name. It is context and never
+// attendance: it does not tick anything, does not move any row, does not
+// grey a declined child, and is not part of composing the list. Its query
+// is a sibling of the register's, never gates the screen, and never
+// touches the register's cache, so a failing RSVP read renders exactly
+// as an unlinked child does, which is as nothing at all.
 //
 // One handed by construction: the whole row is the tick target, so a
 // thumb never has to find a small checkbox, and the bib control sits in
@@ -19,9 +27,12 @@ import {
   useRegisterEntries,
   useRemoveRegisterEntry,
   useSession,
+  useSessionSpondRsvp,
   useSetRegisterEntry,
   useTeams,
 } from '../lib/queries'
+import { RSVP_LABELS, rsvpStaleNote } from '../lib/spondRsvp'
+import type { Rsvp } from '../lib/spondRsvp'
 import {
   activeRoster,
   buildRegister,
@@ -39,15 +50,39 @@ import { Empty, ErrorNote, Loading, Modal, fmtDate } from '../components/ui'
 import './SessionDay.css'
 import './SessionRegister.css'
 
+// The RSVP pill. Text, never a tick or a cross: a tick beside a name is
+// exactly the mark the register uses for present, and one on an unticked
+// row would be misread at a glance in the rain. Monochrome apart from
+// "Not going", because green already means present on this screen and a
+// green "Going" pill would make an unticked row read as half ticked.
+// Non interactive and outside the tick button, so it can never take the
+// tap and a screen reader never announces it inside "Mark X present".
+function RsvpPill({ rsvp }: { rsvp: Rsvp | null | undefined }) {
+  if (!rsvp) return null
+  return (
+    <span
+      className={'reg-rsvp' + (rsvp.status === 'declined' ? ' out' : '')}
+      role="img"
+      aria-label={`Spond reply: ${RSVP_LABELS[rsvp.status].toLowerCase()}`}
+    >
+      {RSVP_LABELS[rsvp.status]}
+    </span>
+  )
+}
+
 export function RegisterRowView({
   row,
   canMark,
+  rsvp,
   onToggle,
   onBib,
   onRemove,
 }: {
   row: RegisterRow
   canMark: boolean
+  // Optional and defaulting to nothing, so every call site that knows no
+  // Spond keeps producing byte identical markup.
+  rsvp?: Rsvp | null
   onToggle: () => void
   onBib: (value: string) => void
   onRemove?: () => void
@@ -81,6 +116,7 @@ export function RegisterRowView({
       ) : (
         <div className="reg-tick">{name}</div>
       )}
+      <RsvpPill rsvp={rsvp} />
       <div className="reg-bib">
         {row.bibSwatch && <span className="reg-swatch" style={{ background: row.bibSwatch }} aria-hidden="true" />}
         {canMark ? (
@@ -160,6 +196,7 @@ export function RegisterScreenView({
   players,
   entries,
   canMark,
+  rsvpByPlayer,
   onToggle,
   onBib,
   onRemove,
@@ -170,6 +207,9 @@ export function RegisterScreenView({
   players: Player[]
   entries: RegisterEntry[]
   canMark: boolean
+  // Optional, and absent is the normal case: no Spond, no link, still
+  // loading and failed all arrive here as no entry for that player.
+  rsvpByPlayer?: Record<string, Rsvp>
   onToggle: (row: RegisterRow) => void
   onBib: (row: RegisterRow, value: string) => void
   onRemove: (row: RegisterRow) => void
@@ -182,6 +222,22 @@ export function RegisterScreenView({
   // memoising it would need the covered ids flattened into a dep key.
   const view = buildRegister(players, covered, teams, entries, wholeClub)
   const unset = coverageOf(session).kind === 'unset'
+  // Composition never sees Spond: buildRegister still takes its five
+  // arguments and the rows are already ordered before this line runs, so
+  // a refresh cannot reorder the list under a thumb.
+  const rsvp = rsvpByPlayer ?? {}
+  // Only the replies actually on screen count towards the freshness line.
+  // The lookup is built from a club wide link read, so it can carry a
+  // child this session does not cover, and a note about a reply nobody can
+  // see would be a claim the screen cannot back up.
+  const shown: Record<string, Rsvp> = {}
+  for (const g of view.groups) {
+    for (const row of g.rows) {
+      const r = rsvp[row.player.id]
+      if (r) shown[row.player.id] = r
+    }
+  }
+  const staleNote = rsvpStaleNote(shown)
 
   return (
     <div className="reg">
@@ -194,6 +250,10 @@ export function RegisterScreenView({
           </button>
         )}
       </div>
+
+      {/* Only when it matters: fresh context needs no label, stale
+          context must not pass itself off as fresh. */}
+      {staleNote && <p className="reg-stale">{staleNote}</p>}
 
       {unset && view.groups.length === 0 ? (
         <Empty icon={Icon.users} title="This session has no teams yet">
@@ -227,6 +287,7 @@ export function RegisterScreenView({
                   key={row.player.id}
                   row={row}
                   canMark={canMark}
+                  rsvp={rsvp[row.player.id] ?? null}
                   onToggle={() => onToggle(row)}
                   onBib={(v) => onBib(row, v)}
                   onRemove={canMark && row.manual ? () => onRemove(row) : undefined}
@@ -254,6 +315,10 @@ function RegisterScreen({ session }: { session: Session }) {
   const season = useCurrentSeason()
   const roster = useRegisteredPlayers(season.data?.id ?? null)
   const register = useRegisterEntries(session.id)
+  // Context, on a sibling key. Deliberately absent from every gate
+  // below: a slow or failing RSVP read must never blank or error a
+  // working register, and its result never reaches the register's cache.
+  const rsvp = useSessionSpondRsvp(session.id, session.spondEventId)
   const setEntry = useSetRegisterEntry()
   const removeEntry = useRemoveRegisterEntry()
   const [adding, setAdding] = useState(false)
@@ -271,6 +336,8 @@ function RegisterScreen({ session }: { session: Session }) {
   const rosterFailed = roster.isError || season.isError
   if (register.isError || rosterFailed) return <ErrorNote />
   if (register.isLoading || roster.isLoading || season.isLoading) return <Loading />
+  // rsvp.isError and rsvp.isLoading are absent from both lines above on
+  // purpose. Spond context is not the register.
   const allTeamIds = teams.map((t) => t.id)
   const pool = quickAddPool(players, coveredTeamIds(session), entries, coversWholeClub(session, allTeamIds))
 
@@ -294,6 +361,7 @@ function RegisterScreen({ session }: { session: Session }) {
         players={players}
         entries={entries}
         canMark={canMark}
+        rsvpByPlayer={rsvp.data}
         onToggle={(row) =>
           setEntry.mutate({
             sessionId: session.id,

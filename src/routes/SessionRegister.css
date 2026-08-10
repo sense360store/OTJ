@@ -119,10 +119,43 @@
   font-weight: 800;
   font-size: 15px;
   line-height: 1.25;
+  /* A long surname breaks rather than running under the reply pill, the
+     same treatment .pc-name and .ip-name already give a child's name. */
+  overflow-wrap: anywhere;
 }
 .reg-name-sub {
   font-size: 12px;
   color: var(--slate);
+}
+
+/* Spond reply, context only. Its own element between the tick target and
+   the bib control, so it can never take the tap. Text rather than an icon
+   because a tick or a cross beside a name is exactly the mark attendance
+   uses. Monochrome apart from "Not going": green already means present on
+   this screen, so a coloured Going pill would make an unticked row read
+   as half ticked, and keeping the tick the only coloured signal leaves
+   the one case worth scanning for as the only colour. */
+.reg-rsvp {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--slate);
+  white-space: nowrap;
+}
+.reg-rsvp.out {
+  color: var(--m-pdf);
+  border-color: var(--m-pdf);
+}
+
+.reg-stale {
+  font-size: 12.5px;
+  color: var(--slate);
+  margin: -8px 2px 0;
 }
 
 /* The bib control, in its own tap area at the end of the row. */
@@ -150,6 +183,20 @@
   font-size: 13.5px;
   font-weight: 700;
   padding: 0 8px;
+}
+
+/* At 360px the row now carries a check, a name, a reply and a bib. The
+   name wraps rather than overflowing (it is in a min-width 0 flex child
+   with no nowrap), and the bib control gives up width first, because a
+   colour is recognisable from its swatch and a name is not. */
+@media (max-width: 420px) {
+  .reg-bib select {
+    max-width: 72px;
+  }
+  .reg-tick {
+    gap: 9px;
+    padding-right: 8px;
+  }
 }
 
 .reg-bib-static {

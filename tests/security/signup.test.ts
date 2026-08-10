@@ -150,6 +150,8 @@ describe('direct signup with forged metadata', () => {
       'feedback',
       'spond_events',
       'spond_groups',
+      'player_spond_links',
+      'spond_event_responses',
       'players',
       'player_registrations',
       'seasons',

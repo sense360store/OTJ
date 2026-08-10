@@ -10,14 +10,23 @@
 //
 // THE CHILDREN'S DATA BOUNDARY, the rule that shapes this module. Spond
 // event responses identify children and their parents: member ids in
-// the response arrays, names elsewhere in the payload. This app never
-// holds any of that. The four counts are derived in memory as array
-// lengths and everything else is discarded. buildEventRow is the only
-// place a Spond event becomes a database row, and SPOND_EVENT_COLUMNS
-// is the complete set of columns it may carry: no member ids, no names,
-// no payload fragments. The event's recipients object, which embeds
-// member names, is never read at all; subgroup scoping is delegated to
-// Spond's own subGroupId filter (see eventsQuery).
+// the response arrays, names elsewhere in the payload. No name, guardian,
+// contact detail, comment or payload fragment is ever stored by anything
+// here. The four counts are derived in memory as array lengths.
+// buildEventRow is the only place a Spond EVENT becomes a database row,
+// and SPOND_EVENT_COLUMNS is the complete set of columns it may carry:
+// no member ids, no names, no payload fragments. The event's recipients
+// object, which embeds member names, is never read at all; subgroup
+// scoping is delegated to Spond's own subGroupId filter (see
+// eventsQuery).
+//
+// Since 0045_spond_links.sql this module also shapes the per member
+// reply rows, in the Release B section at the end of the file:
+// buildResponseRows is the only place a member's reply becomes a row,
+// SPOND_RESPONSE_COLUMNS is its complete column set, and only members a
+// human has LINKED to a roster child appear in one. The opaque member id
+// is the sole Spond identifier either row shape may carry. See
+// docs/security/spond-data-boundary.md.
 //
 // Read only toward Spond: authentication is the only non GET call the
 // function makes, and nothing here builds a write. The endpoint paths,
@@ -742,4 +751,162 @@ export function planRosterImport(
     added++
   }
   return { inserts, added, alreadyPresent, skipped, registeredElsewhere }
+}
+
+// =====================================================================
+// Release B: linked member RSVP context (0045_spond_links.sql)
+//
+// THE BOUNDARY THIS SECTION IMPLEMENTS. A stored response row exists
+// only for a member a human has bound to a roster child. Nothing here
+// reads a name, a guardian, a contact field, a comment or the
+// recipients object; the four response arrays are read for their member
+// ids and nothing else in the payload is touched. The database refuses
+// a row for an unlinked member outright
+// (spond_event_responses_link_fk), so this code is the second line of
+// defence, not the only one.
+//
+// RSVP is context. Nothing here reads, writes or derives attendance:
+// register_entries is the coach's own record and this module does not
+// know it exists.
+// =====================================================================
+
+// The opaque Spond member id, exactly the character class the
+// player_spond_links column check enforces. Uppercase hex admits no
+// space, no '@', no '+', no '.' and no lowercase letter, so a name, an
+// email address or a phone number fails here as it would fail there. A
+// candidate that would be refused by the column is dropped before it is
+// ever offered to a caller.
+export const SPOND_MEMBER_ID_PATTERN = /^[0-9A-F]{16,64}$/
+
+// The complete set of columns a response row may carry. The same
+// discipline SPOND_EVENT_COLUMNS applies to events: no name, no
+// guardian, no comment, no payload fragment, and no free shaped column
+// to hide one in. Pinned by spond_test.ts.
+export const SPOND_RESPONSE_COLUMNS = [
+  'club_id',
+  'spond_event_id',
+  'spond_member_id',
+  'status',
+  'synced_at',
+] as const
+
+export type SpondResponseStatus = 'accepted' | 'declined' | 'unanswered' | 'waiting'
+
+export interface SpondResponseRow {
+  club_id: string
+  spond_event_id: string
+  spond_member_id: string
+  status: SpondResponseStatus
+  synced_at: string
+}
+
+export interface MemberStatus {
+  spond_member_id: string
+  status: SpondResponseStatus
+}
+
+// A defensive cap on ids read from any one response array, so a
+// malformed or unexpectedly huge event is bounded. A grassroots squad is
+// a few dozen.
+export const MAX_RESPONSE_IDS_PER_ARRAY = 1000
+
+// The four arrays, read in a fixed order so the output is deterministic,
+// mapped to the four values the status column accepts. unconfirmedIds is
+// deliberately absent: it is not one of the four and is never read, as it
+// is never read by deriveCounts.
+const RESPONSE_ARRAYS: ReadonlyArray<readonly [string, SpondResponseStatus]> = [
+  ['acceptedIds', 'accepted'],
+  ['declinedIds', 'declined'],
+  ['unansweredIds', 'unanswered'],
+  ['waitinglistIds', 'waiting'],
+]
+
+// One event's response arrays reduced to the statuses of the LINKED
+// members only. Same payload plus same link set gives the same rows in
+// the same order, by construction, so a re-sync of an unchanged event
+// writes an identical set.
+//
+// `linked` is the proven link set. The caller must never pass an empty
+// set to mean "we could not read the links": empty means the club has no
+// links, which is a different fact and has a different consequence. See
+// the three state rule in spond-sync/index.ts.
+//
+// An id appearing in more than one array (which Spond should not do)
+// keeps its first claim, so the result never contains a member twice and
+// the upsert never targets one row twice.
+export function deriveMemberStatuses(responses: unknown, linked: ReadonlySet<string>): MemberStatus[] {
+  const r = asRecord(responses)
+  const seen = new Set<string>()
+  const out: MemberStatus[] = []
+  for (const [field, status] of RESPONSE_ARRAYS) {
+    const value = r[field]
+    if (!Array.isArray(value)) continue
+    for (const id of value.slice(0, MAX_RESPONSE_IDS_PER_ARRAY)) {
+      if (typeof id !== 'string') continue
+      const memberId = id.toUpperCase()
+      if (!SPOND_MEMBER_ID_PATTERN.test(memberId)) continue
+      if (!linked.has(memberId)) continue
+      if (seen.has(memberId)) continue
+      seen.add(memberId)
+      out.push({ spond_member_id: memberId, status })
+    }
+  }
+  return out
+}
+
+// The statuses shaped into rows. Every row carries this run's syncedAt,
+// which is what lets the reconcile delete only the strictly older tail
+// for the event rather than emptying it first. Nothing but the five
+// columns is constructed, so no payload fragment can ride along.
+export function buildResponseRows(
+  clubId: string,
+  eventRowId: string,
+  statuses: MemberStatus[],
+  syncedAt: string,
+): SpondResponseRow[] {
+  return statuses.map((s) => ({
+    club_id: clubId,
+    spond_event_id: eventRowId,
+    spond_member_id: s.spond_member_id,
+    status: s.status,
+    synced_at: syncedAt,
+  }))
+}
+
+// ---- The linking candidate shape -------------------------------------------
+
+// The cap on candidates returned for one team across all of its
+// mappings. A whole group mapping at a busy club can exceed a couple of
+// hundred, and the remedy for hitting this is to map the team to its
+// Spond subgroup so the list is scoped, never to reload: the cap applies
+// to the input order before link state is known, so a reload returns the
+// same names again.
+export const MAX_LINK_CANDIDATES = 400
+
+// The complete shape spond-link-members returns for one member. Two
+// fields, both required by the manager to decide who this is. The
+// display name is TRANSIENT: it is returned to the linking screen and
+// stored nowhere, and the insert the browser then sends carries the
+// member id, the player id and matched_by only.
+export interface LinkCandidate {
+  spond_member_id: string
+  display_name: string
+}
+
+// One member reduced to a candidate, or null when it has no usable name
+// or no id the links table would accept. Reads exactly two things:
+// m.id, and the first and last name through rosterDisplayName. The
+// member's guardians, email, phoneNumber, subGroups and every other
+// field are never reached, so they cannot be returned even by accident.
+//
+// Rejecting a malformed id here rather than at insert time means the UI
+// never offers a candidate the database would refuse.
+export function reduceLinkCandidate(member: unknown): LinkCandidate | null {
+  const id = asRecord(member).id
+  if (typeof id !== 'string') return null
+  const memberId = id.toUpperCase()
+  if (!SPOND_MEMBER_ID_PATTERN.test(memberId)) return null
+  const display_name = rosterDisplayName(member)
+  if (!display_name) return null
+  return { spond_member_id: memberId, display_name }
 }

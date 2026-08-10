@@ -1,0 +1,125 @@
+/* Spond links. A management screen, not a touchline one, but the rows
+   still carry 44px targets because a manager is as likely to be doing
+   this on a phone as at a desk. */
+
+.sl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+.sl-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.sl-chip.on {
+  border-color: var(--royal);
+  background: color-mix(in srgb, var(--royal) 8%, var(--card));
+}
+.sl-chip-name {
+  font-weight: 800;
+  font-size: 14px;
+}
+.sl-chip-count {
+  font-size: 12px;
+  color: var(--slate);
+}
+
+.sl-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sl-section {
+  margin-bottom: 22px;
+}
+.sl-section h3 {
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate);
+  margin-bottom: 8px;
+}
+
+.sl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 13px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--card);
+}
+.sl-row-main {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sl-row-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.sl-row-actions .btn {
+  min-height: 44px;
+}
+.sl-name {
+  font-weight: 800;
+  font-size: 15px;
+}
+.sl-sub {
+  font-size: 12.5px;
+  color: var(--slate);
+}
+
+.sl-empty,
+.sl-note {
+  font-size: 13.5px;
+  color: var(--slate);
+  padding: 2px;
+}
+
+.sl-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  overflow: auto;
+}
+.sl-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: inherit;
+  font-weight: 800;
+  font-size: 14.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.sl-picker-row.off {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
