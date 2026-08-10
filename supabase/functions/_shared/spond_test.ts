@@ -24,6 +24,7 @@ import {
   syncWindow,
   visibleGroupIds,
   wholeGroupEventIds,
+  wholeGroupGate,
 } from './spond.ts'
 import type { SpondEventRow } from './spond.ts'
 
@@ -595,4 +596,65 @@ Deno.test('the whole group pass reads no member data from the group payload', ()
     ],
   }
   assertEquals(groupSubgroupIds([withGuardians], GROUP_ID), [...SG_MAPPED, SG_UNMAPPED])
+})
+
+// ---- The fail closed gate --------------------------------------------------
+//
+// The pass may only run when every subgroup was asked AND asked completely.
+// Each rule below exists because breaking it would store a subgroup's own
+// event as a club event, visible to every team and every parent.
+
+const OPEN_GATE = {
+  subgroupIds: [...SG_MAPPED, SG_UNMAPPED],
+  mappedSubgroupIds: SG_MAPPED,
+  hasWholeGroupMapping: false,
+  truncated: false,
+}
+
+Deno.test('the gate opens for the real topology and names the unmapped subgroup to ask', () => {
+  const gate = wholeGroupGate(OPEN_GATE)
+  assert(gate.ok)
+  // The sixth subgroup is asked precisely because nothing maps to it.
+  assertEquals(gate.unmapped, [SG_UNMAPPED])
+})
+
+Deno.test('the gate shuts when the subgroup list is unknown', () => {
+  const gate = wholeGroupGate({ ...OPEN_GATE, subgroupIds: null })
+  assert(!gate.ok)
+  assert(gate.reason.includes('readable subgroup list'))
+})
+
+Deno.test('the gate shuts when a subgroup answer was truncated at the cap', () => {
+  // An incomplete subgroup list means an event it did not return may still
+  // belong to it, so no whole group event may be inferred this run.
+  const gate = wholeGroupGate({ ...OPEN_GATE, truncated: true })
+  assert(!gate.ok)
+  assert(gate.reason.includes(String(MAX_EVENTS_PER_GROUP)))
+})
+
+Deno.test('the gate shuts when there are more subgroups than the query cap', () => {
+  const many = Array.from({ length: 50 }, (_, i) => `SG-SYNTH-MANY-${i}`)
+  const gate = wholeGroupGate({ ...OPEN_GATE, subgroupIds: many })
+  assert(!gate.ok)
+  assert(gate.reason.includes('subgroups'))
+})
+
+Deno.test('the gate stands aside when a whole group mapping already exists', () => {
+  const gate = wholeGroupGate({ ...OPEN_GATE, hasWholeGroupMapping: true })
+  assert(!gate.ok)
+  assert(gate.reason.includes('whole group mapping'))
+})
+
+Deno.test('a group with no subgroups at all is a real answer: everything is whole group', () => {
+  const gate = wholeGroupGate({ ...OPEN_GATE, subgroupIds: [], mappedSubgroupIds: [] })
+  assert(gate.ok)
+  assertEquals(gate.unmapped, [])
+})
+
+Deno.test('a mapped subgroup Spond no longer lists does not reopen the gate', () => {
+  // The mapping names a subgroup the group no longer has. The unmapped set
+  // is still derived from what Spond lists, so nothing is left unasked.
+  const gate = wholeGroupGate({ ...OPEN_GATE, mappedSubgroupIds: [...SG_MAPPED, 'SG-SYNTH-GONE'] })
+  assert(gate.ok)
+  assertEquals(gate.unmapped, [SG_UNMAPPED])
 })

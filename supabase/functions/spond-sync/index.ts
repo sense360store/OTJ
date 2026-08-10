@@ -51,13 +51,13 @@ import {
   extractAccessToken,
   groupSubgroupIds,
   MAX_EVENTS_PER_GROUP,
-  MAX_SUBGROUP_QUERIES,
   MAX_TOTAL_EVENTS,
   SPOND_API_BASE,
   SPOND_TIMEOUT_MS,
   syncWindow,
   visibleGroupIds,
   wholeGroupEventIds,
+  wholeGroupGate,
   WINDOW_BACK_DAYS,
   WINDOW_FORWARD_DAYS,
 } from '../_shared/spond.ts'
@@ -321,6 +321,12 @@ Deno.serve(async (req) => {
   // group pass reads it as one half of its discriminator. Ids only; nothing
   // else from these events is kept.
   const subgroupSeen = new Set<string>()
+  // Parent groups where a subgroup query came back at the per query cap, so
+  // its event list is truncated and subgroupSeen is incomplete for them. The
+  // whole group pass fails closed on these: an event beyond the cap was
+  // never seen, and calling it a whole group event would store a subgroup's
+  // event as an All teams one.
+  const truncatedGroups = new Set<string>()
   let processed = 0
   let eventsTotal = 0
   let stopped: string | null = null
@@ -365,6 +371,7 @@ Deno.serve(async (req) => {
         const eventId = (event as Record<string, unknown> | null)?.id
         if (typeof eventId === 'string' && eventId) subgroupSeen.add(eventId)
       }
+      if (fetched.events.length >= MAX_EVENTS_PER_GROUP) truncatedGroups.add(mapping.spond_group_id)
     }
 
     const warnings: string[] = []
@@ -485,26 +492,22 @@ Deno.serve(async (req) => {
       continue
     }
 
-    // A mapping that already queries the whole group attributes every event
-    // it returns to its own team, which is the operator's explicit choice.
-    // The pass stands aside rather than contradict it.
-    const groupMappings = mappings.filter((m) => m.spond_group_id === groupId)
-    if (groupMappings.some((m) => !m.spond_subgroup_id)) {
-      skip('This group already has a whole group mapping, which syncs its events.')
-      continue
-    }
-
     // FAIL CLOSED, the rule the unmapped subgroup makes necessary. Every
-    // branch below that cannot ask every subgroup skips the group wide
-    // query entirely, because "no subgroup returned this" is only
-    // trustworthy when every subgroup was actually asked.
+    // condition that stops us asking every subgroup completely skips the
+    // group wide query entirely: see wholeGroupGate in ../_shared/spond.ts,
+    // where those rules live so they can be tested directly.
+    const groupMappings = mappings.filter((m) => m.spond_group_id === groupId)
     const subgroupIds = groups.subgroupsByGroup.get(groupId) ?? null
-    if (subgroupIds === null) {
-      skip('Spond did not return a readable subgroup list for this group, so whole group events were not synced.')
-      continue
-    }
-    if (subgroupIds.length > MAX_SUBGROUP_QUERIES) {
-      skip(`This group has more than ${MAX_SUBGROUP_QUERIES} subgroups, so whole group events were not synced.`)
+    const gate = wholeGroupGate({
+      subgroupIds,
+      mappedSubgroupIds: groupMappings
+        .map((m) => m.spond_subgroup_id)
+        .filter((id): id is string => typeof id === 'string' && !!id),
+      hasWholeGroupMapping: groupMappings.some((m) => !m.spond_subgroup_id),
+      truncated: truncatedGroups.has(groupId),
+    })
+    if (!gate.ok) {
+      skip(gate.reason)
       continue
     }
 
@@ -513,7 +516,7 @@ Deno.serve(async (req) => {
     const mapped = new Set(
       groupMappings.map((m) => m.spond_subgroup_id).filter((id): id is string => typeof id === 'string' && !!id),
     )
-    const unmapped = subgroupIds.filter((id) => !mapped.has(id))
+    const unmapped = gate.unmapped
     let unmappedFailed = false
     for (const subgroupId of unmapped) {
       const fetched = await spondEvents(
@@ -530,9 +533,20 @@ Deno.serve(async (req) => {
         const eventId = (event as Record<string, unknown> | null)?.id
         if (typeof eventId === 'string' && eventId) subgroupSeen.add(eventId)
       }
+      if (fetched.events.length >= MAX_EVENTS_PER_GROUP) truncatedGroups.add(groupId)
     }
     if (unmappedFailed) {
       skip('A subgroup could not be read, so whole group events were not synced.')
+      continue
+    }
+    // FAIL CLOSED on truncation. A subgroup query that came back at the cap
+    // has an incomplete event list, so an event it did not return may still
+    // belong to it. Storing that as a club event is the same leak by another
+    // route, so the group wide query is not run at all.
+    if (truncatedGroups.has(groupId)) {
+      skip(
+        `A subgroup returned the maximum of ${MAX_EVENTS_PER_GROUP} events, so its list is incomplete and whole group events were not synced.`,
+      )
       continue
     }
 
@@ -601,7 +615,7 @@ Deno.serve(async (req) => {
     record({
       status: 'synced',
       whole_group_events: rows.length,
-      subgroups_total: subgroupIds.length,
+      subgroups_total: mapped.size + unmapped.length,
       subgroups_mapped: mapped.size,
       group_wide_returned: byId.size,
       ...(notes.length > 0 ? { notes } : {}),

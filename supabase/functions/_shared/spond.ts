@@ -439,6 +439,54 @@ export function groupSubgroupIds(groups: unknown, groupId: string): string[] | n
   return ids
 }
 
+// The gate on the whole group pass: every condition under which it must
+// NOT run, in one pure place so the fail closed rules are testable rather
+// than buried in the function.
+//
+// The pass may only run when every subgroup of the group was asked, and
+// asked completely, because "no subgroup returned this" is the entire
+// discriminator. A subgroup that was not asked, or was asked and answered
+// with a truncated list, means an event could belong to it and still be
+// absent from what we saw; storing that event as a club event would put a
+// subgroup's private event in front of every team and every parent. In
+// every one of those cases the correct answer is to sync no whole group
+// events at all and say so, never to guess.
+export type WholeGroupGate = { ok: true; unmapped: string[] } | { ok: false; reason: string }
+
+export function wholeGroupGate(input: {
+  subgroupIds: string[] | null
+  mappedSubgroupIds: string[]
+  hasWholeGroupMapping: boolean
+  truncated: boolean
+}): WholeGroupGate {
+  // A mapping that already queries the whole group attributes every event it
+  // returns to its own team, which is the operator's explicit choice.
+  if (input.hasWholeGroupMapping) {
+    return { ok: false, reason: 'This group already has a whole group mapping, which syncs its events.' }
+  }
+  if (input.subgroupIds === null) {
+    return {
+      ok: false,
+      reason: 'Spond did not return a readable subgroup list for this group, so whole group events were not synced.',
+    }
+  }
+  if (input.subgroupIds.length > MAX_SUBGROUP_QUERIES) {
+    return {
+      ok: false,
+      reason: `This group has more than ${MAX_SUBGROUP_QUERIES} subgroups, so whole group events were not synced.`,
+    }
+  }
+  if (input.truncated) {
+    return {
+      ok: false,
+      reason:
+        `A subgroup returned the maximum of ${MAX_EVENTS_PER_GROUP} events, so its list is incomplete and whole group events were not synced.`,
+    }
+  }
+  const mapped = new Set(input.mappedSubgroupIds)
+  return { ok: true, unmapped: input.subgroupIds.filter((id) => !mapped.has(id)) }
+}
+
 // The event ids a group wide query returned that no subgroup query
 // returned. Pure, so the test can pin the six subgroups and five mappings
 // case directly: an event seen only under the unmapped sixth subgroup is
