@@ -322,8 +322,9 @@ Deno.test('readCappedJson returns null for an empty body', async () => {
 // that the refusal never becomes a move: nothing here proves the Spond member
 // and the existing child are the same person.
 
-// The production shape, with invented names. Raife is registered to Trojans
-// this season and Spond now lists him under Titans.
+// The production shape, with invented names throughout. One child is
+// registered to another team this season and Spond now lists them under the
+// team being imported.
 const TITANS_MEMBERS = [
   { firstName: 'Rafferty', lastName: 'Mackenzie' },
   { firstName: 'Nia', lastName: 'Adeyemi' },
@@ -366,12 +367,34 @@ Deno.test('a genuinely new child still imports with the guard in place', () => {
   assertEquals(plan.inserts, [{ display_name: 'Tomas Silva', shirt_number: null }])
 })
 
-Deno.test('an Unassigned registration is not another team, so that child still imports', () => {
-  // The Edge Function passes only rows with a non null team_id as elsewhere, so
-  // a child with no team is a genuine first assignment, not a cross team case.
+Deno.test('an Unassigned current season registration refuses, it does not import again', () => {
+  // Found by the adversarial review. The first cut carved Unassigned out as
+  // "not another team", which left the duplicate wide open: the RPC only ever
+  // inserts, so importing a child who already holds a current season
+  // registration mints a SECOND identity with a SECOND registration, and the
+  // unique (player_id, season_id) constraint does not stop it because the new
+  // row carries a new player_id. The rule is existence, not team.
+  const plan = planRosterImport([{ firstName: 'Tomas', lastName: 'Silva' }], [], ['Tomas Silva'])
+  assertEquals(plan.registeredElsewhere, 1)
+  assertEquals(plan.added, 0)
+  assertEquals(plan.inserts, [])
+})
+
+Deno.test('a withdrawn current season registration refuses too, for the same reason', () => {
+  // A withdrawn child is still an existing identity. Status is ignored on both
+  // sides: re-importing them must not mint a second one. The Edge Function
+  // reads no status column, so every current season registration counts.
+  const plan = planRosterImport([{ firstName: 'Elowen', lastName: 'Pryce' }], [], ['Elowen Pryce'])
+  assertEquals(plan.registeredElsewhere, 1)
+  assertEquals(plan.added, 0)
+})
+
+Deno.test('a child with no current season registration anywhere still imports', () => {
+  // The only path that inserts: no registration in this season, on any team.
   const plan = planRosterImport([{ firstName: 'Tomas', lastName: 'Silva' }], [], [])
   assertEquals(plan.added, 1)
   assertEquals(plan.registeredElsewhere, 0)
+  assertEquals(plan.inserts, [{ display_name: 'Tomas Silva', shirt_number: null }])
 })
 
 Deno.test('the guard is idempotent: re-running changes nothing and still imports nobody', () => {
@@ -392,10 +415,10 @@ Deno.test('a member absent from Spond is simply not in the plan: absence removes
   assert(!JSON.stringify(plan).includes('Elowen'))
 })
 
-Deno.test('the cross team key folds case and whitespace, matching the RPC exactly', () => {
+Deno.test('the cross team key folds case and whitespace, at least as much as the RPC', () => {
   // The RPC dedupes on lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')).
-  // A looser key here would send a candidate the RPC then classifies
-  // differently, which is how a duplicate slips through.
+  // This key folds at least as much, never less: folding more can only refuse
+  // an import, while folding less could admit a duplicate.
   assertEquals(normaliseRosterName('  Rafferty   Mackenzie '), 'rafferty mackenzie')
   const plan = planRosterImport([{ firstName: 'RAFFERTY', lastName: 'MACKENZIE' }], [], ['  rafferty   mackenzie '])
   assertEquals(plan.registeredElsewhere, 1)

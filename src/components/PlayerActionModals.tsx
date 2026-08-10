@@ -348,7 +348,7 @@ export function ImportFromSpondModal({
           <p style={{ marginTop: 0 }}>
             Imported into {seasonName}: {result.added} added, {result.alreadyPresent} already present, {result.skipped}{' '}
             skipped
-            {result.registeredElsewhere > 0 ? `, ${result.registeredElsewhere} already on another team` : ''}.
+            {result.registeredElsewhere > 0 ? `, ${result.registeredElsewhere} already registered elsewhere` : ''}.
           </p>
           {result.message && (
             <p className="muted" style={{ fontSize: 13.5 }}>
@@ -369,9 +369,9 @@ export function ImportFromSpondModal({
             New players land as Pending.
           </p>
           <p className="muted" style={{ fontSize: 13.5 }}>
-            Players already registered in {seasonName} are left as they are, whether they are on this team or another
-            one, so importing again adds no duplicates. A child Spond has moved to this team is reported rather than
-            imported: use Move team to change who they play for.
+            Players already registered in {seasonName} are left as they are, wherever they sit, so importing again adds
+            no duplicates. A child Spond has moved to this team is reported rather than imported, so no second record is
+            created for them: change who they play for on the Registered players page.
           </p>
           {importer.isError && (
             <p role="alert" className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>

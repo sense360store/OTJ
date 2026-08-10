@@ -658,16 +658,24 @@ export interface RosterImportPlan {
   added: number
   alreadyPresent: number
   skipped: number
-  // Members whose name is already registered to ANOTHER team in this club this
-  // season. Not inserted, not moved, counted here so the run can say so.
+  // Members whose name already holds a current season registration that is not
+  // on the team being imported: another team, Unassigned, or withdrawn. Not
+  // inserted, not moved, counted here so the run can say so.
   registeredElsewhere: number
 }
 
-// The roster name normalisation, matching the spond_import_roster RPC's
-// lower(regexp_replace(btrim(name), '\s+', ' ', 'g')) exactly. The RPC is the
-// authoritative dedupe at commit, so a looser key here would let a candidate
-// through that the RPC then classifies differently. Case folded, ends trimmed,
-// internal runs of whitespace collapsed to one space.
+// The roster name normalisation: case folded, ends trimmed, internal runs of
+// whitespace collapsed to one space.
+//
+// It mirrors the spond_import_roster RPC's
+// lower(regexp_replace(btrim(name), '\s+', ' ', 'g')) but is not byte identical
+// to it, and the difference is deliberately in the safe direction. JavaScript
+// trim strips every Unicode whitespace character from the ends, while SQL btrim
+// with no second argument strips spaces only, so this key folds slightly MORE
+// than the RPC's. Folding more can only make two names match where the RPC
+// would see them as distinct, and a match here means REFUSE, so the divergence
+// can only refuse an import, never admit a duplicate. A key that folded less
+// than the RPC's would be the dangerous direction.
 export function normaliseRosterName(name: string): string {
   return name.trim().replace(/\s+/g, ' ').toLowerCase()
 }
@@ -683,8 +691,11 @@ export function normaliseRosterName(name: string): string {
 // It closes it by refusing, never by asserting identity. Nothing here proves
 // that the Spond member and the existing child are the same person: a Spond
 // member id is never persisted, and a name is not an identity. So a member
-// whose name is already registered to another team this season is counted and
-// EXCLUDED, and no row is inserted, updated or moved for them.
+// whose name already holds ANY current season registration that is not on the
+// team being imported is counted and EXCLUDED, and no row is inserted, updated
+// or moved for them. Another team, Unassigned and withdrawn all count: the
+// rule is that the child already exists this season, not which team they are
+// on, because the RPC only inserts and would otherwise mint a second identity.
 //
 // The asymmetry is the whole argument. Refusing on a false name match declines
 // one import and reports it, which a manager can see and undo. Acting on a

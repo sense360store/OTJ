@@ -4035,10 +4035,12 @@ export interface RosterImportResult {
   added: number
   alreadyPresent: number
   skipped: number
-  // Members left alone because that name is already registered to ANOTHER team
-  // in this season. They are neither imported nor moved: a name is not an
-  // identity, so which team they belong to is a manager's decision. A count
-  // only, never a name.
+  // Members left alone because that name already holds a current season
+  // registration that is not on this team: another team, Unassigned, or
+  // withdrawn. They are neither imported nor moved, so no second record is
+  // created for a child who already exists this season. A name is not an
+  // identity, so where they belong stays a manager's decision. A count only,
+  // never a name.
   registeredElsewhere: number
   // The no mapping outcome carries a message instead of counts.
   message: string

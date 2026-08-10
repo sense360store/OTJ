@@ -331,11 +331,23 @@ Deno.serve(async (req) => {
   for (const reg of registrations) {
     const name = nameById.get(reg.player_id)
     if (name === undefined) continue
-    // An Unassigned registration (team_id null) is not another team, so it is
-    // deliberately neither side: importing such a child here is a genuine
-    // first assignment, which the RPC handles as it always did.
+    // ANY current season registration that is not on this team counts, whatever
+    // its team or status: another team, Unassigned (team_id null), or withdrawn.
+    //
+    // The rule is deliberately about EXISTENCE, not about team. A child with any
+    // current season registration already has an identity, so inserting them
+    // here does not assign them anywhere: spond_import_roster only ever inserts,
+    // never updates, so it would mint a SECOND player row with a SECOND current
+    // season registration. The unique (player_id, season_id) constraint does not
+    // stop that, because the new row carries a new player_id. Narrowing this to
+    // "another team" would leave the duplicate this guard exists to prevent wide
+    // open on the Unassigned and withdrawn paths.
+    //
+    // Status is ignored on both sides for the same reason: a child withdrawn
+    // from this team is still an existing identity, and re-importing them must
+    // not mint a second one.
     if (reg.team_id === teamId) existingNames.push(name)
-    else if (reg.team_id !== null) elsewhereNames.push(name)
+    else elsewhereNames.push(name)
   }
 
   // Reduce each member to name plus optional number and plan the inserts
@@ -355,8 +367,8 @@ Deno.serve(async (req) => {
   if (plan.registeredElsewhere > 0) {
     warnings.push(
       plan.registeredElsewhere === 1
-        ? '1 member is already registered to another team this season and was not imported. Nothing was moved or duplicated. Check the Registered players page and use Move team if they have changed team.'
-        : `${plan.registeredElsewhere} members are already registered to another team this season and were not imported. Nothing was moved or duplicated. Check the Registered players page and use Move team if they have changed team.`,
+        ? '1 member is already registered elsewhere in this season (another team, Unassigned, or withdrawn) and was not imported, so no second record was created for them. Check the Registered players page to see where they are and change it there if they have moved.'
+        : `${plan.registeredElsewhere} members are already registered elsewhere in this season (another team, Unassigned, or withdrawn) and were not imported, so no second record was created for them. Check the Registered players page to see where they are and change it there if they have moved.`,
     )
   }
 
@@ -388,7 +400,17 @@ Deno.serve(async (req) => {
   // reflecting the commit under the advisory lock). already_present and skipped
   // combine the preview's pre filter with anything the RPC re classified at
   // commit (a concurrent import that landed a name first, or a name the RPC
-  // itself rejected). The three sum to the reduced member total.
+  // itself rejected). Those three plus registered_elsewhere, the members left
+  // alone because they already hold a current season registration, are the four
+  // buckets that sum to the reduced member total.
+  //
+  // A LIMIT WORTH STATING. This guard runs in the Edge Function, outside the
+  // RPC's per (club, team) advisory lock, and spond_import_roster's own commit
+  // time dedupe is still team scoped. So it closes the path every real import
+  // takes, and it does NOT make the duplicate unrepresentable: a direct RPC
+  // call, or two imports of different teams racing, can still mint a second
+  // identity. Closing it at the database needs a gated migration to widen the
+  // RPC's snapshot, which is deliberately not in this hotfix.
   const result = (committed ?? {}) as { added?: number; already_present?: number; skipped?: number }
   const added = result.added ?? 0
   const alreadyPresent = plan.alreadyPresent + (result.already_present ?? 0)
