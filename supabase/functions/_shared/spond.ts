@@ -658,29 +658,88 @@ export interface RosterImportPlan {
   added: number
   alreadyPresent: number
   skipped: number
+  // Members whose name already holds a current season registration that is not
+  // on the team being imported: another team, Unassigned, or withdrawn. Not
+  // inserted, not moved, counted here so the run can say so.
+  registeredElsewhere: number
 }
 
-export function planRosterImport(members: unknown[], existingNames: Iterable<string>): RosterImportPlan {
+// The roster name normalisation: case folded, ends trimmed, internal runs of
+// whitespace collapsed to one space.
+//
+// It mirrors the spond_import_roster RPC's
+// lower(regexp_replace(btrim(name), '\s+', ' ', 'g')) but is not byte identical
+// to it, and the difference is deliberately in the safe direction. JavaScript
+// trim strips every Unicode whitespace character from the ends, while SQL btrim
+// with no second argument strips spaces only, so this key folds slightly MORE
+// than the RPC's. Folding more can only make two names match where the RPC
+// would see them as distinct, and a match here means REFUSE, so the divergence
+// can only refuse an import, never admit a duplicate. A key that folded less
+// than the RPC's would be the dangerous direction.
+export function normaliseRosterName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+// THE CROSS TEAM GUARD, and why it refuses rather than moves.
+//
+// A child who moves between Spond subgroups is invisible to the team scoped
+// dedupe: importing their NEW team finds no registration for that name on that
+// team, so the run creates a SECOND identity and a SECOND current season
+// registration, leaving the club holding one child twice. That is the defect
+// this guard closes.
+//
+// It closes it by refusing, never by asserting identity. Nothing here proves
+// that the Spond member and the existing child are the same person: a Spond
+// member id is never persisted, and a name is not an identity. So a member
+// whose name already holds ANY current season registration that is not on the
+// team being imported is counted and EXCLUDED, and no row is inserted, updated
+// or moved for them. Another team, Unassigned and withdrawn all count: the
+// rule is that the child already exists this season, not which team they are
+// on, because the RPC only inserts and would otherwise mint a second identity.
+//
+// The asymmetry is the whole argument. Refusing on a false name match declines
+// one import and reports it, which a manager can see and undo. Acting on a
+// false name match would move a different child's registration to another team
+// silently, and it would look correct. Moving on a proved identity is the
+// reconciliation that the durable Spond member link makes possible; it is
+// deliberately not attempted here.
+export function planRosterImport(
+  members: unknown[],
+  existingNames: Iterable<string>,
+  registeredElsewhereNames: Iterable<string> = [],
+): RosterImportPlan {
   const seen = new Set<string>()
-  for (const name of existingNames) seen.add(name.toLowerCase())
+  for (const name of existingNames) seen.add(normaliseRosterName(name))
+  const elsewhere = new Set<string>()
+  for (const name of registeredElsewhereNames) {
+    const key = normaliseRosterName(name)
+    // A name on this team wins: that child is already correctly registered
+    // here, so they are "already present", never a cross team case.
+    if (!seen.has(key)) elsewhere.add(key)
+  }
   const inserts: RosterPlayer[] = []
   let added = 0
   let alreadyPresent = 0
   let skipped = 0
+  let registeredElsewhere = 0
   for (const member of members) {
     const reduced = reduceMember(member)
     if (!reduced) {
       skipped++
       continue
     }
-    const key = reduced.display_name.toLowerCase()
+    const key = normaliseRosterName(reduced.display_name)
     if (seen.has(key)) {
       alreadyPresent++
+      continue
+    }
+    if (elsewhere.has(key)) {
+      registeredElsewhere++
       continue
     }
     seen.add(key)
     inserts.push(reduced)
     added++
   }
-  return { inserts, added, alreadyPresent, skipped }
+  return { inserts, added, alreadyPresent, skipped, registeredElsewhere }
 }

@@ -272,26 +272,82 @@ Deno.serve(async (req) => {
   // and re running the import adds nobody twice. The team and shirt now live on
   // the registration since the PR 2 split, so the existing names come from the
   // current season registrations for this team, joined to the identity names.
-  const { data: regRows, error: regError } = await caller.db
-    .from('player_registrations')
-    .select('player_id')
-    .eq('club_id', caller.clubId)
-    .eq('season_id', seasonId)
-    .eq('team_id', teamId)
-  if (regError) {
-    return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
-  }
-  const existingIds = (regRows ?? []).map((r) => (r as { player_id: string }).player_id)
-  let existingNames: string[] = []
-  if (existingIds.length > 0) {
-    const { data: nameRows, error: nameError } = await caller.db
-      .from('players')
-      .select('display_name')
-      .in('id', existingIds)
-    if (nameError) {
+  // Read the club's CURRENT SEASON registrations across every team, not just
+  // this one, and partition them. Team scoped alone is what let a child who
+  // moved subgroup be imported a second time: their name was registered, but
+  // to their old team, so this team's snapshot never saw it.
+  //
+  // This widens a read the caller already holds (registrations and identity
+  // names are club wide under players.view; nothing new is readable) and
+  // persists nothing. Past seasons are untouched: season_id pins the current
+  // season, so a child on last season's Trojans is not a cross team case.
+  // BOTH reads are paged. PostgREST caps a single response at db.max_rows
+  // (1000, supabase/config.toml), and a silently truncated read here is not a
+  // cosmetic miss: a registration past the cap is absent from the cross team
+  // set, so the very child this guard exists to protect would be imported
+  // again as a duplicate. Advance by the rows actually returned and stop on
+  // the first empty page, which stays correct whatever the server cap is.
+  // This is the useClubPlayerIdentities pattern in src/lib/queries.ts.
+  const PAGE = 1000
+  const registrations: { player_id: string; team_id: string | null }[] = []
+  for (let from = 0; ; ) {
+    const { data, error } = await caller.db
+      .from('player_registrations')
+      .select('player_id, team_id')
+      .eq('club_id', caller.clubId)
+      .eq('season_id', seasonId)
+      .order('player_id', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) {
       return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
     }
-    existingNames = (nameRows ?? []).map((r) => (r as { display_name: string }).display_name)
+    const rows = (data ?? []) as { player_id: string; team_id: string | null }[]
+    for (const row of rows) registrations.push(row)
+    if (rows.length === 0) break
+    from += rows.length
+  }
+
+  const nameById = new Map<string, string>()
+  if (registrations.length > 0) {
+    for (let from = 0; ; ) {
+      const { data, error } = await caller.db
+        .from('players')
+        .select('id, display_name')
+        .eq('club_id', caller.clubId)
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1)
+      if (error) {
+        return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
+      }
+      const rows = (data ?? []) as { id: string; display_name: string }[]
+      for (const row of rows) nameById.set(row.id, row.display_name)
+      if (rows.length === 0) break
+      from += rows.length
+    }
+  }
+
+  const existingNames: string[] = []
+  const elsewhereNames: string[] = []
+  for (const reg of registrations) {
+    const name = nameById.get(reg.player_id)
+    if (name === undefined) continue
+    // ANY current season registration that is not on this team counts, whatever
+    // its team or status: another team, Unassigned (team_id null), or withdrawn.
+    //
+    // The rule is deliberately about EXISTENCE, not about team. A child with any
+    // current season registration already has an identity, so inserting them
+    // here does not assign them anywhere: spond_import_roster only ever inserts,
+    // never updates, so it would mint a SECOND player row with a SECOND current
+    // season registration. The unique (player_id, season_id) constraint does not
+    // stop that, because the new row carries a new player_id. Narrowing this to
+    // "another team" would leave the duplicate this guard exists to prevent wide
+    // open on the Unassigned and withdrawn paths.
+    //
+    // Status is ignored on both sides for the same reason: a child withdrawn
+    // from this team is still an existing identity, and re-importing them must
+    // not mint a second one.
+    if (reg.team_id === teamId) existingNames.push(name)
+    else elsewhereNames.push(name)
   }
 
   // Reduce each member to name plus optional number and plan the inserts
@@ -301,7 +357,20 @@ Deno.serve(async (req) => {
   // a name in the same subgroup (Spond member ids are never persisted): the
   // second is treated as already present. Genuine same name members are
   // represented by a manual add or an id keyed spreadsheet import.
-  const plan = planRosterImport(members, existingNames)
+  const plan = planRosterImport(members, existingNames, elsewhereNames)
+
+  // A member already registered to another team this season is NOT imported and
+  // NOT moved. Their team is a question only a proved identity can answer, and
+  // a Spond member id is never persisted, so the run reports the count and
+  // leaves the decision to a manager. Counts only: no name reaches this warning,
+  // the response or any log line.
+  if (plan.registeredElsewhere > 0) {
+    warnings.push(
+      plan.registeredElsewhere === 1
+        ? '1 member is already registered elsewhere in this season (another team, Unassigned, or withdrawn) and was not imported, so no second record was created for them. Check the Registered players page to see where they are and change it there if they have moved.'
+        : `${plan.registeredElsewhere} members are already registered elsewhere in this season (another team, Unassigned, or withdrawn) and were not imported, so no second record was created for them. Check the Registered players page to see where they are and change it there if they have moved.`,
+    )
+  }
 
   // Commit through the transactional spond_import_roster RPC (0036), not a per
   // member add_player loop. In one transaction, gated on players.import and the
@@ -331,7 +400,17 @@ Deno.serve(async (req) => {
   // reflecting the commit under the advisory lock). already_present and skipped
   // combine the preview's pre filter with anything the RPC re classified at
   // commit (a concurrent import that landed a name first, or a name the RPC
-  // itself rejected). The three sum to the reduced member total.
+  // itself rejected). Those three plus registered_elsewhere, the members left
+  // alone because they already hold a current season registration, are the four
+  // buckets that sum to the reduced member total.
+  //
+  // A LIMIT WORTH STATING. This guard runs in the Edge Function, outside the
+  // RPC's per (club, team) advisory lock, and spond_import_roster's own commit
+  // time dedupe is still team scoped. So it closes the path every real import
+  // takes, and it does NOT make the duplicate unrepresentable: a direct RPC
+  // call, or two imports of different teams racing, can still mint a second
+  // identity. Closing it at the database needs a gated migration to widen the
+  // RPC's snapshot, which is deliberately not in this hotfix.
   const result = (committed ?? {}) as { added?: number; already_present?: number; skipped?: number }
   const added = result.added ?? 0
   const alreadyPresent = plan.alreadyPresent + (result.already_present ?? 0)
@@ -342,6 +421,9 @@ Deno.serve(async (req) => {
     added,
     already_present: alreadyPresent,
     skipped,
+    // Server derived count of members left alone because their name is already
+    // registered to another team this season. A count, never a name.
+    registered_elsewhere: plan.registeredElsewhere,
     warnings,
   })
 })
