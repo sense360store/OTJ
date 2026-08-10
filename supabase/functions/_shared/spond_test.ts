@@ -23,6 +23,7 @@ import {
   syncWindow,
   visibleGroupIds,
 } from './spond.ts'
+import type { SpondEventRow } from './spond.ts'
 
 // ---- Synthetic fixtures, invented ids and names only -----------------------
 
@@ -240,9 +241,45 @@ Deno.test('a whole group mapping queries by groupId with the window and caps', (
   assertEquals(params.get('groupId'), 'GRP-SYNTH-1')
   assertEquals(params.get('subGroupId'), null)
   assertEquals(params.get('max'), String(MAX_EVENTS_PER_GROUP))
-  assertEquals(params.get('scheduled'), 'False')
   assertEquals(params.get('minStartTimestamp'), WINDOW.from)
   assertEquals(params.get('maxStartTimestamp'), WINDOW.to)
+})
+
+// The regression this file exists to prevent. scheduled is an INCLUSION
+// flag in the reference library: sending False excluded every event whose
+// invitations Spond has queued to send later, which is exactly how this
+// club's recurring weekly training is arranged. Fixtures arrived, training
+// never did.
+Deno.test('the query asks Spond for scheduled events, in the library wire format', () => {
+  for (const subgroup of [null, 'SUB-SYNTH-7']) {
+    const params = eventsQuery({ spond_group_id: 'GRP-SYNTH-1', spond_subgroup_id: subgroup }, WINDOW)
+    assertEquals(params.get('scheduled'), 'True', 'scheduled must be True or training never syncs')
+  }
+})
+
+Deno.test('asking for scheduled events narrows nothing else', () => {
+  const params = eventsQuery({ spond_group_id: 'GRP-SYNTH-1', spond_subgroup_id: 'SUB-SYNTH-7' }, WINDOW)
+  // The window, the cap and the subgroup scope are exactly as before, and
+  // no parameter has been added or dropped alongside the flag.
+  assertEquals([...params.keys()].sort(), [
+    'groupId',
+    'max',
+    'maxStartTimestamp',
+    'minStartTimestamp',
+    'scheduled',
+    'subGroupId',
+  ])
+  assertEquals(params.get('max'), String(MAX_EVENTS_PER_GROUP))
+  assertEquals(params.get('minStartTimestamp'), WINDOW.from)
+  assertEquals(params.get('maxStartTimestamp'), WINDOW.to)
+  assertEquals(params.get('subGroupId'), 'SUB-SYNTH-7')
+})
+
+Deno.test('the query is a read: it carries no write, no mutation and no member scope', () => {
+  const query = eventsQuery({ spond_group_id: 'GRP-SYNTH-1', spond_subgroup_id: 'SUB-SYNTH-7' }, WINDOW).toString()
+  for (const forbidden of ['memberId', 'recipients', 'accept', 'decline', 'respond', 'delete', 'cancel']) {
+    assert(!query.includes(forbidden), `the events query must not carry ${forbidden}`)
+  }
 })
 
 Deno.test('a subgroup mapping adds the subGroupId filter to the same query', () => {
@@ -250,6 +287,69 @@ Deno.test('a subgroup mapping adds the subGroupId filter to the same query', () 
   assertEquals(params.get('groupId'), 'GRP-SYNTH-1')
   assertEquals(params.get('subGroupId'), 'SUB-SYNTH-7')
   assertEquals(params.get('max'), String(MAX_EVENTS_PER_GROUP))
+})
+
+// ---- A scheduled training event through the normal row path ----------------
+//
+// A scheduled event is an ordinary event that Spond has not sent the
+// invitations for yet. It therefore has no responses at all, which is the
+// one shape the counts pipeline had never been given.
+
+// Invented throughout. No responses key at all, which is what Spond returns
+// before invitations go out.
+const SYNTHETIC_SCHEDULED_TRAINING = {
+  id: 'EVT-SYNTH-SCHEDULED-1',
+  heading: 'Titans training',
+  startTimestamp: '2026-06-25T17:30:00Z',
+  endTimestamp: '2026-06-25T18:30:00Z',
+  location: { feature: 'Invented Sports Ground', address: '1 Made Up Lane, Nowhere' },
+}
+
+Deno.test('a scheduled training event with no responses becomes an ordinary row', () => {
+  const row = buildEventRow('club-1', 'team-1', SYNTHETIC_SCHEDULED_TRAINING, SYNCED_AT)
+  assert(row !== null, 'a scheduled event must not be skipped as malformed')
+  assertEquals(Object.keys(row).sort(), [...SPOND_EVENT_COLUMNS].sort())
+  assertEquals(row.spond_event_id, 'EVT-SYNTH-SCHEDULED-1')
+  assertEquals(row.title, 'Titans training')
+  assertEquals(row.team_id, 'team-1')
+  assertEquals(row.cancelled, false)
+})
+
+Deno.test('no replies yet stores four zeroes, never null and never a failure', () => {
+  // Every shape a not yet invited event can arrive in.
+  for (const responses of [undefined, null, {}, { acceptedIds: [], declinedIds: [], unansweredIds: [], waitinglistIds: [] }]) {
+    const row = buildEventRow('club-1', 'team-1', { ...SYNTHETIC_SCHEDULED_TRAINING, responses }, SYNCED_AT)
+    assert(row !== null)
+    assertEquals(row.accepted_count, 0)
+    assertEquals(row.declined_count, 0)
+    assertEquals(row.unanswered_count, 0)
+    assertEquals(row.waiting_count, 0)
+  }
+})
+
+Deno.test('a scheduled event and an ordinary one live side by side without colliding', () => {
+  const queued = new Map<string, SpondEventRow>()
+  const scheduled = buildEventRow('club-1', 'team-1', SYNTHETIC_SCHEDULED_TRAINING, SYNCED_AT)!
+  const ordinary = buildEventRow('club-1', 'team-1', SYNTHETIC_EVENT, SYNCED_AT)!
+  assertEquals(claimEvent(queued, scheduled).outcome, 'queued')
+  assertEquals(claimEvent(queued, ordinary).outcome, 'queued')
+  assertEquals(queued.size, 2)
+  // And re-reading the same scheduled event in one run is still one row,
+  // so widening the query cannot duplicate anything.
+  assertEquals(claimEvent(queued, { ...scheduled }).outcome, 'already_synced')
+  assertEquals(queued.size, 2)
+})
+
+Deno.test('a scheduled event leaks no more than an ordinary one', () => {
+  const withNames = {
+    ...SYNTHETIC_SCHEDULED_TRAINING,
+    responses: { acceptedIds: [], declinedIds: [], unansweredIds: [], waitinglistIds: [] },
+    recipients: { group: { members: [{ id: 'FAKE-MEMBER-1', firstName: 'Madeup', lastName: 'Childname' }] } },
+  }
+  const flat = JSON.stringify(buildEventRow('club-1', 'team-1', withNames, SYNCED_AT))
+  for (const fakeId of FAKE_MEMBER_IDS) assert(!flat.includes(fakeId), `row leaked ${fakeId}`)
+  assert(!flat.includes('Madeup'), 'row leaked a member first name')
+  assert(!flat.includes('recipients'), 'row leaked the recipients object')
 })
 
 // ---- Login response handling -------------------------------------------------
