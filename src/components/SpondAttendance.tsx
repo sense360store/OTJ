@@ -59,7 +59,7 @@ export function MatchBadge() {
 // linked is a training session, so the list a coach scrolls should be the
 // training nights. All events is one tap away for the session that really is
 // arranged as a fixture.
-function LinkSpondEventModal({
+export function LinkSpondEventModal({
   teamId,
   date,
   time,

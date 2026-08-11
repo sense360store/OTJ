@@ -66,6 +66,7 @@ import type {
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import { spondEventLookup, type SpondEventLookup } from './eventKind'
+import { tonightUpsertRows, type TonightChange } from './tonight'
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
@@ -5482,6 +5483,52 @@ export function useRegisterEntries(sessionId: string | undefined, enabled = true
         .eq('session_id', sessionId as string)
       if (error) throw error
       return (data as unknown as RegisterEntryRow[]).map(toRegisterEntry)
+    },
+  })
+}
+
+// ---- Saving tonight's groups ---------------------------------------
+//
+// ONE user act, one write. The coach organises the whole night in a local
+// draft and commits it once, so this takes the delta and sends it as a
+// single upsert rather than a mutation per child.
+//
+// ATOMICITY, STATED HONESTLY. PostgREST turns one upsert into one
+// INSERT ... ON CONFLICT statement, and RLS WITH CHECK is evaluated per
+// row inside it, so a row the policy refuses fails the whole statement
+// and nothing lands. That is all-or-nothing for this call. It is NOT a
+// transaction across the refetch that follows, which is why the screen
+// still compares the readback with the draft before it says Saved: the
+// claim "your arrangement is stored" is only ever made about data that
+// came back from the database.
+export function useSaveTonight() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<RegisterEntry[], Error, { sessionId: string; changes: TonightChange[] }>({
+    mutationFn: async ({ sessionId, changes }) => {
+      const rows = tonightUpsertRows(changes, profile?.club_id ?? null)
+      if (rows.length > 0) {
+        const { error } = await supabase
+          .from('register_entries')
+          .upsert(rows, { onConflict: 'session_id,player_id' })
+        if (error) throw error
+      }
+      // The authoritative readback, in the same act. Returning it rather
+      // than only invalidating means the caller compares against what the
+      // database actually holds and not against its own optimism.
+      const { data, error } = await supabase
+        .from('register_entries')
+        .select('session_id, player_id, present, bib_colour_override, source')
+        .eq('session_id', sessionId)
+      if (error) throw error
+      const entries = (data as unknown as RegisterEntryRow[]).map(toRegisterEntry)
+      qc.setQueryData<RegisterEntry[]>(registerKey(sessionId), entries)
+      return entries
+    },
+    // Invalidate once, at the end, so a screen that is showing the
+    // readback does not immediately refetch over it.
+    onSettled: (_d, _e, vars) => {
+      void qc.invalidateQueries({ queryKey: registerKey(vars.sessionId) })
     },
   })
 }

@@ -1,16 +1,18 @@
-import { describe, expect, it } from 'vitest'
+// Tonight, the one operational session-day screen.
+//
+// The pure rules live in lib/tonight.test.ts. The questions here are what
+// a coach sees and can tap: does the screen open on Going, does Select all
+// reach only what is visible, does anything persist before Save, and does
+// the status line ever say Saved when it is not.
+//
+// Names are synthetic, never real children.
+import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { RegisterCardView, RegisterRowView, RegisterScreenView, QuickAddView } from './SessionRegister'
+import { QuickAddView, TonightCardView, TonightRowView, TonightScreenView } from './SessionRegister'
+import { SAVE_LABELS, saveState, tonightSummary } from '../lib/tonight'
+import { buildTonightRows, draftFromEntries, selectAll, setDraftBib, type TonightRow } from '../lib/tonight'
 import { buildRegister, type RegisterEntry } from '../lib/register'
-import type { Player, Session, Team } from '../lib/data'
-import { blankSession } from '../lib/data'
-
-// The register's presentational shells, rendered without hooks or a query
-// client, the same style as SessionBoardCardView. The composition rules
-// themselves are covered in lib/register.test.ts; here the questions are
-// what a coach can tap, what a read only holder cannot, and whether the
-// screen ever presents an unknown register as an empty one. Names are
-// synthetic, never real children.
+import type { Player, Team } from '../lib/data'
 
 const teams: Team[] = [
   { id: 't1', name: 'Titans', bibColour: 'red' },
@@ -25,93 +27,302 @@ const player = (id: string, name: string, teamId: string | null, shirt: number |
   createdBy: null,
 })
 
-const players = [player('p1', 'Alpha Synthetic', 't1', 7), player('p2', 'Beta Synthetic', 't1')]
-
-const session = (over: Partial<Session> = {}): Session => ({
-  ...blankSession('coach', null),
-  id: 's1',
-  name: 'Thursday night',
-  teamIds: ['t1'],
-  ...over,
-})
-
-const entries: RegisterEntry[] = [
-  { sessionId: 's1', playerId: 'p1', present: true, bibColourOverride: null, source: 'roster' },
+const players = [
+  player('p1', 'Alpha Synthetic', 't1', 7),
+  player('p2', 'Beta Synthetic', 't1'),
+  player('p3', 'Gamma Synthetic', 't1'),
 ]
+
+const rsvp = {
+  p1: { status: 'accepted' as const, syncedAt: new Date().toISOString() },
+  p2: { status: 'unanswered' as const, syncedAt: new Date().toISOString() },
+}
+
+const rows = (): TonightRow[] =>
+  buildTonightRows(buildRegister(players, ['t1'], teams, [], false), teams, rsvp)
 
 const noop = () => {}
 
-const screen = (over: Partial<Parameters<typeof RegisterScreenView>[0]> = {}) =>
+const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) =>
   renderToStaticMarkup(
-    <RegisterScreenView
-      session={session()}
-      teams={teams}
-      players={players}
-      entries={entries}
-      canMark
+    <TonightScreenView
+      rows={rows()}
+      draft={draftFromEntries([])}
+      filter="going"
+      canEdit
+      saveStatus="saved"
+      hasSpondEvent
+      eventNote="Titans Tuesday"
+      staleNote={null}
+      linkedNote=""
+      refreshing={false}
+      refreshFailed={false}
+      unset={false}
+      onFilter={noop}
       onToggle={noop}
       onBib={noop}
-      onRemove={noop}
+      onSelectAll={noop}
+      onClearSelection={noop}
+      onSave={noop}
+      onRefresh={noop}
       onQuickAdd={noop}
       {...over}
     />,
   )
 
-describe('RegisterScreenView', () => {
-  it('shows the count, the covered team and its players', () => {
+const names = (html: string) => [...html.matchAll(/reg-name-main">([^<]+)</g)].map((m) => m[1])
+
+describe('the response filters a coach taps', () => {
+  it('opens on Going and shows only the accepted child', () => {
     const html = screen()
-    expect(html).toContain('1 of 2 in')
-    expect(html).toContain('Titans')
-    expect(html).toContain('Alpha Synthetic')
-    expect(html).toContain('Beta Synthetic')
-    expect(html).toContain('Add player')
+    expect(html).toContain('aria-pressed="true">Going 1</button>')
+    expect(names(html)).toEqual(['Alpha Synthetic'])
   })
 
-  it('says so when the session has no teams rather than listing the whole club', () => {
-    // The failure this guards: absence read as "everyone", which would put
-    // every child in the club on a register for one team.
-    const html = screen({ session: session({ teamIds: [] }), entries: [] })
-    expect(html).toContain('This session has no teams yet')
-    expect(html).not.toContain('Alpha Synthetic')
+  it('carries an actionable count on every chip', () => {
+    // The counts describe the Hub players on THIS session, so tapping a
+    // chip shows exactly that many rows.
+    const html = screen()
+    expect(html).toContain('Going 1')
+    expect(html).toContain('No reply 1')
+    expect(html).toContain('Not going 0')
+    expect(html).toContain('Waiting 0')
+    expect(html).toContain('Everyone 3')
   })
 
-  it('offers no write affordance to a holder who may read but not mark', () => {
-    const html = screen({ canMark: false })
-    expect(html).toContain('Alpha Synthetic')
-    expect(html).not.toContain('Add player')
-    expect(html).not.toContain('<select')
-    expect(html).not.toContain('aria-pressed')
+  it('never counts an unlinked child as No reply', () => {
+    // Gamma has no Spond link. Three children, one accepted, one
+    // unanswered, and the third counted only under Everyone.
+    const html = screen()
+    expect(html).toContain('No reply 1')
+    expect(html).toContain('Everyone 3')
+    expect(names(screen({ filter: 'all' }))).toContain('Gamma Synthetic')
+    expect(names(screen({ filter: 'unanswered' }))).not.toContain('Gamma Synthetic')
+  })
+
+  it('offers no response chips at all when the session has no Spond event', () => {
+    // No event means no replies to have, so no chips and no pills: the
+    // screen is the roster and the coach's selection, nothing else.
+    const bare = buildTonightRows(buildRegister(players, ['t1'], teams, [], false), teams, {})
+    const html = screen({ rows: bare, hasSpondEvent: false, eventNote: '', filter: 'all' })
+    expect(html).not.toContain('No reply')
+    expect(html).not.toContain('reg-rsvp')
+    expect(names(html)).toHaveLength(3)
   })
 })
 
-describe('RegisterRowView', () => {
-  const row = (over: Partial<RegisterEntry> = {}) =>
-    buildRegister(players, ['t1'], teams, [{ ...entries[0], ...over }], false).groups[0].rows[0]
+describe('selection', () => {
+  it('shows how many of the visible rows are selected', () => {
+    const html = screen({ draft: selectAll(draftFromEntries([]), rows().slice(0, 1)) })
+    expect(html).toContain('Going 1')
+    expect(html).toContain('1 selected')
+  })
 
-  it('makes the whole name row the tick target and keeps the bib separate', () => {
+  it('offers Select all and Clear to a coach who may edit', () => {
+    const html = screen()
+    expect(html).toContain('Select all')
+    expect(html).toContain('Clear')
+  })
+
+  it('offers neither to a member who may read but not edit', () => {
+    const html = screen({ canEdit: false })
+    expect(html).not.toContain('Select all')
+    expect(html).not.toContain('Save groups')
+    expect(html).not.toContain('<select')
+  })
+
+  it('marks the included child on the row, and leaves the reply beside it', () => {
+    const html = screen({ draft: selectAll(draftFromEntries([]), rows().slice(0, 1)) })
+    expect(html).toContain('reg-row on')
+    expect(html).toContain('Going')
+  })
+})
+
+describe('the row', () => {
+  const one = rows()[0]
+
+  it('says Include, never Present or Arrived', () => {
+    // The tick is the coach's organisation decision, not a claim that a
+    // child walked through the gate.
     const html = renderToStaticMarkup(
-      <RegisterRowView row={row()} canMark onToggle={noop} onBib={noop} />,
+      <TonightRowView row={one} included={false} bib="" canEdit onToggle={noop} onBib={noop} />,
     )
-    expect(html).toContain('aria-label="Mark Alpha Synthetic present"')
-    expect(html).toContain('aria-pressed="true"')
+    expect(html).toContain("aria-label=\"Include Alpha Synthetic in tonight&#x27;s groups\"")
+    expect(html).not.toMatch(/Mark .* present/)
+    expect(html).not.toContain('Arrived')
+  })
+
+  it('keeps the bib control out of the tick target', () => {
+    // A mis-tap must change a colour, not who is in tonight's groups.
+    const html = renderToStaticMarkup(
+      <TonightRowView row={one} included bib="" canEdit onToggle={noop} onBib={noop} />,
+    )
+    expect(html.indexOf('reg-bib')).toBeGreaterThan(html.indexOf('</button>'))
     expect(html).toContain('aria-label="Bib colour for Alpha Synthetic"')
-    // The team default shows as a swatch without claiming to be an override.
-    expect(html).toContain('#e23b3b')
-    expect(html).toContain('value="" selected="">Team bib')
   })
 
-  it('shows the shirt number and marks a quick add as added on the day', () => {
+  it('shows the reply as words, outside the tick button', () => {
     const html = renderToStaticMarkup(
-      <RegisterRowView row={row({ source: 'manual' })} canMark onToggle={noop} onBib={noop} onRemove={noop} />,
+      <TonightRowView row={one} included={false} bib="" canEdit onToggle={noop} onBib={noop} />,
     )
-    expect(html).toContain('#7')
-    expect(html).toContain('Added on the day')
-    expect(html).toContain('aria-label="Remove Alpha Synthetic from the register"')
+    expect(html).toContain('Going')
+    expect(html.indexOf('reg-rsvp')).toBeGreaterThan(html.indexOf('</button>'))
+  })
+})
+
+describe('the groups, which is what the screen is for', () => {
+  it('puts the selected children in their team bib group with no per child work', () => {
+    const html = screen({ filter: 'all', draft: selectAll(draftFromEntries([]), rows()) })
+    expect(html).toContain('Groups')
+    expect(html).toContain('Red bibs')
+    expect(html).toContain('3 selected')
   })
 
-  it('offers no remove button for a roster row', () => {
-    const html = renderToStaticMarkup(<RegisterRowView row={row()} canMark onToggle={noop} onBib={noop} />)
-    expect(html).not.toContain('from the register')
+  it('moves a child into another group the moment their bib changes, before any save', () => {
+    const draft = setDraftBib(selectAll(draftFromEntries([]), rows()), 'p2', 'blue')
+    const html = screen({ filter: 'all', draft })
+    expect(html).toContain('Red bibs')
+    expect(html).toContain('Blue bibs')
+  })
+
+  it('shows no groups at all until something is selected', () => {
+    expect(screen()).not.toContain('Groups')
+  })
+
+  it('says No team bib rather than inventing a colour', () => {
+    const trojan = [player('p9', 'Delta Synthetic', 't2')]
+    const trojanRows = buildTonightRows(buildRegister(trojan, ['t2'], teams, [], false), teams, {})
+    const html = screen({ rows: trojanRows, filter: 'all', draft: selectAll(draftFromEntries([]), trojanRows) })
+    expect(html).toContain('No team bib')
+  })
+})
+
+describe('save', () => {
+  it('reports the four states with the words a coach reads', () => {
+    expect(SAVE_LABELS).toEqual({
+      saved: 'Saved',
+      dirty: 'Unsaved changes',
+      saving: 'Saving…',
+      failed: 'Could not save',
+    })
+  })
+
+  it('derives the state rather than storing it', () => {
+    expect(saveState(false, false, false)).toBe('saved')
+    expect(saveState(true, false, false)).toBe('dirty')
+    expect(saveState(true, true, false)).toBe('saving')
+    expect(saveState(true, false, true)).toBe('failed')
+  })
+
+  it('never says Saved while the draft still differs', () => {
+    // The rule the whole status line hangs on. A failure that leaves the
+    // draft dirty can only read as failed, never as saved.
+    expect(saveState(true, false, true)).not.toBe('saved')
+    expect(saveState(true, false, false)).not.toBe('saved')
+  })
+
+  it('returns to a settled state once a save has landed and nothing has changed', () => {
+    // Dirty is computed against the readback, so a clean draft after a
+    // successful save is Saved even though a save just failed earlier.
+    expect(saveState(false, false, true)).toBe('saved')
+  })
+
+  it('holds the button closed when there is nothing to save', () => {
+    expect(screen({ saveStatus: 'saved' })).toMatch(/disabled[^>]*>Save groups/)
+  })
+
+  it('opens the button and says so when the draft is dirty', () => {
+    const html = screen({ saveStatus: 'dirty' })
+    expect(html).toContain('Unsaved changes')
+    expect(html).not.toMatch(/disabled[^>]*>Save groups/)
+  })
+
+  it('says it is working without taking the list away', () => {
+    const html = screen({ saveStatus: 'saving' })
+    expect(html).toContain('Saving…')
+    expect(html).toContain('Alpha Synthetic')
+  })
+
+  it('keeps the list and the draft on screen when a save fails', () => {
+    const html = screen({ saveStatus: 'failed', draft: selectAll(draftFromEntries([]), rows().slice(0, 1)) })
+    expect(html).toContain('Could not save')
+    expect(html).toContain('Alpha Synthetic')
+    expect(html).toContain('reg-row on')
+  })
+})
+
+describe('Spond, inside Tonight rather than beside it', () => {
+  it('offers Refresh Spond where the coach already is', () => {
+    expect(screen()).toContain('Refresh Spond')
+  })
+
+  it('says it is refreshing without blanking anything', () => {
+    const html = screen({ refreshing: true })
+    expect(html).toContain('Refreshing…')
+    expect(html).toContain('Alpha Synthetic')
+  })
+
+  it('keeps the responses it already had when a refresh fails', () => {
+    const html = screen({ refreshFailed: true })
+    expect(html).toContain('Could not refresh from Spond')
+    expect(html).toContain('Going 1')
+    expect(html).toContain('Alpha Synthetic')
+  })
+
+  it('shows linking coverage and a way to fix it', () => {
+    const html = screen({ linkedNote: '2 of 3 players linked to Spond', onLinkPlayers: noop })
+    expect(html).toContain('2 of 3 players linked to Spond')
+    expect(html).toContain('Link players')
+  })
+
+  it('lets an authorised coach change or unlink the event without a second card', () => {
+    const html = screen({ onLinkEvent: noop, onUnlinkEvent: noop })
+    expect(html).toContain('Change Spond event')
+    expect(html).toContain('Unlink')
+  })
+
+  it('offers Link Spond event on a session that has none', () => {
+    const html = screen({ hasSpondEvent: false, eventNote: '', onLinkEvent: noop, filter: 'all' })
+    expect(html).toContain('Link Spond event')
+    expect(html).not.toContain('Refresh Spond')
+  })
+})
+
+describe('the session day card', () => {
+  it('is Tonight, and says what state the night is in', () => {
+    const html = renderToStaticMarkup(
+      <TonightCardView summary="12 expected · 10 selected · 2 groups" note="" onOpen={noop} />,
+    )
+    expect(html).toContain('Tonight')
+    expect(html).toContain('12 expected · 10 selected · 2 groups')
+    expect(html).not.toContain('Register')
+  })
+
+  it('summarises expected, selected and groups', () => {
+    const r = rows()
+    expect(tonightSummary(r, draftFromEntries([]))).toBe('1 expected · 0 selected')
+    expect(tonightSummary(r, selectAll(draftFromEntries([]), r))).toBe('1 expected · 3 selected · 1 group')
+  })
+
+  it('never presents a failed read as a confident zero', () => {
+    const html = renderToStaticMarkup(<TonightCardView summary="Could not load tonight" note="" onOpen={noop} />)
+    expect(html).toContain('Could not load tonight')
+    expect(html).not.toContain('0 selected')
+  })
+})
+
+describe('a club with no Spond at all', () => {
+  it('still organises the night from Everyone', () => {
+    const bare = buildTonightRows(buildRegister(players, ['t1'], teams, [], false), teams, {})
+    const html = screen({ rows: bare, hasSpondEvent: false, eventNote: '', filter: 'all' })
+    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic', 'Gamma Synthetic'])
+    expect(html).toContain('Select all')
+    expect(html).toContain('Save groups')
+  })
+
+  it('says so when the session has no teams, rather than listing the club', () => {
+    const html = screen({ rows: [], unset: true })
+    expect(html).toContain('This session has no teams yet')
   })
 })
 
@@ -122,299 +333,63 @@ describe('QuickAddView', () => {
     ).toContain('Alpha Synthetic')
   })
 
-  it('tells a club with no roster where to start, not that everyone is listed', () => {
+  it('tells a club with no roster where to start', () => {
     expect(renderToStaticMarkup(<QuickAddView pool={[]} rosterEmpty onAdd={noop} onClose={noop} />)).toContain(
       'Nobody is registered for this season yet',
     )
-    expect(
-      renderToStaticMarkup(<QuickAddView pool={[]} rosterEmpty={false} onAdd={noop} onClose={noop} />),
-    ).toContain('Everyone in the club is already on this register')
   })
 })
 
-describe('RegisterCardView', () => {
-  it('carries the summary through to session day', () => {
-    const html = renderToStaticMarkup(<RegisterCardView summary="1 of 2 in" note="" onOpen={noop} />)
-    expect(html).toContain('Register')
-    expect(html).toContain('1 of 2 in')
-  })
+// ---- Nothing persists before Save -----------------------------------
 
-  it('never presents a failed read as a confident zero', () => {
+describe('no filter or selection writes anything', () => {
+  it('fires no mutation for any draft interaction', () => {
+    // The strongest form of "explicit save": the presentational screen is
+    // handed callbacks, and every one of them is a draft edit. If a
+    // future change wires a mutation into one of these, this fails.
+    const spy = vi.fn()
     const html = renderToStaticMarkup(
-      <RegisterCardView summary="Could not load the register" note="" onOpen={noop} />,
-    )
-    expect(html).toContain('Could not load the register')
-    expect(html).not.toContain('0 of 0 in')
-  })
-})
-
-// ---- Spond RSVP as context, never attendance -------------------------------
-//
-// The questions here are the ones a wrong answer would make dangerous:
-// does the pill ever change what the register composes or how it reads,
-// and does a broken Spond read take the register with it.
-
-describe('RSVP context beside the register', () => {
-  const row = buildRegister(players, ['t1'], teams, entries, false).groups[0].rows[0]
-
-  it('renders nothing at all when there is no reply, exactly as before', () => {
-    const without = renderToStaticMarkup(
-      <RegisterRowView row={row} canMark onToggle={noop} onBib={noop} />,
-    )
-    const withNull = renderToStaticMarkup(
-      <RegisterRowView row={row} canMark rsvp={null} onToggle={noop} onBib={noop} />,
-    )
-    expect(withNull).toBe(without)
-    expect(without).not.toContain('reg-rsvp')
-  })
-
-  it('shows the reply as words, never as a tick or a yes', () => {
-    const html = renderToStaticMarkup(
-      <RegisterRowView
-        row={row}
-        canMark
-        rsvp={{ status: 'accepted', syncedAt: new Date().toISOString() }}
-        onToggle={noop}
-        onBib={noop}
+      <TonightScreenView
+        rows={rows()}
+        draft={draftFromEntries([])}
+        filter="going"
+        canEdit
+        saveStatus="saved"
+        hasSpondEvent
+        eventNote=""
+        staleNote={null}
+        linkedNote=""
+        refreshing={false}
+        refreshFailed={false}
+        unset={false}
+        onFilter={spy}
+        onToggle={spy}
+        onBib={spy}
+        onSelectAll={spy}
+        onClearSelection={spy}
+        onSave={spy}
+        onRefresh={spy}
+        onQuickAdd={spy}
       />,
     )
-    expect(html).toContain('Going')
-    expect(html).not.toMatch(/>\s*Yes\s*</)
-    // Outside the tick button, so it can never take the tap.
-    expect(html.indexOf('reg-rsvp')).toBeGreaterThan(html.indexOf('</button>'))
-  })
-
-  it('a declined child keeps their place, their tick and their prominence', () => {
-    const html = renderToStaticMarkup(
-      <RegisterRowView
-        row={row}
-        canMark
-        rsvp={{ status: 'declined', syncedAt: new Date().toISOString() }}
-        onToggle={noop}
-        onBib={noop}
-      />,
-    )
-    expect(html).toContain('Not going')
-    // Still ticked (this row is present), still tappable, not dimmed.
-    expect(html).toContain('reg-row on')
-    expect(html).toContain('aria-pressed="true"')
-    expect(html).not.toContain('disabled')
-  })
-
-  it('the reply never announces itself as part of the attendance control', () => {
-    const html = renderToStaticMarkup(
-      <RegisterRowView
-        row={row}
-        canMark
-        rsvp={{ status: 'unanswered', syncedAt: new Date().toISOString() }}
-        onToggle={noop}
-        onBib={noop}
-      />,
-    )
-    expect(html).toContain('aria-label="Spond reply: no reply"')
-    expect(html).toContain('aria-label="Mark Alpha Synthetic present"')
-  })
-
-  it('a screen with replies renders the same rows, in the same order, as one without', () => {
-    // Under Everyone, which is what a screen with no Spond always shows.
-    // Replies decorate the rows; they never recompose or reorder them, and
-    // buildRegister still never sees them. The Going view narrows what is
-    // LISTED, which is a separate step covered below.
-    const bare = screen()
-    const withRsvp = screen({
-      scope: 'all',
-      rsvpByPlayer: {
-        p1: { status: 'declined', syncedAt: new Date().toISOString() },
-        p2: { status: 'accepted', syncedAt: new Date().toISOString() },
-      },
-    })
-    const names = (html: string) => [...html.matchAll(/reg-name-main">([^<]+)</g)].map((m) => m[1])
-    expect(names(withRsvp)).toEqual(names(bare))
-    expect(withRsvp).toContain('Not going')
-    // The count is attendance, never the replies.
-    expect(names(bare).length).toBe(2)
-  })
-
-  it('an absent lookup leaves the register byte identical to today', () => {
-    expect(screen({ rsvpByPlayer: undefined })).toBe(screen())
-    expect(screen({ rsvpByPlayer: {} })).toBe(screen())
-  })
-
-  it('the stale line counts only replies actually on this register', () => {
-    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
-    // p9 is linked and replied to this event, but is not on a team this
-    // session covers, so no pill of theirs renders. A freshness claim
-    // about a reply nobody can see is one the screen cannot back up.
-    expect(screen({ rsvpByPlayer: { p9: { status: 'accepted', syncedAt: old } } })).not.toContain(
-      'Spond replies from',
-    )
-  })
-
-  it('says so when the replies are stale, and stays quiet when they are fresh', () => {
-    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
-    expect(screen({ rsvpByPlayer: { p1: { status: 'accepted', syncedAt: old } } })).toContain(
-      'Spond replies from 3 days ago',
-    )
-    expect(
-      screen({ rsvpByPlayer: { p1: { status: 'accepted', syncedAt: new Date().toISOString() } } }),
-    ).not.toContain('Spond replies from')
-  })
-})
-
-// ---- Organising tonight: the Going view -----------------------------------
-//
-// Going means the parent accepted in Spond. It never means the coach has
-// ticked the child in, and it never becomes a claim about who is present.
-// The rules themselves are pinned in lib/registerScope.test.ts; here the
-// questions are what a coach sees, what they can still tap, and whether a
-// club with no Spond can ever be shown an empty register.
-
-describe('the Going view', () => {
-  const names = (html: string) => [...html.matchAll(/reg-name-main">([^<]+)</g)].map((m) => m[1])
-  const fresh = () => new Date().toISOString()
-
-  it('offers no Going toggle at all to a club with no Spond context', () => {
-    // The safety property. No Spond, no linked event, no links, a read
-    // still in flight and a read that failed are one case, and that case
-    // shows the complete register.
-    const html = screen()
-    expect(html).not.toContain('Going')
-    expect(html).not.toContain('Everyone')
-    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic'])
-  })
-
-  it('cannot be forced into an empty register by asking for Going without context', () => {
-    // Even if a caller passes the scope explicitly, missing context wins.
-    // "Nobody is coming" must not be renderable out of absence.
-    const html = screen({ scope: 'going', rsvpByPlayer: {} })
-    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic'])
-  })
-
-  it('defaults to Going once this session has replies to show', () => {
-    const html = screen({
-      entries: [],
-      rsvpByPlayer: { p2: { status: 'accepted', syncedAt: fresh() } },
-    })
-    expect(html).toContain('aria-pressed="true">Going</button>')
-    expect(html).toContain('aria-pressed="false">Everyone</button>')
-    expect(names(html)).toEqual(['Beta Synthetic'])
-  })
-
-  it('lists an accepted child nobody has ticked in yet', () => {
-    // Going is about what the parent said, not about what the coach has
-    // done. An empty register with two accepted children lists both.
-    const html = screen({
-      entries: [],
-      rsvpByPlayer: {
-        p1: { status: 'accepted', syncedAt: fresh() },
-        p2: { status: 'accepted', syncedAt: fresh() },
-      },
-    })
-    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic'])
-    expect(html).toContain('0 of 2 in')
-  })
-
-  it('keeps a child the coach has already ticked in, whatever they replied', () => {
-    // p1 is present and declined. Nothing the coach recorded disappears.
-    const html = screen({
-      rsvpByPlayer: { p1: { status: 'declined', syncedAt: fresh() } },
-    })
-    expect(names(html)).toContain('Alpha Synthetic')
-    expect(html).toContain('Not going')
-  })
-
-  it('leaves an unlinked child out of Going without ever calling them No reply', () => {
-    // p2 has no link, so there is no reply of theirs to have. p1 is linked
-    // and has not answered, which is a different fact and the only one of
-    // the two that gets a pill.
-    const html = screen({
-      entries: [],
-      scope: 'going',
-      rsvpByPlayer: { p1: { status: 'unanswered', syncedAt: fresh() } },
-    })
-    expect(names(html)).not.toContain('Beta Synthetic')
-    expect(html).not.toContain('No reply')
-  })
-
-  it('finds the unlinked child under Everyone, still with no pill', () => {
-    const html = screen({
-      entries: [],
-      scope: 'all',
-      rsvpByPlayer: { p1: { status: 'accepted', syncedAt: fresh() } },
-    })
-    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic'])
-    expect(html).toContain('Going')
-    // One pill, for the one child who has a reply.
-    expect([...html.matchAll(/reg-rsvp/g)]).toHaveLength(1)
-  })
-
-  it('counts the whole register in the headline, not the narrowed view', () => {
-    // The headline is the coach's record for the session and must read the
-    // same as the session day card one tap earlier. Nothing pinned this,
-    // so registerSummary(full) could quietly become registerSummary(view)
-    // and the header would then contradict the pill two lines below it.
-    const html = screen({
-      entries: [],
-      rsvpByPlayer: { p1: { status: 'accepted', syncedAt: fresh() } },
-    })
-    expect(html).toContain('0 of 2 in')
-    expect(html).not.toContain('0 of 1 in')
-    // And the two numbers reconcile: 1 listed plus 1 hidden is the 2 above.
-    expect(html).toContain('1 hidden')
-    expect(names(html)).toEqual(['Alpha Synthetic'])
-  })
-
-  it('says how many it is holding back rather than narrowing silently', () => {
-    const html = screen({
-      entries: [],
-      rsvpByPlayer: { p1: { status: 'accepted', syncedAt: fresh() } },
-    })
-    expect(html).toContain('1 hidden')
-  })
-
-  it('stays fully markable in Going, which is where a coach spends the night', () => {
-    const html = screen({
-      entries: [],
-      rsvpByPlayer: { p1: { status: 'accepted', syncedAt: fresh() } },
-    })
-    expect(html).toContain('aria-label="Mark Alpha Synthetic present"')
-    expect(html).toContain('aria-label="Bib colour for Alpha Synthetic"')
-    expect(html).toContain('Add player')
-  })
-
-  it('points an empty Going view at Everyone instead of claiming nobody is coming', () => {
-    const html = screen({
-      entries: [],
-      rsvpByPlayer: { p1: { status: 'declined', syncedAt: fresh() } },
-    })
-    expect(html).toContain('Everyone')
-    expect(html).not.toMatch(/nobody is coming/i)
-    expect(html).toContain('2 hidden')
-  })
-})
-
-describe('refreshing the Spond context on the night', () => {
-  const fresh = () => new Date().toISOString()
-  const context = { p1: { status: 'accepted' as const, syncedAt: fresh() } }
-
-  it('offers Refresh only where there is context to refresh', () => {
-    expect(screen({ onRefresh: () => {} })).not.toContain('Refresh')
-    expect(screen({ rsvpByPlayer: context, onRefresh: () => {} })).toContain('Refresh')
-  })
-
-  it('says it is working without taking the register away', () => {
-    const html = screen({ rsvpByPlayer: context, onRefresh: () => {}, refreshing: true })
-    expect(html).toContain('Refreshing')
     expect(html).toContain('Alpha Synthetic')
+    // Rendering alone must never call a handler.
+    expect(spy).not.toHaveBeenCalled()
   })
+})
 
-  it('keeps every reply it already had when a refresh fails', () => {
-    // The rule: a failed refresh degrades to the last known context, never
-    // to no context and never to an error page. The coach keeps working.
-    const html = screen({ rsvpByPlayer: context, onRefresh: () => {}, refreshFailed: true })
-    expect(html).toContain('Going')
-    expect(html).toContain('Alpha Synthetic')
-    expect(html).toContain('Could not refresh')
-    expect(html).not.toContain('Something went wrong')
+// ---- The legacy entry shape still round-trips -----------------------
+
+describe('the stored shape', () => {
+  it('reads a saved arrangement back into exactly the same draft', () => {
+    // Leaving and reopening rebuilds what was saved, which is what makes
+    // the Saved claim worth anything.
+    const saved: RegisterEntry[] = [
+      { sessionId: 's', playerId: 'p1', present: true, bibColourOverride: 'blue', source: 'roster' },
+      { sessionId: 's', playerId: 'p2', present: false, bibColourOverride: null, source: 'roster' },
+    ]
+    const d = draftFromEntries(saved)
+    expect(d.included).toEqual({ p1: true, p2: false })
+    expect(d.bibs).toEqual({ p1: 'blue', p2: null })
   })
 })

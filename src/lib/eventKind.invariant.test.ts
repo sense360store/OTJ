@@ -314,7 +314,7 @@ describe('every surface opens in the shared default', () => {
     ['routes/AdminSpond.tsx', /useState<EventKind>\(DEFAULT_EVENT_KIND\)/],
     ['components/PlanFromSpond.tsx', /useState<EventKind>\(DEFAULT_EVENT_KIND\)/],
     ['components/SpondAttendance.tsx', /useState<EventKind>\(DEFAULT_EVENT_KIND\)/],
-    ['routes/SessionRegister.tsx', /useState<RegisterScope>\(DEFAULT_REGISTER_SCOPE\)/],
+    ['routes/SessionRegister.tsx', /useState<ResponseFilter>\(DEFAULT_RESPONSE_FILTER\)/],
   ]
 
   for (const [f, pattern] of OPENS_ON) {
@@ -340,15 +340,17 @@ describe('every surface opens in the shared default', () => {
   // screens and asserts a linked MATCH is absent from what they show, per
   // call site, which is the actual claim.
 
-  it('the register reports a failed refresh as the state that keeps its data', () => {
-    // The shell test proves the screen renders the last replies when it is
-    // TOLD the refresh failed. This pins the container telling it so from
-    // isRefetchError, which TanStack defines as errored WHILE HOLDING DATA.
-    // The plain isError would also be true on a first load that never
-    // produced any replies, and reporting that as a failed refresh would
-    // put a "showing the last synced replies" note over nothing at all.
-    const src = readFileSync(join(SRC, 'routes/SessionRegister.tsx'), 'utf8')
-    expect(src).toMatch(/refreshFailed=\{rsvp\.isRefetchError\}/)
+  it('Tonight never persists an organisation change outside Save', () => {
+    // The product rule this PR turns on: a tick, a Select all and a bib
+    // are draft edits, and the only normal path to the database is the
+    // Save groups button. The old screen mutated on every row change, so
+    // this pins that it does not come back.
+    const src = stripComments(readFileSync(join(SRC, 'routes/SessionRegister.tsx'), 'utf8'))
+    const setters = [...src.matchAll(/(\w+)\.mutate\(/g)].map((m) => m[1])
+    // Only the explicit save, the Spond refresh and the event link may
+    // write. Nothing keyed off a row.
+    expect([...new Set(setters)].sort()).toEqual(['linkSpond', 'save', 'sync'])
+    expect(src).not.toMatch(/useSetRegisterEntry|useRemoveRegisterEntry/)
   })
 })
 

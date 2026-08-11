@@ -1,22 +1,26 @@
-// The session register: the screen a coach holds in one hand at the gate.
+// =====================================================================
+// TONIGHT: the one screen a coach holds at the gate.
 //
-// It needs nothing configured to work. Open a session, see the children
-// it covers grouped by team, tap a row to mark someone in, set a bib if
-// it differs from the team's, and add anyone who turns up unexpectedly.
-// No Spond and no linking required: this is the coach's own record.
+// THE JOB. Not "who arrived?". The coach is asking "who is coming, which
+// of them am I including, and what bib does each need so I can split them
+// into groups?". This replaces two overlapping surfaces on session day, a
+// Register and a passive Spond attendance card, with one operational
+// screen.
 //
-// Where Spond IS configured and a child IS linked, their parent's reply
-// appears as one small pill beside the name. It is context and never
-// attendance: it does not tick anything, does not move any row, does not
-// grey a declined child, and is not part of composing the list. Its query
-// is a sibling of the register's, never gates the screen, and never
-// touches the register's cache, so a failing RSVP read renders exactly
-// as an unlinked child does, which is as nothing at all.
+// TWO FACTS PER ROW, INDEPENDENT. The Spond reply is what the parent
+// said; Included is what the coach decided. A Going child need not be
+// included. A Not going child may be, because they turned up anyway. The
+// tick means IN TONIGHT'S GROUPS, never "arrived": see the note on
+// register_entries.present in ../lib/tonight and in CLAUDE.md.
 //
-// One handed by construction: the whole row is the tick target, so a
-// thumb never has to find a small checkbox, and the bib control sits in
-// its own tap area at the end of the row so a mis-tap changes a colour
-// rather than someone's attendance.
+// NOTHING SAVES UNTIL SAVE. Every tick, every Select all, every bib is a
+// local draft, so the coach arranges the whole night, looks at it, and
+// commits it once. The screen says Saved only when the readback from the
+// database equals the draft, field for field.
+//
+// NEEDS NOTHING CONFIGURED. No Spond, no linking: Everyone is the working
+// view, the coach selects who is there, and the team bib does the rest.
+// =====================================================================
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
@@ -24,114 +28,116 @@ import {
   useCurrentSeason,
   useMyCapabilities,
   useRegisteredPlayers,
+  useLinkSessionSpondEvent,
   useRegisterEntries,
-  useRemoveRegisterEntry,
+  useSaveTonight,
   useSession,
   useSessionSpondRsvp,
-  useSetRegisterEntry,
+  useSpondEvents,
+  useSpondLinks,
+  useSpondSync,
   useTeams,
 } from '../lib/queries'
 import { RSVP_LABELS, rsvpStaleNote } from '../lib/spondRsvp'
-import type { Rsvp } from '../lib/spondRsvp'
+import { activeRoster, buildRegister, quickAddPool, type RegisterEntry } from '../lib/register'
 import {
-  activeRoster,
-  buildRegister,
-  quickAddPool,
-  registerSummary,
-  type RegisterEntry,
-  type RegisterRow,
-} from '../lib/register'
-import {
-  applyRegisterScope,
-  DEFAULT_REGISTER_SCOPE,
-  hasRsvpContext,
-  REGISTER_SCOPE_LABELS,
-  type RegisterScope,
-} from '../lib/registerScope'
-import { BIB_COLOURS, BIB_NONE, bibLabel } from '../lib/bibs'
+  buildTonightRows,
+  clearSelection,
+  countByResponse,
+  DEFAULT_RESPONSE_FILTER,
+  draftDelta,
+  draftFromEntries,
+  draftIsDirty,
+  RESPONSE_FILTER_LABELS,
+  RESPONSE_FILTERS,
+  selectAll,
+  setDraftBib,
+  toggleIncluded,
+  tonightGroups,
+  visibleRows,
+  type ResponseFilter,
+  tonightSummary,
+  SAVE_LABELS,
+  saveState,
+  type SaveState,
+  type TonightDraft,
+  type TonightRow,
+} from '../lib/tonight'
+import { BIB_COLOURS, BIB_NONE, bibSwatch } from '../lib/bibs'
 import { coveredTeamIds, coverageOf, coversWholeClub } from '../lib/sessionTeams'
 import { SESSION_ID_PARAM } from '../lib/routes'
 import type { Player, Session, Team } from '../lib/data'
+import { LinkSpondEventModal } from '../components/SpondAttendance'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, Loading, Modal, fmtDate } from '../components/ui'
 import './SessionDay.css'
 import './SessionRegister.css'
 
-// The RSVP pill. Text, never a tick or a cross: a tick beside a name is
-// exactly the mark the register uses for present, and one on an unticked
-// row would be misread at a glance in the rain. Monochrome apart from
-// "Not going", because green already means present on this screen and a
-// green "Going" pill would make an unticked row read as half ticked.
-// Non interactive and outside the tick button, so it can never take the
-// tap and a screen reader never announces it inside "Mark X present".
-function RsvpPill({ rsvp }: { rsvp: Rsvp | null | undefined }) {
-  if (!rsvp) return null
+// The reply pill. Text, never a tick or a cross: a tick beside a name is
+// exactly the mark inclusion uses, and one on an unticked row would be
+// misread at a glance in the rain. Non interactive and outside the tick
+// button, so it can never take the tap.
+function ResponsePill({ response }: { response: TonightRow['response'] }) {
+  if (!response) return null
   return (
     <span
-      className={'reg-rsvp' + (rsvp.status === 'declined' ? ' out' : '')}
+      className={'reg-rsvp' + (response === 'declined' ? ' out' : '')}
       role="img"
-      aria-label={`Spond reply: ${RSVP_LABELS[rsvp.status].toLowerCase()}`}
+      aria-label={`Spond reply: ${RSVP_LABELS[response].toLowerCase()}`}
     >
-      {RSVP_LABELS[rsvp.status]}
+      {RSVP_LABELS[response]}
     </span>
   )
 }
 
-export function RegisterRowView({
+export function TonightRowView({
   row,
-  canMark,
-  rsvp,
+  included,
+  bib,
+  canEdit,
   onToggle,
   onBib,
-  onRemove,
 }: {
-  row: RegisterRow
-  canMark: boolean
-  // Optional and defaulting to nothing, so every call site that knows no
-  // Spond keeps producing byte identical markup.
-  rsvp?: Rsvp | null
+  row: TonightRow
+  included: boolean
+  // The stored override as a select value: '' means follow the team.
+  bib: string
+  canEdit: boolean
   onToggle: () => void
   onBib: (value: string) => void
-  onRemove?: () => void
 }) {
-  const sub = [
-    row.player.shirtNumber != null ? `#${row.player.shirtNumber}` : '',
-    row.manual ? 'Added on the day' : '',
-  ]
+  const sub = [row.shirtNumber != null ? `#${row.shirtNumber}` : '', row.manual ? 'Added on the day' : '']
     .filter(Boolean)
     .join(' · ')
   const name = (
     <>
-      <span className="reg-check">{row.present && <Icon.check />}</span>
+      <span className="reg-check">{included && <Icon.check />}</span>
       <span className="reg-name">
-        <span className="reg-name-main">{row.player.displayName}</span>
+        <span className="reg-name-main">{row.displayName}</span>
         {sub && <span className="reg-name-sub">{sub}</span>}
       </span>
     </>
   )
   return (
-    <div className={'reg-row' + (row.present ? ' on' : '')}>
-      {canMark ? (
+    <div className={'reg-row' + (included ? ' on' : '')}>
+      {canEdit ? (
         <button
           className="reg-tick"
           onClick={onToggle}
-          aria-pressed={row.present}
-          aria-label={`Mark ${row.player.displayName} present`}
+          aria-pressed={included}
+          aria-label={`Include ${row.displayName} in tonight's groups`}
         >
           {name}
         </button>
       ) : (
         <div className="reg-tick">{name}</div>
       )}
-      <RsvpPill rsvp={rsvp} />
+      <ResponsePill response={row.response} />
+      {/* The bib control has its own tap area at the end of the row, so a
+          mis-tap changes a colour rather than who is in tonight's groups. */}
       <div className="reg-bib">
-        {row.bibSwatch && <span className="reg-swatch" style={{ background: row.bibSwatch }} aria-hidden="true" />}
-        {canMark ? (
-          <select
-            value={row.bibValue}
-            aria-label={`Bib colour for ${row.player.displayName}`}
-            onChange={(e) => onBib(e.target.value)}
-          >
+        {canEdit ? (
+          <select value={bib} aria-label={`Bib colour for ${row.displayName}`} onChange={(e) => onBib(e.target.value)}>
             <option value="">Team bib</option>
             <option value={BIB_NONE}>No bib</option>
             {BIB_COLOURS.map((b) => (
@@ -141,14 +147,9 @@ export function RegisterRowView({
             ))}
           </select>
         ) : (
-          <span className="reg-bib-static">{bibLabel(row.bibColour) ?? 'No bib'}</span>
+          <span className="reg-bib-static">{bib === BIB_NONE ? 'No bib' : bib || 'Team bib'}</span>
         )}
       </div>
-      {onRemove && (
-        <button className="reg-remove" onClick={onRemove} aria-label={`Remove ${row.player.displayName} from the register`}>
-          <Icon.x />
-        </button>
-      )}
     </div>
   )
 }
@@ -160,8 +161,6 @@ export function QuickAddView({
   onClose,
 }: {
   pool: Player[]
-  // True when the club has no registered players at all, which needs a
-  // different answer from "they are all already listed".
   rosterEmpty: boolean
   onAdd: (playerId: string) => void
   onClose: () => void
@@ -181,7 +180,7 @@ export function QuickAddView({
             ? 'No player matches that.'
             : rosterEmpty
               ? 'Nobody is registered for this season yet. Add players under Players first.'
-              : 'Everyone in the club is already on this register.'}
+              : 'Everyone in the club is already in tonight s list.'}
         </p>
       ) : (
         <div className="reg-quickadd">
@@ -197,283 +196,336 @@ export function QuickAddView({
   )
 }
 
-export function RegisterScreenView({
-  session,
-  teams,
-  players,
-  entries,
-  canMark,
-  rsvpByPlayer,
-  scope = DEFAULT_REGISTER_SCOPE,
-  onScope,
-  onRefresh,
-  refreshing = false,
-  refreshFailed = false,
+export function TonightScreenView({
+  rows,
+  draft,
+  filter,
+  canEdit,
+  saveStatus,
+  hasSpondEvent,
+  eventNote,
+  staleNote,
+  linkedNote,
+  refreshing,
+  refreshFailed,
+  onFilter,
   onToggle,
   onBib,
-  onRemove,
+  onSelectAll,
+  onClearSelection,
+  onSave,
+  onRefresh,
   onQuickAdd,
+  onLinkPlayers,
+  onLinkEvent,
+  onUnlinkEvent,
+  unset,
 }: {
-  session: Session
-  teams: Team[]
-  players: Player[]
-  entries: RegisterEntry[]
-  canMark: boolean
-  // Optional, and absent is the normal case: no Spond, no link, still
-  // loading and failed all arrive here as no entry for that player.
-  rsvpByPlayer?: Record<string, Rsvp>
-  // Which set is listed. Going by default, and ignored entirely when there
-  // is no context to build Going from, so absence can never render as an
-  // empty register.
-  scope?: RegisterScope
-  onScope?: (v: RegisterScope) => void
-  // Pull the stored replies again. Absent where nothing can be refreshed.
-  onRefresh?: () => void
-  refreshing?: boolean
-  // The last refresh failed. The screen keeps the context it already had:
-  // a failed refresh degrades to slightly older replies, never to none and
-  // never to an error page.
-  refreshFailed?: boolean
-  onToggle: (row: RegisterRow) => void
-  onBib: (row: RegisterRow, value: string) => void
-  onRemove: (row: RegisterRow) => void
+  rows: TonightRow[]
+  draft: TonightDraft
+  filter: ResponseFilter
+  canEdit: boolean
+  saveStatus: SaveState
+  hasSpondEvent: boolean
+  // The linked event's name and freshness, folded in from the card this
+  // screen replaces. Empty when nothing is linked.
+  eventNote: string
+  staleNote: string | null
+  // "37 of 40 players linked to Spond", or empty when there is nothing
+  // useful to say about linking.
+  linkedNote: string
+  refreshing: boolean
+  refreshFailed: boolean
+  onFilter: (f: ResponseFilter) => void
+  onToggle: (playerId: string) => void
+  onBib: (playerId: string, value: string) => void
+  onSelectAll: () => void
+  onClearSelection: () => void
+  onSave: () => void
+  onRefresh: () => void
   onQuickAdd: () => void
+  onLinkPlayers?: () => void
+  // Link, change or unlink the Spond event, folded in from the card this
+  // screen replaces so nothing is lost with it. Absent for a member who
+  // may not change the session.
+  onLinkEvent?: () => void
+  onUnlinkEvent?: () => void
+  unset: boolean
 }) {
-  const allTeamIds = teams.map((t) => t.id)
-  const covered = coveredTeamIds(session)
-  const wholeClub = coversWholeClub(session, allTeamIds)
-  // A squad's worth of rows: cheap enough to compose on every render, and
-  // memoising it would need the covered ids flattened into a dep key.
-  const full = buildRegister(players, covered, teams, entries, wholeClub)
-  const unset = coverageOf(session).kind === 'unset'
-  // Composition never sees Spond: buildRegister still takes its five
-  // arguments and the rows are ordered before this line runs, so nothing
-  // Spond does can reorder them. What Spond CAN now do is narrow which of
-  // them are listed, and that is what the scope below is; the pinning
-  // rules in ../lib/registerScope are what stop a row the coach has
-  // touched leaving the screen under their thumb.
-  const rsvp = rsvpByPlayer ?? {}
-  // The Going view exists only where there is something to build it from,
-  // measured against THIS register rather than the club. Every way context
-  // can be absent, a club with no Spond included, lands here as false,
-  // which pins the screen to the complete register.
-  const hasContext = hasRsvpContext(rsvp, full)
-  const effectiveScope: RegisterScope = hasContext ? scope : 'all'
-  const scoped = applyRegisterScope(full, effectiveScope, rsvp)
-  const view = scoped.view
-  // Only the replies actually on this register count towards the freshness
-  // line. The lookup is built from a club wide link read, so it can carry a
-  // child this session does not cover, and a note about a reply nobody can
-  // see would be a claim the screen cannot back up.
-  const shown: Record<string, Rsvp> = {}
-  for (const g of full.groups) {
-    for (const row of g.rows) {
-      const r = rsvp[row.player.id]
-      if (r) shown[row.player.id] = r
-    }
-  }
-  const staleNote = rsvpStaleNote(shown)
+  const counts = countByResponse(rows)
+  const shown = visibleRows(rows, filter)
+  const groups = tonightGroups(rows, draft)
+  const selectedTotal = groups.reduce((a, g) => a + g.count, 0)
+  const selectedHere = shown.filter((r) => draft.included[r.playerId]).length
 
   return (
     <div className="reg">
-      <div className="reg-head">
-        {/* The whole register, always. This is the coach's record for the
-            session and it must read the same here as it does on the card
-            one tap earlier; narrowing the view narrows the rows below, not
-            the record. The hidden pill beside the toggle accounts for the
-            difference between this number and what is listed. */}
-        <div className="reg-count">{registerSummary(full)}</div>
-        {canMark && (
-          <button className="btn btn-ghost btn-sm" onClick={onQuickAdd}>
-            <Icon.plus />
-            Add player
-          </button>
+      {/* Spond responses, as filters that do something. The counts are
+          Hub players on THIS session, never the raw event aggregate: the
+          chip filters this list, so its number is the number of rows. */}
+      {hasSpondEvent && (
+        <div className="tn-filters">
+          {RESPONSE_FILTERS.map((f) => (
+            <Chip key={f} on={filter === f} onClick={() => onFilter(f)}>
+              {RESPONSE_FILTER_LABELS[f]} {counts[f]}
+            </Chip>
+          ))}
+        </div>
+      )}
+
+      <div className="tn-bar">
+        <div className="tn-count">
+          {RESPONSE_FILTER_LABELS[filter]} {shown.length}
+          <span className="tn-sub">{selectedHere} selected</span>
+        </div>
+        {canEdit && (
+          <>
+            <button className="btn btn-ghost tn-act" onClick={onSelectAll} disabled={shown.length === 0}>
+              <Icon.check />
+              Select all
+            </button>
+            <button className="btn btn-quiet tn-act" onClick={onClearSelection} disabled={selectedHere === 0}>
+              Clear
+            </button>
+          </>
         )}
       </div>
 
-      {/* The night's organisation, and only where Spond can answer it. A
-          club with no Spond never sees this row and never leaves the
-          complete register. */}
-      {hasContext && (
-        <div className="reg-scope">
-          <Chip on={effectiveScope === 'going'} onClick={() => onScope?.('going')}>
-            {REGISTER_SCOPE_LABELS.going}
-          </Chip>
-          <Chip on={effectiveScope === 'all'} onClick={() => onScope?.('all')}>
-            {REGISTER_SCOPE_LABELS.all}
-          </Chip>
-          {/* A narrowed register always says out loud that it is narrowed. */}
-          {scoped.hidden > 0 && <span className="pill">{scoped.hidden} hidden</span>}
-          {onRefresh && (
-            <button
-              className="btn btn-quiet btn-sm"
-              style={{ marginLeft: 'auto' }}
-              disabled={refreshing}
-              onClick={onRefresh}
-            >
+      {/* Everything Spond has to say about tonight, in one line each,
+          where the coach already is. No trip to the admin screen. */}
+      {(eventNote || linkedNote || hasSpondEvent || onLinkEvent) && (
+        <div className="tn-spond">
+          {eventNote && <span className="tn-event">{eventNote}</span>}
+          {hasSpondEvent && (
+            <button className="btn btn-quiet btn-sm tn-refresh" disabled={refreshing} onClick={onRefresh}>
               <Icon.rotate />
-              {refreshing ? 'Refreshing…' : 'Refresh'}
+              {refreshing ? 'Refreshing…' : 'Refresh Spond'}
+            </button>
+          )}
+          {linkedNote && (
+            <span className="tn-linked">
+              {linkedNote}
+              {onLinkPlayers && (
+                <button className="btn btn-quiet btn-sm" onClick={onLinkPlayers}>
+                  Link players
+                </button>
+              )}
+            </span>
+          )}
+          {onLinkEvent && (
+            <button className="btn btn-quiet btn-sm" onClick={onLinkEvent}>
+              <Icon.link />
+              {hasSpondEvent ? 'Change Spond event' : 'Link Spond event'}
+            </button>
+          )}
+          {onUnlinkEvent && (
+            <button className="btn btn-quiet btn-sm" onClick={onUnlinkEvent}>
+              <Icon.x />
+              Unlink
             </button>
           )}
         </div>
       )}
-
-      {/* Only when it matters: fresh context needs no label, stale
-          context must not pass itself off as fresh. */}
       {staleNote && <p className="reg-stale">{staleNote}</p>}
       {refreshFailed && <p className="reg-stale">Could not refresh from Spond. Showing the last synced replies.</p>}
 
-      {unset && full.groups.length === 0 ? (
-        <Empty icon={Icon.users} title="This session has no teams yet">
-          Choose the teams it covers in the planner and the register fills itself in.
-        </Empty>
-      ) : full.groups.length === 0 ? (
-        <Empty icon={Icon.users} title="Nobody to show">
-          No registered players are on the teams this session covers.
-        </Empty>
-      ) : view.groups.length === 0 ? (
-        // The register is not empty; this view of it is. Saying so, and
-        // naming the way back, is the difference between a filter and a
-        // claim that nobody is coming. A session with no teams set is a
-        // different problem with a different fix, and it keeps its own
-        // explanation rather than being told to look at Everyone.
-        <Empty icon={Icon.users} title={unset ? 'This session has no teams set' : 'No accepted replies yet'}>
+      {/* The list a coach works down: the current response view. */}
+      {rows.length === 0 ? (
+        <Empty icon={Icon.users} title={unset ? 'This session has no teams yet' : 'Nobody to show'}>
           {unset
-            ? `Only the players someone has already added appear. Choose its teams in the planner to list the rest, or tap ${REGISTER_SCOPE_LABELS.all} to see them.`
-            : `Nobody on this register has accepted in Spond yet. Tap ${REGISTER_SCOPE_LABELS.all} for the full register.`}
+            ? 'Choose the teams it covers in the planner and tonight fills itself in.'
+            : 'No registered players are on the teams this session covers.'}
+        </Empty>
+      ) : shown.length === 0 ? (
+        <Empty icon={Icon.users} title={`Nobody under ${RESPONSE_FILTER_LABELS[filter]}`}>
+          {`Tap ${RESPONSE_FILTER_LABELS.all} for the full list.`}
         </Empty>
       ) : (
-        <>
-          {unset && (
-            <p className="reg-empty">
-              This session has no teams set, so only the players someone has already added appear. Choose its teams in
-              the planner to list the rest.
-            </p>
-          )}
-          {view.groups.map((g) => (
-          <div className="reg-group" key={g.teamId ?? 'unassigned'}>
-            <div className="reg-group-head">
-              <h3>{g.teamName}</h3>
-              <span className="reg-group-count">
-                {g.presentCount}/{g.rows.length}
-              </span>
-            </div>
-            {g.rows.length === 0 ? (
-              <p className="reg-empty">Nobody registered on this team yet.</p>
-            ) : (
-              g.rows.map((row) => (
-                <RegisterRowView
-                  key={row.player.id}
-                  row={row}
-                  canMark={canMark}
-                  rsvp={rsvp[row.player.id] ?? null}
-                  onToggle={() => onToggle(row)}
-                  onBib={(v) => onBib(row, v)}
-                  onRemove={canMark && row.manual ? () => onRemove(row) : undefined}
-                />
-              ))
-            )}
+        <div className="tn-list">
+          {shown.map((r) => (
+            <TonightRowView
+              key={r.playerId}
+              row={r}
+              included={draft.included[r.playerId] === true}
+              bib={draft.bibs[r.playerId] ?? ''}
+              canEdit={canEdit}
+              onToggle={() => onToggle(r.playerId)}
+              onBib={(v) => onBib(r.playerId, v)}
+            />
+          ))}
+        </div>
+      )}
+
+      {canEdit && rows.length > 0 && (
+        <button className="btn btn-ghost btn-sm" onClick={onQuickAdd}>
+          <Icon.plus />
+          Add player
+        </button>
+      )}
+
+      {/* The groups, which is what the whole screen is for. Bib first,
+          because that is the thing a coach points at on the grass, with
+          the teams named beside it. */}
+      {groups.length > 0 && (
+        <div className="tn-groups">
+          <div className="tn-groups-head">
+            <h3>Groups</h3>
+            <span className="pill">{selectedTotal} selected</span>
+          </div>
+          {groups.map((g) => (
+            <div className="tn-group" key={g.bib ?? 'none'}>
+              <div className="tn-group-head">
+                {g.bib && <span className="reg-swatch" style={{ background: bibSwatch(g.bib) ?? undefined }} aria-hidden="true" />}
+                <b>{g.label}</b>
+                <span className="muted">{g.teamNames.join(' · ')}</span>
+                <span className="tn-group-count">{g.count}</span>
+              </div>
+              <div className="tn-group-names">{g.rows.map((r) => r.displayName).join(', ')}</div>
             </div>
           ))}
-        </>
+        </div>
+      )}
+
+      {/* The commit. Sticky, so a long list never hides it. */}
+      {canEdit && (
+        <div className="tn-save">
+          <span className={'tn-status tn-status-' + saveStatus}>{SAVE_LABELS[saveStatus]}</span>
+          <button
+            className="btn btn-primary tn-save-btn"
+            disabled={saveStatus === 'saved' || saveStatus === 'saving'}
+            onClick={onSave}
+          >
+            {saveStatus === 'saving' ? 'Saving…' : 'Save groups'}
+          </button>
+        </div>
       )}
     </div>
   )
 }
 
-function RegisterScreen({ session }: { session: Session }) {
+function TonightScreen({ session }: { session: Session }) {
   const nav = useNav()
   const { caps } = useMyCapabilities()
-  // Reading the register needs players.view, which the route guard already
-  // required. Writing it needs sessions.create, the same capability the
-  // register_entries insert, update and delete policies check. A holder of
-  // the first without the second reads the register and changes nothing,
-  // which is what the server would do to them anyway.
-  const canMark = caps.has('sessions.create')
+  const canEdit = caps.has('sessions.create')
   const { data: teams = [] } = useTeams()
   const season = useCurrentSeason()
   const roster = useRegisteredPlayers(season.data?.id ?? null)
   const register = useRegisterEntries(session.id)
-  // Context, on a sibling key. Deliberately absent from every gate
-  // below: a slow or failing RSVP read must never blank or error a
-  // working register, and its result never reaches the register's cache.
+  // Context, on a sibling key. Deliberately absent from every gate below:
+  // a slow or failing Spond read must never blank a working screen.
   const rsvp = useSessionSpondRsvp(session.id, session.spondEventId)
-  const setEntry = useSetRegisterEntry()
-  const removeEntry = useRemoveRegisterEntry()
+  const links = useSpondLinks()
+  const { data: spondEvents = [] } = useSpondEvents(!!session.spondEventId)
+  const sync = useSpondSync()
+  const save = useSaveTonight()
+  const [filter, setFilter] = useState<ResponseFilter>(DEFAULT_RESPONSE_FILTER)
   const [adding, setAdding] = useState(false)
-  const [scope, setScope] = useState<RegisterScope>(DEFAULT_REGISTER_SCOPE)
+  const [draft, setDraft] = useState<TonightDraft | null>(null)
+  const [linking, setLinking] = useState(false)
+  const linkSpond = useLinkSessionSpondEvent()
 
   const entries = useMemo(() => register.data ?? [], [register.data])
-  const players = useMemo(
-    () => activeRoster(roster.data ?? [], entries),
-    [roster.data, entries],
-  )
 
-  // A failed read must never render as "everybody is absent": the coach would
-  // be writing on top of state they never saw. The season read counts, because
-  // the roster query is disabled without a season id and would otherwise
-  // degrade silently to an empty club.
+
+  const players = useMemo(() => activeRoster(roster.data ?? [], entries), [roster.data, entries])
+
   const rosterFailed = roster.isError || season.isError
   if (register.isError || rosterFailed) return <ErrorNote />
   if (register.isLoading || roster.isLoading || season.isLoading) return <Loading />
-  // rsvp.isError and rsvp.isLoading are absent from both lines above on
-  // purpose. Spond context is not the register.
+  // No effect, no seeding. null means "follow what is saved", so a
+  // refetch landing while the coach has touched nothing simply shows the
+  // newer data, and a draft they HAVE touched is theirs until they save
+  // or leave. Saving clears it back to null so the readback takes over.
+  const live = draft ?? draftFromEntries(entries)
+
   const allTeamIds = teams.map((t) => t.id)
-  const pool = quickAddPool(players, coveredTeamIds(session), entries, coversWholeClub(session, allTeamIds))
+  const covered = coveredTeamIds(session)
+  const wholeClub = coversWholeClub(session, allTeamIds)
+  const view = buildRegister(players, covered, teams, entries, wholeClub)
+  const rows = buildTonightRows(view, teams, rsvp.data ?? {})
+  const shown = visibleRows(rows, filter)
+  const pool = quickAddPool(players, covered, entries, wholeClub)
+
+  const dirty = draftIsDirty(live, entries)
+  const status = saveState(dirty, save.isPending, save.isError)
+
+  // Linking coverage, over the children THIS session covers. A club wide
+  // figure would answer a question the coach is not asking.
+  const linkedIds = new Set((links.data?.links ?? []).map((l) => l.playerId))
+  const linkedHere = rows.filter((r) => linkedIds.has(r.playerId)).length
+  const linkedNote =
+    rows.length > 0 && linkedHere < rows.length ? `${linkedHere} of ${rows.length} players linked to Spond` : ''
+
+  const event = spondEvents.find((e) => e.id === session.spondEventId)
+  const eventNote = event ? event.title : ''
+  const staleNote = rsvpStaleNote(rsvp.data ?? {})
 
   return (
     <div>
       <div className="sd-head">
-        <button className="icon-btn" style={{ width: 44, height: 44 }} aria-label="Back" onClick={() => nav('sessionDay', { sessionId: session.id })}>
+        <button
+          className="icon-btn"
+          style={{ width: 44, height: 44 }}
+          aria-label="Back"
+          onClick={() => nav('sessionDay', { sessionId: session.id })}
+        >
           <Icon.chevL />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h2>Register</h2>
-          <div className="sd-sub">
-            {[session.name, fmtDate(session.date), session.time].filter(Boolean).join(' · ')}
-          </div>
+          <h2>Tonight</h2>
+          <div className="sd-sub">{[session.name, fmtDate(session.date), session.time].filter(Boolean).join(' · ')}</div>
         </div>
       </div>
 
-      <RegisterScreenView
-        session={session}
-        teams={teams}
-        players={players}
-        entries={entries}
-        canMark={canMark}
-        rsvpByPlayer={rsvp.data}
-        scope={scope}
-        onScope={setScope}
-        // Refetches the stored mirror, which is what the app holds: no
-        // client code calls Spond, so this is the freshest truth available
-        // here. isRefetching rather than isFetching, so a first load is not
-        // reported as a refresh. isRefetchError is TanStack's own name for
-        // "errored while still holding data", which is the degrade this
-        // screen wants: the previous replies stay in rsvp.data and stay on
-        // screen, and the note beside them says they may be a little old.
-        onRefresh={() => void rsvp.refetch()}
-        refreshing={rsvp.isRefetching}
-        refreshFailed={rsvp.isRefetchError}
-        onToggle={(row) =>
-          setEntry.mutate({
-            sessionId: session.id,
-            playerId: row.player.id,
-            present: !row.present,
-          })
-        }
-        onBib={(row, value) =>
-          setEntry.mutate({
-            sessionId: session.id,
-            playerId: row.player.id,
-            bibColourOverride: value === '' ? null : value,
-          })
-        }
-        onRemove={(row) => removeEntry.mutate({ sessionId: session.id, playerId: row.player.id })}
+      <TonightScreenView
+        rows={rows}
+        draft={live}
+        filter={filter}
+        canEdit={canEdit}
+        saveStatus={status}
+        hasSpondEvent={!!session.spondEventId}
+        eventNote={eventNote}
+        staleNote={staleNote}
+        linkedNote={linkedNote}
+        refreshing={sync.isPending}
+        refreshFailed={sync.isError}
+        unset={coverageOf(session).kind === 'unset'}
+        onFilter={setFilter}
+        onToggle={(playerId) => setDraft(toggleIncluded(live, playerId))}
+        onBib={(playerId, value) => setDraft(setDraftBib(live, playerId, value === '' ? null : value))}
+        onSelectAll={() => setDraft(selectAll(live, shown))}
+        onClearSelection={() => setDraft(clearSelection(live, shown))}
         onQuickAdd={() => setAdding(true)}
+        onLinkPlayers={caps.has('players.manage') ? () => nav('spondLinks') : undefined}
+        onRefresh={() => sync.mutate()}
+        onSave={() =>
+          save.mutate(
+            { sessionId: session.id, changes: draftDelta(live, entries, session.id) },
+            // Hand the screen back to the readback. Dirty is then computed
+            // against what the database actually returned, so Saved is a
+            // statement about stored data and never about optimism.
+            { onSuccess: () => setDraft(null) },
+          )
+        }
+        onLinkEvent={caps.has('sessions.manage') || canEdit ? () => setLinking(true) : undefined}
+        onUnlinkEvent={
+          session.spondEventId && (caps.has('sessions.manage') || canEdit)
+            ? () => linkSpond.mutate({ sessionId: session.id, spondEventId: null })
+            : undefined
+        }
       />
 
-      {(setEntry.isError || removeEntry.isError) && (
-        <ErrorNote>That change did not save. Tap again to retry.</ErrorNote>
+      {linking && (
+        <LinkSpondEventModal
+          teamId={covered[0] ?? null}
+          date={session.date}
+          time={session.time}
+          onPick={(id) => {
+            setLinking(false)
+            linkSpond.mutate({ sessionId: session.id, spondEventId: id })
+          }}
+          onClose={() => setLinking(false)}
+        />
       )}
 
       {adding && (
@@ -482,7 +534,9 @@ function RegisterScreen({ session }: { session: Session }) {
           rosterEmpty={players.length === 0}
           onClose={() => setAdding(false)}
           onAdd={(playerId) => {
-            setEntry.mutate({ sessionId: session.id, playerId, present: true, source: 'manual' })
+            // A quick add is a draft edit like any other: it selects the
+            // child into tonight's groups and waits for Save.
+            setDraft(toggleIncluded(live, playerId))
             setAdding(false)
           }}
         />
@@ -491,9 +545,9 @@ function RegisterScreen({ session }: { session: Session }) {
   )
 }
 
-// The session day entry point. Presentational so the count, the empty
-// coverage case and the error case can be rendered without query hooks.
-export function RegisterCardView({
+// The session day entry point. Presentational so the summary, the empty
+// coverage case and the error case render without query hooks.
+export function TonightCardView({
   summary,
   note,
   onOpen,
@@ -506,7 +560,7 @@ export function RegisterCardView({
     <button className="card reg-card" onClick={onOpen}>
       <Icon.users size={20} style={{ color: 'var(--slate-2)', flex: '0 0 auto' }} />
       <span style={{ flex: 1, minWidth: 0 }}>
-        <span className="reg-card-title">Register</span>
+        <span className="reg-card-title">Tonight</span>
         <span className="reg-card-sub">{summary}</span>
       </span>
       {note && <span className="pill">{note}</span>}
@@ -518,7 +572,7 @@ export function RegisterCardView({
 // Shown on session day to anyone holding players.view. A parent never
 // holds it, so neither the card nor the child-name reads behind it happen
 // for them.
-export function SessionRegisterCard({ session }: { session: Session }) {
+export function TonightCard({ session }: { session: Session }) {
   const nav = useNav()
   const { caps } = useMyCapabilities()
   const canSee = caps.has('players.view')
@@ -526,6 +580,7 @@ export function SessionRegisterCard({ session }: { session: Session }) {
   const season = useCurrentSeason(canSee)
   const roster = useRegisteredPlayers(season.data?.id ?? null, canSee)
   const register = useRegisterEntries(session.id, canSee)
+  const rsvp = useSessionSpondRsvp(session.id, session.spondEventId, canSee)
   const entries = useMemo(() => register.data ?? [], [register.data])
   const players = useMemo(() => activeRoster(roster.data ?? [], entries), [roster.data, entries])
 
@@ -534,22 +589,17 @@ export function SessionRegisterCard({ session }: { session: Session }) {
   const coverage = coverageOf(session)
   if (coverage.kind === 'unset') {
     return (
-      <RegisterCardView
+      <TonightCardView
         summary="No teams set, so nobody is listed yet"
         note=""
         onOpen={() => nav('register', { sessionId: session.id })}
       />
     )
   }
-  // A failed read shows as unknown rather than as a confident zero. The
-  // season read counts for the same reason it does on the screen.
+  // A failed read shows as unknown rather than as a confident zero.
   if (register.isError || roster.isError || season.isError) {
     return (
-      <RegisterCardView
-        summary="Could not load the register"
-        note=""
-        onOpen={() => nav('register', { sessionId: session.id })}
-      />
+      <TonightCardView summary="Could not load tonight" note="" onOpen={() => nav('register', { sessionId: session.id })} />
     )
   }
   const view = buildRegister(
@@ -557,12 +607,17 @@ export function SessionRegisterCard({ session }: { session: Session }) {
     coverage.teamIds,
     teams,
     entries,
-    coversWholeClub(session, teams.map((t) => t.id)),
+    coversWholeClub(
+      session,
+      teams.map((t) => t.id),
+    ),
   )
+  const rows = buildTonightRows(view, teams, rsvp.data ?? {})
+  const draft = draftFromEntries(entries)
   return (
-    <RegisterCardView
-      summary={registerSummary(view)}
-      note={view.presentTotal === 0 ? 'Not started' : ''}
+    <TonightCardView
+      summary={tonightSummary(rows, draft)}
+      note={rows.every((r) => !draft.included[r.playerId]) ? 'Not started' : ''}
       onOpen={() => nav('register', { sessionId: session.id })}
     />
   )
@@ -570,7 +625,8 @@ export function SessionRegisterCard({ session }: { session: Session }) {
 
 export function SessionRegister() {
   // The parameter name comes from the same module that declares the route,
-  // so the two cannot drift apart.
+  // so the two cannot drift apart. The URL keeps its old segment to avoid
+  // route churn; the product concept it opens is Tonight.
   const sessionId = useParams()[SESSION_ID_PARAM]
   const { data: session, isLoading, isError } = useSession(sessionId)
   if (isLoading) return <Loading />
@@ -581,5 +637,13 @@ export function SessionRegister() {
         It may have been removed.
       </Empty>
     )
-  return <RegisterScreen session={session} />
+  return <TonightScreen session={session} />
 }
+
+// Kept for the callers that still name the old concept while the route
+// segment does. Nothing user visible says Register any more.
+export const SessionRegisterCard = TonightCard
+
+// Referenced by the planner, which still links a Spond event to a draft
+// session before it exists on session day.
+export type { RegisterEntry, Team }

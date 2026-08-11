@@ -18,7 +18,6 @@ import {
   useBoard,
   useDrillMap,
   useLinkSessionBoard,
-  useLinkSessionSpondEvent,
   useMediaMap,
   useMyCapabilities,
   usePlayers,
@@ -35,10 +34,9 @@ import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
-import { SpondAttendanceCard } from '../components/SpondAttendance'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { ShareAction } from '../components/ShareModal'
-import { SessionRegisterCard } from './SessionRegister'
+import { TonightCard } from './SessionRegister'
 import { TacticsBoardView } from '../components/TacticsBoardView'
 import { playerNameMap, type Board, type PlayerNameMap } from '../lib/tacticsBoard'
 import './SessionDay.css'
@@ -104,7 +102,6 @@ function SessionDayView({ session }: { session: Session }) {
   const [checked, setChecked] = useState<string[]>(() => loadChecked(session.id))
   // Linking writes at once here, unlike the planner's draft: this view shows
   // the saved session, so there is no save step to ride.
-  const linkSpond = useLinkSessionSpondEvent()
 
   // Activities resolved once: drill, diagram media (images only; videos and
   // PDFs are not part of the diagram carousel) and the slide index.
@@ -235,22 +232,12 @@ function SessionDayView({ session }: { session: Session }) {
         </button>
       )}
 
-      {/* The register stands alone and needs nothing configured. It sits
-          above the Spond card deliberately: Spond is context, the coach's own
-          record is the thing they act on. */}
-      <SessionRegisterCard session={session} />
-
-      <SpondAttendanceCard
-        spondEventId={session.spondEventId}
-        teamId={soleCoveredTeamId(session)}
-        date={session.date}
-        time={session.time}
-        canEdit={canManage}
-        busy={linkSpond.isPending}
-        errorText={linkSpond.isError ? linkSpond.error.message : ''}
-        onLink={(id) => linkSpond.mutate({ sessionId: session.id, spondEventId: id })}
-        style={{ marginBottom: 12 }}
-      />
+      {/* ONE operational surface for the night. Tonight holds the Spond
+          responses, the selection and the groups; the passive Spond
+          attendance card that used to sit under here was the same facts
+          with none of the actions, and two cards asking about one night
+          made the coach decide which was the real one. */}
+      <TonightCard session={session} />
 
       {/* The attached tactics board, read only inline. The board row carries
           player ids and numbers, never names; the card resolves names through
