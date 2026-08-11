@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QuickAddView, TonightCardView, TonightRowView, TonightScreenView } from './SessionRegister'
-import { SAVE_LABELS, saveState, tonightSummary, usableFilter } from '../lib/tonight'
+import { SAVE_LABELS, saveState, tonightCounts, tonightSummary, usableFilter } from '../lib/tonight'
 import { buildTonightRows, draftFromEntries, selectAll, setDraftBib, type TonightRow } from '../lib/tonight'
 import { buildRegister, type RegisterEntry } from '../lib/register'
 import type { Player, Team } from '../lib/data'
@@ -43,11 +43,18 @@ const rows = (): TonightRow[] =>
 
 const noop = () => {}
 
-const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) =>
-  renderToStaticMarkup(
+const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) => {
+  // The counts follow whatever rows and draft the case supplies, so a test
+  // can never accidentally assert a chip against a different population
+  // than the list it rendered. Links are unknown unless a case says
+  // otherwise, which is what a screen with no readable link set gets.
+  const r = over.rows ?? rows()
+  const d = over.draft ?? draftFromEntries([])
+  return renderToStaticMarkup(
     <TonightScreenView
-      rows={rows()}
-      draft={draftFromEntries([])}
+      rows={r}
+      counts={tonightCounts(r, d, null)}
+      draft={d}
       filter="going"
       canEdit
       saveStatus="saved"
@@ -55,7 +62,8 @@ const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) =>
       hasResponses
       eventNote="Titans Tuesday"
       staleNote={null}
-      linkedNote=""
+      linkNote=""
+      audienceNote=""
       refreshing={false}
       refreshFailed={false}
       unset={false}
@@ -70,6 +78,7 @@ const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) =>
       {...over}
     />,
   )
+}
 
 const names = (html: string) => [...html.matchAll(/reg-name-main">([^<]+)</g)].map((m) => m[1])
 
@@ -271,7 +280,7 @@ describe('Spond, inside Tonight rather than beside it', () => {
   })
 
   it('shows linking coverage and a way to fix it', () => {
-    const html = screen({ linkedNote: '2 of 3 players linked to Spond', onLinkPlayers: noop })
+    const html = screen({ linkNote: '2 of 3 players linked to Spond', onLinkPlayers: noop })
     expect(html).toContain('2 of 3 players linked to Spond')
     expect(html).toContain('Link players')
   })
@@ -352,15 +361,17 @@ describe('no filter or selection writes anything', () => {
     const html = renderToStaticMarkup(
       <TonightScreenView
         rows={rows()}
+        counts={tonightCounts(rows(), draftFromEntries([]), null)}
         draft={draftFromEntries([])}
         filter="going"
         canEdit
         saveStatus="saved"
         hasSpondEvent
-      hasResponses
+        hasResponses
         eventNote=""
         staleNote={null}
-        linkedNote=""
+        linkNote=""
+        audienceNote=""
         refreshing={false}
         refreshFailed={false}
         unset={false}
@@ -446,9 +457,60 @@ describe('Refresh Spond', () => {
 
 describe('linking coverage is only claimed when the read can answer', () => {
   it('says nothing rather than "0 of N linked" when there is no note to make', () => {
-    const html = screen({ linkedNote: '' })
+    const html = screen({ linkNote: '' })
     expect(html).not.toContain('linked to Spond')
     expect(html).not.toContain('Link players')
+  })
+})
+
+// ---- The two populations, never presented as one --------------------
+//
+// The "19 vs 11" report. A coach met the Spond event's own aggregate on
+// one screen and Tonight's Going chip on another, both as bare numbers,
+// and could not tell that they count different sets of people.
+
+describe('every number on Tonight names the population it counted', () => {
+  it('counts the chips over Hub players on this session, not the event audience', () => {
+    // Three covered children, one of them accepted. The linked Spond event
+    // has fifty people on it and twenty one of them going; neither figure
+    // may appear on a chip.
+    const html = screen({ audienceNote: 'Spond event: 50 invited, 21 going' })
+    expect(html).toContain('Going 1')
+    expect(html).toContain('Everyone 3')
+    expect(html).not.toContain('Going 21')
+    expect(html).not.toContain('Everyone 50')
+  })
+
+  it('prints the event aggregate as a labelled sentence, never as a chip', () => {
+    const html = screen({ audienceNote: 'Spond event: 50 invited, 21 going' })
+    expect(html).toContain('Spond event: 50 invited, 21 going')
+    // A chip is tappable and filters the list. The aggregate filters
+    // nothing and must never look like it does.
+    expect(html).not.toMatch(/<button[^>]*>Spond event/)
+    expect(html).toContain('tn-audience')
+  })
+
+  it('shows the link coverage that explains the gap between the two', () => {
+    const html = screen({
+      linkNote: '27 of 40 players linked to Spond',
+      audienceNote: 'Spond event: 50 invited, 21 going',
+    })
+    // Read together these answer the question the bare numbers could not:
+    // the event reached fifty people, the squad is forty, and twenty seven
+    // of them are bound to a Spond member.
+    expect(html).toContain('27 of 40 players linked to Spond')
+    expect(html).toContain('Spond event: 50 invited, 21 going')
+  })
+
+  it('says how many linked players actually have a reply for this event', () => {
+    const html = screen({ linkNote: '27 of 40 players linked to Spond · 24 with a reply for this event' })
+    expect(html).toContain('24 with a reply for this event')
+  })
+
+  it('shows no audience sentence when nothing is linked to say it about', () => {
+    const html = screen({ hasSpondEvent: false, hasResponses: false, eventNote: '', audienceNote: '', filter: 'all' })
+    expect(html).not.toContain('tn-audience')
+    expect(html).not.toContain('invited')
   })
 })
 

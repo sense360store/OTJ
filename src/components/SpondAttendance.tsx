@@ -15,7 +15,16 @@
 import { useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useSpondEvents } from '../lib/queries'
-import { pickerEvents, SPOND_COUNT_LABELS, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
+import {
+  pickerEvents,
+  spondAudience,
+  SPOND_AUDIENCE_CAPTION,
+  SPOND_COUNT_LABELS,
+  spondEventWhen,
+  spondPickerSummary,
+  spondTeamLabel,
+  syncedAgo,
+} from '../lib/spond'
 import {
   ALL_EVENTS_LABEL,
   DEFAULT_EVENT_KIND,
@@ -151,8 +160,13 @@ export function LinkSpondEventModal({
                 {isSpondMatch(e) && <MatchBadge />}
                 {e.cancelled && <CancelledBadge />}
               </span>
+              {/* Composed in ../lib/spond, not here: a modal never opens
+                  under a static render, so wording left in this JSX is
+                  wording nothing tests. The line names the population
+                  because the bare accepted count is the figure a coach
+                  then compares with Tonight's Going chip. */}
               <span className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>
-                {spondEventWhen(e.startsAt)} · {spondTeamLabel(e.teamName)} · {e.accepted} accepted
+                {spondPickerSummary(e)}
               </span>
             </button>
           ))}
@@ -234,7 +248,14 @@ export function SpondAttendanceCard({
           <div className="muted" style={{ fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>
             {spondEventWhen(event.startsAt)} · {spondTeamLabel(event.teamName)}
           </div>
-          <div className="row wrap" style={{ gap: 6, marginTop: 10 }}>
+          {/* The four counts are the EVENT's own, over everybody Spond
+              invited. Tonight counts covered Hub players, which is a
+              smaller and different population, so this row says which one
+              it is rather than leaving a coach to compare the two. */}
+          <div className="eyebrow" style={{ marginTop: 10, marginBottom: 4 }}>
+            {SPOND_AUDIENCE_CAPTION} ({spondAudience(event)})
+          </div>
+          <div className="row wrap" style={{ gap: 6 }}>
             {SPOND_COUNT_LABELS.map((label) => (
               <span key={label} className="pill">
                 <b>{event[label]}</b> {label}

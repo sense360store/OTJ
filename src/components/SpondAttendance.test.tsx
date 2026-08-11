@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SpondAttendanceCard } from './SpondAttendance'
-import { pickerEvents } from '../lib/spond'
+import { pickerEvents, spondEventWhen, spondPickerSummary } from '../lib/spond'
 import type { SpondEvent } from '../lib/data'
 
 // SpondAttendanceCard reads the synced events through useSpondEvents, so the
@@ -120,5 +120,59 @@ describe('pickerEvents', () => {
   it('orders by closeness to the session, not by the filter', () => {
     const out = pickerEvents(all, { ...base, kind: 'all', showAll: true, date: '2026-06-18', time: '17:30' })
     expect(out[0].id).toBe('p-other')
+  })
+})
+
+// ---- The event aggregate says who it counted -------------------------
+//
+// The "19 vs 11" report: this card's four counts are the Spond EVENT's own,
+// over everybody it invited, while Tonight's chips count covered Hub
+// players. Both were bare numbers, so one honest pair looked like a bug.
+// These render the markup rather than reading the source, because a source
+// check for the caption matched the import line and survived deleting the
+// caption from the JSX.
+
+describe('the attendance card names the population it counts', () => {
+  const linked = ev({ id: 'big', accepted: 21, declined: 23, unanswered: 6, waiting: 0 })
+
+  it('captions the four counts as the event audience, not the squad', () => {
+    const html = render({ spondEventId: 'big' }, [linked])
+    expect(html).toContain('Everyone invited to the Spond event')
+  })
+
+  it('states the audience total, which is what the counts add up to', () => {
+    const html = render({ spondEventId: 'big' }, [linked])
+    expect(html).toContain('(50)')
+  })
+
+  it('still shows the four counts themselves', () => {
+    const html = render({ spondEventId: 'big' }, [linked])
+    expect(html).toContain('accepted')
+    expect(html).toContain('<b>21</b>')
+  })
+})
+
+describe('the picker row names the population too', () => {
+  // Through the pure composer, NOT through a render of the card. The modal
+  // only opens on a click and this project has no DOM, so the render based
+  // version of this test passed while the row said "21 accepted" — the
+  // exact wording it was written to forbid. pickerEvents lives in
+  // ../lib/spond for the same reason.
+  const big = ev({ id: 'x', accepted: 21, declined: 23, unanswered: 6, waiting: 0 })
+
+  it('says how many of the invited are going, rather than a bare accepted count', () => {
+    // "21 accepted" is the figure a coach carries to Tonight and cannot
+    // reconcile with a Going chip of 11.
+    expect(spondPickerSummary(big)).toContain('21 of 50 invited going')
+    expect(spondPickerSummary(big)).not.toContain('21 accepted')
+  })
+
+  it('keeps the when and the team beside it', () => {
+    expect(spondPickerSummary(big)).toContain(spondEventWhen(big.startsAt))
+    expect(spondPickerSummary(big)).toContain('Titans')
+  })
+
+  it('names All teams for a club event, as the rest of the picker does', () => {
+    expect(spondPickerSummary(ev({ id: 'c', teamName: null }))).toContain('All teams')
   })
 })

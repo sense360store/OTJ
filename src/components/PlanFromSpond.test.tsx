@@ -138,3 +138,22 @@ describe('PlanFromSpondView', () => {
     expect(html).not.toMatch(/<button[^>]*disabled/)
   })
 })
+
+// ---- The event aggregate says who it counted -------------------------
+//
+// These counts are the Spond event's own, over everybody it invited, and
+// the session planned from the event covers a Hub squad that is a
+// different and usually smaller set. Rendered rather than source checked.
+
+describe('the plan rows name the population their counts describe', () => {
+  it('states how many the event invited beside the four counts', () => {
+    const html = render({ rows: [ev({ id: 'e1', accepted: 21, declined: 23, unanswered: 6, waiting: 0 })] })
+    expect(html).toContain('50 invited')
+    expect(html).toContain('<b>21</b>')
+  })
+
+  it('counts every reply state into the audience, not just the accepted', () => {
+    const html = render({ rows: [ev({ id: 'e1', accepted: 4, declined: 1, unanswered: 1, waiting: 0 })] })
+    expect(html).toContain('6 invited')
+  })
+})
