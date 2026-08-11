@@ -217,19 +217,38 @@ describe('spondPlanSuggestions', () => {
     expect(out.map((e) => e.id)).toEqual(['open'])
   })
 
-  it('orders upcoming soonest first, then recent past most recent first', () => {
-    const events = [
-      ev({ id: 'past-old', startsAt: '2026-06-06T17:30:00Z', teamId: 'team-1' }),
-      ev({ id: 'soon', startsAt: '2026-06-14T17:30:00Z', teamId: 'team-1' }),
-      ev({ id: 'later', startsAt: '2026-06-20T17:30:00Z', teamId: 'team-1' }),
-      ev({ id: 'past-recent', startsAt: '2026-06-10T17:30:00Z', teamId: 'team-1' }),
-    ]
-    expect(spondPlanSuggestions({ ...opts, events }).map((e) => e.id)).toEqual([
-      'soon',
-      'later',
+  const mixed = [
+    ev({ id: 'past-old', startsAt: '2026-06-06T17:30:00Z', teamId: 'team-1' }),
+    ev({ id: 'soon', startsAt: '2026-06-14T17:30:00Z', teamId: 'team-1' }),
+    ev({ id: 'later', startsAt: '2026-06-20T17:30:00Z', teamId: 'team-1' }),
+    ev({ id: 'past-recent', startsAt: '2026-06-10T17:30:00Z', teamId: 'team-1' }),
+  ]
+
+  it('suggests what is still to come, soonest first, and nothing that has run', () => {
+    // The lifecycle correction. This used to return the upcoming events and
+    // then every past one after them, so a coach opening the planner to
+    // arrange Tuesday scrolled past every night the club had already had.
+    // Past is now a chip, not a tail.
+    expect(spondPlanSuggestions({ ...opts, events: mixed }).map((e) => e.id)).toEqual(['soon', 'later'])
+  })
+
+  it('returns the events that have run, most recent first, under Past', () => {
+    // Still reachable, because writing up last night is a real thing to do.
+    expect(spondPlanSuggestions({ ...opts, events: mixed, scope: 'past' }).map((e) => e.id)).toEqual([
       'past-recent',
       'past-old',
     ])
+  })
+
+  it('keeps an event that started an hour ago out of Past, because it is still running', () => {
+    // The shared lifecycle rule, not a start time comparison: an event two
+    // hours old is over, one an hour old is not.
+    const running = [
+      ev({ id: 'running', startsAt: '2026-06-13T11:00:00Z', teamId: 'team-1' }),
+      ev({ id: 'finished', startsAt: '2026-06-13T09:00:00Z', teamId: 'team-1' }),
+    ]
+    expect(spondPlanSuggestions({ ...opts, events: running }).map((e) => e.id)).toEqual(['running'])
+    expect(spondPlanSuggestions({ ...opts, events: running, scope: 'past' }).map((e) => e.id)).toEqual(['finished'])
   })
 })
 

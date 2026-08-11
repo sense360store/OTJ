@@ -40,6 +40,33 @@ describe('buildSessionIcs', () => {
     expect(buildSessionIcs(session())).toContain('DTSTART:20260610T173000')
   })
 
+  it('books the session for as long as the rest of the product thinks it runs', () => {
+    // Start and length both come from ./sessionLifecycle now. This file used
+    // to fall back to 60 minutes for a session with no activities while the
+    // app treated the same session as running for 90, so a coach's calendar
+    // and their schedule disagreed about the same night.
+    expect(buildSessionIcs(session())).toContain('DTEND:20260610T190000')
+    expect(
+      buildSessionIcs(
+        session({
+          activities: [
+            { phase: 'Warm-Up', duration: 20 },
+            { phase: 'Game', duration: 25 },
+          ],
+        }),
+      ),
+    ).toContain('DTEND:20260610T181500')
+  })
+
+  it('exports nothing rather than a midnight entry when the time cannot be read', () => {
+    // An entry has to say when it begins. A session with a day and no
+    // readable time is still a session, and the lifecycle keeps it active
+    // all day, but there is no honest calendar event to build from it.
+    expect(buildSessionIcs(session({ time: '' }))).toBeNull()
+    expect(buildSessionIcs(session({ time: 'half six' }))).toBeNull()
+    expect(buildSessionIcs(session({ date: '' }))).toBeNull()
+  })
+
   it('writes the venue as LOCATION', () => {
     expect(buildSessionIcs(session({ venue: 'Ainley Top' }))).toContain('LOCATION:Ainley Top')
   })

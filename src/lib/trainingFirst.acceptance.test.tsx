@@ -28,6 +28,7 @@ import {
   TRAINING_LABEL,
 } from './eventKind'
 import { sessionFromSpondEvent, spondPlanSuggestions } from './spond'
+import { DEFAULT_LIFECYCLE_SCOPE } from './sessionLifecycle'
 import { buildRegister, type RegisterEntry } from './register'
 import {
   buildTonightRows,
@@ -48,6 +49,12 @@ import { PlanFromSpondView } from '../components/PlanFromSpond'
 
 const ME = 'coach-me'
 const THEM = 'coach-them'
+
+// Midday on the club week below, built from local parts. Every list in this
+// file is composed at this moment rather than at whatever time the suite
+// happens to run, so a fixture dated today does not quietly become history
+// halfway through an evening and take the assertions with it.
+const NOW = new Date(2026, 7, 11, 12, 0, 0, 0)
 
 const session = (over: Partial<Session> & Pick<Session, 'id' | 'name'>): Session => ({
   ...blankSession(THEM, null),
@@ -86,15 +93,15 @@ const noop = () => {}
 
 describe('1. the club schedule opens on Training, not on the rows you own', () => {
   it('lists both coaches training and neither fixture', () => {
-    expect(ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: ME }))).toEqual(['a', 'b'])
+    expect(ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: ME, now: NOW }))).toEqual(['a', 'b'])
   })
 })
 
 describe('2. the default does not depend on who is looking', () => {
   it('gives the same list to the coach who owns nothing as to the one who owns everything', () => {
-    const asMe = ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: ME }))
-    const asThem = ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: THEM }))
-    const asNobody = ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: null }))
+    const asMe = ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: ME, now: NOW }))
+    const asThem = ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: THEM, now: NOW }))
+    const asNobody = ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: null, now: NOW }))
     expect(asMe).toEqual(asThem)
     expect(asThem).toEqual(asNobody)
   })
@@ -102,7 +109,7 @@ describe('2. the default does not depend on who is looking', () => {
 
 describe('3. All events is the deliberate widening, and it widens to everything', () => {
   it('brings the friendly and the gala back', () => {
-    expect(ids(applyEventFilter(week, { kind: 'all', mine: false }, { userId: ME }))).toEqual([
+    expect(ids(applyEventFilter(week, { kind: 'all', scope: 'upcoming', mine: false }, { userId: ME, now: NOW }))).toEqual([
       'a',
       'b',
       'c',
@@ -120,13 +127,13 @@ describe('3. All events is the deliberate widening, and it widens to everything'
 describe('4. ownership is a secondary narrowing that starts off', () => {
   it('is off in the default and narrows only when asked', () => {
     expect(DEFAULT_EVENT_FILTER.mine).toBe(false)
-    expect(ids(applyEventFilter(week, { kind: 'training', mine: true }, { userId: ME }))).toEqual(['a'])
+    expect(ids(applyEventFilter(week, { kind: 'training', scope: 'upcoming', mine: true }, { userId: ME, now: NOW }))).toEqual(['a'])
   })
 
   it('narrows to nothing rather than to everything when nobody is signed in', () => {
     // Fail closed. An unknown viewer must never be treated as the owner of
     // every row in the club.
-    expect(ids(applyEventFilter(week, { kind: 'training', mine: true }, { userId: null }))).toEqual([])
+    expect(ids(applyEventFilter(week, { kind: 'training', scope: 'upcoming', mine: true }, { userId: null, now: NOW }))).toEqual([])
   })
 })
 
@@ -134,11 +141,11 @@ describe('5. the front page never claims an empty calendar while the club is tra
   it("leads with the club's next training when this coach owns none", () => {
     // The old rule led with your own next session and showed "Nothing
     // scheduled yet" to everyone else, on nights the club was training.
-    expect(pickNextEvent([theirTraining, gala], ME)?.id).toBe('b')
+    expect(pickNextEvent([theirTraining, gala], ME, undefined, NOW)?.id).toBe('b')
   })
 
   it('still prefers your own training when you have one', () => {
-    expect(pickNextEvent([theirTraining, myTraining], ME)?.id).toBe('a')
+    expect(pickNextEvent([theirTraining, myTraining], ME, undefined, NOW)?.id).toBe('a')
   })
 })
 
@@ -154,11 +161,11 @@ describe('6. team is a narrowing within the kind, never the split', () => {
   ]
 
   it('changing team leaves the kind exactly where it was', () => {
-    expect(ids(applyEventFilter(byTeam, DEFAULT_EVENT_FILTER, { userId: ME, teamMatch: titans }))).toEqual(['a'])
-    expect(ids(applyEventFilter(byTeam, DEFAULT_EVENT_FILTER, { userId: ME, teamMatch: trojans }))).toEqual(['e'])
+    expect(ids(applyEventFilter(byTeam, DEFAULT_EVENT_FILTER, { userId: ME, teamMatch: titans, now: NOW }))).toEqual(['a'])
+    expect(ids(applyEventFilter(byTeam, DEFAULT_EVENT_FILTER, { userId: ME, teamMatch: trojans, now: NOW }))).toEqual(['e'])
     // The friendly is a Titans event and is still absent from the Titans
     // view, because the team filter never widened the kind.
-    expect(ids(applyEventFilter(byTeam, DEFAULT_EVENT_FILTER, { userId: ME, teamMatch: titans }))).not.toContain('c')
+    expect(ids(applyEventFilter(byTeam, DEFAULT_EVENT_FILTER, { userId: ME, teamMatch: titans, now: NOW }))).not.toContain('c')
   })
 })
 
@@ -192,6 +199,8 @@ describe('8. the Plan from Spond surface shows Training as the view it is in', (
         eventsExist
         kind={DEFAULT_EVENT_KIND}
         onKind={noop}
+        scope={DEFAULT_LIFECYCLE_SCOPE}
+        onScope={noop}
         showAll={false}
         onShowAll={noop}
         showAllToggle
@@ -231,14 +240,14 @@ describe('9. a fixture planned from Spond is still a fixture on every screen', (
   })
 
   it('is absent from the Sessions Training view', () => {
-    expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: ME, spondEvents: lookup }))).toEqual([
+    expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: ME, spondEvents: lookup, now: NOW }))).toEqual([
       'planned-training',
       'a',
     ])
   })
 
   it('is present under All events', () => {
-    expect(ids(applyEventFilter(schedule, { kind: 'all', mine: false }, { userId: ME, spondEvents: lookup }))).toEqual([
+    expect(ids(applyEventFilter(schedule, { kind: 'all', scope: 'upcoming', mine: false }, { userId: ME, spondEvents: lookup, now: NOW }))).toEqual([
       'planned-match',
       'planned-training',
       'a',
@@ -246,7 +255,7 @@ describe('9. a fixture planned from Spond is still a fixture on every screen', (
   })
 
   it("is never Home's next training, even when it is soonest and owned", () => {
-    expect(pickNextEvent(schedule, ME, lookup)?.id).toBe('a')
+    expect(pickNextEvent(schedule, ME, lookup, NOW)?.id).toBe('a')
   })
 
   it("is not labelled training by Home's hero either", () => {
@@ -276,7 +285,7 @@ describe('9b. one classifier answers for every surface', () => {
     // lookup, and Array.filter would hand it the index. TypeScript refuses
     // that, which is the guard, but writing it out says why.
     const trainingRows = week.filter((s) => isTrainingEvent(s))
-    expect(ids(trainingRows)).toEqual(ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: null })))
+    expect(ids(trainingRows)).toEqual(ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: null, now: NOW })))
   })
 
   it("lets Spond's own classification overrule a title that reads like training", () => {

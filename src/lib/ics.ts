@@ -3,6 +3,7 @@
 // infrastructure and no scheduling; email reminders are possible future work.
 import type { Session } from './data'
 import { sessionMinutes } from './data'
+import { hasStartTime, plannedMinutes, sessionStart } from './sessionLifecycle'
 
 // Times are written as floating local times (no timezone suffix) on purpose:
 // a 17:30 training session means 17:30 on the clock wherever the phone is,
@@ -35,13 +36,19 @@ function fold(line: string): string {
   return out.join('\r\n ')
 }
 
+// A calendar entry needs both ends, so a session with no time is not
+// exportable; a session with no plan yet still books the length the rest of
+// the product believes it runs for.
+//
+// Start and duration both come from ../lib/sessionLifecycle rather than
+// being derived here. This file used to parse the date and time itself and
+// fall back to 60 minutes where the plan was empty, which made a second
+// answer to "how long is this session": the app treated it as running for
+// 90 and the calendar booked an hour. One seam, one answer.
 export function sessionCalendarDates(s: Session): { start: Date; end: Date } | null {
-  if (!s.date || !s.time) return null
-  const start = new Date(`${s.date}T${s.time}`)
-  if (isNaN(start.getTime())) return null
-  // A session with no activities yet still books a sensible hour.
-  const mins = sessionMinutes(s) || 60
-  return { start, end: new Date(start.getTime() + mins * 60_000) }
+  const start = hasStartTime(s) ? sessionStart(s) : null
+  if (!start) return null
+  return { start, end: new Date(start.getTime() + plannedMinutes(s) * 60_000) }
 }
 
 // venueName is the resolved venue for a session, which the caller looks up

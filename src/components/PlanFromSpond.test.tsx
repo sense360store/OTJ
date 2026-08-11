@@ -35,6 +35,8 @@ function render(props: Partial<Parameters<typeof PlanFromSpondView>[0]> = {}): s
       eventsExist
       kind="training"
       onKind={noop}
+      scope="upcoming"
+      onScope={noop}
       showAll={false}
       onShowAll={noop}
       showAllToggle

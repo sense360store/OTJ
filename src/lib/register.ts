@@ -32,12 +32,14 @@ export interface RegisterRow {
   bibSwatch: string | null
   overridden: boolean
   // True when the row exists only because a coach added them on the day.
+  // With `present`, this is what pins a row inside the register's Going
+  // view (../lib/registerScope): between them they are the marks that say
+  // something. A row once carried a hasEntry flag as well, meaning any
+  // register entry at all, and pinning on that put an unticked child
+  // reading "No reply" inside a list headed Going. An entry that records
+  // neither presence nor a quick add is not a statement about tonight, so
+  // there is nothing left for such a flag to be used for.
   manual: boolean
-  // True when a register entry exists for this player at all: ticked in,
-  // ticked and untucked again, quick added, or given a bib. It means the
-  // coach has touched this row deliberately, which is what stops a
-  // narrowed view dropping a row somebody just created.
-  hasEntry: boolean
 }
 
 export interface RegisterGroup {
@@ -129,7 +131,6 @@ function toRow(player: Player, entry: RegisterEntry | undefined, teamDefault: st
     bibSwatch: bibSwatch(colour),
     overridden: override !== null,
     manual: entry?.source === 'manual',
-    hasEntry: entry !== undefined,
   }
 }
 
