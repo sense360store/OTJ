@@ -10,6 +10,19 @@ This workflow does not loosen that gate. It replaces the by-hand SQL client
 with a button and keeps every check the hand was supposed to perform, in an
 order where each one fails before the next can do damage.
 
+## Applied through this workflow
+
+| Migration | Hosted version | Applied |
+|---|---|---|
+| `0046_drill_diagram` | `20260811210248` | 2026-08-11 |
+
+`0046` is the first migration this workflow applied. Its ledger row records
+`created_by` as the workflow and the commit it ran from, an `idempotency_key`
+of `otj:migration:0046_drill_diagram`, and one `statements` entry hashing to
+the reviewed file. The post-apply gate confirmed it was the unique newest row
+with `20260810182333` / `spond_links` before it, and that the column, the check
+constraint and the three validation functions all exist.
+
 ## What runs, in order
 
 | Step | What it proves |

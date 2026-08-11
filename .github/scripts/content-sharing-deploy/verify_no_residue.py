@@ -12,7 +12,8 @@ one and no share machinery has been left behind:
   - no content_share audit event exists;
   - every drill is internal_only;
   - every media row is internal_only;
-  - the migration ledger's newest version is exactly 0043 (content_rights_fa_lock);
+  - the migration ledger's newest version is exactly EXPECTED_LAST_MIGRATION,
+    currently 20260811210248 (0046, drill_diagram);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
 Runs TWICE in the deploy workflow, with identical assertions:
@@ -77,23 +78,31 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0045_spond_links was deliberately applied to the hosted
+# below is RECONCILED: 0046_drill_diagram was deliberately applied to the hosted
 # project through the gated production process, and hosted assigned it this
 # exact version. It was read back from supabase_migrations.schema_migrations
-# immediately after the apply and confirmed to be the unique newest ledger
-# entry, with the previously pinned 20260809184949 / training_day_core now the
-# entry before it.
+# after the apply and confirmed to be the unique newest ledger entry, with the
+# previously pinned 20260810182333 / spond_links now the entry before it.
+#
+# 0046 is the first migration applied by the gated workflow
+# (.github/workflows/apply-production-migration.yml) rather than by hand, so
+# the row carries more evidence than its predecessors: created_by names the
+# workflow and the commit it ran from, idempotency_key holds
+# otj:migration:0046_drill_diagram, and md5(statements[1]) is
+# a4074f7c01e48cdad679fdc633d8dc14, the reviewed file with its trailing newline
+# stripped. The workflow's own post-apply gate asserted all of that, and it was
+# confirmed again independently before this constant moved.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters
 # no schema: it only tells the fail closed verifier which reviewed hosted state
 # it is now checking against.
 #
-# The ledger version is assigned BY THE APPLY (the connector stamps it from the
-# server clock), so it cannot be known before the apply happens. The order is
-# always: apply -> read back the recorded version -> set this constant to
-# exactly that value in a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260810182333"  # 0045_spond_links
+# The ledger version is assigned BY THE APPLY (stamped from the server clock),
+# so it cannot be known before the apply happens. The order is always: apply ->
+# read back the recorded version -> set this constant to exactly that value in
+# a reviewed pull request -> only then deploy.
+EXPECTED_LAST_MIGRATION = "20260811210248"  # 0046_drill_diagram
 
 # The EXACT set of club ids permitted to have public_sharing_enabled true.
 # This is a deployment review pin in the same sense as
