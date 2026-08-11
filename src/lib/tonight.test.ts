@@ -23,12 +23,14 @@ import { describe, expect, it } from 'vitest'
 import {
   countByResponse,
   DEFAULT_RESPONSE_FILTER,
+  draftEntries,
   draftFromEntries,
   draftIsDirty,
   draftDelta,
   matchesResponse,
   RESPONSE_FILTERS,
   RESPONSE_FILTER_LABELS,
+  quickAdd,
   selectAll,
   clearSelection,
   setDraftBib,
@@ -36,6 +38,8 @@ import {
   buildTonightRows,
   tonightGroups,
   tonightUpsertRows,
+  tonightSummary,
+  usableFilter,
   visibleRows,
   type TonightRow,
 } from './tonight'
@@ -440,5 +444,112 @@ describe('buildTonightRows', () => {
     ]
     const view = buildRegister(withGuest, ['titans'], teams, guest, false)
     expect(buildTonightRows(view, teams, {}).find((r) => r.playerId === 'zed')?.manual).toBe(true)
+  })
+})
+
+// ---- A child added on the day, before anything is saved -------------
+
+describe('quick add, which happens before any save', () => {
+  const teams2: Team[] = [
+    { id: 'titans', name: 'Titans', bibColour: 'blue' },
+    { id: 'trojans', name: 'Trojans', bibColour: 'red' },
+  ]
+  const squad: Player[] = [
+    { id: 'anna', teamId: 'titans', displayName: 'Anna Synthetic', shirtNumber: null, createdBy: null },
+  ]
+  const visitor: Player = { id: 'zed', teamId: 'trojans', displayName: 'Zed Synthetic', shirtNumber: null, createdBy: null }
+
+  it('keeps a quick added child visible with nothing stored yet', () => {
+    // THE BUG THIS PINS. Quick add is now a draft edit, and buildRegister
+    // lists a guest only when they have a STORED entry. Without merging
+    // the draft in, the child a coach just added disappears the instant
+    // the modal closes, and reappears only after a save they cannot see
+    // the point of.
+    const draft = quickAdd(draftFromEntries([]), 'zed')
+    const entries = draftEntries(draft, [], 's1')
+    const view = buildRegister([...squad, visitor], ['titans'], teams2, entries, false)
+    expect(buildTonightRows(view, teams2, {}).map((r) => r.playerId)).toContain('zed')
+  })
+
+  it('marks them a guest, so a visitor never reads as a squad member', () => {
+    const draft = quickAdd(draftFromEntries([]), 'zed')
+    const entries = draftEntries(draft, [], 's1')
+    expect(entries.find((e) => e.playerId === 'zed')?.source).toBe('manual')
+    expect(draftDelta(draft, [], 's1').find((c) => c.playerId === 'zed')?.source).toBe('manual')
+  })
+
+  it('selects them into tonight s groups, because that is why they were added', () => {
+    const draft = quickAdd(draftFromEntries([]), 'zed')
+    expect(draft.included.zed).toBe(true)
+  })
+
+  it('leaves a stored guest exactly as stored', () => {
+    const stored: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'zed', present: true, bibColourOverride: 'red', source: 'manual' },
+    ]
+    expect(draftEntries(draftFromEntries(stored), stored, 's1')).toEqual(stored)
+  })
+
+  it('merges a draft change over a stored row without inventing others', () => {
+    const stored: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'anna', present: false, bibColourOverride: null, source: 'roster' },
+    ]
+    const merged = draftEntries(toggleIncluded(draftFromEntries(stored), 'anna'), stored, 's1')
+    expect(merged).toHaveLength(1)
+    expect(merged[0].present).toBe(true)
+  })
+})
+
+// ---- A club with no Spond must never open on an empty screen --------
+
+describe('the filter a screen can actually use', () => {
+  const withReplies = [going, quiet]
+  const withNone = [row('anna'), row('ben')]
+
+  it('is the coach s choice while this session has replies to filter by', () => {
+    expect(usableFilter(withReplies, 'going')).toBe('going')
+    expect(usableFilter(withReplies, 'all')).toBe('all')
+  })
+
+  it('falls back to Everyone when nothing on this list has replied at all', () => {
+    // THE BUG THIS PINS. Going is the default, and a club with no Spond
+    // has no accepted child, so the screen opened on a filter that hid
+    // every one of them: "Nobody under Going" over a full squad. Tonight
+    // has to work with nothing configured.
+    expect(usableFilter(withNone, 'going')).toBe('all')
+    expect(visibleRows(withNone, usableFilter(withNone, 'going'))).toHaveLength(2)
+  })
+
+  it('treats a failed or still loading Spond read the same way', () => {
+    // Absence has one appearance. No event, no links, a read in flight
+    // and a read that failed all arrive here as rows with no response.
+    expect(usableFilter([], 'going')).toBe('all')
+  })
+
+  it('stays usable once even one child has replied', () => {
+    // A single linked child is enough for the filters to mean something,
+    // and the rest live under Everyone.
+    expect(usableFilter([going, row('ben')], 'going')).toBe('going')
+  })
+})
+
+describe('the session day summary', () => {
+  it('says what is expected when Spond can answer', () => {
+    expect(tonightSummary([going, quiet], draftFromEntries([]))).toBe('1 expected · 0 selected')
+  })
+
+  it('never claims zero expected when nothing is known', () => {
+    // "0 expected" reads as "nobody is coming". With no Spond nothing is
+    // known, which is a different sentence, so the card counts the squad
+    // it is organising instead.
+    const bare = [row('anna'), row('ben')]
+    const summary = tonightSummary(bare, draftFromEntries([]))
+    expect(summary).not.toContain('0 expected')
+    expect(summary).toBe('2 in the squad · 0 selected')
+  })
+
+  it('counts the groups once something is selected', () => {
+    const bare = [row('anna'), row('ben')]
+    expect(tonightSummary(bare, selectAll(draftFromEntries([]), bare))).toBe('2 in the squad · 2 selected · 1 group')
   })
 })

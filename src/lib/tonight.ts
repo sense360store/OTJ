@@ -117,6 +117,26 @@ export function matchesResponse(row: TonightRow, filter: ResponseFilter): boolea
   return row.response !== null && row.response === FILTER_STATUS[filter]
 }
 
+// Whether this session has any Spond reply to filter by at all.
+//
+// Absence has exactly one appearance: no linked event, no linked child, a
+// read still in flight and a read that failed all arrive here as rows
+// carrying no response, and all four mean the same thing.
+export function hasResponseContext(rows: TonightRow[]): boolean {
+  return rows.some((r) => r.response !== null)
+}
+
+// The filter the screen can ACTUALLY use.
+//
+// Going is the default because it is the list a coach acts on. A club with
+// no Spond has no accepted child, so that default would hide every one of
+// them behind "Nobody under Going" over a full squad. Missing context can
+// never empty this screen: with nothing to filter by, Everyone is the
+// working view and the coach organises the night by hand.
+export function usableFilter(rows: TonightRow[], filter: ResponseFilter): ResponseFilter {
+  return hasResponseContext(rows) ? filter : 'all'
+}
+
 export function visibleRows(rows: TonightRow[], filter: ResponseFilter): TonightRow[] {
   return rows.filter((r) => matchesResponse(r, filter))
 }
@@ -148,16 +168,58 @@ export function countByResponse(rows: TonightRow[]): ResponseCounts {
 export interface TonightDraft {
   included: Record<string, boolean>
   bibs: Record<string, string | null>
+  // Children the coach quick added tonight who are not part of the covered
+  // squad. Tracked here because a guest exists only in the draft until the
+  // save, and a guest must never read as a squad member.
+  added: Record<string, boolean>
 }
 
 export function draftFromEntries(entries: RegisterEntry[]): TonightDraft {
   const included: Record<string, boolean> = {}
   const bibs: Record<string, string | null> = {}
+  const added: Record<string, boolean> = {}
   for (const e of entries) {
     included[e.playerId] = e.present
     bibs[e.playerId] = e.bibColourOverride
+    if (e.source === 'manual') added[e.playerId] = true
   }
-  return { included, bibs }
+  return { included, bibs, added }
+}
+
+// Someone who turned up who is not on the list. Selected straight away,
+// because that is why the coach reached for the button, and marked as a
+// guest so a visitor never becomes a squad member.
+export function quickAdd(draft: TonightDraft, playerId: string): TonightDraft {
+  return {
+    ...draft,
+    included: { ...draft.included, [playerId]: true },
+    added: { ...draft.added, [playerId]: true },
+  }
+}
+
+// The draft expressed as register entries, for composing the list.
+//
+// WHY THIS EXISTS. buildRegister lists a guest only when they have a
+// STORED entry, and a quick add is now a draft edit that stores nothing
+// until Save. Without merging the draft in first, the child a coach just
+// added would vanish the moment the modal closed and reappear only after
+// a save whose point they could no longer see.
+export function draftEntries(
+  draft: TonightDraft,
+  entries: RegisterEntry[],
+  sessionId: string,
+): RegisterEntry[] {
+  const byPlayer = new Map(entries.map((e) => [e.playerId, e]))
+  for (const c of draftDelta(draft, entries, sessionId)) {
+    byPlayer.set(c.playerId, {
+      sessionId,
+      playerId: c.playerId,
+      present: c.present,
+      bibColourOverride: c.bibColourOverride,
+      source: c.source,
+    })
+  }
+  return [...byPlayer.values()]
 }
 
 export function toggleIncluded(draft: TonightDraft, playerId: string): TonightDraft {
@@ -243,7 +305,7 @@ export function draftDelta(
       playerId,
       present,
       bibColourOverride,
-      source: stored?.source ?? 'roster',
+      source: stored?.source ?? (draft.added[playerId] ? 'manual' : 'roster'),
     })
   }
   return out
@@ -372,7 +434,11 @@ export function tonightSummary(rows: TonightRow[], draft: TonightDraft): string 
   const counts = countByResponse(rows)
   const groups = tonightGroups(rows, draft)
   const selected = groups.reduce((a, g) => a + g.count, 0)
-  const parts = [`${counts.going} expected`, `${selected} selected`]
+  // "0 expected" reads as "nobody is coming". With no Spond nothing is
+  // known about who is coming, which is a different sentence, so the card
+  // counts the squad it is organising instead of claiming a zero.
+  const lead = hasResponseContext(rows) ? `${counts.going} expected` : `${rows.length} in the squad`
+  const parts = [lead, `${selected} selected`]
   if (groups.length > 0) parts.push(`${groups.length} group${groups.length === 1 ? '' : 's'}`)
   return parts.join(' · ')
 }

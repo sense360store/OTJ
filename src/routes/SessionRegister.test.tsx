@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QuickAddView, TonightCardView, TonightRowView, TonightScreenView } from './SessionRegister'
-import { SAVE_LABELS, saveState, tonightSummary } from '../lib/tonight'
+import { SAVE_LABELS, saveState, tonightSummary, usableFilter } from '../lib/tonight'
 import { buildTonightRows, draftFromEntries, selectAll, setDraftBib, type TonightRow } from '../lib/tonight'
 import { buildRegister, type RegisterEntry } from '../lib/register'
 import type { Player, Team } from '../lib/data'
@@ -391,5 +391,33 @@ describe('the stored shape', () => {
     const d = draftFromEntries(saved)
     expect(d.included).toEqual({ p1: true, p2: false })
     expect(d.bibs).toEqual({ p1: 'blue', p2: null })
+  })
+})
+
+// ---- A club with no Spond opens on a usable screen ------------------
+
+describe('the no Spond path, which is the whole club before linking', () => {
+  const bare = buildTonightRows(buildRegister(players, ['t1'], teams, [], false), teams, {})
+
+  it('shows the whole squad rather than an empty Going view', () => {
+    // THE DEFECT THIS PINS. Going is the default and nobody has accepted,
+    // so the screen used to render "Nobody under Going" over a full
+    // squad. usableFilter falls back to Everyone when this session has no
+    // replies at all.
+    const html = screen({ rows: bare, hasSpondEvent: false, filter: usableFilter(bare, 'going'), eventNote: '' })
+    expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic', 'Gamma Synthetic'])
+    expect(html).not.toContain('Nobody under')
+  })
+
+  it('keeps the coach s chosen filter once even one child has replied', () => {
+    const withOne = buildTonightRows(buildRegister(players, ['t1'], teams, [], false), teams, {
+      p1: { status: 'accepted', syncedAt: 'x' },
+    })
+    expect(usableFilter(withOne, 'going')).toBe('going')
+  })
+
+  it('summarises the card without claiming nobody is expected', () => {
+    expect(tonightSummary(bare, draftFromEntries([]))).toContain('in the squad')
+    expect(tonightSummary(bare, draftFromEntries([]))).not.toContain('0 expected')
   })
 })

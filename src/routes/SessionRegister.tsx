@@ -46,14 +46,18 @@ import {
   countByResponse,
   DEFAULT_RESPONSE_FILTER,
   draftDelta,
+  draftEntries,
   draftFromEntries,
   draftIsDirty,
   RESPONSE_FILTER_LABELS,
   RESPONSE_FILTERS,
+  quickAdd,
   selectAll,
   setDraftBib,
   toggleIncluded,
   tonightGroups,
+  usableFilter,
+  hasResponseContext,
   visibleRows,
   type ResponseFilter,
   tonightSummary,
@@ -253,7 +257,10 @@ export function TonightScreenView({
   unset: boolean
 }) {
   const counts = countByResponse(rows)
-  const shown = visibleRows(rows, filter)
+  // The filter the screen can actually use. A club with no Spond has no
+  // accepted child, so the Going default would hide the whole squad.
+  const effective = usableFilter(rows, filter)
+  const shown = visibleRows(rows, effective)
   const groups = tonightGroups(rows, draft)
   const selectedTotal = groups.reduce((a, g) => a + g.count, 0)
   const selectedHere = shown.filter((r) => draft.included[r.playerId]).length
@@ -441,10 +448,20 @@ function TonightScreen({ session }: { session: Session }) {
   const allTeamIds = teams.map((t) => t.id)
   const covered = coveredTeamIds(session)
   const wholeClub = coversWholeClub(session, allTeamIds)
-  const view = buildRegister(players, covered, teams, entries, wholeClub)
+  // Compose from the DRAFT merged over what is stored, not from the
+  // stored rows alone: a quick added child exists only in the draft until
+  // Save, and buildRegister lists a guest by their entry, so without this
+  // the child a coach just added would vanish as the modal closed.
+  const viewEntries = draftEntries(live, entries, session.id)
+  const view = buildRegister(players, covered, teams, viewEntries, wholeClub)
   const rows = buildTonightRows(view, teams, rsvp.data ?? {})
-  const shown = visibleRows(rows, filter)
-  const pool = quickAddPool(players, covered, entries, wholeClub)
+  // The filter the screen can actually use. A club with no Spond has no
+  // accepted child, so the Going default would hide the whole squad.
+  const effective = usableFilter(rows, filter)
+  const shown = visibleRows(rows, effective)
+  // Against the MERGED entries, so a child the coach already added in this
+  // draft is not offered a second time.
+  const pool = quickAddPool(players, covered, viewEntries, wholeClub)
 
   const dirty = draftIsDirty(live, entries)
   const status = saveState(dirty, save.isPending, save.isError)
@@ -480,10 +497,10 @@ function TonightScreen({ session }: { session: Session }) {
       <TonightScreenView
         rows={rows}
         draft={live}
-        filter={filter}
+        filter={effective}
         canEdit={canEdit}
         saveStatus={status}
-        hasSpondEvent={!!session.spondEventId}
+        hasSpondEvent={!!session.spondEventId && hasResponseContext(rows)}
         eventNote={eventNote}
         staleNote={staleNote}
         linkedNote={linkedNote}
@@ -536,7 +553,7 @@ function TonightScreen({ session }: { session: Session }) {
           onAdd={(playerId) => {
             // A quick add is a draft edit like any other: it selects the
             // child into tonight's groups and waits for Save.
-            setDraft(toggleIncluded(live, playerId))
+            setDraft(quickAdd(live, playerId))
             setAdding(false)
           }}
         />
