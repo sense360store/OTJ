@@ -266,6 +266,46 @@ describe('every surface opens in the shared default', () => {
     })
   }
 
+  // A session row cannot carry spond_type, so a session linked to a Spond
+  // MATCH is only classified correctly if the screen hands the classifier
+  // a way to resolve the link. Both screens that classify SESSIONS have to
+  // do it: fixing one and forgetting the other is the exact shape of this
+  // bug, and it is invisible until a coach compares two pages.
+  const SESSION_SURFACES = ['routes/Sessions.tsx', 'routes/Home.tsx']
+
+  // Matches the context key written either way round: `spondEvents` as
+  // object shorthand, or `spondEvents: somethingElse`.
+  const SUPPLIES_LOOKUP = /spondEvents\s*[,:}]/
+
+  for (const f of SESSION_SURFACES) {
+    it(`${f} supplies the linked Spond event lookup when it classifies sessions`, () => {
+      const src = stripComments(readFileSync(join(SRC, f), 'utf8'))
+      expect(src).toMatch(SUPPLIES_LOOKUP)
+    })
+  }
+
+  it('no screen classifies sessions without one', () => {
+    // The positive checks above name two files. This one catches a third
+    // appearing: any file calling applyEventFilter or pickNextEvent on
+    // sessions must pass the lookup, or a fixture leaks back into Training
+    // on whatever new screen just grew.
+    const offenders: string[] = []
+    for (const f of sourceFiles().filter((f) => !isTest(f))) {
+      const src = stripComments(readFileSync(join(SRC, f), 'utf8'))
+      if (!/\b(applyEventFilter|pickNextEvent)\s*\(/.test(src)) continue
+      if (!SUPPLIES_LOOKUP.test(src)) offenders.push(f)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('catches a screen that drops the lookup', () => {
+    // The check above is only worth having if it fails when it should, and
+    // the shorthand spelling is the one that nearly slipped past it.
+    expect(SUPPLIES_LOOKUP.test('applyEventFilter(sessions, filter, { userId, spondEvents })')).toBe(true)
+    expect(SUPPLIES_LOOKUP.test('applyEventFilter(sessions, filter, { userId, spondEvents: lookup })')).toBe(true)
+    expect(SUPPLIES_LOOKUP.test('applyEventFilter(sessions, filter, { userId: user?.id })')).toBe(false)
+  })
+
   it('the register reports a failed refresh as the state that keeps its data', () => {
     // The shell test proves the screen renders the last replies when it is
     // TOLD the refresh failed. This pins the container telling it so from

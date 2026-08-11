@@ -11,6 +11,7 @@ import {
   isTrainingEvent,
   matchesEventKind,
   NON_TRAINING_WORDS,
+  spondEventLookup,
   TRAINING_LABEL,
 } from './eventKind'
 
@@ -107,6 +108,35 @@ describe('the title branch may only ever hide a fixture, never a session', () =>
     expect(isTrainingEvent({ title: 'Matchday routine' })).toBe(true)
   })
 
+  it('recognises a warm up however it is punctuated', () => {
+    // "warm-up" is the commonest spelling of the three and was the one the
+    // positive check did not accept, so "Cup warm-up" lost to the "cup"
+    // exclusion and a real training night vanished from every default view.
+    for (const title of [
+      'Warm-up',
+      'Warm-Up',
+      'WARM-UP',
+      'warm up',
+      'warmup',
+      'Cup warm-up',
+      'Cup warm up',
+      'Cup warmup',
+      'Pre-match warm-up',
+      'League warm-ups',
+      'Tournament warm-up',
+    ]) {
+      expect(isTrainingEvent({ title })).toBe(true)
+    }
+  })
+
+  it('does not let the looser separator swallow unrelated words', () => {
+    // The separator is one optional space or hyphen, not any run of
+    // characters: "warm" and "up" still have to be adjacent.
+    expect(isTrainingEvent({ title: 'Warm weather cup' })).toBe(false)
+    expect(isTrainingEvent({ title: 'Warm up the league table gala' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Swarm upheaval gala' })).toBe(false)
+  })
+
   it('still keeps a plain match out', () => {
     expect(isTrainingEvent({ title: 'U8 Match' })).toBe(false)
     expect(isTrainingEvent({ title: 'League match vs Ossett Albion' })).toBe(false)
@@ -120,6 +150,90 @@ describe('the title branch may only ever hide a fixture, never a session', () =>
     expect(isTrainingEvent({ title: 'Friendlies at Horbury' })).toBe(false)
     expect(isTrainingEvent({ title: 'Player trials' })).toBe(false)
     expect(isTrainingEvent({ title: 'Two tournaments' })).toBe(false)
+  })
+})
+
+describe("a session keeps the linked Spond event's classification", () => {
+  // THE DEFECT THIS PINS. A coach plans a Spond MATCH from All events.
+  // sessionFromSpondEvent carries the title and the event id, but a
+  // session row has nowhere to put spond_type, so the fixture arrived at
+  // the classifier with nothing but "U8 v Horbury" to go on and read as
+  // training. The fix is to resolve the link, not to guess from the title:
+  // there is still exactly one place that decides, and it is here.
+  const events = [
+    { id: 'e-match', title: 'U8 v Horbury', spondType: 'MATCH' },
+    { id: 'e-training', title: 'Titans Tuesday', spondType: 'EVENT' },
+  ]
+  const lookup = spondEventLookup(events)
+
+  it('reads a linked MATCH as a fixture, whatever the session is called', () => {
+    expect(isTrainingEvent({ name: 'U8 v Horbury', spondEventId: 'e-match' }, lookup)).toBe(false)
+  })
+
+  it('lets the linked MATCH beat a session title that reads like training', () => {
+    // Spond's own classification of its own event outranks the title, and
+    // it outranks it through the link exactly as it does directly.
+    expect(isTrainingEvent({ name: 'Tuesday training', spondEventId: 'e-match' }, lookup)).toBe(false)
+  })
+
+  it('leaves a linked non MATCH event to the ordinary rules', () => {
+    // EVENT is Spond's catch-all and proves nothing, so the title decides,
+    // which is the same thing it does for an unlinked row.
+    expect(isTrainingEvent({ name: 'Titans Tuesday', spondEventId: 'e-training' }, lookup)).toBe(true)
+    expect(isTrainingEvent({ name: 'Summer gala', spondEventId: 'e-training' }, lookup)).toBe(false)
+  })
+
+  it('falls back to the title rules when the link cannot be resolved', () => {
+    // Documented and deterministic. The event may have left the mirror, or
+    // the caller may classify without a lookup at all. Both land on the
+    // title rules, which is the fail towards showing direction this whole
+    // heuristic is built around: a fixture in the Training list costs a
+    // glance, a hidden session costs the night.
+    expect(isTrainingEvent({ name: 'U8 v Horbury', spondEventId: 'gone' }, lookup)).toBe(true)
+    expect(isTrainingEvent({ name: 'U8 v Horbury', spondEventId: 'e-match' })).toBe(true)
+    expect(isTrainingEvent({ name: 'Summer gala', spondEventId: 'gone' }, lookup)).toBe(false)
+  })
+
+  it('needs no link to classify an unlinked session, exactly as before', () => {
+    expect(isTrainingEvent({ name: 'Tuesday training' }, lookup)).toBe(true)
+    expect(isTrainingEvent({ name: 'Summer gala' }, lookup)).toBe(false)
+  })
+
+  it("prefers the row's own classification when it carries one", () => {
+    // A synced event passes its own spondType and never needs the lookup.
+    // If both are present they agree, because they are the same fact; the
+    // row's own copy is the fresher one, so it answers first.
+    expect(isTrainingEvent({ title: 'Titans Tuesday', spondType: 'MATCH', spondEventId: 'e-training' }, lookup)).toBe(
+      false,
+    )
+  })
+
+  it('carries through matchesEventKind, which is what the screens call', () => {
+    const fixture = { name: 'U8 v Horbury', spondEventId: 'e-match' }
+    expect(matchesEventKind(fixture, 'training', lookup)).toBe(false)
+    expect(matchesEventKind(fixture, 'all', lookup)).toBe(true)
+  })
+})
+
+describe('spondEventLookup', () => {
+  it('indexes by id and answers undefined for anything else', () => {
+    const lookup = spondEventLookup([{ id: 'a', spondType: 'MATCH' }])
+    expect(lookup('a')?.spondType).toBe('MATCH')
+    expect(lookup('b')).toBeUndefined()
+  })
+
+  it('keeps the last row when an id repeats, rather than throwing', () => {
+    // The mirror has a primary key so this cannot happen from the database,
+    // but a caller can concatenate lists. Deterministic beats defensive.
+    const lookup = spondEventLookup([
+      { id: 'a', spondType: 'EVENT' },
+      { id: 'a', spondType: 'MATCH' },
+    ])
+    expect(lookup('a')?.spondType).toBe('MATCH')
+  })
+
+  it('is safe to build from nothing', () => {
+    expect(spondEventLookup([])('a')).toBeUndefined()
   })
 })
 

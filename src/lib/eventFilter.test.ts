@@ -6,6 +6,7 @@
 // they cannot drift into different defaults.
 import { describe, expect, it } from 'vitest'
 import { applyEventFilter, DEFAULT_EVENT_FILTER, pickNextEvent } from './eventFilter'
+import { spondEventLookup } from './eventKind'
 
 const training = { id: 't1', title: 'Titans training', coachId: 'me', teamIds: ['titans'] }
 const otherTraining = { id: 't2', title: 'Trojans training', coachId: 'someone', teamIds: ['trojans'] }
@@ -121,6 +122,71 @@ describe('the next event a schedule leads with', () => {
 
   it('is undefined on an empty schedule', () => {
     expect(pickNextEvent([], 'me')).toBeUndefined()
+  })
+})
+
+describe('a session linked to a Spond MATCH stays a fixture through the filter', () => {
+  // The composition layer is where the screens meet the classifier, so the
+  // linked event fact has to survive this far or it is not worth having.
+  const lookup = spondEventLookup([
+    { id: 'e-match', spondType: 'MATCH' },
+    { id: 'e-event', spondType: 'EVENT' },
+  ])
+  // A neutral fixture title: nothing in the word list to catch it.
+  const plannedMatch = { id: 'm1', title: 'U8 v Horbury', coachId: 'me', spondEventId: 'e-match', teamIds: ['titans'] }
+  const plannedTraining = {
+    id: 'p1',
+    title: 'Titans Tuesday',
+    coachId: 'someone',
+    spondEventId: 'e-event',
+    teamIds: ['titans'],
+  }
+  const rows = [training, plannedMatch, plannedTraining]
+
+  it('keeps it out of Training', () => {
+    expect(ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: 'me', spondEvents: lookup }))).toEqual([
+      't1',
+      'p1',
+    ])
+  })
+
+  it('still shows it under All events', () => {
+    expect(ids(applyEventFilter(rows, { kind: 'all', mine: false }, { userId: 'me', spondEvents: lookup }))).toEqual([
+      't1',
+      'm1',
+      'p1',
+    ])
+  })
+
+  it('is not rescued into Training by a team filter', () => {
+    const teamMatch = (e: { teamIds?: string[] }) => (e.teamIds ?? []).includes('titans')
+    expect(
+      ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: 'me', teamMatch, spondEvents: lookup })),
+    ).toEqual(['t1', 'p1'])
+  })
+
+  it('is not rescued into Training by the ownership narrowing', () => {
+    // The coach owns the fixture. Mine narrows within the kind and cannot
+    // widen it, so their Training list is still training only.
+    expect(
+      ids(applyEventFilter(rows, { kind: 'training', mine: true }, { userId: 'me', spondEvents: lookup })),
+    ).toEqual(['t1'])
+  })
+
+  it('reverts to the title rules when no lookup is supplied', () => {
+    // Documented degrade, and the reason the invariant test pins that the
+    // session screens supply one.
+    expect(ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: 'me' }))).toEqual(['t1', 'm1', 'p1'])
+  })
+
+  it('is never chosen as the schedule s next training', () => {
+    expect(pickNextEvent([plannedMatch, training], 'me', lookup)?.id).toBe('t1')
+  })
+
+  it('can still lead a schedule that holds nothing else', () => {
+    // Leading with the fixture beats claiming an empty calendar, which is
+    // the same fallback an unlinked fixture gets.
+    expect(pickNextEvent([plannedMatch], 'me', lookup)?.id).toBe('m1')
   })
 })
 

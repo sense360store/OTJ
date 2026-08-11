@@ -22,6 +22,7 @@ import {
   type EventKind,
   isTrainingEvent,
   matchesEventKind,
+  type SpondEventLookup,
 } from './eventKind'
 
 // Whatever the classifier can read, plus the owner. Extending
@@ -52,6 +53,12 @@ export interface EventFilterContext<T> {
   // parent scope and session coverage, none of which belong in here. Passing
   // it in keeps the composition testable without duplicating that logic.
   teamMatch?: (event: T) => boolean
+  // Resolves a row's linked Spond event, so a session planned from a Spond
+  // MATCH keeps Spond's classification instead of falling back to its
+  // title. Required in practice on any screen that filters SESSIONS, since
+  // a session row cannot carry spondType; a screen filtering synced events
+  // never needs it. See eventKind for the rule and the degrade.
+  spondEvents?: SpondEventLookup
 }
 
 // The one event a schedule leads with, from a list already ordered
@@ -71,11 +78,13 @@ export interface EventFilterContext<T> {
 export function pickNextEvent<T extends FilterableEvent>(
   upcoming: T[],
   userId: string | null | undefined,
+  spondEvents?: SpondEventLookup,
 ): T | undefined {
   const mine = (e: T) => !!userId && e.coachId === userId
+  const training = (e: T) => isTrainingEvent(e, spondEvents)
   return (
-    upcoming.find((e) => isTrainingEvent(e) && mine(e)) ??
-    upcoming.find((e) => isTrainingEvent(e)) ??
+    upcoming.find((e) => training(e) && mine(e)) ??
+    upcoming.find(training) ??
     upcoming.find(mine) ??
     upcoming[0]
   )
@@ -87,7 +96,7 @@ export function applyEventFilter<T extends FilterableEvent>(
   ctx: EventFilterContext<T>,
 ): T[] {
   return items.filter((e) => {
-    if (!matchesEventKind(e, state.kind)) return false
+    if (!matchesEventKind(e, state.kind, ctx.spondEvents)) return false
     if (ctx.teamMatch && !ctx.teamMatch(e)) return false
     // Fail closed on ownership: with no signed in user, "mine" is nobody's,
     // never everybody's.

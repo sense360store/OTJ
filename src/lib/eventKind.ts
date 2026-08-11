@@ -43,6 +43,37 @@ export interface ClassifiableEvent {
   title?: string | null
   name?: string | null
   spondType?: string | null
+  // The synced Spond event this row is arranged as, when it has one.
+  //
+  // WHY A CLASSIFIER CARES ABOUT AN ID. A synced event carries Spond's own
+  // classification in spondType, and that is the strongest fact available.
+  // A SESSION planned from one carries only this id: the sessions table has
+  // no spond_type column and is not getting one for a filtering rule. So a
+  // Spond MATCH planned from All events arrived here as nothing but its
+  // title, and a fixture titled "U8 v Horbury" names no word the heuristic
+  // knows, so it read as training on every session screen.
+  //
+  // Resolving the link puts the authoritative fact back in reach without
+  // persisting anything, without a migration, and without teaching a second
+  // screen a second title trick. The lookup is optional and the caller
+  // supplies it; see isTrainingEvent for what happens when it cannot answer.
+  spondEventId?: string | null
+}
+
+// Resolves a Spond event id to the classification Spond gave it. Optional
+// everywhere it appears: a caller holding only synced events never needs
+// one, because those rows carry their own spondType.
+export type SpondEventLookup = (id: string) => { spondType?: string | null } | undefined
+
+// Builds the lookup from whatever list of synced events the caller holds.
+// A plain index, exported so the screens do not each invent one and so the
+// empty and unresolvable cases have somewhere to be tested.
+export function spondEventLookup(
+  events: readonly { id: string; spondType?: string | null }[],
+): SpondEventLookup {
+  const byId = new Map<string, { spondType?: string | null }>()
+  for (const e of events) byId.set(e.id, e)
+  return (id: string) => byId.get(id)
 }
 
 // The label the classifier reads. Title wins when a row carries both, since
@@ -59,7 +90,13 @@ function eventLabel(event: ClassifiableEvent): string {
 // This is the general form of the asymmetry below. The heuristic is
 // allowed to be wrong by SHOWING a row and must not be wrong by hiding
 // one, so a positive statement beats the exclusion list every time.
-const TRAINING_WORDS = ['training', 'session', 'practice', 'drills', 'warm ?up'] as const
+// "warm-up" is the commonest of the three spellings and was the one this
+// list did not accept, so "Cup warm-up" lost the positive check and then
+// lost to the "cup" exclusion, and a real training night disappeared from
+// every default view. The separator is one optional space or hyphen and
+// nothing else: "warm" and "up" still have to be adjacent, so "Warm
+// weather cup" is not rescued.
+const TRAINING_WORDS = ['training', 'session', 'practice', 'drills', 'warm[ -]?up'] as const
 
 const TRAINING_RE = new RegExp(`\\b(?:${TRAINING_WORDS.join('|')})s?\\b`, 'i')
 
@@ -121,30 +158,47 @@ export function isSpondMatch(event: ClassifiableEvent): boolean {
 //
 // The order is what matters:
 //
-//   1. Spond said MATCH. That is Spond's own classification of its own
-//      event and it beats anything the title claims.
-//   2. The title says training. A coach who named the row training, a
+//   1. Spond said MATCH about this very row. That is Spond's own
+//      classification of its own event and it beats anything the title
+//      claims. Only a synced event carries it directly.
+//   2. Spond said MATCH about the event this row is arranged as. Same
+//      fact, reached through spondEventId because a session has nowhere to
+//      keep it, and given the same authority for the same reason: a
+//      fixture does not become training by being planned in Training Hub.
+//   3. The title says training. A coach who named the row training, a
 //      session, practice or a warm up has answered the question, and the
 //      exclusion list below does not get to overrule them.
-//   3. The title names a non-training event. Whole words and their
+//   4. The title names a non-training event. Whole words and their
 //      plurals, so "Rematching drills" is training and "Matches" is not,
 //      and after the pre match and match day phrases have been taken out,
 //      because those are training.
-//   4. Otherwise it is training. A session a coach planned in Training Hub
+//   5. Otherwise it is training. A session a coach planned in Training Hub
 //      is training unless something says otherwise, which is what keeps
 //      legacy and non-Spond training in the default view instead of
 //      requiring every row to have been named just so.
 //
-// Steps 2 and 3 are deliberately lopsided. A word list can be wrong in two
+// WHEN THE LINK CANNOT BE RESOLVED, which is a caller with no lookup or an
+// event that has left the mirror: fall through to the title rules, exactly
+// as an unlinked row does. Deterministic, and it fails in the same
+// direction everything else here fails in, which is towards showing.
+// A screen that classifies sessions is expected to supply a lookup, and
+// eventKind.invariant.test.ts fails the build if one stops.
+//
+// Steps 3 and 4 are deliberately lopsided. A word list can be wrong in two
 // directions and only one of them is tolerable: showing a gala under
 // Training costs a coach one glance, hiding a training night costs them
 // the session. So every rule that can hide is narrow and every rule that
-// can show is broad.
+// can show is broad. Steps 1 and 2 are not a heuristic at all, which is
+// why they are allowed to hide.
 //
 // spondType 'EVENT' is deliberately NOT treated as proof of training:
 // Spond uses it for galas and socials too, so the title still decides.
-export function isTrainingEvent(event: ClassifiableEvent): boolean {
+export function isTrainingEvent(event: ClassifiableEvent, spondEvents?: SpondEventLookup): boolean {
   if (isSpondMatch(event)) return false
+  if (spondEvents && event.spondEventId) {
+    const linked = spondEvents(event.spondEventId)
+    if (linked && isSpondMatch(linked)) return false
+  }
   const label = eventLabel(event)
   if (TRAINING_RE.test(label)) return true
   return !NON_TRAINING_RE.test(label.replace(NOT_A_FIXTURE, ' '))
@@ -152,7 +206,12 @@ export function isTrainingEvent(event: ClassifiableEvent): boolean {
 
 // The one filter every surface calls. Kept separate from isTrainingEvent so
 // a screen expresses "does this row belong in the current view?" rather than
-// re-deriving the boolean logic each time.
-export function matchesEventKind(event: ClassifiableEvent, kind: EventKind): boolean {
-  return kind === 'all' ? true : isTrainingEvent(event)
+// re-deriving the boolean logic each time. The lookup rides through
+// unchanged, so a screen filtering sessions passes it once.
+export function matchesEventKind(
+  event: ClassifiableEvent,
+  kind: EventKind,
+  spondEvents?: SpondEventLookup,
+): boolean {
+  return kind === 'all' ? true : isTrainingEvent(event, spondEvents)
 }

@@ -161,6 +161,25 @@ Everything else (UI port, query hooks, planner logic, media UI, styling) can run
 
 Deploy an Edge Function through Claude Code or the Supabase CLI from the files on disk, never by pasting file contents inline. A deploy that includes a large shared module (for example `_shared/fa.ts`) can be silently truncated or replaced with a placeholder when the file is pasted inline, leaving a broken function that still reports success. Every function deploy is verified by reading the deployed source back byte for byte and checking its content, never by trusting a version number; that readback is what catches a bad inline deploy.
 
+### Branch preflight
+
+A task branch name handed to a session is not proof the branch is free. Before creating, reusing or pushing one, run these four commands and read them:
+
+```bash
+git fetch origin                                    # 1. see the real remote refs
+git ls-remote --heads origin <branch>               # 2. does it already exist?
+git log --oneline origin/main..origin/<branch>      # 3. what is on it that main lacks?
+git merge-base --is-ancestor origin/<branch> origin/main   # 4. exit 0 means fully merged
+```
+
+Then:
+
+- Nothing there, or step 4 exits 0: the branch is yours, carry on.
+- Step 3 lists commits: that is somebody's unmerged work. Check for an open PR against the branch, and do not force-push. Either rebase those commits onto the new base and keep them, or take a fresh unique branch name for your own work.
+- Rewrite history only when the current task explicitly owns the branch and you have read step 3's output. `--force-with-lease` protects against a race, not against overwriting work you never looked at.
+
+This exists because a session took a handed-down branch name, force-pushed over an unmerged commit it had never read, and only found out afterwards. The commit was recovered; the check is four commands and takes seconds.
+
 ---
 
 ## Roles, teams and permissions
@@ -230,7 +249,8 @@ Spond is where the club arranges sessions and parents respond. The Hub mirrors a
 The product is a training hub, so training is what every list of events leads with.
 
 - Wherever a list can hold training alongside fixtures, galas and the rest, the default view is **Training** and the one widening is **All events**. No screen defaults to My sessions, All sessions, All teams or a list led by fixtures. Team is a narrowing within the kind and never changes it; ownership ("Mine") is a secondary narrowing that starts off. Ownership still decides who may edit or delete, which is a different question entirely.
-- Classification has one implementation, `src/lib/eventKind.ts`. The order is: Spond's own `spond_type` of "MATCH" wins, then a training word in the label ("training", "session", "practice", "warm up"), then a non training word, then training. `spond_type` "EVENT" is Spond's catch-all and is never treated as proof of training. The classifier reads either a session's `name` or an event's `title`, so two shapes never mean two classifiers.
+- Classification has one implementation, `src/lib/eventKind.ts`. The order is: Spond's own `spond_type` of "MATCH" on the row, then "MATCH" on the Spond event the row is linked to, then a training word in the label ("training", "session", "practice", "warm up" however punctuated), then a non training word, then training. `spond_type` "EVENT" is Spond's catch-all and is never treated as proof of training. The classifier reads either a session's `name` or an event's `title`, so two shapes never mean two classifiers.
+- A session planned from a Spond event keeps only `spond_event_id`, because `sessions` has no `spond_type` column and is not getting one for a filtering rule. So a fixture titled "U8 v Horbury" carries no evidence of being a fixture, and any screen that filters SESSIONS must hand the classifier a `SpondEventLookup` (`useSpondEventLookup`) so the link resolves back to Spond's own answer. A screen filtering synced events never needs one, since those rows carry `spondType` directly. An unresolvable link, a caller with no lookup or an event that has left the mirror, falls through to the title rules, which is the same fail-towards-showing direction as everything else here. `eventKind.invariant.test.ts` fails the build if a session screen stops supplying the lookup.
 - The title heuristic is deliberately lopsided, because its two failure modes are not equally bad: showing a gala under Training costs a coach one glance, hiding a training night costs them the session. So the rules that can hide are narrow (whole words and plurals, with "pre match", "post match" and "match day" taken out first, because those are training) and the rules that can show are broad (a positive training word beats the exclusion list outright). Several exclusion words are overloaded on purpose, which is why they lose that contest.
 - `src/lib/eventFilter.ts` composes kind, team and ownership in that order, and `pickNextEvent` decides what a schedule leads with, preferring training over a sooner fixture; Home's eyebrow says which "next" it means so the claim matches the row. Home, Sessions, Plan from Spond, the Spond event picker and the admin synced events list all go through those two modules. This is a filtering rule and needs no migration; nothing about it reaches the database.
 - `src/lib/eventKind.invariant.test.ts` is a tripwire, not a proof. It reads source text, so it catches the realistic mistakes (a title check, a copied word list, a retyped label, a screen opening on its own literal instead of the shared default) and it names in its own tests the shapes it cannot catch (a word reaching the predicate through a variable, a comparison separated from the label by a call). Treat a pass as "nobody typed the obvious thing", never as "there is only one classifier".

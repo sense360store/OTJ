@@ -21,6 +21,7 @@ import {
   useMediaMap,
   useMemberMap,
   useMyCapabilities,
+  useSpondEventLookup,
   useTeamMap,
   useTemplates,
   useVenueMap,
@@ -330,6 +331,11 @@ function CoachHome() {
   const teamById = useTeamMap()
   const venueById = useVenueMap()
   const memberById = useMemberMap()
+  // A session planned from a Spond event carries only the event id, so the
+  // classifier needs this to see that the event was a MATCH. Sessions reads
+  // the same cache entry; the hero, the week list and the eyebrow all go
+  // through it, so this screen cannot answer three ways about one row.
+  const spondEvents = useSpondEventLookup()
   // The This week list honours the Sessions screen's default, which is
   // Training across the club. Mine is the secondary narrowing, off unless
   // asked for; the two screens share the constant so they cannot drift.
@@ -362,7 +368,7 @@ function CoachHome() {
   // own none. Leading with ownership alone told a coach who owns no session
   // that nothing was scheduled on a night the club was training; the shared
   // rule in ../lib/eventFilter states the whole preference order.
-  const next = canPlan ? pickNextEvent(upcoming, user?.id) : upcoming[0]
+  const next = canPlan ? pickNextEvent(upcoming, user?.id, spondEvents) : upcoming[0]
   const liveNow = sessions.find((s) => s.liveActivityIndex != null)
   // A brand-new coach has no sessions at all, upcoming or past.
   const fresh = canPlan && !sessions.some(isMine)
@@ -371,7 +377,7 @@ function CoachHome() {
   const weekAll = upcoming.filter((s) => s.date < weekEnd)
   // Parents get the club's week whole; they own nothing to narrow to and
   // the kind filter is a coach's tool, so their list stays unfiltered.
-  const week = canPlan ? applyEventFilter(weekAll, filter, { userId: user?.id }) : weekAll
+  const week = canPlan ? applyEventFilter(weekAll, filter, { userId: user?.id, spondEvents }) : weekAll
 
   const teamName = (s: Session) => sessionTeamsLabel(s, teamById)
   const venueName = (s: Session) => venueNameFor(s, venueById)
@@ -424,7 +430,7 @@ function CoachHome() {
           <NextSessionHero
             s={next}
             isOwn={isMine(next)}
-            isTraining={isTrainingEvent(next)}
+            isTraining={isTrainingEvent(next, spondEvents)}
             canManage={caps.has('sessions.manage') || (canPlan && isMine(next))}
             teamName={teamName(next)}
             venueName={venueName(next)}

@@ -20,8 +20,14 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { applyEventFilter, DEFAULT_EVENT_FILTER, pickNextEvent } from './eventFilter'
-import { ALL_EVENTS_LABEL, DEFAULT_EVENT_KIND, isTrainingEvent, TRAINING_LABEL } from './eventKind'
-import { spondPlanSuggestions } from './spond'
+import {
+  ALL_EVENTS_LABEL,
+  DEFAULT_EVENT_KIND,
+  isTrainingEvent,
+  spondEventLookup,
+  TRAINING_LABEL,
+} from './eventKind'
+import { sessionFromSpondEvent, spondPlanSuggestions } from './spond'
 import { applyRegisterScope, DEFAULT_REGISTER_SCOPE, hasRsvpContext } from './registerScope'
 import { buildRegister, type RegisterEntry } from './register'
 import { BIB_NONE, effectiveBib } from './bibs'
@@ -189,7 +195,62 @@ describe('8. the Plan from Spond surface shows Training as the view it is in', (
   })
 })
 
-describe('9. one classifier answers for every surface', () => {
+describe('9. a fixture planned from Spond is still a fixture on every screen', () => {
+  // The full round trip, because this is where the model leaked: a Spond
+  // MATCH planned from All events becomes a session row, and a session row
+  // has nowhere to keep spond_type. "U8 v Horbury" carries no word the
+  // heuristic knows, so the fixture read as training on Sessions and on
+  // Home. The link is resolved at the filter seam instead; there is still
+  // one classifier and it has not learned a new title trick.
+  const matchEvent = spondEvent({ id: 'e-match', title: 'U8 v Horbury', spondType: 'MATCH' })
+  const trainingEvent = spondEvent({ id: 'e-train', title: 'Titans Tuesday', spondType: 'EVENT' })
+  const lookup = spondEventLookup([matchEvent, trainingEvent])
+
+  // Exactly what "Plan this" writes, built by the real function.
+  const plannedMatch = { ...sessionFromSpondEvent(matchEvent, ME, 'titans'), id: 'planned-match' }
+  const plannedTraining = { ...sessionFromSpondEvent(trainingEvent, THEM, 'titans'), id: 'planned-training' }
+  const schedule = [plannedMatch, plannedTraining, myTraining]
+
+  it('carries no classification of its own, which is the whole problem', () => {
+    // Stated so the test says why the lookup exists rather than only that
+    // it works. If a spondType ever appears on Session, this fails and the
+    // design gets revisited on purpose.
+    expect(plannedMatch.name).toBe('U8 v Horbury')
+    expect(plannedMatch.spondEventId).toBe('e-match')
+    expect('spondType' in plannedMatch).toBe(false)
+  })
+
+  it('is absent from the Sessions Training view', () => {
+    expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: ME, spondEvents: lookup }))).toEqual([
+      'planned-training',
+      'a',
+    ])
+  })
+
+  it('is present under All events', () => {
+    expect(ids(applyEventFilter(schedule, { kind: 'all', mine: false }, { userId: ME, spondEvents: lookup }))).toEqual([
+      'planned-match',
+      'planned-training',
+      'a',
+    ])
+  })
+
+  it("is never Home's next training, even when it is soonest and owned", () => {
+    expect(pickNextEvent(schedule, ME, lookup)?.id).toBe('a')
+  })
+
+  it("is not labelled training by Home's hero either", () => {
+    // The eyebrow reads the same classifier, so it cannot call a fixture
+    // "your next training" while the list below leaves it out.
+    expect(isTrainingEvent(plannedMatch, lookup)).toBe(false)
+  })
+
+  it('takes the linked training session with it, but only the fixture out', () => {
+    expect(isTrainingEvent(plannedTraining, lookup)).toBe(true)
+  })
+})
+
+describe('9b. one classifier answers for every surface', () => {
   it('gives the schedule, the planner and the Spond screens the same answer for the same row', () => {
     // The same row, asked as a session and as a synced event. Two shapes,
     // one rule: if these could disagree, a coach would see a session on one
@@ -201,7 +262,10 @@ describe('9. one classifier answers for every surface', () => {
 
     // And the whole club week, classified once, matches what the schedule
     // shows under the default.
-    const trainingRows = week.filter(isTrainingEvent)
+    // Wrapped, not passed by reference: the second parameter is the Spond
+    // lookup, and Array.filter would hand it the index. TypeScript refuses
+    // that, which is the guard, but writing it out says why.
+    const trainingRows = week.filter((s) => isTrainingEvent(s))
     expect(ids(trainingRows)).toEqual(ids(applyEventFilter(week, DEFAULT_EVENT_FILTER, { userId: null })))
   })
 

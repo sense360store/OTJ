@@ -9,7 +9,15 @@ import { applyEventFilter, DEFAULT_EVENT_FILTER, type EventFilterState } from '.
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useMemberMap, useMyCapabilities, useMyTeams, useTeamMap, useTeams, useVenueMap } from '../lib/queries'
+import {
+  useMemberMap,
+  useMyCapabilities,
+  useMyTeams,
+  useSpondEventLookup,
+  useTeamMap,
+  useTeams,
+  useVenueMap,
+} from '../lib/queries'
 import { memberTeamIds, sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { venueNameFor } from '../lib/venues'
@@ -179,6 +187,10 @@ export function Sessions() {
   // The parent's team scope: their child's team(s), or every team via the all
   // teams flag. The read rides the same member_teams policy ParentHome uses.
   const { data: myTeams } = useMyTeams()
+  // A session planned from a Spond event carries only the event id, so the
+  // classifier needs this to see that the event was a MATCH. Read only for
+  // members who filter by kind; parents never do.
+  const spondEvents = useSpondEventLookup(canPlan)
   const [filter, setFilter] = useState<EventFilterState>(DEFAULT_EVENT_FILTER)
   const [teamId, setTeamId] = useState('')
   // Parents default to their team's schedule; a club wide toggle covers
@@ -218,6 +230,7 @@ export function Sessions() {
   const list = canPlan
     ? applyEventFilter(sessions, filter, {
         userId: user?.id,
+        spondEvents,
         teamMatch: (s) =>
           !teamId ||
           (teamId === 'club' ? coversWholeClub(s, allTeamIds) : sessionCoversAnyTeam(s, [teamId])),
