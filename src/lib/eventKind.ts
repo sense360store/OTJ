@@ -90,13 +90,26 @@ function eventLabel(event: ClassifiableEvent): string {
 // This is the general form of the asymmetry below. The heuristic is
 // allowed to be wrong by SHOWING a row and must not be wrong by hiding
 // one, so a positive statement beats the exclusion list every time.
-// "warm-up" is the commonest of the three spellings and was the one this
-// list did not accept, so "Cup warm-up" lost the positive check and then
-// lost to the "cup" exclusion, and a real training night disappeared from
-// every default view. The separator is one optional space or hyphen and
-// nothing else: "warm" and "up" still have to be adjacent, so "Warm
-// weather cup" is not rescued.
-const TRAINING_WORDS = ['training', 'session', 'practice', 'drills', 'warm[ -]?up'] as const
+// EVERY ENTRY IS A STEM, NOT A SPELLING. The pattern below appends an
+// optional plural, so a stem written in the plural can never match its own
+// singular: listing 'drills' made "Cup drills" training and "Cup final
+// drill" a fixture, on one letter, with the singular being the form this
+// product's own drill library uses throughout. Write the stem.
+//
+// The separators are the same trap one level down. "warm-up" is the
+// commonest of its three spellings and was the one this list did not
+// accept, so "Cup warm-up" lost the positive check and then lost to the
+// "cup" exclusion. One optional space or hyphen, and nothing else: "warm"
+// and "up" still have to be adjacent, so "Warm weather cup" is not
+// rescued. "practis" covers the British verb beside the American noun.
+const TRAINING_WORDS = [
+  'training',
+  'session',
+  'practice',
+  'practise',
+  'drill',
+  'warm[ -]?up',
+] as const
 
 const TRAINING_RE = new RegExp(`\\b(?:${TRAINING_WORDS.join('|')})s?\\b`, 'i')
 
@@ -181,8 +194,9 @@ export function isSpondMatch(event: ClassifiableEvent): boolean {
 // event that has left the mirror: fall through to the title rules, exactly
 // as an unlinked row does. Deterministic, and it fails in the same
 // direction everything else here fails in, which is towards showing.
-// A screen that classifies sessions is expected to supply a lookup, and
-// eventKind.invariant.test.ts fails the build if one stops.
+// A screen that classifies sessions is expected to supply a lookup;
+// routes/trainingFirst.screens.test.tsx renders those screens and fails if
+// a linked fixture reaches one of their Training views.
 //
 // Steps 3 and 4 are deliberately lopsided. A word list can be wrong in two
 // directions and only one of them is tolerable: showing a gala under

@@ -15,13 +15,12 @@
 import { useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useSpondEvents } from '../lib/queries'
-import { bySpondEventCloseness, SPOND_COUNT_LABELS, spondEventInTeam, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
+import { pickerEvents, SPOND_COUNT_LABELS, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
 import {
   ALL_EVENTS_LABEL,
   DEFAULT_EVENT_KIND,
   type EventKind,
   isSpondMatch,
-  matchesEventKind,
   TRAINING_LABEL,
 } from '../lib/eventKind'
 import { Icon } from './icons'
@@ -60,7 +59,7 @@ export function MatchBadge() {
 // linked is a training session, so the list a coach scrolls should be the
 // training nights. All events is one tap away for the session that really is
 // arranged as a fixture.
-function LinkSpondEventModal({
+export function LinkSpondEventModal({
   teamId,
   date,
   time,
@@ -76,11 +75,14 @@ function LinkSpondEventModal({
   const { data: events = [], isPending, isError } = useSpondEvents()
   const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
   const [showAll, setShowAll] = useState(!teamId)
-  const shown = useMemo(() => {
-    const inTeam = showAll || !teamId ? events : events.filter((e) => spondEventInTeam(e, teamId))
-    const pool = inTeam.filter((e) => matchesEventKind(e, kind))
-    return [...pool].sort(bySpondEventCloseness(date, time))
-  }, [events, kind, showAll, teamId, date, time])
+  const shown = useMemo(() => pickerEvents(events, { kind, showAll, teamId, date, time }), [
+    events,
+    kind,
+    showAll,
+    teamId,
+    date,
+    time,
+  ])
 
   return (
     <Modal
@@ -221,6 +223,12 @@ export function SpondAttendanceCard({
         <>
           <div className="row" style={{ gap: 8 }}>
             <b style={{ fontSize: 14.5, flex: 1, minWidth: 0 }}>{event.title}</b>
+            {/* The picker rows carry this badge and so must the card the
+                pick produces. Linking a session to a MATCH takes it out of
+                every Training view, so the screen that did it has to say
+                what it linked; an unbadged card would leave a coach hunting
+                for a session that is one tap away under All events. */}
+            {isSpondMatch(event) && <MatchBadge />}
             {event.cancelled && <CancelledBadge />}
           </div>
           <div className="muted" style={{ fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>

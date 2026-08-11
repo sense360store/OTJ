@@ -289,3 +289,174 @@
   text-align: left;
   cursor: pointer;
 }
+
+/* ---- Tonight -------------------------------------------------------
+   One operational surface: the response filters, the selection bar, the
+   list, the groups, and a save affordance a long list can never hide.
+   Every control is at least 44px so a cold thumb finds it. */
+
+.tn-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tn-filters .chip {
+  min-height: 44px;
+}
+
+.tn-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  padding: 8px 0;
+}
+.tn-count {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-display, inherit);
+  font-weight: 800;
+  font-size: 19px;
+}
+.tn-sub {
+  display: block;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--slate);
+  margin-top: 2px;
+}
+/* Select all is a core interaction, so it gets a real target rather than
+   a text link squeezed against the count. */
+.tn-act {
+  min-height: 44px;
+  padding-inline: 14px;
+}
+
+.tn-spond {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--slate);
+}
+.tn-event {
+  font-weight: 800;
+  color: var(--ink);
+}
+.tn-spond .btn {
+  min-height: 40px;
+}
+.tn-linked {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tn-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tn-groups-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tn-groups-head h3 {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate);
+}
+.tn-group {
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 12px 14px;
+  background: var(--card);
+}
+.tn-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14.5px;
+}
+.tn-group-head .muted {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.tn-group-count {
+  margin-left: auto;
+  font-weight: 800;
+  font-size: 15px;
+}
+.tn-group-names {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--slate);
+  overflow-wrap: anywhere;
+}
+
+/* The commit. Sticky to the bottom so a squad of thirty never pushes it
+   off the screen, which is the one thing that would make a coach think
+   their arrangement had saved itself. */
+.tn-save {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.tn-status {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--slate);
+}
+.tn-status-dirty {
+  color: var(--gold-600);
+}
+.tn-status-failed {
+  color: var(--m-pdf);
+}
+.tn-status-saved {
+  color: var(--c-physical);
+}
+.tn-save-btn {
+  min-height: 48px;
+  padding-inline: 22px;
+  font-size: 15px;
+}
+
+/* Below the breakpoint the bottom nav is fixed at bottom: 0 with z-index
+   50, so a save bar stuck at bottom: 0 sat underneath it: the status line
+   and the button were invisible and untappable for exactly as long as the
+   bar was doing its job, and taps landed on the nav and navigated away.
+   Sit above it, and match its safe area inset so the two do not overlap
+   on a phone with a home indicator. */
+@media (max-width: 900px) {
+  .tn-save {
+    bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+}

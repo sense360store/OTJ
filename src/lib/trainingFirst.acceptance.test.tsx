@@ -28,13 +28,23 @@ import {
   TRAINING_LABEL,
 } from './eventKind'
 import { sessionFromSpondEvent, spondPlanSuggestions } from './spond'
-import { applyRegisterScope, DEFAULT_REGISTER_SCOPE, hasRsvpContext } from './registerScope'
 import { buildRegister, type RegisterEntry } from './register'
+import {
+  buildTonightRows,
+  countByResponse,
+  draftDelta,
+  draftFromEntries,
+  draftIsDirty,
+  selectAll,
+  toggleIncluded,
+  tonightGroups,
+  visibleRows,
+} from './tonight'
+import type { RsvpStatus } from './spondRsvp'
 import { BIB_NONE, effectiveBib } from './bibs'
 import { blankSession } from './data'
 import type { Player, Session, SpondEvent, Team } from './data'
 import { PlanFromSpondView } from '../components/PlanFromSpond'
-import { RegisterScreenView } from '../routes/SessionRegister'
 
 const ME = 'coach-me'
 const THEM = 'coach-them'
@@ -290,8 +300,6 @@ describe('9b. one classifier answers for every surface', () => {
   })
 })
 
-// ---- 10 to 15. Tonight, organised from Spond -------------------------
-
 const teams: Team[] = [
   { id: 'titans', name: 'Titans', bibColour: 'red' },
   { id: 'trojans', name: 'Trojans', bibColour: null },
@@ -311,159 +319,112 @@ const roster = [
   player('p-unlinked', 'Charlie Synthetic', 'titans'),
 ]
 
-const fresh = '2026-08-10T17:00:00Z'
 const registerOf = (entries: RegisterEntry[] = []) => buildRegister(roster, ['titans'], teams, entries, false)
-const names = (html: string) => [...html.matchAll(/reg-name-main">([^<]+)</g)].map((m) => m[1])
 
-const registerScreen = (over: Partial<Parameters<typeof RegisterScreenView>[0]> = {}) =>
-  renderToStaticMarkup(
-    <RegisterScreenView
-      session={session({ id: 'reg', name: 'Titans Tuesday' })}
-      teams={teams}
-      players={roster}
-      entries={[]}
-      canMark
-      onToggle={noop}
-      onBib={noop}
-      onRemove={noop}
-      onQuickAdd={noop}
-      {...over}
-    />,
-  )
+// ---- 10 to 15. Tonight, organised from Spond -------------------------
+//
+// These clauses were written against the Register screen, whose product
+// framing this PR corrects: the question is not "who arrived?" but "who
+// am I including in tonight's groups?". The truths that survive the
+// reframing are restated here against the Tonight model, and the ones
+// that only made sense as attendance are gone on purpose.
+
+const tonightRows = (rsvpByPlayer: Record<string, { status: RsvpStatus }>) =>
+  buildTonightRows(buildRegister(roster, ['titans'], teams, [], false), teams, rsvpByPlayer)
 
 describe('10. Going means the parent accepted in Spond', () => {
-  it('lists an accepted child nobody has ticked in', () => {
-    const out = applyRegisterScope(registerOf(), DEFAULT_REGISTER_SCOPE, {
-      'p-going': { status: 'accepted', syncedAt: fresh },
-    })
-    expect(out.view.groups.flatMap((g) => g.rows.map((r) => r.player.id))).toEqual(['p-going'])
-    expect(out.view.presentTotal).toBe(0)
+  it('lists an accepted child whether or not the coach has selected them', () => {
+    const rows = tonightRows({ 'p-going': { status: 'accepted' } })
+    expect(visibleRows(rows, 'going').map((r) => r.playerId)).toEqual(['p-going'])
   })
 })
 
-describe('11. Going never means the coach ticked them in', () => {
-  it('does not admit a child to Going on the strength of a tick alone', () => {
-    // Bravo is present and has not replied. Presence keeps his row on
-    // screen, because nothing the coach recorded may vanish; it does not
-    // make Going a statement about attendance, which is what the accepted
-    // and unticked child above proves.
-    const entries: RegisterEntry[] = [
-      { sessionId: 'reg', playerId: 'p-quiet', present: true, bibColourOverride: null, source: 'roster' },
-    ]
-    const out = applyRegisterScope(registerOf(entries), 'going', {
-      'p-quiet': { status: 'unanswered', syncedAt: fresh },
-    })
-    expect(out.view.presentTotal).toBe(1)
-    // The membership rule is still the reply: with no tick, an unanswered
-    // child is not in Going.
-    const untouched = applyRegisterScope(registerOf(), 'going', {
-      'p-quiet': { status: 'unanswered', syncedAt: fresh },
-    })
-    expect(untouched.view.groups).toEqual([])
+describe('11. Going never means the coach included them', () => {
+  it('keeps the response and the selection as two independent facts', () => {
+    // A Going child need not be selected, and a Not going child may be:
+    // Spond suggests the pool, the coach decides tonight's groups.
+    const rows = tonightRows({ 'p-going': { status: 'accepted' }, 'p-quiet': { status: 'declined' } })
+    const draft = toggleIncluded(draftFromEntries([]), 'p-quiet')
+    expect(visibleRows(rows, 'going').map((r) => r.playerId)).toEqual(['p-going'])
+    expect(draft.included['p-going']).toBeUndefined()
+    expect(draft.included['p-quiet']).toBe(true)
   })
 })
 
 describe('12. a child with no Spond link is not a child who did not reply', () => {
-  it('shows no reply pill for them at all', () => {
-    const html = registerScreen({
-      scope: 'all',
-      rsvpByPlayer: { 'p-quiet': { status: 'unanswered', syncedAt: fresh } },
-    })
-    expect(html).toContain('No reply')
-    // One pill on the whole screen, for the one child who has a reply to
-    // show. Charlie is unlinked and gets nothing, not a "No reply".
-    expect([...html.matchAll(/reg-rsvp/g)]).toHaveLength(1)
-    expect(names(html)).toContain('Charlie Synthetic')
+  it('is counted under Everyone and under no reply state', () => {
+    const rows = tonightRows({ 'p-quiet': { status: 'unanswered' } })
+    const counts = countByResponse(rows)
+    expect(counts.unanswered).toBe(1)
+    expect(counts.all).toBe(3)
+    expect(visibleRows(rows, 'unanswered').map((r) => r.playerId)).toEqual(['p-quiet'])
   })
 })
 
-describe('13. an unlinked child is found under Everyone, never under Going', () => {
-  it('is absent from Going and present in Everyone', () => {
-    const context = { 'p-going': { status: 'accepted' as const, syncedAt: fresh } }
-    expect(names(registerScreen({ scope: 'going', rsvpByPlayer: context }))).toEqual(['Alpha Synthetic'])
-    expect(names(registerScreen({ scope: 'all', rsvpByPlayer: context }))).toEqual([
-      'Alpha Synthetic',
-      'Bravo Synthetic',
-      'Charlie Synthetic',
-    ])
-  })
-
-  it('says how many it is holding back rather than narrowing in silence', () => {
-    const html = registerScreen({
-      scope: 'going',
-      rsvpByPlayer: { 'p-going': { status: 'accepted', syncedAt: fresh } },
-    })
-    expect(html).toContain('2 hidden')
+describe('13. an unlinked child is found under Everyone, never under a reply state', () => {
+  it('appears in Everyone and in none of the four', () => {
+    const rows = tonightRows({ 'p-going': { status: 'accepted' } })
+    expect(visibleRows(rows, 'all').map((r) => r.playerId)).toContain('p-unlinked')
+    for (const f of ['going', 'unanswered', 'declined', 'waiting'] as const) {
+      expect(visibleRows(rows, f).map((r) => r.playerId)).not.toContain('p-unlinked')
+    }
   })
 })
 
-describe('14. a club with no Spond gets the complete register and no Going view', () => {
-  it('offers no toggle and lists everybody', () => {
-    expect(hasRsvpContext({})).toBe(false)
-    const html = registerScreen()
-    expect(html).not.toContain('Going')
-    expect(names(html)).toEqual(['Alpha Synthetic', 'Bravo Synthetic', 'Charlie Synthetic'])
+describe('14. a club with no Spond still organises the night', () => {
+  it('carries the whole roster with every reply count at zero', () => {
+    const rows = tonightRows({})
+    expect(rows).toHaveLength(3)
+    expect(countByResponse(rows)).toEqual({ going: 0, unanswered: 0, declined: 0, waiting: 0, all: 3 })
   })
 
-  it('cannot be talked into an empty register by a caller asking for Going', () => {
-    // Missing context beats a requested scope, every time. "Nobody is
-    // coming" must not be renderable out of absence.
-    expect(names(registerScreen({ scope: 'going', rsvpByPlayer: {} }))).toHaveLength(3)
-  })
-
-  it('ignores replies belonging to children this session does not cover', () => {
-    // A Titans session linked to a shared club event receives replies for
-    // Trojans and Gladiators children, because the lookup is joined from a
-    // club wide link read. Counting those as context would engage Going,
-    // find nobody here accepted, and render an empty register under the
-    // words "nobody has accepted".
-    const html = registerScreen({
-      scope: 'going',
-      rsvpByPlayer: { 'a-child-on-another-team': { status: 'accepted', syncedAt: fresh } },
-    })
-    expect(names(html)).toHaveLength(3)
-    expect(html).not.toContain('accepted')
+  it('cannot be rendered empty out of missing context', () => {
+    // Everyone is the working view and it is the complete roster, so a
+    // club with no Spond can never be shown "nobody is coming".
+    expect(visibleRows(tonightRows({}), 'all')).toHaveLength(3)
   })
 })
 
-describe('15. a failed Spond refresh costs the context nothing', () => {
-  it('keeps every reply it already had, and the register with it', () => {
-    const html = registerScreen({
-      scope: 'going',
-      rsvpByPlayer: { 'p-going': { status: 'accepted', syncedAt: fresh } },
-      onRefresh: noop,
-      refreshFailed: true,
-    })
-    expect(html).toContain('Alpha Synthetic')
-    expect(html).toContain('Could not refresh')
-    // Degraded to slightly older replies, not to an error page.
-    expect(html).not.toContain('Something went wrong')
-  })
-})
-
-// ---- 16 to 18. Attendance and bibs -----------------------------------
-
-describe('16. attendance is the coach s own record, markable whatever Spond says', () => {
-  it('leaves every row tappable inside the Going view', () => {
-    const html = registerScreen({
-      scope: 'going',
-      rsvpByPlayer: { 'p-going': { status: 'accepted', syncedAt: fresh } },
-    })
-    expect(html).toContain('aria-label="Mark Alpha Synthetic present"')
-    expect(html).toContain('Add player')
+describe('15. nothing persists until the coach saves', () => {
+  it('writes nothing for a selection, and only the changed rows on save', () => {
+    const rows = tonightRows({ 'p-going': { status: 'accepted' } })
+    const draft = selectAll(draftFromEntries([]), visibleRows(rows, 'going'))
+    expect(draftIsDirty(draft, [])).toBe(true)
+    const delta = draftDelta(draft, [], 'reg')
+    expect(delta.map((c) => c.playerId)).toEqual(['p-going'])
   })
 
-  it('keeps a declined child tickable and visible once ticked', () => {
-    const entries: RegisterEntry[] = [
+  it('is only clean when the readback equals the draft', () => {
+    const draft = selectAll(draftFromEntries([]), tonightRows({}))
+    const partial: RegisterEntry[] = [
       { sessionId: 'reg', playerId: 'p-going', present: true, bibColourOverride: null, source: 'roster' },
     ]
-    const html = registerScreen({
-      entries,
-      scope: 'going',
-      rsvpByPlayer: { 'p-going': { status: 'declined', syncedAt: fresh } },
-    })
-    expect(html).toContain('Not going')
-    expect(html).toContain('aria-pressed="true"')
+    expect(draftIsDirty(draft, partial)).toBe(true)
+  })
+})
+
+// ---- 16 to 18. Inclusion and bibs -----------------------------------
+
+describe('16. inclusion is the coach s decision, whatever Spond says', () => {
+  it('lets a Not going child be included, because they turned up anyway', () => {
+    const rows = tonightRows({ 'p-going': { status: 'declined' } })
+    const draft = toggleIncluded(draftFromEntries([]), 'p-going')
+    expect(rows.find((r) => r.playerId === 'p-going')?.response).toBe('declined')
+    expect(draft.included['p-going']).toBe(true)
+  })
+
+  it('lets a Going child be left out, because Spond is a suggestion', () => {
+    const rows = tonightRows({ 'p-going': { status: 'accepted' } })
+    const draft = draftFromEntries([])
+    expect(visibleRows(rows, 'going')).toHaveLength(1)
+    expect(draft.included['p-going']).toBeUndefined()
+  })
+
+  it('never moves an included child out because their reply changed', () => {
+    const rows = tonightRows({ 'p-going': { status: 'accepted' } })
+    const draft = selectAll(draftFromEntries([]), visibleRows(rows, 'going'))
+    const afterChange = tonightRows({ 'p-going': { status: 'declined' } })
+    expect(tonightGroups(afterChange, draft).flatMap((g) => g.rows.map((r) => r.playerId))).toEqual(['p-going'])
   })
 })
 
