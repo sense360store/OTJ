@@ -129,6 +129,22 @@ describe('the title branch may only ever hide a fixture, never a session', () =>
     }
   })
 
+  it('does not care whether the coach wrote one drill or several', () => {
+    // "Cup drills" was training and "Cup final drill" was not, on a
+    // difference of one letter, because the vocabulary listed the plural
+    // and the pattern could only ADD an s, never remove one. The singular
+    // is the natural way to name one session and it is the word this
+    // product's own drill library uses throughout.
+    for (const title of ['Cup drill', 'Cup drills', 'Cup final drill', 'Tournament drill night', 'Gala drill']) {
+      expect(isTrainingEvent({ title })).toBe(true)
+    }
+  })
+
+  it('accepts both spellings of practise', () => {
+    expect(isTrainingEvent({ title: 'Cup penalty practice' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Cup penalty practise' })).toBe(true)
+  })
+
   it('does not let the looser separator swallow unrelated words', () => {
     // The separator is one optional space or hyphen, not any run of
     // characters: "warm" and "up" still have to be adjacent.

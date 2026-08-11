@@ -308,11 +308,20 @@ export function Sessions() {
           {/* An empty club and a filter that matched nothing look the same
               on screen and need opposite advice. Pointing a brand new club
               at All events would send them looking for sessions nobody has
-              made yet. */}
+              made yet.
+              Name only the narrowings actually in effect, the way Home
+              does: on the shipped default Mine is already off and no team
+              is chosen, so suggesting either is advice that cannot change
+              the result. */}
           {canPlan
             ? sessions.length === 0
               ? 'Plan your first session and it will appear here.'
-              : `Nothing matches this filter. Try ${ALL_EVENTS_LABEL}, another team, or turn Mine off.`
+              : [
+                  `Nothing matches this filter. Try ${ALL_EVENTS_LABEL}`,
+                  teamId ? ', another team' : '',
+                  filter.mine ? ', or turn Mine off' : '',
+                  '.',
+                ].join('')
             : hasTeam && parentScope === 'team'
               ? 'Nothing scheduled for your team yet. Tap All club to see the whole club.'
               : 'Nothing on the club calendar yet.'}

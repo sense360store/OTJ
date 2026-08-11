@@ -42,8 +42,53 @@ function sourceFiles(): string[] {
 
 // Comments carry prose about training on nearly every screen, and prose is
 // not a predicate. Stripping them keeps the check on code.
+//
+// Written as a scanner rather than a regex because both cheaper versions
+// are wrong in ways that bit. Stripping only whole-line comments left
+// trailing ones in, so `const x = f() // was: label.includes('training')`
+// failed the build with a message about second classifiers, and a trailing
+// `// TODO: spondEvents` satisfied a check it should not have. Stripping
+// any `//` breaks on `https://` inside a string. So: walk the source once,
+// tracking string, template and regex state, and drop comments only when
+// outside all three.
 function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  let out = ''
+  let i = 0
+  let quote: string | null = null
+  while (i < src.length) {
+    const c = src[i]
+    const next = src[i + 1]
+    if (quote) {
+      out += c
+      if (c === '\\') {
+        out += next ?? ''
+        i += 2
+        continue
+      }
+      if (c === quote) quote = null
+      i++
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      quote = c
+      out += c
+      i++
+      continue
+    }
+    if (c === '/' && next === '/') {
+      while (i < src.length && src[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && next === '*') {
+      i += 2
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
 }
 
 // Blank the inside of every quoted run, keeping the quotes. Needed before
@@ -178,6 +223,18 @@ describe('the training vocabulary lives in exactly one file', () => {
     expect(CLASSIFYING_REGEX.test('<span><Icon.cone />Training night<Icon.chevR /></span>')).toBe(false)
   })
 
+  it('strips a trailing comment without breaking on a URL', () => {
+    // Both halves bit. Leaving trailing comments in made ordinary prose
+    // ("// was: label.includes('training'), now in lib/eventKind") fail
+    // the build; stripping any // would eat the rest of a line holding an
+    // https:// URL, and the string blanking downstream would then see an
+    // unterminated quote.
+    expect(stripComments("const x = 1 // label.includes('training')").trim()).toBe('const x = 1')
+    expect(stripComments("const u = 'https://x.test/a' // note").trim()).toBe("const u = 'https://x.test/a'")
+    expect(stripComments('const u = "https://x.test" + b').trim()).toBe('const u = "https://x.test" + b')
+    expect(stripComments('a /* mid */ b').replace(/\s+/g, ' ').trim()).toBe('a b')
+  })
+
   it('states what it does not catch, so nobody mistakes it for a proof', () => {
     // Named limits, because an invariant that is trusted beyond its reach
     // is worse than one nobody trusts. Each of these is a real second
@@ -266,45 +323,22 @@ describe('every surface opens in the shared default', () => {
     })
   }
 
+  // THE CHECK THAT USED TO LIVE HERE, AND WHY IT DOES NOT.
+  //
   // A session row cannot carry spond_type, so a session linked to a Spond
   // MATCH is only classified correctly if the screen hands the classifier
-  // a way to resolve the link. Both screens that classify SESSIONS have to
-  // do it: fixing one and forgetting the other is the exact shape of this
-  // bug, and it is invisible until a coach compares two pages.
-  const SESSION_SURFACES = ['routes/Sessions.tsx', 'routes/Home.tsx']
-
-  // Matches the context key written either way round: `spondEvents` as
-  // object shorthand, or `spondEvents: somethingElse`.
-  const SUPPLIES_LOOKUP = /spondEvents\s*[,:}]/
-
-  for (const f of SESSION_SURFACES) {
-    it(`${f} supplies the linked Spond event lookup when it classifies sessions`, () => {
-      const src = stripComments(readFileSync(join(SRC, f), 'utf8'))
-      expect(src).toMatch(SUPPLIES_LOOKUP)
-    })
-  }
-
-  it('no screen classifies sessions without one', () => {
-    // The positive checks above name two files. This one catches a third
-    // appearing: any file calling applyEventFilter or pickNextEvent on
-    // sessions must pass the lookup, or a fixture leaks back into Training
-    // on whatever new screen just grew.
-    const offenders: string[] = []
-    for (const f of sourceFiles().filter((f) => !isTest(f))) {
-      const src = stripComments(readFileSync(join(SRC, f), 'utf8'))
-      if (!/\b(applyEventFilter|pickNextEvent)\s*\(/.test(src)) continue
-      if (!SUPPLIES_LOOKUP.test(src)) offenders.push(f)
-    }
-    expect(offenders).toEqual([])
-  })
-
-  it('catches a screen that drops the lookup', () => {
-    // The check above is only worth having if it fails when it should, and
-    // the shorthand spelling is the one that nearly slipped past it.
-    expect(SUPPLIES_LOOKUP.test('applyEventFilter(sessions, filter, { userId, spondEvents })')).toBe(true)
-    expect(SUPPLIES_LOOKUP.test('applyEventFilter(sessions, filter, { userId, spondEvents: lookup })')).toBe(true)
-    expect(SUPPLIES_LOOKUP.test('applyEventFilter(sessions, filter, { userId: user?.id })')).toBe(false)
-  })
+  // a lookup. This file tried to enforce that by searching each screen's
+  // source for `spondEvents`. An adversarial review broke it both ways in
+  // one sitting: an unused destructured prop or a trailing comment
+  // satisfied it, while a correctly written `pickNextEvent(sessions, null,
+  // lookup)` failed it. Worse, presence anywhere in a file says nothing
+  // about WHICH call site uses it, and Home has three: two could be
+  // stripped with the whole suite green.
+  //
+  // A source-text check cannot answer this question, so it no longer
+  // pretends to. ../routes/trainingFirst.screens.test.tsx renders the real
+  // screens and asserts a linked MATCH is absent from what they show, per
+  // call site, which is the actual claim.
 
   it('the register reports a failed refresh as the state that keeps its data', () => {
     // The shell test proves the screen renders the last replies when it is
