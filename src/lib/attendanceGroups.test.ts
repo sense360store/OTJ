@@ -264,6 +264,40 @@ describe('two coaches editing different facts, with the baseline moving undernea
     const andBack = toggleIncluded(there, 'p1')
     expect(upserts(andBack, atLoad)).toEqual([])
   })
+
+  // THE DELETE PATH, which is the one that DESTROYS rather than overwrites.
+  // A removal has no readback that can surface it: the row is simply absent
+  // from what comes back, and the draft agrees it should be.
+  it('does not delete a guest another coach marked present meanwhile', () => {
+    const guestAtLoad = [entry({ playerId: 'g1', source: 'manual', includedInGroups: true, present: false })]
+    const draftA = toggleIncluded(draftFromEntries(guestAtLoad), 'g1') // A takes them out of the split
+    const afterB = [entry({ playerId: 'g1', source: 'manual', includedInGroups: true, present: true })]
+    expect(draftRemovals(draftA, afterB)).toEqual([])
+  })
+
+  it('does not delete a guest another coach gave a bib meanwhile', () => {
+    const guestAtLoad = [entry({ playerId: 'g1', source: 'manual', includedInGroups: true })]
+    const draftA = toggleIncluded(draftFromEntries(guestAtLoad), 'g1')
+    const afterB = [entry({ playerId: 'g1', source: 'manual', includedInGroups: true, bibColourOverride: 'red' })]
+    expect(draftRemovals(draftA, afterB)).toEqual([])
+  })
+
+  it('still deletes a guest when nothing is recorded about them by anybody', () => {
+    // The removal must not become impossible: that would leave a wrongly
+    // added child on the session for ever with no way to take them off.
+    const guestAtLoad = [entry({ playerId: 'g1', source: 'manual', includedInGroups: true })]
+    const draftA = toggleIncluded(draftFromEntries(guestAtLoad), 'g1')
+    expect(draftRemovals(draftA, guestAtLoad)).toEqual(['g1'])
+  })
+
+  it('deletes a guest whose attendance THIS coach explicitly cleared', () => {
+    // Touched means it is a statement, so an explicit unmark counts even
+    // though the stored row says present.
+    const guestAtLoad = [entry({ playerId: 'g1', source: 'manual', includedInGroups: true, present: true })]
+    let draftA = toggleIncluded(draftFromEntries(guestAtLoad), 'g1')
+    draftA = toggleAttendance(draftA, 'g1')
+    expect(draftRemovals(draftA, guestAtLoad)).toEqual(['g1'])
+  })
 })
 
 describe('two coaches editing different facts about one child', () => {

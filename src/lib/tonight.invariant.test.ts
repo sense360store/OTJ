@@ -311,13 +311,21 @@ describe('attendance and group inclusion never share a field', () => {
   })
 
   it('a guest is removed only when nothing at all is recorded about them', () => {
-    // Including attendance. Without that clause, taking a guest out of the
-    // groups would delete the record that they were at the session.
+    // All three facts, and read through `effective` rather than off the
+    // raw draft. Attendance had to join the condition or taking a guest
+    // out of the groups would delete the record that they were at the
+    // session; reading it EFFECTIVELY had to follow, or the same delete
+    // happened whenever another coach marked them present after this
+    // coach's draft froze.
     const src = read('lib/tonight.ts')
     const fn = src.slice(src.indexOf('export function draftRemovals'), src.indexOf('// Whether the draft differs'))
-    expect(fn).toMatch(/!draftIncluded\(/)
-    expect(fn).toMatch(/!draftPresent\(/)
-    expect(fn).toMatch(/draftBib\([^)]*\) === null/)
+    expect(fn).toMatch(/effective\(draft, e, e\.playerId\)/)
+    expect(fn).toMatch(/!value\.includedInGroups/)
+    expect(fn).toMatch(/!value\.present/)
+    expect(fn).toMatch(/value\.bibColourOverride === null/)
+    // The raw draft accessors must not decide a delete.
+    expect(fn).not.toMatch(/draftPresent\(draft/)
+    expect(fn).not.toMatch(/draftIncluded\(draft/)
   })
 
   it('is named in both share deny lists, so a future projection throws instead of shipping', () => {

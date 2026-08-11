@@ -550,6 +550,33 @@ function draftPresent(draft: TonightDraft, playerId: string): boolean {
   return draft.attendance[playerId] === true
 }
 
+// WHAT THE ROW WILL HOLD AFTER THIS SAVE: the coach's value where they
+// touched the field, and the STORED value where they did not.
+//
+// The draft is frozen at the coach's first tap while the stored entries
+// keep refetching, so the draft's own value for an untouched field is a
+// stale seed, not a statement. Reading it as one is what let a save
+// overwrite another coach's edit, and it is worse than that in the delete
+// path: draftRemovals asks "does this row record anything at all", and
+// answering from the frozen draft meant a guest whom another coach had
+// just marked present was DELETED, destroying the record that a child was
+// at the session. Nothing can surface that afterwards, because the
+// readback and the draft then agree the row is gone.
+function effective(
+  draft: TonightDraft,
+  stored: RegisterEntry | undefined,
+  playerId: string,
+): { includedInGroups: boolean; present: boolean; bibColourOverride: string | null } {
+  const touchedIncluded = wasTouched(draft, playerId, 'included')
+  const touchedAttendance = wasTouched(draft, playerId, 'attendance')
+  const touchedBib = wasTouched(draft, playerId, 'bib')
+  return {
+    includedInGroups: touchedIncluded || !stored ? draftIncluded(draft, playerId) : stored.includedInGroups,
+    present: touchedAttendance || !stored ? draftPresent(draft, playerId) : stored.present,
+    bibColourOverride: touchedBib || !stored ? draftBib(draft, playerId) : stored.bibColourOverride,
+  }
+}
+
 function draftBib(draft: TonightDraft, playerId: string): string | null {
   return draft.bibs[playerId] ?? null
 }
@@ -609,9 +636,12 @@ export function draftDelta(
   for (const playerId of touchedIds(draft, entries)) {
     if (removing.has(playerId)) continue
     const stored = byPlayer.get(playerId)
-    const includedInGroups = draftIncluded(draft, playerId)
-    const present = draftPresent(draft, playerId)
-    const bibColourOverride = draftBib(draft, playerId)
+    // Effective, not raw draft: an untouched field carries the stored value
+    // forward, so the row this change describes is the row that will exist
+    // after the save. draftEntries composes the on screen list from these,
+    // and a raw draft value there would have shown another coach's fresh
+    // attendance mark as absent.
+    const { includedInGroups, present, bibColourOverride } = effective(draft, stored, playerId)
     // Nothing to write for a player who has no stored row and nothing set
     // on them either: that is simply a child the coach has not touched.
     // A guest the coach ADDED is different: they are on this list because
@@ -695,15 +725,17 @@ export function draftAfterSave(
 // would have DELETED the row, destroying the record that a child was at
 // the session. A row is removable only when it records nothing at all:
 // not in a group, not marked present, no bib.
+// The three facts are read through `effective`, so a field the coach never
+// touched is judged by what is STORED NOW rather than by the seed their
+// draft froze with. Without that, a guest another coach marked present
+// between the coach's first tap and their Save was deleted.
 export function draftRemovals(draft: TonightDraft, entries: RegisterEntry[]): string[] {
   return entries
     .filter((e) => e.source === 'manual')
-    .filter(
-      (e) =>
-        !draftIncluded(draft, e.playerId) &&
-        !draftPresent(draft, e.playerId) &&
-        draftBib(draft, e.playerId) === null,
-    )
+    .filter((e) => {
+      const value = effective(draft, e, e.playerId)
+      return !value.includedInGroups && !value.present && value.bibColourOverride === null
+    })
     .map((e) => e.playerId)
 }
 
