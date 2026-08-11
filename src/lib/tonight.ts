@@ -110,11 +110,30 @@ export function buildTonightRows(
   return out
 }
 
+// THE FOUR REPLY STATES ARE THE COVERED SQUAD. Everyone is the widening
+// that holds the rest.
+//
+// Two rows are excluded from a reply state, for two different reasons:
+//
+//   NO LINK      response is null. They are not "No reply": they have no
+//                reply to give.
+//   A GUEST      a child the coach quick added, who is not part of the
+//                squad this session covers. Their reply is a fact about
+//                their own team's event, not about this squad, which is
+//                exactly what hasResponseContext below has always said. It
+//                said it in one direction only: a visitor's reply could
+//                not OPEN the filters, but it could still inflate them and
+//                appear inside them. So the Going chip counted a
+//                population the coverage figures beside it did not, and
+//                going + noReply + notGoing + waiting stopped equalling
+//                withResponse the moment one visitor had replied.
+//
+// Excluding them here rather than in tonightCounts is what keeps a chip's
+// number equal to the rows that chip shows: the count and the list go
+// through this one predicate, so they cannot disagree.
 export function matchesResponse(row: TonightRow, filter: ResponseFilter): boolean {
   if (filter === 'all') return true
-  // A child with no Spond link has response null and matches no reply
-  // state. They are not "No reply": they have no reply to give.
-  return row.response !== null && row.response === FILTER_STATUS[filter]
+  return !row.manual && row.response !== null && row.response === FILTER_STATUS[filter]
 }
 
 // Whether this session has any Spond reply to filter by at all.
@@ -155,6 +174,10 @@ export type ResponseCounts = Record<ResponseFilter, number>
 // its number has to be the number of rows that appear. A whole parent
 // group's fifty replies on the event row is a different figure and
 // belongs beside the event, not on a filter.
+//
+// The four reply states count the COVERED SQUAD and `all` counts every row
+// on screen, guests included. Both follow from matchesResponse above, so
+// there is nothing to keep in step here.
 export function countByResponse(rows: TonightRow[]): ResponseCounts {
   const counts: ResponseCounts = { going: 0, unanswered: 0, declined: 0, waiting: 0, all: rows.length }
   for (const r of rows) {
@@ -219,6 +242,10 @@ export interface TonightCounts {
   // ones who are not. Without the second figure those players render
   // exactly like unlinked children: no pill, no chip, and the screen
   // claiming more linked than it can show replies for.
+  //
+  // going + noReply + notGoing + waiting === withResponse, always. The two
+  // sides describe one population, the covered squad, which is why a guest
+  // is absent from both.
   withResponse: number
   awaiting: number | null
   responses: TonightResponseCounts
@@ -244,7 +271,9 @@ export function tonightCounts(
 
   // The reply split comes from the SAME function the chips filter with, so
   // a chip's number and the list under it cannot disagree by construction
-  // rather than by a test remembering to check.
+  // rather than by a test remembering to check. That predicate also decides
+  // the population: the four states are the covered squad, `all` is every
+  // row, and that is what makes the identity below hold.
   const chips = countByResponse(unique)
   const responses: TonightResponseCounts = {
     going: chips.going,

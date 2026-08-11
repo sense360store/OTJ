@@ -580,6 +580,59 @@ describe('a quick added guest is not evidence about this squad', () => {
     const visitor = { ...row('zed', { response: 'declined' as const }), manual: true }
     expect(hasResponseContext([going, visitor])).toBe(true)
   })
+
+  // The other half of the same rule, added after a review found it missing.
+  // A visitor's reply could not OPEN the filters, but once a covered child
+  // opened them the visitor was counted on a chip and listed inside it, so
+  // the chips described a wider population than the coverage figures beside
+  // them. One predicate decides both, so both now say the same thing.
+  it('does not count a visitor s reply on a chip', () => {
+    const visitor = { ...row('zed', { response: 'accepted' as const }), manual: true }
+    expect(countByResponse([going, visitor]).going).toBe(1)
+  })
+
+  it('does not list a visitor inside a reply state', () => {
+    const visitor = { ...row('zed', { response: 'accepted' as const }), manual: true }
+    expect(matchesResponse(visitor, 'going')).toBe(false)
+    expect(ids(visibleRows([going, visitor], 'going'))).toEqual(['anna'])
+  })
+
+  it('keeps the visitor under Everyone, where the coach organises them', () => {
+    const visitor = { ...row('zed', { response: 'accepted' as const }), manual: true }
+    expect(matchesResponse(visitor, 'all')).toBe(true)
+    expect(ids(visibleRows([going, visitor], 'all'))).toEqual(['anna', 'zed'])
+    expect(countByResponse([going, visitor]).all).toBe(2)
+  })
+})
+
+describe('the reply states always sum to the covered players carrying a reply', () => {
+  // A property rather than a fixture: the identity has to survive any mix
+  // of covered, unlinked and quick added rows, because the arithmetic is
+  // what a coach reads a chip against.
+  const mixes: TonightRow[][] = [
+    [],
+    [going],
+    [going, quiet, out, waiting, unlinked],
+    [{ ...row('zed', { response: 'accepted' as const }), manual: true }],
+    [going, { ...row('zed', { response: 'accepted' as const }), manual: true }],
+    [
+      going,
+      out,
+      unlinked,
+      { ...row('y', { response: 'declined' as const }), manual: true },
+      { ...row('z', { response: 'waiting' as const }), manual: true },
+    ],
+  ]
+
+  for (const [i, rows] of mixes.entries()) {
+    it(`holds for mix ${i}`, () => {
+      const c = countByResponse(rows)
+      const covered = rows.filter((r) => !r.manual && r.response !== null).length
+      expect(c.going + c.unanswered + c.declined + c.waiting).toBe(covered)
+      // And Everyone stays every row on screen, guests included.
+      expect(c.all).toBe(rows.length)
+    })
+  }
 })
 
 describe('an unsaved guest stays on the list when unticked', () => {

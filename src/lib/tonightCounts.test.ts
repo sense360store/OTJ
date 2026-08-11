@@ -35,6 +35,7 @@ import {
   countByResponse,
   tonightCounts,
   tonightLinkNote,
+  visibleRows,
   draftFromEntries,
   quickAdd,
   toggleIncluded,
@@ -91,6 +92,8 @@ function squad({
 }
 
 const EMPTY: TonightDraft = { included: {}, bibs: {}, added: {} }
+
+const ids = (rows: TonightRow[]) => rows.map((r) => r.playerId)
 
 // The raw event row as spond_events stores it: the four counts over
 // everybody Spond invited, and nothing about who they are.
@@ -321,6 +324,110 @@ describe('a quick added guest', () => {
   it('is selected, because that is why the coach added them', () => {
     const counts = tonightCounts([...rows, guest], quickAdd(EMPTY, 'guest'), linkedIds)
     expect(counts.selected).toBe(1)
+  })
+})
+
+// ---- 8b. The reply split is the covered squad, guests included nowhere in it
+//
+// CODEX REVIEW, P2. The four reply states came from countByResponse over
+// every row, guests included, while withResponse, linked and awaiting
+// deliberately skipped a guest. So one visitor carrying a reply made the
+// split describe a different population from the coverage figures beside
+// it, and the identity below silently stopped holding.
+//
+// The module already had the answer and only half applied it:
+// hasResponseContext refuses a guest's reply as evidence about the covered
+// squad ("a fact about their own team's event"), so a guest's reply cannot
+// OPEN the filters. It could still inflate them and appear inside them,
+// which is the same inconsistency seen from the other side.
+//
+// So the reply split, the chips and the rows a chip filters to are all the
+// covered squad. A guest stays on Everyone, stays selectable, and stays in
+// the groups.
+
+describe('the covered squad reply split', () => {
+  const covered = row('anna', { response: 'accepted' })
+  const coveredOut = row('ben', { response: 'declined' })
+  const unlinkedChild = row('cara')
+  const guestGoing = row('zed', { manual: true, response: 'accepted' })
+  const all = [covered, coveredOut, unlinkedChild, guestGoing]
+  const linked = new Set(['anna', 'ben', 'zed'])
+
+  it('counts a covered linked child who accepted under Going and withResponse', () => {
+    const counts = tonightCounts([covered], EMPTY, new Set(['anna']))
+    expect(counts.responses.going).toBe(1)
+    expect(counts.withResponse).toBe(1)
+    expect(counts.linked).toBe(1)
+    expect(counts.awaiting).toBe(0)
+  })
+
+  it('does not let a guest s reply inflate Going', () => {
+    // Two rows carry an accepted reply; only one of them is covered squad.
+    const counts = tonightCounts(all, EMPTY, linked)
+    expect(counts.responses.going).toBe(1)
+  })
+
+  it('does not let a guest s reply inflate withResponse', () => {
+    const counts = tonightCounts(all, EMPTY, linked)
+    expect(counts.withResponse).toBe(2)
+  })
+
+  it('keeps the reply states summing to withResponse with a guest present', () => {
+    const r = tonightCounts(all, EMPTY, linked).responses
+    const counts = tonightCounts(all, EMPTY, linked)
+    expect(r.going + r.noReply + r.notGoing + r.waiting).toBe(counts.withResponse)
+  })
+
+  it('keeps the coverage identities with a guest present', () => {
+    const counts = tonightCounts(all, EMPTY, linked)
+    expect(counts.covered).toBe(3)
+    expect(counts.guests).toBe(1)
+    expect(counts.linked! + counts.unlinked!).toBe(counts.covered)
+    expect(counts.withResponse + counts.awaiting!).toBe(counts.linked)
+  })
+
+  it('still shows the guest under Everyone', () => {
+    const counts = tonightCounts(all, EMPTY, linked)
+    expect(counts.responses.everyone).toBe(4)
+    expect(ids(visibleRows(all, 'all'))).toContain('zed')
+  })
+
+  it('leaves the chip number equal to the rows that chip shows', () => {
+    // The rule the whole PR rests on. Excluding the guest from the count
+    // while leaving them in the list would swap one mismatch for another.
+    const counts = tonightCounts(all, EMPTY, linked)
+    expect(visibleRows(all, 'going')).toHaveLength(counts.responses.going)
+    expect(visibleRows(all, 'all')).toHaveLength(counts.responses.everyone)
+    expect(ids(visibleRows(all, 'going'))).toEqual(['anna'])
+  })
+
+  it('still counts the guest as selected, independently of any reply', () => {
+    const counts = tonightCounts(all, quickAdd(EMPTY, 'zed'), linked)
+    expect(counts.selected).toBe(1)
+    expect(counts.responses.going).toBe(1)
+  })
+
+  it('leaves an ordinary covered linked child untouched', () => {
+    const counts = tonightCounts(all, EMPTY, linked)
+    expect(counts.responses.notGoing).toBe(1)
+    expect(ids(visibleRows(all, 'declined'))).toEqual(['ben'])
+  })
+
+  it('still counts no unlinked child as No reply', () => {
+    const counts = tonightCounts(all, EMPTY, linked)
+    expect(counts.responses.noReply).toBe(0)
+    expect(ids(visibleRows(all, 'unanswered'))).toEqual([])
+  })
+
+  it('leaves the 19 vs 11 reconciliation exactly as it was', () => {
+    // No guest in the reported case, so nothing about it may move.
+    const { rows: squadRows, linkedIds } = squad()
+    const counts = tonightCounts(squadRows, EMPTY, linkedIds)
+    expect(counts.responses.going).toBe(11)
+    expect(counts.covered).toBe(40)
+    expect(counts.linked).toBe(27)
+    expect(counts.withResponse).toBe(27)
+    expect(spondAudience(event())).toBe(50)
   })
 })
 
