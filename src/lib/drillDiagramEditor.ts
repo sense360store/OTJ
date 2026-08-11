@@ -132,14 +132,49 @@ function deleteElement(state: DiagramEditorState, id: string): DiagramEditorStat
 }
 
 // A rectangle from two corners in any order: never inverted, never smaller
-// than a thumb can grab, never off the surface. Both the resize handles and
-// the parser's repair go through this one rule.
+// than a thumb can grab, never off the surface. Used when a rectangle is being
+// created, where either corner may be given first.
 function rectFrom(ax: number, ay: number, bx: number, by: number): Pick<ZoneElement, 'x' | 'y' | 'w' | 'h'> {
   const w = Math.max(Math.abs(bx - ax), MIN_ZONE_SIZE)
   const h = Math.max(Math.abs(by - ay), MIN_ZONE_SIZE)
   const x = Math.min(Math.min(ax, bx), 1 - w)
   const y = Math.min(Math.min(ay, by), 1 - h)
   return { x: Math.max(x, 0), y: Math.max(y, 0), w, h }
+}
+
+// A rectangle from an anchor the coach is NOT holding and a corner they are.
+//
+// THE ANCHOR NEVER MOVES, and that is the whole point. A drag is a stream of
+// resize actions, and each one re-derives the anchor from the CURRENT
+// rectangle. With a sorting rule (rectFrom) the moment the finger passed the
+// fixed corner the rectangle flipped, the anchor became wherever the finger
+// was, and every later step dragged against the new anchor: the zone collapsed
+// to its minimum and walked away from where it started. One action at a time
+// looked perfectly correct, which is why single-action tests never saw it.
+//
+// So the dragged corner is CLAMPED to stay on its own side of the anchor rather
+// than being allowed past it. Dragging the bottom right handle up past the top
+// left stops at the minimum size instead of flipping the rectangle, which is
+// also the behaviour anyone expects from a resize handle.
+function rectFromAnchor(
+  anchorX: number,
+  anchorY: number,
+  cornerX: number,
+  cornerY: number,
+  towardsOrigin: boolean,
+): Pick<ZoneElement, 'x' | 'y' | 'w' | 'h'> {
+  const limit = (anchor: number, corner: number) =>
+    towardsOrigin ? Math.min(corner, anchor - MIN_ZONE_SIZE) : Math.max(corner, anchor + MIN_ZONE_SIZE)
+  const cx = limit(anchorX, cornerX)
+  const cy = limit(anchorY, cornerY)
+  const x = Math.max(Math.min(anchorX, cx), 0)
+  const y = Math.max(Math.min(anchorY, cy), 0)
+  return {
+    x,
+    y,
+    w: Math.min(Math.abs(cx - anchorX), 1 - x),
+    h: Math.min(Math.abs(cy - anchorY), 1 - y),
+  }
 }
 
 function newElement(type: DiagramElementType, id: string, x: number, y: number): DiagramElement {
@@ -238,12 +273,12 @@ export function editorReducer(state: DiagramEditorState, action: DiagramAction):
       const y = pt(action.y)
       return mapElement(state, action.id, (el) => {
         if (el.type !== 'zone') return el
-        // The corner the coach is NOT holding stays put; rectFrom sorts the
-        // two, so dragging one past the other flips the rectangle rather than
-        // inverting it.
-        const anchorX = action.corner === 'start' ? el.x + el.w : el.x
-        const anchorY = action.corner === 'start' ? el.y + el.h : el.y
-        return { ...el, ...rectFrom(anchorX, anchorY, x, y) }
+        // The corner the coach is NOT holding stays exactly where it is for the
+        // whole drag. See rectFromAnchor for what happened when it did not.
+        const start = action.corner === 'start'
+        const anchorX = start ? el.x + el.w : el.x
+        const anchorY = start ? el.y + el.h : el.y
+        return { ...el, ...rectFromAnchor(anchorX, anchorY, x, y, start) }
       })
     }
 
@@ -260,18 +295,24 @@ export function editorReducer(state: DiagramEditorState, action: DiagramAction):
 
     case 'setLabel':
       return mapElement(state, action.id, (el) => {
+        // NOT trimmed here. The field is controlled, so trimming on every
+        // keystroke means the space key does nothing and "Press high" can only
+        // be typed as "Presshigh". The serialiser trims instead, and BOTH sides
+        // of the saved comparison go through it, so a trailing space in the
+        // draft never leaves the editor unsaved for ever.
         if (el.type === 'text') {
-          const text = action.text.trim().slice(0, MAX_TEXT_LENGTH)
-          // Clearing a coaching label removes it. Keeping an empty one would
-          // leave an invisible, untappable element on the surface that the
-          // parser then drops on read, so the editor would report Unsaved for
-          // ever: the readback could never match what was sent.
-          return text === '' ? null : { ...el, text }
+          // An emptied label KEEPS its element. Clearing the field is what a
+          // coach does first when they mean to retype it; deleting the element
+          // there took the chip off the pitch, unmounted the selection bar and
+          // closed the keyboard mid-edit. The serialiser is what declines to
+          // store an empty one, and it does so on both sides of the comparison,
+          // so an empty label on screen is simply a label that is not saved.
+          return { ...el, text: action.text.slice(0, MAX_TEXT_LENGTH) }
         }
         if (el.type === 'player') {
           // A player's badge is optional; the disc is the element, so clearing
           // the badge never removes the player.
-          return { ...el, label: action.text.trim().slice(0, MAX_PLAYER_LABEL) }
+          return { ...el, label: action.text.slice(0, MAX_PLAYER_LABEL) }
         }
         return el
       })

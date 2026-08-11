@@ -24,7 +24,7 @@
 // The markings are returned as data for exactly that reason.
 
 import { clampFraction } from './tacticsBoard'
-import type { DiagramSurface, GoalElement } from './drillDiagram'
+import type { DiagramSurface, GoalElement, ZoneElement } from './drillDiagram'
 
 // The pitch, in metres, at the proportions the Laws give. The full pitch box is
 // the same 680 by 1050 the tactics board uses, so the two read as the same
@@ -199,11 +199,60 @@ export const GOAL_DEPTH = 34
 export function goalRect(surface: DiagramSurface, goal: GoalElement): { x: number; y: number; w: number; h: number } {
   const size = surfaceSize(surface)
   const centre = toView(surface, goal.x, goal.y)
-  const mouth = clampFraction(goal.width) * size.width
+  // A fraction of the pitch's ACROSS measure, which is the screen width in
+  // portrait and the screen height in landscape. Using the screen width in both
+  // made a stored 0.24 mean 163 units on a portrait pitch and 252 on the same
+  // pitch turned, so a goal grew by half when the play direction was toggled,
+  // contradicting the promise this comment makes.
+  const across = surface.orientation === 'landscape' ? size.height : size.width
+  const mouth = clampFraction(goal.width) * across
   const sideways = goal.facing === 'left' || goal.facing === 'right'
   const w = sideways ? GOAL_DEPTH : mouth
   const h = sideways ? mouth : GOAL_DEPTH
   return { x: centre.x - w / 2, y: centre.y - h / 2, w, h }
+}
+
+// ---- Touch targets ------------------------------------------------------
+//
+// HIT_MIN is the smallest a pointer target may be, in viewBox units. The
+// arithmetic that matters is the SCALE: a phone renders the pitch as large as
+// fits in the canvas, and the canvas is bounded by its HEIGHT, not its width,
+// because the top bar, the selection bar and the tool palette take their share
+// first. On a 360 by 640 phone that leaves roughly 344 by 400, and a portrait
+// full pitch (680 by 1050) then draws at about 0.38 of its viewBox. So a 56
+// unit radius is about 42 CSS pixels across, which is the target size a thumb
+// needs. An earlier comment here claimed one pixel was two units, which is what
+// the WIDTH would give if the width ever bound; it does not.
+export const HIT_MIN = 56
+
+// A goal's pointer target. The drawn goal is 34 units deep, about 13 pixels on
+// a phone, so the drawn rectangle is far too thin to grab: the target is grown
+// from the centre in whichever direction is short, and never shrunk.
+export function goalHitRect(surface: DiagramSurface, goal: GoalElement): { x: number; y: number; w: number; h: number } {
+  const g = goalRect(surface, goal)
+  const w = Math.max(g.w, HIT_MIN)
+  const h = Math.max(g.h, HIT_MIN)
+  return { x: g.x - (w - g.w) / 2, y: g.y - (h - g.h) / 2, w, h }
+}
+
+// A zone's pointer target: its BORDER, as a thick unfilled stroke, never its
+// fill.
+//
+// This is the difference between a usable editor and one that cannot build the
+// drill a coach came for. A filled target covers everything under it and is
+// painted last for a zone added last, so with the Cone tool armed a tap inside
+// a zone reached the zone and not the grass, and no cone was placed. A coach
+// could not put a single cone inside the area they had just drawn. With the
+// target on the border, the inside of a zone belongs to whatever is under it,
+// and the zone is grabbed by its edge, which is also where its resize handles
+// are.
+export function zoneHitBand(
+  surface: DiagramSurface,
+  zone: ZoneElement,
+): { x: number; y: number; w: number; h: number; strokeWidth: number; fill: 'none' } {
+  const p = toView(surface, zone.x, zone.y)
+  const q = toView(surface, zone.x + zone.w, zone.y + zone.h)
+  return { x: p.x, y: p.y, w: q.x - p.x, h: q.y - p.y, strokeWidth: HIT_MIN, fill: 'none' }
 }
 
 // ---- Pitch markings -----------------------------------------------------

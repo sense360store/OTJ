@@ -7,6 +7,9 @@ import {
   wavyPath,
   pitchMarkings,
   goalRect,
+  goalHitRect,
+  zoneHitBand,
+  HIT_MIN,
   pointerFraction,
   type Marking,
 } from './drillDiagramGeometry'
@@ -284,6 +287,54 @@ describe('a goal', () => {
   })
 })
 
+describe('what a finger can grab', () => {
+  // REGRESSION, both of these. The first is the one that stopped a coach
+  // building the drill they came for.
+  it('gives a goal a target no thinner than a thumb, whichever way it faces', () => {
+    // A goal is 34 units deep, which is about 12 CSS pixels on a phone: it was
+    // a thin strip that could only be grabbed by aiming at the goal line, and
+    // with a tool armed the taps that missed dropped a cone just above it.
+    for (const facing of ['up', 'down', 'left', 'right'] as const) {
+      const r = goalHitRect(surface(), { type: 'goal', id: 'g1', x: 0.5, y: 0.5, width: 0.24, facing })
+      expect(Math.min(r.w, r.h), facing).toBeGreaterThanOrEqual(HIT_MIN)
+    }
+  })
+
+  it('keeps the goal target centred on the goal, so it grows both ways', () => {
+    const g = goalRect(surface(), { type: 'goal', id: 'g1', x: 0.5, y: 0.5, width: 0.24, facing: 'up' })
+    const r = goalHitRect(surface(), { type: 'goal', id: 'g1', x: 0.5, y: 0.5, width: 0.24, facing: 'up' })
+    expect(r.x + r.w / 2).toBeCloseTo(g.x + g.w / 2, 5)
+    expect(r.y + r.h / 2).toBeCloseTo(g.y + g.h / 2, 5)
+  })
+
+  it('never shrinks a goal target that is already big enough', () => {
+    const wide = { type: 'goal' as const, id: 'g1', x: 0.5, y: 0.5, width: 0.6, facing: 'up' as const }
+    expect(goalHitRect(surface(), wide).w).toBeGreaterThanOrEqual(goalRect(surface(), wide).w)
+  })
+
+  it('makes a zone grabbable by its edge, and lets a tap inside pass through', () => {
+    // THE ONE THAT BLOCKED THE DRILL. A zone's target used to be its whole
+    // filled rectangle, painted over everything under it, so with the Cone tool
+    // armed a tap inside a zone added nothing at all: the canvas saw a press on
+    // an element and returned. A coach could not put a single cone inside the
+    // area they had just drawn, which is the first thing anyone does. The
+    // target is now the BORDER, so the inside belongs to whatever is under it.
+    const band = zoneHitBand(surface(), { type: 'zone', id: 'z1', x: 0.2, y: 0.2, w: 0.5, h: 0.4, colour: 'yellow' })
+    expect(band.strokeWidth).toBeGreaterThanOrEqual(HIT_MIN)
+    expect(band.fill).toBe('none')
+  })
+
+  it('gives the zone border a target on both sides of the line', () => {
+    const z = { type: 'zone' as const, id: 'z1', x: 0.2, y: 0.2, w: 0.5, h: 0.4, colour: 'yellow' as const }
+    const band = zoneHitBand(surface(), z)
+    const rect = { x: band.x, y: band.y, w: band.w, h: band.h }
+    const drawn = toView(surface(), z.x, z.y)
+    // The band is the zone's own rectangle; the thick stroke straddles it.
+    expect(rect.x).toBeCloseTo(drawn.x, 5)
+    expect(rect.y).toBeCloseTo(drawn.y, 5)
+  })
+})
+
 describe('the pitch markings', () => {
   const kinds = (m: Marking[]) => m.map((x) => x.shape)
 
@@ -356,5 +407,26 @@ describe('the pitch markings', () => {
     for (const kind of ['full_pitch', 'half_pitch', 'blank'] as const) {
       expect(JSON.stringify(pitchMarkings({ kind, orientation: 'portrait' }))).not.toMatch(/null|NaN/)
     }
+  })
+})
+
+describe('a goal keeps its size when the pitch is turned', () => {
+  it('means the same real mouth in both orientations', () => {
+    // REGRESSION. The mouth was a fraction of the SCREEN width, which swaps
+    // with the orientation, so turning the pitch grew a goal by half. It is a
+    // fraction of the pitch's across measure, which does not.
+    const goal = { type: 'goal' as const, id: 'goal-1', x: 0.5, y: 0.2, width: 0.24, facing: 'up' as const }
+    const across = 680
+    for (const orientation of ['portrait', 'landscape'] as const) {
+      const g = goalRect({ kind: 'full_pitch', orientation }, goal)
+      expect(Math.max(g.w, g.h), orientation).toBeCloseTo(0.24 * across, 5)
+    }
+  })
+
+  it('means the same real mouth whichever way it faces', () => {
+    const base = { type: 'goal' as const, id: 'goal-1', x: 0.5, y: 0.5, width: 0.3 }
+    const up = goalRect(surface(), { ...base, facing: 'up' })
+    const left = goalRect(surface(), { ...base, facing: 'left' })
+    expect(Math.max(up.w, up.h)).toBeCloseTo(Math.max(left.w, left.h), 5)
   })
 })

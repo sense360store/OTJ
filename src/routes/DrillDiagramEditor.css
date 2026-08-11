@@ -25,7 +25,11 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px calc(10px);
+  /* This route is fixed and full bleed under viewport-fit=cover, so it paints
+     into the display cutout. Every edge is paid for, not just the top: on a
+     notched phone held sideways the inset is on the LEFT or the RIGHT, and Back
+     and Save were the controls under it. */
+  padding: 10px max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left));
   padding-top: calc(10px + env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
   background: var(--card);
@@ -167,41 +171,58 @@
 }
 
 /* One quiet line of instruction that doubles as a live region, so what the
-   editor is waiting for is announced and not only shown. */
+   editor is waiting for is announced and not only shown. It lives INSIDE the
+   bar below, so the bar is the same height whether or not anything is
+   selected. */
 .dde-hint {
-  flex: 0 0 auto;
-  padding: 0 12px 8px;
+  flex: 1;
   text-align: center;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--slate);
 }
 
-/* The bar for whatever is selected. It sits ABOVE the tools rather than over
-   the canvas, so nothing floats under the thumb that is drawing. */
+/* The bar for whatever is selected, ALWAYS PRESENT. It used to appear only on
+   selection, and being `flex: 0 0 auto` it took its height straight out of the
+   canvas: every tap resized and re-centred the pitch under the coach's finger,
+   and the element they had just touched moved and changed size. A fixed minimum
+   height keeps the canvas still. It sits above the tools rather than over the
+   canvas, so nothing floats under the thumb that is drawing. */
 .dde-selbar {
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  min-height: 56px;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 8px max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
   border-top: 1px solid var(--line);
   background: var(--card);
 }
+/* The selected element's name is ANNOUNCED, not shown. On screen it is
+   redundant: the element carries a gold ring and the controls beside it are
+   obviously about something. Shown, it pushed the bar onto a second row on
+   every phone, and the bar takes its height out of the canvas, so selecting
+   anything shrank the pitch by about sixty pixels and moved the element the
+   coach had just touched. Visually hidden keeps the announcement and keeps the
+   bar one row tall, which keeps the canvas still. */
 .dde-sel-name {
-  font-family: var(--display, inherit);
-  font-weight: 800;
-  font-size: 13px;
-  color: var(--slate);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .dde-swatches {
   display: flex;
-  gap: 6px;
+  gap: 5px;
 }
 .dde-swatch {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
   border: 2px solid var(--line);
   padding: 0;
@@ -219,7 +240,7 @@
 }
 .dde-chip {
   height: 34px;
-  padding: 0 12px;
+  padding: 0 10px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--card);
@@ -242,9 +263,14 @@
   font-weight: 700;
   color: var(--slate);
 }
+/* 16px, deliberately. iOS Safari zooms the page when a text input under 16px
+   takes focus and does not zoom back out on blur, and this route is a fixed
+   full screen layer, so the zoom leaves parts of it off screen with no way to
+   scroll to them. */
 .dde-label-field .input {
-  width: 130px;
-  height: 38px;
+  width: 108px;
+  font-size: 16px;
+  height: 40px;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--card);
@@ -265,7 +291,8 @@
   flex: 0 0 auto;
   border-top: 1px solid var(--line);
   background: var(--card);
-  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom))
+    max(8px, env(safe-area-inset-left));
 }
 /* All SEVEN tools fit across the narrowest phone the app supports, with no
    horizontal scroll. They did not: at a 58 pixel minimum the row needed 430
@@ -387,7 +414,8 @@
     white-space: nowrap;
   }
   .dde-selbar {
-    padding: 5px 10px;
+    padding: 4px 10px;
+    min-height: 46px;
     gap: 6px;
   }
   .dde-tools {

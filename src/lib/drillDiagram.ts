@@ -241,6 +241,7 @@ export function diagramIsEmpty(d: DrillDiagram | null | undefined): boolean {
 // id that another element still holds, which is the failure an array index (or
 // a per type counter) walks straight into.
 export function nextElementId(type: DiagramElementType, elements: readonly DiagramElement[]): string {
+  const taken = new Set(elements.map((e) => e.id))
   let highest = 0
   for (const e of elements) {
     const m = /-(\d+)$/.exec(e.id)
@@ -249,7 +250,13 @@ export function nextElementId(type: DiagramElementType, elements: readonly Diagr
       if (Number.isFinite(n) && n > highest) highest = n
     }
   }
-  return `${type}-${highest + 1}`
+  let n = highest + 1
+  // Counting alone is not quite enough: a stored suffix at or above 2^53 makes
+  // `highest + 1` equal `highest`, and the "new" id is one an element already
+  // holds. Checking closes it for good, whatever arrives in the column.
+  let candidate = `${type}-${n}`
+  while (taken.has(candidate)) candidate = `${type}-${++n}-${taken.size}`
+  return candidate
 }
 
 // ---- Reading ------------------------------------------------------------
@@ -445,7 +452,11 @@ function round(n: number): number {
 function serializeElement(el: DiagramElement): Record<string, unknown> {
   switch (el.type) {
     case 'player':
-      return { type: 'player', id: el.id, x: round(el.x), y: round(el.y), colour: el.colour, label: el.label.slice(0, MAX_PLAYER_LABEL) }
+      // Trimmed HERE rather than in the reducer: the draft keeps what the coach
+      // is typing, spaces and all, and the stored form is tidy. Both sides of
+      // the saved comparison run through this function, so the two can never
+      // disagree about a trailing space.
+      return { type: 'player', id: el.id, x: round(el.x), y: round(el.y), colour: el.colour, label: el.label.trim().slice(0, MAX_PLAYER_LABEL) }
     case 'cone':
       return { type: 'cone', id: el.id, x: round(el.x), y: round(el.y), colour: el.colour }
     case 'ball':
@@ -467,7 +478,7 @@ function serializeElement(el: DiagramElement): Record<string, unknown> {
       return { type: 'zone', id: el.id, x: round(clampTo(el.x, 0, 1 - w)), y: round(clampTo(el.y, 0, 1 - h)), w, h, colour: el.colour }
     }
     case 'text':
-      return { type: 'text', id: el.id, x: round(el.x), y: round(el.y), text: el.text.slice(0, MAX_TEXT_LENGTH) }
+      return { type: 'text', id: el.id, x: round(el.x), y: round(el.y), text: el.text.trim().slice(0, MAX_TEXT_LENGTH) }
   }
 }
 

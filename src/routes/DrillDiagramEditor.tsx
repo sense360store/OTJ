@@ -58,20 +58,22 @@ import {
   type DiagramEditorState,
 } from '../lib/drillDiagramEditor'
 import { diagramEditDecision } from '../lib/drillDiagramRights'
-import { goalRect, pointerFraction, surfaceAspect, toView, viewBox } from '../lib/drillDiagramGeometry'
+import { goalHitRect, goalRect, HIT_MIN, pointerFraction, surfaceAspect, toView, viewBox, zoneHitBand } from '../lib/drillDiagramGeometry'
 import { DiagramSurfaceBackdrop, DiagramElementShape } from '../components/DrillDiagramView'
 import { isDrag } from '../lib/tacticsBoard'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
 import './DrillDiagramEditor.css'
 
-// Touch targets, in viewBox units. A phone renders a 680 unit wide pitch at
-// roughly 340 CSS pixels, so one pixel is about two units and a 44 unit radius
-// is a 44 pixel target. The hit areas are invisible and sit over the drawn
-// shape, so the drawing keeps its proportions while the thumb gets something
-// it can actually land on.
-const HIT_R = 44
-const HANDLE_R = 26
+// Touch targets, in viewBox units. HIT_MIN and the arithmetic behind it live in
+// the shared geometry, because the goal and the zone need the same number and
+// the reasoning is worth stating once. The short version: the canvas is bounded
+// by its HEIGHT on a phone, so the pitch draws at roughly 0.38 of its viewBox,
+// and a 56 unit radius is about 42 CSS pixels across. The hit areas are
+// invisible and sit over the drawn shape, so the drawing keeps its proportions
+// while the thumb gets something it can land on.
+const HIT_R = HIT_MIN
+const HANDLE_R = 30
 
 export type SaveState = 'clean' | 'dirty' | 'saving' | 'error'
 
@@ -289,12 +291,18 @@ function HitArea({ surface, el }: { surface: DiagramSurface; el: DiagramElement 
     return <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={HIT_R} strokeLinecap="round" />
   }
   if (el.type === 'zone') {
-    const p = toView(surface, el.x, el.y)
-    const q = toView(surface, el.x + el.w, el.y + el.h)
-    return <rect x={p.x} y={p.y} width={q.x - p.x} height={q.y - p.y} fill="transparent" />
+    // The BORDER, not the fill. A filled target covered everything under it, so
+    // with a tool armed a tap inside a zone placed nothing at all: a coach
+    // could not put one cone inside the area they had just drawn. See
+    // zoneHitBand.
+    const b = zoneHitBand(surface, el)
+    return (
+      <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="none" stroke="transparent" strokeWidth={b.strokeWidth} />
+    )
   }
   if (el.type === 'goal') {
-    const g = goalRect(surface, el)
+    // Grown to a thumb: the drawn goal is a strip about thirteen pixels deep.
+    const g = goalHitRect(surface, el)
     return <rect x={g.x} y={g.y} width={g.w} height={g.h} fill="transparent" />
   }
   const p = toView(surface, el.x, el.y)
@@ -451,15 +459,20 @@ export function DiagramEditorView({
 
       <EditorCanvas state={state} dispatch={dispatch} armed={armed} onPlace={() => onArm(null)} />
 
-      <div className="dde-hint" role="status">
-        {armed
-          ? `Tap the pitch to place a ${ELEMENT_LABEL[armed].toLowerCase()}.`
-          : selected
-            ? `${elementName(selected)} selected. Drag to move.`
-            : 'Pick a tool, then tap the pitch.'}
+      {/* ONE bar, always present. It used to be a hint line plus a selection
+          bar that appeared only when something was selected, and the selection
+          bar took its height straight out of the canvas: every tap resized and
+          re-centred the pitch under the coach's finger. Now the bar is always
+          there and holds either the instruction or the controls. */}
+      <div className="dde-selbar">
+        {selected ? (
+          <SelectionControls el={selected} dispatch={dispatch} />
+        ) : (
+          <span className="dde-hint" role="status">
+            {armed ? `Tap the pitch to place a ${ELEMENT_LABEL[armed].toLowerCase()}.` : 'Pick a tool, then tap the pitch.'}
+          </span>
+        )}
       </div>
-
-      {selected && <SelectionControls el={selected} dispatch={dispatch} />}
 
       <div className="dde-tools">
         <div className="dde-tool-row" role="group" aria-label="Add to the diagram">
@@ -499,6 +512,11 @@ export function DiagramEditorView({
           <button
             type="button"
             className="btn btn-ghost btn-sm"
+            aria-label={
+              state.diagram.surface.orientation === 'portrait'
+                ? 'Turn the pitch so the play runs across the screen'
+                : 'Turn the pitch so the play runs up the screen'
+            }
             onClick={() =>
               dispatch({
                 op: 'setOrientation',
@@ -507,7 +525,7 @@ export function DiagramEditorView({
             }
           >
             <Icon.rotate />
-            {state.diagram.surface.orientation === 'portrait' ? 'Play runs up' : 'Play runs across'}
+            Turn the pitch
           </button>
           <span className="dde-count">
             {state.diagram.elements.length} of {MAX_DIAGRAM_ELEMENTS}
@@ -529,8 +547,10 @@ export function DiagramEditorView({
 function SelectionControls({ el, dispatch }: { el: DiagramElement; dispatch: (a: DiagramAction) => void }) {
   const hasColour = el.type === 'player' || el.type === 'cone' || el.type === 'zone'
   return (
-    <div className="dde-selbar">
-      <span className="dde-sel-name">{ELEMENT_LABEL[el.type]}</span>
+    <>
+      <span className="dde-sel-name" role="status">
+        {elementName(el)} selected
+      </span>
 
       {hasColour && (
         <div className="dde-swatches" role="group" aria-label="Colour">
@@ -600,7 +620,7 @@ function SelectionControls({ el, dispatch }: { el: DiagramElement; dispatch: (a:
         <Icon.trash />
         Delete
       </button>
-    </div>
+    </>
   )
 }
 
@@ -722,24 +742,39 @@ export function DrillDiagramEditor() {
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
   const { data: drill, isLoading, isError } = useDrill(id)
+  // `diagram` stays undefined only while the read has never succeeded; a null
+  // means the drill genuinely has no diagram. The two are told apart below.
   const { data: diagram, isLoading: diagramLoading, isError: diagramError } = useDrillDiagram(id)
 
   // This route owns the whole screen, so its loading, error and not found
   // states need the same frame: rendered bare they would sit on an unstyled
   // page with no way back, because there is no app shell behind them.
-  if (isLoading || diagramLoading) return <Frame title="Drill Maker" onBack={() => navigate(-1)}><Loading /></Frame>
-  if (isError || diagramError)
-    return (
-      <Frame title="Drill Maker" onBack={() => navigate(-1)}>
-        <ErrorNote />
-      </Frame>
-    )
+  // THESE GUARDS TEST FOR MISSING DATA, NEVER FOR A QUERY ERROR ON ITS OWN, and
+  // that distinction is a data loss bug rather than a nicety. Both reads keep
+  // refetching in the background (the query client sets no staleTime, so a
+  // window focus refetches), and both hold their last good data through a
+  // failed refetch. Returning an error screen on `isError` would therefore
+  // unmount EditorBody, whose reducer holds the entire unsaved drawing, the
+  // moment a coach pitch-side lost signal and came back to the app. The
+  // diagram would be gone and the fresh editor would open clean, saying Saved.
+  // So an error only shows while there is nothing to show instead.
+  // Back goes to a KNOWN place, never history.go(-1): this route is deep
+  // linkable, and on a cold tab there is nothing behind it, so -1 leaves a full
+  // screen page whose only control does nothing.
+  const backToDrill = () => navigate(id ? `/drill/${id}` : '/library')
+  if (isLoading || diagramLoading) return <Frame title="Drill Maker" onBack={backToDrill}><Loading /></Frame>
   if (!drill)
     return (
       <Frame title="Drill Maker" onBack={() => navigate('/library')}>
-        <Empty icon={Icon.grid} title="Drill not found">
-          It may have been removed.
-        </Empty>
+        {isError ? <ErrorNote /> : <Empty icon={Icon.grid} title="Drill not found">It may have been removed.</Empty>}
+      </Frame>
+    )
+  // A diagram read that has never succeeded is different: opening an editor on
+  // "no diagram" when the drill may in fact have one would let a save wipe it.
+  if (diagramError && diagram === undefined)
+    return (
+      <Frame title={drill.title} onBack={backToDrill}>
+        <ErrorNote />
       </Frame>
     )
 

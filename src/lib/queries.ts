@@ -1487,6 +1487,11 @@ export function useDrillDiagram(id: string | undefined) {
   return useQuery({
     queryKey: ['drill_diagram', id],
     enabled: !!id,
+    // No retry. This read fires on EVERY drill page for every role, parents
+    // included, and the one failure mode worth naming is the column not being
+    // there yet (migration 0046 unapplied), which no number of retries will
+    // fix. Four rejected requests per page view is noise nobody can act on.
+    retry: false,
     queryFn: async (): Promise<DrillDiagram | null> => {
       const { data, error } = await supabase.from('drills').select(DRILL_DIAGRAM_COLS).eq('id', id!).maybeSingle()
       if (error) throw error

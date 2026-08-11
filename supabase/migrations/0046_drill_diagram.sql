@@ -103,10 +103,16 @@
 -- constraint alone unless the feature itself is being withdrawn. Nothing else
 -- in the schema references the column, so no other object breaks either way.
 --
--- APPLY ORDER. Unlike 0028 there is no ordering hazard: the column is new and
--- every value is NULL, so the constraint cannot fail on existing data and no
--- deployed client writes the column yet. Apply before or after the frontend;
--- the frontend simply shows no diagram until the column exists.
+-- APPLY ORDER. THIS MIGRATION GOES FIRST, before the frontend from the same
+-- change is deployed. It is the opposite way round from 0028 and for the
+-- opposite reason. There is no hazard in applying it early: the column is new
+-- and every value is NULL, so the constraint cannot fail on existing data, and
+-- no deployed client writes or reads the column yet, so nothing changes for
+-- anybody until the frontend ships. Applying it LATE is the hazard: the new
+-- drill page reads `id, diagram`, and against a database without the column
+-- PostgREST answers 42703, so the read fails and Drill Maker offers a Build
+-- diagram button that dead ends. An earlier draft of this header claimed the
+-- frontend degraded gracefully in that state. It does not.
 -- =====================================================================
 
 -- ONE transaction, as 0041 through 0045 are: the column, the three shape
@@ -184,21 +190,29 @@ language sql
 immutable
 set search_path = ''
 as $$
+  -- coalesce(..., false) is NOT decoration. jsonb_typeof and jsonb_array_length
+  -- are strict, so a diagram with no `elements` key made every element conjunct
+  -- SQL NULL, the whole expression NULL, and a CHECK constraint treats NULL as
+  -- SATISFIED. The constraint would have accepted a diagram with no elements
+  -- key at all. The explicit key test is the real fix; the coalesce is the
+  -- belt.
   select p_diagram is null
-      or (
+      or coalesce(
            public.drill_diagram_keys_within(p_diagram, array['version', 'surface', 'elements'])
            and p_diagram ->> 'version' = '1'
            and (
                  p_diagram -> 'surface' is null
                  or public.drill_diagram_keys_within(p_diagram -> 'surface', array['kind', 'orientation'])
                )
+           and p_diagram ? 'elements'
            and jsonb_typeof(p_diagram -> 'elements') = 'array'
            and jsonb_array_length(p_diagram -> 'elements') <= 60
            and not exists (
                  select 1
                  from jsonb_array_elements(p_diagram -> 'elements') as e(el)
                  where not public.drill_diagram_element_is_valid(e.el)
-               )
+               ),
+           false
          )
 $$;
 
@@ -275,6 +289,15 @@ begin
     '{"version":1,"surface":{"kind":"blank"},"elements":[],"roster":["Jamie"]}'::jsonb
   ) then
     raise exception 'drill diagram: an unknown top level key must be refused';
+  end if;
+  -- A diagram with no elements key at all. This one is here because it PASSED:
+  -- the strict jsonb functions made the predicate NULL and a check constraint
+  -- reads NULL as satisfied.
+  if public.drill_diagram_is_valid('{"version":1,"surface":{"kind":"blank"}}'::jsonb) is not false then
+    raise exception 'drill diagram: a diagram with no elements key must be refused, not left null';
+  end if;
+  if public.drill_diagram_is_valid('{"version":1,"surface":{"kind":"blank"},"elements":"nope"}'::jsonb) is not false then
+    raise exception 'drill diagram: a non array elements value must be refused';
   end if;
   if public.drill_diagram_is_valid(
     ('{"version":1,"surface":{"kind":"blank"},"elements":'

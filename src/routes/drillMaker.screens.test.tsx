@@ -1,10 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DrillDiagramSection } from './DrillDetail'
 import { DiagramEditorView, type SaveState } from './DrillDiagramEditor'
 import { emptyDiagram, type DiagramElement, type DrillDiagram } from '../lib/drillDiagram'
 import { editorReducer, initEditor, type DiagramAction, type DiagramEditorState } from '../lib/drillDiagramEditor'
-import { diagramEditDecision } from '../lib/drillDiagramRights'
+import { diagramEditDecision, FA_DIAGRAM_NOTE } from '../lib/drillDiagramRights'
 
 // The two screens Drill Maker adds, rendered for real. This project has no DOM
 // under test, so these are static renders: they prove what a coach is OFFERED
@@ -13,8 +15,14 @@ import { diagramEditDecision } from '../lib/drillDiagramRights'
 
 const noop = () => {}
 
-function drillPage(diagram: DrillDiagram | null, canEdit: boolean): string {
-  return renderToStaticMarkup(<DrillDiagramSection diagram={diagram} canEdit={canEdit} onOpen={noop} />)
+function drillPage(
+  diagram: DrillDiagram | null,
+  canEdit: boolean,
+  over: Partial<Parameters<typeof DrillDiagramSection>[0]> = {},
+): string {
+  return renderToStaticMarkup(
+    <DrillDiagramSection diagram={diagram} canEdit={canEdit} onOpen={noop} {...over} />,
+  )
 }
 
 const withCone: DrillDiagram = {
@@ -71,6 +79,41 @@ describe('the drill page', () => {
       source: { sourceUrl: 'https://learn.englandfootball.com/coaching/activity/abc' },
     })
     expect(drillPage(null, decision.canEdit)).toBe('')
+  })
+
+  it('does not show a diagram stranded on an England Football derived drill', () => {
+    // REACHABLE, and the reason this branch exists: a coach draws a diagram on
+    // their own drill, then later records an England Football source on it.
+    // Showing the drawing is exactly what the licence excludes, and with the
+    // editor refusing every writer it could never be corrected or removed.
+    const html = drillPage(withCone, false, { restrictedReason: FA_DIAGRAM_NOTE, canRemove: true })
+    expect(html).not.toContain('data-el="cone"')
+    expect(html).toContain('England Football Learning')
+  })
+
+  it('offers to remove a stranded diagram, so it is not trapped for ever', () => {
+    const html = drillPage(withCone, false, { restrictedReason: FA_DIAGRAM_NOTE, canRemove: true })
+    expect(html).toContain('Remove diagram')
+    expect(html).not.toContain('Edit diagram')
+    expect(html).not.toContain('Build diagram')
+  })
+
+  it('offers no removal to somebody who could not edit the drill anyway', () => {
+    const html = drillPage(withCone, false, { restrictedReason: FA_DIAGRAM_NOTE, canRemove: false })
+    expect(html).toContain('England Football Learning')
+    expect(html).not.toContain('Remove diagram')
+  })
+
+  it('shows nothing on a restricted drill that has no diagram, rather than a rule nobody asked about', () => {
+    expect(drillPage(null, false, { restrictedReason: FA_DIAGRAM_NOTE, canRemove: true })).toBe('')
+  })
+
+  it('says a removal is in flight, and reports one that failed', () => {
+    const busy = drillPage(withCone, false, { restrictedReason: FA_DIAGRAM_NOTE, canRemove: true, removing: true })
+    expect(busy).toContain('Removing…')
+    expect(busy).toContain('disabled')
+    const failed = drillPage(withCone, false, { restrictedReason: FA_DIAGRAM_NOTE, canRemove: true, removeFailed: true })
+    expect(failed).toContain('Could not remove the diagram')
   })
 
   it('carries no editor chrome onto the drill page', () => {
@@ -180,7 +223,12 @@ describe('the editor tool palette', () => {
     expect(html).toContain('Full pitch')
     expect(html).toContain('Half pitch')
     expect(html).toContain('Blank area')
-    expect(html).toContain('Play runs')
+    // The control is labelled with what it DOES, not with the state it is
+    // leaving. It read "Play runs up" while the pitch was portrait and then
+    // "Play runs across" after it had been pressed, so the text named the
+    // opposite of the button's effect.
+    expect(html).toContain('Turn the pitch')
+    expect(html).not.toContain('Play runs up')
   })
 
   it('shows how full the diagram is', () => {
@@ -223,7 +271,9 @@ describe('the editor canvas', () => {
     const html = editor({ state: s })
     expect(html).toContain('dde-ring')
     expect(html).toContain('aria-pressed="true"')
-    expect(html).toContain('selected. Drag to move.')
+    // Named in words as well as ringed, and announced.
+    expect(html).toContain('Cone, Orange selected')
+    expect(html).toContain('role="status"')
   })
 
   it('gives a selected zone two large handles, not eight small ones', () => {
@@ -293,7 +343,21 @@ describe('the editor selection controls', () => {
     expect(editor({ state: state({ op: 'add', element: 'ball', at: { x: 0.5, y: 0.5 } }) })).toContain('Delete')
   })
 
-  it('offers no selection controls when nothing is selected', () => {
-    expect(editor()).not.toContain('dde-selbar')
+  it('offers no selection controls when nothing is selected, but keeps the bar', () => {
+    // The BAR stays and holds the instruction instead. It used to appear only
+    // on selection, and being a fixed-height band it took its height straight
+    // out of the canvas: every tap resized and re-centred the pitch under the
+    // coach's finger, moving the very element they had just touched.
+    const html = editor()
+    expect(html).toContain('dde-selbar')
+    expect(html).toContain('Pick a tool, then tap the pitch.')
+    expect(html).not.toContain('dde-swatch')
+    expect(html).not.toContain('Delete')
+  })
+
+  it('keeps the bar at one height whether or not something is selected', () => {
+    // Pinned in the stylesheet, since there is no DOM here to measure it.
+    const css = readFileSync(join(import.meta.dirname, 'DrillDiagramEditor.css'), 'utf8')
+    expect(/\.dde-selbar \{[\s\S]*?min-height: \d+px/.test(css)).toBe(true)
   })
 })

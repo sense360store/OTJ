@@ -359,6 +359,55 @@ describe('resizing a zone', () => {
     expect(z.y + z.h).toBeLessThanOrEqual(1)
   })
 
+  it('holds the far corner still through a whole drag, not just one step', () => {
+    // REGRESSION, and the defect single-action tests could never see. A drag is
+    // a STREAM of resize actions, and the anchor was re-derived from the
+    // current element each time. Once the finger passed the fixed corner the
+    // rectangle sorted itself, the anchor moved to where the finger was, and
+    // every later step dragged against the new anchor: the zone collapsed to
+    // its minimum and walked away from where it started.
+    const { s, id } = zoneState() // x 0.2, y 0.2, w 0.5, h 0.4
+    // The bottom right handle, dragged in past the top left corner, one frame
+    // at a time exactly as the pointer handler emits them.
+    let drag = s
+    for (const t of [0.62, 0.55, 0.48, 0.4, 0.33, 0.25, 0.18, 0.1, 0.05]) {
+      drag = run(drag, { op: 'resizeZone', id, corner: 'end', x: t, y: t })
+    }
+    const z = only(drag) as ZoneElement
+    // The corner the coach is NOT holding has not moved.
+    expect(z.x).toBeCloseTo(0.2, 6)
+    expect(z.y).toBeCloseTo(0.2, 6)
+    expect(z.w).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+    expect(z.h).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+  })
+
+  it('holds the near corner still through a whole drag too', () => {
+    const { s, id } = zoneState() // far corner at 0.7, 0.6
+    let drag = s
+    for (const t of [0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95]) {
+      drag = run(drag, { op: 'resizeZone', id, corner: 'start', x: t, y: t })
+    }
+    const z = only(drag) as ZoneElement
+    expect(z.x + z.w).toBeCloseTo(0.7, 6)
+    expect(z.y + z.h).toBeCloseTo(0.6, 6)
+    expect(z.w).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+  })
+
+  it('comes back to the right shape when the finger returns', () => {
+    // The whole point of holding the anchor: a coach who overshoots and drags
+    // back gets the zone they were aiming for, not a collapsed one somewhere
+    // else.
+    const { s, id } = zoneState()
+    let drag = s
+    for (const t of [0.6, 0.4, 0.2, 0.05, 0.3, 0.55, 0.7]) {
+      drag = run(drag, { op: 'resizeZone', id, corner: 'end', x: t, y: t })
+    }
+    const z = only(drag) as ZoneElement
+    expect(z.x).toBeCloseTo(0.2, 6)
+    expect(z.w).toBeCloseTo(0.5, 6)
+    expect(z.h).toBeCloseTo(0.5, 6)
+  })
+
   it('ignores a resize aimed at something that is not a zone', () => {
     const s = withOne('cone')
     const before = diagramSignature(s.diagram)
@@ -393,14 +442,58 @@ describe('editing text and colour', () => {
     expect(t.text).toHaveLength(MAX_TEXT_LENGTH)
   })
 
-  it('removes a label the coach has emptied, so no invisible element is stored', () => {
-    // The parser drops an empty label on read. If the reducer kept one the
-    // screen would stay Unsaved for ever, because the readback could never
-    // match what was sent.
+  it('keeps a label the coach has emptied, so clearing it before retyping does not delete it', () => {
+    // REGRESSION. Clearing the field used to delete the element, which is what
+    // a coach does FIRST when they mean to retype it: backspace over "Label",
+    // and on the last backspace the chip vanished from the pitch, the selection
+    // bar unmounted and the keyboard closed. The element stays; the serialiser
+    // is what declines to store an empty one.
     const s = withOne('text')
-    const after = run(s, { op: 'setLabel', id: only(s).id, text: '   ' })
-    expect(after.diagram.elements).toHaveLength(0)
-    expect(after.selectedId).toBeNull()
+    const after = run(s, { op: 'setLabel', id: only(s).id, text: '' })
+    expect(after.diagram.elements).toHaveLength(1)
+    expect((only(after) as TextElement).text).toBe('')
+    expect(after.selectedId).toBe(only(s).id)
+  })
+
+  it('lets the coach type on after clearing, back to a real label', () => {
+    const s = withOne('text')
+    const id = only(s).id
+    const after = run(s, { op: 'setLabel', id, text: '' }, { op: 'setLabel', id, text: 'Press' })
+    expect((only(after) as TextElement).text).toBe('Press')
+  })
+
+  it('stays clean after saving a label the coach emptied, rather than unsaved for ever', () => {
+    // The element is on screen but not stored. Both sides of the comparison go
+    // through the serialiser, which drops it, so the two agree.
+    const s = withOne('text')
+    const cleared = run(s, { op: 'setLabel', id: only(s).id, text: '' })
+    const saved = run(cleared, { op: 'saved', signature: diagramSignature(cleared.diagram) })
+    expect(isDirty(saved)).toBe(false)
+    expect(diagramSignature(parseDrillDiagram(serializeDrillDiagram(cleared.diagram)))).toBe(
+      diagramSignature(cleared.diagram),
+    )
+  })
+
+  it('lets a coaching label hold a space, so a two word cue is possible', () => {
+    // REGRESSION. setLabel trimmed the raw input on every keystroke, and the
+    // field is controlled, so the space key did nothing: "Press high" could
+    // only ever be typed as "Presshigh".
+    const s = withOne('text')
+    const id = only(s).id
+    const after = run(s, { op: 'setLabel', id, text: 'Press ' })
+    expect((only(after) as TextElement).text).toBe('Press ')
+    expect((only(run(after, { op: 'setLabel', id, text: 'Press high' })) as TextElement).text).toBe('Press high')
+  })
+
+  it('stores a label without the trailing space it was typed with', () => {
+    // The draft keeps the space so the coach can carry on typing; the stored
+    // form does not, and BOTH sides of the saved comparison go through the
+    // serialiser, so a trailing space never leaves the editor permanently
+    // unsaved.
+    const s = run(withOne('text'), { op: 'setLabel', id: 'text-1', text: 'Press ' })
+    const stored = serializeDrillDiagram(s.diagram) as { elements: { text: string }[] }
+    expect(stored.elements[0].text).toBe('Press')
+    expect(diagramSignature(parseDrillDiagram(stored))).toBe(diagramSignature(s.diagram))
   })
 
   it('caps a player badge much shorter than a coaching label', () => {

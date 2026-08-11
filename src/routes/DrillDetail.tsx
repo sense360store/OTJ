@@ -3,7 +3,15 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDrill, useDrillDiagram, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl } from '../lib/queries'
+import {
+  useDrill,
+  useDrillDiagram,
+  useDrills,
+  useMediaMap,
+  useMyCapabilities,
+  useSignedMediaUrl,
+  useUpdateDrillDiagram,
+} from '../lib/queries'
 import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import { relatedDrills } from '../lib/contentOrder'
 import { isFaVideo } from '../lib/fa'
@@ -28,8 +36,9 @@ import {
   SourceLink,
   TopicTags,
 } from '../components/ui'
-import { diagramIsEmpty, type DrillDiagram } from '../lib/drillDiagram'
+import { diagramIsEmpty, emptyDiagram, type DrillDiagram } from '../lib/drillDiagram'
 import { diagramEditDecision } from '../lib/drillDiagramRights'
+import { deriveProvenance } from '../lib/contentRights'
 import { DrillDiagramView } from '../components/DrillDiagramView'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { DeleteDrillModal } from '../components/DeleteDrillModal'
@@ -181,13 +190,57 @@ export function AddToSessionView({
 export function DrillDiagramSection({
   diagram,
   canEdit,
+  restrictedReason,
+  canRemove = false,
+  removing = false,
+  removeFailed = false,
   onOpen,
+  onRemove,
 }: {
   diagram: DrillDiagram | null
   canEdit: boolean
+  // Set when this drill may not carry a hand drawn diagram at all, with the
+  // reason in the club's words. Today that means England Football derived.
+  restrictedReason?: string | null
+  canRemove?: boolean
+  removing?: boolean
+  removeFailed?: boolean
   onOpen: () => void
+  onRemove?: () => void
 }) {
   const has = !diagramIsEmpty(diagram)
+
+  // A restricted drill that somehow carries a diagram. This is reachable: a
+  // coach draws one on their own drill, then later records an England Football
+  // source on it. The diagram is NOT rendered, because showing it is the thing
+  // the licence excludes, and it would otherwise be stranded there for ever
+  // with no control able to touch it. So the reason is stated and, for anyone
+  // who could edit the drill, it can be removed.
+  if (restrictedReason) {
+    if (!has) return null
+    return (
+      <>
+        <hr className="divider" />
+        <div className="section-title">
+          <Icon.lock />
+          <h3>Diagram</h3>
+        </div>
+        <p className="muted" style={{ fontSize: 14.5, lineHeight: 1.55, maxWidth: 460 }}>
+          {restrictedReason}
+        </p>
+        {canRemove && (
+          <div className="row" style={{ gap: 10, marginTop: 12, maxWidth: 460 }}>
+            <button className="btn btn-ghost btn-block" onClick={onRemove} disabled={removing}>
+              <Icon.trash />
+              {removing ? 'Removing…' : 'Remove diagram'}
+            </button>
+          </div>
+        )}
+        {removeFailed && <ActionError style={{ marginTop: 10 }}>Could not remove the diagram. Try again.</ActionError>}
+      </>
+    )
+  }
+
   if (!has && !canEdit) return null
   return (
     <>
@@ -276,6 +329,9 @@ export function DrillDetail() {
   // The diagram is read on its own, never as part of the drill row, so no
   // other drill read grows and no other path can carry it. See queries.ts.
   const { data: diagram = null } = useDrillDiagram(id)
+  // Removing a stranded diagram writes an empty one through the same focused
+  // save the editor uses, so it touches the diagram column and nothing else.
+  const removeDiagram = useUpdateDrillDiagram()
   const mediaById = useMediaMap()
   // Resolved before the early returns so the signed URL hook is called
   // unconditionally. The bucket is private, so opening an image or PDF goes
@@ -333,10 +389,20 @@ export function DrillDetail() {
   // Drawing a diagram follows the SAME ownership rule as Edit drill, with one
   // extra limit for England Football derived drills. Both come from
   // diagramEditDecision so neither is restated here (src/lib/drillDiagramRights.ts).
+  // sessions.create is in here because the EDITOR ROUTE is gated on it (see
+  // App.tsx), and a button that leads to a redirect is worse than no button.
+  // The two must name the same condition; every built in role that holds the
+  // drills capabilities holds this one too, so it changes nothing today and
+  // stops a custom role from being bounced silently to Home tomorrow.
+  const source = { sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel, sourceKey: drill.sourceKey }
   const diagramDecision = diagramEditDecision({
-    canManage,
-    source: { sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel, sourceKey: drill.sourceKey },
+    canManage: canManage && caps.has('sessions.create'),
+    source,
   })
+  // Restricted is narrower than "cannot edit": it means this drill may not
+  // carry a hand drawn diagram at all, which is the England Football case and
+  // not the "not yours" one. Only the first strands an existing diagram.
+  const diagramRestricted = deriveProvenance(source) === 'fa'
 
   return (
     <div>
@@ -518,6 +584,22 @@ export function DrillDetail() {
         </div>
       </div>
 
+      {/* The diagram sits with the drill's own description, ABOVE the STEP
+          adaptations and the coaching points, not below Related drills. It was
+          at the very bottom of the page, under the block whose whole job is to
+          send a coach somewhere else, so the drill's own picture and the only
+          way into Drill Maker both read as a page footer. */}
+      <DrillDiagramSection
+        diagram={diagram}
+        canEdit={diagramDecision.canEdit}
+        restrictedReason={diagramRestricted ? diagramDecision.reason : null}
+        canRemove={canManage}
+        removing={removeDiagram.isPending}
+        removeFailed={removeDiagram.isError}
+        onOpen={() => navigate(`/drill/${drill.id}/diagram`)}
+        onRemove={() => removeDiagram.mutate({ id: drill.id, diagram: emptyDiagram() })}
+      />
+
       {drill.easier.length > 0 && (
         <>
           <hr className="divider" />
@@ -571,12 +653,6 @@ export function DrillDetail() {
           </div>
         </>
       )}
-
-      <DrillDiagramSection
-        diagram={diagram}
-        canEdit={diagramDecision.canEdit}
-        onOpen={() => navigate(`/drill/${drill.id}/diagram`)}
-      />
 
       {addOpen && <AddToSessionModal drill={drill} onClose={() => setAddOpen(false)} />}
       {editOpen && <DrillFormModal drill={drill} onClose={() => setEditOpen(false)} />}
