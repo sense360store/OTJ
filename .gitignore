@@ -40,3 +40,4 @@ logs/
 
 # Local Python bytecode for deploy helper scripts
 .github/scripts/content-sharing-deploy/__pycache__/
+.github/scripts/production-migration/__pycache__/
