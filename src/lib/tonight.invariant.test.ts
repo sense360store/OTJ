@@ -104,6 +104,90 @@ describe('unlinked is not a reply state', () => {
   })
 })
 
+// =====================================================================
+// One canonical count builder, because "19 vs 11" was two populations
+// wearing one word.
+//
+// The behavioural half is ./tonightCounts.test.ts, which proves the
+// arithmetic and the wording. What behaviour CANNOT prove is that there is
+// only one implementation: a second one that happens to agree today passes
+// every behavioural test and drifts on the first change. So the rules
+// below are source text, and they are deliberately narrow, aimed at the
+// realistic mistake of a screen counting an array in place.
+//
+// What this cannot catch, stated plainly: a count reaching a label through
+// a variable, an aggregate read in a hook and passed down as a plain
+// number, or a second builder in a new file that nothing here names. Treat
+// a pass as "nobody typed the obvious thing", never as proof.
+// =====================================================================
+describe('Tonight counts people in exactly one place', () => {
+  const SCREEN = 'routes/SessionRegister.tsx'
+
+  it('builds every number through tonightCounts', () => {
+    const src = read(SCREEN)
+    expect(src).toMatch(/import \{[^}]*\btonightCounts\b/s)
+    expect(src).toMatch(/tonightCounts\(/)
+  })
+
+  it('reads each chip through the shared lookup rather than indexing its own record', () => {
+    // `counts[f]` was the old shape: a record the screen built itself. The
+    // filter key and the count key are tied together in one table in
+    // ./tonight so a renamed state cannot silently zero a chip.
+    const src = read(SCREEN)
+    expect(src).toMatch(/chipCount\(counts, f\)/)
+    expect(src).not.toMatch(/\{counts\[f\]\}/)
+  })
+
+  it('never filters the rows itself to produce a number', () => {
+    // The specific defect: `rows.filter(...).length` beside a label. Each
+    // one is a second implementation of a population, and the linked count
+    // was exactly this before it moved into the model.
+    const src = read(SCREEN)
+    expect(src).not.toMatch(/\brows\.filter\([^)]*\)\.length/)
+    expect(src).not.toMatch(/\bshown\.filter\([^)]*\)\.length/)
+  })
+
+  it('does not reduce the groups to recover a total the model already has', () => {
+    const src = read(SCREEN)
+    expect(src).not.toMatch(/groups\.reduce\(/)
+  })
+
+  it('lets no Spond event aggregate reach a per player count', () => {
+    // The four aggregate fields count everybody Spond invited. Tonight
+    // counts covered Hub players. The screen may name the aggregate in a
+    // labelled sentence (spondAudienceNote) and must never read a field
+    // off an event to produce one of its own figures.
+    const src = read(SCREEN)
+    expect(src).not.toMatch(/event\.(accepted|declined|unanswered|waiting)\b/)
+    expect(src).toMatch(/spondAudienceNote\(/)
+  })
+
+  it('hands the builder a link set that may be unknown, so zero is never guessed', () => {
+    // null means the link set could not be read. Collapsing it to an empty
+    // set would print "0 of 40 players linked to Spond" at a club that has
+    // linked everybody and simply had a slow read.
+    const src = read(SCREEN)
+    expect(src).toMatch(/linksUsable \?[^\n]*new Set\(/)
+    expect(src).toMatch(/:\s*null/)
+  })
+})
+
+describe('the event aggregate is never printed bare', () => {
+  // Whether a screen actually RENDERS the population is proved by
+  // rendering it, in ../components/SpondAttendance.test.tsx and
+  // ../components/PlanFromSpond.test.tsx. A source check here matched the
+  // import line and survived deleting the caption from the markup, which
+  // is precisely the false confidence this file warns about, so the only
+  // rule left here is the one behaviour cannot show: that the audience has
+  // a single derivation.
+  it('derives the audience in one place', () => {
+    const offenders = sourceFiles()
+      .filter((f) => f !== 'lib/spond.ts' && !isTest(f))
+      .filter((f) => /accepted\s*\+\s*\w+\.declined/.test(read(f)))
+    expect(offenders).toEqual([])
+  })
+})
+
 describe('the bib rule stays centralised', () => {
   it('tonight resolves a bib through effectiveBib rather than reimplementing it', () => {
     const src = read('lib/tonight.ts')

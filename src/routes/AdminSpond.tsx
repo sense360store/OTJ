@@ -24,7 +24,14 @@ import {
 import { linkedCounts } from '../lib/spondRsvp'
 import type { SpondSyncResult } from '../lib/queries'
 import type { SpondMapping, Team } from '../lib/data'
-import { parseSpondMappingInput, SPOND_COUNT_LABELS, spondEventWhen, spondTeamLabel, syncedAgo } from '../lib/spond'
+import {
+  parseSpondMappingInput,
+  spondAudience,
+  SPOND_COUNT_LABELS,
+  spondEventWhen,
+  spondTeamLabel,
+  syncedAgo,
+} from '../lib/spond'
 import {
   ALL_EVENTS_LABEL,
   DEFAULT_EVENT_KIND,
@@ -376,6 +383,11 @@ function EventsCard() {
               <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>
                 {spondEventWhen(e.startsAt)}
               </span>
+              {/* The event's own counts, over everybody Spond invited. The
+                  admin screen is an inspection of the mirror, so the raw
+                  figure belongs here; naming its population is what stops
+                  it being read as the club's squad. */}
+              <span className="pill">{spondAudience(e)} invited</span>
               {SPOND_COUNT_LABELS.map((label) => (
                 <span key={label} className="pill">
                   <b>{e[label]}</b> {label}

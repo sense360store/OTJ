@@ -21,7 +21,14 @@ import { useMyCapabilities, useMyTeams, useSpondEvents, useTeamMap } from '../li
 import { memberTeamIds } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
 import { SESSION_CREATE_ERROR, stableCreateId } from '../lib/sessionSubmit'
-import { sessionFromSpondEvent, SPOND_COUNT_LABELS, spondEventWhen, spondPlanSuggestions, spondTeamLabel } from '../lib/spond'
+import {
+  sessionFromSpondEvent,
+  spondAudience,
+  SPOND_COUNT_LABELS,
+  spondEventWhen,
+  spondPlanSuggestions,
+  spondTeamLabel,
+} from '../lib/spond'
 import { ALL_EVENTS_LABEL, DEFAULT_EVENT_KIND, type EventKind, isSpondMatch, TRAINING_LABEL } from '../lib/eventKind'
 import {
   DEFAULT_LIFECYCLE_SCOPE,
@@ -147,6 +154,10 @@ export function PlanFromSpondView({
                   {spondEventWhen(e.startsAt)}
                 </span>
                 <span className="pill">{spondTeamLabel(e.teamName)}</span>
+                {/* The event's own counts, over everybody Spond invited,
+                    which is a larger set than the squad the planned session
+                    will cover. Named so the two are never read as one. */}
+                <span className="pill">{spondAudience(e)} invited</span>
                 {SPOND_COUNT_LABELS.map((label) => (
                   <span key={label} className="pill">
                     <b>{e[label]}</b> {label}

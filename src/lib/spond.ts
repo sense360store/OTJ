@@ -10,6 +10,55 @@ import type { Session, SpondEvent, SpondMapping } from './data'
 // holds. They key straight into SpondEvent.
 export const SPOND_COUNT_LABELS = ['accepted', 'declined', 'unanswered', 'waiting'] as const
 
+// ---- The event aggregate, and who it counts --------------------------
+//
+// THE POPULATION THESE FOUR NUMBERS DESCRIBE, which is the thing every
+// screen showing them has to say out loud.
+//
+// spond_events holds four integers per event, derived from the response
+// arrays Spond returns. They count EVERY MEMBER SPOND INVITED: children
+// the Hub has never bound to a roster child, coaches, members of a
+// subgroup nobody mapped, and anyone else on the event. It is not the
+// club's roster and it is not a squad.
+//
+// Tonight's chips count something else entirely: covered Hub players.
+// Both were once rendered as a bare number beside the same word, so one
+// event honestly read "19 accepted" on the planner and "Going 11" on
+// Tonight, and a coach reasonably asked which was wrong. Neither was:
+// on that night the event's audience was 46 people and 27 of the club's
+// 40 covered children were linked to one of them.
+//
+// So nothing here is compared with a Tonight count, and nothing here is
+// rendered without naming its population.
+
+// Everybody the Spond event reached, which is what the four counts add up
+// to. Named rather than summed at each call site so no screen invents its
+// own idea of the denominator.
+export function spondAudience(event: {
+  accepted: number
+  declined: number
+  unanswered: number
+  waiting: number
+}): number {
+  return event.accepted + event.declined + event.unanswered + event.waiting
+}
+
+// The caption above a row of the four counts. Its whole job is to stop the
+// numbers under it being read as a statement about the club's squad.
+export const SPOND_AUDIENCE_CAPTION = 'Everyone invited to the Spond event'
+
+// One line naming the population and the figure a Tonight chip is most
+// often compared with. Rendered where the aggregate sits beside Hub
+// counts, so the two never look like the same measurement.
+export function spondAudienceNote(event: {
+  accepted: number
+  declined: number
+  unanswered: number
+  waiting: number
+}): string {
+  return `Spond event: ${spondAudience(event)} invited, ${event.accepted} going`
+}
+
 // What an admin pastes into the add mapping form resolves to: the Spond
 // group, and optionally one subgroup within it.
 export interface SpondGroupRef {
@@ -129,6 +178,22 @@ export function spondEventWhen(startsAt: string): string {
   const date = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
   const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   return `${date} · ${time}`
+}
+
+// The muted line under a picker row's title: when it is, whose it is, and
+// how many of the people Spond invited are going.
+//
+// PURE, AND HERE, because the picker lives inside a modal and this project
+// has no DOM: a modal never opens under test, so a rule left in that JSX is
+// a rule nothing checks. (pickerEvents is in this file for the same reason.
+// A test asserting the row's wording through a static render of the card
+// passed while the row said the opposite, which is how this arrived.)
+//
+// It reads "21 of 50 invited going" rather than "21 accepted" because that
+// bare figure is the one a coach carries to Tonight and compares with a
+// Going chip counting covered Hub players.
+export function spondPickerSummary(event: SpondEvent): string {
+  return `${spondEventWhen(event.startsAt)} · ${spondTeamLabel(event.teamName)} · ${event.accepted} of ${spondAudience(event)} invited going`
 }
 
 // The event's local wall clock split into the session's yyyy-mm-dd date and

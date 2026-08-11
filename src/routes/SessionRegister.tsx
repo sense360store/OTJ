@@ -43,8 +43,11 @@ import { RSVP_LABELS, rsvpStaleNote } from '../lib/spondRsvp'
 import { activeRoster, buildRegister, quickAddPool, type RegisterEntry } from '../lib/register'
 import {
   buildTonightRows,
+  chipCount,
   clearSelection,
-  countByResponse,
+  tonightCounts,
+  tonightLinkNote,
+  type TonightCounts,
   DEFAULT_RESPONSE_FILTER,
   draftDelta,
   draftAfterSave,
@@ -72,6 +75,7 @@ import {
 } from '../lib/tonight'
 import { BIB_COLOURS, BIB_NONE, bibLabel, bibSwatch, effectiveBib } from '../lib/bibs'
 import { coveredTeamIds, coverageOf, coversWholeClub, soleCoveredTeamId } from '../lib/sessionTeams'
+import { spondAudienceNote } from '../lib/spond'
 import { SESSION_ID_PARAM } from '../lib/routes'
 import type { Player, Session, Team } from '../lib/data'
 import { LinkSpondEventModal } from '../components/SpondAttendance'
@@ -205,6 +209,7 @@ export function QuickAddView({
 
 export function TonightScreenView({
   rows,
+  counts,
   draft,
   filter,
   canEdit,
@@ -213,7 +218,8 @@ export function TonightScreenView({
   hasResponses,
   eventNote,
   staleNote,
-  linkedNote,
+  linkNote,
+  audienceNote,
   refreshing,
   refreshFailed,
   onFilter,
@@ -230,6 +236,10 @@ export function TonightScreenView({
   unset,
 }: {
   rows: TonightRow[]
+  // Every number on this screen, built once in ../lib/tonight. The screen
+  // never counts an array itself: a chip whose figure disagreed with the
+  // list under it is exactly the defect that made "19 vs 11" unanswerable.
+  counts: TonightCounts
   draft: TonightDraft
   filter: ResponseFilter
   canEdit: boolean
@@ -244,9 +254,16 @@ export function TonightScreenView({
   // screen replaces. Empty when nothing is linked.
   eventNote: string
   staleNote: string | null
-  // "37 of 40 players linked to Spond", or empty when there is nothing
-  // useful to say about linking.
-  linkedNote: string
+  // "27 of 40 players linked to Spond", which is the sentence naming the
+  // population every chip above counts. Empty when the link set is
+  // unknown, because "0 of 40" would be a confident falsehood.
+  linkNote: string
+  // "Spond event: 50 invited, 21 going": the event's OWN aggregate, over
+  // everybody Spond invited. It is here so the coach who saw "21 accepted"
+  // in the picker can see why the Going chip says 11, and it is a labelled
+  // sentence rather than a chip precisely so it can never be mistaken for
+  // one of the per player counts.
+  audienceNote: string
   refreshing: boolean
   refreshFailed: boolean
   onFilter: (f: ResponseFilter) => void
@@ -265,14 +282,16 @@ export function TonightScreenView({
   onUnlinkEvent?: () => void
   unset: boolean
 }) {
-  const counts = countByResponse(rows)
   // The filter the screen can actually use. A club with no Spond has no
   // accepted child, so the Going default would hide the whole squad.
   const effective = usableFilter(rows, filter)
   const shown = visibleRows(rows, effective)
   const groups = tonightGroups(rows, draft)
-  const selectedTotal = groups.reduce((a, g) => a + g.count, 0)
-  const selectedHere = shown.filter((r) => draft.included[r.playerId]).length
+  const selectedTotal = counts.selected
+  // Selected among the rows CURRENTLY VISIBLE, which is a different
+  // population from counts.selected and drives Clear rather than Save.
+  // Built by the same function so it cannot drift from the total.
+  const selectedHere = tonightCounts(shown, draft, null).selected
 
   return (
     <div className="reg">
@@ -283,7 +302,7 @@ export function TonightScreenView({
         <div className="tn-filters">
           {RESPONSE_FILTERS.map((f) => (
             <Chip key={f} on={filter === f} onClick={() => onFilter(f)}>
-              {RESPONSE_FILTER_LABELS[f]} {counts[f]}
+              {RESPONSE_FILTER_LABELS[f]} {chipCount(counts, f)}
             </Chip>
           ))}
         </div>
@@ -309,7 +328,7 @@ export function TonightScreenView({
 
       {/* Everything Spond has to say about tonight, in one line each,
           where the coach already is. No trip to the admin screen. */}
-      {(eventNote || linkedNote || hasSpondEvent || onLinkEvent) && (
+      {(eventNote || linkNote || audienceNote || hasSpondEvent || onLinkEvent) && (
         <div className="tn-spond">
           {eventNote && <span className="tn-event">{eventNote}</span>}
           {hasSpondEvent && onRefresh && (
@@ -318,9 +337,13 @@ export function TonightScreenView({
               {refreshing ? 'Refreshing…' : 'Refresh Spond'}
             </button>
           )}
-          {linkedNote && (
+          {/* The two populations, each named. The chips above count Hub
+              players on this session; the event counts everybody Spond
+              invited. Printing either as a bare number beside the other is
+              what made one honest pair of figures look like a bug. */}
+          {linkNote && (
             <span className="tn-linked">
-              {linkedNote}
+              {linkNote}
               {onLinkPlayers && (
                 <button className="btn btn-quiet btn-sm" onClick={onLinkPlayers}>
                   Link players
@@ -328,6 +351,7 @@ export function TonightScreenView({
               )}
             </span>
           )}
+          {audienceNote && <span className="tn-audience">{audienceNote}</span>}
           {onLinkEvent && (
             <button className="btn btn-quiet btn-sm" onClick={onLinkEvent}>
               <Icon.link />
@@ -480,26 +504,34 @@ function TonightScreen({ session }: { session: Session }) {
   const dirty = draftIsDirty(live, entries)
   const status = saveState(dirty, save.isPending, save.isError)
 
-  // Linking coverage, over the children THIS session covers. A club wide
-  // figure would answer a question the coach is not asking.
-  const linkedIds = new Set((links.data?.links ?? []).map((l) => l.playerId))
-  const linkedHere = rows.filter((r) => linkedIds.has(r.playerId)).length
   // Only a claim the read can actually back up. A club with no Spond, a
   // read still in flight, a failed read and a database where linking is
-  // not available yet all say nothing rather than "0 of 18 linked", which
+  // not available yet all pass null, which the model reports as UNKNOWN
+  // and the note renders as silence, rather than "0 of 18 linked", which
   // would be a confident falsehood of exactly the kind this screen
   // refuses to print elsewhere.
   const linksUsable =
     !!session.spondEventId && links.data?.available !== false && !links.isLoading && !links.isError
-  const linkedNote =
-    linksUsable && rows.length > 0 && linkedHere < rows.length
-      ? `${linkedHere} of ${rows.length} players linked to Spond`
-      : ''
+  // The link set is club wide; ../lib/tonight intersects it with the rows,
+  // so a child on a team this session does not cover cannot be counted.
+  const linkedIds = linksUsable ? new Set((links.data?.links ?? []).map((l) => l.playerId)) : null
+  // EVERY number the screen shows, built once.
+  const counts = tonightCounts(rows, live, linkedIds)
+  // Whether the reply read has actually answered. A query in flight and a
+  // failed one both leave every row without a response, which counts the
+  // same as an event nobody replied to, so the note must not claim a reply
+  // figure until this is true.
+  const responsesKnown = !!session.spondEventId && !rsvp.isLoading && !rsvp.isError
+  const linkNote = tonightLinkNote(counts, responsesKnown)
 
   const event = spondEvents.find((e) => e.id === session.spondEventId)
   // A cancelled event was only ever surfaced by the card this screen
   // replaces, so it says so here or it says so nowhere.
   const eventNote = event ? (event.cancelled ? `${event.title} · Cancelled` : event.title) : ''
+  // The event's own aggregate, labelled as such. It is the number a coach
+  // meets in the picker and on the planner, and without it named here the
+  // Going chip looks like it contradicts one of them.
+  const audienceNote = event ? spondAudienceNote(event) : ''
   const staleNote = rsvpStaleNote(rsvp.data ?? {})
 
   return (
@@ -521,6 +553,7 @@ function TonightScreen({ session }: { session: Session }) {
 
       <TonightScreenView
         rows={rows}
+        counts={counts}
         draft={live}
         filter={effective}
         canEdit={canEdit}
@@ -529,7 +562,8 @@ function TonightScreen({ session }: { session: Session }) {
         hasResponses={hasResponseContext(rows)}
         eventNote={eventNote}
         staleNote={staleNote}
-        linkedNote={linkedNote}
+        linkNote={linkNote}
+        audienceNote={audienceNote}
         refreshing={sync.isPending}
         refreshFailed={sync.isError || sync.data?.ok === false}
         unset={coverageOf(session).kind === 'unset'}

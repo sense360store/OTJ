@@ -110,11 +110,30 @@ export function buildTonightRows(
   return out
 }
 
+// THE FOUR REPLY STATES ARE THE COVERED SQUAD. Everyone is the widening
+// that holds the rest.
+//
+// Two rows are excluded from a reply state, for two different reasons:
+//
+//   NO LINK      response is null. They are not "No reply": they have no
+//                reply to give.
+//   A GUEST      a child the coach quick added, who is not part of the
+//                squad this session covers. Their reply is a fact about
+//                their own team's event, not about this squad, which is
+//                exactly what hasResponseContext below has always said. It
+//                said it in one direction only: a visitor's reply could
+//                not OPEN the filters, but it could still inflate them and
+//                appear inside them. So the Going chip counted a
+//                population the coverage figures beside it did not, and
+//                going + noReply + notGoing + waiting stopped equalling
+//                withResponse the moment one visitor had replied.
+//
+// Excluding them here rather than in tonightCounts is what keeps a chip's
+// number equal to the rows that chip shows: the count and the list go
+// through this one predicate, so they cannot disagree.
 export function matchesResponse(row: TonightRow, filter: ResponseFilter): boolean {
   if (filter === 'all') return true
-  // A child with no Spond link has response null and matches no reply
-  // state. They are not "No reply": they have no reply to give.
-  return row.response !== null && row.response === FILTER_STATUS[filter]
+  return !row.manual && row.response !== null && row.response === FILTER_STATUS[filter]
 }
 
 // Whether this session has any Spond reply to filter by at all.
@@ -155,6 +174,10 @@ export type ResponseCounts = Record<ResponseFilter, number>
 // its number has to be the number of rows that appear. A whole parent
 // group's fifty replies on the event row is a different figure and
 // belongs beside the event, not on a filter.
+//
+// The four reply states count the COVERED SQUAD and `all` counts every row
+// on screen, guests included. Both follow from matchesResponse above, so
+// there is nothing to keep in step here.
 export function countByResponse(rows: TonightRow[]): ResponseCounts {
   const counts: ResponseCounts = { going: 0, unanswered: 0, declined: 0, waiting: 0, all: rows.length }
   for (const r of rows) {
@@ -163,6 +186,182 @@ export function countByResponse(rows: TonightRow[]): ResponseCounts {
     }
   }
   return counts
+}
+
+// ---- The five populations, counted once -----------------------------
+//
+// WHY THIS EXISTS. Five different things on this screen are a number of
+// people, and a coach reported two of them as a contradiction: "19 vs
+// 11". Neither was wrong. 19 was the Spond EVENT AGGREGATE, every member
+// Spond invited who pressed Going, over an audience of 46 to 50. 11 was
+// this screen's Going chip, covered Hub players bound to a Spond member
+// whose member accepted. On the night it was reported the club had 40
+// covered children, 27 of them linked, so the two numbers could not have
+// matched and were never meant to.
+//
+// The five, and none of them is any of the others:
+//
+//   COVERED       Hub players this session lists. What Everyone shows.
+//   LINKED        of those, the ones bound to a Spond member.
+//   WITH REPLY    of those, the ones carrying a stored reply for THIS
+//                 event. Smaller than linked whenever a link was made
+//                 after the last sync, or the member was not invited.
+//   RESPONSES     those replies split four ways.
+//   SELECTED      who the coach put in tonight's groups. Independent of
+//                 every number above, in both directions.
+//
+// The event aggregate is deliberately NOT here and cannot be: this takes
+// rows and links, and there is no parameter an aggregate could arrive
+// through. It is named and captioned in ./spond instead.
+//
+// One builder, so the screen never counts an array itself. A chip whose
+// number disagreed with the list under it is the defect this prevents.
+
+// The four reply states in the product's own words, plus the widening.
+export interface TonightResponseCounts {
+  going: number
+  noReply: number
+  notGoing: number
+  waiting: number
+  // Every row on screen, guests included: what the Everyone chip shows.
+  everyone: number
+}
+
+export interface TonightCounts {
+  // The squad this session covers. A quick added guest is on the list but
+  // is NOT part of it: link coverage is a claim about the covered squad,
+  // and a visitor from another team must not make it look better or worse.
+  covered: number
+  guests: number
+  // Null means UNKNOWN, never none. A read still in flight, a read that
+  // failed, and a database where linking is not available yet all arrive
+  // here, and "0 of 40 linked" would be a confident falsehood.
+  linked: number | null
+  unlinked: number | null
+  // Covered players carrying a stored reply for this event, and the linked
+  // ones who are not. Without the second figure those players render
+  // exactly like unlinked children: no pill, no chip, and the screen
+  // claiming more linked than it can show replies for.
+  //
+  // going + noReply + notGoing + waiting === withResponse, always. The two
+  // sides describe one population, the covered squad, which is why a guest
+  // is absent from both.
+  withResponse: number
+  awaiting: number | null
+  responses: TonightResponseCounts
+  selected: number
+}
+
+// Every count on the screen, from the rows it is already showing, the
+// draft it is already holding, and the club's link set.
+//
+// `linkedPlayerIds` is club wide by construction (one binding per child,
+// read without a session filter), and is intersected with the rows here.
+// Counting it whole would answer a question the coach is not asking and
+// would exceed the covered total on any single team session.
+export function tonightCounts(
+  rows: TonightRow[],
+  draft: TonightDraft,
+  linkedPlayerIds: ReadonlySet<string> | null,
+): TonightCounts {
+  // By player, so a row appearing twice cannot count twice.
+  const byPlayer = new Map<string, TonightRow>()
+  for (const r of rows) if (!byPlayer.has(r.playerId)) byPlayer.set(r.playerId, r)
+  const unique = [...byPlayer.values()]
+
+  // The reply split comes from the SAME function the chips filter with, so
+  // a chip's number and the list under it cannot disagree by construction
+  // rather than by a test remembering to check. That predicate also decides
+  // the population: the four states are the covered squad, `all` is every
+  // row, and that is what makes the identity below hold.
+  const chips = countByResponse(unique)
+  const responses: TonightResponseCounts = {
+    going: chips.going,
+    noReply: chips.unanswered,
+    notGoing: chips.declined,
+    waiting: chips.waiting,
+    everyone: chips.all,
+  }
+
+  let covered = 0
+  let guests = 0
+  let linked = 0
+  let withResponse = 0
+  let selected = 0
+
+  for (const r of unique) {
+    if (draft.included[r.playerId] === true) selected++
+    if (r.manual) {
+      guests++
+      continue
+    }
+    covered++
+    if (r.response !== null) withResponse++
+    // Carrying a reply is itself proof of a link: the response row's
+    // foreign key makes an unlinked member's reply unrepresentable. So a
+    // row with a reply counts as linked even when the two reads came from
+    // different moments, which also keeps `awaiting` from going negative.
+    if (linkedPlayerIds?.has(r.playerId) === true || r.response !== null) linked++
+  }
+
+  return {
+    covered,
+    guests,
+    linked: linkedPlayerIds === null ? null : linked,
+    unlinked: linkedPlayerIds === null ? null : covered - linked,
+    withResponse,
+    awaiting: linkedPlayerIds === null ? null : linked - withResponse,
+    responses,
+    selected,
+  }
+}
+
+// The one line that says which population the chips above it describe.
+//
+// Printed whenever the link set is known and there is a squad to describe,
+// INCLUDING a fully linked one: the screen used to print it only when
+// linked was short of covered, so the clubs whose numbers matched lost the
+// only sentence naming the population, and the chips went back to being
+// bare figures a coach had to guess at.
+//
+// Empty means say nothing, which is what an unknown link set and an empty
+// squad both deserve.
+//
+// `responsesKnown` is the SECOND thing that can be unknown, and it is
+// passed rather than inferred because it cannot be inferred: a reply query
+// still in flight, and one that failed, hand this function rows carrying
+// no response, which is arithmetically identical to an event nobody
+// replied to. Reading that as "0 with a reply" is the confident falsehood
+// this screen refuses everywhere else, so the reply clause appears only
+// once the caller says the answer is actually in.
+export function tonightLinkNote(counts: TonightCounts, responsesKnown: boolean): string {
+  if (counts.linked === null || counts.covered === 0) return ''
+  const note = `${counts.linked} of ${counts.covered} players linked to Spond`
+  // Only when the two differ. A linked child with no stored reply for this
+  // event is invisible in every chip, so the screen owes the coach the
+  // number rather than letting them read the gap as a mistake.
+  if (responsesKnown && counts.awaiting !== null && counts.awaiting > 0) {
+    return `${note} · ${counts.withResponse} with a reply for this event`
+  }
+  return note
+}
+
+// The number on one chip, read out of the canonical model.
+//
+// The chips are labelled in the parent's words and the model is named in
+// them too, so this is the one place the filter key and the count key are
+// tied together. A screen reaching past this to count an array itself is
+// how a chip and its list drift apart.
+const CHIP_COUNT: Record<ResponseFilter, keyof TonightResponseCounts> = {
+  going: 'going',
+  unanswered: 'noReply',
+  declined: 'notGoing',
+  waiting: 'waiting',
+  all: 'everyone',
+}
+
+export function chipCount(counts: TonightCounts, filter: ResponseFilter): number {
+  return counts.responses[CHIP_COUNT[filter]]
 }
 
 // ---- The draft ------------------------------------------------------
@@ -503,14 +702,17 @@ export function saveState(dirty: boolean, saving: boolean, failed: boolean): Sav
 // A truthful one line summary of tonight: how many are expected from
 // Spond, how many the coach has selected, and how many groups that makes.
 export function tonightSummary(rows: TonightRow[], draft: TonightDraft): string {
-  const counts = countByResponse(rows)
+  // The same builder the screen uses. The card led with a count of its own
+  // before, which is exactly how two surfaces describing one night start
+  // disagreeing. Links are not read here: the card makes no claim about
+  // them, and unknown is the honest input for a figure it never prints.
+  const counts = tonightCounts(rows, draft, null)
   const groups = tonightGroups(rows, draft)
-  const selected = groups.reduce((a, g) => a + g.count, 0)
   // "0 expected" reads as "nobody is coming". With no Spond nothing is
   // known about who is coming, which is a different sentence, so the card
   // counts the squad it is organising instead of claiming a zero.
-  const lead = hasResponseContext(rows) ? `${counts.going} expected` : `${rows.length} in the squad`
-  const parts = [lead, `${selected} selected`]
+  const lead = hasResponseContext(rows) ? `${counts.responses.going} expected` : `${counts.responses.everyone} in the squad`
+  const parts = [lead, `${counts.selected} selected`]
   if (groups.length > 0) parts.push(`${groups.length} group${groups.length === 1 ? '' : 's'}`)
   return parts.join(' · ')
 }

@@ -358,6 +358,12 @@
   align-items: center;
   gap: 6px;
 }
+/* The Spond event's own aggregate, over everybody it invited. Quieter than
+   the link coverage beside it because it is context about the event rather
+   than about the squad the coach is organising. */
+.tn-audience {
+  color: var(--slate-2);
+}
 
 .tn-list {
   display: flex;
