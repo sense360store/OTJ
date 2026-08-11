@@ -4,10 +4,20 @@
 // ownership (own, or admin); other coaches' sessions render read-only with
 // the owner's name. The sessions RLS enforces the same rules on write.
 import { useState } from 'react'
+import { ALL_EVENTS_LABEL, TRAINING_LABEL } from '../lib/eventKind'
+import { applyEventFilter, DEFAULT_EVENT_FILTER, type EventFilterState } from '../lib/eventFilter'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useMemberMap, useMyCapabilities, useMyTeams, useTeamMap, useTeams, useVenueMap } from '../lib/queries'
+import {
+  useMemberMap,
+  useMyCapabilities,
+  useMyTeams,
+  useSpondEventLookup,
+  useTeamMap,
+  useTeams,
+  useVenueMap,
+} from '../lib/queries'
 import { memberTeamIds, sessionMinutes } from '../lib/data'
 import type { Session } from '../lib/data'
 import { venueNameFor } from '../lib/venues'
@@ -177,7 +187,11 @@ export function Sessions() {
   // The parent's team scope: their child's team(s), or every team via the all
   // teams flag. The read rides the same member_teams policy ParentHome uses.
   const { data: myTeams } = useMyTeams()
-  const [view, setView] = useState<'mine' | 'all'>('mine')
+  // A session planned from a Spond event carries only the event id, so the
+  // classifier needs this to see that the event was a MATCH. Read only for
+  // members who filter by kind; parents never do.
+  const spondEvents = useSpondEventLookup(canPlan)
+  const [filter, setFilter] = useState<EventFilterState>(DEFAULT_EVENT_FILTER)
   const [teamId, setTeamId] = useState('')
   // Parents default to their team's schedule; a club wide toggle covers
   // helping across teams.
@@ -202,21 +216,25 @@ export function Sessions() {
   const teamChipLabel = scope.teamIds.length > 1 ? 'My teams' : 'My team'
   const teamScoped = (s: Session) => sessionVisibleToTeams(s, effectiveIds)
 
-  // Coaches filter by ownership and an optional team; the club value now
-  // selects sessions covering every team, which is what a club night is,
-  // rather than sessions saved with no team at all. Parents see their
-  // team's schedule by default, the whole club when they toggle or hold
-  // no team.
+  // Training first. The primary split is what KIND of night this is, not who
+  // owns the row: a coach opening Sessions is asking what training is
+  // happening, so Training is the default and All events is the deliberate
+  // widening. Team narrows within that, and Mine is a secondary narrowing that
+  // is off by default. Ownership still decides who may edit or delete, which
+  // is `canManage` below and a different question entirely.
+  //
+  // The composition lives in ../lib/eventFilter so Home and the Spond surfaces
+  // give the same answer; only the team predicate is local, because it depends
+  // on session coverage and the parent scope.
   const allTeamIds = Object.keys(teamById)
   const list = canPlan
-    ? sessions.filter(
-        (s) =>
-          (view === 'mine' ? s.coachId === user?.id : true) &&
-          (!teamId ||
-            (teamId === 'club'
-              ? coversWholeClub(s, allTeamIds)
-              : sessionCoversAnyTeam(s, [teamId]))),
-      )
+    ? applyEventFilter(sessions, filter, {
+        userId: user?.id,
+        spondEvents,
+        teamMatch: (s) =>
+          !teamId ||
+          (teamId === 'club' ? coversWholeClub(s, allTeamIds) : sessionCoversAnyTeam(s, [teamId])),
+      })
     : hasTeam && parentScope === 'team'
       ? sessions.filter(teamScoped)
       : sessions
@@ -228,7 +246,7 @@ export function Sessions() {
           <h2>Sessions</h2>
           <div className="sub">
             {canPlan
-              ? 'Training nights across the club. You see your own by default.'
+              ? 'Training across the club. All events widens to fixtures, galas and the rest.'
               : hasTeam
                 ? "Your team's training nights."
                 : 'Training nights across the club.'}
@@ -248,11 +266,11 @@ export function Sessions() {
         <div className="filter-row" style={{ marginBottom: 18 }}>
           {canPlan ? (
             <>
-              <Chip on={view === 'mine'} onClick={() => setView('mine')}>
-                My sessions
+              <Chip on={filter.kind === 'training'} onClick={() => setFilter((f) => ({ ...f, kind: 'training' }))}>
+                {TRAINING_LABEL}
               </Chip>
-              <Chip on={view === 'all'} onClick={() => setView('all')}>
-                All sessions
+              <Chip on={filter.kind === 'all'} onClick={() => setFilter((f) => ({ ...f, kind: 'all' }))}>
+                {ALL_EVENTS_LABEL}
               </Chip>
               <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
                 <option value="">All teams</option>
@@ -263,6 +281,10 @@ export function Sessions() {
                   </option>
                 ))}
               </select>
+              {/* Ownership, deliberately last and off by default. */}
+              <Chip on={filter.mine} onClick={() => setFilter((f) => ({ ...f, mine: !f.mine }))}>
+                Mine
+              </Chip>
             </>
           ) : (
             <>
@@ -283,10 +305,14 @@ export function Sessions() {
 
       {list.length === 0 ? (
         <Empty icon={Icon.calendar} title="No sessions here yet">
+          {/* An empty club and a filter that matched nothing look the same
+              on screen and need opposite advice. Pointing a brand new club
+              at All events would send them looking for sessions nobody has
+              made yet. */}
           {canPlan
-            ? view === 'mine' && !teamId
+            ? sessions.length === 0
               ? 'Plan your first session and it will appear here.'
-              : 'Nothing matches this filter. Try All sessions or another team.'
+              : `Nothing matches this filter. Try ${ALL_EVENTS_LABEL}, another team, or turn Mine off.`
             : hasTeam && parentScope === 'team'
               ? 'Nothing scheduled for your team yet. Tap All club to see the whole club.'
               : 'Nothing on the club calendar yet.'}

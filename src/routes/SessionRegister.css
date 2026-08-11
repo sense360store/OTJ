@@ -152,6 +152,24 @@
   border-color: var(--m-pdf);
 }
 
+/* Going or Everyone, and the way to pull the replies again. Sits under the
+   sticky count so the toggle scrolls away and the count does not, and wraps
+   at 360px so Refresh drops to its own line rather than squeezing the
+   chips below a thumb's width. */
+.reg-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -10px 0 -4px;
+}
+.reg-scope .chip {
+  min-height: 40px;
+}
+.reg-scope .btn {
+  min-height: 40px;
+}
+
 .reg-stale {
   font-size: 12.5px;
   color: var(--slate);

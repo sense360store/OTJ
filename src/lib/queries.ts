@@ -65,6 +65,7 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
+import { spondEventLookup, type SpondEventLookup } from './eventKind'
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
@@ -2201,8 +2202,9 @@ export function useSpondMappings() {
 // The synced events, the admin's view of what the mirror holds and the pool
 // the session link picker offers. Ordered by start so the table reads as a
 // calendar.
-export function useSpondEvents() {
+export function useSpondEvents(enabled = true) {
   return useQuery({
+    enabled,
     queryKey: ['spond_events'],
     queryFn: async (): Promise<SpondEvent[]> => {
       const { data, error } = await supabase
@@ -2214,6 +2216,17 @@ export function useSpondEvents() {
       return (data as unknown as SpondEventDbRow[]).map(toSpondEvent)
     },
   })
+}
+
+// The synced events indexed by id, for the one job that needs a lookup
+// rather than a list: classifying a SESSION that was planned from a Spond
+// event. A session row cannot carry spond_type, so the screens that filter
+// sessions resolve the link through this. Same query, same cache entry as
+// useSpondEvents, so it costs no extra read on a screen that already has
+// one; `enabled` is false for members who never filter by event kind.
+export function useSpondEventLookup(enabled = true): SpondEventLookup {
+  const { data } = useSpondEvents(enabled)
+  return useMemo(() => spondEventLookup(data ?? []), [data])
 }
 
 export interface SpondMappingInput {

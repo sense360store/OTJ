@@ -20,6 +20,7 @@ import { memberTeamIds } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
 import { SESSION_CREATE_ERROR, stableCreateId } from '../lib/sessionSubmit'
 import { sessionFromSpondEvent, SPOND_COUNT_LABELS, spondEventWhen, spondPlanSuggestions, spondTeamLabel } from '../lib/spond'
+import { ALL_EVENTS_LABEL, DEFAULT_EVENT_KIND, type EventKind, isSpondMatch, TRAINING_LABEL } from '../lib/eventKind'
 import { Icon } from './icons'
 import { CancelledBadge, MatchBadge } from './SpondAttendance'
 import { ActionError, Chip } from './ui'
@@ -30,8 +31,8 @@ import { ActionError, Chip } from './ui'
 export function PlanFromSpondView({
   rows,
   eventsExist,
-  trainingOnly,
-  onTrainingOnly,
+  kind,
+  onKind,
   showAll,
   onShowAll,
   showAllToggle,
@@ -44,8 +45,11 @@ export function PlanFromSpondView({
 }: {
   rows: SpondEvent[]
   eventsExist: boolean
-  trainingOnly: boolean
-  onTrainingOnly: (v: boolean) => void
+  // Training by default. This surface used to open on every synced event
+  // with a Training only toggle a coach had to find; a Training Hub asking
+  // "which night do you want to plan?" should not lead with the gala.
+  kind: EventKind
+  onKind: (v: EventKind) => void
   showAll: boolean
   onShowAll: (v: boolean) => void
   showAllToggle: boolean
@@ -69,9 +73,13 @@ export function PlanFromSpondView({
         Turn a synced Spond event into a session. The counts show who has answered so far.
       </p>
       <div className="row" style={{ gap: 7, marginBottom: 12 }}>
-        <Chip on={trainingOnly} onClick={() => onTrainingOnly(!trainingOnly)}>
-          Training only
+        <Chip on={kind === 'training'} onClick={() => onKind('training')}>
+          {TRAINING_LABEL}
         </Chip>
+        <Chip on={kind === 'all'} onClick={() => onKind('all')}>
+          {ALL_EVENTS_LABEL}
+        </Chip>
+        {/* Team, second: a narrowing within the kind, never the split. */}
         {showAllToggle && (
           <Chip on={showAll} onClick={() => onShowAll(!showAll)}>
             All teams
@@ -88,8 +96,12 @@ export function PlanFromSpondView({
         </p>
       ) : rows.length === 0 ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
+          {/* Name only the widenings actually on screen: the All teams chip
+              is absent for a coach whose scope is already the whole club. */}
           {eventsExist
-            ? 'No unplanned events match. Try All teams, or turn Training only off to see every event.'
+            ? showAllToggle
+              ? `No unplanned events here. Try ${ALL_EVENTS_LABEL}, or All teams.`
+              : `No unplanned events here. Try ${ALL_EVENTS_LABEL}.`
             : 'Nothing synced yet. An admin presses Sync now on the Spond screen first.'}
         </p>
       ) : (
@@ -102,7 +114,7 @@ export function PlanFromSpondView({
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="row" style={{ gap: 8 }}>
                 <b style={{ fontSize: 14 }}>{e.title}</b>
-                {e.spondType === 'MATCH' && <MatchBadge />}
+                {isSpondMatch(e) && <MatchBadge />}
                 {e.cancelled && <CancelledBadge />}
               </div>
               <div className="row wrap" style={{ gap: 6, marginTop: 4 }}>
@@ -149,7 +161,7 @@ export function PlanFromSpond({
   const { data: events = [], isLoading, isError } = useSpondEvents()
   const { data: myTeams } = useMyTeams()
   const teamById = useTeamMap()
-  const [trainingOnly, setTrainingOnly] = useState(false)
+  const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
   const [showAll, setShowAll] = useState(false)
   // One id per Spond event for the life of this surface, so a retry after an
   // ambiguous failure reuses it and the server-safe write recovers into an
@@ -185,17 +197,19 @@ export function PlanFromSpond({
   const plannedEventIds = new Set(
     sessions.filter((s) => s.coachId === user?.id && s.spondEventId).map((s) => s.spondEventId as string),
   )
-  const rows = spondPlanSuggestions({
-    events,
-    plannedEventIds,
-    scopeTeamIds,
-    showAllTeams: showAll,
-    trainingOnly,
-  })
+  const suggest = (forKind: EventKind) =>
+    spondPlanSuggestions({ events, plannedEventIds, scopeTeamIds, showAllTeams: showAll, kind: forKind })
+  const rows = suggest(kind)
 
   // On the Sessions screen the surface only earns space when it has something
   // to suggest; on the planner it shows the empty guidance instead.
-  if (hideWhenEmpty && !isLoading && !isError && rows.length === 0) return null
+  //
+  // Measured against All events, deliberately. Judging it on the Training
+  // view would hide the whole card on a week whose only unplanned events
+  // are fixtures, and the card is where the All events chip that would
+  // reveal them lives, so hiding it would take the widening with it.
+  const anythingToSuggest = kind === 'all' ? rows.length > 0 : suggest('all').length > 0
+  if (hideWhenEmpty && !isLoading && !isError && !anythingToSuggest) return null
 
   const plan = (event: SpondEvent) => {
     const session = {
@@ -209,8 +223,8 @@ export function PlanFromSpond({
     <PlanFromSpondView
       rows={rows}
       eventsExist={events.length > 0}
-      trainingOnly={trainingOnly}
-      onTrainingOnly={setTrainingOnly}
+      kind={kind}
+      onKind={setKind}
       showAll={showAll}
       onShowAll={setShowAll}
       showAllToggle={showAllToggle}

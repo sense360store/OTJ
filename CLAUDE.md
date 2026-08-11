@@ -132,6 +132,7 @@ Work one phase per branch, one pull request per phase. Each phase is independent
 10. **Feedback log.** A club visible log of requests and bug reports that any member files, parents included, with status moved by admins.
 11. **Mobile navigation.** The bottom nav extended to cover the admin and secondary screens.
 12. **Training day.** Venues the club picks from, the set of teams a session covers, a team default bib colour, and the pitch side register: who is here, what they wear, and quick add for whoever turns up. It works with nothing configured beyond a roster.
+13. **Training first.** One classifier behind every event list, Training as the default view with All events as the widening, ownership demoted to a secondary narrowing, and the register organised around who accepted in Spond. See Training first below.
 
 ### Phase 1 detail
 - Scaffold per Bootstrap above.
@@ -159,6 +160,25 @@ Everything else (UI port, query hooks, planner logic, media UI, styling) can run
 ### Edge Function deploys
 
 Deploy an Edge Function through Claude Code or the Supabase CLI from the files on disk, never by pasting file contents inline. A deploy that includes a large shared module (for example `_shared/fa.ts`) can be silently truncated or replaced with a placeholder when the file is pasted inline, leaving a broken function that still reports success. Every function deploy is verified by reading the deployed source back byte for byte and checking its content, never by trusting a version number; that readback is what catches a bad inline deploy.
+
+### Branch preflight
+
+A task branch name handed to a session is not proof the branch is free. Before creating, reusing or pushing one, run these four commands and read them:
+
+```bash
+git fetch origin                                    # 1. see the real remote refs
+git ls-remote --heads origin <branch>               # 2. does it already exist?
+git log --oneline origin/main..origin/<branch>      # 3. what is on it that main lacks?
+git merge-base --is-ancestor origin/<branch> origin/main   # 4. exit 0 means fully merged
+```
+
+Then:
+
+- Nothing there, or step 4 exits 0: the branch is yours, carry on.
+- Step 3 lists commits: that is somebody's unmerged work. Check for an open PR against the branch, and do not force-push. Either rebase those commits onto the new base and keep them, or take a fresh unique branch name for your own work.
+- Rewrite history only when the current task explicitly owns the branch and you have read step 3's output. `--force-with-lease` protects against a race, not against overwriting work you never looked at.
+
+This exists because a session took a handed-down branch name, force-pushed over an unmerged commit it had never read, and only found out afterwards. The commit was recovered; the check is four commands and takes seconds.
 
 ---
 
@@ -221,6 +241,21 @@ Spond is where the club arranges sessions and parents respond. The Hub mirrors a
 - A dedicated Spond organiser account is used, never a personal login. Its credentials live only in the `SPOND_EMAIL` and `SPOND_PASSWORD` function secrets, never in the repo and never in the client. The sync fails closed when they are missing.
 - Sync direction is Spond to app only. Sessions are arranged and answered in Spond; the Hub holds a synced copy of the counts.
 - An event matched by more than one mapping in a run is shared and becomes a club event, stored with no team. `spond_type` stores Spond's own event classification ("EVENT" or "MATCH") as an event fact about the event itself, not member data.
+
+---
+
+## Training first
+
+The product is a training hub, so training is what every list of events leads with.
+
+- Wherever a list can hold training alongside fixtures, galas and the rest, the default view is **Training** and the one widening is **All events**. No screen defaults to My sessions, All sessions, All teams or a list led by fixtures. Team is a narrowing within the kind and never changes it; ownership ("Mine") is a secondary narrowing that starts off. Ownership still decides who may edit or delete, which is a different question entirely.
+- Classification has one implementation, `src/lib/eventKind.ts`. The order is: Spond's own `spond_type` of "MATCH" on the row, then "MATCH" on the Spond event the row is linked to, then a training word in the label ("training", "session", "practice", "warm up" however punctuated), then a non training word, then training. `spond_type` "EVENT" is Spond's catch-all and is never treated as proof of training. The classifier reads either a session's `name` or an event's `title`, so two shapes never mean two classifiers.
+- A session planned from a Spond event keeps only `spond_event_id`, because `sessions` has no `spond_type` column and is not getting one for a filtering rule. So a fixture titled "U8 v Horbury" carries no evidence of being a fixture, and any screen that filters SESSIONS must hand the classifier a `SpondEventLookup` (`useSpondEventLookup`) so the link resolves back to Spond's own answer. A screen filtering synced events never needs one, since those rows carry `spondType` directly. An unresolvable link, a caller with no lookup or an event that has left the mirror, falls through to the title rules, which is the same fail-towards-showing direction as everything else here. `eventKind.invariant.test.ts` fails the build if a session screen stops supplying the lookup.
+- The title heuristic is deliberately lopsided, because its two failure modes are not equally bad: showing a gala under Training costs a coach one glance, hiding a training night costs them the session. So the rules that can hide are narrow (whole words and plurals, with "pre match", "post match" and "match day" taken out first, because those are training) and the rules that can show are broad (a positive training word beats the exclusion list outright). Several exclusion words are overloaded on purpose, which is why they lose that contest.
+- `src/lib/eventFilter.ts` composes kind, team and ownership in that order, and `pickNextEvent` decides what a schedule leads with, preferring training over a sooner fixture; Home's eyebrow says which "next" it means so the claim matches the row. Home, Sessions, Plan from Spond, the Spond event picker and the admin synced events list all go through those two modules. This is a filtering rule and needs no migration; nothing about it reaches the database.
+- `src/lib/eventKind.invariant.test.ts` is a tripwire, not a proof. It reads source text, so it catches the realistic mistakes (a title check, a copied word list, a retyped label, a screen opening on its own literal instead of the shared default) and it names in its own tests the shapes it cannot catch (a word reaching the predicate through a variable, a comparison separated from the label by a call). Treat a pass as "nobody typed the obvious thing", never as "there is only one classifier".
+- The register organises the night the same way: **Going** (the parent accepted in Spond) is the default and **Everyone** is the widening, held in `src/lib/registerScope.ts` so `src/lib/register.ts` stays Spond-blind. Going never means the coach ticked someone in, and any row carrying a register entry is pinned, so nothing the coach has touched can leave the screen under their thumb. A child with no Spond link is not a child who did not reply: they carry no pill and they live under Everyone. The Going view is offered only where **this register** has replies, measured against the composed rows rather than the club wide lookup, so a session whose own children are unlinked keeps the complete register rather than rendering empty under the words "nobody has accepted". A club with no Spond, a failed read and a read still in flight are the same case. The headline count is always the whole register, matching the session day card, and the hidden pill accounts for the difference.
+- Bibs need no per player setup: a register entry's override wins, otherwise the team's default colour, otherwise none, with a stored override of `none` meaning no bib rather than fall back.
 
 ---
 

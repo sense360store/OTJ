@@ -33,8 +33,8 @@ function render(props: Partial<Parameters<typeof PlanFromSpondView>[0]> = {}): s
     <PlanFromSpondView
       rows={[ev({ id: 'e1' })]}
       eventsExist
-      trainingOnly
-      onTrainingOnly={noop}
+      kind="training"
+      onKind={noop}
       showAll={false}
       onShowAll={noop}
       showAllToggle
@@ -58,10 +58,19 @@ describe('PlanFromSpondView', () => {
     expect(html).toContain('>2</b> declined')
   })
 
-  it('offers the training and all teams toggles', () => {
+  it('offers the event kind chips and the all teams toggle', () => {
     const html = render()
-    expect(html).toContain('Training only')
+    expect(html).toContain('Training')
+    expect(html).toContain('All events')
     expect(html).toContain('All teams')
+  })
+
+  it('shows Training as the selected chip, not All events', () => {
+    // The pressed chip is the view the coach lands in, and aria-pressed is
+    // the same signal a screen reader gets.
+    const html = render()
+    expect(html).toContain('aria-pressed="true">Training</button>')
+    expect(html).toContain('aria-pressed="false">All events</button>')
   })
 
   it('hides the all teams toggle when the coach has no specific team subset', () => {
@@ -80,9 +89,19 @@ describe('PlanFromSpondView', () => {
     expect(html).not.toContain('Plan this')
   })
 
-  it('explains an empty surface that has events but no matches', () => {
+  it('points an empty Training view at the widenings rather than at nothing', () => {
     const html = render({ rows: [], eventsExist: true })
-    expect(html).toContain('No unplanned events match')
+    expect(html).toContain('No unplanned events here')
+    expect(html).toContain('All events')
+    expect(html).toContain('All teams')
+  })
+
+  it('names only the widenings it is actually offering', () => {
+    // A coach whose scope is already the whole club gets no All teams
+    // chip, so the empty copy must not send them looking for one.
+    const html = render({ rows: [], eventsExist: true, showAllToggle: false })
+    expect(html).toContain('No unplanned events here')
+    expect(html).not.toContain('All teams')
   })
 
   it('labels the planning row and disables every plan control while a create is in flight', () => {

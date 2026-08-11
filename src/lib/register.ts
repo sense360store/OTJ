@@ -33,6 +33,11 @@ export interface RegisterRow {
   overridden: boolean
   // True when the row exists only because a coach added them on the day.
   manual: boolean
+  // True when a register entry exists for this player at all: ticked in,
+  // ticked and untucked again, quick added, or given a bib. It means the
+  // coach has touched this row deliberately, which is what stops a
+  // narrowed view dropping a row somebody just created.
+  hasEntry: boolean
 }
 
 export interface RegisterGroup {
@@ -124,6 +129,7 @@ function toRow(player: Player, entry: RegisterEntry | undefined, teamDefault: st
     bibSwatch: bibSwatch(colour),
     overridden: override !== null,
     manual: entry?.source === 'manual',
+    hasEntry: entry !== undefined,
   }
 }
 
