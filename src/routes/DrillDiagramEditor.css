@@ -1,0 +1,440 @@
+/* Drill Maker's editor chrome. Deliberately a SEPARATE file from
+   DrillDiagram.css: the read only renderer is used on the drill page and, from
+   C2, inside sessions, and it must stay free of anything to do with editing.
+   Every class here is prefixed .dde-; the shared surface classes (.dd-*) come
+   from DrillDiagram.css, which the renderer imports.
+
+   THIS ROUTE OWNS THE WHOLE SCREEN. It sits outside the app shell, like the
+   live session view, so there is no bottom navigation for a sticky control to
+   hide under. The layout is one fixed column: a top bar, a scrolling canvas
+   that takes the slack, and the tools pinned at the bottom where a thumb is. */
+.dde {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* The top bar carries Back, the drill name, the saved state and Save. Save
+   stays on screen at every size: it is the one control a coach must be able to
+   find without thinking. */
+.dde-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* This route is fixed and full bleed under viewport-fit=cover, so it paints
+     into the display cutout. Every edge is paid for, not just the top: on a
+     notched phone held sideways the inset is on the LEFT or the RIGHT, and Back
+     and Save were the controls under it. */
+  padding: 10px max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left));
+  padding-top: calc(10px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  flex: 0 0 auto;
+}
+.dde-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dde-title-main {
+  font-family: var(--display, inherit);
+  font-weight: 800;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The saved state is a WORD, always. The colour is a second signal on top of
+   it, never the signal itself. */
+.dde-state {
+  font-size: 12px;
+  font-weight: 700;
+}
+.dde-state.clean {
+  color: var(--m-image, #16a34a);
+}
+.dde-state.dirty {
+  color: var(--m-social, #ef8e1b);
+}
+.dde-state.saving {
+  color: var(--slate);
+}
+.dde-state.error {
+  color: var(--m-pdf, #ef5a5a);
+}
+
+.dde-error {
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--gold-soft, #fff4d1);
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+/* The canvas takes whatever is left and centres the pitch inside it. min-height
+   0 is what lets a flex child actually shrink rather than pushing the tools off
+   the bottom of the screen. */
+.dde-canvas-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 10px 12px;
+  overflow: auto;
+}
+/* THE EDITOR CANVAS DOES NOT DECLARE AN ASPECT RATIO, and that is the fix for
+   a real defect rather than an oversight. It used to inherit .dd-surface's
+   `width: 100%` plus `aspect-ratio`, with `max-height: 100%` on top. Those three
+   cannot all hold: with the width definite at 100%, max-height clips the height
+   and the ratio is simply lost. On a phone held sideways the box came out
+   844 by 118, and the pitch, which keeps its own proportions, was drawn 76
+   pixels wide in the middle of it. A postage stamp with a toolbar.
+
+   So the box fills whatever space is going, and the SVG's own
+   preserveAspectRatio (the default, xMidYMid meet) draws the pitch as large as
+   fits and centres it. The pitch is never distorted, the whole of it is always
+   visible, and the background is transparent because the grass is a rect INSIDE
+   the viewBox: it paints the pitch and not the bars beside it.
+
+   The pointer mapping already does the matching letterbox arithmetic
+   (pointerFraction), so a tap lands where the finger is at any box shape. */
+.dde-canvas {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  /* The canvas itself takes the touch, so a drag draws instead of scrolling the
+     page underneath it. The read only renderer deliberately does NOT do this. */
+  touch-action: none;
+}
+/* No outline on the armed canvas: with the box filling the whole area it would
+   ring the empty space beside the pitch rather than the pitch. The armed state
+   is carried by the pressed tool button, its aria-pressed, and the line of
+   instruction under the canvas. */
+.dde-canvas.armed {
+  cursor: copy;
+}
+
+/* Element chrome, inside the SVG. */
+.dde-hit {
+  cursor: grab;
+  outline: none;
+}
+.dde-hit:active {
+  cursor: grabbing;
+}
+/* The selection marker is a dashed ring: a SHAPE change, so it reads on every
+   element colour and for anyone who does not see colour. Paired with
+   aria-pressed on the hit area and with the element named in words in the bar
+   below the canvas. */
+.dde-ring {
+  fill: none;
+  stroke: var(--gold, #f4c020);
+  stroke-width: 4;
+  stroke-dasharray: 10 7;
+}
+.dde-hit:focus-visible + .dde-handle .dde-handle-dot,
+.dde-hit:focus-visible {
+  outline: none;
+}
+.dde-el .dde-hit:focus-visible ~ * {
+  /* nothing: the focus ring is drawn on the element below */
+}
+.dde-hit:focus-visible circle,
+.dde-hit:focus-visible rect,
+.dde-hit:focus-visible line {
+  stroke: var(--royal, #1f43d6);
+  stroke-width: 4;
+  stroke-dasharray: 6 5;
+}
+.dde-handle {
+  cursor: grab;
+}
+.dde-handle-dot {
+  fill: var(--card, #fff);
+  stroke: var(--navy, #122a86);
+  stroke-width: 5;
+}
+.dde-handle:focus-visible .dde-handle-dot {
+  stroke: var(--royal, #1f43d6);
+  stroke-dasharray: 8 6;
+}
+
+/* One quiet line of instruction that doubles as a live region, so what the
+   editor is waiting for is announced and not only shown. It lives INSIDE the
+   bar below, so the bar is the same height whether or not anything is
+   selected. */
+.dde-hint {
+  flex: 1;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--slate);
+}
+
+/* The bar for whatever is selected, ALWAYS PRESENT. It used to appear only on
+   selection, and being `flex: 0 0 auto` it took its height straight out of the
+   canvas: every tap resized and re-centred the pitch under the coach's finger,
+   and the element they had just touched moved and changed size. A fixed minimum
+   height keeps the canvas still. It sits above the tools rather than over the
+   canvas, so nothing floats under the thumb that is drawing. */
+.dde-selbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: 56px;
+  gap: 8px;
+  padding: 8px max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+/* The selected element's name is ANNOUNCED, not shown. On screen it is
+   redundant: the element carries a gold ring and the controls beside it are
+   obviously about something. Shown, it pushed the bar onto a second row on
+   every phone, and the bar takes its height out of the canvas, so selecting
+   anything shrank the pitch by about sixty pixels and moved the element the
+   coach had just touched. Visually hidden keeps the announcement and keeps the
+   bar one row tall, which keeps the canvas still. */
+.dde-sel-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.dde-swatches {
+  display: flex;
+  gap: 5px;
+}
+.dde-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  padding: 0;
+  cursor: pointer;
+}
+/* The chosen colour is marked by a ring and a size change, not by being the
+   only coloured one. */
+.dde-swatch.on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--gold, #f4c020);
+}
+.dde-chips {
+  display: flex;
+  gap: 6px;
+}
+.dde-chip {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dde-chip.on {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.dde-label-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--slate);
+}
+/* 16px, deliberately. iOS Safari zooms the page when a text input under 16px
+   takes focus and does not zoom back out on blur, and this route is a fixed
+   full screen layer, so the zoom leaves parts of it off screen with no way to
+   scroll to them. */
+.dde-label-field .input {
+  width: 108px;
+  font-size: 16px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  padding: 0 10px;
+}
+.dde-delete {
+  margin-left: auto;
+  color: var(--m-pdf, #ef5a5a);
+}
+
+/* The tool palette, pinned at the bottom. Seven tools across, each a 44 pixel
+   tall target with its name under the icon, so nothing here is an icon a coach
+   has to guess at. */
+.dde-tools {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+  padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom))
+    max(8px, env(safe-area-inset-left));
+}
+/* All SEVEN tools fit across the narrowest phone the app supports, with no
+   horizontal scroll. They did not: at a 58 pixel minimum the row needed 430
+   pixels inside a 374 pixel bar, so Label sat off the right edge behind a
+   scroll nobody would think to try, and the label tool was effectively missing
+   on a phone. Seven at 44 plus six 2 pixel gaps is 320, which fits inside 374
+   with room to spare. 44 is also the touch target floor, so this is the
+   smallest they may become. */
+.dde-tool-row {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+}
+.dde-tool {
+  flex: 1 1 0;
+  min-width: 44px;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 2px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--slate-2);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dde-tool svg {
+  width: 21px;
+  height: 21px;
+}
+/* An armed tool is filled AND ringed, so the armed state is not a colour on its
+   own; aria-pressed says it in words too. */
+.dde-tool.armed {
+  background: var(--navy);
+  border-color: var(--gold, #f4c020);
+  color: #fff;
+}
+.dde-tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.dde-surface-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dde-surface-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--slate);
+}
+.dde-surface-row .select {
+  height: 38px;
+}
+.dde-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--slate-2);
+}
+.dde-full {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--m-social, #ef8e1b);
+}
+
+.dde-refused {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+/* On a wide screen the canvas has room, so the tools sit under it rather than
+   stretched across the whole width. */
+@media (min-width: 900px) {
+  .dde-tool-row {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .dde-surface-row {
+    max-width: 720px;
+    margin: 8px auto 0;
+  }
+}
+
+/* A phone held sideways. The chrome does not shrink with the screen, so on a
+   390 pixel tall viewport the top bar, the hint, the selection bar and the
+   tools between them left the pitch 118 pixels tall: a postage stamp with a
+   toolbar. This trims everything that is not the drawing.
+
+   The hint is moved out of the flow rather than removed: it is a live region,
+   so hiding it with display none would stop the armed and selected states being
+   announced. Visually hidden keeps the announcement and gives the space back. */
+@media (max-height: 520px) {
+  .dde-top {
+    padding-top: calc(4px + env(safe-area-inset-top));
+    padding-bottom: 4px;
+  }
+  .dde-canvas-wrap {
+    padding: 4px 8px;
+  }
+  .dde-hint {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .dde-selbar {
+    padding: 4px 10px;
+    min-height: 46px;
+    gap: 6px;
+  }
+  .dde-tools {
+    padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+  }
+  .dde-tool {
+    min-height: 44px;
+    font-size: 9.5px;
+    gap: 1px;
+  }
+  .dde-tool svg {
+    width: 17px;
+    height: 17px;
+  }
+  .dde-surface-row {
+    margin-top: 4px;
+  }
+  .dde-surface-row .select,
+  .dde-surface-row .btn {
+    height: 34px;
+  }
+}

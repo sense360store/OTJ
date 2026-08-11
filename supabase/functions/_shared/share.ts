@@ -1358,6 +1358,15 @@ const FORBIDDEN_ANYWHERE = [
   'spond_member_id', 'spondMemberId', 'player_spond_links', 'playerSpondLinks',
   'spond_event_responses', 'spondEventResponses', 'matched_by', 'matchedBy',
   'rsvp', 'rsvpStatus',
+  // The drill diagram (0046). Drill Maker C1 does not publish a diagram: the
+  // positive allow list in projectDrillFields never copies it, so nothing
+  // reaches a snapshot today. Naming it here is the tripwire, and it matters
+  // more than most because a share is a FROZEN COPY: once a key lands in
+  // content_shares.snapshot the read path serves it until the link is revoked,
+  // and no later fix to the projection can take it back. A diagram also carries
+  // free text a coach typed, so publishing one is a decision to review, not a
+  // side effect of adding a column.
+  'diagram',
 ]
 
 function assertKeysWithin(obj: Record<string, unknown>, allowed: Set<string>, where: string): void {

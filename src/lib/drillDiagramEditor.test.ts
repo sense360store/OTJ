@@ -1,0 +1,695 @@
+import { describe, expect, it } from 'vitest'
+import {
+  initEditor,
+  editorReducer,
+  isDirty,
+  selectedElement,
+  canAddElement,
+  elementAnchor,
+  type DiagramEditorState,
+  type DiagramAction,
+} from './drillDiagramEditor'
+import {
+  MAX_DIAGRAM_ELEMENTS,
+  MAX_PLAYER_LABEL,
+  MAX_TEXT_LENGTH,
+  MIN_ZONE_SIZE,
+  diagramSignature,
+  emptyDiagram,
+  parseDrillDiagram,
+  serializeDrillDiagram,
+  type ArrowElement,
+  type DiagramElement,
+  type DrillDiagram,
+  type GoalElement,
+  type PlayerElement,
+  type TextElement,
+  type ZoneElement,
+} from './drillDiagram'
+
+// The reducer is where every geometry change happens. It is pure, so a drag, a
+// resize and an arrow endpoint edit are all provable without a DOM, which this
+// project does not have under test.
+
+function run(state: DiagramEditorState, ...actions: DiagramAction[]): DiagramEditorState {
+  return actions.reduce(editorReducer, state)
+}
+
+function fresh(): DiagramEditorState {
+  return initEditor(null)
+}
+
+function withOne(type: DiagramElement['type'], at = { x: 0.5, y: 0.5 }): DiagramEditorState {
+  return run(fresh(), { op: 'add', element: type, at })
+}
+
+const only = (s: DiagramEditorState) => s.diagram.elements[0]
+
+describe('starting the editor', () => {
+  it('opens clean on a drill with no diagram', () => {
+    const s = fresh()
+    expect(s.diagram.elements).toEqual([])
+    expect(s.selectedId).toBeNull()
+    expect(isDirty(s)).toBe(false)
+  })
+
+  it('opens clean on a drill that already has one', () => {
+    const stored: DrillDiagram = { ...emptyDiagram(), elements: [{ type: 'cone', id: 'cone-1', x: 0.2, y: 0.2, colour: 'orange' }] }
+    const s = initEditor(stored)
+    expect(s.diagram.elements).toHaveLength(1)
+    expect(isDirty(s)).toBe(false)
+  })
+
+  it('opens clean on a diagram loaded straight from storage, so nothing looks unsaved on arrival', () => {
+    const stored = parseDrillDiagram(
+      serializeDrillDiagram({ ...emptyDiagram(), elements: [{ type: 'ball', id: 'ball-1', x: 1 / 3, y: 2 / 3 }] }),
+    )
+    expect(isDirty(initEditor(stored))).toBe(false)
+  })
+})
+
+describe('adding an element', () => {
+  it('adds each of the seven types, selected and dirty', () => {
+    for (const type of ['player', 'cone', 'ball', 'goal', 'arrow', 'zone', 'text'] as const) {
+      const s = withOne(type)
+      expect(s.diagram.elements).toHaveLength(1)
+      expect(only(s).type).toBe(type)
+      expect(s.selectedId).toBe(only(s).id)
+      expect(isDirty(s)).toBe(true)
+    }
+  })
+
+  it('places the new element where the coach tapped', () => {
+    const s = withOne('cone', { x: 0.25, y: 0.75 })
+    expect(only(s)).toMatchObject({ x: 0.25, y: 0.75 })
+  })
+
+  it('clamps a tap outside the surface onto it', () => {
+    const s = withOne('cone', { x: -0.5, y: 2 })
+    expect(only(s)).toMatchObject({ x: 0, y: 1 })
+  })
+
+  it('gives a new arrow two distinct endpoints, so it has a direction from birth', () => {
+    const a = only(withOne('arrow', { x: 0.5, y: 0.5 })) as ArrowElement
+    expect(a.x1 === a.x2 && a.y1 === a.y2).toBe(false)
+  })
+
+  it('gives a new arrow endpoints that are already on the surface', () => {
+    const a = only(withOne('arrow', { x: 0.02, y: 0.98 })) as ArrowElement
+    for (const n of [a.x1, a.y1, a.x2, a.y2]) {
+      expect(n).toBeGreaterThanOrEqual(0)
+      expect(n).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('gives a new zone a grabbable size that sits on the surface', () => {
+    const z = only(withOne('zone', { x: 0.95, y: 0.95 })) as ZoneElement
+    expect(z.w).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+    expect(z.h).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+    expect(z.x + z.w).toBeLessThanOrEqual(1)
+    expect(z.y + z.h).toBeLessThanOrEqual(1)
+  })
+
+  it('gives a new label placeholder text, so an empty label never persists', () => {
+    const t = only(withOne('text')) as TextElement
+    expect(t.text.length).toBeGreaterThan(0)
+  })
+
+  it('gives every element a distinct id, however many are added', () => {
+    let s = fresh()
+    for (let i = 0; i < 12; i++) s = run(s, { op: 'add', element: 'cone', at: { x: 0.1, y: 0.1 } })
+    expect(new Set(s.diagram.elements.map((e) => e.id)).size).toBe(12)
+  })
+
+  it('never reissues the id of a live element after a delete', () => {
+    // The failure an array index walks into: delete the middle, add, collide.
+    let s = fresh()
+    for (let i = 0; i < 3; i++) s = run(s, { op: 'add', element: 'cone', at: { x: 0.1, y: 0.1 } })
+    const middle = s.diagram.elements[1].id
+    s = run(s, { op: 'delete', id: middle }, { op: 'add', element: 'ball', at: { x: 0.4, y: 0.4 } })
+    expect(new Set(s.diagram.elements.map((e) => e.id)).size).toBe(s.diagram.elements.length)
+  })
+
+  it('adds on top, so draw order follows the order the coach placed things', () => {
+    const s = run(fresh(), { op: 'add', element: 'zone', at: { x: 0.2, y: 0.2 } }, { op: 'add', element: 'player', at: { x: 0.3, y: 0.3 } })
+    expect(s.diagram.elements.map((e) => e.type)).toEqual(['zone', 'player'])
+  })
+
+  it('refuses to add past the element limit and leaves the diagram exactly as it was', () => {
+    let s = fresh()
+    for (let i = 0; i < MAX_DIAGRAM_ELEMENTS; i++) s = run(s, { op: 'add', element: 'cone', at: { x: 0.5, y: 0.5 } })
+    expect(canAddElement(s)).toBe(false)
+    const before = diagramSignature(s.diagram)
+    const after = run(s, { op: 'add', element: 'cone', at: { x: 0.5, y: 0.5 } })
+    expect(after.diagram.elements).toHaveLength(MAX_DIAGRAM_ELEMENTS)
+    expect(diagramSignature(after.diagram)).toBe(before)
+  })
+
+  it('says there is room while the diagram is under the limit', () => {
+    expect(canAddElement(fresh())).toBe(true)
+  })
+})
+
+describe('selection', () => {
+  it('selects an element that exists', () => {
+    const s = run(withOne('cone'), { op: 'select', id: null })
+    const id = only(s).id
+    expect(run(s, { op: 'select', id }).selectedId).toBe(id)
+  })
+
+  it('resolves the selected element, and nothing when there is no selection', () => {
+    const s = withOne('goal')
+    expect(selectedElement(s)?.type).toBe('goal')
+    expect(selectedElement(run(s, { op: 'select', id: null }))).toBeNull()
+  })
+
+  it('clears the selection on a tap in empty space', () => {
+    expect(run(withOne('cone'), { op: 'select', id: null }).selectedId).toBeNull()
+  })
+
+  it('refuses to select an id that is not on the diagram, rather than holding a ghost', () => {
+    expect(run(withOne('cone'), { op: 'select', id: 'cone-999' }).selectedId).toBeNull()
+  })
+
+  it('does not make the diagram dirty', () => {
+    const s = initEditor({ ...emptyDiagram(), elements: [{ type: 'cone', id: 'cone-1', x: 0.2, y: 0.2, colour: 'orange' }] })
+    expect(isDirty(run(s, { op: 'select', id: 'cone-1' }, { op: 'select', id: null }))).toBe(false)
+  })
+
+  it('survives the element being moved', () => {
+    const s = withOne('cone')
+    const id = only(s).id
+    expect(run(s, { op: 'move', id, x: 0.9, y: 0.9 }).selectedId).toBe(id)
+  })
+
+  it('is cleared when the selected element is deleted, so no action lands on a ghost', () => {
+    const s = withOne('cone')
+    expect(run(s, { op: 'delete', id: only(s).id }).selectedId).toBeNull()
+  })
+
+  it('is kept when a different element is deleted', () => {
+    let s = run(fresh(), { op: 'add', element: 'cone', at: { x: 0.1, y: 0.1 } })
+    const first = only(s).id
+    s = run(s, { op: 'add', element: 'ball', at: { x: 0.4, y: 0.4 } }, { op: 'select', id: first })
+    const second = s.diagram.elements[1].id
+    expect(run(s, { op: 'delete', id: second }).selectedId).toBe(first)
+  })
+})
+
+describe('moving an element', () => {
+  it('moves a player to where the finger went', () => {
+    const s = withOne('player')
+    const moved = run(s, { op: 'move', id: only(s).id, x: 0.8, y: 0.2 })
+    expect(only(moved)).toMatchObject({ x: 0.8, y: 0.2 })
+  })
+
+  it('clamps a drag past the edge back onto the surface', () => {
+    const s = withOne('cone')
+    const moved = run(s, { op: 'move', id: only(s).id, x: 5, y: -5 })
+    expect(only(moved)).toMatchObject({ x: 1, y: 0 })
+  })
+
+  it('never produces a coordinate that is not a number', () => {
+    const s = withOne('cone')
+    const moved = run(s, { op: 'move', id: only(s).id, x: Number.NaN, y: Number.POSITIVE_INFINITY })
+    const c = only(moved) as { x: number; y: number }
+    expect(Number.isFinite(c.x)).toBe(true)
+    expect(Number.isFinite(c.y)).toBe(true)
+  })
+
+  it('keeps the element identity, so a drag moves rather than duplicates', () => {
+    const s = withOne('cone')
+    const id = only(s).id
+    const moved = run(s, { op: 'move', id, x: 0.1, y: 0.1 }, { op: 'move', id, x: 0.2, y: 0.2 })
+    expect(moved.diagram.elements).toHaveLength(1)
+    expect(only(moved).id).toBe(id)
+  })
+
+  it('leaves every other element untouched', () => {
+    let s = run(fresh(), { op: 'add', element: 'cone', at: { x: 0.1, y: 0.1 } }, { op: 'add', element: 'ball', at: { x: 0.4, y: 0.4 } })
+    const ballBefore = JSON.stringify(s.diagram.elements[1])
+    s = run(s, { op: 'move', id: s.diagram.elements[0].id, x: 0.9, y: 0.9 })
+    expect(JSON.stringify(s.diagram.elements[1])).toBe(ballBefore)
+  })
+
+  it('ignores a move aimed at an id that is not there, and does not dirty the diagram', () => {
+    const s = initEditor({ ...emptyDiagram(), elements: [{ type: 'cone', id: 'cone-1', x: 0.2, y: 0.2, colour: 'orange' }] })
+    const after = run(s, { op: 'move', id: 'nope', x: 0.9, y: 0.9 })
+    expect(isDirty(after)).toBe(false)
+  })
+
+  it('moves a zone by its centre and keeps it wholly on the surface', () => {
+    const s = withOne('zone', { x: 0.5, y: 0.5 })
+    const z = only(run(s, { op: 'move', id: only(s).id, x: 0.99, y: 0.99 })) as ZoneElement
+    expect(z.x + z.w).toBeLessThanOrEqual(1)
+    expect(z.y + z.h).toBeLessThanOrEqual(1)
+    expect(z.w).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+  })
+
+  it('moves an arrow whole, keeping its length and direction', () => {
+    const s = withOne('arrow', { x: 0.5, y: 0.5 })
+    const before = only(s) as ArrowElement
+    const dx = before.x2 - before.x1
+    const dy = before.y2 - before.y1
+    const after = only(run(s, { op: 'move', id: before.id, x: 0.3, y: 0.4 })) as ArrowElement
+    expect(after.x2 - after.x1).toBeCloseTo(dx, 6)
+    expect(after.y2 - after.y1).toBeCloseTo(dy, 6)
+  })
+
+  it('keeps both arrow endpoints on the surface when it is dragged into a corner', () => {
+    const s = withOne('arrow', { x: 0.5, y: 0.5 })
+    const a = only(run(s, { op: 'move', id: only(s).id, x: 1.4, y: -0.4 })) as ArrowElement
+    for (const n of [a.x1, a.y1, a.x2, a.y2]) {
+      expect(n).toBeGreaterThanOrEqual(0)
+      expect(n).toBeLessThanOrEqual(1)
+    }
+  })
+})
+
+describe('editing an arrow', () => {
+  it('moves the start point alone', () => {
+    const s = withOne('arrow')
+    const before = only(s) as ArrowElement
+    const a = only(run(s, { op: 'moveArrowEnd', id: before.id, end: 'start', x: 0.1, y: 0.1 })) as ArrowElement
+    expect([a.x1, a.y1]).toEqual([0.1, 0.1])
+    expect([a.x2, a.y2]).toEqual([before.x2, before.y2])
+  })
+
+  it('moves the end point alone', () => {
+    const s = withOne('arrow')
+    const before = only(s) as ArrowElement
+    const a = only(run(s, { op: 'moveArrowEnd', id: before.id, end: 'end', x: 0.9, y: 0.9 })) as ArrowElement
+    expect([a.x2, a.y2]).toEqual([0.9, 0.9])
+    expect([a.x1, a.y1]).toEqual([before.x1, before.y1])
+  })
+
+  it('clamps an endpoint dragged off the surface', () => {
+    const s = withOne('arrow')
+    const a = only(run(s, { op: 'moveArrowEnd', id: only(s).id, end: 'end', x: 3, y: -3 })) as ArrowElement
+    expect([a.x2, a.y2]).toEqual([1, 0])
+  })
+
+  it('never lets an endpoint become NaN', () => {
+    const s = withOne('arrow')
+    const a = only(run(s, { op: 'moveArrowEnd', id: only(s).id, end: 'end', x: Number.NaN, y: Number.NaN })) as ArrowElement
+    expect(Number.isFinite(a.x2) && Number.isFinite(a.y2)).toBe(true)
+  })
+
+  it('changes the arrow meaning without touching its geometry', () => {
+    const s = withOne('arrow')
+    const before = only(s) as ArrowElement
+    const a = only(run(s, { op: 'setArrowKind', id: before.id, arrow: 'dribble' })) as ArrowElement
+    expect(a.arrow).toBe('dribble')
+    expect([a.x1, a.y1, a.x2, a.y2]).toEqual([before.x1, before.y1, before.x2, before.y2])
+  })
+
+  it('ignores an arrow edit aimed at something that is not an arrow', () => {
+    const s = withOne('cone')
+    const before = diagramSignature(s.diagram)
+    expect(diagramSignature(run(s, { op: 'moveArrowEnd', id: only(s).id, end: 'end', x: 0.9, y: 0.9 }).diagram)).toBe(before)
+  })
+})
+
+describe('resizing a zone', () => {
+  function zoneState() {
+    let s = withOne('zone', { x: 0.5, y: 0.5 })
+    const id = only(s).id
+    // Start from a known rectangle so the corner maths is readable.
+    s = run(s, { op: 'resizeZone', id, corner: 'start', x: 0.2, y: 0.2 }, { op: 'resizeZone', id, corner: 'end', x: 0.7, y: 0.6 })
+    return { s, id }
+  }
+
+  it('drags the far corner out', () => {
+    const { s } = zoneState()
+    const z = only(s) as ZoneElement
+    expect(z.x).toBeCloseTo(0.2, 6)
+    expect(z.y).toBeCloseTo(0.2, 6)
+    expect(z.w).toBeCloseTo(0.5, 6)
+    expect(z.h).toBeCloseTo(0.4, 6)
+  })
+
+  it('drags the near corner in, moving the origin', () => {
+    const { s, id } = zoneState()
+    const z = only(run(s, { op: 'resizeZone', id, corner: 'start', x: 0.4, y: 0.3 })) as ZoneElement
+    expect(z.x).toBeCloseTo(0.4, 6)
+    expect(z.y).toBeCloseTo(0.3, 6)
+    expect(z.x + z.w).toBeCloseTo(0.7, 6)
+    expect(z.y + z.h).toBeCloseTo(0.6, 6)
+  })
+
+  it('never inverts when a corner is dragged past the other one', () => {
+    const { s, id } = zoneState()
+    const z = only(run(s, { op: 'resizeZone', id, corner: 'end', x: 0.05, y: 0.02 })) as ZoneElement
+    expect(z.w).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+    expect(z.h).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+    expect(z.x).toBeGreaterThanOrEqual(0)
+    expect(z.y).toBeGreaterThanOrEqual(0)
+  })
+
+  it('never collapses a zone to nothing', () => {
+    const { s, id } = zoneState()
+    const z = only(run(s, { op: 'resizeZone', id, corner: 'end', x: 0.2, y: 0.2 })) as ZoneElement
+    expect(z.w).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+    expect(z.h).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+  })
+
+  it('keeps the zone on the surface when a corner is dragged off it', () => {
+    const { s, id } = zoneState()
+    const z = only(run(s, { op: 'resizeZone', id, corner: 'end', x: 4, y: 4 })) as ZoneElement
+    expect(z.x + z.w).toBeLessThanOrEqual(1)
+    expect(z.y + z.h).toBeLessThanOrEqual(1)
+  })
+
+  it('holds the far corner still through a whole drag, not just one step', () => {
+    // REGRESSION, and the defect single-action tests could never see. A drag is
+    // a STREAM of resize actions, and the anchor was re-derived from the
+    // current element each time. Once the finger passed the fixed corner the
+    // rectangle sorted itself, the anchor moved to where the finger was, and
+    // every later step dragged against the new anchor: the zone collapsed to
+    // its minimum and walked away from where it started.
+    const { s, id } = zoneState() // x 0.2, y 0.2, w 0.5, h 0.4
+    // The bottom right handle, dragged in past the top left corner, one frame
+    // at a time exactly as the pointer handler emits them.
+    let drag = s
+    for (const t of [0.62, 0.55, 0.48, 0.4, 0.33, 0.25, 0.18, 0.1, 0.05]) {
+      drag = run(drag, { op: 'resizeZone', id, corner: 'end', x: t, y: t })
+    }
+    const z = only(drag) as ZoneElement
+    // The corner the coach is NOT holding has not moved.
+    expect(z.x).toBeCloseTo(0.2, 6)
+    expect(z.y).toBeCloseTo(0.2, 6)
+    expect(z.w).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+    expect(z.h).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+  })
+
+  it('holds the near corner still through a whole drag too', () => {
+    const { s, id } = zoneState() // far corner at 0.7, 0.6
+    let drag = s
+    for (const t of [0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95]) {
+      drag = run(drag, { op: 'resizeZone', id, corner: 'start', x: t, y: t })
+    }
+    const z = only(drag) as ZoneElement
+    expect(z.x + z.w).toBeCloseTo(0.7, 6)
+    expect(z.y + z.h).toBeCloseTo(0.6, 6)
+    expect(z.w).toBeGreaterThanOrEqual(MIN_ZONE_SIZE)
+  })
+
+  it('comes back to the right shape when the finger returns', () => {
+    // The whole point of holding the anchor: a coach who overshoots and drags
+    // back gets the zone they were aiming for, not a collapsed one somewhere
+    // else.
+    const { s, id } = zoneState()
+    let drag = s
+    for (const t of [0.6, 0.4, 0.2, 0.05, 0.3, 0.55, 0.7]) {
+      drag = run(drag, { op: 'resizeZone', id, corner: 'end', x: t, y: t })
+    }
+    const z = only(drag) as ZoneElement
+    expect(z.x).toBeCloseTo(0.2, 6)
+    expect(z.w).toBeCloseTo(0.5, 6)
+    expect(z.h).toBeCloseTo(0.5, 6)
+  })
+
+  it('ignores a resize aimed at something that is not a zone', () => {
+    const s = withOne('cone')
+    const before = diagramSignature(s.diagram)
+    expect(diagramSignature(run(s, { op: 'resizeZone', id: only(s).id, corner: 'end', x: 0.9, y: 0.9 }).diagram)).toBe(before)
+  })
+})
+
+describe('deleting', () => {
+  it('removes the element and nothing else', () => {
+    let s = run(fresh(), { op: 'add', element: 'cone', at: { x: 0.1, y: 0.1 } }, { op: 'add', element: 'ball', at: { x: 0.4, y: 0.4 } })
+    s = run(s, { op: 'delete', id: s.diagram.elements[0].id })
+    expect(s.diagram.elements.map((e) => e.type)).toEqual(['ball'])
+  })
+
+  it('ignores an id that is not there and leaves the diagram clean', () => {
+    const s = initEditor({ ...emptyDiagram(), elements: [{ type: 'ball', id: 'ball-1', x: 0.2, y: 0.2 }] })
+    const after = run(s, { op: 'delete', id: 'ball-9' })
+    expect(after.diagram.elements).toHaveLength(1)
+    expect(isDirty(after)).toBe(false)
+  })
+})
+
+describe('editing text and colour', () => {
+  it('edits a coaching label', () => {
+    const s = withOne('text')
+    expect((only(run(s, { op: 'setLabel', id: only(s).id, text: 'Press' })) as TextElement).text).toBe('Press')
+  })
+
+  it('caps a coaching label at the maximum length', () => {
+    const s = withOne('text')
+    const t = only(run(s, { op: 'setLabel', id: only(s).id, text: 'x'.repeat(200) })) as TextElement
+    expect(t.text).toHaveLength(MAX_TEXT_LENGTH)
+  })
+
+  it('keeps a label the coach has emptied, so clearing it before retyping does not delete it', () => {
+    // REGRESSION. Clearing the field used to delete the element, which is what
+    // a coach does FIRST when they mean to retype it: backspace over "Label",
+    // and on the last backspace the chip vanished from the pitch, the selection
+    // bar unmounted and the keyboard closed. The element stays; the serialiser
+    // is what declines to store an empty one.
+    const s = withOne('text')
+    const after = run(s, { op: 'setLabel', id: only(s).id, text: '' })
+    expect(after.diagram.elements).toHaveLength(1)
+    expect((only(after) as TextElement).text).toBe('')
+    expect(after.selectedId).toBe(only(s).id)
+  })
+
+  it('lets the coach type on after clearing, back to a real label', () => {
+    const s = withOne('text')
+    const id = only(s).id
+    const after = run(s, { op: 'setLabel', id, text: '' }, { op: 'setLabel', id, text: 'Press' })
+    expect((only(after) as TextElement).text).toBe('Press')
+  })
+
+  it('stays clean after saving a label the coach emptied, rather than unsaved for ever', () => {
+    // The element is on screen but not stored. Both sides of the comparison go
+    // through the serialiser, which drops it, so the two agree.
+    const s = withOne('text')
+    const cleared = run(s, { op: 'setLabel', id: only(s).id, text: '' })
+    const saved = run(cleared, { op: 'saved', signature: diagramSignature(cleared.diagram) })
+    expect(isDirty(saved)).toBe(false)
+    expect(diagramSignature(parseDrillDiagram(serializeDrillDiagram(cleared.diagram)))).toBe(
+      diagramSignature(cleared.diagram),
+    )
+  })
+
+  it('lets a coaching label hold a space, so a two word cue is possible', () => {
+    // REGRESSION. setLabel trimmed the raw input on every keystroke, and the
+    // field is controlled, so the space key did nothing: "Press high" could
+    // only ever be typed as "Presshigh".
+    const s = withOne('text')
+    const id = only(s).id
+    const after = run(s, { op: 'setLabel', id, text: 'Press ' })
+    expect((only(after) as TextElement).text).toBe('Press ')
+    expect((only(run(after, { op: 'setLabel', id, text: 'Press high' })) as TextElement).text).toBe('Press high')
+  })
+
+  it('stores a label without the trailing space it was typed with', () => {
+    // The draft keeps the space so the coach can carry on typing; the stored
+    // form does not, and BOTH sides of the saved comparison go through the
+    // serialiser, so a trailing space never leaves the editor permanently
+    // unsaved.
+    const s = run(withOne('text'), { op: 'setLabel', id: 'text-1', text: 'Press ' })
+    const stored = serializeDrillDiagram(s.diagram) as { elements: { text: string }[] }
+    expect(stored.elements[0].text).toBe('Press')
+    expect(diagramSignature(parseDrillDiagram(stored))).toBe(diagramSignature(s.diagram))
+  })
+
+  it('caps a player badge much shorter than a coaching label', () => {
+    const s = withOne('player')
+    const p = only(run(s, { op: 'setLabel', id: only(s).id, text: 'Jonathan' })) as PlayerElement
+    expect(p.label).toHaveLength(MAX_PLAYER_LABEL)
+  })
+
+  it('keeps a player whose badge is cleared, because the disc is the element', () => {
+    const s = withOne('player')
+    const after = run(s, { op: 'setLabel', id: only(s).id, text: '' })
+    expect(after.diagram.elements).toHaveLength(1)
+    expect((only(after) as PlayerElement).label).toBe('')
+  })
+
+  it('changes the colour of a player, a cone and a zone', () => {
+    for (const type of ['player', 'cone', 'zone'] as const) {
+      const s = withOne(type)
+      const after = only(run(s, { op: 'setColour', id: only(s).id, colour: 'red' })) as { colour: string }
+      expect(after.colour).toBe('red')
+    }
+  })
+
+  it('ignores a colour change on an element that has no colour', () => {
+    const s = withOne('ball')
+    const before = diagramSignature(s.diagram)
+    expect(diagramSignature(run(s, { op: 'setColour', id: only(s).id, colour: 'red' }).diagram)).toBe(before)
+  })
+
+  it('turns a goal to face another way', () => {
+    const s = withOne('goal')
+    expect((only(run(s, { op: 'setGoalFacing', id: only(s).id, facing: 'left' })) as GoalElement).facing).toBe('left')
+  })
+})
+
+describe('switching the surface', () => {
+  it('changes the pitch under the drill', () => {
+    const s = run(fresh(), { op: 'setSurface', surface: 'half_pitch' })
+    expect(s.diagram.surface.kind).toBe('half_pitch')
+    expect(isDirty(s)).toBe(true)
+  })
+
+  it('turns the surface without changing what is on it', () => {
+    const s = run(withOne('cone', { x: 0.3, y: 0.7 }), { op: 'setOrientation', orientation: 'landscape' })
+    expect(s.diagram.surface.orientation).toBe('landscape')
+    expect(only(s)).toMatchObject({ x: 0.3, y: 0.7 })
+  })
+
+  it('leaves every element exactly where it was, because coordinates are fractions', () => {
+    let s = fresh()
+    for (const type of ['player', 'cone', 'ball', 'goal', 'arrow', 'zone', 'text'] as const) {
+      s = run(s, { op: 'add', element: type, at: { x: 0.4, y: 0.6 } })
+    }
+    const before = JSON.stringify(s.diagram.elements)
+    const after = run(s, { op: 'setSurface', surface: 'blank' }, { op: 'setOrientation', orientation: 'landscape' })
+    expect(JSON.stringify(after.diagram.elements)).toBe(before)
+  })
+
+  it('keeps the selection through a surface switch', () => {
+    const s = withOne('cone')
+    expect(run(s, { op: 'setSurface', surface: 'blank' }).selectedId).toBe(only(s).id)
+  })
+})
+
+describe('saving', () => {
+  it('is dirty from the first change and clean once that exact diagram is confirmed stored', () => {
+    const s = withOne('cone')
+    expect(isDirty(s)).toBe(true)
+    const saved = run(s, { op: 'saved', signature: diagramSignature(s.diagram) })
+    expect(isDirty(saved)).toBe(false)
+  })
+
+  it('stays dirty when the confirmed diagram is not the one on screen', () => {
+    // A readback that differs from what was sent must never read as Saved.
+    const s = withOne('cone')
+    const saved = run(s, { op: 'saved', signature: diagramSignature(emptyDiagram()) })
+    expect(isDirty(saved)).toBe(true)
+  })
+
+  it('keeps an edit made while the save was in flight, and stays dirty for it', () => {
+    const s = withOne('cone')
+    const submitted = diagramSignature(s.diagram)
+    // The coach adds a ball before the readback lands.
+    const during = run(s, { op: 'add', element: 'ball', at: { x: 0.2, y: 0.2 } })
+    const after = run(during, { op: 'saved', signature: submitted })
+    expect(after.diagram.elements).toHaveLength(2)
+    expect(isDirty(after)).toBe(true)
+  })
+
+  it('goes clean on the second save, which stores the later edit', () => {
+    const s = withOne('cone')
+    const submitted = diagramSignature(s.diagram)
+    const during = run(s, { op: 'add', element: 'ball', at: { x: 0.2, y: 0.2 } })
+    const after = run(during, { op: 'saved', signature: submitted })
+    const second = run(after, { op: 'saved', signature: diagramSignature(after.diagram) })
+    expect(isDirty(second)).toBe(false)
+    expect(second.diagram.elements).toHaveLength(2)
+  })
+
+  it('never changes what is on screen when a save is confirmed', () => {
+    const s = withOne('cone')
+    const before = JSON.stringify(s.diagram)
+    expect(JSON.stringify(run(s, { op: 'saved', signature: 'anything' }).diagram)).toBe(before)
+  })
+
+  it('is clean again when a change is undone by hand', () => {
+    const s = initEditor({ ...emptyDiagram(), elements: [{ type: 'cone', id: 'cone-1', x: 0.2, y: 0.2, colour: 'orange' }] })
+    const moved = run(s, { op: 'move', id: 'cone-1', x: 0.8, y: 0.8 })
+    expect(isDirty(moved)).toBe(true)
+    expect(isDirty(run(moved, { op: 'move', id: 'cone-1', x: 0.2, y: 0.2 }))).toBe(false)
+  })
+})
+
+describe('the reducer is pure', () => {
+  it('never mutates the state it is given', () => {
+    const s = withOne('cone')
+    const snapshot = JSON.stringify(s)
+    run(s, { op: 'move', id: only(s).id, x: 0.9, y: 0.9 }, { op: 'delete', id: only(s).id })
+    expect(JSON.stringify(s)).toBe(snapshot)
+  })
+
+  it('produces a diagram that always survives a storage round trip unchanged', () => {
+    let s = fresh()
+    for (const type of ['player', 'cone', 'ball', 'goal', 'arrow', 'zone', 'text'] as const) {
+      s = run(s, { op: 'add', element: type, at: { x: 0.37, y: 0.63 } })
+    }
+    const stored = serializeDrillDiagram(s.diagram)
+    expect(diagramSignature(parseDrillDiagram(stored))).toBe(diagramSignature(s.diagram))
+  })
+})
+
+describe('picking an element up where the finger landed', () => {
+  // The anchor is the point a move sets. A drag captures the offset between the
+  // finger and this point at press, so the element does not teleport under the
+  // thumb when the drag threshold is crossed.
+  it('reports the point a move actually sets, for every element type', () => {
+    for (const type of ['player', 'cone', 'ball', 'goal', 'text'] as const) {
+      const s = withOne(type, { x: 0.3, y: 0.7 })
+      expect(elementAnchor(only(s)), type).toEqual({ x: 0.3, y: 0.7 })
+    }
+  })
+
+  it('reports a zone by its centre and an arrow by its midpoint', () => {
+    const z = only(withOne('zone', { x: 0.4, y: 0.6 })) as ZoneElement
+    expect(elementAnchor(z).x).toBeCloseTo(z.x + z.w / 2, 6)
+    expect(elementAnchor(z).y).toBeCloseTo(z.y + z.h / 2, 6)
+    const a = only(withOne('arrow', { x: 0.4, y: 0.6 })) as ArrowElement
+    expect(elementAnchor(a).x).toBeCloseTo((a.x1 + a.x2) / 2, 6)
+  })
+
+  it('leaves an element where it is when moved to its own anchor', () => {
+    // The property that makes the offset arithmetic correct: move(anchor(el))
+    // changes nothing, for every type. Compared through the signature rather
+    // than by field, because that is the question that matters (does the coach
+    // see a change, is the diagram dirty) and it is the comparison the save
+    // uses; comparing raw floats would fail on the last bit of a division.
+    for (const type of ['player', 'cone', 'ball', 'goal', 'arrow', 'zone', 'text'] as const) {
+      const s = withOne(type, { x: 0.45, y: 0.55 })
+      const el = only(s)
+      const anchor = elementAnchor(el)
+      const after = run(s, { op: 'move', id: el.id, x: anchor.x, y: anchor.y })
+      expect(diagramSignature(after.diagram), type).toBe(diagramSignature(s.diagram))
+    }
+  })
+})
+
+describe('an emptied label is tidied up when the coach moves on', () => {
+  it('is removed when the selection moves to something else', () => {
+    let s = run(fresh(), { op: 'add', element: 'text', at: { x: 0.5, y: 0.5 } })
+    const textId = only(s).id
+    s = run(s, { op: 'setLabel', id: textId, text: '' }, { op: 'add', element: 'cone', at: { x: 0.2, y: 0.2 } })
+    s = run(s, { op: 'select', id: s.diagram.elements[s.diagram.elements.length - 1].id })
+    expect(s.diagram.elements.some((e) => e.id === textId)).toBe(false)
+  })
+
+  it('is removed when the coach taps empty grass', () => {
+    const s = withOne('text')
+    const cleared = run(s, { op: 'setLabel', id: only(s).id, text: '  ' }, { op: 'select', id: null })
+    expect(cleared.diagram.elements).toHaveLength(0)
+  })
+
+  it('survives while it is still the thing being edited', () => {
+    const s = withOne('text')
+    const id = only(s).id
+    const still = run(s, { op: 'setLabel', id, text: '' }, { op: 'select', id })
+    expect(still.diagram.elements).toHaveLength(1)
+  })
+
+  it('leaves a label with something in it alone', () => {
+    const s = run(withOne('text'), { op: 'setLabel', id: 'text-1', text: 'Press' }, { op: 'select', id: null })
+    expect(s.diagram.elements).toHaveLength(1)
+  })
+
+  it('leaves the diagram clean if nothing was pruned', () => {
+    const s = initEditor({ ...emptyDiagram(), elements: [{ type: 'cone', id: 'cone-1', x: 0.2, y: 0.2, colour: 'orange' }] })
+    expect(isDirty(run(s, { op: 'select', id: 'cone-1' }, { op: 'select', id: null }))).toBe(false)
+  })
+})

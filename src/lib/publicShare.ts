@@ -265,6 +265,9 @@ const FORBIDDEN = new Set<string>([
   'spond_member_id', 'spondMemberId', 'player_spond_links', 'playerSpondLinks',
   'spond_event_responses', 'spondEventResponses', 'matched_by', 'matchedBy',
   'rsvp', 'rsvpStatus',
+  // The drill diagram (0046), kept in step with the server list above. C1 does
+  // not publish a diagram; this is the browser's half of the tripwire.
+  'diagram',
   'builder', 'public', '_mid', '_path',
 ])
 
