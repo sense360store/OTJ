@@ -66,6 +66,7 @@ import type {
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import { spondEventLookup, type SpondEventLookup } from './eventKind'
+import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
 import { tonightUpsertRows, type TonightChange } from './tonight'
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
@@ -1424,6 +1425,84 @@ export function useUpdateDrill() {
       return toDrill(data as unknown as DrillRow)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['drills'] }),
+  })
+}
+
+// ---- Drill diagram (Drill Maker C1) --------------------------------------
+//
+// The diagram is read and written on its OWN, never as part of a drill row.
+// Three things follow from that, all deliberate:
+//
+//   1. DRILL_COLS does not gain `diagram`, so the library list, the planner,
+//      the share snapshot builders and every other drill read carry exactly
+//      what they carried before. A diagram cannot leak through a path that was
+//      never told about it, and the list payload does not grow.
+//   2. The save sends ONE column. A coach with an editor open holds a drill
+//      that another coach may have renamed since; a whole-row update would put
+//      the stale title back. This one cannot, whatever it is holding.
+//   3. Nothing new is granted. The write rides the existing drills UPDATE
+//      policy (owner holding drills.create, or drills.manage), which already
+//      covers every column, so there is no new boundary to get wrong.
+export const DRILL_DIAGRAM_COLS = 'id, diagram'
+
+// The complete payload a diagram save sends. One key, by construction.
+export function drillDiagramWriteRow(diagram: DrillDiagram): { diagram: unknown } {
+  return { diagram: serializeDrillDiagram(diagram) }
+}
+
+// Whether the database is holding the diagram that was sent to it. A request
+// that returned is not a save: the row that came back has to be the same
+// diagram, field for field, in the canonical form. A stored value that will not
+// parse, or that parses to something else, is not a match.
+export function diagramSaveMatches(submitted: DrillDiagram, stored: unknown): boolean {
+  const back = parseDrillDiagram(stored)
+  return back !== null && diagramSignature(back) === diagramSignature(submitted)
+}
+
+// The write itself, pulled out of the hook so the payload, the filter and the
+// readback comparison are testable against a recording client (see
+// drillDiagramSave.test.ts). Returns what the database now holds, and whether
+// it is what was asked for.
+export async function saveDrillDiagram(
+  id: string,
+  diagram: DrillDiagram,
+): Promise<{ diagram: DrillDiagram | null; matched: boolean }> {
+  const { data, error } = await supabase
+    .from('drills')
+    .update(drillDiagramWriteRow(diagram))
+    .eq('id', id)
+    .select(DRILL_DIAGRAM_COLS)
+    .maybeSingle()
+  if (error) throw contentWriteError(error)
+  // Row level security refusing the update returns no row and no error.
+  // Reporting that as saved would be a false statement about a coach's work.
+  if (!data) throw new Error('You do not have permission to change this drill.')
+  const stored = (data as { diagram: unknown }).diagram
+  return { diagram: parseDrillDiagram(stored), matched: diagramSaveMatches(diagram, stored) }
+}
+
+// The drill's diagram, read on its own. Separate from useDrill so the diagram
+// never rides a list read.
+export function useDrillDiagram(id: string | undefined) {
+  return useQuery({
+    queryKey: ['drill_diagram', id],
+    enabled: !!id,
+    queryFn: async (): Promise<DrillDiagram | null> => {
+      const { data, error } = await supabase.from('drills').select(DRILL_DIAGRAM_COLS).eq('id', id!).maybeSingle()
+      if (error) throw error
+      // A stored value that will not parse reads as no diagram, so a hand
+      // edited or future shaped row shows the empty state rather than
+      // crashing the drill page.
+      return data ? parseDrillDiagram((data as { diagram: unknown }).diagram) : null
+    },
+  })
+}
+
+export function useUpdateDrillDiagram() {
+  const qc = useQueryClient()
+  return useMutation<{ diagram: DrillDiagram | null; matched: boolean }, Error, { id: string; diagram: DrillDiagram }>({
+    mutationFn: ({ id, diagram }) => saveDrillDiagram(id, diagram),
+    onSettled: (_data, _err, vars) => qc.invalidateQueries({ queryKey: ['drill_diagram', vars.id] }),
   })
 }
 

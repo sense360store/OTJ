@@ -1,0 +1,98 @@
+/* Drill diagram: the shared surface styles for the read only renderer and the
+   editor's canvas.
+
+   The grass and line colours are the same custom properties the tactics board
+   declares (src/routes/Board.css), with the same values, so the two read as the
+   same club's pitch. They are declared here as well because a drill page never
+   loads Board.css: two declarations of one value are harmless, and the pair are
+   pinned together by drillDiagram.invariant.test.ts.
+
+   The pitch stays green in dark mode, exactly as the tactics board does. */
+:root {
+  --pitch-grass: #2f9152;
+  --pitch-grass-2: #2a8549;
+  --pitch-line: rgba(255, 255, 255, 0.78);
+}
+
+/* The surface holds the aspect ratio its diagram declares (set inline from the
+   surface geometry) and fills the width it is given, so one stored diagram
+   reads on a phone and on a desktop with no second copy. */
+.dd-surface {
+  position: relative;
+  width: 100%;
+  margin: 0 auto;
+  border-radius: var(--radius, 16px);
+  overflow: hidden;
+  background: var(--pitch-grass);
+  box-shadow: var(--shadow-sm);
+}
+.dd-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.dd-grass {
+  fill: var(--pitch-grass);
+}
+.dd-lines line,
+.dd-lines rect,
+.dd-lines circle {
+  stroke: var(--pitch-line);
+  stroke-width: 3;
+  fill: none;
+}
+.dd-lines .dd-spot {
+  fill: var(--pitch-line);
+  stroke: none;
+}
+
+/* The net inside a goal. Thin, so the mouth still reads as open. */
+.dd-net line {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1.6;
+}
+
+/* An arrow is dark with a light casing, so it reads over grass, over a zone
+   and over another element without depending on any one background. */
+.dd-shaft,
+.dd-wave {
+  stroke: #12203f;
+  stroke-width: 6;
+  stroke-linecap: round;
+  paint-order: stroke;
+}
+.dd-arrowhead {
+  fill: #12203f;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.dd-badge {
+  font-family: var(--display, inherit);
+  font-weight: 800;
+  font-size: 22px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.dd-chip {
+  fill: rgba(255, 255, 255, 0.94);
+  stroke: rgba(10, 31, 107, 0.25);
+  stroke-width: 1.5;
+}
+.dd-chip-text {
+  font-family: var(--display, inherit);
+  font-weight: 800;
+  font-size: 22px;
+  fill: var(--ink, #16181d);
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+/* The drill page's read only diagram: capped so it sits as one block among the
+   rest of the page rather than filling the screen. */
+.dd-on-detail {
+  max-width: 460px;
+}

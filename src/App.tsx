@@ -14,6 +14,7 @@ import { SetPassword } from './routes/SetPassword'
 import { Home } from './routes/Home'
 import { Library } from './routes/Library'
 import { DrillDetail } from './routes/DrillDetail'
+import { DrillDiagramEditor } from './routes/DrillDiagramEditor'
 import { Sessions } from './routes/Sessions'
 import { Planner } from './routes/Planner'
 import { Board } from './routes/Board'
@@ -92,6 +93,19 @@ export function App() {
       <Route path="/login" element={<LoginGate />} />
       <Route element={<RequireAuth />}>
         <Route path="/live/:sessionId" element={<LiveSession />} />
+        {/* Drill Maker's editor. Full screen and OUTSIDE the app shell, like
+            the live view: the canvas wants the whole screen and Save has to be
+            reachable with a thumb, so there must be no bottom navigation for a
+            sticky control to hide under. The drill page it is reached from
+            stays inside the shell and stays readable by every role; the editor
+            does not inherit that, so it sits behind the same sessions.create
+            gate as the planner and the board, which excludes parents. The
+            precise question of whether THIS coach may draw on THIS drill
+            (ownership, and the England Football limit) is the screen's own,
+            and the drills UPDATE policy is the enforcement. */}
+        <Route element={<RequireCap cap="sessions.create" />}>
+          <Route path="/drill/:id/diagram" element={<DrillDiagramEditor />} />
+        </Route>
         <Route element={<AppShell />}>
           <Route index element={<Home />} />
           {/* Detail routes stay reachable read only for every role: the parent

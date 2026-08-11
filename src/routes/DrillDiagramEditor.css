@@ -1,0 +1,336 @@
+/* Drill Maker's editor chrome. Deliberately a SEPARATE file from
+   DrillDiagram.css: the read only renderer is used on the drill page and, from
+   C2, inside sessions, and it must stay free of anything to do with editing.
+   Every class here is prefixed .dde-; the shared surface classes (.dd-*) come
+   from DrillDiagram.css, which the renderer imports.
+
+   THIS ROUTE OWNS THE WHOLE SCREEN. It sits outside the app shell, like the
+   live session view, so there is no bottom navigation for a sticky control to
+   hide under. The layout is one fixed column: a top bar, a scrolling canvas
+   that takes the slack, and the tools pinned at the bottom where a thumb is. */
+.dde {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* The top bar carries Back, the drill name, the saved state and Save. Save
+   stays on screen at every size: it is the one control a coach must be able to
+   find without thinking. */
+.dde-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px calc(10px);
+  padding-top: calc(10px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  flex: 0 0 auto;
+}
+.dde-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dde-title-main {
+  font-family: var(--display, inherit);
+  font-weight: 800;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The saved state is a WORD, always. The colour is a second signal on top of
+   it, never the signal itself. */
+.dde-state {
+  font-size: 12px;
+  font-weight: 700;
+}
+.dde-state.clean {
+  color: var(--m-image, #16a34a);
+}
+.dde-state.dirty {
+  color: var(--m-social, #ef8e1b);
+}
+.dde-state.saving {
+  color: var(--slate);
+}
+.dde-state.error {
+  color: var(--m-pdf, #ef5a5a);
+}
+
+.dde-error {
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--gold-soft, #fff4d1);
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+/* The canvas takes whatever is left and centres the pitch inside it. min-height
+   0 is what lets a flex child actually shrink rather than pushing the tools off
+   the bottom of the screen. */
+.dde-canvas-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 10px 12px;
+  overflow: auto;
+}
+.dde-canvas {
+  /* Bounded by the shorter of the two axes so the whole pitch is always
+     visible: a coach should never have to scroll to reach the far goal. */
+  max-width: min(100%, 560px);
+  max-height: 100%;
+  /* The canvas itself takes the touch, so a drag draws instead of scrolling the
+     page underneath it. The read only renderer deliberately does NOT do this. */
+  touch-action: none;
+}
+.dde-canvas.armed {
+  cursor: copy;
+  outline: 3px solid var(--gold, #f4c020);
+  outline-offset: 2px;
+}
+
+/* Element chrome, inside the SVG. */
+.dde-hit {
+  cursor: grab;
+  outline: none;
+}
+.dde-hit:active {
+  cursor: grabbing;
+}
+/* The selection marker is a dashed ring: a SHAPE change, so it reads on every
+   element colour and for anyone who does not see colour. Paired with
+   aria-pressed on the hit area and with the element named in words in the bar
+   below the canvas. */
+.dde-ring {
+  fill: none;
+  stroke: var(--gold, #f4c020);
+  stroke-width: 4;
+  stroke-dasharray: 10 7;
+}
+.dde-hit:focus-visible + .dde-handle .dde-handle-dot,
+.dde-hit:focus-visible {
+  outline: none;
+}
+.dde-el .dde-hit:focus-visible ~ * {
+  /* nothing: the focus ring is drawn on the element below */
+}
+.dde-hit:focus-visible circle,
+.dde-hit:focus-visible rect,
+.dde-hit:focus-visible line {
+  stroke: var(--royal, #1f43d6);
+  stroke-width: 4;
+  stroke-dasharray: 6 5;
+}
+.dde-handle {
+  cursor: grab;
+}
+.dde-handle-dot {
+  fill: var(--card, #fff);
+  stroke: var(--navy, #122a86);
+  stroke-width: 5;
+}
+.dde-handle:focus-visible .dde-handle-dot {
+  stroke: var(--royal, #1f43d6);
+  stroke-dasharray: 8 6;
+}
+
+/* One quiet line of instruction that doubles as a live region, so what the
+   editor is waiting for is announced and not only shown. */
+.dde-hint {
+  flex: 0 0 auto;
+  padding: 0 12px 8px;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--slate);
+}
+
+/* The bar for whatever is selected. It sits ABOVE the tools rather than over
+   the canvas, so nothing floats under the thumb that is drawing. */
+.dde-selbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+.dde-sel-name {
+  font-family: var(--display, inherit);
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--slate);
+}
+.dde-swatches {
+  display: flex;
+  gap: 6px;
+}
+.dde-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  padding: 0;
+  cursor: pointer;
+}
+/* The chosen colour is marked by a ring and a size change, not by being the
+   only coloured one. */
+.dde-swatch.on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--gold, #f4c020);
+}
+.dde-chips {
+  display: flex;
+  gap: 6px;
+}
+.dde-chip {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dde-chip.on {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.dde-label-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--slate);
+}
+.dde-label-field .input {
+  width: 130px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  padding: 0 10px;
+}
+.dde-delete {
+  margin-left: auto;
+  color: var(--m-pdf, #ef5a5a);
+}
+
+/* The tool palette, pinned at the bottom. Seven tools across, each a 44 pixel
+   tall target with its name under the icon, so nothing here is an icon a coach
+   has to guess at. */
+.dde-tools {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+}
+.dde-tool-row {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+.dde-tool {
+  flex: 1 1 0;
+  min-width: 58px;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 2px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--slate-2);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dde-tool svg {
+  width: 21px;
+  height: 21px;
+}
+/* An armed tool is filled AND ringed, so the armed state is not a colour on its
+   own; aria-pressed says it in words too. */
+.dde-tool.armed {
+  background: var(--navy);
+  border-color: var(--gold, #f4c020);
+  color: #fff;
+}
+.dde-tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.dde-surface-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dde-surface-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--slate);
+}
+.dde-surface-row .select {
+  height: 38px;
+}
+.dde-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--slate-2);
+}
+.dde-full {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--m-social, #ef8e1b);
+}
+
+.dde-refused {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+/* On a wide screen the canvas has room, so the tools sit under it rather than
+   stretched across the whole width. */
+@media (min-width: 900px) {
+  .dde-tool-row {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .dde-surface-row {
+    max-width: 720px;
+    margin: 8px auto 0;
+  }
+}

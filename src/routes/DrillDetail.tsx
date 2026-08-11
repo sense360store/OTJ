@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useDrill, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl } from '../lib/queries'
+import { useDrill, useDrillDiagram, useDrills, useMediaMap, useMyCapabilities, useSignedMediaUrl } from '../lib/queries'
 import { embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import { relatedDrills } from '../lib/contentOrder'
 import { isFaVideo } from '../lib/fa'
@@ -28,6 +28,9 @@ import {
   SourceLink,
   TopicTags,
 } from '../components/ui'
+import { diagramIsEmpty, type DrillDiagram } from '../lib/drillDiagram'
+import { diagramEditDecision } from '../lib/drillDiagramRights'
+import { DrillDiagramView } from '../components/DrillDiagramView'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { DeleteDrillModal } from '../components/DeleteDrillModal'
 import { MediaPlayerModal, MediaPlayerSurface } from '../components/MediaPlayerModal'
@@ -162,6 +165,56 @@ export function AddToSessionView({
   )
 }
 
+// The drill's diagram on the drill page: the canonical read only renderer when
+// there is one, and the way in to Drill Maker when the coach may draw.
+//
+// Pulled out as a presentational component so the static renderer can prove the
+// three states without a DOM: a drill with a diagram shows it and offers Edit,
+// a drill without one offers Build, and a drill nobody may draw on offers
+// nothing at all rather than a button that would be refused.
+//
+// The section is ABSENT, not disabled, when there is no diagram and no way to
+// make one. An England Football derived drill already carries the FA's own
+// diagram as media; offering a dead Build button beside it, or a paragraph
+// explaining a rule the coach did not ask about, would be noise. The reason is
+// there for anyone who reaches the editor by its URL.
+export function DrillDiagramSection({
+  diagram,
+  canEdit,
+  onOpen,
+}: {
+  diagram: DrillDiagram | null
+  canEdit: boolean
+  onOpen: () => void
+}) {
+  const has = !diagramIsEmpty(diagram)
+  if (!has && !canEdit) return null
+  return (
+    <>
+      <hr className="divider" />
+      <div className="section-title">
+        <Icon.grid />
+        <h3>Diagram</h3>
+      </div>
+      {has && diagram ? (
+        <DrillDiagramView diagram={diagram} className="dd-on-detail" />
+      ) : (
+        <p className="muted" style={{ fontSize: 14.5, maxWidth: 460 }}>
+          No diagram yet. Build one to show the shape of this drill at a glance.
+        </p>
+      )}
+      {canEdit && (
+        <div className="row" style={{ gap: 10, marginTop: 12, maxWidth: 460 }}>
+          <button className="btn btn-ghost btn-block" onClick={onOpen}>
+            <Icon.edit />
+            {has ? 'Edit diagram' : 'Build diagram'}
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
+
 function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => void }) {
   const nav = useNav()
   const { user } = useAuth()
@@ -211,6 +264,7 @@ function AddToSessionModal({ drill, onClose }: { drill: Drill; onClose: () => vo
 export function DrillDetail() {
   const { id } = useParams()
   const nav = useNav()
+  const navigate = useNavigate()
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
   const [addOpen, setAddOpen] = useState(false)
@@ -219,6 +273,9 @@ export function DrillDetail() {
   const [playerOpen, setPlayerOpen] = useState(false)
   const { data: drill, isLoading, isError } = useDrill(id)
   const { data: allDrills = [] } = useDrills()
+  // The diagram is read on its own, never as part of the drill row, so no
+  // other drill read grows and no other path can carry it. See queries.ts.
+  const { data: diagram = null } = useDrillDiagram(id)
   const mediaById = useMediaMap()
   // Resolved before the early returns so the signed URL hook is called
   // unconditionally. The bucket is private, so opening an image or PDF goes
@@ -273,6 +330,13 @@ export function DrillDetail() {
   // The UI only surfaces controls; the Edge Function and RPC are the boundary.
   const canPublishShare = caps.has('shares.create') && canManage
   const canRevokeAnyShare = caps.has('shares.manage')
+  // Drawing a diagram follows the SAME ownership rule as Edit drill, with one
+  // extra limit for England Football derived drills. Both come from
+  // diagramEditDecision so neither is restated here (src/lib/drillDiagramRights.ts).
+  const diagramDecision = diagramEditDecision({
+    canManage,
+    source: { sourceUrl: drill.sourceUrl, sourceLabel: drill.sourceLabel, sourceKey: drill.sourceKey },
+  })
 
   return (
     <div>
@@ -507,6 +571,12 @@ export function DrillDetail() {
           </div>
         </>
       )}
+
+      <DrillDiagramSection
+        diagram={diagram}
+        canEdit={diagramDecision.canEdit}
+        onOpen={() => navigate(`/drill/${drill.id}/diagram`)}
+      />
 
       {addOpen && <AddToSessionModal drill={drill} onClose={() => setAddOpen(false)} />}
       {editOpen && <DrillFormModal drill={drill} onClose={() => setEditOpen(false)} />}
