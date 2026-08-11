@@ -301,6 +301,44 @@ describe('the tactics board is not part of this', () => {
   })
 })
 
+describe('the editor layout defects that a static render cannot catch', () => {
+  // SOURCE TEXT over CSS, and the weakest checks in this file. They exist
+  // because there is no DOM under test, so nothing here can measure a box: both
+  // of these were found by rendering the real components with the real
+  // stylesheets in a real browser, and neither would have failed a single
+  // existing test. What they pin is the exact numbers that were wrong, which is
+  // all a text check can honestly do. They will not catch the same defect
+  // arriving through a different property, a wider container or a longer tool
+  // name.
+  const css = read('routes/DrillDiagramEditor.css')
+
+  it('keeps all seven tools inside the narrowest phone, with no sideways scroll', () => {
+    // The row was 430 wide inside a 374 bar, so Label sat off the right edge
+    // behind a scroll nobody would try, and the label tool was effectively
+    // missing on a phone.
+    const minWidth = Number(/\.dde-tool \{[\s\S]*?min-width: (\d+)px/.exec(css)?.[1])
+    const gap = Number(/\.dde-tool-row \{[\s\S]*?gap: (\d+)px/.exec(css)?.[1])
+    expect(Number.isFinite(minWidth) && Number.isFinite(gap)).toBe(true)
+    // 360 is the narrowest phone the app supports, less the palette's padding.
+    expect(ELEMENT_TYPES.length * minWidth + (ELEMENT_TYPES.length - 1) * gap).toBeLessThanOrEqual(344)
+    // And no smaller than a touch target.
+    expect(minWidth).toBeGreaterThanOrEqual(44)
+  })
+
+  it('never gives the editor canvas an aspect ratio, which is what collapsed the pitch', () => {
+    // .dd-surface sets `width: 100%` and an aspect ratio; the editor added
+    // `max-height: 100%` on top. All three cannot hold: with the width definite
+    // the max-height clips the height and the ratio is lost. On a phone held
+    // sideways the box came out 844 by 118 and the pitch drew 76 pixels wide.
+    // The canvas fills its space instead and the SVG letterboxes the pitch
+    // itself, which is why pointerFraction does the matching arithmetic.
+    const block = /\.dde-canvas \{[\s\S]*?\n\}/.exec(css)?.[0] ?? ''
+    expect(block).not.toContain('aspect-ratio')
+    expect(block).not.toContain('max-height')
+    expect(block).toContain('height: 100%')
+  })
+})
+
 describe('the vocabulary does not drift', () => {
   it('offers only colours the club already uses for bibs', () => {
     // BEHAVIOURAL. A coach setting up a drill thinks in bibs, so the diagram

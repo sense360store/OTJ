@@ -86,7 +86,11 @@ export function DiagramSurfaceBackdrop({ surface }: { surface: DiagramSurface })
   const size = surfaceSize(surface)
   return (
     <>
-      <rect className="dd-grass" x={0} y={0} width={size.width} height={size.height} />
+      {/* The grass is INSIDE the viewBox, so it paints the pitch and nothing
+          beside it. That is what lets the editor's canvas box be transparent
+          and fill the screen while the pitch keeps its own proportions. rx
+          rounds it, since there is no longer a container clipping it there. */}
+      <rect className="dd-grass" x={0} y={0} width={size.width} height={size.height} rx={16} />
       <Markings surface={surface} clipId={clipId} />
     </>
   )

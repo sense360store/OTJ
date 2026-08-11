@@ -176,11 +176,38 @@ describe('turning a pointer position back into a fraction', () => {
 
 describe('an arrow', () => {
   it('points from its start towards its end', () => {
-    // The head sits at the end and its tip is further along the vector than
-    // its base corners, which is what makes the direction visible.
     const head = arrowHeadPoints(100, 100, 300, 100)
     const xs = head.map((p) => p.x)
     expect(Math.max(...xs)).toBeCloseTo(300, 5)
+  })
+
+  it('has real depth along the vector, so the head is a triangle and not a bar', () => {
+    // REGRESSION, found by mutation testing. Collapsing the head's base onto
+    // its tip leaves three points that still sit at the arrow's end and still
+    // differ between one direction and another, so every earlier check here
+    // passed while the arrow had no visible direction at all: it drew a short
+    // line across the end. The direction is only visible because the tip is
+    // FURTHER ALONG the vector than the base corners, so that is what is
+    // measured, by projecting each point onto the unit vector.
+    for (const [x1, y1, x2, y2] of [
+      [100, 100, 300, 100],
+      [300, 100, 100, 100],
+      [100, 100, 100, 300],
+      [400, 400, 100, 40],
+    ]) {
+      const len = Math.hypot(x2 - x1, y2 - y1)
+      const ux = (x2 - x1) / len
+      const uy = (y2 - y1) / len
+      const along = arrowHeadPoints(x1, y1, x2, y2).map((p) => p.x * ux + p.y * uy)
+      const tip = along[2]
+      const base = Math.max(along[0], along[1])
+      expect(tip - base, `${x1},${y1} to ${x2},${y2}: the head has no depth`).toBeGreaterThan(8)
+    }
+  })
+
+  it('has real width across the vector, so the head is a triangle and not a line', () => {
+    const across = arrowHeadPoints(100, 100, 300, 100).map((p) => p.y)
+    expect(Math.max(...across) - Math.min(...across)).toBeGreaterThan(8)
   })
 
   it('turns its head with the vector', () => {

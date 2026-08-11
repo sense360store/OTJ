@@ -87,19 +87,38 @@
   padding: 10px 12px;
   overflow: auto;
 }
+/* THE EDITOR CANVAS DOES NOT DECLARE AN ASPECT RATIO, and that is the fix for
+   a real defect rather than an oversight. It used to inherit .dd-surface's
+   `width: 100%` plus `aspect-ratio`, with `max-height: 100%` on top. Those three
+   cannot all hold: with the width definite at 100%, max-height clips the height
+   and the ratio is simply lost. On a phone held sideways the box came out
+   844 by 118, and the pitch, which keeps its own proportions, was drawn 76
+   pixels wide in the middle of it. A postage stamp with a toolbar.
+
+   So the box fills whatever space is going, and the SVG's own
+   preserveAspectRatio (the default, xMidYMid meet) draws the pitch as large as
+   fits and centres it. The pitch is never distorted, the whole of it is always
+   visible, and the background is transparent because the grass is a rect INSIDE
+   the viewBox: it paints the pitch and not the bars beside it.
+
+   The pointer mapping already does the matching letterbox arithmetic
+   (pointerFraction), so a tap lands where the finger is at any box shape. */
 .dde-canvas {
-  /* Bounded by the shorter of the two axes so the whole pitch is always
-     visible: a coach should never have to scroll to reach the far goal. */
-  max-width: min(100%, 560px);
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
   /* The canvas itself takes the touch, so a drag draws instead of scrolling the
      page underneath it. The read only renderer deliberately does NOT do this. */
   touch-action: none;
 }
+/* No outline on the armed canvas: with the box filling the whole area it would
+   ring the empty space beside the pitch rather than the pitch. The armed state
+   is carried by the pressed tool button, its aria-pressed, and the line of
+   instruction under the canvas. */
 .dde-canvas.armed {
   cursor: copy;
-  outline: 3px solid var(--gold, #f4c020);
-  outline-offset: 2px;
 }
 
 /* Element chrome, inside the SVG. */
@@ -248,14 +267,21 @@
   background: var(--card);
   padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
 }
+/* All SEVEN tools fit across the narrowest phone the app supports, with no
+   horizontal scroll. They did not: at a 58 pixel minimum the row needed 430
+   pixels inside a 374 pixel bar, so Label sat off the right edge behind a
+   scroll nobody would think to try, and the label tool was effectively missing
+   on a phone. Seven at 44 plus six 2 pixel gaps is 320, which fits inside 374
+   with room to spare. 44 is also the touch target floor, so this is the
+   smallest they may become. */
 .dde-tool-row {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   overflow-x: auto;
 }
 .dde-tool {
   flex: 1 1 0;
-  min-width: 58px;
+  min-width: 44px;
   min-height: 52px;
   display: flex;
   flex-direction: column;
@@ -332,5 +358,55 @@
   .dde-surface-row {
     max-width: 720px;
     margin: 8px auto 0;
+  }
+}
+
+/* A phone held sideways. The chrome does not shrink with the screen, so on a
+   390 pixel tall viewport the top bar, the hint, the selection bar and the
+   tools between them left the pitch 118 pixels tall: a postage stamp with a
+   toolbar. This trims everything that is not the drawing.
+
+   The hint is moved out of the flow rather than removed: it is a live region,
+   so hiding it with display none would stop the armed and selected states being
+   announced. Visually hidden keeps the announcement and gives the space back. */
+@media (max-height: 520px) {
+  .dde-top {
+    padding-top: calc(4px + env(safe-area-inset-top));
+    padding-bottom: 4px;
+  }
+  .dde-canvas-wrap {
+    padding: 4px 8px;
+  }
+  .dde-hint {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .dde-selbar {
+    padding: 5px 10px;
+    gap: 6px;
+  }
+  .dde-tools {
+    padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+  }
+  .dde-tool {
+    min-height: 44px;
+    font-size: 9.5px;
+    gap: 1px;
+  }
+  .dde-tool svg {
+    width: 17px;
+    height: 17px;
+  }
+  .dde-surface-row {
+    margin-top: 4px;
+  }
+  .dde-surface-row .select,
+  .dde-surface-row .btn {
+    height: 34px;
   }
 }
