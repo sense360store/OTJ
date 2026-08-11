@@ -220,9 +220,15 @@ The hosted ledger version is stamped **by the apply** (the connector uses the
 server clock), so it cannot be predicted before the apply happens. The order is
 always:
 
-1. apply the reviewed migration through the connector, after its own approval;
+1. apply the reviewed migration, after its own approval, through the gated
+   production migration workflow
+   (`docs/operations/production-migration-apply.md`). Migrations before 0046
+   were applied by hand through the connector; the order below is the same
+   either way;
 2. read back the recorded version and name immediately:
    `select version, name from supabase_migrations.schema_migrations order by version desc limit 1;`
+   The workflow's post-apply gate does this itself and prints the version in
+   the job summary;
 3. confirm it appears **exactly once** and is the newest row;
 4. open a small reconciliation pull request setting `EXPECTED_LAST_MIGRATION` to
    exactly that value, updating its tests, fixtures and this document. Never
@@ -234,23 +240,32 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260810182333` (`0045_spond_links`, applied
-2026-08-10 under its own production approval).
+Current value: `20260811210248` (`0046_drill_diagram`, applied
+2026-08-11 under its own production approval).
 
-Hosted ledger newest migration: **`20260810182333` / `spond_links`**.
+Hosted ledger newest migration: **`20260811210248` / `drill_diagram`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
 apply, not predicted before it, and was confirmed to be the unique newest row.
-The apply's readback also confirmed that `player_spond_links` and
-`spond_event_responses` both exist with row level security enabled and three
-and four policies respectively; that `authenticated` holds `DELETE, INSERT,
-SELECT` on the links and `DELETE, INSERT, SELECT, UPDATE` on the responses, so
-the links carry no `UPDATE`; that `anon` holds nothing on either; that the
-expected cascade and composite foreign keys exist; that both tables are empty;
-and that existing player and registration data was untouched.
 
-The superseded value, `20260809184949` (`0044_training_day_core`, applied
-2026-08-09 as Release A of Training Day), is now rejected by the gate; a test
-pins that it is, alongside the earlier `20260809081118` and `20260727110609`.
+0046 is the first migration applied by the gated production migration workflow
+rather than by hand, so its ledger row carries more evidence than its
+predecessors, all of it confirmed independently before this constant moved:
+
+- `created_by` is
+  `github-actions:apply-production-migration@3aee9522440ddcc7d47a1da9016226a87228a30c`,
+  naming the workflow and the commit it ran from;
+- `idempotency_key` is `otj:migration:0046_drill_diagram`, and that column is
+  UNIQUE, so the same migration cannot be applied a second time;
+- `statements` holds one entry whose MD5 is
+  `a4074f7c01e48cdad679fdc633d8dc14`, the reviewed file with its trailing
+  newline stripped;
+- the row before it is `20260810182333` / `spond_links`, unchanged;
+- `public.drills.diagram` exists, the `drills_diagram_shape` check constraint
+  exists, and all three `drill_diagram_*` validation functions exist.
+
+The superseded value, `20260810182333` (`0045_spond_links`, applied 2026-08-10
+as the Spond member links), is now rejected by the gate; a test pins that it
+is, alongside the earlier `20260809184949` and `20260809081118`.
 
 Moving this constant is a **reconciliation**, never a deployment: it records an
 already applied, already reviewed hosted state so the fail closed verifier
@@ -367,7 +382,7 @@ on the hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260810182333` (0045, the Spond member links);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260811210248` (0046, the drill diagram column);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
