@@ -1,0 +1,364 @@
+name: Apply production migration
+
+# Apply ONE reviewed Supabase migration to the hosted production database, by
+# hand, from a button. It deploys no frontend code, no Edge Function, no
+# Storage policy and no secret. It applies exactly the one migration file
+# selected from the dropdown below and nothing else.
+#
+# ---------------------------------------------------------------------
+# THE PRODUCTION SAFETY MODEL
+# ---------------------------------------------------------------------
+#
+# Migrations are a review gate in this repository (CLAUDE.md, "Review gates").
+# The gate has always been human: someone reads the SQL, then applies it by
+# hand. This workflow does not loosen that. It replaces the hand with a button
+# and keeps every check the hand was supposed to perform, in an order where
+# each one fails before the next can do damage:
+#
+#   1. workflow_dispatch ONLY. There is no push, pull_request or schedule
+#      trigger. Merging this file changes no database, and merging a migration
+#      changes no database either. Nothing here runs without a person pressing
+#      Run workflow.
+#   2. The `production` environment. GitHub holds the run at "Waiting" until a
+#      configured reviewer approves it, and the secrets live on that
+#      environment rather than the repository.
+#   3. The operator types the project ref. It must equal both a ref hardcoded
+#      here and the configured SUPABASE_PROJECT_ID secret, so a valid token
+#      pointed at a different project cannot apply anything here.
+#   4. The migration is CHOSEN FROM A CLOSED LIST, not typed. The options are
+#      the keys of REVIEWED_MIGRATIONS in
+#      .github/scripts/production-migration/reviewed_migrations.py. Adding a
+#      migration to that list is its own reviewed pull request, so "this SQL is
+#      correct" and "this SQL may be applied to production" are one review.
+#   5. The pre-apply gate reads the hosted ledger and refuses unless the
+#      database is still exactly the one the migration was reviewed against:
+#      the expected ledger row is still the unique newest one, this migration
+#      has never been recorded, and every object it creates is still absent. A
+#      second press of the button stops here with the database untouched.
+#   6. The apply is one transaction. The ledger row is inserted FIRST and the
+#      migration's own COMMIT commits both, so a failure anywhere takes the
+#      ledger row with it and the ledger can never claim a migration that did
+#      not apply. See apply_one_migration.sql for why that ordering works.
+#   7. The post-apply gate reads the hosted ledger back and fails unless the
+#      migration is now the unique newest row, the row before it is the one
+#      that was newest before, the recorded statement hashes to the reviewed
+#      file, and every object exists.
+#
+# WHY EXACTLY ONE MIGRATION, AND WHY NOT `supabase db push`
+#
+# This repository names its migration files 0001..0046 while the hosted ledger
+# records 14 digit timestamp versions assigned at apply time (0045_spond_links
+# is recorded as 20260810182333 / spond_links). `db push` reconciles the two by
+# pushing every unapplied local file under its own file name as the version.
+# That would apply more than one migration in a run and would write a version
+# shape this ledger has never used, permanently splitting the history. So the
+# apply is a single explicit file, recorded the way every existing hosted row
+# is recorded: one statements entry holding the whole file, a name, and a
+# server-clock version.
+#
+# WHY psql RATHER THAN THE MANAGEMENT API
+#
+# docs/operations/content-sharing-edge-function-deploy.md records the finding:
+# the classic personal access token in SUPABASE_ACCESS_TOKEN returns HTTP 403
+# against the Management API database endpoints on this project. Every database
+# read and the apply itself therefore go through a direct psql connection using
+# SUPABASE_DB_URL, which is the connection the no-residue verifier already uses
+# from Actions. SUPABASE_ACCESS_TOKEN still authenticates the pinned CLI, which
+# is used here for one thing only: proving the run is pointed at a project this
+# account can actually see, before psql touches anything.
+#
+# Secrets are read only through environment variables and are never printed.
+# SUPABASE_DB_URL is scoped to the three steps that need it rather than the
+# job. No step uses `set -x`; every script uses `set -euo pipefail`, and psql
+# output is filtered through redact.py before it reaches the log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      migration_file:
+        description: "The reviewed migration to apply (this is the ONLY one applied)"
+        required: true
+        type: choice
+        options:
+          - supabase/migrations/0046_drill_diagram.sql
+      confirm_project:
+        description: "Type the target Supabase project ref to confirm (must equal uynorsnrvocksgqweucu)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apply-production-migration
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: apply one reviewed migration
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      CONFIRM_PROJECT: ${{ inputs.confirm_project }}
+      MIGRATION_FILE: ${{ inputs.migration_file }}
+      # A project ref is not a credential; it appears in every function URL.
+      # Hardcoded so a valid token cannot apply to the wrong project.
+      EXPECTED_PROJECT_REF: uynorsnrvocksgqweucu
+      SUPABASE_CLI_VERSION: 2.105.0
+      SCRIPTS: .github/scripts/production-migration
+    steps:
+      # github.sha is the commit of the ref chosen in the Run workflow dialog.
+      # Naming it explicitly is what makes "the exact selected commit" a fact
+      # rather than a default. No credential is persisted: this job pushes
+      # nothing.
+      - name: Check out the selected commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Confirm target project (double gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CONFIRM_PROJECT}" ]; then
+            echo "confirm_project input is empty"; exit 1
+          fi
+          if [ "${CONFIRM_PROJECT}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "confirm_project does not match the expected project ref"; exit 1
+          fi
+          if [ -z "${SUPABASE_PROJECT_ID}" ]; then
+            echo "SUPABASE_PROJECT_ID secret is not set"; exit 1
+          fi
+          if [ "${SUPABASE_PROJECT_ID}" != "${EXPECTED_PROJECT_REF}" ]; then
+            echo "the configured project secret does not match the expected project ref"; exit 1
+          fi
+          if [ -z "${SUPABASE_ACCESS_TOKEN}" ]; then
+            echo "SUPABASE_ACCESS_TOKEN secret is not set"; exit 1
+          fi
+          echo "project ref confirmed; token variable present"
+
+      # The dropdown already limits the choice, but a workflow_dispatch input
+      # can also arrive from the API, so the register is asked again here.
+      # This is the same check the plan step performs; it runs first so an
+      # unreviewed path is refused before anything else happens.
+      - name: Confirm the migration is on the reviewed list
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, os.environ["SCRIPTS"])
+          from reviewed_migrations import REVIEWED_MIGRATIONS
+          want = os.environ["MIGRATION_FILE"]
+          if want not in REVIEWED_MIGRATIONS:
+              print(f"FAIL: {want!r} is not a reviewed migration")
+              print("Reviewed migrations:")
+              for path in sorted(REVIEWED_MIGRATIONS):
+                  print(f"  {path}")
+              sys.exit(1)
+          print(f"{want} is on the reviewed list")
+          PY
+
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.105.0
+
+      - name: Assert Supabase CLI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          have="$(supabase --version)"
+          echo "Supabase CLI: ${have}"
+          if [ "${have}" != "${SUPABASE_CLI_VERSION}" ]; then
+            echo "Expected pinned Supabase CLI ${SUPABASE_CLI_VERSION}, got ${have}"; exit 1
+          fi
+
+      # The token is never used to apply anything. It proves the run is
+      # operating against a project this account can see, which is one more
+      # independent way a mis-pointed run stops before psql opens a connection.
+      # validate_token.py is the repository's one implementation of this check.
+      - name: Confirm the access token can see the target project
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          supabase projects list --output json > "$tmp"
+          python3 .github/scripts/content-sharing-deploy/validate_token.py "$tmp" "${EXPECTED_PROJECT_REF}"
+
+      - name: Refuse a dirty working tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree is not clean; refusing to apply a migration that is not the committed one"
+            git status --porcelain
+            exit 1
+          fi
+          echo "working tree is clean at $(git rev-parse HEAD)"
+
+      # The integrity record, written BEFORE anything is applied: the commit,
+      # the file, its SHA-256, and the hash the ledger row must carry
+      # afterwards. This step also refuses a migration file that does not open
+      # and close its own transaction, because the atomic apply depends on it.
+      - name: Record the apply plan (commit, file, SHA-256)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "${SCRIPTS}/reviewed_migrations.py" \
+            --migration "${MIGRATION_FILE}" \
+            --commit "${GITHUB_SHA}"
+
+      # SUPABASE_DB_URL is exposed only to this step and the three below it. The
+      # verifier connects with psql inside a read-only, rollback-only
+      # transaction and never writes.
+      #
+      # The connection string is checked FIRST, and it is the gate the others
+      # cannot stand in for. Every earlier check guards a different value: the
+      # typed ref, the SUPABASE_PROJECT_ID secret, and what the access token
+      # can see. None of them constrains SUPABASE_DB_URL, which is the only
+      # thing psql actually connects through, so it is asserted to name the
+      # expected project ref in its user or host before a connection is opened.
+      - name: Pre-apply gate (the hosted ledger is still the reviewed one)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v psql >/dev/null 2>&1 || { echo "psql is not installed on the runner"; exit 1; }
+          [ -n "${SUPABASE_DB_URL:-}" ] || { echo "SUPABASE_DB_URL is missing"; exit 1; }
+          python3 "${SCRIPTS}/check_db_url_project.py"
+          python3 "${SCRIPTS}/verify_hosted_state.py" --phase pre --migration "${MIGRATION_FILE}"
+
+      # The apply. One psql invocation, one transaction, one migration. The
+      # ledger row goes in first and the migration's own COMMIT commits both;
+      # see apply_one_migration.sql for the full reasoning. psql output is
+      # captured and filtered before it reaches the log, on success and on
+      # failure alike, so a libpq message can never surface the connection
+      # string.
+      - name: Apply the migration and record it in the hosted ledger
+        id: apply
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${SUPABASE_DB_URL:-}" ] || { echo "SUPABASE_DB_URL is missing"; exit 1; }
+          # Asserted again here, immediately before the only step that writes.
+          # The pre gate proving it is not enough on its own: this is the step
+          # that opens the connection, so it checks its own connection.
+          python3 "${SCRIPTS}/check_db_url_project.py"
+
+          # The ledger identity AND the path all come out of the register, not
+          # out of the dispatch input. The input has already been matched
+          # against the register's keys; taking the path back out of the
+          # register means the file that is read, hashed and applied is the
+          # reviewed one by construction.
+          ident="$(mktemp)"
+          trap 'rm -f "$ident"' EXIT
+          python3 - > "$ident" <<'PY'
+          import os, sys
+          sys.path.insert(0, os.environ["SCRIPTS"])
+          from reviewed_migrations import lookup
+          entry = lookup(os.environ["MIGRATION_FILE"])
+          print(entry.path)
+          print(entry.ledger_name)
+          print(entry.idempotency_key)
+          PY
+          { read -r migration_path; read -r ledger_name; read -r ledger_key; } < "$ident"
+          if [ -z "${migration_path}" ] || [ -z "${ledger_name}" ] || [ -z "${ledger_key}" ]; then
+            echo "could not resolve the migration's ledger identity"; exit 1
+          fi
+          echo "applying ${migration_path} as ${ledger_name}"
+
+          # Command substitution strips trailing newlines, which is exactly the
+          # shape every existing hosted row carries and exactly what the
+          # post-apply hash comparison expects.
+          migration_sql="$(cat "${migration_path}")"
+          [ -n "${migration_sql}" ] || { echo "migration file is empty"; exit 1; }
+
+          log="$(mktemp)"
+          trap 'rm -f "$ident" "$log"' EXIT
+          set +e
+          PGSSLMODE=require PGCONNECT_TIMEOUT=15 psql \
+            --no-psqlrc \
+            --set ON_ERROR_STOP=1 \
+            --set "ledger_name=${ledger_name}" \
+            --set "ledger_key=${ledger_key}" \
+            --set "created_by=github-actions:apply-production-migration@${GITHUB_SHA}" \
+            --set "migration_sql=${migration_sql}" \
+            --set "migration_path=${migration_path}" \
+            -d "${SUPABASE_DB_URL}" \
+            -f "${SCRIPTS}/apply_one_migration.sql" > "$log" 2>&1
+          rc=$?
+          set -e
+          python3 "${SCRIPTS}/redact.py" "$log"
+          if [ "$rc" -ne 0 ]; then
+            echo "psql exited ${rc}; the transaction was rolled back and NOTHING was applied."
+            echo "Confirm with the post gate below before doing anything else."
+            exit "$rc"
+          fi
+          echo "apply committed"
+
+      # The proof. This is also where the assigned hosted version is printed,
+      # which is the value the separate EXPECTED_LAST_MIGRATION reconciliation
+      # pull request needs.
+      - name: Post-apply gate (read the hosted ledger back)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${SUPABASE_DB_URL:-}" ] || { echo "SUPABASE_DB_URL is missing"; exit 1; }
+          python3 "${SCRIPTS}/verify_hosted_state.py" --phase post --migration "${MIGRATION_FILE}"
+
+      # Only when the apply itself failed. The transaction should have rolled
+      # back, and the pre gate passing again is the proof: it asserts the
+      # ledger is untouched and every object the migration creates is still
+      # absent. It runs the SAME assertions as the pre gate above rather than a
+      # softer "looks fine" check, so a partial apply cannot pass it.
+      - name: Prove nothing was applied
+        if: failure() && steps.apply.outcome == 'failure'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "${SUPABASE_DB_URL:-}" ] || { echo "SUPABASE_DB_URL is missing"; exit 1; }
+          if python3 "${SCRIPTS}/verify_hosted_state.py" --phase pre --migration "${MIGRATION_FILE}"; then
+            echo "CONFIRMED: the apply rolled back and the hosted database is unchanged."
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**The apply failed and rolled back. The hosted database is unchanged.**" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "WARNING: the apply failed AND the database is not in its pre-apply state."
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**The apply failed and the database is NOT in its pre-apply state. Inspect it by hand before re-running.**" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: What happens next
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### What this run did NOT do"
+            echo ""
+            echo "- It deployed no frontend code, no Edge Function, no Storage policy and no secret."
+            echo "- It applied no migration other than \`${MIGRATION_FILE}\`."
+            echo ""
+            echo "### Required follow-up"
+            echo ""
+            echo "1. Copy the assigned hosted migration version printed above."
+            echo "2. Open a SEPARATE reconciliation pull request setting \`EXPECTED_LAST_MIGRATION\`"
+            echo "   in \`.github/scripts/content-sharing-deploy/verify_no_residue.py\` to exactly"
+            echo "   that value, updating its tests, sample fixture and"
+            echo "   \`docs/operations/content-sharing-edge-function-deploy.md\` with it."
+            echo "3. Until that lands, the content-sharing Edge Function deploy workflow fails"
+            echo "   closed on its own ledger gate. That is intended, not a fault."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Done. One migration applied and recorded; nothing else was changed."
