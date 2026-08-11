@@ -144,6 +144,22 @@ describe('the gate is the replies on THIS register, not the club', () => {
     expect(hasRsvpContext({ anna: rsvp('unanswered') }, v)).toBe(true)
   })
 
+  it('ignores a walk up guest, whose reply says nothing about this squad', () => {
+    // The failure this stops: a session covers Titans, none of the Titans
+    // children are linked yet, and a Trojans child turns up and is quick
+    // added. That guest IS linked and accepted, so counting them opened
+    // Going, and Going then hid every unlinked Titans child and dropped
+    // the group heading with them. The register collapsed to the one
+    // visitor. A guest is not evidence about the squad the session covers.
+    const v = view([row('titan-a'), row('titan-b'), { ...row('visitor', true), manual: true }])
+    expect(hasRsvpContext({ visitor: rsvp('accepted') }, v)).toBe(false)
+  })
+
+  it('still opens Going when a covered child replies, guest or no guest', () => {
+    const v = view([row('titan-a'), { ...row('visitor', true), manual: true }])
+    expect(hasRsvpContext({ 'titan-a': rsvp('accepted'), visitor: rsvp('accepted') }, v)).toBe(true)
+  })
+
   it('counts an unanswered reply as context, because it is one', () => {
     // A linked child who has not answered is a fact about tonight. It is
     // the absence of any link at all that means no context.

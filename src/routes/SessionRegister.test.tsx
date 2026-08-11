@@ -348,6 +348,22 @@ describe('the Going view', () => {
     expect([...html.matchAll(/reg-rsvp/g)]).toHaveLength(1)
   })
 
+  it('counts the whole register in the headline, not the narrowed view', () => {
+    // The headline is the coach's record for the session and must read the
+    // same as the session day card one tap earlier. Nothing pinned this,
+    // so registerSummary(full) could quietly become registerSummary(view)
+    // and the header would then contradict the pill two lines below it.
+    const html = screen({
+      entries: [],
+      rsvpByPlayer: { p1: { status: 'accepted', syncedAt: fresh() } },
+    })
+    expect(html).toContain('0 of 2 in')
+    expect(html).not.toContain('0 of 1 in')
+    // And the two numbers reconcile: 1 listed plus 1 hidden is the 2 above.
+    expect(html).toContain('1 hidden')
+    expect(names(html)).toEqual(['Alpha Synthetic'])
+  })
+
   it('says how many it is holding back rather than narrowing silently', () => {
     const html = screen({
       entries: [],

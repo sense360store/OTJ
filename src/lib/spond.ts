@@ -87,6 +87,25 @@ export function bySpondEventCloseness(date: string, time: string) {
   }
 }
 
+// What the Link Spond event picker lists, given its two narrowings and the
+// session's moment: Training or All events first, then the team scope, then
+// nearest to the session.
+//
+// Lives here rather than in the modal that renders it because the modal
+// opens on a tap and this project has no DOM, so inside the component the
+// rule was unreachable by any test: it could be changed to always widen and
+// the suite stayed green while the Training chip rendered pressed over a
+// list of fixtures. Out here it is ordinary pure code with ordinary tests.
+export function pickerEvents(
+  events: SpondEvent[],
+  opts: { kind: EventKind; showAll: boolean; teamId: string | null; date: string; time: string },
+): SpondEvent[] {
+  const teamId = opts.teamId
+  const inTeam = opts.showAll || !teamId ? events : events.filter((e) => spondEventInTeam(e, teamId))
+  const pool = inTeam.filter((e) => matchesEventKind(e, opts.kind))
+  return [...pool].sort(bySpondEventCloseness(opts.date, opts.time))
+}
+
 // The freshness label next to the counts: "synced 20 minutes ago". Coarse
 // on purpose, freshness not precision; the counts are a snapshot and change
 // only when someone presses Sync now.

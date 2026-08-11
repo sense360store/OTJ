@@ -71,7 +71,12 @@ export const DEFAULT_REGISTER_SCOPE: RegisterScope = 'going'
 // failed are one case.
 export function hasRsvpContext(rsvpByPlayer: Record<string, Rsvp>, view?: RegisterView): boolean {
   if (!view) return Object.keys(rsvpByPlayer).length > 0
-  return view.groups.some((g) => g.rows.some((r) => rsvpByPlayer[r.player.id] !== undefined))
+  // Quick added guests do not count. A visitor's reply is a fact about
+  // their own team's event, not about the squad this session covers, and
+  // counting one was enough to open Going over a register whose own
+  // children were all unlinked: every covered row was hidden, the group
+  // heading went with it, and the screen collapsed to the one visitor.
+  return view.groups.some((g) => g.rows.some((r) => !r.manual && rsvpByPlayer[r.player.id] !== undefined))
 }
 
 export interface ScopedRegister {
