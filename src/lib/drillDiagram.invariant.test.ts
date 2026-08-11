@@ -193,6 +193,24 @@ describe('nothing persists while a finger is moving', () => {
     expect(pointerSection).not.toContain('mutate')
   })
 
+  it('drags an element by its grab offset, never by the raw pointer position', () => {
+    // SOURCE TEXT, and the weakest kind: this is the one rule in Drill Maker
+    // that mutation testing could not kill behaviourally. The arithmetic lives
+    // in a pointer handler, and this project has no DOM under test, so no test
+    // can fire a pointer event to observe it. What CAN be proved behaviourally
+    // is elementAnchor, the point the offset is measured from, and it is
+    // (drillDiagramEditor.test.ts: move to an element's own anchor changes
+    // nothing, for every type).
+    //
+    // Dropping the offset teleports the element under the thumb the instant a
+    // drag starts, and it is invisible in every test. So the dispatch is
+    // checked for the subtraction. This catches somebody deleting it; it does
+    // not catch the offset being computed wrongly, or measured from the wrong
+    // point, or a sign error.
+    expect(editor).toContain('elementAnchor(el)')
+    expect(editor).toMatch(/op: 'move', id, x: f\.x - g\.grabX, y: f\.y - g\.grabY/)
+  })
+
   it('has no autosave: the save runs from the Save handler, never from an effect', () => {
     // SOURCE TEXT. A coach has to know whether their work is stored, which is
     // the whole reason the state is shown in words in the top bar.
