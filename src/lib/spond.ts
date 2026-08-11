@@ -151,13 +151,20 @@ export function spondEventLocalDateTime(startsAt: string): { date: string; time:
 import { DEFAULT_EVENT_KIND, type EventKind, isTrainingEvent, matchesEventKind } from './eventKind'
 export { isTrainingEvent, matchesEventKind }
 
+// The lifecycle rule lives in ./sessionLifecycle, the single seam every
+// operational surface uses. Imported for the upcoming and past split below;
+// this file declares no cutoff of its own.
+import { DEFAULT_LIFECYCLE_SCOPE, isSessionPast, type LifecycleScope } from './sessionLifecycle'
+
 // The "Plan from Spond" suggestions: synced events a coach could turn into a
-// session, ordered upcoming soonest first then recent past most recent first.
-// Drops events the coach has already planned (a session they own linked to
-// it), narrows to their teams plus club events (team_id null) unless the all
-// teams toggle widens it, and narrows to the requested event kind, which is
-// Training unless the caller widens it. Pure so the screen wires it to live
-// data and the test pins the scope and ordering.
+// session. Upcoming soonest first by default; the Past scope returns the
+// events that have already run, most recent first, for a coach writing up a
+// night after it happened. Drops events the coach has already planned (a
+// session they own linked to it), narrows to their teams plus club events
+// (team_id null) unless the all teams toggle widens it, and narrows to the
+// requested event kind, which is Training unless the caller widens it. Pure
+// so the screen wires it to live data and the test pins the scope and
+// ordering.
 export interface SpondPlanOptions {
   events: SpondEvent[]
   // Event ids the current coach already owns a session linked to. One event
@@ -174,6 +181,11 @@ export interface SpondPlanOptions {
   // training. All events is the deliberate widening, not the starting
   // point, which is the correction this parameter carries.
   kind?: EventKind
+  // Which side of the lifecycle to suggest. Upcoming unless the caller
+  // widens it: an event that has already run is not a night to organise,
+  // and mixing the two put last month's gala under a coach's thumb while
+  // they were trying to plan Tuesday.
+  scope?: LifecycleScope
   now?: Date
 }
 
@@ -183,9 +195,9 @@ export function spondPlanSuggestions({
   scopeTeamIds,
   showAllTeams,
   kind = DEFAULT_EVENT_KIND,
+  scope = DEFAULT_LIFECYCLE_SCOPE,
   now = new Date(),
 }: SpondPlanOptions): SpondEvent[] {
-  const at = now.getTime()
   const inScope = (e: SpondEvent) => showAllTeams || e.teamId === null || scopeTeamIds.includes(e.teamId)
   const pool = events.filter(
     (e) =>
@@ -193,13 +205,17 @@ export function spondPlanSuggestions({
       inScope(e) &&
       matchesEventKind(e, kind),
   )
-  const upcoming = pool
-    .filter((e) => Date.parse(e.startsAt) >= at)
+  // Past reads most recent first, because a coach looking back wants last
+  // night before last month; upcoming reads soonest first for the same
+  // reason pointed the other way.
+  if (scope === 'past') {
+    return pool
+      .filter((e) => isSessionPast(e, now))
+      .sort((a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt))
+  }
+  return pool
+    .filter((e) => !isSessionPast(e, now))
     .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))
-  const past = pool
-    .filter((e) => Date.parse(e.startsAt) < at)
-    .sort((a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt))
-  return [...upcoming, ...past]
 }
 
 // The pre filled session "Plan this" creates: the tapping coach owns it, the

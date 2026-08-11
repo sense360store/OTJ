@@ -29,6 +29,7 @@ import {
 import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
 import { ALL_EVENTS_LABEL, isTrainingEvent, TRAINING_LABEL } from '../lib/eventKind'
 import { applyEventFilter, DEFAULT_EVENT_FILTER, pickNextEvent, type EventFilterState } from '../lib/eventFilter'
+import { isSessionActive, isSessionLive } from '../lib/sessionLifecycle'
 import { compareNewestFirst } from '../lib/contentOrder'
 import type { Session, Template } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
@@ -361,23 +362,31 @@ function CoachHome() {
   const todayStr = toIso(now)
 
   const isMine = (s: Session) => s.coachId === user?.id
-  // The sessions read is club-wide and ordered by date and time; upcoming
-  // keeps today's sessions all day so the hero holds while one runs.
-  const upcoming = sessions.filter((s) => s.status === 'upcoming' && s.date >= todayStr)
+  // The sessions read is club-wide and ordered by date and time. What
+  // counts as still to come is the shared lifecycle rule in
+  // ../lib/sessionLifecycle, never the stored status and never a date
+  // string comparison: a session keeps its place through its own planned
+  // duration and for as long as somebody is driving it live, and loses it
+  // the moment it has genuinely finished. Yesterday's training does not sit
+  // here waiting for a status nobody ever set.
+  const upcoming = sessions.filter((s) => isSessionActive(s, now))
   // The hero leads with your own next training, and with the club's when you
   // own none. Leading with ownership alone told a coach who owns no session
   // that nothing was scheduled on a night the club was training; the shared
   // rule in ../lib/eventFilter states the whole preference order.
-  const next = canPlan ? pickNextEvent(upcoming, user?.id, spondEvents) : upcoming[0]
-  const liveNow = sessions.find((s) => s.liveActivityIndex != null)
+  const next = canPlan ? pickNextEvent(upcoming, user?.id, spondEvents, now) : upcoming[0]
+  const liveNow = sessions.find(isSessionLive)
   // A brand-new coach has no sessions at all, upcoming or past.
   const fresh = canPlan && !sessions.some(isMine)
 
   const weekEnd = addDaysIso(todayStr, 7)
+  // Already narrowed to what is still to come, so this only closes the far
+  // end of the window. A session that ran late last night is inside the
+  // seven days and outside `upcoming`, which is the right way round.
   const weekAll = upcoming.filter((s) => s.date < weekEnd)
   // Parents get the club's week whole; they own nothing to narrow to and
   // the kind filter is a coach's tool, so their list stays unfiltered.
-  const week = canPlan ? applyEventFilter(weekAll, filter, { userId: user?.id, spondEvents }) : weekAll
+  const week = canPlan ? applyEventFilter(weekAll, filter, { userId: user?.id, spondEvents, now }) : weekAll
 
   const teamName = (s: Session) => sessionTeamsLabel(s, teamById)
   const venueName = (s: Session) => venueNameFor(s, venueById)

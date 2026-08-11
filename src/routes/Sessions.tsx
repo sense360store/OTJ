@@ -6,6 +6,8 @@
 import { useState } from 'react'
 import { ALL_EVENTS_LABEL, TRAINING_LABEL } from '../lib/eventKind'
 import { applyEventFilter, DEFAULT_EVENT_FILTER, type EventFilterState } from '../lib/eventFilter'
+import { LIFECYCLE_SCOPE_LABELS, matchesLifecycleScope } from '../lib/sessionLifecycle'
+import { emptyEventListNote, NO_PAST_SESSIONS_NOTE } from '../lib/sessionEmptyState'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
@@ -216,28 +218,45 @@ export function Sessions() {
   const teamChipLabel = scope.teamIds.length > 1 ? 'My teams' : 'My team'
   const teamScoped = (s: Session) => sessionVisibleToTeams(s, effectiveIds)
 
-  // Training first. The primary split is what KIND of night this is, not who
-  // owns the row: a coach opening Sessions is asking what training is
-  // happening, so Training is the default and All events is the deliberate
-  // widening. Team narrows within that, and Mine is a secondary narrowing that
-  // is off by default. Ownership still decides who may edit or delete, which
-  // is `canManage` below and a different question entirely.
+  // Training first, upcoming first. The primary split is what KIND of night
+  // this is, not who owns the row: a coach opening Sessions is asking what
+  // training is happening, so Training is the default and All events is the
+  // deliberate widening. Upcoming or Past comes next and defaults to
+  // Upcoming, because this is an operational list and a finished session is
+  // not work. Team narrows within both, and Mine is a secondary narrowing
+  // that is off by default. Ownership still decides who may edit or delete,
+  // which is `canManage` below and a different question entirely.
   //
   // The composition lives in ../lib/eventFilter so Home and the Spond surfaces
   // give the same answer; only the team predicate is local, because it depends
   // on session coverage and the parent scope.
   const allTeamIds = Object.keys(teamById)
+  // One moment for the whole render, so every row on screen is judged
+  // against the same clock rather than against the millisecond it happened
+  // to be tested at.
+  const now = new Date()
   const list = canPlan
     ? applyEventFilter(sessions, filter, {
         userId: user?.id,
         spondEvents,
+        now,
         teamMatch: (s) =>
           !teamId ||
           (teamId === 'club' ? coversWholeClub(s, allTeamIds) : sessionCoversAnyTeam(s, [teamId])),
       })
-    : hasTeam && parentScope === 'team'
-      ? sessions.filter(teamScoped)
-      : sessions
+    : // Parents get the same lifecycle split with none of the coaching
+      // narrowings: their schedule is their team's next nights, and Past is
+      // there when they want to look back at one.
+      (hasTeam && parentScope === 'team' ? sessions.filter(teamScoped) : sessions).filter((s) =>
+        matchesLifecycleScope(s, filter.scope, now),
+      )
+  // Whether the club holds any finished session AT ALL, measured before
+  // any narrowing. This is the one question "no sessions have finished
+  // yet" is allowed to answer: a Past view emptied by a kind, team or
+  // ownership filter is a filtered view, not an empty history, and telling
+  // a coach their club has never trained would be plainly wrong on a
+  // screen that had just hidden last Tuesday behind a chip.
+  const pastExists = sessions.some((s) => matchesLifecycleScope(s, 'past', now))
 
   return (
     <div>
@@ -246,7 +265,7 @@ export function Sessions() {
           <h2>Sessions</h2>
           <div className="sub">
             {canPlan
-              ? 'Training across the club. All events widens to fixtures, galas and the rest.'
+              ? `Training coming up across the club. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds the nights that have finished.`
               : hasTeam
                 ? "Your team's training nights."
                 : 'Training nights across the club.'}
@@ -262,31 +281,18 @@ export function Sessions() {
 
       {!canPlan && !hasTeam && <NoTeamNote />}
 
-      {(canPlan || showParentToggle) && (
-        <div className="filter-row" style={{ marginBottom: 18 }}>
-          {canPlan ? (
-            <>
-              <Chip on={filter.kind === 'training'} onClick={() => setFilter((f) => ({ ...f, kind: 'training' }))}>
-                {TRAINING_LABEL}
-              </Chip>
-              <Chip on={filter.kind === 'all'} onClick={() => setFilter((f) => ({ ...f, kind: 'all' }))}>
-                {ALL_EVENTS_LABEL}
-              </Chip>
-              <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
-                <option value="">All teams</option>
-                <option value="club">Club</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-              {/* Ownership, deliberately last and off by default. */}
-              <Chip on={filter.mine} onClick={() => setFilter((f) => ({ ...f, mine: !f.mine }))}>
-                Mine
-              </Chip>
-            </>
-          ) : (
+      <div className="filter-row" style={{ marginBottom: 18 }}>
+        {canPlan ? (
+          <>
+            <Chip on={filter.kind === 'training'} onClick={() => setFilter((f) => ({ ...f, kind: 'training' }))}>
+              {TRAINING_LABEL}
+            </Chip>
+            <Chip on={filter.kind === 'all'} onClick={() => setFilter((f) => ({ ...f, kind: 'all' }))}>
+              {ALL_EVENTS_LABEL}
+            </Chip>
+          </>
+        ) : (
+          showParentToggle && (
             <>
               <Chip on={parentScope === 'team'} onClick={() => setParentScope('team')}>
                 {teamChipLabel}
@@ -295,36 +301,69 @@ export function Sessions() {
                 All club
               </Chip>
             </>
-          )}
-        </div>
-      )}
+          )
+        )}
+        {/* The lifecycle split, second: what kind of night, then whether it
+            has happened. Everyone gets it, coach and parent alike, because
+            looking back at a session is not a coaching affordance. */}
+        <Chip on={filter.scope === 'upcoming'} onClick={() => setFilter((f) => ({ ...f, scope: 'upcoming' }))}>
+          {LIFECYCLE_SCOPE_LABELS.upcoming}
+        </Chip>
+        <Chip on={filter.scope === 'past'} onClick={() => setFilter((f) => ({ ...f, scope: 'past' }))}>
+          {LIFECYCLE_SCOPE_LABELS.past}
+        </Chip>
+        {canPlan && (
+          <>
+            <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
+              <option value="">All teams</option>
+              <option value="club">Club</option>
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            {/* Ownership, deliberately last and off by default. */}
+            <Chip on={filter.mine} onClick={() => setFilter((f) => ({ ...f, mine: !f.mine }))}>
+              Mine
+            </Chip>
+          </>
+        )}
+      </div>
 
       {/* Coaches can start a session from a synced Spond event. Hidden when
           there is nothing to suggest, so it adds no empty card here. */}
       <PlanFromSpond hideWhenEmpty />
 
       {list.length === 0 ? (
-        <Empty icon={Icon.calendar} title="No sessions here yet">
-          {/* An empty club and a filter that matched nothing look the same
-              on screen and need opposite advice. Pointing a brand new club
-              at All events would send them looking for sessions nobody has
-              made yet.
-              Name only the narrowings actually in effect, the way Home
-              does: on the shipped default Mine is already off and no team
-              is chosen, so suggesting either is advice that cannot change
-              the result. */}
+        <Empty
+          icon={Icon.calendar}
+          title={filter.scope === 'past' ? 'Nothing in the past here' : 'No sessions here yet'}
+        >
+          {/* An empty club, a filter that matched nothing and a club with
+              no history at all look identical on screen and need three
+              different answers. Which one is true is decided in
+              ../lib/sessionEmptyState, where every combination is testable;
+              a static render cannot vary a chosen team or a pressed Mine
+              chip, so assembling this sentence here left it unreachable.
+              The parent's widening is All club rather than the coach's
+              filters, so their two lines stay beside the toggle they name. */}
           {canPlan
-            ? sessions.length === 0
-              ? 'Plan your first session and it will appear here.'
-              : [
-                  `Nothing matches this filter. Try ${ALL_EVENTS_LABEL}`,
-                  teamId ? ', another team' : '',
-                  filter.mine ? ', or turn Mine off' : '',
-                  '.',
-                ].join('')
-            : hasTeam && parentScope === 'team'
-              ? 'Nothing scheduled for your team yet. Tap All club to see the whole club.'
-              : 'Nothing on the club calendar yet.'}
+            ? emptyEventListNote({
+                anySessions: sessions.length > 0,
+                anyPast: pastExists,
+                scope: filter.scope,
+                kind: filter.kind,
+                team: !!teamId,
+                mine: filter.mine,
+              })
+            : filter.scope === 'past' && !pastExists
+              ? NO_PAST_SESSIONS_NOTE
+              : hasTeam && parentScope === 'team'
+                ? `Nothing ${filter.scope === 'past' ? 'in the past' : 'scheduled'} for your team. Tap All club to see the whole club.`
+                : filter.scope === 'past'
+                  ? 'Nothing in the past on the club calendar.'
+                  : 'Nothing on the club calendar yet.'}
         </Empty>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: 18 }}>

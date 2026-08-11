@@ -24,6 +24,15 @@
 // covers what a screen shows WHEN IT OPENS, which is exactly what "the
 // default view is Training" is a claim about.
 //
+// THE SESSION LIFECYCLE RIDES ALONG, in the last section. It is a second
+// rule about the same opening view: Upcoming is the other half of the
+// default a coach lands on, and it is worth proving on the screen for the
+// same reason Training is. It shares this harness rather than copying
+// forty lines of mocks. What static render cannot reach is a chip a coach
+// presses, so the Past VIEW itself is proved at the seams
+// (../lib/eventFilter, ../lib/sessionCleanup.acceptance) and its copy in
+// ../lib/sessionEmptyState; what is proved here is what opens.
+//
 // Names in fixtures are invented. No real child or coach appears.
 // =====================================================================
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -89,6 +98,23 @@ const MY_TRAINING = session({ id: 's-mine', name: 'Titans Tuesday', coachId: ME,
 const THEIR_TRAINING = session({ id: 's-theirs', name: 'Trojans Thursday', coachId: THEM, date: inDays(4) })
 
 const WEEK = [LINKED_FIXTURE, PLAIN_FIXTURE, GALA, MY_TRAINING, THEIR_TRAINING]
+
+// Nights that have finished. Dated whole days back, so the assertions
+// below do not depend on the hour the suite runs at: a 17:30 session two
+// days ago is over on any clock.
+const LAST_WEEK_TRAINING = session({
+  id: 's-was',
+  name: 'Titans Tuesday',
+  coachId: ME,
+  date: inDays(-7),
+})
+const YESTERDAY_TRAINING = session({
+  id: 's-yesterday',
+  name: 'Gladiators Monday',
+  coachId: THEM,
+  date: inDays(-1),
+})
+const YESTERDAY_GALA = session({ id: 's-was-gala', name: 'Summer gala', coachId: THEM, date: inDays(-2) })
 
 // ---- the data layer, stubbed ----------------------------------------
 //
@@ -298,5 +324,73 @@ describe('the linked Spond card on a session', () => {
     )
     expect(out).toContain('Match')
     expect(out).toContain('U8 v Horbury')
+  })
+})
+
+// ---- The session lifecycle, on the screens ---------------------------
+
+describe('the Sessions screen, on the night after training', () => {
+  const html = () => renderToStaticMarkup(<Sessions />)
+
+  it('opens on Upcoming, with Past offered beside it', () => {
+    const out = html()
+    expect(out).toContain('aria-pressed="true">Upcoming</button>')
+    expect(out).toContain('aria-pressed="false">Past</button>')
+  })
+
+  it('leaves last night s training out of the list it opens on', () => {
+    // The complaint this work started from: a session nobody ever marked
+    // completed sitting in the operational list for ever.
+    state.sessions = [YESTERDAY_TRAINING, MY_TRAINING]
+    const out = html()
+    expect(out).toContain('Titans Tuesday')
+    expect(out).not.toContain('Gladiators Monday')
+  })
+
+  it('offers Past when there is history to reach, and not otherwise', () => {
+    // The screen has to hand the note whether the club HAS history. This
+    // is the half of that sentence a unit test cannot see.
+    state.sessions = [LAST_WEEK_TRAINING, YESTERDAY_TRAINING]
+    expect(html()).toContain('Nothing matches this filter. Try All events, or Past.')
+    state.sessions = [PLAIN_FIXTURE, GALA]
+    expect(html()).toContain('Nothing matches this filter. Try All events.')
+  })
+
+  it('never tells a club with a season behind it that nothing has finished', () => {
+    // The Codex finding, at the screen. Under Upcoming with only history
+    // in the club, the honest note points at Past; the claim about the
+    // club is not made at all.
+    state.sessions = [LAST_WEEK_TRAINING, YESTERDAY_GALA]
+    expect(html()).not.toContain('No sessions have finished yet')
+  })
+
+  it('still tells a brand new club to plan a session', () => {
+    state.sessions = []
+    const out = html()
+    expect(out).toContain('Plan your first session')
+    expect(out).not.toContain('No sessions have finished yet')
+  })
+})
+
+describe('the Home screen, on the night after training', () => {
+  const html = () => renderToStaticMarkup(<Home />)
+
+  it('never leads with a session that has already happened', () => {
+    state.sessions = [YESTERDAY_TRAINING, MY_TRAINING]
+    const out = html()
+    expect(out).toContain('<h2>Titans Tuesday</h2>')
+    expect(out).not.toContain('Gladiators Monday')
+  })
+
+  it('shows the honest empty hero rather than yesterday', () => {
+    state.sessions = [LAST_WEEK_TRAINING, YESTERDAY_TRAINING, YESTERDAY_GALA]
+    const out = html()
+    expect(out).not.toContain('Gladiators Monday')
+    expect(out).not.toContain('<h2>Titans Tuesday</h2>')
+    expect(out).toContain('Nothing scheduled yet')
+  })
+
+  it('offers no Past chip at all, because it is the what is next surface', () => {
+    expect(html()).not.toContain('>Past</button>')
   })
 })

@@ -26,6 +26,7 @@ import { useSessions } from '../context/SessionsContext'
 import { isSampleMedia, memberTeamIds } from '../lib/data'
 import type { Drill, Session } from '../lib/data'
 import { sessionTeamsLabel, sessionVisibleToTeams } from '../lib/sessionTeams'
+import { isSessionActive, isSessionPast } from '../lib/sessionLifecycle'
 import { venueNameFor } from '../lib/venues'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -351,12 +352,6 @@ export function ParentDashboard({
 
 // ---- Container ------------------------------------------------------------
 
-function toIso(d: Date): string {
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
-}
-
 export function ParentHome() {
   const nav = useNav()
   const { profile } = useAuth()
@@ -391,9 +386,15 @@ export function ParentHome() {
   }
   const relevant = sessions.filter(inScope)
 
-  const todayStr = toIso(new Date())
-  const isUpcoming = (s: Session) => s.status === 'upcoming' && !!s.date && s.date >= todayStr
-  const isPast = (s: Session) => !isUpcoming(s) && !!s.date && (s.date < todayStr || s.status === 'completed')
+  // One rule for both halves of this dashboard, shared with Home and
+  // Sessions (../lib/sessionLifecycle). This screen used to compare date
+  // strings, so a session vanished from This week at midnight however late
+  // it had run, and a parent looking for last night's focus found it under
+  // neither heading. An undated session is in neither list: it cannot be
+  // placed in a week and it is not a night that happened.
+  const now = new Date()
+  const isUpcoming = (s: Session) => !!s.date && isSessionActive(s, now)
+  const isPast = (s: Session) => !!s.date && isSessionPast(s, now)
   // The sessions read is ordered ascending by date and time, so upcoming runs
   // soonest first and the last past entry is the most recent.
   const upcoming = relevant.filter(isUpcoming)

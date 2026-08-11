@@ -1,8 +1,10 @@
 // The "Plan from Spond" suggestions surface: synced Spond events a coach can
 // turn into a session. It lists events in the coach's scope (their team's
-// events plus club events) that they have not already planned, upcoming first
-// then recent past, and "Plan this" creates a pre filled session and drops
-// the coach into the planner to build the drills.
+// events plus club events) that they have not already planned, soonest
+// first, and "Plan this" creates a pre filled session and drops the coach
+// into the planner to build the drills. Events that have already run are
+// behind the Past chip: a night that has happened is not one to organise,
+// so it is reachable and never in the way.
 //
 // Counts only, the children's data boundary (CLAUDE.md, Spond integration):
 // each row shows the four counts and event facts from the spond_events read
@@ -21,6 +23,11 @@ import type { Session, SpondEvent } from '../lib/data'
 import { SESSION_CREATE_ERROR, stableCreateId } from '../lib/sessionSubmit'
 import { sessionFromSpondEvent, SPOND_COUNT_LABELS, spondEventWhen, spondPlanSuggestions, spondTeamLabel } from '../lib/spond'
 import { ALL_EVENTS_LABEL, DEFAULT_EVENT_KIND, type EventKind, isSpondMatch, TRAINING_LABEL } from '../lib/eventKind'
+import {
+  DEFAULT_LIFECYCLE_SCOPE,
+  LIFECYCLE_SCOPE_LABELS,
+  type LifecycleScope,
+} from '../lib/sessionLifecycle'
 import { Icon } from './icons'
 import { CancelledBadge, MatchBadge } from './SpondAttendance'
 import { ActionError, Chip } from './ui'
@@ -33,6 +40,8 @@ export function PlanFromSpondView({
   eventsExist,
   kind,
   onKind,
+  scope,
+  onScope,
   showAll,
   onShowAll,
   showAllToggle,
@@ -50,6 +59,11 @@ export function PlanFromSpondView({
   // "which night do you want to plan?" should not lead with the gala.
   kind: EventKind
   onKind: (v: EventKind) => void
+  // Upcoming by default. A night that has already run is not one to
+  // organise, so past events are a deliberate widening here too, for the
+  // coach writing up a session after it happened.
+  scope: LifecycleScope
+  onScope: (v: LifecycleScope) => void
   showAll: boolean
   onShowAll: (v: boolean) => void
   showAllToggle: boolean
@@ -79,7 +93,15 @@ export function PlanFromSpondView({
         <Chip on={kind === 'all'} onClick={() => onKind('all')}>
           {ALL_EVENTS_LABEL}
         </Chip>
-        {/* Team, second: a narrowing within the kind, never the split. */}
+        {/* Lifecycle, second: what kind of night, then whether it has
+            happened. */}
+        <Chip on={scope === 'upcoming'} onClick={() => onScope('upcoming')}>
+          {LIFECYCLE_SCOPE_LABELS.upcoming}
+        </Chip>
+        <Chip on={scope === 'past'} onClick={() => onScope('past')}>
+          {LIFECYCLE_SCOPE_LABELS.past}
+        </Chip>
+        {/* Team, third: a narrowing within the kind, never the split. */}
         {showAllToggle && (
           <Chip on={showAll} onClick={() => onShowAll(!showAll)}>
             All teams
@@ -97,11 +119,14 @@ export function PlanFromSpondView({
       ) : rows.length === 0 ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
           {/* Name only the widenings actually on screen: the All teams chip
-              is absent for a coach whose scope is already the whole club. */}
+              is absent for a coach whose scope is already the whole club,
+              and the one they are already in is no use to them. */}
           {eventsExist
-            ? showAllToggle
-              ? `No unplanned events here. Try ${ALL_EVENTS_LABEL}, or All teams.`
-              : `No unplanned events here. Try ${ALL_EVENTS_LABEL}.`
+            ? [
+                `No unplanned events here. Try ${ALL_EVENTS_LABEL}`,
+                scope === 'upcoming' ? `, ${LIFECYCLE_SCOPE_LABELS.past}` : `, ${LIFECYCLE_SCOPE_LABELS.upcoming}`,
+                showAllToggle ? ', or All teams.' : '.',
+              ].join('')
             : 'Nothing synced yet. An admin presses Sync now on the Spond screen first.'}
         </p>
       ) : (
@@ -162,6 +187,10 @@ export function PlanFromSpond({
   const { data: myTeams } = useMyTeams()
   const teamById = useTeamMap()
   const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
+  // Named for the lifecycle rather than "scope", because this component
+  // already calls the coach's team reach a scope and two of them would be
+  // one too many.
+  const [lifecycle, setLifecycle] = useState<LifecycleScope>(DEFAULT_LIFECYCLE_SCOPE)
   const [showAll, setShowAll] = useState(false)
   // One id per Spond event for the life of this surface, so a retry after an
   // ambiguous failure reuses it and the server-safe write recovers into an
@@ -197,18 +226,21 @@ export function PlanFromSpond({
   const plannedEventIds = new Set(
     sessions.filter((s) => s.coachId === user?.id && s.spondEventId).map((s) => s.spondEventId as string),
   )
-  const suggest = (forKind: EventKind) =>
-    spondPlanSuggestions({ events, plannedEventIds, scopeTeamIds, showAllTeams: showAll, kind: forKind })
-  const rows = suggest(kind)
+  const suggest = (forKind: EventKind, forScope: LifecycleScope) =>
+    spondPlanSuggestions({ events, plannedEventIds, scopeTeamIds, showAllTeams: showAll, kind: forKind, scope: forScope })
+  const rows = suggest(kind, lifecycle)
 
   // On the Sessions screen the surface only earns space when it has something
   // to suggest; on the planner it shows the empty guidance instead.
   //
-  // Measured against All events, deliberately. Judging it on the Training
-  // view would hide the whole card on a week whose only unplanned events
-  // are fixtures, and the card is where the All events chip that would
-  // reveal them lives, so hiding it would take the widening with it.
-  const anythingToSuggest = kind === 'all' ? rows.length > 0 : suggest('all').length > 0
+  // Measured against the widest view, deliberately: every kind, both sides
+  // of the lifecycle. Judging it on the Training view would hide the whole
+  // card on a week whose only unplanned events are fixtures, and judging it
+  // on Upcoming would hide it whenever the only thing left to write up
+  // already happened. The card is where both widenings live, so hiding it
+  // takes them with it. What stays out of the DEFAULT list is the rule; what
+  // the coach can still reach is not.
+  const anythingToSuggest = suggest('all', 'upcoming').length > 0 || suggest('all', 'past').length > 0
   if (hideWhenEmpty && !isLoading && !isError && !anythingToSuggest) return null
 
   const plan = (event: SpondEvent) => {
@@ -225,6 +257,8 @@ export function PlanFromSpond({
       eventsExist={events.length > 0}
       kind={kind}
       onKind={setKind}
+      scope={lifecycle}
+      onScope={setLifecycle}
       showAll={showAll}
       onShowAll={setShowAll}
       showAllToggle={showAllToggle}
