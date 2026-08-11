@@ -182,3 +182,15 @@ describe('the read only renderer carries no editor chrome', () => {
     expect(render(ALL)).not.toContain('touch-action:none')
   })
 })
+
+describe('a goal points somewhere', () => {
+  it('draws a different goal for each of the four directions', () => {
+    const html = (facing: 'up' | 'down' | 'left' | 'right') =>
+      render([{ type: 'goal', id: 'goal-1', x: 0.5, y: 0.5, width: 0.24, facing }])
+    expect(new Set((['up', 'down', 'left', 'right'] as const).map(html)).size).toBe(4)
+  })
+
+  it('draws the frame open on the side it faces', () => {
+    expect(render([{ type: 'goal', id: 'goal-1', x: 0.5, y: 0.5, width: 0.24, facing: 'up' }])).toContain('dd-goal-frame')
+  })
+})

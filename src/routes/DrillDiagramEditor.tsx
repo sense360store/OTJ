@@ -51,6 +51,7 @@ import {
 import {
   canAddElement,
   editorReducer,
+  elementAnchor,
   initEditor,
   isDirty,
   selectedElement,
@@ -117,7 +118,20 @@ function EditorCanvas({
   // The live gesture: which element, which grip, where the press began and
   // whether it has become a drag. Held in a ref so a move never rerenders this
   // component for its own sake.
-  const gesture = useRef<{ id: string; grip: Grip; startX: number; startY: number; dragging: boolean } | null>(null)
+  // grabX/grabY is the offset between where the finger landed and where the
+  // element is actually anchored, captured at press. Without it, crossing the
+  // drag threshold teleports the element under the thumb: the hit targets are
+  // deliberately generous, and an arrow or a zone border is nearly always
+  // grabbed a long way from its anchor.
+  const gesture = useRef<{
+    id: string
+    grip: Grip
+    startX: number
+    startY: number
+    dragging: boolean
+    grabX: number
+    grabY: number
+  } | null>(null)
   const { surface } = state.diagram
 
   // Where the finger is, as a fraction of the pitch. The letterbox arithmetic
@@ -156,7 +170,20 @@ function EditorCanvas({
     // decides. Stopping propagation keeps the canvas from reading it as a tap
     // on empty space.
     e.stopPropagation()
-    gesture.current = { id, grip, startX: e.clientX, startY: e.clientY, dragging: false }
+    // Only a whole-element move carries an offset. A handle IS the point being
+    // dragged, so an endpoint or a corner follows the finger exactly.
+    let grabX = 0
+    let grabY = 0
+    if (grip === 'move') {
+      const el = state.diagram.elements.find((x) => x.id === id)
+      const f = toFraction(e)
+      if (el && f) {
+        const anchor = elementAnchor(el)
+        grabX = f.x - anchor.x
+        grabY = f.y - anchor.y
+      }
+    }
+    gesture.current = { id, grip, startX: e.clientX, startY: e.clientY, dragging: false, grabX, grabY }
     capture(e)
   }
 
@@ -173,7 +200,8 @@ function EditorCanvas({
     if (!f) return
     switch (g.grip) {
       case 'move':
-        dispatch({ op: 'move', id, x: f.x, y: f.y })
+        // Where the ANCHOR should be, not where the finger is.
+        dispatch({ op: 'move', id, x: f.x - g.grabX, y: f.y - g.grabY })
         break
       case 'arrowStart':
         dispatch({ op: 'moveArrowEnd', id, end: 'start', x: f.x, y: f.y })

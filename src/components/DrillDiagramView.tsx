@@ -25,6 +25,7 @@ import {
 import {
   arrowHeadPoints,
   arrowShaft,
+  goalOutline,
   goalRect,
   pitchMarkings,
   surfaceAspect,
@@ -155,12 +156,15 @@ function Goal({ surface, el }: { surface: DiagramSurface; el: Extract<DiagramEle
   })
   return (
     <g data-el="goal">
-      <rect x={g.x} y={g.y} width={g.w} height={g.h} fill="rgba(255,255,255,.16)" stroke="#ffffff" strokeWidth={5} />
+      {/* The frame is drawn OPEN on the side it faces, so all four directions
+          look different. A closed rectangle made Up and Down the same picture. */}
+      <rect x={g.x} y={g.y} width={g.w} height={g.h} fill="rgba(255,255,255,.16)" stroke="none" />
       <g className="dd-net">
         {netLines.map((l, i) => (
           <line key={i} {...l} />
         ))}
       </g>
+      <path className="dd-goal-frame" d={goalOutline(surface, el)} fill="none" />
     </g>
   )
 }

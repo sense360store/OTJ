@@ -48,6 +48,14 @@
   stroke: none;
 }
 
+/* The goal frame: three sides, open on the side it faces. */
+.dd-goal-frame {
+  stroke: #ffffff;
+  stroke-width: 5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
 /* The net inside a goal. Thin, so the mouth still reads as open. */
 .dd-net line {
   stroke: rgba(255, 255, 255, 0.55);

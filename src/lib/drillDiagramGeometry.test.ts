@@ -8,6 +8,7 @@ import {
   pitchMarkings,
   goalRect,
   goalHitRect,
+  goalOutline,
   zoneHitBand,
   HIT_MIN,
   pointerFraction,
@@ -428,5 +429,40 @@ describe('a goal keeps its size when the pitch is turned', () => {
     const up = goalRect(surface(), { ...base, facing: 'up' })
     const left = goalRect(surface(), { ...base, facing: 'left' })
     expect(Math.max(up.w, up.h)).toBeCloseTo(Math.max(left.w, left.h), 5)
+  })
+})
+
+describe('a goal shows which way it faces', () => {
+  // REGRESSION. The goal was a closed rectangle whose only nod to direction was
+  // a sideways boolean, so Up and Down drew the same picture and so did Left
+  // and Right. A coach could pick Down, watch nothing change, and save a drill
+  // that could not say which way the goal pointed.
+  const goal = (facing: 'up' | 'down' | 'left' | 'right') => ({
+    type: 'goal' as const,
+    id: 'goal-1',
+    x: 0.5,
+    y: 0.5,
+    width: 0.24,
+    facing,
+  })
+
+  it('draws a different outline for each of the four directions', () => {
+    const paths = (['up', 'down', 'left', 'right'] as const).map((f) => goalOutline(surface(), goal(f)))
+    expect(new Set(paths).size).toBe(4)
+  })
+
+  it('leaves the mouth open, so the outline is three sides and not four', () => {
+    for (const f of ['up', 'down', 'left', 'right'] as const) {
+      const path = goalOutline(surface(), goal(f))
+      // Four points, three segments: a closed rectangle would need five or a Z.
+      expect(path.match(/[ML]/g), f).toHaveLength(4)
+      expect(path, f).not.toContain('Z')
+    }
+  })
+
+  it('never puts a NaN in the path', () => {
+    for (const f of ['up', 'down', 'left', 'right'] as const) {
+      expect(goalOutline(surface(), goal(f))).not.toMatch(/NaN|Infinity/)
+    }
   })
 })

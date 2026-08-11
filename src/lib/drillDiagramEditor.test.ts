@@ -5,6 +5,7 @@ import {
   isDirty,
   selectedElement,
   canAddElement,
+  elementAnchor,
   type DiagramEditorState,
   type DiagramAction,
 } from './drillDiagramEditor'
@@ -622,5 +623,73 @@ describe('the reducer is pure', () => {
     }
     const stored = serializeDrillDiagram(s.diagram)
     expect(diagramSignature(parseDrillDiagram(stored))).toBe(diagramSignature(s.diagram))
+  })
+})
+
+describe('picking an element up where the finger landed', () => {
+  // The anchor is the point a move sets. A drag captures the offset between the
+  // finger and this point at press, so the element does not teleport under the
+  // thumb when the drag threshold is crossed.
+  it('reports the point a move actually sets, for every element type', () => {
+    for (const type of ['player', 'cone', 'ball', 'goal', 'text'] as const) {
+      const s = withOne(type, { x: 0.3, y: 0.7 })
+      expect(elementAnchor(only(s)), type).toEqual({ x: 0.3, y: 0.7 })
+    }
+  })
+
+  it('reports a zone by its centre and an arrow by its midpoint', () => {
+    const z = only(withOne('zone', { x: 0.4, y: 0.6 })) as ZoneElement
+    expect(elementAnchor(z).x).toBeCloseTo(z.x + z.w / 2, 6)
+    expect(elementAnchor(z).y).toBeCloseTo(z.y + z.h / 2, 6)
+    const a = only(withOne('arrow', { x: 0.4, y: 0.6 })) as ArrowElement
+    expect(elementAnchor(a).x).toBeCloseTo((a.x1 + a.x2) / 2, 6)
+  })
+
+  it('leaves an element where it is when moved to its own anchor', () => {
+    // The property that makes the offset arithmetic correct: move(anchor(el))
+    // changes nothing, for every type. Compared through the signature rather
+    // than by field, because that is the question that matters (does the coach
+    // see a change, is the diagram dirty) and it is the comparison the save
+    // uses; comparing raw floats would fail on the last bit of a division.
+    for (const type of ['player', 'cone', 'ball', 'goal', 'arrow', 'zone', 'text'] as const) {
+      const s = withOne(type, { x: 0.45, y: 0.55 })
+      const el = only(s)
+      const anchor = elementAnchor(el)
+      const after = run(s, { op: 'move', id: el.id, x: anchor.x, y: anchor.y })
+      expect(diagramSignature(after.diagram), type).toBe(diagramSignature(s.diagram))
+    }
+  })
+})
+
+describe('an emptied label is tidied up when the coach moves on', () => {
+  it('is removed when the selection moves to something else', () => {
+    let s = run(fresh(), { op: 'add', element: 'text', at: { x: 0.5, y: 0.5 } })
+    const textId = only(s).id
+    s = run(s, { op: 'setLabel', id: textId, text: '' }, { op: 'add', element: 'cone', at: { x: 0.2, y: 0.2 } })
+    s = run(s, { op: 'select', id: s.diagram.elements[s.diagram.elements.length - 1].id })
+    expect(s.diagram.elements.some((e) => e.id === textId)).toBe(false)
+  })
+
+  it('is removed when the coach taps empty grass', () => {
+    const s = withOne('text')
+    const cleared = run(s, { op: 'setLabel', id: only(s).id, text: '  ' }, { op: 'select', id: null })
+    expect(cleared.diagram.elements).toHaveLength(0)
+  })
+
+  it('survives while it is still the thing being edited', () => {
+    const s = withOne('text')
+    const id = only(s).id
+    const still = run(s, { op: 'setLabel', id, text: '' }, { op: 'select', id })
+    expect(still.diagram.elements).toHaveLength(1)
+  })
+
+  it('leaves a label with something in it alone', () => {
+    const s = run(withOne('text'), { op: 'setLabel', id: 'text-1', text: 'Press' }, { op: 'select', id: null })
+    expect(s.diagram.elements).toHaveLength(1)
+  })
+
+  it('leaves the diagram clean if nothing was pruned', () => {
+    const s = initEditor({ ...emptyDiagram(), elements: [{ type: 'cone', id: 'cone-1', x: 0.2, y: 0.2, colour: 'orange' }] })
+    expect(isDirty(run(s, { op: 'select', id: 'cone-1' }, { op: 'select', id: null }))).toBe(false)
   })
 })

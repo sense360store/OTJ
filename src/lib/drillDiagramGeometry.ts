@@ -255,6 +255,33 @@ export function zoneHitBand(
   return { x: p.x, y: p.y, w: q.x - p.x, h: q.y - p.y, strokeWidth: HIT_MIN, fill: 'none' }
 }
 
+// The goal drawn as THREE SIDES, open on the side it faces.
+//
+// A closed rectangle cannot say which way a goal points: up and down, and left
+// and right, came out identical, so a coach could pick Down, see nothing
+// change, and save a drill that could not communicate the direction it was
+// about. A goal on a pitch is open on one side, so drawing it that way is both
+// the fix and the more honest picture.
+//
+// `facing` is the side the MOUTH is on. The path runs from one open corner
+// round the three closed sides to the other, so the stroke never crosses the
+// mouth.
+export function goalOutline(surface: DiagramSurface, goal: GoalElement): string {
+  const { x, y, w, h } = goalRect(surface, goal)
+  const r = x + w
+  const b = y + h
+  switch (goal.facing) {
+    case 'up':
+      return `M ${x} ${y} L ${x} ${b} L ${r} ${b} L ${r} ${y}`
+    case 'down':
+      return `M ${x} ${b} L ${x} ${y} L ${r} ${y} L ${r} ${b}`
+    case 'left':
+      return `M ${x} ${y} L ${r} ${y} L ${r} ${b} L ${x} ${b}`
+    case 'right':
+      return `M ${r} ${y} L ${x} ${y} L ${x} ${b} L ${r} ${b}`
+  }
+}
+
 // ---- Pitch markings -----------------------------------------------------
 // Returned as data, not as JSX, so the layout is provable without a DOM and
 // both surfaces draw exactly the same lines.

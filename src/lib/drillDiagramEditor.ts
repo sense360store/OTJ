@@ -83,6 +83,28 @@ export function canAddElement(state: DiagramEditorState): boolean {
   return state.diagram.elements.length < MAX_DIAGRAM_ELEMENTS
 }
 
+// The point a `move` action sets: the exact fraction the element ends up
+// anchored at. Exported so a drag can hold the offset between where the finger
+// landed and where the element actually is.
+//
+// WITHOUT THIS A DRAG JUMPS. Hit targets are deliberately generous, an arrow is
+// grabbed anywhere along its length and a zone anywhere on its border, so the
+// finger is usually nowhere near the anchor. Dispatching the raw pointer
+// position as the new anchor teleports the element under the thumb the instant
+// the drag threshold is crossed, and the coach then drags from wherever it
+// landed. Subtracting the offset captured at press keeps the element under the
+// finger where it was picked up.
+export function elementAnchor(el: DiagramElement): { x: number; y: number } {
+  switch (el.type) {
+    case 'zone':
+      return { x: el.x + el.w / 2, y: el.y + el.h / 2 }
+    case 'arrow':
+      return { x: (el.x1 + el.x2) / 2, y: (el.y1 + el.y2) / 2 }
+    default:
+      return { x: el.x, y: el.y }
+  }
+}
+
 export function selectedElement(state: DiagramEditorState): DiagramElement | null {
   if (!state.selectedId) return null
   return state.diagram.elements.find((e) => e.id === state.selectedId) ?? null
@@ -223,11 +245,20 @@ export function editorReducer(state: DiagramEditorState, action: DiagramAction):
     }
 
     case 'select': {
-      if (action.id === null) return { ...state, selectedId: null }
+      // Moving off an emptied label removes it. The element is KEPT while it is
+      // selected, so clearing the field before retyping does not delete it
+      // mid-edit, and it is pruned the moment the coach moves on, because the
+      // serialiser will not store one: without this a blank chip sat on the
+      // canvas, the editor said Saved, and reopening the drill made it vanish.
+      const pruned = state.diagram.elements.filter(
+        (e) => e.type !== 'text' || e.text.trim() !== '' || e.id === action.id,
+      )
+      const elements = pruned.length === state.diagram.elements.length ? state.diagram.elements : pruned
+      if (action.id === null) return { ...withElements(state, elements), selectedId: null }
       // An id that is not on the diagram selects nothing rather than becoming
       // a ghost selection the delete control would point at.
-      const exists = state.diagram.elements.some((e) => e.id === action.id)
-      return { ...state, selectedId: exists ? action.id : null }
+      const exists = elements.some((e) => e.id === action.id)
+      return { ...withElements(state, elements), selectedId: exists ? action.id : null }
     }
 
     case 'move': {
