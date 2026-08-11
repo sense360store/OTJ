@@ -23,7 +23,7 @@
 // arrange the whole night, look at it, and then commit it once. Nothing
 // here talks to a database; ../lib/queries owns that.
 // =====================================================================
-import { effectiveBib, bibLabel } from './bibs'
+import { BIB_COLOURS, effectiveBib, bibLabel } from './bibs'
 import type { RegisterEntry, RegisterView } from './register'
 import type { Team } from './data'
 import type { RsvpStatus } from './spondRsvp'
@@ -123,7 +123,12 @@ export function matchesResponse(row: TonightRow, filter: ResponseFilter): boolea
 // read still in flight and a read that failed all arrive here as rows
 // carrying no response, and all four mean the same thing.
 export function hasResponseContext(rows: TonightRow[]): boolean {
-  return rows.some((r) => r.response !== null)
+  // A quick added guest does not count. Their reply is a fact about their
+  // own team's event, not about the squad this session covers, and one
+  // linked visitor beside an entirely unlinked squad was enough to keep
+  // the Going default and hide every child behind them. registerScope.ts
+  // guards the same collapse for the same reason.
+  return rows.some((r) => !r.manual && r.response !== null)
 }
 
 // The filter the screen can ACTUALLY use.
@@ -275,6 +280,13 @@ export interface TonightChange {
   present: boolean
   bibColourOverride: string | null
   source: 'roster' | 'manual'
+  // Which fields this change actually moved, and whether the row exists
+  // at all. A save carries only what it changed, so two coaches working
+  // the same session at once cannot revert each other: a whole row write
+  // would carry a stale value for the field the other one just set.
+  presentChanged: boolean
+  bibChanged: boolean
+  isNew: boolean
 }
 
 // What a save would write: only the rows whose stored value differs from
@@ -289,8 +301,10 @@ export function draftDelta(
   sessionId: string,
 ): TonightChange[] {
   const byPlayer = new Map(entries.map((e) => [e.playerId, e]))
+  const removing = new Set(draftRemovals(draft, entries))
   const out: TonightChange[] = []
   for (const playerId of touchedIds(draft, entries)) {
+    if (removing.has(playerId)) continue
     const stored = byPlayer.get(playerId)
     const present = draftIncluded(draft, playerId)
     const bibColourOverride = draftBib(draft, playerId)
@@ -299,16 +313,57 @@ export function draftDelta(
     if (unchanged) continue
     // Nothing to write for a player who has no stored row and nothing set
     // on them either: that is simply a child the coach has not touched.
-    if (!stored && !present && bibColourOverride === null) continue
+    // A guest the coach ADDED is different: they are on this list because
+    // somebody put them there, so unticking them must leave the row on
+    // screen rather than deleting it under their thumb.
+    if (!stored && !present && bibColourOverride === null && !draft.added[playerId]) continue
     out.push({
       sessionId,
       playerId,
       present,
       bibColourOverride,
       source: stored?.source ?? (draft.added[playerId] ? 'manual' : 'roster'),
+      presentChanged: !stored || stored.present !== present,
+      bibChanged: !stored || stored.bibColourOverride !== bibColourOverride,
+      isNew: !stored,
     })
   }
   return out
+}
+
+// What the screen's draft should be after a save reports success.
+//
+// NOT null unconditionally. Clearing the draft makes the screen rebuild it
+// from the readback and then compare the readback with itself, so "Saved"
+// becomes structurally true for any mutation that did not throw, and the
+// field for field comparison this module documents never runs. It also
+// silently discards anything the coach ticked while the write was in
+// flight, since the payload was captured at click time.
+//
+// So: keep the draft when it still differs from what came back, and clear
+// it only when they agree. Clean means Saved, and Saved then means stored.
+export function draftAfterSave(
+  draft: TonightDraft | null,
+  persisted: RegisterEntry[],
+): TonightDraft | null {
+  if (!draft) return null
+  return draftIsDirty(draft, persisted) ? draft : null
+}
+
+// Guests the save should DELETE rather than write.
+//
+// The screen this replaces had a per row remove wired straight to a
+// delete. In a draft world the same intent is "untick them and save", so
+// a stored guest the coach has unticked and left without a bib is removed
+// entirely; otherwise a wrongly added child would stay on the session for
+// ever with no affordance to take them off. Only a guest is ever removed:
+// a roster child belongs to the covered squad and their row is their
+// record, not their presence on a list.
+export function draftRemovals(draft: TonightDraft, entries: RegisterEntry[]): string[] {
+  return entries
+    .filter((e) => e.source === 'manual')
+    .filter((e) => !draftIncluded(draft, e.playerId) && draftBib(draft, e.playerId) === null)
+    .map((e) => e.playerId)
 }
 
 // Whether the draft differs from what is stored.
@@ -319,7 +374,10 @@ export function draftDelta(
 // draft. A partial write, a row refused by RLS, or a value that came back
 // different all leave this true and the screen dirty.
 export function draftIsDirty(draft: TonightDraft, entries: RegisterEntry[]): boolean {
-  return draftDelta(draft, entries, '').length > 0
+  // Removals count. A draft whose only change is "take this guest off the
+  // list" is still a change, and reading it as clean would leave the Save
+  // button closed over work the coach had done.
+  return draftDelta(draft, entries, '').length > 0 || draftRemovals(draft, entries).length > 0
 }
 
 // The database rows a save sends, built from the delta.
@@ -338,9 +396,9 @@ export interface TonightUpsertRow {
   session_id: string
   player_id: string
   club_id: string
-  present: boolean
-  bib_colour_override: string | null
-  source: 'roster' | 'manual'
+  present?: boolean
+  bib_colour_override?: string | null
+  source?: 'roster' | 'manual'
 }
 
 export function tonightUpsertRows(changes: TonightChange[], clubId: string | null): TonightUpsertRow[] {
@@ -348,17 +406,19 @@ export function tonightUpsertRows(changes: TonightChange[], clubId: string | nul
   // A row with no club is a row RLS refuses, so fail here with something
   // a coach can read rather than at the database with a policy error.
   if (!clubId) throw new Error('You must be signed in to save tonight s groups.')
-  return changes.map((c) => ({
-    session_id: c.sessionId,
-    player_id: c.playerId,
-    club_id: clubId,
-    present: c.present,
-    // Explicitly null rather than omitted: leaving the key out would keep
-    // the stored override, so "back to the team colour" would silently
-    // not happen.
-    bib_colour_override: c.bibColourOverride,
-    source: c.source,
-  }))
+  return changes.map((c) => {
+    const row: TonightUpsertRow = { session_id: c.sessionId, player_id: c.playerId, club_id: clubId }
+    // Only the fields this change moved. Omitting a key leaves the stored
+    // value alone, which is exactly what protects the other coach's edit;
+    // a cleared bib is sent as an explicit null, not omitted, or "back to
+    // the team colour" would silently not happen.
+    if (c.presentChanged) row.present = c.present
+    if (c.bibChanged) row.bib_colour_override = c.bibColourOverride
+    // Only on insert. Rewriting it later could turn a stored guest into a
+    // squad member, which the security suite pins against.
+    if (c.isNew) row.source = c.source
+    return row
+  })
 }
 
 // ---- The groups on the grass ----------------------------------------
@@ -394,17 +454,29 @@ export function tonightGroups(rows: TonightRow[], draft: TonightDraft): TonightG
     let g = groups.get(key)
     if (!g) {
       // "Red bibs", not "Red": the label names the group a coach points
-      // at on the grass, and "No team bib" says the honest thing rather
-      // than inventing a colour for a team that has none set.
+      // at on the grass. The bibless group is "No bibs" and says nothing
+      // about a team, because it holds two different facts at once: a
+      // child the coach set to No bib, and a child whose team has no
+      // colour configured. Both wear nothing, and blaming the team for
+      // the first was simply untrue.
       const colour = bibLabel(bib)
-      g = { bib, label: colour ? `${colour} bibs` : 'No team bib', rows: [], count: 0, teamNames: [] }
+      g = { bib, label: colour ? `${colour} bibs` : 'No bibs', rows: [], count: 0, teamNames: [] }
       groups.set(key, g)
     }
     g.rows.push(r)
     g.count++
     if (r.teamName && !g.teamNames.includes(r.teamName)) g.teamNames.push(r.teamName)
   }
-  return [...groups.values()]
+  // Ordered by the club's own bib vocabulary, with the bibless group last.
+  // Map insertion order would be the first appearance order of an
+  // arbitrary child, so one bib edit reshuffled every card on a screen a
+  // coach is reading to call groups out.
+  const order = new Map(BIB_COLOURS.map((b, i) => [b.value, i]))
+  return [...groups.values()].sort((a, b) => {
+    const ai = a.bib === null ? Number.MAX_SAFE_INTEGER : (order.get(a.bib) ?? Number.MAX_SAFE_INTEGER - 1)
+    const bi = b.bib === null ? Number.MAX_SAFE_INTEGER : (order.get(b.bib) ?? Number.MAX_SAFE_INTEGER - 1)
+    return ai - bi
+  })
 }
 
 // What the save button and status line are saying. Derived, never stored:

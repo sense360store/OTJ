@@ -23,7 +23,10 @@ import { describe, expect, it } from 'vitest'
 import {
   countByResponse,
   DEFAULT_RESPONSE_FILTER,
+  draftAfterSave,
   draftEntries,
+  draftRemovals,
+  hasResponseContext,
   draftFromEntries,
   draftIsDirty,
   draftDelta,
@@ -314,8 +317,10 @@ describe('the groups on the grass', () => {
   it('lets an override win, and move the child into another group', () => {
     const d = setDraftBib(selectAll(draftFromEntries([]), [going, quiet]), 'ben', 'red')
     const groups = tonightGroups([going, quiet], d)
-    expect(groups.map((g) => g.bib)).toEqual(['blue', 'red'])
-    expect(ids(groups[1].rows)).toEqual(['ben'])
+    // Ordered by the club's bib vocabulary, so red precedes blue however
+    // the rows happened to arrive.
+    expect(groups.map((g) => g.bib)).toEqual(['red', 'blue'])
+    expect(ids(groups.find((g) => g.bib === 'red')!.rows)).toEqual(['ben'])
   })
 
   it('shows a change of bib in the draft, before anything is saved', () => {
@@ -330,7 +335,7 @@ describe('the groups on the grass', () => {
   it('says so honestly when a team has no bib configured', () => {
     const groups = tonightGroups([teamless], selectAll(draftFromEntries([]), [teamless]))
     expect(groups[0].bib).toBeNull()
-    expect(groups[0].label).toBe('No team bib')
+    expect(groups[0].label).toBe('No bibs')
   })
 
   it('treats a stored override of none as wearing no bib, not as falling back', () => {
@@ -370,6 +375,9 @@ describe('the rows a save sends to the database', () => {
     present: true,
     bibColourOverride: 'red' as string | null,
     source: 'roster' as const,
+    presentChanged: true,
+    bibChanged: true,
+    isNew: true,
   }
 
   it('carries the club on every row, because RLS scopes on it', () => {
@@ -386,11 +394,12 @@ describe('the rows a save sends to the database', () => {
     ])
   })
 
-  it('sends a cleared bib as null rather than omitting it', () => {
+  it('sends a cleared bib as an explicit null rather than omitting it', () => {
     // Omitting the key would leave the stored override in place, so
     // "back to the team colour" would silently not happen.
     const rows = tonightUpsertRows([{ ...change, bibColourOverride: null }], 'club-1')
     expect(rows[0].bib_colour_override).toBeNull()
+    expect(rows[0]).toHaveProperty('bib_colour_override')
   })
 
   it('never invents a club, because a row without one is a row RLS refuses', () => {
@@ -551,5 +560,205 @@ describe('the session day summary', () => {
   it('counts the groups once something is selected', () => {
     const bare = [row('anna'), row('ben')]
     expect(tonightSummary(bare, selectAll(draftFromEntries([]), bare))).toBe('2 in the squad · 2 selected · 1 group')
+  })
+})
+
+// ---- Defects found in adversarial review ----------------------------
+
+describe('a quick added guest is not evidence about this squad', () => {
+  it('does not let a visitor s reply open the response filters', () => {
+    // The same collapse registerScope.ts guards: a session covering Titans
+    // whose own children are unlinked, plus one linked visitor, would keep
+    // the Going default and hide the whole squad behind the visitor.
+    const squad = [row('anna'), row('ben')]
+    const visitor = { ...row('zed', { response: 'declined' as const }), manual: true }
+    expect(hasResponseContext([...squad, visitor])).toBe(false)
+    expect(usableFilter([...squad, visitor], 'going')).toBe('all')
+  })
+
+  it('still opens them when a covered child has replied', () => {
+    const visitor = { ...row('zed', { response: 'declined' as const }), manual: true }
+    expect(hasResponseContext([going, visitor])).toBe(true)
+  })
+})
+
+describe('an unsaved guest stays on the list when unticked', () => {
+  it('keeps their row rather than dropping it under the coach s thumb', () => {
+    // Unticking a guest who has nothing stored used to remove them from
+    // the composed list entirely: the row vanished and everything below
+    // jumped up, inviting a mis-tap on whoever slid into its place.
+    const added = quickAdd(draftFromEntries([]), 'zed')
+    const unticked = toggleIncluded(added, 'zed')
+    expect(unticked.included.zed).toBe(false)
+    expect(draftEntries(unticked, [], 's1').map((e) => e.playerId)).toContain('zed')
+  })
+
+  it('writes them as a guest who is not included, so the row is not lost on save', () => {
+    const unticked = toggleIncluded(quickAdd(draftFromEntries([]), 'zed'), 'zed')
+    const change = draftDelta(unticked, [], 's1').find((c) => c.playerId === 'zed')
+    expect(change).toMatchObject({ present: false, source: 'manual' })
+  })
+})
+
+describe('groups keep a stable order', () => {
+  it('does not reshuffle the cards when one child changes bib', () => {
+    // The coach is reading these cards to call groups out. A single bib
+    // edit must not move the card their finger is on.
+    const titanA = row('anna', { teamBib: 'blue' })
+    const titanB = row('ben', { teamBib: 'blue' })
+    const trojan = row('cara', { teamId: 'trojans', teamName: 'Trojans', teamBib: 'red' })
+    const all = [titanA, titanB, trojan]
+    const before = tonightGroups(all, selectAll(draftFromEntries([]), all))
+    const after = tonightGroups(all, setDraftBib(selectAll(draftFromEntries([]), all), 'anna', 'red'))
+    expect(before.map((g) => g.bib)).toEqual(after.map((g) => g.bib))
+  })
+
+  it('puts the children wearing nothing last, where a coach expects them', () => {
+    const noBib = row('dan', { teamBib: null })
+    const all = [noBib, going]
+    const groups = tonightGroups(all, selectAll(draftFromEntries([]), all))
+    expect(groups[groups.length - 1].bib).toBeNull()
+  })
+})
+
+describe('the no bib group says only what is true', () => {
+  it('does not blame the team when a coach chose no bib', () => {
+    // A child whose team HAS a colour but who is set to No bib sat in a
+    // group labelled "No team bib" beside that team's name, which says
+    // something false about the team.
+    const d = setDraftBib(selectAll(draftFromEntries([]), [going]), 'anna', 'none')
+    expect(tonightGroups([going], d)[0].label).toBe('No bibs')
+  })
+
+  it('uses the same words for a team that simply has none set', () => {
+    const teamless = row('dan', { teamBib: null })
+    const d = selectAll(draftFromEntries([]), [teamless])
+    expect(tonightGroups([teamless], d)[0].label).toBe('No bibs')
+  })
+})
+
+describe('removing a guest through the normal save', () => {
+  it('deletes a stored guest the coach has unticked and left without a bib', () => {
+    // The old screen had a per row remove wired straight to a delete. In
+    // a draft world the same intent is "untick them and save", so the save
+    // has to remove the row rather than leave the guest listed forever.
+    const stored: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'zed', present: true, bibColourOverride: null, source: 'manual' },
+    ]
+    const d = toggleIncluded(draftFromEntries(stored), 'zed')
+    expect(draftRemovals(d, stored)).toEqual(['zed'])
+    expect(draftDelta(d, stored, 's1').map((c) => c.playerId)).not.toContain('zed')
+  })
+
+  it('never removes a roster child, only a guest', () => {
+    const stored: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
+    ]
+    expect(draftRemovals(toggleIncluded(draftFromEntries(stored), 'anna'), stored)).toEqual([])
+  })
+
+  it('keeps a guest the coach gave a bib to, because that is deliberate', () => {
+    const stored: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'zed', present: true, bibColourOverride: 'red', source: 'manual' },
+    ]
+    expect(draftRemovals(toggleIncluded(draftFromEntries(stored), 'zed'), stored)).toEqual([])
+  })
+})
+
+describe('a removal is a change', () => {
+  it('marks the draft dirty when the only edit is taking a guest off', () => {
+    const stored: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'zed', present: true, bibColourOverride: null, source: 'manual' },
+    ]
+    expect(draftIsDirty(toggleIncluded(draftFromEntries(stored), 'zed'), stored)).toBe(true)
+  })
+})
+
+describe('what a successful save does to the draft', () => {
+  const draft = selectAll(draftFromEntries([]), [going, quiet])
+
+  it('clears it only when the readback agrees, field for field', () => {
+    const persisted: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'ben', present: true, bibColourOverride: null, source: 'roster' },
+    ]
+    expect(draftAfterSave(draft, persisted)).toBeNull()
+  })
+
+  it('keeps it when only some of the rows landed', () => {
+    // THE DEFECT THIS PINS. Clearing unconditionally made the screen
+    // compare the readback with a draft rebuilt from that same readback,
+    // so Saved was structurally true for any mutation that did not throw.
+    const partial: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
+    ]
+    expect(draftAfterSave(draft, partial)).toBe(draft)
+  })
+
+  it('keeps it when a value came back different from what was sent', () => {
+    const wrong: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: 'blue', source: 'roster' },
+      { sessionId: 's1', playerId: 'ben', present: true, bibColourOverride: null, source: 'roster' },
+    ]
+    expect(draftAfterSave(draft, wrong)).toBe(wrong && draft)
+  })
+
+  it('keeps an edit the coach made while the write was in flight', () => {
+    // Nothing is disabled during a save, so a coach can tick another child
+    // between the click and the response. That tick was never in the
+    // payload, and discarding the draft threw it away and then called the
+    // result Saved.
+    const persisted: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'ben', present: true, bibColourOverride: null, source: 'roster' },
+    ]
+    const late = toggleIncluded(draft, 'cara')
+    expect(draftAfterSave(late, persisted)).toBe(late)
+    expect(draftIsDirty(late, persisted)).toBe(true)
+  })
+
+  it('is a no op when there was no draft to begin with', () => {
+    expect(draftAfterSave(null, [])).toBeNull()
+  })
+})
+
+describe('a save preserves the fields it did not change', () => {
+  const stored: RegisterEntry[] = [
+    { sessionId: 's1', playerId: 'anna', present: false, bibColourOverride: 'red', source: 'roster' },
+  ]
+
+  it('sends only the field a change actually touched', () => {
+    // The pitch side race tests/security/training-day.test.ts pins: one
+    // coach includes a child while another sets that child's bib. A whole
+    // row write carries a stale value for the other field and silently
+    // undoes it, so each row carries only what it changed.
+    const rows = tonightUpsertRows(draftDelta(toggleIncluded(draftFromEntries(stored), 'anna'), stored, 's1'), 'c1')
+    expect(rows[0]).toEqual({ session_id: 's1', player_id: 'anna', club_id: 'c1', present: true })
+    expect(rows[0]).not.toHaveProperty('bib_colour_override')
+  })
+
+  it('sends only the bib when only the bib moved', () => {
+    const rows = tonightUpsertRows(draftDelta(setDraftBib(draftFromEntries(stored), 'anna', 'blue'), stored, 's1'), 'c1')
+    expect(rows[0]).toEqual({ session_id: 's1', player_id: 'anna', club_id: 'c1', bib_colour_override: 'blue' })
+  })
+
+  it('sends both when both moved', () => {
+    const d = setDraftBib(toggleIncluded(draftFromEntries(stored), 'anna'), 'anna', 'blue')
+    const rows = tonightUpsertRows(draftDelta(d, stored, 's1'), 'c1')
+    expect(rows[0]).toMatchObject({ present: true, bib_colour_override: 'blue' })
+  })
+
+  it('sends the whole row for a child who has nothing stored yet', () => {
+    // Nothing to preserve, and the source has to travel or a guest would
+    // be written as a squad member.
+    const rows = tonightUpsertRows(draftDelta(quickAdd(draftFromEntries([]), 'zed'), [], 's1'), 'c1')
+    expect(rows[0]).toEqual({
+      session_id: 's1',
+      player_id: 'zed',
+      club_id: 'c1',
+      present: true,
+      bib_colour_override: null,
+      source: 'manual',
+    })
   })
 })

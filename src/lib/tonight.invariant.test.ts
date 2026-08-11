@@ -107,7 +107,7 @@ describe('unlinked is not a reply state', () => {
 describe('the bib rule stays centralised', () => {
   it('tonight resolves a bib through effectiveBib rather than reimplementing it', () => {
     const src = read('lib/tonight.ts')
-    expect(src).toMatch(/import \{ effectiveBib/)
+    expect(src).toMatch(/import \{[^}]*effectiveBib/)
     expect(src).toMatch(/effectiveBib\(/)
   })
 
@@ -145,5 +145,53 @@ describe('the product no longer calls this a register', () => {
 
   it('labels the tick as inclusion in tonight s groups', () => {
     expect(read('routes/SessionRegister.tsx')).toMatch(/Include \$\{row\.displayName\} in tonight/)
+  })
+})
+
+describe('the save affordance survives the mobile bottom nav', () => {
+  it('lifts the sticky save bar clear of the fixed nav below the breakpoint', () => {
+    // The nav is position:fixed bottom:0 z-index:50 (styles.css). A save
+    // bar stuck at bottom:0 was painted underneath it, so the one control
+    // the whole screen depends on was untappable exactly while it stuck.
+    const css = readFileSync(join(SRC, 'routes/SessionRegister.css'), 'utf8')
+    const mobile = css.slice(css.indexOf('@media (max-width: 900px)'))
+    expect(mobile).toMatch(/\.tn-save\s*\{[^}]*bottom:\s*calc\(/)
+  })
+
+  it('gives Select all and Save groups real touch targets', () => {
+    const css = readFileSync(join(SRC, 'routes/SessionRegister.css'), 'utf8')
+    expect(css).toMatch(/\.tn-act\s*\{[^}]*min-height:\s*44px/)
+    expect(css).toMatch(/\.tn-save-btn\s*\{[^}]*min-height:\s*48px/)
+  })
+})
+
+describe('Refresh Spond follows the capability that runs it', () => {
+  it('is handed to the screen only for a member who may write', () => {
+    // spond-sync is gated on sessions.create, so offering it to a reader
+    // could only ever produce a failure note.
+    expect(read('routes/SessionRegister.tsx')).toMatch(/onRefresh=\{canEdit \?/)
+  })
+})
+
+describe('the sync refreshes what the screen reads', () => {
+  it('invalidates the replies as well as the events', () => {
+    // The whole point of the button. Invalidating only spond_events left
+    // every chip, count and pill exactly as they were.
+    const src = read('lib/queries.ts')
+    const fn = src.slice(src.indexOf('export function useSpondSync'))
+    const settled = fn.slice(fn.indexOf('onSettled'), fn.indexOf('onSettled') + 500)
+    expect(settled).toMatch(/'spond_events'/)
+    expect(settled).toMatch(/'spond_rsvp'/)
+  })
+})
+
+describe('Saved is a comparison, not an assumption', () => {
+  it('the screen hands the readback to draftAfterSave rather than clearing the draft', () => {
+    // Clearing unconditionally made the dirty check compare the readback
+    // with a draft rebuilt from it, so Saved was structurally true for any
+    // mutation that did not throw.
+    const src = read('routes/SessionRegister.tsx')
+    expect(src).toMatch(/onSuccess:\s*\(persisted\)\s*=>\s*setDraft\(\(current\)\s*=>\s*draftAfterSave\(/)
+    expect(src).not.toMatch(/onSuccess:\s*\(\)\s*=>\s*setDraft\(null\)/)
   })
 })

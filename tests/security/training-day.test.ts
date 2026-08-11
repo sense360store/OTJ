@@ -389,11 +389,14 @@ describe('training day row level security', () => {
   })
 
   it('a partial upsert changes only the field it names, so two coaches cannot revert each other', async () => {
-    // The pitch side race this pins: one coach ticks a child in while
-    // another sets that child's bib. Both writes go through the same
-    // upsert the client uses, each carrying ONLY the field its tap
-    // changed. A whole row write would carry a stale value for the other
-    // field and silently undo it, which is why the client sends partials.
+    // The pitch side race this pins: one coach includes a child in
+    // tonight's groups while another sets that child's bib. Both writes go
+    // through the same upsert the client uses, each carrying ONLY the
+    // fields its edit changed. A whole row write would carry a stale value
+    // for the other field and silently undo it, which is why the client
+    // still sends partials even now that a save commits a whole
+    // arrangement at once: tonightUpsertRows omits every key the change
+    // did not move.
     // This test exists because that guarantee depends on how PostgREST
     // translates a partial payload into ON CONFLICT DO UPDATE SET, which
     // is worth proving rather than assuming.

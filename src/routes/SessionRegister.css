@@ -448,3 +448,15 @@
   padding-inline: 22px;
   font-size: 15px;
 }
+
+/* Below the breakpoint the bottom nav is fixed at bottom: 0 with z-index
+   50, so a save bar stuck at bottom: 0 sat underneath it: the status line
+   and the button were invisible and untappable for exactly as long as the
+   bar was doing its job, and taps landed on the nav and navigated away.
+   Sit above it, and match its safe area inset so the two do not overlap
+   on a phone with a home indicator. */
+@media (max-width: 900px) {
+  .tn-save {
+    bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+}

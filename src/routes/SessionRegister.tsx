@@ -24,6 +24,7 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
+import { useAuth } from '../hooks/useAuth'
 import {
   useCurrentSeason,
   useMyCapabilities,
@@ -46,8 +47,10 @@ import {
   countByResponse,
   DEFAULT_RESPONSE_FILTER,
   draftDelta,
+  draftAfterSave,
   draftEntries,
   draftFromEntries,
+  draftRemovals,
   draftIsDirty,
   RESPONSE_FILTER_LABELS,
   RESPONSE_FILTERS,
@@ -67,8 +70,8 @@ import {
   type TonightDraft,
   type TonightRow,
 } from '../lib/tonight'
-import { BIB_COLOURS, BIB_NONE, bibSwatch } from '../lib/bibs'
-import { coveredTeamIds, coverageOf, coversWholeClub } from '../lib/sessionTeams'
+import { BIB_COLOURS, BIB_NONE, bibLabel, bibSwatch, effectiveBib } from '../lib/bibs'
+import { coveredTeamIds, coverageOf, coversWholeClub, soleCoveredTeamId } from '../lib/sessionTeams'
 import { SESSION_ID_PARAM } from '../lib/routes'
 import type { Player, Session, Team } from '../lib/data'
 import { LinkSpondEventModal } from '../components/SpondAttendance'
@@ -151,7 +154,7 @@ export function TonightRowView({
             ))}
           </select>
         ) : (
-          <span className="reg-bib-static">{bib === BIB_NONE ? 'No bib' : bib || 'Team bib'}</span>
+          <span className="reg-bib-static">{bibLabel(effectiveBib(bib === '' ? null : bib, row.teamBib)) ?? 'No bib'}</span>
         )}
       </div>
     </div>
@@ -207,6 +210,7 @@ export function TonightScreenView({
   canEdit,
   saveStatus,
   hasSpondEvent,
+  hasResponses,
   eventNote,
   staleNote,
   linkedNote,
@@ -230,7 +234,12 @@ export function TonightScreenView({
   filter: ResponseFilter
   canEdit: boolean
   saveStatus: SaveState
+  // Two different facts. The event is linked, and it has replies. The
+  // chips need replies to mean anything; Refresh needs only the event,
+  // because the case that most needs refreshing is a linked event whose
+  // replies have not arrived yet.
   hasSpondEvent: boolean
+  hasResponses: boolean
   // The linked event's name and freshness, folded in from the card this
   // screen replaces. Empty when nothing is linked.
   eventNote: string
@@ -246,7 +255,7 @@ export function TonightScreenView({
   onSelectAll: () => void
   onClearSelection: () => void
   onSave: () => void
-  onRefresh: () => void
+  onRefresh?: () => void
   onQuickAdd: () => void
   onLinkPlayers?: () => void
   // Link, change or unlink the Spond event, folded in from the card this
@@ -270,7 +279,7 @@ export function TonightScreenView({
       {/* Spond responses, as filters that do something. The counts are
           Hub players on THIS session, never the raw event aggregate: the
           chip filters this list, so its number is the number of rows. */}
-      {hasSpondEvent && (
+      {hasResponses && (
         <div className="tn-filters">
           {RESPONSE_FILTERS.map((f) => (
             <Chip key={f} on={filter === f} onClick={() => onFilter(f)}>
@@ -303,7 +312,7 @@ export function TonightScreenView({
       {(eventNote || linkedNote || hasSpondEvent || onLinkEvent) && (
         <div className="tn-spond">
           {eventNote && <span className="tn-event">{eventNote}</span>}
-          {hasSpondEvent && (
+          {hasSpondEvent && onRefresh && (
             <button className="btn btn-quiet btn-sm tn-refresh" disabled={refreshing} onClick={onRefresh}>
               <Icon.rotate />
               {refreshing ? 'Refreshing…' : 'Refresh Spond'}
@@ -363,7 +372,7 @@ export function TonightScreenView({
         </div>
       )}
 
-      {canEdit && rows.length > 0 && (
+      {canEdit && (
         <button className="btn btn-ghost btn-sm" onClick={onQuickAdd}>
           <Icon.plus />
           Add player
@@ -413,7 +422,12 @@ export function TonightScreenView({
 function TonightScreen({ session }: { session: Session }) {
   const nav = useNav()
   const { caps } = useMyCapabilities()
+  const { user } = useAuth()
   const canEdit = caps.has('sessions.create')
+  // Changing which Spond event a session is arranged as edits the SESSION,
+  // so it follows the sessions update policy (owner, or sessions.manage)
+  // rather than the club wide write that governs the arrangement itself.
+  const canManageSession = caps.has('sessions.manage') || (canEdit && session.coachId === user?.id)
   const { data: teams = [] } = useTeams()
   const season = useCurrentSeason()
   const roster = useRegisteredPlayers(season.data?.id ?? null)
@@ -470,11 +484,22 @@ function TonightScreen({ session }: { session: Session }) {
   // figure would answer a question the coach is not asking.
   const linkedIds = new Set((links.data?.links ?? []).map((l) => l.playerId))
   const linkedHere = rows.filter((r) => linkedIds.has(r.playerId)).length
+  // Only a claim the read can actually back up. A club with no Spond, a
+  // read still in flight, a failed read and a database where linking is
+  // not available yet all say nothing rather than "0 of 18 linked", which
+  // would be a confident falsehood of exactly the kind this screen
+  // refuses to print elsewhere.
+  const linksUsable =
+    !!session.spondEventId && links.data?.available !== false && !links.isLoading && !links.isError
   const linkedNote =
-    rows.length > 0 && linkedHere < rows.length ? `${linkedHere} of ${rows.length} players linked to Spond` : ''
+    linksUsable && rows.length > 0 && linkedHere < rows.length
+      ? `${linkedHere} of ${rows.length} players linked to Spond`
+      : ''
 
   const event = spondEvents.find((e) => e.id === session.spondEventId)
-  const eventNote = event ? event.title : ''
+  // A cancelled event was only ever surfaced by the card this screen
+  // replaces, so it says so here or it says so nowhere.
+  const eventNote = event ? (event.cancelled ? `${event.title} · Cancelled` : event.title) : ''
   const staleNote = rsvpStaleNote(rsvp.data ?? {})
 
   return (
@@ -500,12 +525,13 @@ function TonightScreen({ session }: { session: Session }) {
         filter={effective}
         canEdit={canEdit}
         saveStatus={status}
-        hasSpondEvent={!!session.spondEventId && hasResponseContext(rows)}
+        hasSpondEvent={!!session.spondEventId}
+        hasResponses={hasResponseContext(rows)}
         eventNote={eventNote}
         staleNote={staleNote}
         linkedNote={linkedNote}
         refreshing={sync.isPending}
-        refreshFailed={sync.isError}
+        refreshFailed={sync.isError || sync.data?.ok === false}
         unset={coverageOf(session).kind === 'unset'}
         onFilter={setFilter}
         onToggle={(playerId) => setDraft(toggleIncluded(live, playerId))}
@@ -514,19 +540,22 @@ function TonightScreen({ session }: { session: Session }) {
         onClearSelection={() => setDraft(clearSelection(live, shown))}
         onQuickAdd={() => setAdding(true)}
         onLinkPlayers={caps.has('players.manage') ? () => nav('spondLinks') : undefined}
-        onRefresh={() => sync.mutate()}
+        onRefresh={canEdit ? () => sync.mutate() : undefined}
         onSave={() =>
           save.mutate(
-            { sessionId: session.id, changes: draftDelta(live, entries, session.id) },
-            // Hand the screen back to the readback. Dirty is then computed
-            // against what the database actually returned, so Saved is a
-            // statement about stored data and never about optimism.
-            { onSuccess: () => setDraft(null) },
+            { sessionId: session.id, changes: draftDelta(live, entries, session.id), removals: draftRemovals(live, entries) },
+            // Compare, do not assume. The draft is cleared only when the
+            // authoritative readback AGREES with it; if the database
+            // returned something else, or the coach ticked another child
+            // while the write was in flight, the draft stays and the
+            // screen stays dirty. Clearing unconditionally would have made
+            // Saved structurally true for any mutation that did not throw.
+            { onSuccess: (persisted) => setDraft((current) => draftAfterSave(current, persisted)) },
           )
         }
-        onLinkEvent={caps.has('sessions.manage') || canEdit ? () => setLinking(true) : undefined}
+        onLinkEvent={canManageSession ? () => setLinking(true) : undefined}
         onUnlinkEvent={
-          session.spondEventId && (caps.has('sessions.manage') || canEdit)
+          session.spondEventId && canManageSession
             ? () => linkSpond.mutate({ sessionId: session.id, spondEventId: null })
             : undefined
         }
@@ -534,7 +563,7 @@ function TonightScreen({ session }: { session: Session }) {
 
       {linking && (
         <LinkSpondEventModal
-          teamId={covered[0] ?? null}
+          teamId={soleCoveredTeamId(session)}
           date={session.date}
           time={session.time}
           onPick={(id) => {

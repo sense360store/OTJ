@@ -52,6 +52,7 @@ const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) =>
       canEdit
       saveStatus="saved"
       hasSpondEvent
+      hasResponses
       eventNote="Titans Tuesday"
       staleNote={null}
       linkedNote=""
@@ -104,7 +105,7 @@ describe('the response filters a coach taps', () => {
     // No event means no replies to have, so no chips and no pills: the
     // screen is the roster and the coach's selection, nothing else.
     const bare = buildTonightRows(buildRegister(players, ['t1'], teams, [], false), teams, {})
-    const html = screen({ rows: bare, hasSpondEvent: false, eventNote: '', filter: 'all' })
+    const html = screen({ rows: bare, hasSpondEvent: false, hasResponses: false, eventNote: '', filter: 'all' })
     expect(html).not.toContain('No reply')
     expect(html).not.toContain('reg-rsvp')
     expect(names(html)).toHaveLength(3)
@@ -192,8 +193,8 @@ describe('the groups, which is what the screen is for', () => {
   it('says No team bib rather than inventing a colour', () => {
     const trojan = [player('p9', 'Delta Synthetic', 't2')]
     const trojanRows = buildTonightRows(buildRegister(trojan, ['t2'], teams, [], false), teams, {})
-    const html = screen({ rows: trojanRows, filter: 'all', draft: selectAll(draftFromEntries([]), trojanRows) })
-    expect(html).toContain('No team bib')
+    const html = screen({ rows: trojanRows, hasResponses: false, filter: 'all', draft: selectAll(draftFromEntries([]), trojanRows) })
+    expect(html).toContain('No bibs')
   })
 })
 
@@ -282,7 +283,7 @@ describe('Spond, inside Tonight rather than beside it', () => {
   })
 
   it('offers Link Spond event on a session that has none', () => {
-    const html = screen({ hasSpondEvent: false, eventNote: '', onLinkEvent: noop, filter: 'all' })
+    const html = screen({ hasSpondEvent: false, hasResponses: false, eventNote: '', onLinkEvent: noop, filter: 'all' })
     expect(html).toContain('Link Spond event')
     expect(html).not.toContain('Refresh Spond')
   })
@@ -314,7 +315,7 @@ describe('the session day card', () => {
 describe('a club with no Spond at all', () => {
   it('still organises the night from Everyone', () => {
     const bare = buildTonightRows(buildRegister(players, ['t1'], teams, [], false), teams, {})
-    const html = screen({ rows: bare, hasSpondEvent: false, eventNote: '', filter: 'all' })
+    const html = screen({ rows: bare, hasSpondEvent: false, hasResponses: false, eventNote: '', filter: 'all' })
     expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic', 'Gamma Synthetic'])
     expect(html).toContain('Select all')
     expect(html).toContain('Save groups')
@@ -356,6 +357,7 @@ describe('no filter or selection writes anything', () => {
         canEdit
         saveStatus="saved"
         hasSpondEvent
+      hasResponses
         eventNote=""
         staleNote={null}
         linkedNote=""
@@ -404,7 +406,7 @@ describe('the no Spond path, which is the whole club before linking', () => {
     // so the screen used to render "Nobody under Going" over a full
     // squad. usableFilter falls back to Everyone when this session has no
     // replies at all.
-    const html = screen({ rows: bare, hasSpondEvent: false, filter: usableFilter(bare, 'going'), eventNote: '' })
+    const html = screen({ rows: bare, hasSpondEvent: false, hasResponses: false, filter: usableFilter(bare, 'going'), eventNote: '' })
     expect(names(html)).toEqual(['Alpha Synthetic', 'Beta Synthetic', 'Gamma Synthetic'])
     expect(html).not.toContain('Nobody under')
   })
@@ -419,5 +421,67 @@ describe('the no Spond path, which is the whole club before linking', () => {
   it('summarises the card without claiming nobody is expected', () => {
     expect(tonightSummary(bare, draftFromEntries([]))).toContain('in the squad')
     expect(tonightSummary(bare, draftFromEntries([]))).not.toContain('0 expected')
+  })
+})
+
+// ---- Defects found in adversarial review ----------------------------
+
+describe('Refresh Spond', () => {
+  it('is offered on a linked event even before any reply has arrived', () => {
+    // The case that most needs it: an event linked and never synced. The
+    // chips have nothing to say, and the button used to hide with them.
+    const bare = buildTonightRows(buildRegister(players, ['t1'], teams, [], false), teams, {})
+    const html = screen({ rows: bare, hasSpondEvent: true, hasResponses: false, eventNote: 'Titans Tuesday' })
+    expect(html).toContain('Refresh Spond')
+    expect(html).not.toContain('No reply 0')
+  })
+
+  it('is absent for a member who may read but not write', () => {
+    // spond-sync is gated on sessions.create, so offering it to a reader
+    // could only ever produce a failure note for an action they were never
+    // allowed to take.
+    expect(screen({ canEdit: false, onRefresh: undefined })).not.toContain('Refresh Spond')
+  })
+})
+
+describe('linking coverage is only claimed when the read can answer', () => {
+  it('says nothing rather than "0 of N linked" when there is no note to make', () => {
+    const html = screen({ linkedNote: '' })
+    expect(html).not.toContain('linked to Spond')
+    expect(html).not.toContain('Link players')
+  })
+})
+
+describe('a cancelled Spond event still says so', () => {
+  it('carries the cancellation into the one surface that remains', () => {
+    expect(screen({ eventNote: 'Titans Tuesday · Cancelled' })).toContain('Cancelled')
+  })
+})
+
+describe('quick add stays reachable', () => {
+  it('is offered even when the composed list is empty', () => {
+    // A session covering a team with nobody registered still has to let a
+    // coach add the child standing in front of them.
+    const html = screen({ rows: [], hasSpondEvent: false, hasResponses: false, filter: 'all' })
+    expect(html).toContain('Add player')
+  })
+})
+
+describe('the read only bib cell', () => {
+  it('shows the colour a child actually wears, not the stored enum', () => {
+    const one = rows()[0]
+    const html = renderToStaticMarkup(
+      <TonightRowView row={one} included bib="red" canEdit={false} onToggle={noop} onBib={noop} />,
+    )
+    expect(html).toContain('Red')
+    expect(html).not.toMatch(/>red</)
+  })
+
+  it('falls back to the team colour when there is no override', () => {
+    const one = rows()[0]
+    const html = renderToStaticMarkup(
+      <TonightRowView row={one} included bib="" canEdit={false} onToggle={noop} onBib={noop} />,
+    )
+    expect(html).toContain('Red')
   })
 })

@@ -2358,7 +2358,14 @@ export function useSpondSync() {
     // before a late failure must show either way. Sessions are not
     // invalidated because they carry only the link id; the counts always
     // render from the spond_events read.
-    onSettled: () => qc.invalidateQueries({ queryKey: ['spond_events'] }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['spond_events'] })
+      // The replies too. Every screen that shows a child's answer reads
+      // spondRsvpKey, so a sync that refreshed only the event row left the
+      // chips, the counts and every pill exactly as they were: a refresh
+      // that visibly did nothing.
+      void qc.invalidateQueries({ queryKey: ['spond_rsvp'] })
+    },
   })
 }
 
@@ -5146,13 +5153,12 @@ export function useSetTeamBibColour() {
 // ---- Spond RSVP context (0045) ---------------------------------------------
 //
 // Sibling of the register, never a child of it. The register's cache key
-// prefix is swept by an invalidation on EVERY tick and its optimistic
-// writer puts a RegisterEntry[] into that prefix, so a nested key would
-// make contamination a matter of care rather than structure.
+// prefix is swept by the save's invalidation and its readback puts a
+// RegisterEntry[] into that prefix, so a nested key would make
+// contamination a matter of care rather than structure.
 //
 // RSVP is context. Nothing in this section reads or writes
-// register_entries, appears in useSetRegisterEntry, or reaches
-// applyRegisterPatch.
+// register_entries.
 
 // Does this error mean "the table is not there yet"? Exactly three codes
 // do: 42P01 is Postgres undefined_table, PGRST205 is PostgREST's table
@@ -5504,13 +5510,24 @@ export function useRegisterEntries(sessionId: string | undefined, enabled = true
 export function useSaveTonight() {
   const qc = useQueryClient()
   const { profile } = useAuth()
-  return useMutation<RegisterEntry[], Error, { sessionId: string; changes: TonightChange[] }>({
-    mutationFn: async ({ sessionId, changes }) => {
+  return useMutation<RegisterEntry[], Error, { sessionId: string; changes: TonightChange[]; removals?: string[] }>({
+    mutationFn: async ({ sessionId, changes, removals = [] }) => {
       const rows = tonightUpsertRows(changes, profile?.club_id ?? null)
       if (rows.length > 0) {
         const { error } = await supabase
           .from('register_entries')
           .upsert(rows, { onConflict: 'session_id,player_id' })
+        if (error) throw error
+      }
+      // Guests the coach took off the list. Separate from the upsert
+      // because there is no way to express "remove" in one, and second so
+      // a failure here still leaves the arrangement written.
+      if (removals.length > 0) {
+        const { error } = await supabase
+          .from('register_entries')
+          .delete()
+          .eq('session_id', sessionId)
+          .in('player_id', removals)
         if (error) throw error
       }
       // The authoritative readback, in the same act. Returning it rather
@@ -5533,86 +5550,7 @@ export function useSaveTonight() {
   })
 }
 
-export interface SetRegisterEntryInput {
-  sessionId: string
-  playerId: string
-  present?: boolean
-  bibColourOverride?: string | null
-  source?: 'roster' | 'manual'
-}
-
-// Apply one partial change to the cached register. Pure, and idempotent:
-// the optimistic path applies it and the settled refetch may apply it
-// again over the same cache.
-export function applyRegisterPatch(
-  entries: RegisterEntry[] | undefined,
-  input: SetRegisterEntryInput,
-): RegisterEntry[] {
-  const list = entries ?? []
-  const existing = list.find((e) => e.playerId === input.playerId)
-  const next: RegisterEntry = {
-    sessionId: input.sessionId,
-    playerId: input.playerId,
-    present: input.present ?? existing?.present ?? false,
-    bibColourOverride:
-      input.bibColourOverride !== undefined ? input.bibColourOverride : (existing?.bibColourOverride ?? null),
-    source: input.source ?? existing?.source ?? 'roster',
-  }
-  return existing ? list.map((e) => (e.playerId === input.playerId ? next : e)) : [...list, next]
-}
-
-// Mark one player. The write carries ONLY the fields the tap changed, so
-// two coaches on one gate cannot revert each other: a whole row write
-// would carry a stale present value alongside a fresh bib change.
-export function useSetRegisterEntry() {
-  const qc = useQueryClient()
-  const { profile } = useAuth()
-  return useMutation<void, Error, SetRegisterEntryInput, { prev: RegisterEntry[] | undefined }>({
-    mutationFn: async (input) => {
-      if (!profile?.club_id) throw new Error('You must be signed in to mark the register.')
-      const row: Record<string, unknown> = {
-        session_id: input.sessionId,
-        player_id: input.playerId,
-        club_id: profile.club_id,
-      }
-      if (input.present !== undefined) row.present = input.present
-      if (input.bibColourOverride !== undefined) row.bib_colour_override = input.bibColourOverride
-      if (input.source !== undefined) row.source = input.source
-      const { error } = await supabase
-        .from('register_entries')
-        .upsert(row, { onConflict: 'session_id,player_id' })
-      if (error) throw error
-    },
-    onMutate: async (input) => {
-      const key = registerKey(input.sessionId)
-      await qc.cancelQueries({ queryKey: key })
-      const prev = qc.getQueryData<RegisterEntry[]>(key)
-      qc.setQueryData<RegisterEntry[]>(key, (old) => applyRegisterPatch(old, input))
-      return { prev }
-    },
-    onError: (_err, input, ctx) => {
-      if (ctx) qc.setQueryData(registerKey(input.sessionId), ctx.prev)
-    },
-    onSettled: (_d, _e, input) => {
-      qc.invalidateQueries({ queryKey: registerKey(input.sessionId) })
-    },
-  })
-}
-
-// Undo a quick add. Only offered for a row whose stored source is manual.
-export function useRemoveRegisterEntry() {
-  const qc = useQueryClient()
-  return useMutation<void, Error, { sessionId: string; playerId: string }>({
-    mutationFn: async ({ sessionId, playerId }) => {
-      const { error } = await supabase
-        .from('register_entries')
-        .delete()
-        .eq('session_id', sessionId)
-        .eq('player_id', playerId)
-      if (error) throw error
-    },
-    onSettled: (_d, _e, { sessionId }) => {
-      qc.invalidateQueries({ queryKey: registerKey(sessionId) })
-    },
-  })
-}
+// The per row writers this screen used to need are gone. Tonight edits a
+// local draft and commits it once through useSaveTonight, so there is no
+// longer a mutation that fires on a tick. applyRegisterPatch went with
+// them: nothing optimistically patches a single register row any more.
