@@ -6,7 +6,7 @@
 import { useState } from 'react'
 import { ALL_EVENTS_LABEL, TRAINING_LABEL } from '../lib/eventKind'
 import { applyEventFilter, DEFAULT_EVENT_FILTER, type EventFilterState } from '../lib/eventFilter'
-import { LIFECYCLE_SCOPE_LABELS, matchesLifecycleScope } from '../lib/sessionLifecycle'
+import { isSessionEndedToday, LIFECYCLE_SCOPE_LABELS, matchesLifecycleScope } from '../lib/sessionLifecycle'
 import { emptyEventListNote, NO_PAST_SESSIONS_NOTE } from '../lib/sessionEmptyState'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
@@ -46,12 +46,18 @@ function SessionCard({
   venueName,
   canManage,
   coaching,
+  ended,
   onDelete,
 }: {
   s: Session
   nav: Nav
   ownerName: string | null
   teamName: string | null
+  // This session finished earlier today. It is deliberately still in the
+  // default view, because a coach at 22:30 is looking for exactly this
+  // night, so the card has to say so rather than sit silently among the
+  // sessions still to come. See ../lib/sessionLifecycle.
+  ended: boolean
   // The resolved venue name. Falls back to the frozen free text label for a
   // session saved before venues existed, and is empty when neither is set.
   venueName: string
@@ -78,6 +84,14 @@ function SessionCard({
               <Icon.clock />
               {s.time}
             </span>
+            {ended && (
+              <span
+                className="pill"
+                style={{ color: 'var(--gold-600)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
+              >
+                Ended earlier today
+              </span>
+            )}
           </div>
           <h3 style={{ fontSize: 19 }}>{s.name}</h3>
           <div style={{ color: 'var(--gold-600)', fontWeight: 700, fontSize: 14, marginTop: 2 }}>{s.focus}</div>
@@ -265,7 +279,7 @@ export function Sessions() {
           <h2>Sessions</h2>
           <div className="sub">
             {canPlan
-              ? `Training coming up across the club. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds the nights that have finished.`
+              ? `Training coming up across the club, including tonight's after it has finished. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds earlier days.`
               : hasTeam
                 ? "Your team's training nights."
                 : 'Training nights across the club.'}
@@ -379,6 +393,7 @@ export function Sessions() {
                 venueName={venueNameOf(s)}
                 canManage={caps.has('sessions.manage') || (canPlan && mine)}
                 coaching={canPlan}
+                ended={isSessionEndedToday(s, now)}
                 onDelete={() => setDeleting(s)}
               />
             )

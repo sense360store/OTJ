@@ -219,7 +219,7 @@ export { isTrainingEvent, matchesEventKind }
 // The lifecycle rule lives in ./sessionLifecycle, the single seam every
 // operational surface uses. Imported for the upcoming and past split below;
 // this file declares no cutoff of its own.
-import { DEFAULT_LIFECYCLE_SCOPE, isSessionPast, type LifecycleScope } from './sessionLifecycle'
+import { DEFAULT_LIFECYCLE_SCOPE, matchesLifecycleScope, type LifecycleScope } from './sessionLifecycle'
 
 // The "Plan from Spond" suggestions: synced events a coach could turn into a
 // session. Upcoming soonest first by default; the Past scope returns the
@@ -273,13 +273,20 @@ export function spondPlanSuggestions({
   // Past reads most recent first, because a coach looking back wants last
   // night before last month; upcoming reads soonest first for the same
   // reason pointed the other way.
+  // matchesLifecycleScope, not a `!isSessionPast` of its own. With three
+  // lifecycle states the seam is the only place that should decide which
+  // of them Upcoming holds, and restating it here is how a fourth answer
+  // to the same question gets written. An event that RAN EARLIER TODAY is
+  // therefore still offered: planning a session from this morning's event
+  // is the same real act as writing up last night, and it stops being
+  // offered when the local day turns over.
   if (scope === 'past') {
     return pool
-      .filter((e) => isSessionPast(e, now))
+      .filter((e) => matchesLifecycleScope(e, 'past', now))
       .sort((a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt))
   }
   return pool
-    .filter((e) => !isSessionPast(e, now))
+    .filter((e) => matchesLifecycleScope(e, 'upcoming', now))
     .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))
 }
 

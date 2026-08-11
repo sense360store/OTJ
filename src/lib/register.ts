@@ -16,7 +16,16 @@ import type { Player, RegisteredPlayer, Team } from './data'
 export interface RegisterEntry {
   sessionId: string
   playerId: string
+  // ATTENDANCE. This child was physically at the session. Restored to that
+  // meaning by 0047_register_group_inclusion.sql after the Tonight release
+  // had reused it for group inclusion; the two are different facts and
+  // each now has its own column.
   present: boolean
+  // THE COACH'S ARRANGEMENT. This child is in one of tonight's working
+  // groups. Independent of `present` in both directions: a child can
+  // attend and be left out of the split, and be in a group without having
+  // arrived yet.
+  includedInGroups: boolean
   bibColourOverride: string | null
   source: 'roster' | 'manual'
 }
@@ -47,6 +56,9 @@ export interface RegisterGroup {
   teamId: string | null
   teamName: string
   rows: RegisterRow[]
+  // How many of this group ATTENDED. Not how many the coach put in a
+  // working group: that is the draft's business and lives in
+  // ../lib/tonight, keyed on included_in_groups.
   presentCount: number
 }
 
@@ -210,7 +222,17 @@ export function quickAddPool(
   return players.filter((p) => !listedIds.has(p.id) && !entered.has(p.id)).sort(registerOrder)
 }
 
-// A short summary for the session day card: "12 of 18 in".
+// A short attendance summary: "12 of 18 here".
+//
+// ATTENDANCE, not group inclusion. It reads presentTotal, which counts the
+// children marked as having turned up (0047). It used to say "in", which
+// was written when `present` meant "in tonight's groups" and would now be
+// a sentence about one fact using the other one's word.
+//
+// Nothing renders this today: the session day card summarises the night
+// through tonightSummary instead. It is kept because "how many turned up"
+// is a real question this view can already answer, and it is worded
+// unambiguously so picking it up cannot reintroduce the conflation.
 export function registerSummary(view: RegisterView): string {
-  return `${view.presentTotal} of ${view.playerTotal} in`
+  return `${view.presentTotal} of ${view.playerTotal} here`
 }

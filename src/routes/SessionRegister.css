@@ -177,6 +177,38 @@
 }
 
 /* The bib control, in its own tap area at the end of the row. */
+/* Attendance. Deliberately NOT styled like the inclusion check: that one
+   is a tick inside the big row target, this is a small labelled pill with
+   its own 44px touch area, so the two gestures cannot be confused in the
+   rain. Its "on" colour is the social corner rather than the physical one
+   the row uses, so a glance down the list separates "here" from "in a
+   group" without reading either label. */
+.reg-here {
+  flex: 0 0 auto;
+  align-self: center;
+  min-height: 44px;
+  min-width: 52px;
+  padding: 0 12px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--slate);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.reg-here.on {
+  background: color-mix(in srgb, var(--c-social) 16%, var(--card));
+  border-color: var(--c-social);
+  color: var(--c-social);
+}
+.reg-here.static {
+  cursor: default;
+  min-width: 0;
+  border: 0;
+  background: none;
+}
+
 .reg-bib {
   display: flex;
   align-items: center;

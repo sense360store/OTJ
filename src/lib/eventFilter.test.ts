@@ -262,10 +262,24 @@ describe('19. Training and All events compose with Upcoming and Past', () => {
     expect(cell('all', 'past')).toEqual(['was', 'was-fixture'])
   })
 
-  it('moves tonight into Past the moment it has actually finished', () => {
-    expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: 'me', now: AFTER }))).toEqual(['next'])
+  it('keeps tonight in the operational view after it has finished, until the day turns over', () => {
+    // CORRECTED. This used to assert that 22:00 on the night of the session
+    // filed it under Past, which is the reported regression: at 22:30 on
+    // 2026-08-11 a coach could not reach that evening's own session from
+    // any list. It has ended, so it is not the next thing; it is still
+    // tonight, so it stays in the view a coach lands on.
+    expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: 'me', now: AFTER }))).toEqual(['now', 'next'])
     expect(
       ids(applyEventFilter(schedule, { kind: 'training', scope: 'past', mine: false }, { userId: 'me', now: AFTER })),
+    ).toEqual(['was'])
+  })
+
+  it('moves tonight into Past once the local day is over', () => {
+    // The half of the original rule that was right, kept and proved.
+    const tomorrow = at(2026, 8, 12, 9, 0)
+    expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: 'me', now: tomorrow }))).toEqual(['next'])
+    expect(
+      ids(applyEventFilter(schedule, { kind: 'training', scope: 'past', mine: false }, { userId: 'me', now: tomorrow })),
     ).toEqual(['was', 'now'])
   })
 
@@ -369,6 +383,6 @@ describe('18. a screen mounted again after the session ended agrees with itself'
     const first = ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: 'me', now: AFTER }))
     const second = ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: 'me', now: AFTER }))
     expect(first).toEqual(second)
-    expect(first).toEqual(['next'])
+    expect(first).toEqual(['now', 'next'])
   })
 })

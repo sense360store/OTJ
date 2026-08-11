@@ -243,12 +243,23 @@ describe('spondPlanSuggestions', () => {
   it('keeps an event that started an hour ago out of Past, because it is still running', () => {
     // The shared lifecycle rule, not a start time comparison: an event two
     // hours old is over, one an hour old is not.
+    //
+    // CORRECTED for the same-day rule. `finished` ran at 09:00 and ended at
+    // 10:30, on the day `now` is in, so it has ENDED but has not moved to
+    // Past: planning a session from an event that ran this morning is the
+    // same real act as writing up last night, and it stays offered until
+    // the local day turns over. Both events are here; neither is lost.
     const running = [
       ev({ id: 'running', startsAt: '2026-06-13T11:00:00Z', teamId: 'team-1' }),
       ev({ id: 'finished', startsAt: '2026-06-13T09:00:00Z', teamId: 'team-1' }),
     ]
-    expect(spondPlanSuggestions({ ...opts, events: running }).map((e) => e.id)).toEqual(['running'])
-    expect(spondPlanSuggestions({ ...opts, events: running, scope: 'past' }).map((e) => e.id)).toEqual(['finished'])
+    expect(spondPlanSuggestions({ ...opts, events: running }).map((e) => e.id)).toEqual(['finished', 'running'])
+    expect(spondPlanSuggestions({ ...opts, events: running, scope: 'past' }).map((e) => e.id)).toEqual([])
+    // The next local day, where it is genuinely past.
+    const tomorrow = new Date('2026-06-14T12:00:00Z')
+    expect(
+      spondPlanSuggestions({ ...opts, events: running, scope: 'past', now: tomorrow }).map((e) => e.id),
+    ).toEqual(['running', 'finished'])
   })
 })
 

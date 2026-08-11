@@ -69,6 +69,7 @@ const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) => 
       unset={false}
       onFilter={noop}
       onToggle={noop}
+      onPresent={noop}
       onBib={noop}
       onSelectAll={noop}
       onClearSelection={noop}
@@ -155,7 +156,7 @@ describe('the row', () => {
     // The tick is the coach's organisation decision, not a claim that a
     // child walked through the gate.
     const html = renderToStaticMarkup(
-      <TonightRowView row={one} included={false} bib="" canEdit onToggle={noop} onBib={noop} />,
+      <TonightRowView row={one} included={false} present={false} onPresent={() => {}} bib="" canEdit onToggle={noop} onBib={noop} />,
     )
     expect(html).toContain("aria-label=\"Include Alpha Synthetic in tonight&#x27;s groups\"")
     expect(html).not.toMatch(/Mark .* present/)
@@ -165,7 +166,7 @@ describe('the row', () => {
   it('keeps the bib control out of the tick target', () => {
     // A mis-tap must change a colour, not who is in tonight's groups.
     const html = renderToStaticMarkup(
-      <TonightRowView row={one} included bib="" canEdit onToggle={noop} onBib={noop} />,
+      <TonightRowView row={one} included present={false} onPresent={() => {}} bib="" canEdit onToggle={noop} onBib={noop} />,
     )
     expect(html.indexOf('reg-bib')).toBeGreaterThan(html.indexOf('</button>'))
     expect(html).toContain('aria-label="Bib colour for Alpha Synthetic"')
@@ -173,7 +174,7 @@ describe('the row', () => {
 
   it('shows the reply as words, outside the tick button', () => {
     const html = renderToStaticMarkup(
-      <TonightRowView row={one} included={false} bib="" canEdit onToggle={noop} onBib={noop} />,
+      <TonightRowView row={one} included={false} present={false} onPresent={() => {}} bib="" canEdit onToggle={noop} onBib={noop} />,
     )
     expect(html).toContain('Going')
     expect(html.indexOf('reg-rsvp')).toBeGreaterThan(html.indexOf('</button>'))
@@ -377,6 +378,7 @@ describe('no filter or selection writes anything', () => {
         unset={false}
         onFilter={spy}
         onToggle={spy}
+        onPresent={noop}
         onBib={spy}
         onSelectAll={spy}
         onClearSelection={spy}
@@ -398,8 +400,8 @@ describe('the stored shape', () => {
     // Leaving and reopening rebuilds what was saved, which is what makes
     // the Saved claim worth anything.
     const saved: RegisterEntry[] = [
-      { sessionId: 's', playerId: 'p1', present: true, bibColourOverride: 'blue', source: 'roster' },
-      { sessionId: 's', playerId: 'p2', present: false, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's', playerId: 'p1', present: false, includedInGroups: true, bibColourOverride: 'blue', source: 'roster' },
+      { sessionId: 's', playerId: 'p2', present: false, includedInGroups: false, bibColourOverride: null, source: 'roster' },
     ]
     const d = draftFromEntries(saved)
     expect(d.included).toEqual({ p1: true, p2: false })
@@ -533,7 +535,7 @@ describe('the read only bib cell', () => {
   it('shows the colour a child actually wears, not the stored enum', () => {
     const one = rows()[0]
     const html = renderToStaticMarkup(
-      <TonightRowView row={one} included bib="red" canEdit={false} onToggle={noop} onBib={noop} />,
+      <TonightRowView row={one} included present={false} onPresent={() => {}} bib="red" canEdit={false} onToggle={noop} onBib={noop} />,
     )
     expect(html).toContain('Red')
     expect(html).not.toMatch(/>red</)
@@ -542,7 +544,7 @@ describe('the read only bib cell', () => {
   it('falls back to the team colour when there is no override', () => {
     const one = rows()[0]
     const html = renderToStaticMarkup(
-      <TonightRowView row={one} included bib="" canEdit={false} onToggle={noop} onBib={noop} />,
+      <TonightRowView row={one} included present={false} onPresent={() => {}} bib="" canEdit={false} onToggle={noop} onBib={noop} />,
     )
     expect(html).toContain('Red')
   })

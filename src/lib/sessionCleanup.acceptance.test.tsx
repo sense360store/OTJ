@@ -46,7 +46,12 @@ const at = (y: number, m: number, d: number, hh = 0, mm = 0) => new Date(y, m - 
 // The moment every list below is composed at: the morning after Monday
 // night's training, and the day of Tuesday night's.
 const TUESDAY_MORNING = at(2026, 8, 11, 9, 0)
+// 22:00 on the night of the session, an hour and a half after an 18:00
+// session with no plan is expected to end. This is the hour the same-day
+// regression was reported at, and several assertions below turn on it.
 const TUESDAY_EVENING = at(2026, 8, 11, 22, 0)
+// The next local day. Where "past" actually begins.
+const WEDNESDAY_MORNING = at(2026, 8, 12, 9, 0)
 
 const session = (over: Partial<Session> & Pick<Session, 'id' | 'name' | 'date'>): Session => ({
   ...blankSession(ME, null),
@@ -109,10 +114,22 @@ describe('12. yesterday s training is still there under Past', () => {
     expect(LIFECYCLE_SCOPE_LABELS.past).toBe('Past')
   })
 
-  it('joins it there as soon as tonight has finished, without touching the row', () => {
+  it('is joined there by tonight once the local day is over, without touching either row', () => {
+    // CORRECTED. This used to expect tonight to join Past at 22:00 on its
+    // own evening, which is the reported regression: the session was
+    // unreachable from the operational view while the coach was still
+    // standing on the pitch. Tonight joins Past on Wednesday, not at 22:00
+    // on Tuesday.
     const before = JSON.stringify(club)
-    expect(past(club, TUESDAY_EVENING)).toEqual(['mon', 'tue'])
+    expect(past(club, TUESDAY_EVENING)).toEqual(['mon'])
+    expect(past(club, WEDNESDAY_MORNING)).toEqual(['mon', 'tue'])
     expect(JSON.stringify(club)).toBe(before)
+  })
+
+  it('keeps tonight reachable all evening after it has ended', () => {
+    // The regression, stated positively and at the reported hour.
+    expect(upcoming(club, TUESDAY_EVENING)).toContain('tue')
+    expect(past(club, TUESDAY_EVENING)).not.toContain('tue')
   })
 
   it('never falls between the two views', () => {
@@ -259,8 +276,11 @@ describe('15. a past Spond event does not clutter the default Training list', ()
 describe('16. no historical session is deleted, or altered, by any of this', () => {
   it('returns a narrowed view over the same rows, leaving the source list whole', () => {
     const before = JSON.parse(JSON.stringify(club))
-    const view = applyEventFilter(club, DEFAULT_EVENT_FILTER, { userId: ME, now: TUESDAY_EVENING })
-    expect(view).toHaveLength(1)
+    // Two on Tuesday evening (tonight, still reachable, and next week);
+    // one on Wednesday, once tonight has moved. Either way the source
+    // array is untouched, which is what this test is actually about.
+    expect(applyEventFilter(club, DEFAULT_EVENT_FILTER, { userId: ME, now: TUESDAY_EVENING })).toHaveLength(2)
+    expect(applyEventFilter(club, DEFAULT_EVENT_FILTER, { userId: ME, now: WEDNESDAY_MORNING })).toHaveLength(1)
     expect(club).toHaveLength(3)
     expect(club).toEqual(before)
   })
@@ -274,8 +294,11 @@ describe('16. no historical session is deleted, or altered, by any of this', () 
     ]
     const teams: Team[] = [{ id: 'titans', name: 'Titans', bibColour: 'red' }]
     const entries: RegisterEntry[] = [
-      { sessionId: 'mon', playerId: 'p1', present: true, bibColourOverride: 'blue', source: 'roster' },
-      { sessionId: 'mon', playerId: 'p2', present: true, bibColourOverride: null, source: 'manual' },
+      // Both facts recorded on a night that has happened: they were here,
+      // and the coach had them in a group. Neither may be disturbed by the
+      // lifecycle rule.
+      { sessionId: 'mon', playerId: 'p1', present: true, includedInGroups: true, bibColourOverride: 'blue', source: 'roster' },
+      { sessionId: 'mon', playerId: 'p2', present: true, includedInGroups: true, bibColourOverride: null, source: 'manual' },
     ]
     const view = buildRegister(roster, ['titans'], teams, entries, false)
     expect(view.presentTotal).toBe(2)
@@ -300,12 +323,15 @@ describe('17. filtering a session into Past writes nothing', () => {
   })
 })
 
-describe('18. a screen remounted after the session ended still calls it Past', () => {
+describe('18. a screen remounted after the session ended agrees with itself', () => {
   it('recomputes from the clock rather than from anything it stored', () => {
+    // Asked twice at the same moment, answered the same way; asked at a
+    // later moment, answered by the clock and not by anything cached.
     expect(upcoming(club, TUESDAY_MORNING)).toContain('tue')
-    expect(upcoming(club, TUESDAY_EVENING)).not.toContain('tue')
-    expect(upcoming(club, TUESDAY_EVENING)).not.toContain('tue')
-    expect(past(club, TUESDAY_EVENING)).toContain('tue')
+    expect(upcoming(club, TUESDAY_EVENING)).toContain('tue')
+    expect(upcoming(club, TUESDAY_EVENING)).toContain('tue')
+    expect(upcoming(club, WEDNESDAY_MORNING)).not.toContain('tue')
+    expect(past(club, WEDNESDAY_MORNING)).toContain('tue')
   })
 })
 

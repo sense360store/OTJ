@@ -26,7 +26,7 @@ import { useSessions } from '../context/SessionsContext'
 import { isSampleMedia, memberTeamIds } from '../lib/data'
 import type { Drill, Session } from '../lib/data'
 import { sessionTeamsLabel, sessionVisibleToTeams } from '../lib/sessionTeams'
-import { isSessionActive, isSessionPast } from '../lib/sessionLifecycle'
+import { isSessionEndedToday, isSessionOperational, isSessionPast } from '../lib/sessionLifecycle'
 import { venueNameFor } from '../lib/venues'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
@@ -46,6 +46,10 @@ export interface ParentSessionView {
   teamLabel: string
   focus: string
   intentions: string[]
+  // Finished earlier today. It stays in this list, because a parent
+  // looking at 21:00 is looking for tonight, and it says so rather than
+  // being presented as what the team is working on next.
+  ended: boolean
 }
 
 export interface LastSessionView {
@@ -135,7 +139,7 @@ export function NoTeamNote() {
 // working on. No attendance counts; responses live in Spond.
 function ThisWeekSection({ sessions }: { sessions: ParentSessionView[] }) {
   return (
-    <Section icon={Icon.calendar} title="This week" sub="What the team is working on next.">
+    <Section icon={Icon.calendar} title="This week" sub="Tonight and what the team is working on next.">
       <div className="parent-sessions">
         {sessions.map((s) => (
           <div className="psn" key={s.id}>
@@ -162,6 +166,7 @@ function ThisWeekSection({ sessions }: { sessions: ParentSessionView[] }) {
                   <Icon.flag />
                   {s.teamLabel}
                 </span>
+                {s.ended && <span className="pill">Ended earlier today</span>}
               </span>
               {s.focus && <span className="psn-focus">{s.focus}</span>}
               {s.intentions.length > 0 && (
@@ -393,7 +398,13 @@ export function ParentHome() {
   // neither heading. An undated session is in neither list: it cannot be
   // placed in a week and it is not a night that happened.
   const now = new Date()
-  const isUpcoming = (s: Session) => !!s.date && isSessionActive(s, now)
+  // isSessionOperational, not isSessionActive. With three lifecycle states
+  // an "active only" upcoming and a "past only" history leave a hole
+  // exactly the width of the evening a session finished in: it would be in
+  // NEITHER list, so a parent looking for tonight's session at 21:00 would
+  // find it nowhere on this dashboard. The two predicates have to partition
+  // the rows between them, and these two do.
+  const isUpcoming = (s: Session) => !!s.date && isSessionOperational(s, now)
   const isPast = (s: Session) => !!s.date && isSessionPast(s, now)
   // The sessions read is ordered ascending by date and time, so upcoming runs
   // soonest first and the last past entry is the most recent.
@@ -415,6 +426,7 @@ export function ParentHome() {
       teamLabel: teamLabel(s),
       focus: s.focus,
       intentions: s.intentions,
+      ended: isSessionEndedToday(s, now),
     }
   })
 

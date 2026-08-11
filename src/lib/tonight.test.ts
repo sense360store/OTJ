@@ -5,7 +5,7 @@
 // "who arrived?" — it is "who am I including in tonight's groups, and
 // what bib do they need?". Spond suggests the pool; the coach decides.
 //
-// Two facts live on every row and they are independent:
+// Three facts live on every row and they are independent:
 //
 //   RESPONSE   what the child's parent said in Spond. Read only, and a
 //              child with no Spond link has no response at all, which is
@@ -13,6 +13,11 @@
 //   INCLUDED   whether the coach is putting them in tonight's groups.
 //              A Going child need not be included; a Not going child may
 //              be, because they turned up anyway.
+//   ATTENDANCE whether the child actually turned up.
+//
+// The last two shared one column until 0047 and this file's fixtures said
+// `present` when they meant included. They now say which they mean; the
+// independence of the pair is proved in ./attendanceGroups.test.ts.
 //
 // Everything here is pure so the screen is a thin shell and the rules
 // that matter are tested rather than argued about.
@@ -152,7 +157,7 @@ const entries: RegisterEntry[] = []
 describe('the draft', () => {
   it('starts from what is already saved', () => {
     const saved: RegisterEntry[] = [
-      { sessionId: 's', playerId: 'anna', present: true, bibColourOverride: 'red', source: 'roster' },
+      { sessionId: 's', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: 'red', source: 'roster' },
     ]
     const d = draftFromEntries(saved)
     expect(d.included.anna).toBe(true)
@@ -209,7 +214,7 @@ describe('the draft', () => {
 
 describe('dirty tracking', () => {
   const saved: RegisterEntry[] = [
-    { sessionId: 's', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
+    { sessionId: 's', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
   ]
 
   it('is clean when the draft matches what is saved', () => {
@@ -232,8 +237,8 @@ describe('dirty tracking', () => {
 
 describe('the delta a save writes', () => {
   const saved: RegisterEntry[] = [
-    { sessionId: 's', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
-    { sessionId: 's', playerId: 'ben', present: false, bibColourOverride: 'red', source: 'manual' },
+    { sessionId: 's', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
+    { sessionId: 's', playerId: 'ben', present: false, includedInGroups: false, bibColourOverride: 'red', source: 'manual' },
   ]
 
   it('is empty when nothing changed, so saving writes nothing', () => {
@@ -258,7 +263,7 @@ describe('the delta a save writes', () => {
     const d = setDraftBib(toggleIncluded(draftFromEntries(saved), 'cara'), 'cara', 'green')
     const delta = draftDelta(d, saved, 's')
     expect(delta).toHaveLength(1)
-    expect(delta[0]).toMatchObject({ playerId: 'cara', present: true, bibColourOverride: 'green' })
+    expect(delta[0]).toMatchObject({ playerId: 'cara', includedInGroups: true, bibColourOverride: 'green' })
   })
 
   it('preserves a bib on a child who is not included', () => {
@@ -277,7 +282,7 @@ describe('what Saved is allowed to mean', () => {
     // back.
     const draft = setDraftBib(toggleIncluded(draftFromEntries([]), 'anna'), 'anna', 'red')
     const persisted: RegisterEntry[] = [
-      { sessionId: 's', playerId: 'anna', present: true, bibColourOverride: 'red', source: 'roster' },
+      { sessionId: 's', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: 'red', source: 'roster' },
     ]
     expect(draftIsDirty(draft, persisted)).toBe(false)
   })
@@ -287,7 +292,7 @@ describe('what Saved is allowed to mean', () => {
     // and a partial write is not a save.
     const draft = selectAll(draftFromEntries([]), [going, quiet])
     const partial: RegisterEntry[] = [
-      { sessionId: 's', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
     ]
     expect(draftIsDirty(draft, partial)).toBe(true)
   })
@@ -295,7 +300,7 @@ describe('what Saved is allowed to mean', () => {
   it('stays dirty when a field came back different from what was sent', () => {
     const draft = setDraftBib(draftFromEntries([]), 'anna', 'red')
     const wrong: RegisterEntry[] = [
-      { sessionId: 's', playerId: 'anna', present: false, bibColourOverride: 'blue', source: 'roster' },
+      { sessionId: 's', playerId: 'anna', present: false, includedInGroups: false, bibColourOverride: 'blue', source: 'roster' },
     ]
     expect(draftIsDirty(draft, wrong)).toBe(true)
   })
@@ -369,13 +374,18 @@ describe('the groups on the grass', () => {
 // ---- The rows a save actually sends ---------------------------------
 
 describe('the rows a save sends to the database', () => {
+  // A new row where the coach set everything at once: in a group, marked
+  // present, and given a bib. `present` here means attendance; the
+  // inclusion it used to stand for is now its own pair of fields.
   const change = {
     sessionId: 's1',
     playerId: 'anna',
     present: true,
+    includedInGroups: true,
     bibColourOverride: 'red' as string | null,
     source: 'roster' as const,
     presentChanged: true,
+    includedChanged: true,
     bibChanged: true,
     isNew: true,
   }
@@ -388,6 +398,7 @@ describe('the rows a save sends to the database', () => {
         player_id: 'anna',
         club_id: 'club-1',
         present: true,
+        included_in_groups: true,
         bib_colour_override: 'red',
         source: 'roster',
       },
@@ -445,7 +456,7 @@ describe('buildTonightRows', () => {
 
   it('marks a quick added guest as manual', () => {
     const guest: RegisterEntry[] = [
-      { sessionId: 's', playerId: 'zed', present: true, bibColourOverride: null, source: 'manual' },
+      { sessionId: 's', playerId: 'zed', present: false, includedInGroups: true, bibColourOverride: null, source: 'manual' },
     ]
     const withGuest: Player[] = [
       ...players,
@@ -494,18 +505,18 @@ describe('quick add, which happens before any save', () => {
 
   it('leaves a stored guest exactly as stored', () => {
     const stored: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'zed', present: true, bibColourOverride: 'red', source: 'manual' },
+      { sessionId: 's1', playerId: 'zed', present: false, includedInGroups: true, bibColourOverride: 'red', source: 'manual' },
     ]
     expect(draftEntries(draftFromEntries(stored), stored, 's1')).toEqual(stored)
   })
 
   it('merges a draft change over a stored row without inventing others', () => {
     const stored: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'anna', present: false, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'anna', present: false, includedInGroups: false, bibColourOverride: null, source: 'roster' },
     ]
     const merged = draftEntries(toggleIncluded(draftFromEntries(stored), 'anna'), stored, 's1')
     expect(merged).toHaveLength(1)
-    expect(merged[0].present).toBe(true)
+    expect(merged[0].includedInGroups).toBe(true)
   })
 })
 
@@ -696,7 +707,7 @@ describe('removing a guest through the normal save', () => {
     // a draft world the same intent is "untick them and save", so the save
     // has to remove the row rather than leave the guest listed forever.
     const stored: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'zed', present: true, bibColourOverride: null, source: 'manual' },
+      { sessionId: 's1', playerId: 'zed', present: false, includedInGroups: true, bibColourOverride: null, source: 'manual' },
     ]
     const d = toggleIncluded(draftFromEntries(stored), 'zed')
     expect(draftRemovals(d, stored)).toEqual(['zed'])
@@ -705,14 +716,14 @@ describe('removing a guest through the normal save', () => {
 
   it('never removes a roster child, only a guest', () => {
     const stored: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
     ]
     expect(draftRemovals(toggleIncluded(draftFromEntries(stored), 'anna'), stored)).toEqual([])
   })
 
   it('keeps a guest the coach gave a bib to, because that is deliberate', () => {
     const stored: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'zed', present: true, bibColourOverride: 'red', source: 'manual' },
+      { sessionId: 's1', playerId: 'zed', present: false, includedInGroups: true, bibColourOverride: 'red', source: 'manual' },
     ]
     expect(draftRemovals(toggleIncluded(draftFromEntries(stored), 'zed'), stored)).toEqual([])
   })
@@ -721,7 +732,7 @@ describe('removing a guest through the normal save', () => {
 describe('a removal is a change', () => {
   it('marks the draft dirty when the only edit is taking a guest off', () => {
     const stored: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'zed', present: true, bibColourOverride: null, source: 'manual' },
+      { sessionId: 's1', playerId: 'zed', present: false, includedInGroups: true, bibColourOverride: null, source: 'manual' },
     ]
     expect(draftIsDirty(toggleIncluded(draftFromEntries(stored), 'zed'), stored)).toBe(true)
   })
@@ -732,8 +743,8 @@ describe('what a successful save does to the draft', () => {
 
   it('clears it only when the readback agrees, field for field', () => {
     const persisted: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
-      { sessionId: 's1', playerId: 'ben', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'ben', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
     ]
     expect(draftAfterSave(draft, persisted)).toBeNull()
   })
@@ -743,17 +754,33 @@ describe('what a successful save does to the draft', () => {
     // compare the readback with a draft rebuilt from that same readback,
     // so Saved was structurally true for any mutation that did not throw.
     const partial: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
     ]
     expect(draftAfterSave(draft, partial)).toBe(draft)
   })
 
-  it('keeps it when a value came back different from what was sent', () => {
+  it('keeps it when a value the coach changed came back different from what was sent', () => {
+    // anna's inclusion is what this coach set. It came back false, so their
+    // write did not land and the screen must not say Saved.
     const wrong: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: 'blue', source: 'roster' },
-      { sessionId: 's1', playerId: 'ben', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'anna', present: false, includedInGroups: false, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'ben', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
     ]
-    expect(draftAfterSave(draft, wrong)).toBe(wrong && draft)
+    expect(draftAfterSave(draft, wrong)).toBe(draft)
+  })
+
+  it('clears it when a field the coach never touched differs, because that is not their write', () => {
+    // SHARPENED BY THE TOUCH RECORD. "Dirty" now means "something I
+    // changed is not stored", not "the readback differs from the seed I
+    // opened with". Another coach's bib arriving on anna is not this
+    // coach's failed write, and holding the screen dirty for it would be
+    // the same confusion the per field payload exists to avoid: it would
+    // invite this coach to press Save again and push their stale seed.
+    const otherCoachSetABib: RegisterEntry[] = [
+      { sessionId: 's1', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: 'blue', source: 'roster' },
+      { sessionId: 's1', playerId: 'ben', present: true, includedInGroups: true, bibColourOverride: null, source: 'roster' },
+    ]
+    expect(draftAfterSave(draft, otherCoachSetABib)).toBeNull()
   })
 
   it('keeps an edit the coach made while the write was in flight', () => {
@@ -762,8 +789,8 @@ describe('what a successful save does to the draft', () => {
     // payload, and discarding the draft threw it away and then called the
     // result Saved.
     const persisted: RegisterEntry[] = [
-      { sessionId: 's1', playerId: 'anna', present: true, bibColourOverride: null, source: 'roster' },
-      { sessionId: 's1', playerId: 'ben', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'anna', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 's1', playerId: 'ben', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
     ]
     const late = toggleIncluded(draft, 'cara')
     expect(draftAfterSave(late, persisted)).toBe(late)
@@ -777,7 +804,7 @@ describe('what a successful save does to the draft', () => {
 
 describe('a save preserves the fields it did not change', () => {
   const stored: RegisterEntry[] = [
-    { sessionId: 's1', playerId: 'anna', present: false, bibColourOverride: 'red', source: 'roster' },
+    { sessionId: 's1', playerId: 'anna', present: false, includedInGroups: false, bibColourOverride: 'red', source: 'roster' },
   ]
 
   it('sends only the field a change actually touched', () => {
@@ -786,7 +813,7 @@ describe('a save preserves the fields it did not change', () => {
     // row write carries a stale value for the other field and silently
     // undoes it, so each row carries only what it changed.
     const rows = tonightUpsertRows(draftDelta(toggleIncluded(draftFromEntries(stored), 'anna'), stored, 's1'), 'c1')
-    expect(rows[0]).toEqual({ session_id: 's1', player_id: 'anna', club_id: 'c1', present: true })
+    expect(rows[0]).toEqual({ session_id: 's1', player_id: 'anna', club_id: 'c1', included_in_groups: true })
     expect(rows[0]).not.toHaveProperty('bib_colour_override')
   })
 
@@ -798,7 +825,7 @@ describe('a save preserves the fields it did not change', () => {
   it('sends both when both moved', () => {
     const d = setDraftBib(toggleIncluded(draftFromEntries(stored), 'anna'), 'anna', 'blue')
     const rows = tonightUpsertRows(draftDelta(d, stored, 's1'), 'c1')
-    expect(rows[0]).toMatchObject({ present: true, bib_colour_override: 'blue' })
+    expect(rows[0]).toMatchObject({ included_in_groups: true, bib_colour_override: 'blue' })
   })
 
   it('sends the whole row for a child who has nothing stored yet', () => {
@@ -809,7 +836,12 @@ describe('a save preserves the fields it did not change', () => {
       session_id: 's1',
       player_id: 'zed',
       club_id: 'c1',
-      present: true,
+      // A row that does not exist yet has nothing to preserve, so every
+      // field travels. Quick add puts them in a group and says they were
+      // NOT here: attendance stays the coach's own explicit mark, and
+      // false is what the column would have defaulted to anyway.
+      included_in_groups: true,
+      present: false,
       bib_colour_override: null,
       source: 'manual',
     })

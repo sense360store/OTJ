@@ -30,7 +30,32 @@
 // =====================================================================
 import type { SessionStatus } from './data'
 
-export type SessionLifecycle = 'active' | 'past'
+// THREE STATES, BECAUSE "FINISHED" AND "YESTERDAY" ARE TWO QUESTIONS.
+//
+// The first version of this module had two, and answered both with one
+// comparison. A session at 18:00 with no planned activities took the 90
+// minute fallback, became `past` at 19:30, and left every operational
+// surface while the coach was still standing on the pitch at 22:30. The
+// row was intact, its Spond link was intact, its saved groups were
+// intact; it was simply unreachable. That was a real session on
+// 2026-08-11 and lib/sameDaySession.test.ts pins the hour by hour rule
+// against it.
+//
+//   active       still to come, or running now. The only state that can
+//                be the "next" event.
+//   endedToday   it has ended, and its local calendar day is still the
+//                day we are in. Not next, not gone: the coach can still
+//                open it, organise it and record who was there.
+//   past         a previous local day or older. The widening a coach asks
+//                for, exactly as before.
+//
+// The third state is deliberately NOT a fourth scope, a per screen date
+// comparison or a grace period in minutes. A grace period would have been
+// the obvious fix and it is the wrong shape: "two hours after it ends" is
+// not a thing a coach can reason about, and at 23:00 it would have hidden
+// the session again. The local calendar day is the unit the product
+// already thinks in, and it is the one a coach can predict.
+export type SessionLifecycle = 'active' | 'endedToday' | 'past'
 
 // The duration used when a session's plan cannot answer how long it runs.
 //
@@ -163,6 +188,27 @@ export function sessionExpectedEnd(event: TimedEvent): Date | null {
   return new Date(start.at.getTime() + plannedMinutes(event) * 60_000)
 }
 
+// Are these two instants on the same local calendar day?
+//
+// LOCAL FIELDS, NEVER A STRING. Comparing toISOString().slice(0, 10)
+// would ask whether they share a UTC day, which for a Yorkshire club is a
+// different day for one hour of every summer evening: a session at 23:30
+// BST is already tomorrow in UTC. Reading getFullYear/getMonth/getDate
+// asks the runtime the question the coach is asking, and it is DST safe
+// for free, because a 23 hour and a 25 hour day both still have one date.
+// Is this instant's local calendar day LATER than now's? Day granularity,
+// so a session at 09:00 today is not "after today".
+function startsAfterToday(at: Date, now: Date): boolean {
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  return day(at) > day(now)
+}
+
+export function isSameLocalDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  )
+}
+
 // Whether the session is being driven right now. The live columns are
 // written by the driver on every activity change and cleared when they
 // press End, so this is a fact about now rather than a flag nobody
@@ -176,40 +222,108 @@ export function isSessionLive(event: TimedEvent): boolean {
 //
 // THE PRECEDENCE, in the order it is applied:
 //
-//   1. status completed. Authoritative and believed: somebody, or the
-//      live view's End, has said this session is finished. A completed
-//      session is past even if its date is in the future.
+//   1. status completed. Read FIRST, exactly as before, and still beating
+//      the live columns: a row that somehow carries both must not be
+//      stuck active for ever, which is what reading live first would do.
+//      What changed is the SIZE of the claim. It used to mean "past"; it
+//      now means "has ended", and the day rule below decides where that
+//      lands. A coach who pressed End at 19:30 still has that evening's
+//      work in front of them, so a session completed today is endedToday.
+//      A completed session with a FUTURE date is still past, unchanged,
+//      because no local day of its own has begun.
 //   2. Being driven live. A coach running long is still running the
 //      session, so it stays active however far past its expected end the
 //      clock has gone, until the live state says otherwise.
 //   3. Expected end from the start plus the planned duration.
 //   4. The fallback duration where the plan cannot answer, and the whole
 //      local day where the row names no time.
-//   5. now later than the expected end means past. Anything else, an
-//      unreadable date included, is active.
+//   5. Ended, and today: endedToday. Ended, and not today: past.
+//      Anything else, an unreadable date included, is active.
+//
+// WHAT "TODAY" MEANS HERE, and why it is generous. A session counts as
+// today when EITHER the day it started on OR the day it was expected to
+// end on is the local day we are in. The two differ only for a night that
+// runs through midnight, and taking either keeps such a session reachable
+// on both the evening it began and the small hours it finished in. The
+// failure modes are not equal: one extra row on a screen costs a coach a
+// glance, and a missing row cost one an entire evening's register.
 //
 // Deliberately lopsided in the same direction as the training classifier:
 // every rule that can hide is narrow and precise, and every ambiguity
 // resolves towards keeping the session on screen.
 export function sessionLifecycle(event: TimedEvent, now: Date = new Date()): SessionLifecycle {
-  if (event.status === COMPLETED) return 'past'
-  if (isSessionLive(event)) return 'active'
+  const completed = event.status === COMPLETED
+  // Completed beats live. A row carrying both is a stale live column, and
+  // reading live first would leave it active for ever.
+  if (!completed && isSessionLive(event)) return 'active'
   const end = sessionExpectedEnd(event)
-  if (!end) return 'active'
-  return now.getTime() > end.getTime() ? 'past' : 'active'
+  // Nothing places it in time. A completed row has still ended, and there
+  // is no local day it could be "today" on, so it is past.
+  if (!end) return completed ? 'past' : 'active'
+  const start = sessionStart(event)
+  // A completed session whose own DAY has not arrived yet is past, and does
+  // not get the same-day reprieve.
+  //
+  // The row is self-contradictory: somebody marked it finished while it is
+  // still days away, which the planner allows because editing a completed
+  // session keeps its status. Without this the day rule read the FUTURE end
+  // as "today" for the whole of the session's own date, so the row left the
+  // Past view at midnight, sat in the default Upcoming list all day
+  // labelled as having ended, and returned to Past the next midnight.
+  //
+  // THE COMPARISON IS ON CALENDAR DAYS, not instants, and that is the whole
+  // subtlety. Comparing instants would also send a session the driver ENDED
+  // EARLY back to past for the rest of its own window: End pressed at 18:45
+  // on a session planned until 19:15 would read as past until 19:15 and
+  // then reappear. Ending early is an ordinary Tuesday and that coach still
+  // has the evening's work in front of them, so a completed session dated
+  // TODAY is endedToday from the moment it is completed.
+  if (completed && startsAfterToday(start ?? end, now)) return 'past'
+  const overdue = now.getTime() > end.getTime()
+  if (!completed && !overdue) return 'active'
+  const today = isSameLocalDay(end, now) || (!!start && isSameLocalDay(start, now))
+  return today ? 'endedToday' : 'past'
 }
 
+// Still to come, or running. The ONLY state that may be offered as the
+// next event: an ended session is discoverable, never imminent.
 export function isSessionActive(event: TimedEvent, now?: Date): boolean {
   return sessionLifecycle(event, now) === 'active'
 }
 
+// Finished, but on the day we are still in. The state that keeps Session
+// Day, Tonight and the attendance record one tap away all evening.
+export function isSessionEndedToday(event: TimedEvent, now?: Date): boolean {
+  return sessionLifecycle(event, now) === 'endedToday'
+}
+
+// A previous local day or older. Narrower than it used to be, and that
+// narrowing is the fix: this is now the only state that removes a session
+// from the operational views.
 export function isSessionPast(event: TimedEvent, now?: Date): boolean {
   return sessionLifecycle(event, now) === 'past'
+}
+
+// Everything a coach may still act on: tonight's session before it starts,
+// while it runs, and after it has finished until the day turns over.
+//
+// This is the predicate every LIST and every ENTRY POINT wants, and
+// isSessionActive is the one only "what is next" wants. Getting those two
+// the wrong way round is precisely the regression, so they are named for
+// the questions they answer rather than for the states they test.
+export function isSessionOperational(event: TimedEvent, now?: Date): boolean {
+  return sessionLifecycle(event, now) !== 'past'
 }
 
 // The one filter every list calls, kept separate from the predicates so a
 // screen expresses "does this row belong in the current view?" rather
 // than re-deriving the boolean each time.
+//
+// Upcoming holds active AND endedToday. A session that finished three
+// hours ago is not "upcoming" in the dictionary sense, and it is exactly
+// what a coach opening the app at 22:30 is looking for, so the default
+// view keeps it and the row says "Ended" for itself. The alternative,
+// filing it under Past the moment it ends, is the bug.
 export function matchesLifecycleScope(event: TimedEvent, scope: LifecycleScope, now?: Date): boolean {
-  return scope === 'past' ? isSessionPast(event, now) : isSessionActive(event, now)
+  return scope === 'past' ? isSessionPast(event, now) : isSessionOperational(event, now)
 }

@@ -35,7 +35,7 @@
 //
 // Names in fixtures are invented. No real child or coach appears.
 // =====================================================================
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { blankSession } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
@@ -392,5 +392,93 @@ describe('the Home screen, on the night after training', () => {
 
   it('offers no Past chip at all, because it is the what is next surface', () => {
     expect(html()).not.toContain('>Past</button>')
+  })
+})
+
+// ---- The same-day regression, at the screens --------------------------
+//
+// The model half is ../lib/sameDaySession.test.ts. This is the half that
+// matters to a coach: with the clock fixed at 22:30 on the evening of a
+// session that ended at 19:30, does the screen they open actually still
+// show it, and does it still offer the way in to Session Day?
+//
+// The clock is FAKED rather than the fixtures dated relatively, because
+// this rule is about the hour, not the day: a relative fixture would say
+// nothing at 00:30 and something different at 23:00.
+describe('the screens on the evening of a session that has already ended', () => {
+  // 22:30 local on Tuesday 11 August 2026. The reported hour.
+  const THAT_EVENING = new Date(2026, 7, 11, 22, 30, 0, 0)
+  // 18:00 with no activities: the production session, which the fallback
+  // duration ends at 19:30.
+  const TONIGHT_ENDED = session({
+    id: 's-ended-today',
+    name: 'Titans Tuesday',
+    coachId: ME,
+    date: '2026-08-11',
+    time: '18:00',
+    activities: [],
+  })
+  const NEXT_WEEK = session({
+    id: 's-next-week',
+    name: 'Trojans Thursday',
+    coachId: ME,
+    date: '2026-08-18',
+    time: '18:00',
+  })
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(THAT_EVENING)
+    state.sessions = [TONIGHT_ENDED, NEXT_WEEK]
+    state.spondEvents = []
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('Sessions still lists tonight, on the view it opens on', () => {
+    const out = renderToStaticMarkup(<Sessions />)
+    expect(out).toContain('aria-pressed="true">Upcoming</button>')
+    expect(out).toContain('Titans Tuesday')
+  })
+
+  it('Sessions says the session has ended rather than pretending it is upcoming', () => {
+    expect(renderToStaticMarkup(<Sessions />)).toContain('Ended earlier today')
+  })
+
+  it('Sessions still offers the way in to Session day', () => {
+    // REQUIREMENT: Session Day and Tonight stay reachable on the same
+    // calendar day. The card's own button is that route.
+    expect(renderToStaticMarkup(<Sessions />)).toContain('Session day')
+  })
+
+  it('Home still lists tonight in the week, marked', () => {
+    const out = renderToStaticMarkup(<Home />)
+    expect(out).toContain('Titans Tuesday')
+    expect(out).toContain('Ended earlier today')
+  })
+
+  it('Home does not lead with it, because it is not what is next', () => {
+    const out = renderToStaticMarkup(<Home />)
+    // The hero is the next session, not the one that finished at 19:30.
+    expect(out).toContain('<h2>Trojans Thursday</h2>')
+    expect(out).not.toContain('<h2>Titans Tuesday</h2>')
+  })
+
+  it('Home shows the honest empty hero when tonight is all there is', () => {
+    state.sessions = [TONIGHT_ENDED]
+    const out = renderToStaticMarkup(<Home />)
+    expect(out).not.toContain('<h2>Titans Tuesday</h2>')
+    expect(out).toContain('Nothing scheduled yet')
+    // And it is STILL in the week list below, which is the whole point:
+    // not the hero, not gone.
+    expect(out).toContain('Ended earlier today')
+  })
+
+  it('after local midnight it leaves the default view', () => {
+    vi.setSystemTime(new Date(2026, 7, 12, 0, 30, 0, 0))
+    const out = renderToStaticMarkup(<Sessions />)
+    expect(out).not.toContain('Titans Tuesday')
+    expect(out).not.toContain('Ended earlier today')
   })
 })

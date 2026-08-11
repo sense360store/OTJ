@@ -1350,6 +1350,7 @@ const FORBIDDEN_ANYWHERE = [
   'venue_id', 'venueId', 'teamIds', 'session_teams', 'sessionTeams',
   'bib_colour', 'bibColour', 'bib_colour_override', 'bibColourOverride',
   'register_entries', 'registerEntries', 'present',
+  'included_in_groups', 'includedInGroups',
   'marked_by', 'markedBy', 'marked_at', 'markedAt',
   // Spond member links and per child RSVP (0045). An opaque member id
   // resolves to a named child through the roster, and RSVP says which

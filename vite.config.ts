@@ -22,6 +22,18 @@ export default defineConfig({
     env: {
       VITE_SUPABASE_URL: 'http://localhost',
       VITE_SUPABASE_ANON_KEY: 'test-anon-key',
+      // The club is in Yorkshire and the product is defined in its local
+      // wall clock: `date` and `time` are read as the coach typed them, and
+      // whether a session "ended earlier today" is a question about the
+      // local calendar day. Under a UTC runner every one of those rules is
+      // still exercised, but the interesting half of them, the hours where
+      // BST and UTC disagree, never happens. Pinning the club's zone is what
+      // makes the DST tests in lib/sessionLifecycle.test.ts mean anything.
+      //
+      // The whole suite was run under this zone before it was pinned and
+      // nothing changed, so this narrows what the tests can miss without
+      // altering what they assert.
+      TZ: 'Europe/London',
     },
   },
 })

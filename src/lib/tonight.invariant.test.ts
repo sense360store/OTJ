@@ -32,6 +32,17 @@ function sourceFiles(): string[] {
 const isTest = (f: string) => /\.test\.tsx?$/.test(f)
 const read = (f: string) => readFileSync(join(SRC, f), 'utf8')
 
+// Source with its comments removed. Several rules below are about what the
+// code DOES, and this file's own habit is to explain the mistake it is
+// preventing in a comment right next to the prevention, which a bare
+// substring check then reads as the mistake itself.
+const code = (src: string) =>
+  src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('//'))
+    .join('\n')
+
 describe('session day has one operational surface, not two', () => {
   it('renders the Tonight card', () => {
     expect(read('routes/SessionDay.tsx')).toMatch(/<TonightCard\b/)
@@ -66,9 +77,24 @@ describe('nothing persists outside Save groups', () => {
   it('the save path sends a delta and reads back, rather than trusting itself', () => {
     const src = read('lib/queries.ts')
     const fn = src.slice(src.indexOf('export function useSaveTonight'))
-    expect(fn).toMatch(/tonightUpsertRows/)
+    // tonightUpsertBatches, not tonightUpsertRows: the delta is grouped by
+    // key shape before it is sent, because postgrest-js unions the keys of
+    // an array into one column list and would propose NULL for a column an
+    // individual row deliberately omitted. See the function's header.
+    expect(fn).toMatch(/tonightUpsertBatches/)
     // The readback is what the Saved claim rests on, so it has to be there.
-    expect(fn.slice(0, 2000)).toMatch(/\.select\(/)
+    expect(fn.slice(0, 2500)).toMatch(/\.select\(/)
+  })
+
+  it('never asks postgrest to fill a missing key with the column default', () => {
+    // `defaultToNull: false` would turn an omitted `present` into the
+    // column DEFAULT, so a save that only changed a group would write
+    // false over stored attendance. It is the opposite of the fix, which
+    // is why both files explain it at length; this reads the CODE, with
+    // the comments stripped, so saying so is not doing so.
+    for (const f of ['lib/queries.ts', 'lib/tonight.ts']) {
+      expect(code(read(f))).not.toMatch(/defaultToNull/)
+    }
   })
 })
 
@@ -206,6 +232,20 @@ describe('the bib rule stays centralised', () => {
 describe('the product no longer calls this a register', () => {
   // The route segment and the file name keep the old word deliberately, to
   // avoid churn. What must not survive is the WORD ON SCREEN.
+  //
+  // AMENDED BY THE 0047 SPLIT, and the amendment is the point rather than
+  // an exception to it. This block used to forbid any mention of
+  // attendance on these two screens, because the release it was written
+  // for had decided the product no longer recorded attendance at all: the
+  // tick meant "in tonight's groups" and `present` was only its storage.
+  // That decision was wrong and is what 0047 reverses. Attendance is a
+  // first-class fact again, with its own control and its own column, so a
+  // rule that forbids the screen from mentioning it now forbids the fix.
+  //
+  // What the rule was actually protecting is untouched: this screen is
+  // Tonight, it is not a register, and the big row target means INCLUSION.
+  // Those three are still pinned below. What is gone is the blanket ban on
+  // the word, which was a claim about the product, not about the wording.
   const USER_FACING = ['routes/SessionRegister.tsx', 'routes/SessionDay.tsx']
 
   it('shows Tonight as the title and the card', () => {
@@ -215,20 +255,96 @@ describe('the product no longer calls this a register', () => {
   })
 
   for (const f of USER_FACING) {
-    it(`${f} renders no Register text and no attendance claim`, () => {
-      const src = read(f)
+    it(`${f} renders no Register text`, () => {
       // Inside JSX text or a quoted string, not in an identifier or an
       // import path, which legitimately still say Register.
-      const jsxText = src.replace(/import[^\n]*\n/g, '')
+      const jsxText = read(f).replace(/import[^\n]*\n/g, '')
       expect(jsxText).not.toMatch(/>\s*Register\s*</)
-      expect(jsxText).not.toMatch(/Mark \$\{[^}]*\} present/)
-      expect(jsxText).not.toMatch(/aria-label="[^"]*\bpresent\b/)
-      expect(jsxText).not.toMatch(/'Attendance'|"Attendance"/)
     })
   }
 
-  it('labels the tick as inclusion in tonight s groups', () => {
-    expect(read('routes/SessionRegister.tsx')).toMatch(/Include \$\{row\.displayName\} in tonight/)
+  it('labels the row target as inclusion in tonight s groups, not as arrival', () => {
+    const src = read('routes/SessionRegister.tsx')
+    expect(src).toMatch(/Include \$\{row\.displayName\} in tonight/)
+    // The row target must never be the thing that records attendance.
+    const rowButton = src.slice(src.indexOf('className="reg-tick"'), src.indexOf('</button>'))
+    expect(rowButton).toMatch(/onClick=\{onToggle\}/)
+    expect(rowButton).not.toMatch(/onPresent/)
+  })
+
+  it('gives attendance its own control, separate from the row target', () => {
+    // The whole point of 0047 on this screen. One gesture sets the group,
+    // a different one records that a child was here, and a coach can do
+    // either without doing the other.
+    const src = read('routes/SessionRegister.tsx')
+    expect(src).toMatch(/onClick=\{onPresent\}/)
+    expect(src).toMatch(/aria-pressed=\{present\}/)
+    expect(src).toMatch(/was present/)
+  })
+})
+
+describe('attendance and group inclusion never share a field', () => {
+  it('the draft keeps them in two separate maps', () => {
+    // One map with a single entry per child is how they were conflated in
+    // the first place. Two maps make "toggling one moved the other"
+    // unrepresentable rather than merely tested against.
+    const src = read('lib/tonight.ts')
+    const iface = src.slice(src.indexOf('export interface TonightDraft'), src.indexOf('export function draftFromEntries'))
+    expect(iface).toMatch(/included:\s*Record<string, boolean>/)
+    expect(iface).toMatch(/attendance:\s*Record<string, boolean>/)
+  })
+
+  it('the draft builder reads each from its own column', () => {
+    const src = read('lib/tonight.ts')
+    const fn = src.slice(src.indexOf('export function draftFromEntries'), src.indexOf('export function quickAdd'))
+    expect(fn).toMatch(/included\[e\.playerId\]\s*=\s*e\.includedInGroups/)
+    expect(fn).toMatch(/attendance\[e\.playerId\]\s*=\s*e\.present/)
+    // The bug, stated as the thing that must not reappear.
+    expect(fn).not.toMatch(/included\[e\.playerId\]\s*=\s*e\.present/)
+  })
+
+  it('the write payload gates the two columns on two separate flags', () => {
+    const src = read('lib/tonight.ts')
+    const fn = src.slice(src.indexOf('export function tonightUpsertRows'))
+    expect(fn).toMatch(/if \(c\.presentChanged\) row\.present = c\.present/)
+    expect(fn).toMatch(/if \(c\.includedChanged\) row\.included_in_groups = c\.includedInGroups/)
+  })
+
+  it('a guest is removed only when nothing at all is recorded about them', () => {
+    // Including attendance. Without that clause, taking a guest out of the
+    // groups would delete the record that they were at the session.
+    const src = read('lib/tonight.ts')
+    const fn = src.slice(src.indexOf('export function draftRemovals'), src.indexOf('// Whether the draft differs'))
+    expect(fn).toMatch(/!draftIncluded\(/)
+    expect(fn).toMatch(/!draftPresent\(/)
+    expect(fn).toMatch(/draftBib\([^)]*\) === null/)
+  })
+
+  it('is named in both share deny lists, so a future projection throws instead of shipping', () => {
+    // SOURCE TEXT, and the same rule 0046's diagram follows. A share is a
+    // FROZEN COPY: once a key reaches content_shares.snapshot the read path
+    // serves it until the link is revoked, and no later fix takes it back.
+    // included_in_groups says which named children a coach put in a group on
+    // a given evening, which is the same child-operational weight as
+    // `present` and `bib_colour_override` already in these lists.
+    expect(read('lib/publicShare.ts')).toContain("'included_in_groups', 'includedInGroups',")
+    const server = readFileSync(
+      join(SRC, '..', 'supabase/functions/_shared/share.ts'),
+      'utf8',
+    )
+    const forbidden = server.slice(
+      server.indexOf('const FORBIDDEN_ANYWHERE'),
+      server.indexOf('function assertKeysWithin'),
+    )
+    expect(forbidden).toContain("'included_in_groups'")
+    expect(forbidden).toContain("'includedInGroups'")
+  })
+
+  it('nothing derives either fact from a Spond reply', () => {
+    const src = code(read('lib/tonight.ts'))
+    // No assignment into the two draft maps from anything reply shaped.
+    expect(src).not.toMatch(/(included|attendance)\[[^\]]*\]\s*=\s*[^\n]*\bresponse\b/)
+    expect(src).not.toMatch(/(included|attendance)\[[^\]]*\]\s*=\s*[^\n]*\brsvp\b/i)
   })
 })
 

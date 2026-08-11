@@ -81,6 +81,7 @@ on:
         type: choice
         options:
           - supabase/migrations/0046_drill_diagram.sql
+          - supabase/migrations/0047_register_group_inclusion.sql
       confirm_project:
         description: "Type the target Supabase project ref to confirm (must equal uynorsnrvocksgqweucu)"
         required: true

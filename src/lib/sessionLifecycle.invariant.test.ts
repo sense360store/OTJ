@@ -269,3 +269,57 @@ describe('the tripwire itself', () => {
     }
   })
 })
+
+// =====================================================================
+// The third state, and the trap it creates.
+//
+// With two states, isSessionActive and isSessionPast were exact
+// complements, so a screen could use one for its Upcoming list and the
+// other for its Past list and every row landed somewhere. With three they
+// are NOT complements, and a session that ended earlier today satisfies
+// neither: it would fall out of both lists and be unreachable, which is
+// the regression this state exists to fix, reintroduced from the other
+// side. ParentHome was written in exactly that shape and had to be
+// corrected (isSessionActive -> isSessionOperational).
+//
+// A tripwire, not a proof. It catches the realistic mistake, a file
+// partitioning its rows with the two non complementary predicates, and it
+// cannot catch a predicate reaching a list through a variable or a helper.
+// =====================================================================
+describe('a list never partitions on two predicates that are not complements', () => {
+  const OPERATIONAL = /\bisSessionOperational\b/
+  const ACTIVE = /\bisSessionActive\b/
+  const PAST = /\bisSessionPast\b/
+
+  it('offers a predicate that IS the complement of past, and says so', () => {
+    const seam = readFileSync(join(SRC, 'lib/sessionLifecycle.ts'), 'utf8')
+    expect(seam).toMatch(/export function isSessionOperational/)
+    expect(seam).toMatch(/export function isSessionEndedToday/)
+    // matchesLifecycleScope must route Upcoming through it, or the default
+    // view drops today's finished session again.
+    const fn = seam.slice(seam.indexOf('export function matchesLifecycleScope'))
+    expect(fn).toMatch(/isSessionOperational/)
+    expect(fn).not.toMatch(/isSessionActive/)
+  })
+
+  it('lets no screen use active and past together without the complement', () => {
+    // Naming both is the shape of a partition. A file that does it must
+    // also name isSessionOperational, which is the one that actually
+    // complements isSessionPast.
+    const offenders = sourceFiles()
+      .filter((f) => !/\.test\.tsx?$/.test(f) && f !== 'lib/sessionLifecycle.ts')
+      .filter((f) => {
+        const src = readFileSync(join(SRC, f), 'utf8')
+        return ACTIVE.test(src) && PAST.test(src) && !OPERATIONAL.test(src)
+      })
+    expect(offenders).toEqual([])
+  })
+
+  it('names what this cannot catch', () => {
+    // A predicate passed as a variable, a list built in a hook and
+    // filtered elsewhere, or a screen that simply forgets to show ended
+    // sessions at all. The behavioural cover for those is
+    // ./sameDaySession.test.ts and ./sessionCleanup.acceptance.test.tsx.
+    expect(OPERATIONAL.test('const p = isSessionActive; rows.filter(p)')).toBe(false)
+  })
+})

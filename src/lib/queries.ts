@@ -67,7 +67,7 @@ import type {
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import { spondEventLookup, type SpondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
-import { tonightUpsertRows, type TonightChange } from './tonight'
+import { tonightUpsertBatches, type TonightChange } from './tonight'
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
@@ -5540,15 +5540,23 @@ interface RegisterEntryRow {
   session_id: string
   player_id: string
   present: boolean
+  included_in_groups: boolean
   bib_colour_override: string | null
   source: 'roster' | 'manual'
 }
+
+// The one column list, so the two reads below cannot drift apart. A read
+// that fetched present but not included_in_groups would silently give
+// every child a false inclusion, which is the shape of the defect 0047
+// exists to remove.
+const REGISTER_COLUMNS = 'session_id, player_id, present, included_in_groups, bib_colour_override, source'
 
 export function toRegisterEntry(r: RegisterEntryRow): RegisterEntry {
   return {
     sessionId: r.session_id,
     playerId: r.player_id,
     present: r.present,
+    includedInGroups: r.included_in_groups,
     bibColourOverride: r.bib_colour_override,
     source: r.source,
   }
@@ -5569,7 +5577,7 @@ export function useRegisterEntries(sessionId: string | undefined, enabled = true
     queryFn: async (): Promise<RegisterEntry[]> => {
       const { data, error } = await supabase
         .from('register_entries')
-        .select('session_id, player_id, present, bib_colour_override, source')
+        .select(REGISTER_COLUMNS)
         .eq('session_id', sessionId as string)
       if (error) throw error
       return (data as unknown as RegisterEntryRow[]).map(toRegisterEntry)
@@ -5596,8 +5604,14 @@ export function useSaveTonight() {
   const { profile } = useAuth()
   return useMutation<RegisterEntry[], Error, { sessionId: string; changes: TonightChange[]; removals?: string[] }>({
     mutationFn: async ({ sessionId, changes, removals = [] }) => {
-      const rows = tonightUpsertRows(changes, profile?.club_id ?? null)
-      if (rows.length > 0) {
+      // ONE UPSERT PER KEY SHAPE, not one for the whole delta. postgrest-js
+      // unions the keys of every object in an array into the `columns`
+      // parameter, so a mixed batch proposes NULL for a column an
+      // individual row omitted: it would fail on the NOT NULL columns and
+      // wipe a stored bib on the nullable one. tonightUpsertBatches groups
+      // the rows so each request writes exactly the columns it means to.
+      // See its header for why `defaultToNull: false` is worse.
+      for (const rows of tonightUpsertBatches(changes, profile?.club_id ?? null)) {
         const { error } = await supabase
           .from('register_entries')
           .upsert(rows, { onConflict: 'session_id,player_id' })
@@ -5619,7 +5633,7 @@ export function useSaveTonight() {
       // database actually holds and not against its own optimism.
       const { data, error } = await supabase
         .from('register_entries')
-        .select('session_id, player_id, present, bib_colour_override, source')
+        .select(REGISTER_COLUMNS)
         .eq('session_id', sessionId)
       if (error) throw error
       const entries = (data as unknown as RegisterEntryRow[]).map(toRegisterEntry)
