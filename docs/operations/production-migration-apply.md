@@ -15,14 +15,29 @@ order where each one fails before the next can do damage.
 | Migration | Hosted version | Applied |
 |---|---|---|
 | `0046_drill_diagram` | `20260811210248` | 2026-08-11 |
-| `0047_register_group_inclusion` | not applied | registered, awaiting review |
+| `0047_register_group_inclusion` | `20260812064038` | 2026-08-12 |
 
-`0047` is in the dropdown and in `REVIEWED_MIGRATIONS` so it CAN be selected,
-and it has not been run. Its pre-apply gate requires the ledger's newest row to
-still be `20260811210248` / `drill_diagram`, so it will refuse if anything else
-lands first. It must be applied BEFORE the frontend from the same pull request
-is deployed: the new client selects `included_in_groups`, and against a database
-without the column PostgREST answers 42703 and the whole register read fails.
+`0047` stays in the dropdown and in `REVIEWED_MIGRATIONS` now that it has run.
+Entries are never removed once applied: the register is the closed list of what
+this workflow may apply, and an applied entry is what makes a second press fail
+closed rather than fail unrecognised. Selecting it again stops at the pre-apply
+gate, which now finds the ledger moved, the migration already recorded and the
+column already present, and the UNIQUE `idempotency_key` refuses the insert
+behind that. Its `expected_previous_version` stays `20260811210248` for the same
+reason: it records the state `0047` was REVIEWED against, not the current head.
+
+`0047`'s ledger row records `created_by` as the workflow and the commit it ran
+from, `b3f5d5c1a6610a5ff804a7b1b008adc8a4def6cf`, an `idempotency_key` of
+`otj:migration:0047_register_group_inclusion`, and one `statements` entry
+hashing to `317101852faf1ddc68f8e641f24579b9`, the reviewed file with its
+trailing newline stripped. The post-apply gate confirmed it was the unique
+newest row with `20260811210248` / `drill_diagram` before it, and that
+`public.register_entries.included_in_groups` exists as a NOT NULL boolean
+defaulting to false. The attendance record was read either side and did not
+move: 9 register rows before and after, 1 with `present` true before and after,
+and 0 with `included_in_groups` true immediately afterwards, which is what a
+defaulted column with no backfill must read. The four `register_entries` RLS
+policies remained 4, with no `FOR ALL` policy introduced.
 
 `0046` is the first migration this workflow applied. Its ledger row records
 `created_by` as the workflow and the commit it ran from, an `idempotency_key`
