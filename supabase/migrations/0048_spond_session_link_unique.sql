@@ -63,7 +63,8 @@
 --   3. Adds sessions_spond_event_id_unique, a partial unique index over
 --      spond_event_id where it is not null, so the corruption cannot
 --      recur.
---   4. Proves all of it, including the things it must NOT have done.
+--   4. Proves all of it, including the things it must NOT have done: no
+--      row but one touched, no grant, ACL, policy or trigger moved.
 --
 -- IT IS CORRECT IN TWO PLACES, which is why step 2 says "where it is still
 -- there". `supabase db reset` applies every migration in this directory to
@@ -104,13 +105,42 @@
 -- IT CHANGES NO POLICY, GRANT, CAPABILITY, ROLE OR TRIGGER, and needs to
 -- change none:
 --
---   The four policies on sessions name no column; they gate by club and
+--   The four policies on sessions (sessions_select_club,
+--   sessions_insert_own, sessions_update_owner_or_manager and
+--   sessions_delete_owner_or_manager) name no column; they gate by club and
 --   capability, so they already cover this column and the index does not
 --   change what anybody may read or write.
 --
 --   An index is not an access control. It refuses a value, not a person.
 --   A coach who may write the session may still write the session; they
 --   simply cannot claim an event another session already holds.
+--
+--   TWO LAYERS, AND THIS FILE ASSERTS ONLY THAT IT MOVED NEITHER. They are
+--   worth naming precisely, because an earlier draft of this file confused
+--   them and would have aborted the production apply for it:
+--
+--     PostgreSQL TABLE PRIVILEGES on public.sessions are broad and always
+--     have been. anon, authenticated and service_role each hold SELECT,
+--     INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER, inherited
+--     from Supabase's default privileges for new tables in the public
+--     schema; 0001 never issued a GRANT for this table and no later
+--     migration narrowed it. So "anon has no write privilege" is false, and
+--     asserting it would have been asserting a posture this project has
+--     never had.
+--
+--     ROW LEVEL SECURITY is the layer that actually decides. It is enabled
+--     on the table and the four policies above are what permit or refuse
+--     each row and each action. A holder of the INSERT privilege with no
+--     policy permitting the row inserts nothing.
+--
+--   Narrowing the table privileges may well be worth doing. It is not this
+--   migration's business, it would be an unrelated security change riding
+--   on a hotfix, and doing it here would mean a Spond link fix silently
+--   altering the Data API surface. The self-verification below therefore
+--   fingerprints the grants, the raw ACL, the column ACLs and the full
+--   policy set on entry and compares them on exit: the claim is that this
+--   file changed none of it, which is the only claim it is entitled to
+--   make.
 --
 --   audit_sessions() fires on every sessions update but records an event
 --   only when team_id, date, status, programme_id, programme_week or
@@ -238,7 +268,49 @@ select
     where id = '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid
       and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid)      as bad_link_rows,
   (select count(*) from pg_policies
-    where schemaname = 'public' and tablename = 'sessions')                  as session_policies;
+    where schemaname = 'public' and tablename = 'sessions')                  as session_policies,
+  -- THE GRANT STATE, CAPTURED RATHER THAN ASSUMED.
+  --
+  -- What this migration has to prove about security is that it CHANGED
+  -- NOTHING. It cannot prove a posture, because it does not know what the
+  -- posture is: on this project every role in the Data API (anon,
+  -- authenticated and service_role) holds the full set of table privileges
+  -- on public.sessions, inherited from Supabase's default privileges for
+  -- new tables in the public schema, and RLS is what decides which rows and
+  -- which actions are actually allowed. An earlier draft of this file
+  -- asserted that anon held no write privilege, which was simply false, and
+  -- would have aborted the apply against production as well as against a
+  -- fresh local stack. See the header for the full statement of the two
+  -- layers.
+  --
+  -- Three fingerprints, because one view cannot see everything:
+  --
+  --   the readable one, from information_schema, sorted so it is
+  --   deterministic: who holds what, and whether they may pass it on;
+  (select coalesce(md5(string_agg(g.grantee || ':' || g.privilege_type || ':' || g.is_grantable, ','
+                                  order by g.grantee, g.privilege_type)), 'none')
+     from information_schema.role_table_grants g
+    where g.table_schema = 'public' and g.table_name = 'sessions')           as table_grants_fingerprint,
+  --   the authoritative one, the stored ACL itself, which does not depend
+  --   on which role is connected the way the information_schema views do;
+  (select coalesce(relacl::text, 'default')
+     from pg_class where oid = 'public.sessions'::regclass)                  as table_acl,
+  --   and the column scoped one, which role_table_grants cannot show at
+  --   all: a grant on a single column would be invisible to both of the
+  --   above and is exactly the kind of quiet widening worth catching.
+  (select coalesce(md5(string_agg(a.attname || ':' || coalesce(a.attacl::text, '-'), ','
+                                  order by a.attname)), 'none')
+     from pg_attribute a
+    where a.attrelid = 'public.sessions'::regclass
+      and a.attnum > 0 and not a.attisdropped)                               as column_acl_fingerprint,
+  -- And the policy set in full, not just its size: a policy silently
+  -- rewritten keeps the count identical.
+  (select coalesce(md5(string_agg(p.policyname || ':' || p.cmd || ':' || p.permissive || ':' ||
+                                  coalesce(array_to_string(p.roles, '+'), '') || ':' ||
+                                  coalesce(p.qual, '') || ':' || coalesce(p.with_check, ''), ','
+                                  order by p.policyname)), 'none')
+     from pg_policies p
+    where p.schemaname = 'public' and p.tablename = 'sessions')              as policies_fingerprint;
 
 -- ---------------------------------------------------------------------
 -- THE ASSUMPTIONS, AND THE REPAIR, IN ONE BLOCK.
@@ -367,12 +439,18 @@ declare
   before_live integer;
   before_policies integer;
   before_bad integer;
+  before_grants text;
+  before_acl text;
+  before_column_acl text;
+  before_policy_set text;
   after_text text;
 begin
   select total_rows, linked_rows, other_rows_fingerprint, repaired_row_fingerprint,
-         audit_rows, live_marked_rows, session_policies, bad_link_rows
+         audit_rows, live_marked_rows, session_policies, bad_link_rows,
+         table_grants_fingerprint, table_acl, column_acl_fingerprint, policies_fingerprint
     into before_total, before_linked, before_others, before_repaired,
-         before_audit, before_live, before_policies, before_bad
+         before_audit, before_live, before_policies, before_bad,
+         before_grants, before_acl, before_column_acl, before_policy_set
     from sessions_link_before;
 
   -- 1. THE INDEX, in the exact shape this file claims: unique, partial,
@@ -476,19 +554,69 @@ begin
 
   -- 7. THE SECURITY POSTURE IS UNTOUCHED. An index is not an access
   --    control, and this migration has no business moving any of this.
+  --
+  --    THE CLAIM IS "NOTHING CHANGED", NOT "THE SCHEMA LOOKS LIKE X". Those
+  --    are different assertions and only the first one is this file's to
+  --    make. An earlier draft asserted that anon held no INSERT, UPDATE or
+  --    DELETE on public.sessions. That is false on this project and always
+  --    has been: every Data API role holds the full table privilege set
+  --    through Supabase's default privileges, and RLS is the layer that
+  --    decides what any of them may actually do. The assertion would have
+  --    aborted the apply against production for a security property the
+  --    database never had, which is a worse failure than the one it was
+  --    trying to prevent: it makes the migration unrunnable while proving
+  --    nothing about what the migration did.
+  --
+  --    So every check below compares the state this file captured on entry
+  --    with the state on exit. A project that widens or narrows its grants
+  --    for real reasons stays free to do so in the migration that means it.
   if not exists (select 1 from pg_class
                   where relname = 'sessions'
                     and relnamespace = 'public'::regnamespace and relrowsecurity) then
     raise exception 'spond_session_link_unique: row level security is not enabled on sessions';
   end if;
+
+  -- The policy set, by size and then in full. The count gives the readable
+  -- failure; the fingerprint is what actually catches a policy added,
+  -- removed, re-scoped or rewritten in place.
   select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'sessions';
   if n <> before_policies then
-    raise exception 'spond_session_link_unique: the sessions policy set changed (% -> %)', before_policies, n;
+    raise exception 'spond_session_link_unique: the sessions policy count changed (% -> %); this migration adds and removes no policy', before_policies, n;
   end if;
-  if exists (select 1 from information_schema.role_table_grants
-             where table_schema = 'public' and table_name = 'sessions' and grantee = 'anon'
-               and privilege_type in ('INSERT', 'UPDATE', 'DELETE')) then
-    raise exception 'spond_session_link_unique: anon must hold no write on sessions';
+  select coalesce(md5(string_agg(p.policyname || ':' || p.cmd || ':' || p.permissive || ':' ||
+                                 coalesce(array_to_string(p.roles, '+'), '') || ':' ||
+                                 coalesce(p.qual, '') || ':' || coalesce(p.with_check, ''), ','
+                                 order by p.policyname)), 'none')
+    into after_text
+    from pg_policies p
+   where p.schemaname = 'public' and p.tablename = 'sessions';
+  if after_text is distinct from before_policy_set then
+    raise exception 'spond_session_link_unique: a sessions policy changed (% -> %)', before_policy_set, after_text;
+  end if;
+
+  -- The grants, all three views of them. No grant added, none removed, none
+  -- made grantable, and no column scoped grant introduced.
+  select coalesce(md5(string_agg(g.grantee || ':' || g.privilege_type || ':' || g.is_grantable, ','
+                                 order by g.grantee, g.privilege_type)), 'none')
+    into after_text
+    from information_schema.role_table_grants g
+   where g.table_schema = 'public' and g.table_name = 'sessions';
+  if after_text is distinct from before_grants then
+    raise exception 'spond_session_link_unique: the sessions table grants changed (% -> %)', before_grants, after_text;
+  end if;
+  select coalesce(relacl::text, 'default') into after_text
+    from pg_class where oid = 'public.sessions'::regclass;
+  if after_text is distinct from before_acl then
+    raise exception 'spond_session_link_unique: the sessions access control list changed (% -> %)', before_acl, after_text;
+  end if;
+  select coalesce(md5(string_agg(a.attname || ':' || coalesce(a.attacl::text, '-'), ','
+                                 order by a.attname)), 'none')
+    into after_text
+    from pg_attribute a
+   where a.attrelid = 'public.sessions'::regclass
+     and a.attnum > 0 and not a.attisdropped;
+  if after_text is distinct from before_column_acl then
+    raise exception 'spond_session_link_unique: a column scoped grant on sessions changed (% -> %)', before_column_acl, after_text;
   end if;
 
   -- 8. THE LIVE MARKERS ARE EXACTLY AS THEY WERE, said out loud because

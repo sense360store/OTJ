@@ -102,6 +102,15 @@ scalar() { psql_run -d "$1" -tAc "$2"; }
 fail() { echo "FAIL: $1"; exit 1; }
 ok() { echo "  ok: $1"; }
 
+# The same three representations the migration fingerprints, computed here
+# independently so the assertion is checked from OUTSIDE the file that makes
+# it. A migration proving its own claim with its own expression proves only
+# that the expression is self-consistent.
+GRANTS_SQL="select coalesce(md5(string_agg(g.grantee || ':' || g.privilege_type || ':' || g.is_grantable, ',' order by g.grantee, g.privilege_type)), 'none') from information_schema.role_table_grants g where g.table_schema = 'public' and g.table_name = 'sessions'"
+ACL_SQL="select coalesce(relacl::text, 'default') from pg_class where oid = 'public.sessions'::regclass"
+COLUMN_ACL_SQL="select coalesce(md5(string_agg(a.attname || ':' || coalesce(a.attacl::text, '-'), ',' order by a.attname)), 'none') from pg_attribute a where a.attrelid = 'public.sessions'::regclass and a.attnum > 0 and not a.attisdropped"
+POLICIES_SQL="select coalesce(md5(string_agg(p.policyname || ':' || p.cmd || ':' || p.permissive || ':' || coalesce(array_to_string(p.roles, '+'), '') || ':' || coalesce(p.qual, '') || ':' || coalesce(p.with_check, ''), ',' order by p.policyname)), 'none') from pg_policies p where p.schemaname = 'public' and p.tablename = 'sessions'"
+
 # ---------------------------------------------------------------------
 # The stand-in. Every column 0048 reads or writes, the two structures its
 # verification asks about (RLS with the four policies, the audit table), and
@@ -117,6 +126,7 @@ build_standin() {
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
   if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role; end if;
 end $$;
 
 create table public.clubs (id uuid primary key);
@@ -163,12 +173,22 @@ create table public.sessions (
 );
 create index sessions_spond_event_id_idx on public.sessions (spond_event_id);
 
+-- THE SUPABASE GRANT TOPOLOGY, not a tidied version of it. This is the
+-- half the first version of this harness got wrong, and getting it wrong is
+-- what let a false assertion (that anon holds no write on sessions) reach
+-- CI and would have let it reach the production apply.
+--
+-- On a real Supabase project every Data API role holds the FULL table
+-- privilege set on a new table in public, through default privileges that
+-- nobody in this repository ever wrote. Row level security is what actually
+-- decides. So the stand-in grants exactly that, to all three roles, and any
+-- assertion in the migration about who holds what has to survive it.
 alter table public.sessions enable row level security;
-create policy sessions_select on public.sessions for select to authenticated using (true);
-create policy sessions_insert on public.sessions for insert to authenticated with check (true);
-create policy sessions_update on public.sessions for update to authenticated using (true);
-create policy sessions_delete on public.sessions for delete to authenticated using (true);
-grant select, insert, update, delete on public.sessions to authenticated;
+create policy sessions_select_club on public.sessions for select to authenticated using (true);
+create policy sessions_insert_own on public.sessions for insert to authenticated with check (true);
+create policy sessions_update_owner_or_manager on public.sessions for update to authenticated using (true);
+create policy sessions_delete_owner_or_manager on public.sessions for delete to authenticated using (true);
+grant all on public.sessions to anon, authenticated, service_role;
 
 -- The audit trigger's rule, copied from the hosted audit_sessions(): a
 -- session update is recorded ONLY when one of six columns moved, and
@@ -244,6 +264,10 @@ before_audit="$(scalar otj_a "select count(*) from public.audit_events")"
 before_live="$(scalar otj_a "select count(*) from public.sessions where live_activity_index is not null")"
 before_rows="$(scalar otj_a "select count(*) from public.sessions")"
 before_linked="$(scalar otj_a "select count(*) from public.sessions where spond_event_id is not null")"
+before_grants="$(scalar otj_a "${GRANTS_SQL}")"
+before_acl="$(scalar otj_a "${ACL_SQL}")"
+before_column_acl="$(scalar otj_a "${COLUMN_ACL_SQL}")"
+before_policies="$(scalar otj_a "${POLICIES_SQL}")"
 
 apply_migration otj_a >/dev/null
 ok "the migration committed"
@@ -285,8 +309,23 @@ ok "every historic live marker is still stored exactly as it was (${before_live}
 ok "sessions_spond_event_id_unique exists, unique and partial"
 
 [ "$(scalar otj_a "select count(*) from pg_policies where schemaname='public' and tablename='sessions'")" = "4" ] \
-  || fail "the sessions policy set moved"
-ok "the four sessions policies are untouched"
+  || fail "the sessions policy count moved"
+[ "$(scalar otj_a "${POLICIES_SQL}")" = "${before_policies}" ] || fail "a sessions policy changed"
+ok "the four sessions policies are untouched, in full and not only in number"
+
+# THE CLAIM IS "NOTHING CHANGED". The stand-in above deliberately grants the
+# full Supabase table privilege set to anon, authenticated and service_role,
+# so this is asserted against the topology a real project actually has rather
+# than against a tidied one. An earlier version of this migration asserted
+# that anon held no write here; with the real topology in place that assertion
+# fails on the very first scenario, which is the point.
+[ "$(scalar otj_a "${GRANTS_SQL}")" = "${before_grants}" ] || fail "the sessions table grants changed"
+[ "$(scalar otj_a "${ACL_SQL}")" = "${before_acl}" ] || fail "the sessions ACL changed"
+[ "$(scalar otj_a "${COLUMN_ACL_SQL}")" = "${before_column_acl}" ] || fail "a column scoped grant changed"
+ok "no grant was added, removed or made grantable, at table or column level"
+[ "$(scalar otj_a "select count(*) from information_schema.role_table_grants where table_schema='public' and table_name='sessions' and grantee='anon' and privilege_type in ('INSERT','UPDATE','DELETE')")" = "3" ] \
+  || fail "the stand-in no longer reproduces the Supabase grant topology, so it can no longer catch a false posture assertion"
+ok "anon still holds its inherited write privileges, exactly as production does"
 
 # The invariant, from the outside: a second session cannot claim the event.
 if psql_run -d otj_a -qc "insert into public.sessions (id, club_id, name, spond_event_id) values ('9f7d0f1a-0000-4000-8000-000000000002', '11111111-1111-1111-1111-111111111111', 'Sneaky', '${EVENT}')" >/dev/null 2>"${WORK}/dup.err"; then
@@ -415,6 +454,39 @@ ok "every session row is exactly as it was"
 [ "$(scalar otj_e "select count(*) from pg_class where relname = 'sessions_spond_event_id_unique'")" = "0" ] \
   || fail "the index survived a failed run"
 ok "the index was not created"
+
+# =====================================================================
+echo
+echo "== F. the grant fingerprints are sensitive to a real grant change"
+# A fingerprint that never moves proves nothing. Each representation is shown
+# to change when the thing it describes changes, so "identical before and
+# after" in the scenarios above is a claim with content. Run on its own
+# database, and the change is made here rather than by the migration, which
+# grants nothing by design.
+build_standin otj_f
+f_grants="$(scalar otj_f "${GRANTS_SQL}")"
+f_acl="$(scalar otj_f "${ACL_SQL}")"
+f_column_acl="$(scalar otj_f "${COLUMN_ACL_SQL}")"
+f_policies="$(scalar otj_f "${POLICIES_SQL}")"
+
+psql_run -d otj_f -qc "revoke insert on public.sessions from anon" >/dev/null
+[ "$(scalar otj_f "${GRANTS_SQL}")" != "${f_grants}" ] || fail "revoking a privilege did not move the grants fingerprint"
+[ "$(scalar otj_f "${ACL_SQL}")" != "${f_acl}" ] || fail "revoking a privilege did not move the ACL"
+ok "revoking one privilege from anon moves both the grants fingerprint and the ACL"
+psql_run -d otj_f -qc "grant insert on public.sessions to anon" >/dev/null
+[ "$(scalar otj_f "${GRANTS_SQL}")" = "${f_grants}" ] || fail "restoring the privilege did not restore the fingerprint"
+ok "and restoring it restores them, so the representation is exact rather than merely different"
+
+psql_run -d otj_f -qc "grant update (name) on public.sessions to anon" >/dev/null
+[ "$(scalar otj_f "${COLUMN_ACL_SQL}")" != "${f_column_acl}" ] || fail "a column scoped grant did not move the column ACL fingerprint"
+ok "a column scoped grant moves the column ACL fingerprint, which the table view cannot see"
+
+psql_run -d otj_f -qc "create policy sessions_extra on public.sessions for select to anon using (true)" >/dev/null
+[ "$(scalar otj_f "${POLICIES_SQL}")" != "${f_policies}" ] || fail "adding a policy did not move the policy fingerprint"
+psql_run -d otj_f -qc "drop policy sessions_extra on public.sessions" >/dev/null
+psql_run -d otj_f -qc "alter policy sessions_select_club on public.sessions using (false)" >/dev/null
+[ "$(scalar otj_f "${POLICIES_SQL}")" != "${f_policies}" ] || fail "rewriting a policy in place did not move the policy fingerprint"
+ok "adding a policy moves it, and so does rewriting one in place, which a count cannot catch"
 
 echo
 echo "PASS: 0048 repairs exactly one row where there is one to repair, refuses every"

@@ -59,6 +59,17 @@ client works against a database without the index; it simply never sees the
 refusal it knows how to explain), but the duplicate it prevents is silent
 corruption, so early is the right way round.
 
+It proves it **changed** nothing rather than asserting what the schema looks
+like. That distinction cost a CI run: a first draft asserted that `anon` held
+no INSERT, UPDATE or DELETE on `public.sessions`, which is false on this
+project and always has been. Every Data API role (`anon`, `authenticated`,
+`service_role`) holds the full table privilege set there, inherited from
+Supabase's default privileges for new tables in `public`; row level security is
+the layer that decides what any of them may actually do. The assertion would
+have aborted the apply against production as well as against a fresh local
+stack. The self-verification now fingerprints the table grants, the raw ACL,
+the column ACLs and the full policy set on entry and compares them on exit.
+
 It is correct in two places, which is not optional: `supabase db reset`
 applies every migration in `supabase/migrations/` to a fresh local stack on
 every developer machine and in the CI security job, and that database has never
@@ -76,7 +87,11 @@ aborts with the database untouched. Against a database with nothing to repair,
 and against an empty one, it asserts the file applies and changes no row. And
 against the one odd state the assumption checks step over (only the wrong
 session holding the link), it asserts the verification catches it and the
-transaction rolls back. It
+transaction rolls back. Its stand-in grants the full Supabase table privilege
+set to `anon`, `authenticated` and `service_role`, which is what the first
+version did not do and why the false assertion reached CI; a sixth database
+proves each grant fingerprint actually moves when a grant, a column grant or a
+policy changes. It
 needs a local PostgreSQL server and is therefore not part of CI; run it by hand
 when reviewing the migration.
 
