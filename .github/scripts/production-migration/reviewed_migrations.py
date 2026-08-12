@@ -163,6 +163,57 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             ),
         },
     ),
+    # ------------------------------------------------------------------
+    # 0048_spond_session_link_unique: repairs ONE bad Spond link and adds
+    # the partial unique index that makes the class of corruption
+    # impossible. It clears sessions.spond_event_id on one named June
+    # session, creates sessions_spond_event_id_unique, and does nothing
+    # else: it deletes no session, rewrites no status, clears no
+    # live_activity_index, and changes no policy, grant, capability, role
+    # or trigger. Its own self-verification fingerprints every other
+    # session row whole, before and after, and aborts if any of them
+    # moved. It refuses to run at all if the hosted database holds any
+    # duplicate Spond link other than the reviewed pair.
+    #
+    # Written against a hosted database whose newest ledger row is
+    # 20260812064038 / register_group_inclusion, checked 2026-08-12.
+    # ------------------------------------------------------------------
+    "supabase/migrations/0048_spond_session_link_unique.sql": ReviewedMigration(
+        path="supabase/migrations/0048_spond_session_link_unique.sql",
+        ledger_name="spond_session_link_unique",
+        idempotency_key="otj:migration:0048_spond_session_link_unique",
+        expected_previous_version="20260812064038",
+        expected_previous_name="register_group_inclusion",
+        objects={
+            # pg_index rather than information_schema: an index is not a
+            # constraint here, so information_schema.table_constraints
+            # cannot see it. The shape is probed, not only the name: a
+            # non-unique or non-partial index of the same name would be a
+            # different migration.
+            "sessions_spond_event_id_unique, unique and partial": (
+                "(select count(*) > 0 from pg_index x "
+                "join pg_class c on c.oid = x.indexrelid "
+                "where x.indrelid = to_regclass('public.sessions') "
+                "and c.relname = 'sessions_spond_event_id_unique' "
+                "and x.indisunique and x.indpred is not null)"
+            ),
+            # The data half, which the index alone does not prove: the
+            # 11 August event is held by exactly one session. False before
+            # (two sessions hold it), true after.
+            "the 11 August Spond event is held by exactly one session": (
+                "(select count(*) = 1 from public.sessions "
+                "where spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac')"
+            ),
+            # And the general form of the same claim, so a repair that
+            # fixed the named pair while leaving another duplicate behind
+            # could not pass.
+            "no Spond event is held by more than one session": (
+                "(select count(*) = 0 from (select spond_event_id "
+                "from public.sessions where spond_event_id is not null "
+                "group by spond_event_id having count(*) > 1) dupes)"
+            ),
+        },
+    ),
 }
 
 

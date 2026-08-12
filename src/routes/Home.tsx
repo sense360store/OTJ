@@ -81,6 +81,7 @@ function NextSessionHero({
   teamName,
   venueName,
   todayStr,
+  live,
   nav,
 }: {
   s: Session
@@ -96,6 +97,12 @@ function NextSessionHero({
   // would show the frozen legacy label and lose the chosen venue entirely.
   venueName: string
   todayStr: string
+  // Whether the session is being driven RIGHT NOW, decided by the container
+  // through isSessionLive against the render's one moment. Reading
+  // s.liveActivityIndex here is what put "Live now" on a June session whose
+  // driver never pressed End: the column says somebody once started it, not
+  // that anybody is running it. See ../lib/sessionLifecycle.
+  live: boolean
   nav: Nav
 }) {
   const mins = sessionMinutes(s)
@@ -104,7 +111,6 @@ function NextSessionHero({
     day: 'numeric',
     month: 'long',
   })
-  const live = s.liveActivityIndex != null
   return (
     <div className="hero">
       <div className="eyebrow">
@@ -410,7 +416,13 @@ function CoachHome() {
   // A session that finished earlier today is never the hero and is always
   // in the week list below, marked, one tap from Session Day and Tonight.
   // isSessionEndedToday decides the marking at the row.
-  const liveNow = sessions.find(isSessionLive)
+  // The session being driven right now, if any. The predicate takes the
+  // render's one moment, so a marker nobody cleared last June cannot offer a
+  // Watch live action for a night that finished two months ago. Written as an
+  // arrow rather than passed by reference on purpose: `find(isSessionLive)`
+  // hands the callback the ARRAY INDEX as its second argument, which would
+  // arrive here as `now`.
+  const liveNow = sessions.find((s) => isSessionLive(s, now))
   // A brand-new coach has no sessions at all, upcoming or past.
   const fresh = canPlan && !sessions.some(isMine)
 
@@ -480,6 +492,7 @@ function CoachHome() {
             teamName={teamName(next)}
             venueName={venueName(next)}
             todayStr={todayStr}
+            live={isSessionLive(next, now)}
             nav={nav}
           />
         ) : (

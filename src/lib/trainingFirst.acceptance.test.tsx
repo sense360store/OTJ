@@ -239,18 +239,21 @@ describe('9. a fixture planned from Spond is still a fixture on every screen', (
     expect('spondType' in plannedMatch).toBe(false)
   })
 
+  // Soonest first, which is the Upcoming order and no longer the order the
+  // rows happened to arrive in: `a` starts 17:30 local, and both planned
+  // rows carry the event's 17:30Z, which is 18:30 in the club's summer.
   it('is absent from the Sessions Training view', () => {
     expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: ME, spondEvents: lookup, now: NOW }))).toEqual([
-      'planned-training',
       'a',
+      'planned-training',
     ])
   })
 
   it('is present under All events', () => {
     expect(ids(applyEventFilter(schedule, { kind: 'all', scope: 'upcoming', mine: false }, { userId: ME, spondEvents: lookup, now: NOW }))).toEqual([
+      'a',
       'planned-match',
       'planned-training',
-      'a',
     ])
   })
 

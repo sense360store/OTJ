@@ -82,6 +82,7 @@ on:
         options:
           - supabase/migrations/0046_drill_diagram.sql
           - supabase/migrations/0047_register_group_inclusion.sql
+          - supabase/migrations/0048_spond_session_link_unique.sql
       confirm_project:
         description: "Type the target Supabase project ref to confirm (must equal uynorsnrvocksgqweucu)"
         required: true

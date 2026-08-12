@@ -18,6 +18,16 @@ import type { Session } from './data'
 export const SESSION_SAVE_ERROR = "We couldn't save this session. Check your connection and try again."
 export const SESSION_START_ERROR = "We couldn't save this session before starting it. Check your connection and try again."
 export const SESSION_CREATE_ERROR = "We couldn't create the session. Check your connection and try again."
+// The one write failure that is not a connection problem and must not be
+// reported as one. A mirrored Spond event holds at most one Hub session
+// (migration 0048), so a second session claiming the same event is refused by
+// the database. Two coaches pressing Plan this on the same event within a
+// second of each other is the honest way to reach it, and the loser needs to
+// know the event is planned rather than that something went wrong. Worded to
+// be true of both paths that can hit it: planning an event, and linking an
+// existing session to one.
+export const SESSION_SPOND_LINK_TAKEN_ERROR =
+  'That Spond event already has a session. Only one session can be linked to a Spond event.'
 export const DRILL_ADD_ERROR = "We couldn't add the drill to that session. Check your connection and try again."
 // Save and share fails at the save: the link is never shared from stale or
 // pre-save data, so the message names the save, not the share.

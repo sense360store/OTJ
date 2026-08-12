@@ -122,7 +122,9 @@ describe('12. yesterday s training is still there under Past', () => {
     // on Tuesday.
     const before = JSON.stringify(club)
     expect(past(club, TUESDAY_EVENING)).toEqual(['mon'])
-    expect(past(club, WEDNESDAY_MORNING)).toEqual(['mon', 'tue'])
+    // Newest first: Tuesday leads Monday, because a coach looking back wants
+    // last night before last month.
+    expect(past(club, WEDNESDAY_MORNING)).toEqual(['tue', 'mon'])
     expect(JSON.stringify(club)).toBe(before)
   })
 

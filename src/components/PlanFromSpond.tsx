@@ -17,10 +17,17 @@ import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
 import { useSessions } from '../context/SessionsContext'
-import { useMyCapabilities, useMyTeams, useSpondEvents, useTeamMap } from '../lib/queries'
+import {
+  SpondLinkTakenError,
+  useMyCapabilities,
+  useMyTeams,
+  useRefreshSpondPlanning,
+  useSpondEvents,
+  useTeamMap,
+} from '../lib/queries'
 import { memberTeamIds } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
-import { SESSION_CREATE_ERROR, stableCreateId } from '../lib/sessionSubmit'
+import { SESSION_CREATE_ERROR, SESSION_SPOND_LINK_TAKEN_ERROR, stableCreateId } from '../lib/sessionSubmit'
 import {
   sessionFromSpondEvent,
   spondAudience,
@@ -57,6 +64,7 @@ export function PlanFromSpondView({
   error,
   planPendingId = null,
   planFailed = false,
+  planFailedText = SESSION_CREATE_ERROR,
   frozen = false,
 }: {
   rows: SpondEvent[]
@@ -82,6 +90,11 @@ export function PlanFromSpondView({
   planPendingId?: string | null
   // The last create failed; the row's button doubles as the retry.
   planFailed?: boolean
+  // What to say about that failure. Defaults to the connection wording,
+  // which is right for every failure except one: the database refusing a
+  // second session on an event that already has one is not a connection
+  // problem and must not be reported as if a retry would help.
+  planFailedText?: string
   // An outer write is in flight (the planner's Save or Start on the draft this
   // surface sits above). Planning an event abandons that draft, so every Plan
   // this control freezes until the outer write settles.
@@ -172,7 +185,7 @@ export function PlanFromSpondView({
           </div>
         ))
       )}
-      {planFailed && <ActionError style={{ marginTop: 10 }}>{SESSION_CREATE_ERROR}</ActionError>}
+      {planFailed && <ActionError style={{ marginTop: 10 }}>{planFailedText}</ActionError>}
     </div>
   )
 }
@@ -191,6 +204,7 @@ export function PlanFromSpond({
   onPendingChange?: (pending: boolean) => void
 }) {
   const nav = useNav()
+  const refreshPlanning = useRefreshSpondPlanning()
   const { user, profile } = useAuth()
   const { caps } = useMyCapabilities()
   const { sessions, upsertSession } = useSessions()
@@ -213,13 +227,30 @@ export function PlanFromSpond({
   // keys the row's pending label. onPendingChange reports the transition up
   // synchronously (inside submit), so the outer planner freezes Save and Start
   // in the same tick the create starts, not a render later.
-  const { submit, pending, failed: planFailed } = useGuardedSubmit<Session, Session>({
+  const {
+    submit,
+    pending,
+    failed: planFailed,
+    error: planError,
+  } = useGuardedSubmit<Session, Session>({
     operation: 'plan from spond event',
     perform: (s) => upsertSession(s),
     onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
     onPendingChange,
+    // The race, handled rather than reported as a mystery. Two coaches can
+    // press Plan this on the same event within a second of each other; the
+    // database (0048) refuses the second, which is exactly what should
+    // happen, and the surface's job is then to tell the truth and catch up.
+    // Refetching both lists is what makes the row disappear on the next
+    // render: the winning session lands in `sessions`, the event joins
+    // plannedEventIds and stops being suggested. refreshPlanning is a stable
+    // callback, so it is safe to capture here.
+    onFailure: (err) => {
+      if (err instanceof SpondLinkTakenError) refreshPlanning()
+    },
   })
   const planPendingId = pending?.spondEventId ?? null
+  const linkTaken = planError instanceof SpondLinkTakenError
 
   // Coaches plan; parents never see this. The planner route already redirects
   // parents, so this is belt and braces and keeps the surface safe to drop on
@@ -233,9 +264,18 @@ export function PlanFromSpond({
   // everything, and with no team there is nothing but club events to narrow.
   const showAllToggle = !scope.allTeams && scope.teamIds.length > 0
 
-  // Planned for this coach: a session they own already linked to the event.
+  // Already planned, CLUB WIDE. A mirrored Spond event holds at most one Hub
+  // session (migration 0048), so "has this been planned?" is a question about
+  // the club, never about who owns the row. Asking it per coach meant a second
+  // coach was still offered an event another coach had already planned, and
+  // pressing Plan this then produced whatever the database said. Ownership
+  // still decides who may EDIT the resulting session, which is a different
+  // question and is decided elsewhere.
+  //
+  // The database is the authority on a concurrent create; this only keeps the
+  // suggestion list honest about what it can already see.
   const plannedEventIds = new Set(
-    sessions.filter((s) => s.coachId === user?.id && s.spondEventId).map((s) => s.spondEventId as string),
+    sessions.filter((s) => s.spondEventId).map((s) => s.spondEventId as string),
   )
   const suggest = (forKind: EventKind, forScope: LifecycleScope) =>
     spondPlanSuggestions({ events, plannedEventIds, scopeTeamIds, showAllTeams: showAll, kind: forKind, scope: forScope })
@@ -278,6 +318,7 @@ export function PlanFromSpond({
       error={isError}
       planPendingId={planPendingId}
       planFailed={planFailed}
+      planFailedText={linkTaken ? SESSION_SPOND_LINK_TAKEN_ERROR : SESSION_CREATE_ERROR}
       frozen={frozen}
     />
   )

@@ -65,6 +65,7 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
+import { SESSION_SPOND_LINK_TAKEN_ERROR } from './sessionSubmit'
 import { spondEventLookup, type SpondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
 import { tonightUpsertBatches, type TonightChange } from './tonight'
@@ -1874,6 +1875,53 @@ export function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '23505'
 }
 
+// The unique index migration 0048 adds: at most one Hub session per mirrored
+// Spond event. Named here because the client recognises the refusal by name,
+// and a rename that quietly stopped matching would turn a clear sentence back
+// into an opaque database error.
+export const SPOND_LINK_UNIQUE_INDEX = 'sessions_spond_event_id_unique'
+
+// The write was refused because ANOTHER session already links this Spond
+// event. 23505 alone cannot say that: a duplicate PRIMARY KEY carries the
+// same code and means something entirely different (a retry whose first
+// attempt committed), and recovering THAT into an update is exactly right
+// while recovering this one is exactly wrong. So the constraint is
+// identified, not just the class of error.
+//
+// PostgREST names the index in `message` ("duplicate key value violates
+// unique constraint ...") and the offending column in `details` ("Key
+// (spond_event_id)=(...) already exists."). Both are read: `details` is
+// omitted on some deployments, and matching the column as well as the index
+// name means renaming the index degrades to the right answer rather than to
+// silence.
+export function isSpondLinkTaken(err: unknown): boolean {
+  if (!isUniqueViolation(err)) return false
+  const e = err as { message?: unknown; details?: unknown }
+  const text = [e.message, e.details].filter((v) => typeof v === 'string').join(' ')
+  return text.includes(SPOND_LINK_UNIQUE_INDEX) || text.includes('spond_event_id')
+}
+
+// The refusal, as an Error the surfaces can recognise after the raw
+// PostgREST object has been translated. A class rather than a flag on a
+// plain Error because `instanceof` survives being thrown through the guarded
+// submit seam, where the raw code does not: contentWriteError below returns a
+// fresh Error for anything that is not an FA rights refusal, which drops the
+// code.
+export class SpondLinkTakenError extends Error {
+  constructor() {
+    super(SESSION_SPOND_LINK_TAKEN_ERROR)
+    this.name = 'SpondLinkTakenError'
+  }
+}
+
+// Every sessions write goes through this rather than contentWriteError
+// directly, so the one refusal a coach can act on keeps its meaning and
+// everything else behaves exactly as it did.
+export function sessionWriteError(error: unknown): Error {
+  if (isSpondLinkTaken(error)) return new SpondLinkTakenError()
+  return contentWriteError(error)
+}
+
 // The server-safe insert-versus-update decision, kept pure so its idempotency
 // is provable without a database. The cache is only a hint for the fast path;
 // the server is the authority on whether a row exists:
@@ -1893,11 +1941,18 @@ export async function upsertSessionWrite(opts: {
   insert: () => Promise<Session>
   update: () => Promise<Session>
   isUniqueViolation: (err: unknown) => boolean
+  // The one duplicate key that must NEVER recover into an update. A refused
+  // Spond link (0048) means ANOTHER session already holds the event, so there
+  // is no row of this id to update: recovering would report "no rows" and
+  // bury the one fact the coach needs. Optional so the pure function keeps
+  // its old behaviour for callers that do not write a Spond link.
+  isLinkConflict?: (err: unknown) => boolean
 }): Promise<Session> {
   if (opts.exists) return opts.update()
   try {
     return await opts.insert()
   } catch (err) {
+    if (opts.isLinkConflict?.(err)) throw err
     if (opts.isUniqueViolation(err)) return opts.update()
     throw err
   }
@@ -1977,7 +2032,7 @@ export function useUpsertSession() {
           .eq('id', input.id)
           .select(SESSION_COLS)
           .single()
-        if (error) throw contentWriteError(error)
+        if (error) throw sessionWriteError(error)
         return toSession(data as unknown as SessionRow)
       }
 
@@ -1990,7 +2045,7 @@ export function useUpsertSession() {
           .insert({ id: input.id, coach_id: user.id, club_id: profile.club_id, ...editable })
           .select(SESSION_COLS)
           .single()
-        if (error) throw contentWriteError(error)
+        if (error) throw sessionWriteError(error)
         return toSession(data as unknown as SessionRow)
       }
 
@@ -2002,6 +2057,11 @@ export function useUpsertSession() {
         insert,
         update,
         isUniqueViolation,
+        // A refused Spond link is a duplicate key that recovery must not
+        // touch. Both write closures translate it to SpondLinkTakenError
+        // above, so the test is on the translated error rather than on a
+        // code that no longer survives the wrapping.
+        isLinkConflict: (err) => err instanceof SpondLinkTakenError,
       })
       const teamIds = await reconcileSessionTeams(saved.id, input.teamIds, profile?.club_id ?? null)
       // Only now, with coverage recorded, is the frozen column safe to clear.
@@ -2453,6 +2513,23 @@ export function useSpondSync() {
   })
 }
 
+// Refetch what the club has actually planned: the sessions list and the synced
+// events beside it.
+//
+// It exists as a named hook rather than a useQueryClient call inside a screen
+// because the thing being refreshed is a fact ("which Spond events already
+// have a session"), not a cache detail, and because every other invalidation
+// in the product lives in this file. Plan from Spond calls it when the
+// database refuses a duplicate link: the losing coach's list then catches up
+// with the coach who won the race, and the event stops being suggested.
+export function useRefreshSpondPlanning(): () => void {
+  const qc = useQueryClient()
+  return useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ['sessions'] })
+    void qc.invalidateQueries({ queryKey: ['spond_events'] })
+  }, [qc])
+}
+
 // Links a session to a synced event, or unlinks with null. A plain sessions
 // update riding the existing update policies (owner, or sessions.manage),
 // so ownership rules apply exactly as they do to any other session edit; a
@@ -2466,7 +2543,12 @@ export function useLinkSessionSpondEvent() {
         .update({ spond_event_id: spondEventId })
         .eq('id', sessionId)
         .select('id')
-      if (error) throw error
+      // sessionWriteError, not the raw error: since 0048 this update can be
+      // refused because another session already links the chosen event, and
+      // "duplicate key value violates unique constraint" is not a sentence to
+      // put in front of a coach. Every other failure is passed through
+      // unchanged.
+      if (error) throw sessionWriteError(error)
       if (!data?.length) throw new Error('Only the session owner or an admin can change its Spond link.')
     },
     onSettled: () => {

@@ -39,6 +39,62 @@ and 0 with `included_in_groups` true immediately afterwards, which is what a
 defaulted column with no backfill must read. The four `register_entries` RLS
 policies remained 4, with no `FOR ALL` policy introduced.
 
+## Reviewed, registered, not yet applied
+
+| Migration | Reviewed against | State |
+|---|---|---|
+| `0048_spond_session_link_unique` | `20260812064038` / `register_group_inclusion` | in the register and the dropdown, never run |
+
+`0048` repairs one bad Spond link and adds
+`sessions_spond_event_id_unique`, so a mirrored Spond event can hold at most
+one Hub session. It is in `REVIEWED_MIGRATIONS` and in the dropdown so it can
+be applied through this workflow after review, and it has not been applied.
+`EXPECTED_LAST_MIGRATION` therefore stays at `20260812064038`.
+
+**It must be applied BEFORE the frontend from its pull request reaches
+production.** The repository auto-deploys `main` to Vercel, so the safe order
+is: merge nothing, run this workflow on the migration's branch commit, confirm
+the post-apply gate, then merge. Applying it late is not catastrophic (the new
+client works against a database without the index; it simply never sees the
+refusal it knows how to explain), but the duplicate it prevents is silent
+corruption, so early is the right way round.
+
+It proves it **changed** nothing rather than asserting what the schema looks
+like. That distinction cost a CI run: a first draft asserted that `anon` held
+no INSERT, UPDATE or DELETE on `public.sessions`, which is false on this
+project and always has been. Every Data API role (`anon`, `authenticated`,
+`service_role`) holds the full table privilege set there, inherited from
+Supabase's default privileges for new tables in `public`; row level security is
+the layer that decides what any of them may actually do. The assertion would
+have aborted the apply against production as well as against a fresh local
+stack. The self-verification now fingerprints the table grants, the raw ACL,
+the column ACLs and the full policy set on entry and compares them on exit.
+
+It is correct in two places, which is not optional: `supabase db reset`
+applies every migration in `supabase/migrations/` to a fresh local stack on
+every developer machine and in the CI security job, and that database has never
+held the hosted damage. So `0048` refuses any duplicated link it was not shown,
+repairs the one it was shown only if it is still there, and adds the index
+either way, saying which branch it took.
+
+Its behaviour was exercised against a real PostgreSQL before shipping:
+`.github/scripts/production-migration/test_0048_spond_link_unique.sh` builds a
+stand-in and runs five databases. Against the hosted state it asserts exactly
+one row moved, that no other row and no live marker changed, and that the index
+then refuses a second session on the same event including for two racing
+connections. Against an unexpected third duplicate it asserts the whole run
+aborts with the database untouched. Against a database with nothing to repair,
+and against an empty one, it asserts the file applies and changes no row. And
+against the one odd state the assumption checks step over (only the wrong
+session holding the link), it asserts the verification catches it and the
+transaction rolls back. Its stand-in grants the full Supabase table privilege
+set to `anon`, `authenticated` and `service_role`, which is what the first
+version did not do and why the false assertion reached CI; a sixth database
+proves each grant fingerprint actually moves when a grant, a column grant or a
+policy changes. It
+needs a local PostgreSQL server and is therefore not part of CI; run it by hand
+when reviewing the migration.
+
 `0046` is the first migration this workflow applied. Its ledger row records
 `created_by` as the workflow and the commit it ran from, an `idempotency_key`
 of `otj:migration:0046_drill_diagram`, and one `statements` entry hashing to

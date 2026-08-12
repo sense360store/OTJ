@@ -6,12 +6,16 @@ import {
   deletedExactlyOne,
   faImportBody,
   invalidatePlayerReads,
+  isSpondLinkTaken,
   isUniqueViolation,
   MEDIA_MAX_BYTES,
   oversizeMessage,
   partitionDrillsByUsage,
   revertSessionUpsert,
   sessionExistsInCache,
+  sessionWriteError,
+  SPOND_LINK_UNIQUE_INDEX,
+  SpondLinkTakenError,
   toActivity,
   toActivityRow,
   toDrill,
@@ -443,6 +447,79 @@ describe('isUniqueViolation', () => {
   })
 })
 
+describe('isSpondLinkTaken, telling one duplicate key from another', () => {
+  // Both are 23505 and they need opposite handling: a duplicate PRIMARY KEY
+  // is a retry whose first attempt committed, and recovering it into an
+  // update is exactly right. A duplicate SPOND LINK (0048) means another
+  // session already holds the event, and recovering it would update a row
+  // that does not exist and report "no rows" instead of the truth.
+  const constraintError = (name: string) => ({
+    code: '23505',
+    message: `duplicate key value violates unique constraint "${name}"`,
+    details: null,
+  })
+
+  it('recognises the index by name', () => {
+    expect(isSpondLinkTaken(constraintError(SPOND_LINK_UNIQUE_INDEX))).toBe(true)
+  })
+
+  it('recognises it by the offending column when the index has been renamed', () => {
+    // PostgREST puts the key in `details`. Matching that as well means a
+    // renamed index degrades to the right answer rather than to silence.
+    expect(
+      isSpondLinkTaken({
+        code: '23505',
+        message: 'duplicate key value violates unique constraint "sessions_spond_link_uniq"',
+        details: 'Key (spond_event_id)=(e3065302-c164-4b23-b52a-2ce813271dac) already exists.',
+      }),
+    ).toBe(true)
+  })
+
+  it('is false for a duplicate primary key, which must still recover', () => {
+    expect(isSpondLinkTaken(constraintError('sessions_pkey'))).toBe(false)
+  })
+
+  it('is false for everything that is not a unique violation', () => {
+    expect(isSpondLinkTaken({ code: '23503', message: SPOND_LINK_UNIQUE_INDEX })).toBe(false)
+    expect(isSpondLinkTaken(new Error(SPOND_LINK_UNIQUE_INDEX))).toBe(false)
+    expect(isSpondLinkTaken(null)).toBe(false)
+    expect(isSpondLinkTaken(undefined)).toBe(false)
+    expect(isSpondLinkTaken('23505')).toBe(false)
+  })
+
+  it('survives an error carrying no message or details at all', () => {
+    expect(isSpondLinkTaken({ code: '23505' })).toBe(false)
+    expect(isSpondLinkTaken({ code: '23505', message: null, details: null })).toBe(false)
+  })
+})
+
+describe('sessionWriteError', () => {
+  it('translates the link refusal into the sentence a coach can act on', () => {
+    const out = sessionWriteError({
+      code: '23505',
+      message: `duplicate key value violates unique constraint "${SPOND_LINK_UNIQUE_INDEX}"`,
+    })
+    expect(out).toBeInstanceOf(SpondLinkTakenError)
+    expect(out.message).toContain('already has a session')
+    // The raw database wording never reaches a coach.
+    expect(out.message).not.toContain('duplicate key')
+    expect(out.message).not.toContain(SPOND_LINK_UNIQUE_INDEX)
+  })
+
+  it('leaves every other write error exactly as contentWriteError had it', () => {
+    // A plain object with no FA rights refusal in it becomes the calm
+    // generic Error, which is the behaviour that was there before.
+    const out = sessionWriteError({ code: '08006', message: 'connection failure' })
+    expect(out).not.toBeInstanceOf(SpondLinkTakenError)
+    expect(out.message).toBe('Something went wrong. Try again.')
+  })
+
+  it('keeps the England Football rights refusal and its hint', () => {
+    const out = sessionWriteError({ code: '42501', message: 'Refusing to share.', hint: 'Clear the source first.' })
+    expect(out.message).toBe('Refusing to share. Clear the source first.')
+  })
+})
+
 describe('upsertSessionWrite server-safe insert versus update', () => {
   const row = () => toSession(sessionRow())
 
@@ -488,6 +565,47 @@ describe('upsertSessionWrite server-safe insert versus update', () => {
     const update = vi.fn()
     await expect(upsertSessionWrite({ exists: false, insert, update, isUniqueViolation })).rejects.toBe(boom)
     expect(update).not.toHaveBeenCalled()
+  })
+
+  it('never recovers a refused Spond link into an update', async () => {
+    // REQUIREMENT 14, the client half. Two coaches plan the same event: the
+    // loser's insert is refused because the event is taken, and there is no
+    // row of that id to update. Recovering would turn one clear refusal into
+    // a confusing "no rows" from a second failed statement.
+    const taken = new SpondLinkTakenError()
+    const insert = vi.fn(async () => {
+      throw taken
+    })
+    const update = vi.fn()
+    await expect(
+      upsertSessionWrite({
+        exists: false,
+        insert,
+        update,
+        isUniqueViolation: () => true,
+        isLinkConflict: (err) => err instanceof SpondLinkTakenError,
+      }),
+    ).rejects.toBe(taken)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('still recovers a duplicate primary key when a link conflict test is supplied', () => {
+    // The link conflict test must narrow nothing else: the retry recovery is
+    // the reason the pure function exists.
+    const insert = vi.fn(async () => {
+      throw { code: '23505', message: 'duplicate key value violates unique constraint "sessions_pkey"' }
+    })
+    const update = vi.fn(async () => row())
+    return upsertSessionWrite({
+      exists: false,
+      insert,
+      update,
+      isUniqueViolation,
+      isLinkConflict: (err) => err instanceof SpondLinkTakenError,
+    }).then((out) => {
+      expect(update).toHaveBeenCalledTimes(1)
+      expect(out.id).toBe('s1')
+    })
   })
 
   it('fails closed when the recovery update is not authorised', async () => {

@@ -22,6 +22,7 @@ import { embedSrc, sessionMinutes } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
+import { isSessionLive, liveActivityNow } from '../lib/sessionLifecycle'
 import { Icon } from '../components/icons'
 import { fmtClock, MediaAttribution, MediaThumb, MEDIA_META, Modal, PHASE_COLOR } from '../components/ui'
 import { MediaPlayerSurface } from '../components/MediaPlayerModal'
@@ -238,8 +239,16 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
   // loaded row says the session is not already live, so a driver rejoining
   // (or an admin opening a session the owner is mid-way through) does not
   // reset it. Watchers never reach this component.
+  //
+  // "Already live" is isSessionLive, not a bare null check on the column. A
+  // stale marker from a previous day means nobody is running this, so opening
+  // the runner starts it properly and writes a fresh index and timestamp,
+  // rather than silently adopting an index from June while the watcher's half
+  // of this screen (which uses the same rule) shows it as not started. This is
+  // also the only thing in the product that clears a stale marker, and it does
+  // it as a side effect of somebody actually driving the session.
   useEffect(() => {
-    if (!complete && acts.length > 0 && session.liveActivityIndex == null) {
+    if (!complete && acts.length > 0 && !isSessionLive(session)) {
       setLive.mutate({ id: session.id, index: idx })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -479,7 +488,12 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
   const teamById = useTeamMap()
   const teamName = sessionTeamsLabel(session, teamById)
   const acts = session.activities
-  const live = session.liveActivityIndex
+  // The activity the driver is on, or null when nobody is driving. Through
+  // the seam, never off the column: a marker nobody ever cleared is not
+  // somebody running a session, and reading it raw gave a watcher who opened
+  // the June session a live stage with a clock counting up from two months
+  // ago. Stale reads as not started, which is what it is.
+  const live = liveActivityNow(session)
 
   // A one second tick keeps the computed clock moving while live.
   const [, setNow] = useState(0)
