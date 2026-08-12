@@ -68,7 +68,7 @@ import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } f
 import { SESSION_SPOND_LINK_TAKEN_ERROR } from './sessionSubmit'
 import { type EventKindContext, spondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
-import { tonightUpsertBatches, type TonightChange } from './tonight'
+import { countLinkedResponses, tonightUpsertBatches, type ResponseCounts, type TonightChange } from './tonight'
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
@@ -5431,6 +5431,73 @@ export function useSessionSpondRsvp(sessionId: string | undefined, spondEventId:
         // is surfaced as such to the hook, which the register still
         // never gates on.
         if (isMissingRelation(e)) return {}
+        throw e
+      }
+    },
+  })
+}
+
+// ---- Linked player replies, per event (players.view) ----------------
+//
+// THE POPULATION, AND WHY IT CAN BE STATED WITHOUT A SESSION. Every row in
+// spond_event_responses belongs to a LINKED member: the foreign key into
+// player_spond_links makes an unlinked member's reply unrepresentable
+// (migration 0045). So grouping those rows by event and status counts the
+// club's own children, and nothing else, for an event that no session has
+// been planned from yet.
+//
+// WHAT IT IS NOT. Tonight's chips count the children a SESSION covers.
+// This has no session, so it has no coverage to narrow by, and the screen
+// that renders it says "Linked players" rather than borrowing Tonight's
+// words. Two populations, two labels; the reply split itself is built by
+// the one predicate in ../lib/tonight.
+//
+// THE READ IS TWO COLUMNS. spond_event_id and status, never the member id:
+// the counts need no identifier, so none is fetched. Nothing here can
+// resolve to a child even in memory.
+export function spondEventResponseCountsKey() {
+  return ['spond_rsvp', 'event_counts'] as const
+}
+
+interface SpondResponseCountRow {
+  spond_event_id: string
+  status: string
+}
+
+// `available` is false when 0045 has not been applied. An admin screen has
+// to tell that apart from "nobody has replied", which is why the shape
+// carries the flag rather than an empty record standing for both.
+export interface SpondEventResponseCounts {
+  byEvent: Record<string, ResponseCounts>
+  available: boolean
+}
+
+export function useSpondEventResponseCounts(enabled = true) {
+  const { caps } = useMyCapabilities()
+  return useQuery({
+    queryKey: spondEventResponseCountsKey(),
+    enabled: enabled && caps.has('players.view'),
+    retry: (count, error) => !isMissingRelation(error) && count < 2,
+    queryFn: async (): Promise<SpondEventResponseCounts> => {
+      try {
+        const rows = await readAllPages<SpondResponseCountRow>((from, to) =>
+          supabase
+            .from('spond_event_responses')
+            .select('spond_event_id, status')
+            .order('spond_event_id', { ascending: true })
+            .range(from, to),
+        )
+        const statuses = new Map<string, string[]>()
+        for (const r of rows) {
+          const list = statuses.get(r.spond_event_id)
+          if (list) list.push(r.status)
+          else statuses.set(r.spond_event_id, [r.status])
+        }
+        const byEvent: Record<string, ResponseCounts> = {}
+        for (const [eventId, list] of statuses) byEvent[eventId] = countLinkedResponses(list)
+        return { byEvent, available: true }
+      } catch (e) {
+        if (isMissingRelation(e)) return { byEvent: {}, available: false }
         throw e
       }
     },

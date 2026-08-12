@@ -203,6 +203,7 @@ vi.mock('../lib/queries', () => ({
   useCurrentSeason: () => query({ id: 'season' }),
   useRegisteredPlayers: () => query([]),
   useSpondLinks: () => query({ available: true, links: [] }),
+  useSpondEventResponseCounts: () => query({ byEvent: {}, available: false }),
   useSpondMappings: () => query([]),
   useSpondSync: () => ({ mutate: () => {}, isPending: false, isError: false, data: null, error: null }),
   useInsertSpondMapping: () => ({ mutate: () => {}, isPending: false, isError: false, error: null }),

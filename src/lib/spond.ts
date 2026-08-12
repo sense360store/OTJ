@@ -6,10 +6,6 @@
 import { blankSession } from './data'
 import type { Session, SpondEvent, SpondMapping } from './data'
 
-// The four counts in display order, the only attendance figures the app
-// holds. They key straight into SpondEvent.
-export const SPOND_COUNT_LABELS = ['accepted', 'declined', 'unanswered', 'waiting'] as const
-
 // ---- The event aggregate, and who it counts --------------------------
 //
 // THE POPULATION THESE FOUR NUMBERS DESCRIBE, which is the thing every
@@ -43,9 +39,10 @@ export function spondAudience(event: {
   return event.accepted + event.declined + event.unanswered + event.waiting
 }
 
-// The caption above the four counts on the ADMIN mirror inspection, which
-// is the one surface that still shows them split. Its whole job is to stop
-// the numbers under it being read as a statement about the club's squad.
+// The words for the aggregate's population, for anywhere that needs to
+// name it without the figure. No surface renders the four counts split any
+// more, so there is nothing left for this to caption; it survives as the
+// one place the population is named in words.
 export const SPOND_AUDIENCE_CAPTION = 'Everyone invited to the Spond event'
 
 // The aggregate as ONE labelled sentence, which is the only shape it takes

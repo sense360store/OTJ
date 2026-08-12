@@ -423,18 +423,24 @@ describe('Saved is a comparison, not an assumption', () => {
 // adding the pills back. What it cannot catch is a count reaching a label
 // through a variable, or a new file nothing here names.
 // =====================================================================
-describe('the Spond event aggregate is not a player RSVP anywhere a coach plans', () => {
-  // The mirror inspection, and the module that composes the wording.
-  const ALLOWED = ['lib/spond.ts', 'routes/AdminSpond.tsx']
+describe('the Spond event aggregate is never a player RSVP, on any screen', () => {
+  // Only the module that composes the wording. The admin mirror
+  // inspection used to be exempt, on the reasoning that its job is showing
+  // what was synced. It is also the screen the defect was reported from:
+  // "20 accepted / 24 declined / 6 unanswered" over an audience of 50
+  // people, while the club's own children were 10 going and 14 not going.
+  // A reply word beside a figure is read as a statement about players
+  // wherever it appears, so there is no exempt surface.
+  const ALLOWED = ['lib/spond.ts']
 
-  it('renders the four count labels only on the admin mirror inspection', () => {
+  it('leaves no list of the four API reply words anywhere in the product', () => {
     const offenders = sourceFiles()
-      .filter((f) => !isTest(f) && !ALLOWED.includes(f))
+      .filter((f) => !isTest(f))
       .filter((f) => /SPOND_COUNT_LABELS/.test(code(read(f))))
     expect(offenders).toEqual([])
   })
 
-  it('lets no other screen read a count field off an event row', () => {
+  it('lets no screen read a count field off an event row', () => {
     // `event.accepted`, `e.declined` and their relatives. Each one is a
     // figure about the event's audience being placed on a screen about
     // the club's players.
@@ -460,9 +466,25 @@ describe('the Spond event aggregate is not a player RSVP anywhere a coach plans'
     expect(body).not.toMatch(/going|accepted|declined|unanswered/i)
   })
 
-  it('keeps the planner card and the plan rows on that one sentence', () => {
-    for (const f of ['components/SpondAttendance.tsx', 'components/PlanFromSpond.tsx']) {
+  it('keeps every surface that shows an event on that one sentence', () => {
+    for (const f of [
+      'components/SpondAttendance.tsx',
+      'components/PlanFromSpond.tsx',
+      'routes/AdminSpond.tsx',
+    ]) {
       expect(code(read(f))).toMatch(/spondAudienceNote\(/)
     }
+  })
+
+  it('lets the reply words be rendered only against a population of players', () => {
+    // RESPONSE_FILTER_LABELS is the product's own wording for the four
+    // states, and it may only be rendered beside a figure that counts
+    // children. The admin screen reads it for its Linked players split,
+    // which comes from spond_event_responses (linked members only, by
+    // foreign key) and never from an event's count fields. This pins that
+    // it takes its numbers from the response read rather than the event.
+    const src = code(read('routes/AdminSpond.tsx'))
+    expect(src).toMatch(/useSpondEventResponseCounts\(/)
+    expect(src).not.toMatch(/\bspondAudience\(/)
   })
 })
