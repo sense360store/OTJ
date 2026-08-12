@@ -240,32 +240,40 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260811210248` (`0046_drill_diagram`, applied
-2026-08-11 under its own production approval).
+Current value: `20260812064038` (`0047_register_group_inclusion`, applied
+2026-08-12 under its own production approval).
 
-Hosted ledger newest migration: **`20260811210248` / `drill_diagram`**.
+Hosted ledger newest migration: **`20260812064038` / `register_group_inclusion`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
 apply, not predicted before it, and was confirmed to be the unique newest row.
 
-0046 is the first migration applied by the gated production migration workflow
-rather than by hand, so its ledger row carries more evidence than its
-predecessors, all of it confirmed independently before this constant moved:
+0047 was applied by the gated production migration workflow, so its ledger row
+carries that workflow's evidence, all of it confirmed independently before this
+constant moved:
 
 - `created_by` is
-  `github-actions:apply-production-migration@3aee9522440ddcc7d47a1da9016226a87228a30c`,
+  `github-actions:apply-production-migration@b3f5d5c1a6610a5ff804a7b1b008adc8a4def6cf`,
   naming the workflow and the commit it ran from;
-- `idempotency_key` is `otj:migration:0046_drill_diagram`, and that column is
-  UNIQUE, so the same migration cannot be applied a second time;
+- `idempotency_key` is `otj:migration:0047_register_group_inclusion`, and that
+  column is UNIQUE, so the same migration cannot be applied a second time;
 - `statements` holds one entry whose MD5 is
-  `a4074f7c01e48cdad679fdc633d8dc14`, the reviewed file with its trailing
+  `317101852faf1ddc68f8e641f24579b9`, the reviewed file with its trailing
   newline stripped;
-- the row before it is `20260810182333` / `spond_links`, unchanged;
-- `public.drills.diagram` exists, the `drills_diagram_shape` check constraint
-  exists, and all three `drill_diagram_*` validation functions exist.
+- the row before it is `20260811210248` / `drill_diagram`, unchanged;
+- `public.register_entries.included_in_groups` exists, as a NOT NULL boolean
+  defaulting to false.
 
-The superseded value, `20260810182333` (`0045_spond_links`, applied 2026-08-10
-as the Spond member links), is now rejected by the gate; a test pins that it
-is, alongside the earlier `20260809184949` and `20260809081118`.
+0047 adds one column and writes no row, and the read either side proves it: 9
+register rows before and after, 1 with `present` true before and after, and 0
+with `included_in_groups` true immediately afterwards, which is what a defaulted
+column with no backfill must read. Nothing was copied between the two columns in
+either direction. The `register_entries` RLS policy count remained 4 and no
+`FOR ALL` policy was introduced.
+
+The superseded value, `20260811210248` (`0046_drill_diagram`, applied 2026-08-11
+as the drill diagram column), is now rejected by the gate; a test pins that it
+is, alongside the earlier `20260810182333`, `20260809184949` and
+`20260809081118`.
 
 Moving this constant is a **reconciliation**, never a deployment: it records an
 already applied, already reviewed hosted state so the fail closed verifier
@@ -382,7 +390,7 @@ on the hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260811210248` (0046, the drill diagram column);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260812064038` (0047, the register group inclusion column);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
@@ -442,7 +450,8 @@ password or the environment. Its offline test suite
   the workflow verifies this after deploy.
 - It does not apply a migration, change a grant, or create a cleanup schedule;
   the workflow verifies the migration ledger's newest version is exactly the
-  reviewed one (`0043` after the content rights FA lock) and no `pg_cron` job
+  reviewed one (`EXPECTED_LAST_MIGRATION`, named rather than restated here so
+  it cannot drift out of date the way `0043` did) and no `pg_cron` job
   references content sharing, both BEFORE and after the deploy. The check is an
   exact equality, so applying a migration without updating
   `EXPECTED_LAST_MIGRATION` fails the deploy before anything is changed, and so
