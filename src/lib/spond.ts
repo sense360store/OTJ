@@ -224,17 +224,19 @@ import { DEFAULT_LIFECYCLE_SCOPE, matchesLifecycleScope, type LifecycleScope } f
 // The "Plan from Spond" suggestions: synced events a coach could turn into a
 // session. Upcoming soonest first by default; the Past scope returns the
 // events that have already run, most recent first, for a coach writing up a
-// night after it happened. Drops events the coach has already planned (a
-// session they own linked to it), narrows to their teams plus club events
+// night after it happened. Drops events any club session already links,
+// narrows to their teams plus club events
 // (team_id null) unless the all teams toggle widens it, and narrows to the
 // requested event kind, which is Training unless the caller widens it. Pure
 // so the screen wires it to live data and the test pins the scope and
 // ordering.
 export interface SpondPlanOptions {
   events: SpondEvent[]
-  // Event ids the current coach already owns a session linked to. One event
-  // can be planned by several coaches, so this clears the suggestion for the
-  // owner only and leaves it for everyone else.
+  // Event ids that ANY club session already links. A mirrored Spond event
+  // holds at most one Hub session (migration 0048), so "already planned" is a
+  // question about the club and never about who owns the row. It used to be
+  // built per coach, which offered an event another coach had already planned
+  // to everybody else and left the database to refuse whoever pressed second.
   plannedEventIds: Set<string>
   // The coach's effective team ids (member_teams resolved, every team when the
   // all teams flag is set). Club events (team_id null) are always in scope.

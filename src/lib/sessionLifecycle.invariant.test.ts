@@ -271,6 +271,135 @@ describe('the tripwire itself', () => {
 })
 
 // =====================================================================
+// The live marker, and every place it could be read raw.
+//
+// WHY THIS EXISTS. live_activity_index is a column that says a driver once
+// pressed Start. Pressing End is the only thing that clears it, so it says
+// nothing at all about whether anybody is running the session NOW, and five
+// hosted rows from June and July proved it by keeping themselves in the
+// Upcoming list for two months. isSessionLive answers the question the
+// screens are actually asking, against a moment, and this fails the build
+// when a screen goes back to asking the column.
+//
+// A tripwire, not a proof: it reads source text, so a null check reached
+// through a variable or a helper of the file's own walks past it.
+// =====================================================================
+describe('nothing decides a session is live by reading the column', () => {
+  // The comparison that means "is this live". Both orders, all four
+  // operators, because the mistake reads just as well backwards.
+  const LIVE_NULL_CHECK = new RegExp(
+    String.raw`liveActivityIndex\s*(?:===|!==|==|!=)\s*null|null\s*(?:===|!==|==|!=)\s*[\w.]*liveActivityIndex`,
+  )
+
+  it('is a comparison no file outside the seam makes', () => {
+    const offenders: string[] = []
+    for (const f of sourceFiles().filter((f) => !isTest(f))) {
+      const src = stripComments(readFileSync(join(SRC, f), 'utf8'))
+      const hit = src.match(LIVE_NULL_CHECK)
+      if (hit) offenders.push(`${f}: ${hit[0]}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('names every file that touches the column at all, and why', () => {
+    // Set equality, so a new mention is a decision somebody has to make in
+    // review rather than something that appears quietly. Each of these
+    // reads or writes the column for something that is NOT "is this session
+    // still operational work".
+    // sourceFiles() already excludes the seam and its tests, which is why
+    // lib/sessionLifecycle.ts, the one file allowed to interpret the
+    // marker, is not listed here.
+    const TOUCHES_THE_COLUMN: Record<string, string> = {
+      'lib/data.ts': 'declares the field on Session',
+      'lib/queries.ts': 'reads the column, and the live view writes it through here',
+      'lib/publicShare.ts': 'lists the field names a public share must never carry',
+      'routes/LiveSession.tsx': "the driver's resume position, which is the column and not the lifecycle",
+      'hooks/useStartFromTemplate.ts': 'creates a session with the marker null',
+      'components/ApplyProgrammeModal.tsx': 'creates sessions with the marker null',
+    }
+    const found = sourceFiles()
+      .filter((f) => !isTest(f))
+      .filter((f) => stripComments(readFileSync(join(SRC, f), 'utf8')).includes('liveActivityIndex'))
+    expect(found.sort()).toEqual(Object.keys(TOUCHES_THE_COLUMN).sort())
+  })
+
+  it('takes a moment, so it can answer about now rather than about the column', () => {
+    const seam = readFileSync(join(SRC, 'lib/sessionLifecycle.ts'), 'utf8')
+    expect(seam).toMatch(/export function isSessionLive\(event: TimedEvent, now: Date = new Date\(\)\)/)
+    // And the lifecycle passes its own moment through, or every list judges
+    // liveness against the wall clock while judging everything else against
+    // the render's instant.
+    const fn = seam.slice(seam.indexOf('export function sessionLifecycle'))
+    expect(fn).toMatch(/isSessionLive\(event, now\)/)
+  })
+
+  it('catches the shapes it claims to catch, and not the ones it does not', () => {
+    expect(LIVE_NULL_CHECK.test('const live = s.liveActivityIndex != null')).toBe(true)
+    expect(LIVE_NULL_CHECK.test('if (session.liveActivityIndex === null) start()')).toBe(true)
+    expect(LIVE_NULL_CHECK.test('if (null !== s.liveActivityIndex) return')).toBe(true)
+    // Writing the column, and reading it as a position, are not decisions
+    // about liveness.
+    expect(LIVE_NULL_CHECK.test('liveActivityIndex: null,')).toBe(false)
+    expect(LIVE_NULL_CHECK.test('const idx = session.liveActivityIndex ?? 0')).toBe(false)
+  })
+
+  it('keeps the live view s own clock behind the seam too', () => {
+    // The watcher shows a running clock computed from
+    // live_activity_started_at, so a stale marker there is not a badge, it
+    // is a live stage counting up from June. It reads liveActivityNow rather
+    // than the column, and the plain assignment that used to be there is the
+    // realistic way back.
+    const src = stripComments(readFileSync(join(SRC, 'routes/LiveSession.tsx'), 'utf8'))
+    expect(src).toMatch(/const live = liveActivityNow\(session\)/)
+    expect(src).not.toMatch(/const live = session\.liveActivityIndex/)
+    // And going live is decided by whether the session IS live, not by
+    // whether the column holds a number, or a driver opening a stale row
+    // would adopt June's index while the watcher showed not started.
+    expect(src).toMatch(/!isSessionLive\(session\)/)
+  })
+
+  it('names what it cannot catch', () => {
+    // The comparison behind a helper, or against a variable holding the
+    // column. The behavioural cover for those is ./staleLiveSession.test.ts.
+    expect(LIVE_NULL_CHECK.test('const i = s.liveActivityIndex; if (i != null) badge()')).toBe(false)
+    // And the assignment check above is spelled exactly: a watcher that
+    // reached the column through a destructure would walk past it.
+    expect(/const live = session\.liveActivityIndex/.test('const { liveActivityIndex: live } = session')).toBe(false)
+  })
+})
+
+// =====================================================================
+// The order a list reads in.
+//
+// The sessions query returns rows soonest first, which is right for a
+// schedule and wrong for a history. Past led with last June and buried
+// last night, and the obvious fix, reversing the query, would have broken
+// Home, which leads with the front of the same list. So the order belongs
+// to the VIEW and lives beside the filter that composes it.
+// =====================================================================
+describe('the order a list reads in has one implementation', () => {
+  it('is declared in eventFilter and nowhere else', () => {
+    const offenders = sourceFiles()
+      .filter((f) => !isTest(f) && f !== 'lib/eventFilter.ts')
+      .filter((f) => /(?:function|const)\s+orderEventsForScope/.test(readFileSync(join(SRC, f), 'utf8')))
+    expect(offenders).toEqual([])
+  })
+
+  it('is applied by the filter, so a screen cannot get the right rows in the wrong order', () => {
+    const src = readFileSync(join(SRC, 'lib/eventFilter.ts'), 'utf8')
+    const fn = src.slice(src.indexOf('export function applyEventFilter'))
+    expect(fn).toMatch(/orderEventsForScope\(kept, state\.scope\)/)
+  })
+
+  it('is reached by the one list Sessions composes without the filter', () => {
+    // The parent branch has no kind, team or ownership narrowing to apply,
+    // so it does not go through applyEventFilter and would otherwise read in
+    // whatever order the query returned.
+    expect(readFileSync(join(SRC, 'routes/Sessions.tsx'), 'utf8')).toMatch(/orderEventsForScope\(/)
+  })
+})
+
+// =====================================================================
 // The third state, and the trap it creates.
 //
 // With two states, isSessionActive and isSessionPast were exact

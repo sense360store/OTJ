@@ -208,7 +208,7 @@ describe('spondPlanSuggestions', () => {
     expect(spondPlanSuggestions({ ...opts, events, kind: 'all' }).map((e) => e.id)).toEqual(['train', 'match'])
   })
 
-  it("drops an event the coach has already planned, and keeps the rest", () => {
+  it('drops an event any club session already links, and keeps the rest', () => {
     const events = [
       ev({ id: 'planned', startsAt: '2026-06-16T17:30:00Z', teamId: 'team-1' }),
       ev({ id: 'open', startsAt: '2026-06-17T17:30:00Z', teamId: 'team-1' }),

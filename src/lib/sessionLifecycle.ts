@@ -209,13 +209,76 @@ export function isSameLocalDay(a: Date, b: Date): boolean {
   )
 }
 
-// Whether the session is being driven right now. The live columns are
-// written by the driver on every activity change and cleared when they
-// press End, so this is a fact about now rather than a flag nobody
-// updates. One definition, so a screen showing a Live badge and a filter
-// deciding what is active cannot disagree.
-export function isSessionLive(event: TimedEvent): boolean {
-  return event.liveActivityIndex != null
+// The instant the live marker was written, when the row carries a readable
+// one. The driver rewrites live_activity_started_at on EVERY activity
+// change, so the stamp dates the evidence rather than the session.
+function liveMarkerStamp(event: TimedEvent): Date | null {
+  if (!event.liveActivityStartedAt) return null
+  const ms = Date.parse(event.liveActivityStartedAt)
+  return Number.isFinite(ms) ? new Date(ms) : null
+}
+
+// Whether the session is being driven RIGHT NOW.
+//
+// THE MARKER IS EVIDENCE, AND EVIDENCE GOES STALE. live_activity_index is
+// written by the driver on every activity change and cleared when they press
+// End. Pressing End is the only thing that clears it, so a driver who closes
+// the tab, loses signal or simply walks off the pitch leaves the marker
+// behind for ever. This function used to read the bare column, which meant
+// "somebody once started this" was treated as "somebody is running this",
+// and five sessions from June and July sat in the hosted database with
+// live_activity_index = 0 keeping themselves permanently active. That is how
+// 16 June turned up under Upcoming on 12 August.
+//
+// THE RULE, and why it is a calendar day rather than a grace period. A live
+// marker counts only on the local day it belongs to. It belongs to the day
+// it was WRITTEN, when the row stores one, and to the session's own start
+// day when it does not. A marker belonging to a previous local day is stale;
+// a marker belonging to a day that has not arrived is not evidence of
+// anything either, so a future session carrying contradictory live columns
+// gets no Live badge (it is still active, because it is still to come, which
+// the clock decides on its own).
+//
+// A number of hours would have been the obvious alternative and it is the
+// wrong shape here for the same reason a grace period was the wrong shape
+// for endedToday: "six hours after the last activity change" is not
+// something a coach can predict, and whatever number was chosen would either
+// hide a session mid evening or keep last month's alive. The local calendar
+// day is the unit this product already thinks in, it is the unit
+// sessionLifecycle already uses below, and it self heals: a marker nobody
+// cleared stops mattering when the day turns over, so no cleanup job and no
+// destructive migration over historic rows is needed.
+//
+// WHAT THIS COSTS, stated rather than hidden. A coach still driving at 00:10
+// on a session dated yesterday keeps it only if they touched an activity
+// after midnight (which restamps the marker) or the session's planned window
+// reaches into today. Otherwise the night moves to Past, where it is fully
+// reachable. One row moving a few hours early is a glance; a June session
+// wedged into Upcoming for ever is the bug.
+//
+// One definition, so a screen showing a Live badge and a filter deciding
+// what is active cannot disagree. `now` is a parameter for the same reason
+// it is one everywhere else here: tests must not depend on the day they run
+// on, and a screen must judge every row against one moment.
+export function isSessionLive(event: TimedEvent, now: Date = new Date()): boolean {
+  if (event.liveActivityIndex == null) return false
+  const marker = liveMarkerStamp(event) ?? sessionStart(event)
+  // Nothing dates the marker at all: fail towards showing, exactly as an
+  // unreadable date is read as active below.
+  if (!marker) return true
+  return isSameLocalDay(marker, now)
+}
+
+// The activity a driver is on RIGHT NOW, or null when nobody is driving.
+//
+// The same question as isSessionLive, answered with the index rather than a
+// boolean, because the live view needs the position and the running clock
+// beside it. It exists so the watcher cannot read the column directly: doing
+// that gave anybody opening June's session a live stage with a clock counting
+// up from two months earlier, which is the most convincing possible way to
+// show a session that is not happening.
+export function liveActivityNow(event: TimedEvent, now?: Date): number | null {
+  return isSessionLive(event, now) ? (event.liveActivityIndex ?? null) : null
 }
 
 // Where this row sits in its own lifecycle.
@@ -231,9 +294,12 @@ export function isSessionLive(event: TimedEvent): boolean {
 //      work in front of them, so a session completed today is endedToday.
 //      A completed session with a FUTURE date is still past, unchanged,
 //      because no local day of its own has begun.
-//   2. Being driven live. A coach running long is still running the
-//      session, so it stays active however far past its expected end the
-//      clock has gone, until the live state says otherwise.
+//   2. Being driven live, where the marker is CURRENT (see isSessionLive).
+//      A coach running long is still running the session, so it stays
+//      active however far past its expected end the clock has gone. A
+//      marker left behind on a previous local day is not evidence of
+//      anybody running anything and is read past, exactly as if the
+//      columns were null.
 //   3. Expected end from the start plus the planned duration.
 //   4. The fallback duration where the plan cannot answer, and the whole
 //      local day where the row names no time.
@@ -255,7 +321,13 @@ export function sessionLifecycle(event: TimedEvent, now: Date = new Date()): Ses
   const completed = event.status === COMPLETED
   // Completed beats live. A row carrying both is a stale live column, and
   // reading live first would leave it active for ever.
-  if (!completed && isSessionLive(event)) return 'active'
+  //
+  // isSessionLive takes `now` and answers "is the marker CURRENT", not "does
+  // the column hold a number". Passing the moment is the whole of the stale
+  // live fix: without it a marker nobody ever cleared keeps its session
+  // active for the rest of time, which is what happened to five rows in the
+  // hosted database.
+  if (!completed && isSessionLive(event, now)) return 'active'
   const end = sessionExpectedEnd(event)
   // Nothing places it in time. A completed row has still ended, and there
   // is no local day it could be "today" on, so it is past.

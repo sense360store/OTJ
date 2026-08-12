@@ -278,9 +278,12 @@ describe('19. Training and All events compose with Upcoming and Past', () => {
     // The half of the original rule that was right, kept and proved.
     const tomorrow = at(2026, 8, 12, 9, 0)
     expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: 'me', now: tomorrow }))).toEqual(['next'])
+    // Most recent first, so last night leads the history rather than
+    // whatever the query happened to return first. `now` (2026-08-11) is
+    // more recent than `was`.
     expect(
       ids(applyEventFilter(schedule, { kind: 'training', scope: 'past', mine: false }, { userId: 'me', now: tomorrow })),
-    ).toEqual(['was', 'now'])
+    ).toEqual(['now', 'was'])
   })
 
   it('keeps tonight in the operational view while it is still running', () => {

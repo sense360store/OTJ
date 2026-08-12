@@ -19,6 +19,10 @@
 //      training is happening rather than which rows they own. Ownership
 //      still governs edit and delete, which is decided elsewhere and is a
 //      different question entirely.
+//
+// And then the ORDER, which is the other half of "what belongs in this
+// view": Upcoming reads soonest first, Past reads most recent first. See
+// orderEventsForScope for why that cannot be settled in the query.
 // =====================================================================
 import {
   type ClassifiableEvent,
@@ -33,6 +37,7 @@ import {
   isSessionActive,
   type LifecycleScope,
   matchesLifecycleScope,
+  sessionStart,
   type TimedEvent,
 } from './sessionLifecycle'
 
@@ -115,12 +120,47 @@ export function pickNextEvent<T extends FilterableEvent>(
   return active.find((e) => training(e) && mine(e)) ?? active.find(training) ?? active.find(mine) ?? active[0]
 }
 
+// The order a list reads in, decided by which side of the lifecycle it is
+// showing.
+//
+// WHY THE ORDER IS A PROPERTY OF THE VIEW, and not of the query. The
+// sessions read is `order(date).order(start_time).order(id)`, all ascending,
+// which is the right raw order for a schedule and exactly the wrong one for
+// a history: pressing Past put last June at the top and left a coach
+// scrolling a season to reach last night. Reversing the query would have
+// fixed Past by breaking everything else, because Home leads with the
+// soonest event and takes the front of the list.
+//
+// So the two views state their own order, from the same start instant the
+// lifecycle rule reads, which is also what makes it testable rather than an
+// accident of database wire order. Upcoming reads soonest first; Past reads
+// most recent first. That is the pair of rules spondPlanSuggestions already
+// applies to synced events, and having the sessions list agree with it is
+// the point: two surfaces answering "what happened recently" in opposite
+// orders is the kind of disagreement this module exists to remove.
+//
+// Stable by construction. Array.prototype.sort is stable, so rows sharing a
+// start keep the (date, start_time, id) order the query gave them, in both
+// directions.
+export function orderEventsForScope<T extends TimedEvent>(items: T[], scope: LifecycleScope): T[] {
+  const startedAt = (e: T) => sessionStart(e)?.getTime() ?? null
+  return [...items].sort((a, b) => {
+    const x = startedAt(a)
+    const y = startedAt(b)
+    // A row nothing places in time sorts LAST in both directions, rather
+    // than to whichever end a missing value happens to imply. It is not
+    // "oldest" and it is not "soonest"; it is unplaced.
+    if (x === null || y === null) return x === null ? (y === null ? 0 : 1) : -1
+    return scope === 'past' ? y - x : x - y
+  })
+}
+
 export function applyEventFilter<T extends FilterableEvent>(
   items: T[],
   state: EventFilterState,
   ctx: EventFilterContext<T>,
 ): T[] {
-  return items.filter((e) => {
+  const kept = items.filter((e) => {
     if (!matchesEventKind(e, state.kind, ctx.spondEvents)) return false
     if (!matchesLifecycleScope(e, state.scope, ctx.now)) return false
     if (ctx.teamMatch && !ctx.teamMatch(e)) return false
@@ -129,4 +169,9 @@ export function applyEventFilter<T extends FilterableEvent>(
     if (state.mine && (!ctx.userId || e.coachId !== ctx.userId)) return false
     return true
   })
+  // Ordered here, so a screen composing a list cannot get the right rows in
+  // the wrong order by forgetting a step. For Upcoming this reproduces the
+  // order the query already returns, so it changes nothing a coach sees; for
+  // Past it is the fix.
+  return orderEventsForScope(kept, state.scope)
 }

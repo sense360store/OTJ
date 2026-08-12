@@ -482,3 +482,133 @@ describe('the screens on the evening of a session that has already ended', () =>
     expect(out).not.toContain('Ended earlier today')
   })
 })
+
+// ---- The stale live marker, and the order, at the screens -------------
+//
+// The model half is ../lib/staleLiveSession.test.ts and
+// ../lib/sessionOrder.test.ts. This is the half a coach reported: on the
+// morning of 12 August 2026, Sessions showed June sessions under Upcoming
+// and the recent ones were nowhere obvious. Both symptoms come from rows
+// nobody ever touched again, so both are proved here against the screen
+// rather than only against the seam.
+//
+// The clock is FAKED, because these are claims about a particular morning.
+describe('the screens on the morning after a season of live markers nobody cleared', () => {
+  // 09:00 on Wednesday 12 August 2026, when the screenshots were taken.
+  const THAT_MORNING = new Date(2026, 7, 12, 9, 0, 0, 0)
+
+  // The hosted row that made this visible: 16 June, still saying upcoming,
+  // still carrying live_activity_index 0 from the evening it was driven.
+  const JUNE_STALE_LIVE = session({
+    id: 's-june',
+    name: 'Attacking session: 2v2 to score',
+    coachId: ME,
+    date: '2026-06-16',
+    time: '17:30',
+    activities: [],
+    liveActivityIndex: 0,
+    liveActivityStartedAt: '2026-06-16T16:55:16.004Z',
+  })
+  const LAST_NIGHT = session({
+    id: 's-aug11',
+    name: 'Training',
+    coachId: ME,
+    date: '2026-08-11',
+    time: '18:00',
+    activities: [],
+  })
+  const IN_TEN_DAYS = session({
+    id: 's-aug22',
+    name: 'Lindley Moor',
+    coachId: ME,
+    date: '2026-08-22',
+    time: '10:00',
+  })
+  const IN_SEVENTEEN_DAYS = session({
+    id: 's-aug29',
+    name: 'Clifton moor',
+    coachId: ME,
+    date: '2026-08-29',
+    time: '12:00',
+  })
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(THAT_MORNING)
+    state.sessions = [JUNE_STALE_LIVE, LAST_NIGHT, IN_TEN_DAYS, IN_SEVENTEEN_DAYS]
+    state.spondEvents = []
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('Sessions leaves the June session out of the view it opens on', () => {
+    const out = renderToStaticMarkup(<Sessions />)
+    expect(out).not.toContain('Attacking session')
+    expect(out).toContain('Lindley Moor')
+  })
+
+  it('Sessions lists what is coming soonest first', () => {
+    const out = renderToStaticMarkup(<Sessions />)
+    expect(out.indexOf('Lindley Moor')).toBeLessThan(out.indexOf('Clifton moor'))
+  })
+
+  it('Home does not lead with the June session, and never calls it live', () => {
+    const out = renderToStaticMarkup(<Home />)
+    expect(out).toContain('<h2>Lindley Moor</h2>')
+    expect(out).not.toContain('Attacking session')
+    // The badge the stale marker produced: "Live now" on a session that
+    // finished in June.
+    expect(out).not.toContain('Live now')
+  })
+
+  it('Home does not call a FUTURE session live because of a marker left on it', () => {
+    // The hero is the only place a stale marker can still reach once the
+    // lifecycle is right, because a stale row is past and past is never the
+    // hero. A future session carrying contradictory live columns IS still
+    // the hero (it is still to come), and reading the column there put
+    // "Live now" on a session ten days away.
+    state.sessions = [{ ...IN_TEN_DAYS, liveActivityIndex: 2, liveActivityStartedAt: '2026-06-16T16:55:16.004Z' }]
+    const out = renderToStaticMarkup(<Home />)
+    expect(out).toContain('<h2>Lindley Moor</h2>')
+    expect(out).not.toContain('Live now')
+    // And it says what it should say instead: how far away the night is.
+    expect(out).toContain('In 10 days')
+  })
+
+  it('Home does call tonight live while somebody is actually driving it', () => {
+    // The other direction, so the badge is not simply switched off. A
+    // session being driven now, marker stamped this morning, still leads
+    // with Live now.
+    state.sessions = [
+      {
+        ...LAST_NIGHT,
+        id: 's-now',
+        name: 'Being driven',
+        date: '2026-08-12',
+        time: '08:30',
+        liveActivityIndex: 1,
+        liveActivityStartedAt: new Date(2026, 7, 12, 8, 45).toISOString(),
+      },
+    ]
+    const out = renderToStaticMarkup(<Home />)
+    expect(out).toContain('<h2>Being driven</h2>')
+    expect(out).toContain('Live now')
+  })
+
+  // Home's "Watch live" quick action is DELIBERATELY NOT COVERED HERE, and
+  // that is a finding rather than an omission: it renders only when the
+  // action list is empty, and the action list always holds Plan session for
+  // anybody who reaches CoachHome at all, because both are gated on
+  // sessions.create. A member without it gets ParentHome instead. So the
+  // branch is unreachable, and a test asserting it would only be asserting
+  // that ParentHome renders. Its liveNow read still goes through the seam,
+  // which ../lib/sessionLifecycle.invariant.test.ts enforces from the
+  // source side.
+
+  it('Sessions still opens on Upcoming with Past beside it, unchanged', () => {
+    const out = renderToStaticMarkup(<Sessions />)
+    expect(out).toContain('aria-pressed="true">Upcoming</button>')
+    expect(out).toContain('aria-pressed="false">Past</button>')
+  })
+})

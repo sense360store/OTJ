@@ -130,11 +130,32 @@ describe('what the third state must not swallow', () => {
     expect(isSessionActive(lastMonth, at(2026, 8, 11, 22, 30))).toBe(false)
   })
 
-  it('keeps a live session active however late it runs', () => {
-    const running = { ...PRODUCTION_SESSION, liveActivityIndex: 2 }
+  it('keeps a live session active however late it runs, on its own day', () => {
+    const running = { ...PRODUCTION_SESSION, liveActivityIndex: 2, liveActivityStartedAt: '2026-08-11T21:00:00Z' }
     expect(sessionLifecycle(running, at(2026, 8, 11, 23, 30))).toBe('active')
-    // Even past midnight: the driver has not pressed End.
-    expect(sessionLifecycle(running, at(2026, 8, 12, 1, 0))).toBe('active')
+  })
+
+  it('does not let a marker nobody cleared carry the session into the next day', () => {
+    // The other half of the same rule, and the reason the stale live
+    // regression existed: "the driver has not pressed End" is not evidence
+    // that anybody is driving, because pressing End is the ONLY thing that
+    // clears the columns. A driver who closed the tab leaves them set for
+    // ever. See isSessionLive in ./sessionLifecycle.
+    const running = { ...PRODUCTION_SESSION, liveActivityIndex: 2, liveActivityStartedAt: '2026-08-11T21:00:00Z' }
+    expect(sessionLifecycle(running, at(2026, 8, 12, 1, 0))).toBe('past')
+  })
+
+  it('keeps a session whose driver is still pressing Next after midnight', () => {
+    // The marker is restamped on every activity change, so a coach genuinely
+    // running into the small hours has evidence dated today and keeps the
+    // session. This is what the calendar day rule buys that a bare column
+    // read cannot: it tells the two apart.
+    const stillGoing = {
+      ...PRODUCTION_SESSION,
+      liveActivityIndex: 3,
+      liveActivityStartedAt: new Date(2026, 7, 12, 0, 40).toISOString(),
+    }
+    expect(sessionLifecycle(stillGoing, at(2026, 8, 12, 1, 0))).toBe('active')
   })
 
   it('treats a session completed today as ended today, not as gone', () => {

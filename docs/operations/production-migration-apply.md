@@ -39,6 +39,35 @@ and 0 with `included_in_groups` true immediately afterwards, which is what a
 defaulted column with no backfill must read. The four `register_entries` RLS
 policies remained 4, with no `FOR ALL` policy introduced.
 
+## Reviewed, registered, not yet applied
+
+| Migration | Reviewed against | State |
+|---|---|---|
+| `0048_spond_session_link_unique` | `20260812064038` / `register_group_inclusion` | in the register and the dropdown, never run |
+
+`0048` repairs one bad Spond link and adds
+`sessions_spond_event_id_unique`, so a mirrored Spond event can hold at most
+one Hub session. It is in `REVIEWED_MIGRATIONS` and in the dropdown so it can
+be applied through this workflow after review, and it has not been applied.
+`EXPECTED_LAST_MIGRATION` therefore stays at `20260812064038`.
+
+**It must be applied BEFORE the frontend from its pull request reaches
+production.** The repository auto-deploys `main` to Vercel, so the safe order
+is: merge nothing, run this workflow on the migration's branch commit, confirm
+the post-apply gate, then merge. Applying it late is not catastrophic (the new
+client works against a database without the index; it simply never sees the
+refusal it knows how to explain), but the duplicate it prevents is silent
+corruption, so early is the right way round.
+
+Its behaviour was exercised against a real PostgreSQL before shipping:
+`.github/scripts/production-migration/test_0048_spond_link_unique.sh` builds a
+stand-in of the hosted state, applies the file, and asserts that exactly one
+row moved, that no other row and no live marker changed, that the index refuses
+a second session on the same event including for two racing connections, and
+that an unexpected third duplicate makes the whole run abort with the database
+untouched. It needs a local PostgreSQL server and is therefore not part of CI;
+run it by hand when reviewing the migration.
+
 `0046` is the first migration this workflow applied. Its ledger row records
 `created_by` as the workflow and the commit it ran from, an `idempotency_key`
 of `otj:migration:0046_drill_diagram`, and one `statements` entry hashing to

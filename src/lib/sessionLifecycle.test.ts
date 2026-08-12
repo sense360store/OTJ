@@ -152,12 +152,24 @@ describe('active and past', () => {
   })
 
   it('6. a session being driven live is active past its expected end', () => {
-    // A coach running long is still running the session. The live state is
-    // written by the driver, so it is a fact about now, not a stale flag.
+    // A coach running long is still running the session, so a CURRENT live
+    // marker holds the session open however far past its planned end the
+    // clock has gone.
     const live = training({ liveActivityIndex: 2, liveActivityStartedAt: '2026-08-11T18:40:00Z' })
-    expect(isSessionLive(live)).toBe(true)
+    expect(isSessionLive(live, at(2026, 8, 11, 21, 0))).toBe(true)
     expect(isSessionActive(live, at(2026, 8, 11, 21, 0))).toBe(true)
-    expect(isSessionActive(live, at(2026, 8, 12, 9, 0))).toBe(true)
+  })
+
+  it('6b. a live marker nobody cleared does not hold the session open for ever', () => {
+    // THE STALE LIVE REGRESSION. Pressing End is the only thing that clears
+    // live_activity_index, so a driver who closed the tab in June left the
+    // column set. Read as a bare column that says "this session is running",
+    // which put 16 June under Upcoming on 12 August. Read as evidence with a
+    // date on it, it says nothing at all, and the clock answers instead.
+    const live = training({ liveActivityIndex: 2, liveActivityStartedAt: '2026-08-11T18:40:00Z' })
+    expect(isSessionLive(live, at(2026, 8, 12, 9, 0))).toBe(false)
+    expect(isSessionActive(live, at(2026, 8, 12, 9, 0))).toBe(false)
+    expect(sessionLifecycle(live, at(2026, 8, 12, 9, 0))).toBe('past')
   })
 
   it('lets a completed status end a session the live columns never cleared', () => {

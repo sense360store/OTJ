@@ -5,7 +5,12 @@
 // the owner's name. The sessions RLS enforces the same rules on write.
 import { useState } from 'react'
 import { ALL_EVENTS_LABEL, TRAINING_LABEL } from '../lib/eventKind'
-import { applyEventFilter, DEFAULT_EVENT_FILTER, type EventFilterState } from '../lib/eventFilter'
+import {
+  applyEventFilter,
+  DEFAULT_EVENT_FILTER,
+  type EventFilterState,
+  orderEventsForScope,
+} from '../lib/eventFilter'
 import { isSessionEndedToday, LIFECYCLE_SCOPE_LABELS, matchesLifecycleScope } from '../lib/sessionLifecycle'
 import { emptyEventListNote, NO_PAST_SESSIONS_NOTE } from '../lib/sessionEmptyState'
 import { useNav } from '../hooks/useNav'
@@ -243,7 +248,10 @@ export function Sessions() {
   //
   // The composition lives in ../lib/eventFilter so Home and the Spond surfaces
   // give the same answer; only the team predicate is local, because it depends
-  // on session coverage and the parent scope.
+  // on session coverage and the parent scope. The ORDER comes from the same
+  // place: Upcoming soonest first, Past most recent first. Neither is the
+  // order the query returns for Past, which read oldest first and buried last
+  // night under a season of history.
   const allTeamIds = Object.keys(teamById)
   // One moment for the whole render, so every row on screen is judged
   // against the same clock rather than against the millisecond it happened
@@ -260,9 +268,15 @@ export function Sessions() {
       })
     : // Parents get the same lifecycle split with none of the coaching
       // narrowings: their schedule is their team's next nights, and Past is
-      // there when they want to look back at one.
-      (hasTeam && parentScope === 'team' ? sessions.filter(teamScoped) : sessions).filter((s) =>
-        matchesLifecycleScope(s, filter.scope, now),
+      // there when they want to look back at one. It does not go through
+      // applyEventFilter (there is no kind, team or ownership narrowing to
+      // apply), so it orders through the shared seam explicitly rather than
+      // reading in whatever order the query returned.
+      orderEventsForScope(
+        (hasTeam && parentScope === 'team' ? sessions.filter(teamScoped) : sessions).filter((s) =>
+          matchesLifecycleScope(s, filter.scope, now),
+        ),
+        filter.scope,
       )
   // Whether the club holds any finished session AT ALL, measured before
   // any narrowing. This is the one question "no sessions have finished
