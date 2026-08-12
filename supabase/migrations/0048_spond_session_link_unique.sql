@@ -407,6 +407,14 @@ begin
   --    only session that does. Guarded on before_bad, because on a database
   --    that never held the bad pair neither row exists and there is nothing
   --    to say about them.
+  --
+  --    This is also what closes the one odd state the assumption block above
+  --    steps over: the June session holding the link while the 11 August one
+  --    does not. The block sees a single holder and skips its pair checks,
+  --    the repair clears that holder, and this check then finds the event
+  --    held by nobody and aborts the whole transaction. Fail closed, with a
+  --    message that says what it found, which is the right answer for a
+  --    state this file was not reviewed against.
   if before_bad = 1 then
     select count(*) into n
       from public.sessions

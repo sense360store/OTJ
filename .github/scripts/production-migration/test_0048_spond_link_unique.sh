@@ -391,6 +391,31 @@ apply_migration otj_d >/dev/null 2>&1
   || fail "the migration did not apply to an empty sessions table"
 ok "it applies to an empty sessions table and adds the guarantee"
 
+# =====================================================================
+echo
+echo "== E. only the WRONG session holds the link: the migration aborts"
+# The one state the assumption block steps over (it sees a single holder and
+# skips its pair checks). The verification catches it after the repair has
+# emptied the event, and the whole transaction rolls back.
+build_standin otj_e
+seed_reviewed_state otj_e
+psql_run -d otj_e -qc "update public.sessions set spond_event_id = null where id = '${KEEP}'::uuid" >/dev/null
+before_e="$(scalar otj_e "select md5(string_agg(to_jsonb(s)::text, ',' order by s.id)) from public.sessions s")"
+set +e
+apply_migration otj_e >"${WORK}/e.log" 2>&1
+e_rc=$?
+set -e
+[ "${e_rc}" -ne 0 ] || fail "the migration applied against a state it was not reviewed for"
+grep -q "the 11 August event is held by 0 sessions" "${WORK}/e.log" \
+  || fail "the refusal did not say what it found: $(tail -3 "${WORK}/e.log")"
+ok "it aborted rather than clearing the only link to the event"
+[ "$(scalar otj_e "select md5(string_agg(to_jsonb(s)::text, ',' order by s.id)) from public.sessions s")" = "${before_e}" ] \
+  || fail "the failed run changed a session row"
+ok "every session row is exactly as it was"
+[ "$(scalar otj_e "select count(*) from pg_class where relname = 'sessions_spond_event_id_unique'")" = "0" ] \
+  || fail "the index survived a failed run"
+ok "the index was not created"
+
 echo
 echo "PASS: 0048 repairs exactly one row where there is one to repair, refuses every"
 echo "      duplicate it was not shown, applies cleanly where there is nothing to repair,"

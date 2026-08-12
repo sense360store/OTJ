@@ -68,12 +68,15 @@ either way, saying which branch it took.
 
 Its behaviour was exercised against a real PostgreSQL before shipping:
 `.github/scripts/production-migration/test_0048_spond_link_unique.sh` builds a
-stand-in and runs four databases. Against the hosted state it asserts exactly
+stand-in and runs five databases. Against the hosted state it asserts exactly
 one row moved, that no other row and no live marker changed, and that the index
 then refuses a second session on the same event including for two racing
 connections. Against an unexpected third duplicate it asserts the whole run
 aborts with the database untouched. Against a database with nothing to repair,
-and against an empty one, it asserts the file applies and changes no row. It
+and against an empty one, it asserts the file applies and changes no row. And
+against the one odd state the assumption checks step over (only the wrong
+session holding the link), it asserts the verification catches it and the
+transaction rolls back. It
 needs a local PostgreSQL server and is therefore not part of CI; run it by hand
 when reviewing the migration.
 
