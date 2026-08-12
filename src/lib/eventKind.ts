@@ -119,6 +119,23 @@ function eventLabel(event: ClassifiableEvent): string {
 // "cup" exclusion. One optional space or hyphen, and nothing else: "warm"
 // and "up" still have to be adjacent, so "Warm weather cup" is not
 // rescued. "practis" covers the British verb beside the American noun.
+//
+// THE SECOND HALF OF THIS LIST IS THE PRODUCT'S OWN COACHING VOCABULARY,
+// and it is here rather than inside the fixture rule below on purpose.
+// A coach who titles a night "Titans – Shooting" has named what they are
+// coaching, and "Shooting" is a topic, not an opponent. The fixture rule
+// cannot tell those apart by shape: "Shooting" and "Rastrick" are both one
+// capitalised word. Rather than teach that rule a list of things it must
+// refuse to hide, which would be a hiding rule with an exception list, the
+// vocabulary joins the rule that can only ever SHOW a row. Adding a word
+// here can move a title from fixture to training and never the other way,
+// which is the only direction this module is allowed to be incomplete in.
+//
+// The words are the FA's own session taxonomy (themes and player skills,
+// the lists src/lib/fa.ts offers a coach when they fill a session in) plus
+// the coaching words this club's game uses that the FA's lists do not
+// carry. Deliberately not here: "game", "final" and other words a fixture
+// is at least as likely to contain as a training night.
 const TRAINING_WORDS = [
   'training',
   'session',
@@ -126,6 +143,45 @@ const TRAINING_WORDS = [
   'practise',
   'drill',
   'warm[ -]?up',
+  // FA themes.
+  'attacking',
+  'defending',
+  'goalkeeping',
+  'futsal',
+  // FA player skills.
+  'finishing',
+  'passing',
+  'receiving',
+  'pressing',
+  'marking',
+  'tackling',
+  'turning',
+  'intercepting',
+  'covering',
+  // The rest of a coaching vocabulary, which the FA lists do not cover.
+  'shooting',
+  'dribbling',
+  'crossing',
+  'heading',
+  'possession',
+  'transition',
+  'rondo',
+  'mastery',
+  'sided',
+  'conditioning',
+  'fitness',
+  'technique',
+  'skill',
+  'development',
+  'coaching',
+  'prep',
+  // Where a night happens, which is the other thing a coach puts after a
+  // team name. Each of these is far likelier to describe a training venue
+  // than to be the whole name of a club playing.
+  'indoor',
+  'outdoor',
+  'astro',
+  'gym',
 ] as const
 
 const TRAINING_RE = new RegExp(`\\b(?:${TRAINING_WORDS.join('|')})s?\\b`, 'i')
@@ -230,16 +286,53 @@ const VERSUS_SEPARATOR = /\s+(?:[–—-]|vs?|versus)\s+/i
 // Words a name may contain in lower case without ceasing to be a name.
 const NAME_JOINERS = new Set(['of', 'the', 'and', 'at', 'on', 'in', 'de', 'la', 'le'])
 
+// Sides that are a moment rather than an opponent. "Titans – Tuesday" is
+// how half the country titles a training night, and Tuesday passes every
+// shape test a place name passes.
+//
+// A CLOSED SET, which is what makes it different from the coaching
+// vocabulary above. There are seven days and twelve months and there will
+// not be more, so this cannot be incomplete the way a topic list can.
+const NOT_AN_OPPONENT = new Set([
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december',
+])
+
 // Strips the punctuation a title wraps a word in, so "(Titans)" and
 // "Rastrick," are read as the words they are.
 function bareWord(word: string): string {
   return word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
 }
 
-// Whether one side of a title reads as a name: a short run of words, each
-// either capitalised, numeric, or one of the small joining words above.
-// "Lindley Moor" and "TITANS" pass; "passing and receiving" does not,
-// because "passing" is neither capitalised nor a joiner.
+// Whether one side of a title reads as the name of somebody playing: a
+// short run of words, each either capitalised or one of the small joining
+// words above, and none of them a day or a month. "Lindley Moor" and
+// "TITANS" pass; "passing and receiving" does not, because "passing" is
+// neither capitalised nor a joiner.
+//
+// AN UPPERCASE LETTER, NOT A DIGIT. Accepting a leading digit made
+// "5-a-side" and "4v4" read as opponents, because bareWord strips only the
+// edges and leaves the run whole, so "Titans – 5-a-side" was a fixture. It
+// also made "Week 3" a name. A team or a place starts with a letter; the
+// cost is that an opponent written "1874 Northwich" is not recognised,
+// which shows a fixture and is the direction this module fails in.
 function isNameLike(side: string): boolean {
   const words = side.split(/\s+/).filter(Boolean)
   // Four is a generous ceiling for a club or place name and a tight one
@@ -249,8 +342,10 @@ function isNameLike(side: string): boolean {
   for (const word of words) {
     const bare = bareWord(word)
     if (!bare) return false
-    if (NAME_JOINERS.has(bare.toLowerCase())) continue
-    if (!/^[\p{Lu}\p{N}]/u.test(bare)) return false
+    const lower = bare.toLowerCase()
+    if (NOT_AN_OPPONENT.has(lower)) return false
+    if (NAME_JOINERS.has(lower)) continue
+    if (!/^\p{Lu}/u.test(bare)) return false
     named = true
   }
   // A side made of nothing but joining words is not a name.
@@ -359,8 +454,16 @@ export function isTrainingEvent(event: ClassifiableEvent, ctx?: EventKindContext
   }
   const label = eventLabel(event)
   if (TRAINING_RE.test(label)) return true
-  if (isFixtureTitle(label, ctx?.teamNames)) return false
-  return !NON_TRAINING_RE.test(label.replace(NOT_A_FIXTURE, ' '))
+  // Both hiding rules read the label with the pre match and match day
+  // phrases already taken out, and they have to. Running the fixture rule
+  // on the raw label made "TITANS – Pre Match" a fixture: the phrase that
+  // exists precisely to say "this is training" became one side of a
+  // two-sided title, and the strip a line below it never got the chance to
+  // rescue it. Removed first, that side is empty and the shape does not
+  // hold, which is the answer both rules were always meant to give.
+  const withoutTrainingPhrases = label.replace(NOT_A_FIXTURE, ' ')
+  if (isFixtureTitle(withoutTrainingPhrases, ctx?.teamNames)) return false
+  return !NON_TRAINING_RE.test(withoutTrainingPhrases)
 }
 
 // The one filter every surface calls. Kept separate from isTrainingEvent so

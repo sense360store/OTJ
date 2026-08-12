@@ -406,6 +406,84 @@ describe('an opponent-versus-team title is a fixture, not training', () => {
     expect(isTrainingEvent({ title: 'Lindley Moor – TITANS' }, { teamNames: [] })).toBe(true)
   })
 
+  // ---- the review that rewrote this rule ---------------------------
+  //
+  // An adversarial pass over the first version found three ways it hid a
+  // training night, which is the direction this module is not allowed to
+  // fail in. All three are pinned here.
+
+  it('leaves a team beside a coaching topic alone, however it is capitalised', () => {
+    // THE DEFECT. The first version justified itself by saying the other
+    // side reads as prose, and tested only "Titans – passing and
+    // receiving". Title Case is the normal way a title is typed, and
+    // "Shooting" and "Rastrick" are both one capitalised word, so every
+    // one of these was hidden. The rescue is the coaching vocabulary in
+    // TRAINING_WORDS, which can only ever show a row.
+    for (const title of [
+      'Titans – Shooting',
+      'TITANS – Fitness',
+      'TITANS – Development',
+      'Titans – Goalkeeping',
+      'Titans – Finishing',
+      'TITANS – Skills And Shooting',
+      'Titans – Passing And Receiving',
+      'Titans - Rondo',
+      'Titans - Small Sided Games',
+      'Gladiators – Defending As A Unit',
+      'Spartans – Ball Mastery',
+      'Titans – Conditioning',
+      'Titans – Possession',
+      'Titans – Indoor',
+    ]) {
+      expect(training(title)).toBe(true)
+    }
+  })
+
+  it('leaves a team beside a day or a month alone', () => {
+    // A closed set, unlike the topic vocabulary: there are seven days and
+    // twelve months and there will not be more. "Titans – Tuesday" is how
+    // half the country titles a training night.
+    expect(training('Titans - Tuesday')).toBe(true)
+    expect(training('TITANS – Thursday')).toBe(true)
+    expect(training('Titans – August')).toBe(true)
+  })
+
+  it('leaves a numeric side alone, because a club does not start with a digit', () => {
+    // bareWord strips only the edges, so "5-a-side" survived whole and a
+    // leading digit used to read as a name.
+    expect(training('Titans – 5-a-side')).toBe(true)
+    expect(training('Titans - 7 A Side')).toBe(true)
+    expect(training('Titans – 4v4')).toBe(true)
+    expect(training('TITANS – Week 3')).toBe(true)
+  })
+
+  it('lets the pre match and match day rescue reach this rule too', () => {
+    // THE DEFECT. The fixture rule ran on the raw label and the phrases
+    // that exist to say "this is training" were stripped one line later,
+    // so the phrase became one side of a two-sided title and lost. The
+    // repo's own seed data carries "Saturday Pre-Match".
+    for (const title of [
+      'Titans – Pre-Match',
+      'Pre-Match – TITANS',
+      'Titans – Pre Match',
+      'TITANS – Post Match',
+      'Titans – Match Day',
+      'TITANS – Matchday',
+      'Titans – Pre-Match Prep',
+    ]) {
+      expect(training(title)).toBe(true)
+    }
+  })
+
+  it('still hides the three production fixtures after all of that narrowing', () => {
+    // The point of the exercise: every rescue above had to leave the
+    // reported defect fixed. None of these names a day, a month, a digit
+    // or a coaching topic.
+    expect(training('Lindley Moor – TITANS')).toBe(false)
+    expect(training('Hepworth – TITANS')).toBe(false)
+    expect(training('TROJANS – Rastrick')).toBe(false)
+  })
+
   it('states the shapes it deliberately misses', () => {
     // Each of these is a real fixture this rule leaves in the Training
     // view, listed so nobody mistakes the rule for complete. Every miss
@@ -413,6 +491,17 @@ describe('an opponent-versus-team title is a fixture, not training', () => {
     expect(training('U8 v Horbury')).toBe(true)
     expect(training('Titans U9 – Hepworth')).toBe(true)
     expect(training('titans – rastrick')).toBe(true)
+  })
+
+  it('names the residual it cannot close, in the direction that hides', () => {
+    // THE ONE PLACE THIS MODULE IS INCOMPLETE TOWARDS HIDING. A single
+    // capitalised word that is not a day, a month, a digit or a coaching
+    // topic is indistinguishable from an opponent, so a training night
+    // titled this way is under All events rather than Training. There is
+    // no fact in the row that separates the two; adding the word to
+    // TRAINING_WORDS is the one line fix, and doing so can only ever show
+    // more. Pinned so the limit is a decision and not a surprise.
+    expect(training('Titans – Bounce')).toBe(false)
   })
 
   it('still lets a positive training word outrank the whole shape', () => {
