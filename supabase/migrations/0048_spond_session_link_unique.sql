@@ -55,14 +55,22 @@
 -- WHAT IT DOES
 -- ---------------------------------------------------------------------
 --
---   1. Proves the hosted database is still exactly the one described
---      above, and aborts otherwise.
---   2. Clears spond_event_id on that ONE June session. Nothing else about
---      the row changes and the row is not deleted.
+--   1. Refuses any duplicated Spond link it was not shown, naming every
+--      one of them.
+--   2. Clears spond_event_id on that ONE June session, where it is still
+--      there. Nothing else about the row changes and the row is not
+--      deleted.
 --   3. Adds sessions_spond_event_id_unique, a partial unique index over
 --      spond_event_id where it is not null, so the corruption cannot
 --      recur.
 --   4. Proves all of it, including the things it must NOT have done.
+--
+-- IT IS CORRECT IN TWO PLACES, which is why step 2 says "where it is still
+-- there". `supabase db reset` applies every migration in this directory to
+-- a fresh local stack, on every developer machine and in CI, and that
+-- database has never held the hosted damage. A file that INSISTED on
+-- finding the bad pair would fail there for being right. So an absence is
+-- accepted and reported; an unexpected duplicate is refused.
 --
 -- ---------------------------------------------------------------------
 -- WHAT IT DELIBERATELY DOES NOT DO
@@ -72,12 +80,14 @@
 -- name, date, plan, coach, teams, register rows, saved groups and board;
 -- it simply stops claiming an event that was never its own.
 --
--- IT REPAIRS NOTHING IT WAS NOT SHOWN. If a duplicate group appears that
--- is not the pair named above, this file raises and the whole transaction
+-- IT REPAIRS NOTHING IT WAS NOT SHOWN. If a duplicated event appears that
+-- is not the one named above, this file raises and the whole transaction
 -- rolls back. There is no "keep the newest" or "keep the one whose date
 -- matches" rule here, because either would be a guess about which link a
 -- human meant, dressed up as a migration. A second occurrence is a second
--- review.
+-- review. The same applies to the reviewed event itself: it is repaired
+-- only while it is held by exactly the two rows described above, each
+-- still carrying the date it was reviewed with.
 --
 -- IT DOES NOT TOUCH live_activity_index. Five historic rows in the hosted
 -- database carry a live marker their driver never cleared, which is what
@@ -219,99 +229,113 @@ select
     where s.id = '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid)               as repaired_row_fingerprint,
   (select count(*) from public.audit_events)                                 as audit_rows,
   (select count(*) from public.sessions where live_activity_index is not null) as live_marked_rows,
+  -- Whether the ONE bad link this file repairs is present: 1 on the hosted
+  -- database, 0 anywhere the repair has nothing to do (a fresh `supabase db
+  -- reset`, a developer's stack, a restored copy taken after the repair).
+  -- Every count below is stated relative to this, so the same file is correct
+  -- in both places without either branch guessing.
+  (select count(*) from public.sessions
+    where id = '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid
+      and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid)      as bad_link_rows,
   (select count(*) from pg_policies
     where schemaname = 'public' and tablename = 'sessions')                  as session_policies;
 
 -- ---------------------------------------------------------------------
--- THE ASSUMPTIONS, CHECKED BEFORE ANYTHING IS WRITTEN.
+-- THE ASSUMPTIONS, AND THE REPAIR, IN ONE BLOCK.
 --
--- This file was written against one specific database state, read only,
--- on 2026-08-12. If the state has moved, the right answer is to stop and
--- have a human look, not to apply a repair aimed at rows that are no
--- longer what they were.
+-- The file has to be correct in two places: the hosted database, where one
+-- named link is wrong and must be cleared, and every OTHER database this
+-- repository's migrations run against, where that link has never existed.
+-- `supabase db reset` applies every migration to a fresh local stack on
+-- every developer machine and in CI, so a file that insisted on finding
+-- production's damage would fail there, every time, for being correct.
+--
+-- So the shape is: refuse anything UNEXPECTED, repair the one thing that is
+-- expected IF it is there, and add the guarantee either way. What is
+-- refused is a duplicate this file was not shown; what is not refused is an
+-- absence.
 -- ---------------------------------------------------------------------
 do $$
 declare
   n integer;
   dupes text;
+  bad integer;
 begin
-  -- 1. EXACTLY ONE duplicate group, and it is the known event. This is the
-  --    check that fails closed on an unexpected third duplicate: the
-  --    message names every offending event so the human reading the failed
-  --    run knows what to review.
+  -- 1. NO DUPLICATE THIS FILE WAS NOT SHOWN. This is the fail closed check:
+  --    an unexpected duplicated event has no repair here, because "keep the
+  --    newest" and "keep the one whose date matches" are both guesses about
+  --    which link a human meant. The message names every offender so the
+  --    person reading the failed run knows exactly what to review.
   select count(*), coalesce(string_agg(d.spond_event_id::text, ', ' order by d.spond_event_id), '')
     into n, dupes
     from (select spond_event_id
             from public.sessions
            where spond_event_id is not null
            group by spond_event_id
-          having count(*) > 1) d;
-  if n <> 1 then
-    raise exception 'spond_session_link_unique: expected exactly one duplicated Spond link, found % (%). This migration repairs one known pair and refuses to guess at any other.', n, dupes;
-  end if;
-  if dupes <> 'e3065302-c164-4b23-b52a-2ce813271dac' then
-    raise exception 'spond_session_link_unique: the duplicated Spond event is %, not the reviewed e3065302-c164-4b23-b52a-2ce813271dac', dupes;
+          having count(*) > 1) d
+   where d.spond_event_id <> 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
+  if n <> 0 then
+    raise exception 'spond_session_link_unique: % Spond event(s) are held by more than one session and are not the reviewed pair (%). This migration repairs one known link and refuses to guess at any other.', n, dupes;
   end if;
 
-  -- 2. The group holds exactly the two reviewed sessions, no more.
+  -- 2. THE REVIEWED PAIR, if it is still here. On the hosted database it is;
+  --    on a fresh database none of this matches and there is nothing to do.
   select count(*) into n
     from public.sessions
-   where spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid
-     and id in ('243aab0d-02a1-4ebe-887f-d2de588fc29e'::uuid,
-                '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid);
-  if n <> 2 then
-    raise exception 'spond_session_link_unique: the duplicated event is not held by the two reviewed sessions (matched % of 2)', n;
+   where spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
+
+  if n > 1 then
+    -- The event IS duplicated, so it must be duplicated by exactly the two
+    -- rows this file was reviewed against, each still what it was described
+    -- as. Anything else is an unexpected duplicate wearing a familiar id.
+    if n <> 2 then
+      raise exception 'spond_session_link_unique: the 11 August event is held by % sessions, and only the reviewed pair of 2 can be repaired here', n;
+    end if;
+    select count(*) into n
+      from public.sessions
+     where id = '243aab0d-02a1-4ebe-887f-d2de588fc29e'::uuid
+       and date = date '2026-08-11'
+       and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
+    if n <> 1 then
+      raise exception 'spond_session_link_unique: the 11 August session 243aab0d is not the row it was reviewed as; refusing to repair';
+    end if;
+    select count(*) into n
+      from public.sessions
+     where id = '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid
+       and date = date '2026-06-16'
+       and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
+    if n <> 1 then
+      raise exception 'spond_session_link_unique: the 16 June session 13637155 is not the row it was reviewed as; refusing to repair';
+    end if;
   end if;
 
-  -- 3. THE ROW THAT KEEPS THE LINK is the 11 August Training session, and
-  --    it still is what it was described as.
-  select count(*) into n
-    from public.sessions
-   where id = '243aab0d-02a1-4ebe-887f-d2de588fc29e'::uuid
-     and date = date '2026-08-11'
-     and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
-  if n <> 1 then
-    raise exception 'spond_session_link_unique: the 11 August session 243aab0d is not the row it was reviewed as; refusing to repair';
-  end if;
-
-  -- 4. THE ROW THAT LOSES THE LINK is the 16 June session, and it still is
-  --    what it was described as.
-  select count(*) into n
-    from public.sessions
-   where id = '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid
-     and date = date '2026-06-16'
-     and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
-  if n <> 1 then
-    raise exception 'spond_session_link_unique: the 16 June session 13637155 is not the row it was reviewed as; refusing to repair';
-  end if;
-
-  -- 5. The index this migration adds must not already exist. The apply
-  --    workflow's pre gate asserts the same thing; asserting it here too
-  --    means the file is safe to reason about on its own.
+  -- 3. THE INDEX must not already exist. The apply workflow's pre gate
+  --    asserts the same thing; asserting it here means the file is safe to
+  --    reason about on its own.
   if exists (select 1 from pg_class c
               where c.relname = 'sessions_spond_event_id_unique'
                 and c.relnamespace = 'public'::regnamespace) then
     raise exception 'spond_session_link_unique: sessions_spond_event_id_unique already exists';
   end if;
-end
-$$;
 
--- ---------------------------------------------------------------------
--- THE REPAIR. One row, one column, by primary key, and only while it
--- still holds the link this migration is removing. Not a delete, not a
--- rewrite: the June session keeps everything else it has ever had.
--- ---------------------------------------------------------------------
-do $$
-declare
-  n integer;
-begin
+  -- 4. THE REPAIR. One row, one column, by primary key, and only while it
+  --    still holds the link being removed. Not a delete, not a rewrite: the
+  --    June session keeps everything else it has ever had. Where the link is
+  --    already absent this updates nothing, which is the whole point of
+  --    counting first.
+  select bad_link_rows into bad from sessions_link_before;
   update public.sessions
      set spond_event_id = null
    where id = '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid
      and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
   get diagnostics n = row_count;
-  if n <> 1 then
-    raise exception 'spond_session_link_unique: the repair touched % rows, expected exactly 1', n;
+  if n <> bad then
+    raise exception 'spond_session_link_unique: the repair touched % rows, expected exactly %', n, bad;
+  end if;
+  if bad = 1 then
+    raise notice 'spond_session_link_unique: cleared the erroneous Spond link on session 13637155';
+  else
+    raise notice 'spond_session_link_unique: no erroneous Spond link present; adding the guarantee only';
   end if;
 end
 $$;
@@ -342,12 +366,13 @@ declare
   before_audit integer;
   before_live integer;
   before_policies integer;
+  before_bad integer;
   after_text text;
 begin
   select total_rows, linked_rows, other_rows_fingerprint, repaired_row_fingerprint,
-         audit_rows, live_marked_rows, session_policies
+         audit_rows, live_marked_rows, session_policies, bad_link_rows
     into before_total, before_linked, before_others, before_repaired,
-         before_audit, before_live, before_policies
+         before_audit, before_live, before_policies, before_bad
     from sessions_link_before;
 
   -- 1. THE INDEX, in the exact shape this file claims: unique, partial,
@@ -377,28 +402,36 @@ begin
     raise exception 'spond_session_link_unique: % Spond event(s) are still held by more than one session', n;
   end if;
 
-  -- 3. THE RIGHT LINK SURVIVED. The 11 August session still points at the
-  --    11 August event, and it is now the only session that does.
-  select count(*) into n
-    from public.sessions
-   where spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
-  if n <> 1 then
-    raise exception 'spond_session_link_unique: the 11 August event is held by % sessions, expected exactly 1', n;
-  end if;
-  if not exists (select 1 from public.sessions
-                  where id = '243aab0d-02a1-4ebe-887f-d2de588fc29e'::uuid
-                    and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid) then
-    raise exception 'spond_session_link_unique: the 11 August session lost its Spond link, which is the one link this migration had to keep';
+  -- 3. THE RIGHT LINK SURVIVED, where there was a repair to do. The
+  --    11 August session still points at the 11 August event and is now the
+  --    only session that does. Guarded on before_bad, because on a database
+  --    that never held the bad pair neither row exists and there is nothing
+  --    to say about them.
+  if before_bad = 1 then
+    select count(*) into n
+      from public.sessions
+     where spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid;
+    if n <> 1 then
+      raise exception 'spond_session_link_unique: the 11 August event is held by % sessions, expected exactly 1', n;
+    end if;
+    if not exists (select 1 from public.sessions
+                    where id = '243aab0d-02a1-4ebe-887f-d2de588fc29e'::uuid
+                      and spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac'::uuid) then
+      raise exception 'spond_session_link_unique: the 11 August session lost its Spond link, which is the one link this migration had to keep';
+    end if;
+
+    -- 4. THE JUNE SESSION IS STILL THERE, unlinked. Not deleted, not
+    --    renamed, not re-dated, not re-owned.
+    if not exists (select 1 from public.sessions
+                    where id = '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid
+                      and spond_event_id is null) then
+      raise exception 'spond_session_link_unique: the June session is missing or still linked';
+    end if;
   end if;
 
-  -- 4. THE JUNE SESSION IS STILL THERE, unlinked, and otherwise byte for
-  --    byte what it was. Not deleted, not renamed, not re-dated, not
-  --    re-owned.
-  if not exists (select 1 from public.sessions
-                  where id = '13637155-706f-4d8a-9dec-b5da5a15f620'::uuid
-                    and spond_event_id is null) then
-    raise exception 'spond_session_link_unique: the June session is missing or still linked';
-  end if;
+  -- The repaired row, whole, minus the one column this file may change.
+  -- Compares 'missing' with 'missing' where the row does not exist, which is
+  -- the correct claim there: it did not appear.
   select coalesce(md5((to_jsonb(s) - 'spond_event_id')::text), 'missing')
     into after_text
     from public.sessions s
@@ -421,8 +454,8 @@ begin
     raise exception 'spond_session_link_unique: the session count changed (% -> %); this migration deletes nothing', before_total, n;
   end if;
   select count(*) into n from public.sessions where spond_event_id is not null;
-  if n <> before_linked - 1 then
-    raise exception 'spond_session_link_unique: expected exactly one link to be cleared (% -> %)', before_linked, n;
+  if n <> before_linked - before_bad then
+    raise exception 'spond_session_link_unique: expected exactly % link(s) to be cleared (% -> %)', before_bad, before_linked, n;
   end if;
 
   -- 6. NO AUDIT ROW. audit_sessions() ignores a spond_event_id only

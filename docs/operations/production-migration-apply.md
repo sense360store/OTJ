@@ -59,14 +59,23 @@ client works against a database without the index; it simply never sees the
 refusal it knows how to explain), but the duplicate it prevents is silent
 corruption, so early is the right way round.
 
+It is correct in two places, which is not optional: `supabase db reset`
+applies every migration in `supabase/migrations/` to a fresh local stack on
+every developer machine and in the CI security job, and that database has never
+held the hosted damage. So `0048` refuses any duplicated link it was not shown,
+repairs the one it was shown only if it is still there, and adds the index
+either way, saying which branch it took.
+
 Its behaviour was exercised against a real PostgreSQL before shipping:
 `.github/scripts/production-migration/test_0048_spond_link_unique.sh` builds a
-stand-in of the hosted state, applies the file, and asserts that exactly one
-row moved, that no other row and no live marker changed, that the index refuses
-a second session on the same event including for two racing connections, and
-that an unexpected third duplicate makes the whole run abort with the database
-untouched. It needs a local PostgreSQL server and is therefore not part of CI;
-run it by hand when reviewing the migration.
+stand-in and runs four databases. Against the hosted state it asserts exactly
+one row moved, that no other row and no live marker changed, and that the index
+then refuses a second session on the same event including for two racing
+connections. Against an unexpected third duplicate it asserts the whole run
+aborts with the database untouched. Against a database with nothing to repair,
+and against an empty one, it asserts the file applies and changes no row. It
+needs a local PostgreSQL server and is therefore not part of CI; run it by hand
+when reviewing the migration.
 
 `0046` is the first migration this workflow applied. Its ledger row records
 `created_by` as the workflow and the commit it ran from, an `idempotency_key`

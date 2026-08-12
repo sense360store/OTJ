@@ -16,10 +16,15 @@
 #                                     connections racing.
 #   B. an unexpected third duplicate -> refuses, and leaves the database
 #                                     exactly as it found it.
-#   C. the known bad link already gone -> refuses, for the same reason: the
-#                                     file was reviewed against one state and
-#                                     guessing at another is what a migration
-#                                     must never do.
+#   C. a database that never held the bad pair (a fresh `supabase db reset`,
+#                                     which is what CI and every developer
+#                                     machine runs) -> applies, adds the
+#                                     guarantee, and changes no row. A file
+#                                     that INSISTED on finding production's
+#                                     damage would fail there for being
+#                                     right, so this is the case that keeps
+#                                     the repository's own migrations
+#                                     runnable.
 #
 # WHAT IT IS NOT. The stand-in is a stand-in: the sessions table here carries
 # the columns 0048 reads and writes plus enough of the surrounding machinery
@@ -219,8 +224,12 @@ insert into public.sessions (id, club_id, coach_id, name, date, start_time, stat
 SQL
 }
 
+# The migration itself runs with NOTICE visible, because which branch it took
+# (repair, or guarantee only) is something it says out loud and something a
+# real apply shows in the workflow log. The stand-in setup above stays quiet.
 apply_migration() {
-  psql_run -d "$1" -q -f "${MIGRATION}"
+  PGHOST="${WORK}" PGPORT="${PORT}" PGUSER=postgres PGOPTIONS='-c client_min_messages=notice' \
+    psql --no-psqlrc --set ON_ERROR_STOP=1 -q -d "$1" -f "${MIGRATION}"
 }
 
 # =====================================================================
@@ -334,10 +343,12 @@ apply_migration otj_b >"${WORK}/b.log" 2>&1
 b_rc=$?
 set -e
 [ "${b_rc}" -ne 0 ] || fail "the migration applied against an unexpected duplicate"
-grep -q "expected exactly one duplicated Spond link, found 2" "${WORK}/b.log" \
-  || fail "the refusal did not name the count it found: $(tail -3 "${WORK}/b.log")"
+grep -q "are held by more than one session and are not the reviewed pair" "${WORK}/b.log" \
+  || fail "the refusal did not say what it found: $(tail -3 "${WORK}/b.log")"
+grep -q "b9b8b964-8308-481a-b788-42b1499bb523" "${WORK}/b.log" \
+  || fail "the refusal did not name the offending event"
 grep -q "refuses to guess" "${WORK}/b.log" || fail "the refusal did not say why"
-ok "it refused, naming both offending events"
+ok "it refused, naming the offending event"
 [ "$(scalar otj_b "select md5(string_agg(to_jsonb(s)::text, ',' order by s.id)) from public.sessions s")" = "${before_b}" ] \
   || fail "the failed run changed a session row"
 ok "every session row is exactly as it was"
@@ -350,22 +361,37 @@ ok "the June link is still there, because the transaction rolled back"
 
 # =====================================================================
 echo
-echo "== C. the reviewed bad link is already gone: the migration refuses"
+echo "== C. a database that never held the bad pair: the migration applies and changes nothing"
 build_standin otj_c
 seed_reviewed_state otj_c
+# Exactly the shape `supabase db reset` produces: no duplicated link anywhere.
 psql_run -d otj_c -qc "update public.sessions set spond_event_id = null where id = '${CLEAR}'::uuid" >/dev/null
-set +e
+before_c="$(scalar otj_c "select md5(string_agg(to_jsonb(s)::text, ',' order by s.id)) from public.sessions s")"
+before_c_audit="$(scalar otj_c "select count(*) from public.audit_events")"
+# NOTICE goes to stderr, and which branch it took is the point of this case.
 apply_migration otj_c >"${WORK}/c.log" 2>&1
-c_rc=$?
-set -e
-[ "${c_rc}" -ne 0 ] || fail "the migration applied against a state it was not reviewed for"
-grep -q "expected exactly one duplicated Spond link, found 0" "${WORK}/c.log" \
-  || fail "the refusal did not name what it found: $(tail -3 "${WORK}/c.log")"
-ok "it refused rather than creating the index against an unreviewed state"
-[ "$(scalar otj_c "select count(*) from pg_class where relname = 'sessions_spond_event_id_unique'")" = "0" ] \
-  || fail "the index was created by a run that should have refused"
-ok "nothing was created"
+ok "the migration committed"
+[ "$(scalar otj_c "select md5(string_agg(to_jsonb(s)::text, ',' order by s.id)) from public.sessions s")" = "${before_c}" ] \
+  || fail "the migration changed a row on a database with nothing to repair"
+ok "not one session row changed"
+[ "$(scalar otj_c "select count(*) from public.audit_events")" = "${before_c_audit}" ] || fail "an audit row was written"
+ok "no audit row was written"
+[ "$(scalar otj_c "select count(*) from pg_class where relname = 'sessions_spond_event_id_unique'")" = "1" ] \
+  || fail "the guarantee was not added"
+ok "the guarantee was still added"
+grep -q "no erroneous Spond link present" "${WORK}/c.log" || fail "it did not say which branch it took"
+ok "and it said so, rather than repairing silently"
+
+# =====================================================================
+echo
+echo "== D. an empty database, which is what a fresh reset actually looks like"
+build_standin otj_d
+apply_migration otj_d >/dev/null 2>&1
+[ "$(scalar otj_d "select count(*) from pg_class where relname = 'sessions_spond_event_id_unique'")" = "1" ] \
+  || fail "the migration did not apply to an empty sessions table"
+ok "it applies to an empty sessions table and adds the guarantee"
 
 echo
-echo "PASS: 0048 repairs exactly one row, refuses every state it was not reviewed against,"
+echo "PASS: 0048 repairs exactly one row where there is one to repair, refuses every"
+echo "      duplicate it was not shown, applies cleanly where there is nothing to repair,"
 echo "      and the index it adds makes a duplicate Spond link impossible, race included."
