@@ -29,7 +29,7 @@ import {
 import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
 import { ALL_EVENTS_LABEL, isTrainingEvent, TRAINING_LABEL } from '../lib/eventKind'
 import { applyEventFilter, DEFAULT_EVENT_FILTER, pickNextEvent, type EventFilterState } from '../lib/eventFilter'
-import { isSessionActive, isSessionLive } from '../lib/sessionLifecycle'
+import { isSessionActive, isSessionEndedToday, isSessionLive, isSessionOperational } from '../lib/sessionLifecycle'
 import { compareNewestFirst } from '../lib/contentOrder'
 import type { Session, Template } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
@@ -220,7 +220,23 @@ function EmptyHero({
   )
 }
 
-function WeekRow({ s, teamName, ownerName, nav }: { s: Session; teamName: string; ownerName: string | null; nav: Nav }) {
+function WeekRow({
+  s,
+  teamName,
+  ownerName,
+  ended,
+  nav,
+}: {
+  s: Session
+  teamName: string
+  ownerName: string | null
+  // Finished earlier today. The row stays, and one tap still opens Session
+  // Day and Tonight, because the evening's work outlives the session's own
+  // end time. It says so rather than sitting silently among the nights
+  // still to come.
+  ended: boolean
+  nav: Nav
+}) {
   const d = new Date(s.date + 'T00:00:00')
   return (
     <button className="week-row" onClick={() => nav('sessionDay', { sessionId: s.id })}>
@@ -235,6 +251,14 @@ function WeekRow({ s, teamName, ownerName, nav }: { s: Session; teamName: string
             <Icon.clock />
             {s.time}
           </span>
+          {ended && (
+            <span
+              className="pill"
+              style={{ color: 'var(--gold-600)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
+            >
+              Ended earlier today
+            </span>
+          )}
           <span className="pill">
             <Icon.flag />
             {teamName}
@@ -369,21 +393,33 @@ function CoachHome() {
   // duration and for as long as somebody is driving it live, and loses it
   // the moment it has genuinely finished. Yesterday's training does not sit
   // here waiting for a status nobody ever set.
-  const upcoming = sessions.filter((s) => isSessionActive(s, now))
+  //
+  // TWO SETS, NOT ONE, and conflating them is the same-day regression.
+  // `stillToCome` is what may be offered as next: strictly active. `onToday`
+  // adds the nights that have already finished but whose local day has not,
+  // because a coach opening this at 22:30 is looking for exactly that
+  // session and Home is where they look first.
+  const stillToCome = sessions.filter((s) => isSessionActive(s, now))
+  const onToday = sessions.filter((s) => isSessionOperational(s, now))
   // The hero leads with your own next training, and with the club's when you
   // own none. Leading with ownership alone told a coach who owns no session
   // that nothing was scheduled on a night the club was training; the shared
-  // rule in ../lib/eventFilter states the whole preference order.
-  const next = canPlan ? pickNextEvent(upcoming, user?.id, spondEvents, now) : upcoming[0]
+  // rule in ../lib/eventFilter states the whole preference order. It reads
+  // `stillToCome`, so a session that ended three hours ago is never the hero.
+  const next = canPlan ? pickNextEvent(stillToCome, user?.id, spondEvents, now) : stillToCome[0]
+  // A session that finished earlier today is never the hero and is always
+  // in the week list below, marked, one tap from Session Day and Tonight.
+  // isSessionEndedToday decides the marking at the row.
   const liveNow = sessions.find(isSessionLive)
   // A brand-new coach has no sessions at all, upcoming or past.
   const fresh = canPlan && !sessions.some(isMine)
 
   const weekEnd = addDaysIso(todayStr, 7)
-  // Already narrowed to what is still to come, so this only closes the far
-  // end of the window. A session that ran late last night is inside the
-  // seven days and outside `upcoming`, which is the right way round.
-  const weekAll = upcoming.filter((s) => s.date < weekEnd)
+  // Narrowed to what a coach may still act on, so this only closes the far
+  // end of the window. Yesterday's training is outside `onToday`, which is
+  // the right way round; tonight's finished session is inside it, which is
+  // the correction.
+  const weekAll = onToday.filter((s) => s.date < weekEnd)
   // Parents get the club's week whole; they own nothing to narrow to and
   // the kind filter is a coach's tool, so their list stays unfiltered.
   const week = canPlan ? applyEventFilter(weekAll, filter, { userId: user?.id, spondEvents, now }) : weekAll
@@ -490,6 +526,7 @@ function CoachHome() {
                   s={s}
                   teamName={teamName(s)}
                   ownerName={isMine(s) ? null : memberById[s.coachId]?.fullName || (s.coachId ? 'Another coach' : 'Club session')}
+                  ended={isSessionEndedToday(s, now)}
                   nav={nav}
                 />
               ))

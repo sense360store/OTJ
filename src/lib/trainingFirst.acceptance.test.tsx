@@ -406,7 +406,7 @@ describe('15. nothing persists until the coach saves', () => {
   it('is only clean when the readback equals the draft', () => {
     const draft = selectAll(draftFromEntries([]), tonightRows({}))
     const partial: RegisterEntry[] = [
-      { sessionId: 'reg', playerId: 'p-going', present: true, bibColourOverride: null, source: 'roster' },
+      { sessionId: 'reg', playerId: 'p-going', present: false, includedInGroups: true, bibColourOverride: null, source: 'roster' },
     ]
     expect(draftIsDirty(draft, partial)).toBe(true)
   })
@@ -463,7 +463,7 @@ describe('18. a bib override is per player, per session, and includes wearing no
 
   it('shows the override on the row without changing anyone else', () => {
     const entries: RegisterEntry[] = [
-      { sessionId: 'reg', playerId: 'p-going', present: false, bibColourOverride: 'blue', source: 'roster' },
+      { sessionId: 'reg', playerId: 'p-going', present: false, includedInGroups: false, bibColourOverride: 'blue', source: 'roster' },
     ]
     const rows = registerOf(entries).groups[0].rows
     const overridden = rows.find((r) => r.player.id === 'p-going')

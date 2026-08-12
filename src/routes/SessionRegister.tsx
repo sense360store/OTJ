@@ -7,11 +7,18 @@
 // Register and a passive Spond attendance card, with one operational
 // screen.
 //
-// TWO FACTS PER ROW, INDEPENDENT. The Spond reply is what the parent
-// said; Included is what the coach decided. A Going child need not be
-// included. A Not going child may be, because they turned up anyway. The
-// tick means IN TONIGHT'S GROUPS, never "arrived": see the note on
-// register_entries.present in ../lib/tonight and in CLAUDE.md.
+// THREE FACTS PER ROW, INDEPENDENT. The Spond reply is what the parent
+// said; Included is what the coach decided; Here is whether the child
+// actually turned up. A Going child need not be included. A Not going
+// child may be, because they turned up anyway. A child who is Here need
+// not be in tonight's split, and a coach may arrange a split before
+// anybody arrives.
+//
+// THE ROW TARGET SETS INCLUSION, THE "HERE" BUTTON SETS ATTENDANCE, and
+// they are different gestures on purpose. They were one tick until 0047,
+// stored in one column, which meant a coach who split fourteen of the
+// eighteen children who came had just recorded four of them absent. See
+// ../lib/tonight and supabase/migrations/0047_register_group_inclusion.sql.
 //
 // NOTHING SAVES UNTIL SAVE. Every tick, every Select all, every bib is a
 // local draft, so the coach arranges the whole night, looks at it, and
@@ -60,6 +67,7 @@ import {
   quickAdd,
   selectAll,
   setDraftBib,
+  toggleAttendance,
   toggleIncluded,
   tonightGroups,
   usableFilter,
@@ -104,17 +112,28 @@ function ResponsePill({ response }: { response: TonightRow['response'] }) {
 export function TonightRowView({
   row,
   included,
+  present,
   bib,
   canEdit,
   onToggle,
+  onPresent,
   onBib,
 }: {
   row: TonightRow
+  // In tonight's working groups. The coach's arrangement, and what the
+  // big row target sets.
   included: boolean
+  // Physically here. A SEPARATE fact with a SEPARATE control, because a
+  // child can attend without being in this split and can be in a split
+  // before they arrive. These shared one tick until 0047, which meant a
+  // coach who left four of the eighteen who came out of the groups had
+  // just recorded that four children were absent.
+  present: boolean
   // The stored override as a select value: '' means follow the team.
   bib: string
   canEdit: boolean
   onToggle: () => void
+  onPresent: () => void
   onBib: (value: string) => void
 }) {
   const sub = [row.shirtNumber != null ? `#${row.shirtNumber}` : '', row.manual ? 'Added on the day' : '']
@@ -144,6 +163,22 @@ export function TonightRowView({
         <div className="reg-tick">{name}</div>
       )}
       <ResponsePill response={row.response} />
+      {/* Attendance. Its own small target, deliberately not the row: a
+          mis-tap here changes who was here, and a mis-tap on the row
+          changes who is in a group, and those must not be the same
+          gesture. Read only for a member who cannot write, like the bib. */}
+      {canEdit ? (
+        <button
+          className={'reg-here' + (present ? ' on' : '')}
+          onClick={onPresent}
+          aria-pressed={present}
+          aria-label={`${row.displayName} was present`}
+        >
+          Here
+        </button>
+      ) : (
+        <span className={'reg-here static' + (present ? ' on' : '')}>{present ? 'Here' : ''}</span>
+      )}
       {/* The bib control has its own tap area at the end of the row, so a
           mis-tap changes a colour rather than who is in tonight's groups. */}
       <div className="reg-bib">
@@ -224,6 +259,7 @@ export function TonightScreenView({
   refreshFailed,
   onFilter,
   onToggle,
+  onPresent,
   onBib,
   onSelectAll,
   onClearSelection,
@@ -268,6 +304,8 @@ export function TonightScreenView({
   refreshFailed: boolean
   onFilter: (f: ResponseFilter) => void
   onToggle: (playerId: string) => void
+  // Attendance, a separate act from putting a child in a group.
+  onPresent: (playerId: string) => void
   onBib: (playerId: string, value: string) => void
   onSelectAll: () => void
   onClearSelection: () => void
@@ -387,9 +425,11 @@ export function TonightScreenView({
               key={r.playerId}
               row={r}
               included={draft.included[r.playerId] === true}
+              present={draft.attendance[r.playerId] === true}
               bib={draft.bibs[r.playerId] ?? ''}
               canEdit={canEdit}
               onToggle={() => onToggle(r.playerId)}
+              onPresent={() => onPresent(r.playerId)}
               onBib={(v) => onBib(r.playerId, v)}
             />
           ))}
@@ -569,6 +609,7 @@ function TonightScreen({ session }: { session: Session }) {
         unset={coverageOf(session).kind === 'unset'}
         onFilter={setFilter}
         onToggle={(playerId) => setDraft(toggleIncluded(live, playerId))}
+        onPresent={(playerId) => setDraft(toggleAttendance(live, playerId))}
         onBib={(playerId, value) => setDraft(setDraftBib(live, playerId, value === '' ? null : value))}
         onSelectAll={() => setDraft(selectAll(live, shown))}
         onClearSelection={() => setDraft(clearSelection(live, shown))}

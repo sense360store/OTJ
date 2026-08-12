@@ -91,7 +91,7 @@ function squad({
   return { rows, linkedIds }
 }
 
-const EMPTY: TonightDraft = { included: {}, bibs: {}, added: {} }
+const EMPTY: TonightDraft = { included: {}, attendance: {}, bibs: {}, added: {}, touched: {} }
 
 const ids = (rows: TonightRow[]) => rows.map((r) => r.playerId)
 
@@ -573,7 +573,10 @@ describe('selected matches what a save would store', () => {
     const stored: RegisterEntry[] = rows.map((r) => ({
       sessionId: 's',
       playerId: r.playerId,
-      present: true,
+      // Selected into a group. Attendance is a different field and this
+      // test says nothing about it.
+      present: false,
+      includedInGroups: true,
       bibColourOverride: null,
       source: 'roster',
     }))

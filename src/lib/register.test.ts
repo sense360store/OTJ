@@ -33,6 +33,7 @@ const entry = (playerId: string, over: Partial<RegisterEntry> = {}): RegisterEnt
   sessionId: 's1',
   playerId,
   present: false,
+  includedInGroups: false,
   bibColourOverride: null,
   source: 'roster',
   ...over,
@@ -247,7 +248,7 @@ describe('guests and quick add', () => {
 describe('registerSummary', () => {
   it('reads as a count a coach can shout across a pitch', () => {
     const view = buildRegister(players, ['t1'], teams, [entry('p1', { present: true })], false)
-    expect(registerSummary(view)).toBe('1 of 2 in')
+    expect(registerSummary(view)).toBe('1 of 2 here')
   })
 })
 
@@ -256,6 +257,6 @@ describe('an empty club', () => {
     const view = buildRegister([], [], [], [], false)
     expect(view.groups).toEqual([])
     expect(view.playerTotal).toBe(0)
-    expect(registerSummary(view)).toBe('0 of 0 in')
+    expect(registerSummary(view)).toBe('0 of 0 here')
   })
 })

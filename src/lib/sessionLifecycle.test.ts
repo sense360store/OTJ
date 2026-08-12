@@ -125,16 +125,22 @@ describe('active and past', () => {
     expect(isSessionPast(training(), at(2026, 8, 11, 18, 5))).toBe(false)
   })
 
-  it('4. a session past its expected end is past', () => {
-    expect(sessionLifecycle(training(), at(2026, 8, 11, 19, 16))).toBe('past')
-    expect(isSessionPast(training(), at(2026, 8, 11, 20, 0))).toBe(true)
+  it('4. a session past its expected end has ended, and is past on a later day', () => {
+    // The end of the session and the end of the day are two different
+    // moments, and this test used to conflate them. Ending is what stops it
+    // being "next"; the day turning over is what files it under Past.
+    expect(sessionLifecycle(training(), at(2026, 8, 11, 19, 16))).toBe('endedToday')
+    expect(isSessionActive(training(), at(2026, 8, 11, 20, 0))).toBe(false)
+    expect(isSessionPast(training(), at(2026, 8, 11, 20, 0))).toBe(false)
+    expect(isSessionPast(training(), at(2026, 8, 12, 9, 0))).toBe(true)
   })
 
-  it('is still active exactly on its expected end, and past one millisecond later', () => {
+  it('is still active exactly on its expected end, and ended one millisecond later', () => {
     // The boundary belongs to the session. A coach standing on the pitch at
     // the final whistle has not finished putting the cones away.
     expect(isSessionActive(training(), ENDS)).toBe(true)
-    expect(isSessionPast(training(), new Date(ENDS.getTime() + 1))).toBe(true)
+    expect(isSessionActive(training(), new Date(ENDS.getTime() + 1))).toBe(false)
+    expect(sessionLifecycle(training(), new Date(ENDS.getTime() + 1))).toBe('endedToday')
   })
 
   it('5. a completed session is past even when its date is in the future', () => {
@@ -155,10 +161,16 @@ describe('active and past', () => {
   })
 
   it('lets a completed status end a session the live columns never cleared', () => {
-    // Precedence, stated as a case: completed is read first, so a row that
-    // somehow carries both cannot be stuck active for ever.
+    // Precedence, unchanged and deliberately so: completed is still read
+    // first, so a row that somehow carries both cannot be stuck active for
+    // ever. What changed is only how far "completed" reaches. It now means
+    // "has ended", and the local day decides whether that is endedToday or
+    // past, so a session ended at 19:30 is still reachable that evening.
     const both = training({ status: 'completed', liveActivityIndex: 0, liveActivityStartedAt: '2026-08-11T18:00:00Z' })
-    expect(sessionLifecycle(both, at(2026, 8, 11, 18, 10))).toBe('past')
+    expect(sessionLifecycle(both, at(2026, 8, 11, 18, 10))).toBe('endedToday')
+    expect(isSessionActive(both, at(2026, 8, 11, 18, 10))).toBe(false)
+    // And on any later day it is past, live columns or not.
+    expect(sessionLifecycle(both, at(2026, 8, 12, 9, 0))).toBe('past')
   })
 
   it('reads a Spond event by its own start instant', () => {
@@ -167,7 +179,8 @@ describe('active and past', () => {
     // absolute instant and no plan, so it gets the fallback duration.
     const startsAt = at(2026, 8, 11, 18, 0).toISOString()
     expect(isSessionActive({ startsAt }, at(2026, 8, 11, 19, 29))).toBe(true)
-    expect(isSessionPast({ startsAt }, at(2026, 8, 11, 19, 31))).toBe(true)
+    expect(isSessionActive({ startsAt }, at(2026, 8, 11, 19, 31))).toBe(false)
+    expect(isSessionPast({ startsAt }, at(2026, 8, 12, 9, 0))).toBe(true)
   })
 })
 
@@ -190,7 +203,9 @@ describe('8. the clock is local, and the same in every timezone', () => {
       expect(sessionStart(s)?.getHours()).toBe(18)
       expect(sessionStart(s)?.getMinutes()).toBe(0)
       expect(isSessionActive(s, at(2026, 8, 11, 19, 14))).toBe(true)
-      expect(isSessionPast(s, at(2026, 8, 11, 19, 16))).toBe(true)
+      expect(isSessionActive(s, at(2026, 8, 11, 19, 16))).toBe(false)
+      // Past is the NEXT local day, in whichever zone the runner is in.
+      expect(isSessionPast(s, at(2026, 8, 12, 9, 0))).toBe(true)
     })
   }
 
@@ -213,7 +228,11 @@ describe('9. a session that runs past midnight', () => {
     expect(sessionExpectedEnd(lateNight)?.getTime()).toBe(at(2026, 8, 12, 0, 30).getTime())
     expect(isSessionActive(lateNight, at(2026, 8, 11, 23, 59))).toBe(true)
     expect(isSessionActive(lateNight, at(2026, 8, 12, 0, 15))).toBe(true)
-    expect(isSessionPast(lateNight, at(2026, 8, 12, 0, 31))).toBe(true)
+    expect(isSessionActive(lateNight, at(2026, 8, 12, 0, 31))).toBe(false)
+    // It ended at 00:30 on the 12th, so the 12th is the day it finished on
+    // and it stays reachable through it. Past on the 13th.
+    expect(sessionLifecycle(lateNight, at(2026, 8, 12, 0, 31))).toBe('endedToday')
+    expect(isSessionPast(lateNight, at(2026, 8, 13, 0, 1))).toBe(true)
   })
 
   it('does not treat a new calendar day as the end of yesterday evening', () => {
@@ -231,12 +250,22 @@ describe('the Upcoming and Past scopes', () => {
   })
 
   it('split the same rule two ways, with nothing falling between them', () => {
-    const before = at(2026, 8, 11, 18, 30)
-    const after = at(2026, 8, 11, 20, 0)
-    expect(matchesLifecycleScope(training(), 'upcoming', before)).toBe(true)
-    expect(matchesLifecycleScope(training(), 'past', before)).toBe(false)
-    expect(matchesLifecycleScope(training(), 'upcoming', after)).toBe(false)
-    expect(matchesLifecycleScope(training(), 'past', after)).toBe(true)
+    // Three lifecycle states, still two scopes, and every state belongs to
+    // exactly one of them: endedToday sits with Upcoming, because the
+    // default view is the operational one and tonight is operational until
+    // the day turns over.
+    const during = at(2026, 8, 11, 18, 30)
+    const laterThatEvening = at(2026, 8, 11, 20, 0)
+    const nextMorning = at(2026, 8, 12, 9, 0)
+    for (const now of [during, laterThatEvening, nextMorning]) {
+      const inUpcoming = matchesLifecycleScope(training(), 'upcoming', now)
+      const inPast = matchesLifecycleScope(training(), 'past', now)
+      expect(inUpcoming).toBe(!inPast)
+    }
+    expect(matchesLifecycleScope(training(), 'upcoming', during)).toBe(true)
+    expect(matchesLifecycleScope(training(), 'upcoming', laterThatEvening)).toBe(true)
+    expect(matchesLifecycleScope(training(), 'upcoming', nextMorning)).toBe(false)
+    expect(matchesLifecycleScope(training(), 'past', nextMorning)).toBe(true)
   })
 })
 
@@ -258,7 +287,7 @@ describe('17 and 18. deriving the answer, every time, and writing nothing', () =
     // says upcoming; the derived answer is past both times it is asked.
     const s = training()
     expect(sessionLifecycle(s, at(2026, 8, 11, 18, 30))).toBe('active')
-    expect(sessionLifecycle(s, at(2026, 8, 11, 20, 0))).toBe('past')
+    expect(sessionLifecycle(s, at(2026, 8, 11, 20, 0))).toBe('endedToday')
     expect(sessionLifecycle(s, at(2026, 8, 12, 9, 0))).toBe('past')
     expect(s.status).toBe('upcoming')
   })

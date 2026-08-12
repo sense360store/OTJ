@@ -123,6 +123,46 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             ),
         },
     ),
+    # ------------------------------------------------------------------
+    # 0047_register_group_inclusion: adds
+    # public.register_entries.included_in_groups so that `present` can go
+    # back to meaning physical attendance. It adds ONE column and three
+    # comments. It writes no row, and in particular copies nothing between
+    # the two columns in either direction; its own self-verification
+    # fingerprints the attendance record before and after and aborts if it
+    # moved, and refuses to complete if any row came out marked as
+    # included. It changes no policy, grant, capability, role or trigger,
+    # and the same self-verification proves that too.
+    #
+    # Written against a hosted database whose newest ledger row is
+    # 20260811210248 / drill_diagram, checked 2026-08-11.
+    # ------------------------------------------------------------------
+    "supabase/migrations/0047_register_group_inclusion.sql": ReviewedMigration(
+        path="supabase/migrations/0047_register_group_inclusion.sql",
+        ledger_name="register_group_inclusion",
+        idempotency_key="otj:migration:0047_register_group_inclusion",
+        expected_previous_version="20260811210248",
+        expected_previous_name="drill_diagram",
+        objects={
+            # information_schema.columns, never pg_attribute: attisdropped
+            # carries the substring "drop", which the verifier's read-only
+            # statement guard rejects. test_reviewed_migrations.py runs
+            # every probe here through that guard.
+            "public.register_entries.included_in_groups column": (
+                "(select count(*) > 0 from information_schema.columns "
+                "where table_schema = 'public' and table_name = 'register_entries' "
+                "and column_name = 'included_in_groups')"
+            ),
+            # The shape matters as much as the presence: a nullable column,
+            # or one defaulting to true, would be a different migration.
+            "included_in_groups is NOT NULL and defaults to false": (
+                "(select count(*) > 0 from information_schema.columns "
+                "where table_schema = 'public' and table_name = 'register_entries' "
+                "and column_name = 'included_in_groups' "
+                "and is_nullable = 'NO' and column_default = 'false')"
+            ),
+        },
+    ),
 }
 
 

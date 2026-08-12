@@ -259,6 +259,7 @@ const FORBIDDEN = new Set<string>([
   'venue_id', 'venueId', 'teamIds', 'session_teams', 'sessionTeams',
   'bib_colour', 'bibColour', 'bib_colour_override', 'bibColourOverride',
   'register_entries', 'registerEntries', 'present',
+  'included_in_groups', 'includedInGroups',
   'marked_by', 'markedBy', 'marked_at', 'markedAt',
   // Spond member links and per child RSVP (0045), kept in step with the
   // server list above.

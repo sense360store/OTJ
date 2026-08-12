@@ -6,8 +6,8 @@
 // what bib does each need so I can split them into groups?". Spond
 // suggests the pool; the coach decides the groups.
 //
-// TWO INDEPENDENT FACTS PER CHILD, and conflating them is the mistake
-// this module exists to prevent:
+// THREE INDEPENDENT FACTS PER CHILD, and conflating any two of them is
+// the mistake this module exists to prevent:
 //
 //   RESPONSE   what the child's parent said in Spond. Read only. Four
 //              states, and a fifth thing that is not a state: a child
@@ -16,7 +16,25 @@
 //              under Everyone and are counted nowhere else.
 //   INCLUDED   whether the coach is putting them in tonight's groups.
 //              A Going child need not be included. A Not going child may
-//              be, because they turned up anyway.
+//              be, because they turned up anyway. Stored in
+//              register_entries.included_in_groups (0047).
+//   ATTENDANCE whether the child actually turned up. Stored in
+//              register_entries.present, which is what that column has
+//              meant since 0044 and means again after 0047.
+//
+// THE SECOND AND THIRD WERE ONE COLUMN, and that is the defect being
+// corrected. Tonight reused `present` for inclusion because one tick set
+// both, so a coach who split fourteen of the eighteen who came had just
+// recorded that four of them were absent. Every combination below is a
+// real Tuesday and every one of them is now storable:
+//
+//   present, included         the ordinary case
+//   present, not included     came, but not in this split
+//   absent, included          groups arranged before anybody arrived
+//   absent, not included      not here, not playing
+//
+// Nothing in this module derives one from another, and nothing derives
+// either from the Spond reply.
 //
 // EVERYTHING IS A DRAFT until the coach saves. Selecting, clearing,
 // toggling and changing a bib all edit a local draft, so the coach can
@@ -370,34 +388,77 @@ export function chipCount(counts: TonightCounts, filter: ResponseFilter): number
 // purpose: a player with no entry here has never been touched, which is
 // what lets the delta write only what changed.
 export interface TonightDraft {
+  // In tonight's working groups. register_entries.included_in_groups.
   included: Record<string, boolean>
+  // Physically here. register_entries.present. A SEPARATE map, so no code
+  // path can move one by touching the other: there is no shared entry to
+  // overwrite by accident.
+  attendance: Record<string, boolean>
   bibs: Record<string, string | null>
   // Children the coach quick added tonight who are not part of the covered
   // squad. Tracked here because a guest exists only in the draft until the
   // save, and a guest must never read as a squad member.
   added: Record<string, boolean>
+  // WHICH FIELDS THE COACH ACTUALLY TOUCHED, keyed `${playerId}:${field}`.
+  //
+  // This exists because "touched" cannot be inferred from a diff. The three
+  // maps above are seeded from the stored entries when the draft opens, and
+  // the draft is then FROZEN until the coach saves or leaves, while the
+  // stored entries behind it keep refetching (TanStack Query's default
+  // staleTime is 0 and it refetches on window focus, which is what a phone
+  // locking and unlocking on a touchline does). So a coach who tapped only
+  // one row would, on saving, diff their frozen seed against a baseline
+  // another coach had moved, decide the fields they never touched had
+  // "changed", and write their stale seed over the other coach's work.
+  //
+  // That is the exact failure the per field payload exists to prevent, and
+  // inferring the flags from the diff reintroduced it one level down. An
+  // explicit record cannot drift: a field is in here because a gesture put
+  // it here.
+  touched: Record<string, true>
+}
+
+// The three fields a save can carry, and the key each is recorded under.
+type TouchedField = 'included' | 'attendance' | 'bib'
+
+const touchKey = (playerId: string, field: TouchedField) => `${playerId}:${field}`
+
+function withTouch(draft: TonightDraft, playerId: string, field: TouchedField): Record<string, true> {
+  return { ...draft.touched, [touchKey(playerId, field)]: true }
+}
+
+function wasTouched(draft: TonightDraft, playerId: string, field: TouchedField): boolean {
+  return draft.touched[touchKey(playerId, field)] === true
 }
 
 export function draftFromEntries(entries: RegisterEntry[]): TonightDraft {
   const included: Record<string, boolean> = {}
+  const attendance: Record<string, boolean> = {}
   const bibs: Record<string, string | null> = {}
   const added: Record<string, boolean> = {}
   for (const e of entries) {
-    included[e.playerId] = e.present
+    included[e.playerId] = e.includedInGroups
+    attendance[e.playerId] = e.present
     bibs[e.playerId] = e.bibColourOverride
     if (e.source === 'manual') added[e.playerId] = true
   }
-  return { included, bibs, added }
+  return { included, attendance, bibs, added, touched: {} }
 }
 
-// Someone who turned up who is not on the list. Selected straight away,
+// Someone who is not on the list. Put in tonight's groups straight away,
 // because that is why the coach reached for the button, and marked as a
 // guest so a visitor never becomes a squad member.
+//
+// It does NOT mark them present. Adding a child to the groups and saying
+// they were here are the two facts this module keeps apart, and quick add
+// is the coach pressing one of them. Attendance stays one explicit tap
+// away, where every other attendance mark is.
 export function quickAdd(draft: TonightDraft, playerId: string): TonightDraft {
   return {
     ...draft,
     included: { ...draft.included, [playerId]: true },
     added: { ...draft.added, [playerId]: true },
+    touched: withTouch(draft, playerId, 'included'),
   }
 }
 
@@ -419,6 +480,7 @@ export function draftEntries(
       sessionId,
       playerId: c.playerId,
       present: c.present,
+      includedInGroups: c.includedInGroups,
       bibColourOverride: c.bibColourOverride,
       source: c.source,
     })
@@ -427,7 +489,23 @@ export function draftEntries(
 }
 
 export function toggleIncluded(draft: TonightDraft, playerId: string): TonightDraft {
-  return { ...draft, included: { ...draft.included, [playerId]: !draft.included[playerId] } }
+  return {
+    ...draft,
+    included: { ...draft.included, [playerId]: !draft.included[playerId] },
+    touched: withTouch(draft, playerId, 'included'),
+  }
+}
+
+// Whether this child was actually here. A separate act on a separate map,
+// so putting somebody in a group cannot record that they turned up and
+// correcting an attendance mis-tap cannot dissolve the group the coach
+// built.
+export function toggleAttendance(draft: TonightDraft, playerId: string): TonightDraft {
+  return {
+    ...draft,
+    attendance: { ...draft.attendance, [playerId]: !draft.attendance[playerId] },
+    touched: withTouch(draft, playerId, 'attendance'),
+  }
 }
 
 // Select all, scoped to what the coach can actually see. Reaching past
@@ -435,25 +513,68 @@ export function toggleIncluded(draft: TonightDraft, playerId: string): TonightDr
 // looked at, so the caller passes the visible rows and this trusts them.
 export function selectAll(draft: TonightDraft, rows: TonightRow[]): TonightDraft {
   const included = { ...draft.included }
-  for (const r of rows) included[r.playerId] = true
-  return { ...draft, included }
+  const touched = { ...draft.touched }
+  for (const r of rows) {
+    included[r.playerId] = true
+    touched[touchKey(r.playerId, 'included')] = true
+  }
+  return { ...draft, included, touched }
 }
 
 export function clearSelection(draft: TonightDraft, rows: TonightRow[]): TonightDraft {
   const included = { ...draft.included }
-  for (const r of rows) included[r.playerId] = false
-  return { ...draft, included }
+  const touched = { ...draft.touched }
+  for (const r of rows) {
+    included[r.playerId] = false
+    touched[touchKey(r.playerId, 'included')] = true
+  }
+  return { ...draft, included, touched }
 }
 
 // A bib override, or null to fall back to the team's colour. The string
 // 'none' is a real choice meaning this child wears no bib tonight even
 // though their team has a default.
 export function setDraftBib(draft: TonightDraft, playerId: string, value: string | null): TonightDraft {
-  return { ...draft, bibs: { ...draft.bibs, [playerId]: value } }
+  return {
+    ...draft,
+    bibs: { ...draft.bibs, [playerId]: value },
+    touched: withTouch(draft, playerId, 'bib'),
+  }
 }
 
 function draftIncluded(draft: TonightDraft, playerId: string): boolean {
   return draft.included[playerId] === true
+}
+
+function draftPresent(draft: TonightDraft, playerId: string): boolean {
+  return draft.attendance[playerId] === true
+}
+
+// WHAT THE ROW WILL HOLD AFTER THIS SAVE: the coach's value where they
+// touched the field, and the STORED value where they did not.
+//
+// The draft is frozen at the coach's first tap while the stored entries
+// keep refetching, so the draft's own value for an untouched field is a
+// stale seed, not a statement. Reading it as one is what let a save
+// overwrite another coach's edit, and it is worse than that in the delete
+// path: draftRemovals asks "does this row record anything at all", and
+// answering from the frozen draft meant a guest whom another coach had
+// just marked present was DELETED, destroying the record that a child was
+// at the session. Nothing can surface that afterwards, because the
+// readback and the draft then agree the row is gone.
+function effective(
+  draft: TonightDraft,
+  stored: RegisterEntry | undefined,
+  playerId: string,
+): { includedInGroups: boolean; present: boolean; bibColourOverride: string | null } {
+  const touchedIncluded = wasTouched(draft, playerId, 'included')
+  const touchedAttendance = wasTouched(draft, playerId, 'attendance')
+  const touchedBib = wasTouched(draft, playerId, 'bib')
+  return {
+    includedInGroups: touchedIncluded || !stored ? draftIncluded(draft, playerId) : stored.includedInGroups,
+    present: touchedAttendance || !stored ? draftPresent(draft, playerId) : stored.present,
+    bibColourOverride: touchedBib || !stored ? draftBib(draft, playerId) : stored.bibColourOverride,
+  }
 }
 
 function draftBib(draft: TonightDraft, playerId: string): string | null {
@@ -467,6 +588,7 @@ function draftBib(draft: TonightDraft, playerId: string): string | null {
 function touchedIds(draft: TonightDraft, entries: RegisterEntry[]): string[] {
   const ids = new Set<string>()
   for (const id of Object.keys(draft.included)) ids.add(id)
+  for (const id of Object.keys(draft.attendance)) ids.add(id)
   for (const id of Object.keys(draft.bibs)) ids.add(id)
   for (const e of entries) ids.add(e.playerId)
   return [...ids]
@@ -476,14 +598,23 @@ function touchedIds(draft: TonightDraft, entries: RegisterEntry[]): string[] {
 export interface TonightChange {
   sessionId: string
   playerId: string
+  // Attendance.
   present: boolean
+  // In tonight's working groups.
+  includedInGroups: boolean
   bibColourOverride: string | null
   source: 'roster' | 'manual'
-  // Which fields this change actually moved, and whether the row exists
-  // at all. A save carries only what it changed, so two coaches working
-  // the same session at once cannot revert each other: a whole row write
-  // would carry a stale value for the field the other one just set.
+  // WHICH FIELDS THIS CHANGE ACTUALLY MOVED, and whether the row exists at
+  // all. A save carries only what it changed, so two coaches working the
+  // same session at once cannot revert each other: a whole row write would
+  // carry a stale value for the field the other one just set.
+  //
+  // Now three flags rather than two, and the third is what stops the
+  // regression this release fixes from reappearing as a race: a coach
+  // organising the groups sends no attendance value at all, so the coach
+  // marking arrivals beside them cannot be overwritten, and the reverse.
   presentChanged: boolean
+  includedChanged: boolean
   bibChanged: boolean
   isNew: boolean
 }
@@ -505,26 +636,54 @@ export function draftDelta(
   for (const playerId of touchedIds(draft, entries)) {
     if (removing.has(playerId)) continue
     const stored = byPlayer.get(playerId)
-    const present = draftIncluded(draft, playerId)
-    const bibColourOverride = draftBib(draft, playerId)
-    const unchanged =
-      stored !== undefined && stored.present === present && stored.bibColourOverride === bibColourOverride
-    if (unchanged) continue
+    // Effective, not raw draft: an untouched field carries the stored value
+    // forward, so the row this change describes is the row that will exist
+    // after the save. draftEntries composes the on screen list from these,
+    // and a raw draft value there would have shown another coach's fresh
+    // attendance mark as absent.
+    const { includedInGroups, present, bibColourOverride } = effective(draft, stored, playerId)
     // Nothing to write for a player who has no stored row and nothing set
     // on them either: that is simply a child the coach has not touched.
     // A guest the coach ADDED is different: they are on this list because
     // somebody put them there, so unticking them must leave the row on
     // screen rather than deleting it under their thumb.
-    if (!stored && !present && bibColourOverride === null && !draft.added[playerId]) continue
+    if (!stored && !includedInGroups && !present && bibColourOverride === null && !draft.added[playerId]) continue
+    // A field travels only when the coach TOUCHED it and it differs from
+    // what is stored now. Both halves are load bearing:
+    //
+    //   the diff alone is not enough, because the draft is frozen at the
+    //   first tap while `entries` keeps refetching, so an untouched field
+    //   can "differ" purely because another coach moved it, and sending
+    //   the frozen seed would overwrite them;
+    //
+    //   the touch alone is not enough either, because a coach who toggles
+    //   a value and toggles it back has touched it and changed nothing,
+    //   and rewriting it would take the same lock for no reason.
+    //
+    // A row with nothing stored is new, so every field is genuinely new
+    // and all of them travel; there is no other coach's value to protect.
+    const isNew = !stored
+    const presentChanged = isNew || (wasTouched(draft, playerId, 'attendance') && stored.present !== present)
+    const includedChanged =
+      isNew || (wasTouched(draft, playerId, 'included') && stored.includedInGroups !== includedInGroups)
+    const bibChanged =
+      isNew || (wasTouched(draft, playerId, 'bib') && stored.bibColourOverride !== bibColourOverride)
+    // No field would travel, so there is no row to send. This replaces the
+    // old "does the draft differ from stored" check, which asked the wrong
+    // question: a row can differ from a baseline another coach has moved
+    // without this coach having changed anything.
+    if (!presentChanged && !includedChanged && !bibChanged) continue
     out.push({
       sessionId,
       playerId,
       present,
+      includedInGroups,
       bibColourOverride,
       source: stored?.source ?? (draft.added[playerId] ? 'manual' : 'roster'),
-      presentChanged: !stored || stored.present !== present,
-      bibChanged: !stored || stored.bibColourOverride !== bibColourOverride,
-      isNew: !stored,
+      presentChanged,
+      includedChanged,
+      bibChanged,
+      isNew,
     })
   }
   return out
@@ -558,10 +717,25 @@ export function draftAfterSave(
 // ever with no affordance to take them off. Only a guest is ever removed:
 // a roster child belongs to the covered squad and their row is their
 // record, not their presence on a list.
+//
+// ATTENDANCE IS PART OF "SAYS NOTHING", and adding it is not a detail.
+// While inclusion and attendance were one column this read "not ticked and
+// no bib", which was complete. With them split, a guest could be marked
+// present and then taken out of the working groups, and the old condition
+// would have DELETED the row, destroying the record that a child was at
+// the session. A row is removable only when it records nothing at all:
+// not in a group, not marked present, no bib.
+// The three facts are read through `effective`, so a field the coach never
+// touched is judged by what is STORED NOW rather than by the seed their
+// draft froze with. Without that, a guest another coach marked present
+// between the coach's first tap and their Save was deleted.
 export function draftRemovals(draft: TonightDraft, entries: RegisterEntry[]): string[] {
   return entries
     .filter((e) => e.source === 'manual')
-    .filter((e) => !draftIncluded(draft, e.playerId) && draftBib(draft, e.playerId) === null)
+    .filter((e) => {
+      const value = effective(draft, e, e.playerId)
+      return !value.includedInGroups && !value.present && value.bibColourOverride === null
+    })
     .map((e) => e.playerId)
 }
 
@@ -596,8 +770,58 @@ export interface TonightUpsertRow {
   player_id: string
   club_id: string
   present?: boolean
+  included_in_groups?: boolean
   bib_colour_override?: string | null
   source?: 'roster' | 'manual'
+}
+
+// THE ROWS A SAVE SENDS, GROUPED SO THE PARTIAL WRITE SURVIVES THE WIRE.
+//
+// tonightUpsertRows deliberately emits rows with DIFFERENT key sets: a
+// child whose group changed carries included_in_groups and nothing else, a
+// child whose bib changed carries bib_colour_override and nothing else.
+// That is what stops two coaches reverting each other.
+//
+// postgrest-js does not preserve it across an array. Its upsert sets the
+// `columns` query parameter to the UNION of the keys of every object in
+// the batch (@supabase/postgrest-js 2.108.0, PostgrestQueryBuilder.upsert),
+// and because defaultToNull is true by default it does not send
+// `Prefer: missing=default`. PostgREST therefore builds ONE
+// INSERT ... ON CONFLICT DO UPDATE over that union, and a key an
+// individual row omitted arrives as NULL. So a single Save that touched
+// one child's group and another child's bib would propose NULL into
+// present (NOT NULL, so 23502 and the whole statement fails) and NULL over
+// the first child's stored bib on the way past.
+//
+// `defaultToNull: false` is not the fix and is strictly worse: the omitted
+// key would then arrive as the column DEFAULT, so excluded.present is
+// false and the DO UPDATE SET writes false over stored attendance,
+// silently. That is precisely the corruption this whole release exists to
+// prevent.
+//
+// So the batch is split by key shape and each shape is sent as its own
+// upsert. Every request is then internally uniform, its `columns` union is
+// exactly the keys that request meant to write, and nothing is proposed
+// for a column the coach did not touch.
+//
+// WHAT THIS COSTS, stated honestly: one statement becomes up to a few, so
+// the all-or-nothing guarantee now holds PER SHAPE rather than across the
+// whole save. It is not a regression in what "Saved" means, because Saved
+// has never rested on the write: it rests on the authoritative readback
+// being compared with the draft field for field (see draftAfterSave). A
+// batch that fails leaves the screen dirty and says so.
+export function tonightUpsertBatches(changes: TonightChange[], clubId: string | null): TonightUpsertRow[][] {
+  const rows = tonightUpsertRows(changes, clubId)
+  const byShape = new Map<string, TonightUpsertRow[]>()
+  for (const row of rows) {
+    // The key set, order independent, so two rows that write the same
+    // columns land in the same request whatever order the keys were set in.
+    const shape = Object.keys(row).sort().join(',')
+    const group = byShape.get(shape)
+    if (group) group.push(row)
+    else byShape.set(shape, [row])
+  }
+  return [...byShape.values()]
 }
 
 export function tonightUpsertRows(changes: TonightChange[], clubId: string | null): TonightUpsertRow[] {
@@ -611,7 +835,14 @@ export function tonightUpsertRows(changes: TonightChange[], clubId: string | nul
     // value alone, which is exactly what protects the other coach's edit;
     // a cleared bib is sent as an explicit null, not omitted, or "back to
     // the team colour" would silently not happen.
+    //
+    // present and included_in_groups are two separate keys under two
+    // separate flags, so organising the groups sends no attendance value
+    // and marking attendance sends no group value. That is what makes the
+    // two facts safe to edit concurrently rather than merely documented as
+    // independent.
     if (c.presentChanged) row.present = c.present
+    if (c.includedChanged) row.included_in_groups = c.includedInGroups
     if (c.bibChanged) row.bib_colour_override = c.bibColourOverride
     // Only on insert. Rewriting it later could turn a stored guest into a
     // squad member, which the security suite pins against.

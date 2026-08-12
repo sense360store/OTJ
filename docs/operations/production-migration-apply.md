@@ -15,6 +15,14 @@ order where each one fails before the next can do damage.
 | Migration | Hosted version | Applied |
 |---|---|---|
 | `0046_drill_diagram` | `20260811210248` | 2026-08-11 |
+| `0047_register_group_inclusion` | not applied | registered, awaiting review |
+
+`0047` is in the dropdown and in `REVIEWED_MIGRATIONS` so it CAN be selected,
+and it has not been run. Its pre-apply gate requires the ledger's newest row to
+still be `20260811210248` / `drill_diagram`, so it will refuse if anything else
+lands first. It must be applied BEFORE the frontend from the same pull request
+is deployed: the new client selects `included_in_groups`, and against a database
+without the column PostgREST answers 42703 and the whole register read fails.
 
 `0046` is the first migration this workflow applied. Its ledger row records
 `created_by` as the workflow and the commit it ran from, an `idempotency_key`

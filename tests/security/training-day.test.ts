@@ -451,6 +451,163 @@ describe('training day row level security', () => {
     expect(after2!.bib_colour_override).toBe('red')
   })
 
+  it('attendance and group inclusion survive each other s partial writes', async () => {
+    // 0047. `present` means the child was here; `included_in_groups` means
+    // the coach put them in tonight's split. They shared one column until
+    // 0047, so a coach organising groups was silently rewriting attendance.
+    // Three columns now, and each partial write must leave the other two
+    // exactly as it found them.
+    const splitPlayer = seedPlayer({
+      club: CLUB_A,
+      season: seasonA,
+      display: `${playerPrefix} split`,
+      teamId: TEST_TEAM,
+    }).playerId
+
+    // Coach one records that the child was here. Nothing about groups.
+    const { error: hereErr } = await coachOne
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: splitPlayer, club_id: CLUB_A, present: true },
+        { onConflict: 'session_id,player_id' },
+      )
+    expect(hereErr).toBeNull()
+
+    // Coach two puts them in a group. Nothing about attendance.
+    const { error: groupErr } = await coachTwo
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: splitPlayer, club_id: CLUB_A, included_in_groups: true },
+        { onConflict: 'session_id,player_id' },
+      )
+    expect(groupErr).toBeNull()
+
+    const { data: both } = await serviceClient()
+      .from('register_entries')
+      .select('present, included_in_groups')
+      .eq('session_id', ownSession)
+      .eq('player_id', splitPlayer)
+      .single()
+    expect(both!.present).toBe(true)
+    expect(both!.included_in_groups).toBe(true)
+
+    // Taking them OUT of the groups must not un-record that they attended.
+    // This is the direction that loses data, so it is asserted explicitly.
+    await coachTwo
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: splitPlayer, club_id: CLUB_A, included_in_groups: false },
+        { onConflict: 'session_id,player_id' },
+      )
+    const { data: stillHere } = await serviceClient()
+      .from('register_entries')
+      .select('present, included_in_groups')
+      .eq('session_id', ownSession)
+      .eq('player_id', splitPlayer)
+      .single()
+    expect(stillHere!.present).toBe(true)
+    expect(stillHere!.included_in_groups).toBe(false)
+
+    // And correcting attendance must not dissolve the group.
+    await coachTwo
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: splitPlayer, club_id: CLUB_A, included_in_groups: true },
+        { onConflict: 'session_id,player_id' },
+      )
+    await coachOne
+      .from('register_entries')
+      .upsert(
+        { session_id: ownSession, player_id: splitPlayer, club_id: CLUB_A, present: false },
+        { onConflict: 'session_id,player_id' },
+      )
+    const { data: stillGrouped } = await serviceClient()
+      .from('register_entries')
+      .select('present, included_in_groups')
+      .eq('session_id', ownSession)
+      .eq('player_id', splitPlayer)
+      .single()
+    expect(stillGrouped!.present).toBe(false)
+    expect(stillGrouped!.included_in_groups).toBe(true)
+  })
+
+  it('an ARRAY upsert of mixed shapes is the hazard the client groups around', async () => {
+    // WHY THIS TEST EXISTS. Every partial write proof above passes a
+    // SINGLE object. The client sends an ARRAY, and postgrest-js sets the
+    // `columns` parameter to the UNION of the keys across the batch, with
+    // no `Prefer: missing=default`. So a key an individual row omits
+    // arrives as NULL, and one Save touching one child's group and
+    // another child's bib would propose NULL into a NOT NULL column and
+    // NULL over the other child's stored bib.
+    //
+    // This asserts the hazard is real, which is what justifies
+    // tonightUpsertBatches grouping the delta by key shape. If a future
+    // postgrest-js changes this behaviour, this test fails and the
+    // grouping can be revisited deliberately rather than by accident.
+    const a = seedPlayer({ club: CLUB_A, season: seasonA, display: `${playerPrefix} mixa`, teamId: TEST_TEAM }).playerId
+    const b = seedPlayer({ club: CLUB_A, season: seasonA, display: `${playerPrefix} mixb`, teamId: TEST_TEAM }).playerId
+
+    // Both start with a bib and attendance recorded.
+    await coachOne.from('register_entries').upsert(
+      [
+        { session_id: ownSession, player_id: a, club_id: CLUB_A, present: true, bib_colour_override: 'red' },
+        { session_id: ownSession, player_id: b, club_id: CLUB_A, present: true, bib_colour_override: 'red' },
+      ],
+      { onConflict: 'session_id,player_id' },
+    )
+
+    // A deliberately MIXED batch: one row names only the group, the other
+    // only the bib. This is what the client must never send.
+    const { error: mixedErr } = await coachOne.from('register_entries').upsert(
+      [
+        { session_id: ownSession, player_id: a, club_id: CLUB_A, included_in_groups: true },
+        { session_id: ownSession, player_id: b, club_id: CLUB_A, bib_colour_override: 'blue' },
+      ] as never,
+      { onConflict: 'session_id,player_id' },
+    )
+    // NOT NULL on the omitted column is what stops it, so the whole
+    // statement fails and nothing lands. A future version that silently
+    // succeeded here would be the dangerous one.
+    expect(mixedErr).not.toBeNull()
+
+    const { data: untouched } = await serviceClient()
+      .from('register_entries')
+      .select('present, included_in_groups, bib_colour_override')
+      .eq('session_id', ownSession)
+      .eq('player_id', a)
+      .single()
+    expect(untouched!.present).toBe(true)
+    expect(untouched!.bib_colour_override).toBe('red')
+
+    // The same two edits, sent the way the client sends them: one request
+    // per key shape, each internally uniform. Both land, nothing else moves.
+    const { error: groupBatchErr } = await coachOne
+      .from('register_entries')
+      .upsert([{ session_id: ownSession, player_id: a, club_id: CLUB_A, included_in_groups: true }], {
+        onConflict: 'session_id,player_id',
+      })
+    expect(groupBatchErr).toBeNull()
+    const { error: bibBatchErr } = await coachOne
+      .from('register_entries')
+      .upsert([{ session_id: ownSession, player_id: b, club_id: CLUB_A, bib_colour_override: 'blue' }], {
+        onConflict: 'session_id,player_id',
+      })
+    expect(bibBatchErr).toBeNull()
+
+    const { data: rows } = await serviceClient()
+      .from('register_entries')
+      .select('player_id, present, included_in_groups, bib_colour_override')
+      .eq('session_id', ownSession)
+      .in('player_id', [a, b])
+    const rowA = rows!.find((r) => r.player_id === a)!
+    const rowB = rows!.find((r) => r.player_id === b)!
+    expect(rowA.included_in_groups).toBe(true)
+    expect(rowA.present).toBe(true)
+    expect(rowA.bib_colour_override).toBe('red')
+    expect(rowB.bib_colour_override).toBe('blue')
+    expect(rowB.present).toBe(true)
+  })
+
   it('a quick add records its source, and a later partial write does not reset it', async () => {
     const guest = seedPlayer({
       club: CLUB_A,
