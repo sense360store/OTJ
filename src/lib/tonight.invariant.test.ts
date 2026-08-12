@@ -403,3 +403,66 @@ describe('Saved is a comparison, not an assumption', () => {
     expect(src).not.toMatch(/onSuccess:\s*\(\)\s*=>\s*setDraft\(null\)/)
   })
 })
+
+// =====================================================================
+// The event aggregate never appears as a reply split.
+//
+// WHY THIS IS A SOURCE RULE. spond_events holds four integers per event
+// and they count every member Spond invited: coaches, unlinked members,
+// anybody on the event. Rendered as four figures beside four words they
+// read as a measurement of the club's players, and production proved it:
+// an event whose audience was 50 people showed 20 and 24 on the planner
+// while the same night's covered players were 10 going and 14 not going.
+// Both pairs were correct and only one of them was about players.
+//
+// So the split survives on exactly one surface, the admin mirror
+// inspection, whose whole job is showing what was synced. Everywhere a
+// coach organises a night the aggregate is one labelled sentence.
+//
+// A tripwire, not a proof: it reads source text and catches somebody
+// adding the pills back. What it cannot catch is a count reaching a label
+// through a variable, or a new file nothing here names.
+// =====================================================================
+describe('the Spond event aggregate is not a player RSVP anywhere a coach plans', () => {
+  // The mirror inspection, and the module that composes the wording.
+  const ALLOWED = ['lib/spond.ts', 'routes/AdminSpond.tsx']
+
+  it('renders the four count labels only on the admin mirror inspection', () => {
+    const offenders = sourceFiles()
+      .filter((f) => !isTest(f) && !ALLOWED.includes(f))
+      .filter((f) => /SPOND_COUNT_LABELS/.test(code(read(f))))
+    expect(offenders).toEqual([])
+  })
+
+  it('lets no other screen read a count field off an event row', () => {
+    // `event.accepted`, `e.declined` and their relatives. Each one is a
+    // figure about the event's audience being placed on a screen about
+    // the club's players.
+    const offenders: string[] = []
+    for (const f of sourceFiles().filter((f) => !isTest(f) && !ALLOWED.includes(f))) {
+      // Anchored on the names an event row is actually held under in this
+      // codebase. A blanket "identifier dot reply word" would flag the
+      // response model's own `chips.going`, which is the right figure.
+      const hit = code(read(f)).match(/\b(?:e|ev|evt|event|spondEvent|linked)\.(?:accepted|declined|unanswered|waiting)\b/)
+      if (hit) offenders.push(`${f}: ${hit[0]}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('composes the audience sentence in one place, naming its population', () => {
+    const src = read('lib/spond.ts')
+    const fn = src.slice(src.indexOf('export function spondAudienceNote'))
+    const body = fn.slice(fn.indexOf('return'), fn.indexOf('return') + 200)
+    expect(body).toMatch(/Spond audience/)
+    // A headcount, not a split. What the sentence must never carry is a
+    // reply word beside a figure; the wording itself is pinned
+    // behaviourally in ./tonightCounts.test.ts.
+    expect(body).not.toMatch(/going|accepted|declined|unanswered/i)
+  })
+
+  it('keeps the planner card and the plan rows on that one sentence', () => {
+    for (const f of ['components/SpondAttendance.tsx', 'components/PlanFromSpond.tsx']) {
+      expect(code(read(f))).toMatch(/spondAudienceNote\(/)
+    }
+  })
+})

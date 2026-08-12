@@ -20,7 +20,7 @@ import {
   useMemberMap,
   useMyCapabilities,
   useMyTeams,
-  useSpondEventLookup,
+  useEventKindContext,
   useTeamMap,
   useTeams,
   useVenueMap,
@@ -211,7 +211,7 @@ export function Sessions() {
   // A session planned from a Spond event carries only the event id, so the
   // classifier needs this to see that the event was a MATCH. Read only for
   // members who filter by kind; parents never do.
-  const spondEvents = useSpondEventLookup(canPlan)
+  const kindContext = useEventKindContext(canPlan)
   const [filter, setFilter] = useState<EventFilterState>(DEFAULT_EVENT_FILTER)
   const [teamId, setTeamId] = useState('')
   // Parents default to their team's schedule; a club wide toggle covers
@@ -260,7 +260,7 @@ export function Sessions() {
   const list = canPlan
     ? applyEventFilter(sessions, filter, {
         userId: user?.id,
-        spondEvents,
+        kindContext,
         now,
         teamMatch: (s) =>
           !teamId ||

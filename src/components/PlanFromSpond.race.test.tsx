@@ -63,6 +63,7 @@ vi.mock('../lib/queries', () => ({
   useSpondEvents: () => query([EVENT]),
   useTeamMap: () => ({ titans: { id: 'titans', name: 'Titans', bibColour: null } }),
   useRefreshSpondPlanning: () => refresh,
+  useEventKindContext: () => ({ teamNames: ['Titans', 'Trojans'] }),
   SpondLinkTakenError: class SpondLinkTakenError extends Error {},
 }))
 

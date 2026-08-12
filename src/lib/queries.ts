@@ -66,7 +66,7 @@ import type {
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import { SESSION_SPOND_LINK_TAKEN_ERROR } from './sessionSubmit'
-import { spondEventLookup, type SpondEventLookup } from './eventKind'
+import { type EventKindContext, spondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
 import { tonightUpsertBatches, type TonightChange } from './tonight'
 import type { Venue } from './venues'
@@ -2363,15 +2363,29 @@ export function useSpondEvents(enabled = true) {
   })
 }
 
-// The synced events indexed by id, for the one job that needs a lookup
-// rather than a list: classifying a SESSION that was planned from a Spond
-// event. A session row cannot carry spond_type, so the screens that filter
-// sessions resolve the link through this. Same query, same cache entry as
-// useSpondEvents, so it costs no extra read on a screen that already has
-// one; `enabled` is false for members who never filter by event kind.
-export function useSpondEventLookup(enabled = true): SpondEventLookup {
-  const { data } = useSpondEvents(enabled)
-  return useMemo(() => spondEventLookup(data ?? []), [data])
+// Everything the training classifier needs beyond the row it is handed,
+// as ONE hook, because a screen that wires half the context reads exactly
+// like a screen that wired all of it.
+//
+// The two facts, and the job each does:
+//
+//   spondEvents  the synced events indexed by id, for classifying a
+//                SESSION planned from a Spond event. A session row cannot
+//                carry spond_type, so the link is resolved through this.
+//   teamNames    the club's own team names, so an opponent-versus-team
+//                fixture title ("TROJANS – Rastrick") is recognised as a
+//                fixture rather than read as training.
+//
+// Both ride queries the screens already hold, so this costs no extra read
+// on a screen that lists sessions; `enabled` is false for members who
+// never filter by event kind. Teams are read unconditionally because the
+// teams query is club wide, tiny and already cached everywhere.
+export function useEventKindContext(enabled = true): EventKindContext {
+  const { data: events } = useSpondEvents(enabled)
+  const { data: teams } = useTeams()
+  const spondEvents = useMemo(() => spondEventLookup(events ?? []), [events])
+  const teamNames = useMemo(() => (teams ?? []).map((t) => t.name), [teams])
+  return useMemo(() => ({ spondEvents, teamNames }), [spondEvents, teamNames])
 }
 
 export interface SpondMappingInput {

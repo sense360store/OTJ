@@ -258,14 +258,14 @@ describe('15. a past Spond event does not clutter the default Training list', ()
     const planned = { ...sessionFromSpondEvent(ranLastNight, ME, 'titans'), id: 'planned-mon' }
     const lookup = spondEventLookup([ranLastNight, runsTonight])
     const rows = [planned, tonight]
-    expect(ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: ME, spondEvents: lookup, now: TUESDAY_MORNING }))).toEqual([
+    expect(ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: ME, kindContext: { spondEvents: lookup }, now: TUESDAY_MORNING }))).toEqual([
       'tue',
     ])
     expect(
       ids(
         applyEventFilter(rows, { ...DEFAULT_EVENT_FILTER, scope: 'past' }, {
           userId: ME,
-          spondEvents: lookup,
+          kindContext: { spondEvents: lookup },
           now: TUESDAY_MORNING,
         }),
       ),

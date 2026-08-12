@@ -150,14 +150,14 @@ describe('a session linked to a Spond MATCH stays a fixture through the filter',
   const rows = [training, plannedMatch, plannedTraining]
 
   it('keeps it out of Training', () => {
-    expect(ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: 'me', spondEvents: lookup }))).toEqual([
+    expect(ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: 'me', kindContext: { spondEvents: lookup } }))).toEqual([
       't1',
       'p1',
     ])
   })
 
   it('still shows it under All events', () => {
-    expect(ids(applyEventFilter(rows, { kind: 'all', scope: 'upcoming', mine: false }, { userId: 'me', spondEvents: lookup }))).toEqual([
+    expect(ids(applyEventFilter(rows, { kind: 'all', scope: 'upcoming', mine: false }, { userId: 'me', kindContext: { spondEvents: lookup } }))).toEqual([
       't1',
       'm1',
       'p1',
@@ -167,7 +167,7 @@ describe('a session linked to a Spond MATCH stays a fixture through the filter',
   it('is not rescued into Training by a team filter', () => {
     const teamMatch = (e: { teamIds?: string[] }) => (e.teamIds ?? []).includes('titans')
     expect(
-      ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: 'me', teamMatch, spondEvents: lookup })),
+      ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: 'me', teamMatch, kindContext: { spondEvents: lookup } })),
     ).toEqual(['t1', 'p1'])
   })
 
@@ -175,7 +175,7 @@ describe('a session linked to a Spond MATCH stays a fixture through the filter',
     // The coach owns the fixture. Mine narrows within the kind and cannot
     // widen it, so their Training list is still training only.
     expect(
-      ids(applyEventFilter(rows, { kind: 'training', scope: 'upcoming', mine: true }, { userId: 'me', spondEvents: lookup })),
+      ids(applyEventFilter(rows, { kind: 'training', scope: 'upcoming', mine: true }, { userId: 'me', kindContext: { spondEvents: lookup } })),
     ).toEqual(['t1'])
   })
 
@@ -186,13 +186,13 @@ describe('a session linked to a Spond MATCH stays a fixture through the filter',
   })
 
   it('is never chosen as the schedule s next training', () => {
-    expect(pickNextEvent([plannedMatch, training], 'me', lookup)?.id).toBe('t1')
+    expect(pickNextEvent([plannedMatch, training], 'me', { spondEvents: lookup })?.id).toBe('t1')
   })
 
   it('can still lead a schedule that holds nothing else', () => {
     // Leading with the fixture beats claiming an empty calendar, which is
     // the same fallback an unlinked fixture gets.
-    expect(pickNextEvent([plannedMatch], 'me', lookup)?.id).toBe('m1')
+    expect(pickNextEvent([plannedMatch], 'me', { spondEvents: lookup })?.id).toBe('m1')
   })
 })
 

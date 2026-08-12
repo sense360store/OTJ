@@ -147,8 +147,13 @@ describe('the 19 vs 11 case', () => {
     // Each sentence names who it counted. A bare "19" beside a bare "11"
     // is exactly the defect this fixes.
     expect(linkNote).toMatch(/players linked to Spond/)
-    expect(audienceNote).toMatch(/Spond event/)
+    expect(audienceNote).toMatch(/Spond audience/)
     expect(audienceNote).toMatch(/invited/)
+    // And the aggregate no longer carries a going figure at all. It used
+    // to read "…, 21 going" directly beside a Going chip saying 11, which
+    // is the pair of numbers this whole file exists for.
+    expect(audienceNote).not.toMatch(/going/i)
+    expect(audienceNote).not.toContain('21')
   })
 })
 
@@ -243,7 +248,18 @@ describe('the Spond event aggregate never drives a Tonight count', () => {
 
   it('reports the audience under its own name, as a separate concept', () => {
     expect(spondAudience(event())).toBe(50)
-    expect(spondAudienceNote(event())).toBe('Spond event: 50 invited, 21 going')
+    expect(spondAudienceNote(event())).toBe('Spond audience: 50 people invited')
+  })
+
+  it('states a headcount and nothing a coach can read as a reply split', () => {
+    // Requirement 10, at the seam: the aggregate has exactly one number
+    // and it is labelled as people invited. None of the four reply words
+    // may appear beside a figure from this event.
+    const note = spondAudienceNote(event())
+    for (const word of ['accepted', 'declined', 'unanswered', 'waiting', 'going']) {
+      expect(note.toLowerCase()).not.toContain(word)
+    }
+    expect(note.match(/\d+/g)).toEqual(['50'])
   })
 
   it('captions the aggregate so a reader knows who it counted', () => {

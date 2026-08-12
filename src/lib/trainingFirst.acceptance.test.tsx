@@ -243,14 +243,14 @@ describe('9. a fixture planned from Spond is still a fixture on every screen', (
   // rows happened to arrive in: `a` starts 17:30 local, and both planned
   // rows carry the event's 17:30Z, which is 18:30 in the club's summer.
   it('is absent from the Sessions Training view', () => {
-    expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: ME, spondEvents: lookup, now: NOW }))).toEqual([
+    expect(ids(applyEventFilter(schedule, DEFAULT_EVENT_FILTER, { userId: ME, kindContext: { spondEvents: lookup }, now: NOW }))).toEqual([
       'a',
       'planned-training',
     ])
   })
 
   it('is present under All events', () => {
-    expect(ids(applyEventFilter(schedule, { kind: 'all', scope: 'upcoming', mine: false }, { userId: ME, spondEvents: lookup, now: NOW }))).toEqual([
+    expect(ids(applyEventFilter(schedule, { kind: 'all', scope: 'upcoming', mine: false }, { userId: ME, kindContext: { spondEvents: lookup }, now: NOW }))).toEqual([
       'a',
       'planned-match',
       'planned-training',
@@ -258,17 +258,17 @@ describe('9. a fixture planned from Spond is still a fixture on every screen', (
   })
 
   it("is never Home's next training, even when it is soonest and owned", () => {
-    expect(pickNextEvent(schedule, ME, lookup, NOW)?.id).toBe('a')
+    expect(pickNextEvent(schedule, ME, { spondEvents: lookup }, NOW)?.id).toBe('a')
   })
 
   it("is not labelled training by Home's hero either", () => {
     // The eyebrow reads the same classifier, so it cannot call a fixture
     // "your next training" while the list below leaves it out.
-    expect(isTrainingEvent(plannedMatch, lookup)).toBe(false)
+    expect(isTrainingEvent(plannedMatch, { spondEvents: lookup })).toBe(false)
   })
 
   it('takes the linked training session with it, but only the fixture out', () => {
-    expect(isTrainingEvent(plannedTraining, lookup)).toBe(true)
+    expect(isTrainingEvent(plannedTraining, { spondEvents: lookup })).toBe(true)
   })
 })
 

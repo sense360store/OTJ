@@ -28,9 +28,9 @@ import {
   type ClassifiableEvent,
   DEFAULT_EVENT_KIND,
   type EventKind,
+  type EventKindContext,
   isTrainingEvent,
   matchesEventKind,
-  type SpondEventLookup,
 } from './eventKind'
 import {
   DEFAULT_LIFECYCLE_SCOPE,
@@ -75,12 +75,15 @@ export interface EventFilterContext<T> {
   // parent scope and session coverage, none of which belong in here. Passing
   // it in keeps the composition testable without duplicating that logic.
   teamMatch?: (event: T) => boolean
-  // Resolves a row's linked Spond event, so a session planned from a Spond
-  // MATCH keeps Spond's classification instead of falling back to its
-  // title. Required in practice on any screen that filters SESSIONS, since
-  // a session row cannot carry spondType; a screen filtering synced events
-  // never needs it. See eventKind for the rule and the degrade.
-  spondEvents?: SpondEventLookup
+  // What the classifier needs beyond the row itself: the Spond event
+  // lookup, so a session planned from a Spond MATCH keeps Spond's
+  // classification instead of falling back to its title, and the club's
+  // team names, so an opponent-versus-team fixture title is recognised as
+  // one. The lookup is required in practice on any screen that filters
+  // SESSIONS, since a session row cannot carry spondType; a screen
+  // filtering synced events never needs it. Both degrade towards showing
+  // the row. See eventKind for the rules and the degrades.
+  kindContext?: EventKindContext
   // The moment the list is being composed at. Defaults to the real clock in
   // the app and is supplied explicitly by tests, so no test depends on the
   // day it happens to run on.
@@ -109,14 +112,14 @@ export interface EventFilterContext<T> {
 export function pickNextEvent<T extends FilterableEvent>(
   upcoming: T[],
   userId: string | null | undefined,
-  spondEvents?: SpondEventLookup,
+  kindContext?: EventKindContext,
   now?: Date,
 ): T | undefined {
   // "active", not "live": a session being driven live is one of the ways a
   // row is still active, and the other ways matter just as much here.
   const active = upcoming.filter((e) => isSessionActive(e, now))
   const mine = (e: T) => !!userId && e.coachId === userId
-  const training = (e: T) => isTrainingEvent(e, spondEvents)
+  const training = (e: T) => isTrainingEvent(e, kindContext)
   return active.find((e) => training(e) && mine(e)) ?? active.find(training) ?? active.find(mine) ?? active[0]
 }
 
@@ -161,7 +164,7 @@ export function applyEventFilter<T extends FilterableEvent>(
   ctx: EventFilterContext<T>,
 ): T[] {
   const kept = items.filter((e) => {
-    if (!matchesEventKind(e, state.kind, ctx.spondEvents)) return false
+    if (!matchesEventKind(e, state.kind, ctx.kindContext)) return false
     if (!matchesLifecycleScope(e, state.scope, ctx.now)) return false
     if (ctx.teamMatch && !ctx.teamMatch(e)) return false
     // Fail closed on ownership: with no signed in user, "mine" is nobody's,

@@ -19,6 +19,7 @@ import {
   useSpondLinks,
   useSpondMappings,
   useSpondSync,
+  useEventKindContext,
   useTeams,
 } from '../lib/queries'
 import { linkedCounts } from '../lib/spondRsvp'
@@ -337,12 +338,17 @@ function LinksCard() {
 
 function EventsCard() {
   const { data: events = [], isLoading, isError } = useSpondEvents()
+  // The same classifier context the coaches' screens supply. Without the
+  // club's team names an opponent-versus-team fixture reads as training
+  // here and as a fixture there, which is the exact disagreement the one
+  // seam exists to prevent.
+  const kindContext = useEventKindContext()
   // Training first here too. An admin checking the mirror is nearly always
   // asking whether the training nights came through; All events is the tap
   // that answers everything else, and both use the same classifier the
   // coaches' screens use, so the two never disagree about a given row.
   const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
-  const shown = events.filter((e) => matchesEventKind(e, kind))
+  const shown = events.filter((e) => matchesEventKind(e, kind, kindContext))
   return (
     <div className="card" style={{ padding: 18 }}>
       <h3 style={{ fontSize: 17, marginBottom: 4 }}>Synced events</h3>
