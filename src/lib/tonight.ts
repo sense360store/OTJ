@@ -44,7 +44,7 @@
 import { BIB_COLOURS, effectiveBib, bibLabel } from './bibs'
 import type { RegisterEntry, RegisterView } from './register'
 import type { Team } from './data'
-import type { RsvpStatus } from './spondRsvp'
+import { isRsvpStatus, type RsvpStatus } from './spondRsvp'
 
 // The four Spond reply states plus the widening. Order is the order a
 // coach reads them: the ones they act on first, then everyone.
@@ -149,7 +149,16 @@ export function buildTonightRows(
 // Excluding them here rather than in tonightCounts is what keeps a chip's
 // number equal to the rows that chip shows: the count and the list go
 // through this one predicate, so they cannot disagree.
-export function matchesResponse(row: TonightRow, filter: ResponseFilter): boolean {
+// The smallest thing the predicate reads. TonightRow satisfies it
+// structurally, and so does a bare stored reply with nobody attached,
+// which is what lets the admin mirror inspection count LINKED PLAYERS
+// through this very predicate rather than growing a second one.
+export interface RespondingRow {
+  response: RsvpStatus | null
+  manual: boolean
+}
+
+export function matchesResponse(row: RespondingRow, filter: ResponseFilter): boolean {
   if (filter === 'all') return true
   return !row.manual && row.response !== null && row.response === FILTER_STATUS[filter]
 }
@@ -196,7 +205,7 @@ export type ResponseCounts = Record<ResponseFilter, number>
 // The four reply states count the COVERED SQUAD and `all` counts every row
 // on screen, guests included. Both follow from matchesResponse above, so
 // there is nothing to keep in step here.
-export function countByResponse(rows: TonightRow[]): ResponseCounts {
+export function countByResponse(rows: readonly RespondingRow[]): ResponseCounts {
   const counts: ResponseCounts = { going: 0, unanswered: 0, declined: 0, waiting: 0, all: rows.length }
   for (const r of rows) {
     for (const f of RESPONSE_FILTERS) {
@@ -204,6 +213,29 @@ export function countByResponse(rows: TonightRow[]): ResponseCounts {
     }
   }
   return counts
+}
+
+// One event's stored replies, counted as LINKED PLAYERS.
+//
+// WHY THIS POPULATION IS SAFE TO NAME. A row in spond_event_responses is
+// unrepresentable for an unlinked member: the foreign key into
+// player_spond_links makes it so (migration 0045). So the rows this counts
+// are exactly the club's own children, one reply each, and the caller
+// needs no member id and no name to say so.
+//
+// IT IS NOT TONIGHT'S SQUAD, and the screen that shows it says which it
+// is. Tonight counts the children a SESSION covers, whether or not they
+// replied; this counts every linked child who replied to one event, with
+// no session and therefore no coverage to narrow by. Two populations, two
+// labels, one predicate: matchesResponse decides both, so neither can
+// drift from the reply states the product names.
+//
+// A status the mirror does not recognise counts under Everyone and no
+// reply state, exactly as an unlinked child does on Tonight.
+export function countLinkedResponses(statuses: readonly string[]): ResponseCounts {
+  return countByResponse(
+    statuses.map((s) => ({ response: isRsvpStatus(s) ? s : null, manual: false })),
+  )
 }
 
 // ---- The five populations, counted once -----------------------------

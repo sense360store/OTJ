@@ -6,10 +6,6 @@
 import { blankSession } from './data'
 import type { Session, SpondEvent, SpondMapping } from './data'
 
-// The four counts in display order, the only attendance figures the app
-// holds. They key straight into SpondEvent.
-export const SPOND_COUNT_LABELS = ['accepted', 'declined', 'unanswered', 'waiting'] as const
-
 // ---- The event aggregate, and who it counts --------------------------
 //
 // THE POPULATION THESE FOUR NUMBERS DESCRIBE, which is the thing every
@@ -43,20 +39,35 @@ export function spondAudience(event: {
   return event.accepted + event.declined + event.unanswered + event.waiting
 }
 
-// The caption above a row of the four counts. Its whole job is to stop the
-// numbers under it being read as a statement about the club's squad.
+// The words for the aggregate's population, for anywhere that needs to
+// name it without the figure. No surface renders the four counts split any
+// more, so there is nothing left for this to caption; it survives as the
+// one place the population is named in words.
 export const SPOND_AUDIENCE_CAPTION = 'Everyone invited to the Spond event'
 
-// One line naming the population and the figure a Tonight chip is most
-// often compared with. Rendered where the aggregate sits beside Hub
-// counts, so the two never look like the same measurement.
+// The aggregate as ONE labelled sentence, which is the only shape it takes
+// on any surface a coach organises a night from.
+//
+// WHY IT LOST ITS SPLIT. It used to render as four figures beside four
+// words: "20 accepted", "24 declined". Both the words and the figures then
+// read as a measurement of the club's players, because that is what a
+// coach on a football app assumes a going figure counts, and production
+// proved it: an event whose audience was 50 people showed 20 and 24 on the
+// planner while the same night's covered players were 10 going and 14 not.
+// Nothing was wrong with either number and everything was wrong with
+// showing the larger pair as an unqualified split.
+//
+// So the aggregate keeps exactly one job here, saying how many people the
+// event reached, and it says whose figure it is in the same breath. The
+// per player replies are Tonight's, where the rows that back them are.
 export function spondAudienceNote(event: {
   accepted: number
   declined: number
   unanswered: number
   waiting: number
 }): string {
-  return `Spond event: ${spondAudience(event)} invited, ${event.accepted} going`
+  const people = spondAudience(event)
+  return `Spond audience: ${people} ${people === 1 ? 'person' : 'people'} invited`
 }
 
 // What an admin pastes into the add mapping form resolves to: the Spond
@@ -147,11 +158,23 @@ export function bySpondEventCloseness(date: string, time: string) {
 // list of fixtures. Out here it is ordinary pure code with ordinary tests.
 export function pickerEvents(
   events: SpondEvent[],
-  opts: { kind: EventKind; showAll: boolean; teamId: string | null; date: string; time: string },
+  opts: {
+    kind: EventKind
+    showAll: boolean
+    teamId: string | null
+    date: string
+    time: string
+    // What the classifier needs beyond the row: in practice the club's
+    // team names, so an opponent-versus-team fixture title is classified
+    // as a fixture here too. These rows carry their own spondType, so the
+    // event lookup half is never needed; passing the whole context anyway
+    // means a third classifier fact reaches every composer at once.
+    kindContext?: EventKindContext
+  },
 ): SpondEvent[] {
   const teamId = opts.teamId
   const inTeam = opts.showAll || !teamId ? events : events.filter((e) => spondEventInTeam(e, teamId))
-  const pool = inTeam.filter((e) => matchesEventKind(e, opts.kind))
+  const pool = inTeam.filter((e) => matchesEventKind(e, opts.kind, opts.kindContext))
   return [...pool].sort(bySpondEventCloseness(opts.date, opts.time))
 }
 
@@ -181,7 +204,7 @@ export function spondEventWhen(startsAt: string): string {
 }
 
 // The muted line under a picker row's title: when it is, whose it is, and
-// how many of the people Spond invited are going.
+// how many people the event reached.
 //
 // PURE, AND HERE, because the picker lives inside a modal and this project
 // has no DOM: a modal never opens under test, so a rule left in that JSX is
@@ -189,11 +212,12 @@ export function spondEventWhen(startsAt: string): string {
 // A test asserting the row's wording through a static render of the card
 // passed while the row said the opposite, which is how this arrived.)
 //
-// It reads "21 of 50 invited going" rather than "21 accepted" because that
-// bare figure is the one a coach carries to Tonight and compares with a
-// Going chip counting covered Hub players.
+// It names the audience and states no going figure at all. The accepted
+// count used to lead this line, and it is the number a coach carried to
+// Tonight and read as contradicting a Going chip counting covered Hub
+// players. Choosing which event a session is arranged as does not need it.
 export function spondPickerSummary(event: SpondEvent): string {
-  return `${spondEventWhen(event.startsAt)} · ${spondTeamLabel(event.teamName)} · ${event.accepted} of ${spondAudience(event)} invited going`
+  return `${spondEventWhen(event.startsAt)} · ${spondTeamLabel(event.teamName)} · ${spondAudienceNote(event)}`
 }
 
 // The event's local wall clock split into the session's yyyy-mm-dd date and
@@ -213,7 +237,13 @@ export function spondEventLocalDateTime(startsAt: string): { date: string; time:
 // The training classifier lives in ./eventKind, which is the single seam every
 // surface uses. Imported for use below and re-exported so existing Spond
 // callers keep a stable import; there is no second implementation.
-import { DEFAULT_EVENT_KIND, type EventKind, isTrainingEvent, matchesEventKind } from './eventKind'
+import {
+  DEFAULT_EVENT_KIND,
+  type EventKind,
+  type EventKindContext,
+  isTrainingEvent,
+  matchesEventKind,
+} from './eventKind'
 export { isTrainingEvent, matchesEventKind }
 
 // The lifecycle rule lives in ./sessionLifecycle, the single seam every
@@ -248,6 +278,12 @@ export interface SpondPlanOptions {
   // training. All events is the deliberate widening, not the starting
   // point, which is the correction this parameter carries.
   kind?: EventKind
+  // What the classifier needs beyond the row, in practice the club's team
+  // names for the fixture rule. Synced events carry their own spondType,
+  // so the lookup half is never needed here; absent, an opponent-versus-
+  // team fixture reads as training, which is the pre-existing degrade
+  // rather than a new one.
+  kindContext?: EventKindContext
   // Which side of the lifecycle to suggest. Upcoming unless the caller
   // widens it: an event that has already run is not a night to organise,
   // and mixing the two put last month's gala under a coach's thumb while
@@ -262,6 +298,7 @@ export function spondPlanSuggestions({
   scopeTeamIds,
   showAllTeams,
   kind = DEFAULT_EVENT_KIND,
+  kindContext,
   scope = DEFAULT_LIFECYCLE_SCOPE,
   now = new Date(),
 }: SpondPlanOptions): SpondEvent[] {
@@ -270,7 +307,7 @@ export function spondPlanSuggestions({
     (e) =>
       !plannedEventIds.has(e.id) &&
       inScope(e) &&
-      matchesEventKind(e, kind),
+      matchesEventKind(e, kind, kindContext),
   )
   // Past reads most recent first, because a coach looking back wants last
   // night before last month; upcoming reads soonest first for the same

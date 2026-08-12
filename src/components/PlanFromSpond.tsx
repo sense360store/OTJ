@@ -22,6 +22,7 @@ import {
   useMyCapabilities,
   useMyTeams,
   useRefreshSpondPlanning,
+  useEventKindContext,
   useSpondEvents,
   useTeamMap,
 } from '../lib/queries'
@@ -30,8 +31,7 @@ import type { Session, SpondEvent } from '../lib/data'
 import { SESSION_CREATE_ERROR, SESSION_SPOND_LINK_TAKEN_ERROR, stableCreateId } from '../lib/sessionSubmit'
 import {
   sessionFromSpondEvent,
-  spondAudience,
-  SPOND_COUNT_LABELS,
+  spondAudienceNote,
   spondEventWhen,
   spondPlanSuggestions,
   spondTeamLabel,
@@ -167,15 +167,16 @@ export function PlanFromSpondView({
                   {spondEventWhen(e.startsAt)}
                 </span>
                 <span className="pill">{spondTeamLabel(e.teamName)}</span>
-                {/* The event's own counts, over everybody Spond invited,
-                    which is a larger set than the squad the planned session
-                    will cover. Named so the two are never read as one. */}
-                <span className="pill">{spondAudience(e)} invited</span>
-                {SPOND_COUNT_LABELS.map((label) => (
-                  <span key={label} className="pill">
-                    <b>{e[label]}</b> {label}
-                  </span>
-                ))}
+                {/* The audience, named, and nothing that reads as a player
+                    RSVP. The four counts used to render here as a split,
+                    and they count every member Spond invited rather than
+                    the squad the planned session will cover, which on the
+                    production event was 50 people against 27 linked
+                    children. Choosing a night to plan does not need a
+                    reply figure; Tonight has the ones that count players. */}
+                <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>
+                  {spondAudienceNote(e)}
+                </span>
               </div>
             </div>
             <button className="btn btn-primary btn-sm" disabled={planPendingId !== null || frozen} onClick={() => onPlan(e)}>
@@ -211,6 +212,10 @@ export function PlanFromSpond({
   const { data: events = [], isLoading, isError } = useSpondEvents()
   const { data: myTeams } = useMyTeams()
   const teamById = useTeamMap()
+  // The classifier context, so the fixture rule fires here as well. Beside
+  // the other reads, above the capability guard: hooks run in one order or
+  // they run wrong.
+  const kindContext = useEventKindContext()
   const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
   // Named for the lifecycle rather than "scope", because this component
   // already calls the coach's team reach a scope and two of them would be
@@ -278,7 +283,15 @@ export function PlanFromSpond({
     sessions.filter((s) => s.spondEventId).map((s) => s.spondEventId as string),
   )
   const suggest = (forKind: EventKind, forScope: LifecycleScope) =>
-    spondPlanSuggestions({ events, plannedEventIds, scopeTeamIds, showAllTeams: showAll, kind: forKind, scope: forScope })
+    spondPlanSuggestions({
+      events,
+      plannedEventIds,
+      scopeTeamIds,
+      showAllTeams: showAll,
+      kind: forKind,
+      kindContext,
+      scope: forScope,
+    })
   const rows = suggest(kind, lifecycle)
 
   // On the Sessions screen the surface only earns space when it has something

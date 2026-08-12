@@ -65,6 +65,23 @@ export interface ClassifiableEvent {
 // one, because those rows carry their own spondType.
 export type SpondEventLookup = (id: string) => { spondType?: string | null } | undefined
 
+// Everything the classifier can be told about the world beyond the row.
+//
+// ONE PARAMETER, NOT TWO, and that is deliberate. Both members are facts a
+// screen fetches and hands down, both are optional, and both degrade the
+// same way when absent. Passing them separately would let a screen supply
+// half the context and read as if it had supplied all of it; bundling them
+// means the compiler names every call site the day a third fact arrives,
+// and a screen wires one hook rather than remembering two.
+export interface EventKindContext {
+  spondEvents?: SpondEventLookup
+  // The club's own team names, as the teams table spells them. Used by the
+  // fixture rule below and by nothing else here. Absent means the rule
+  // cannot fire, which leaves the classifier exactly as lopsided as it was
+  // before: it degrades towards showing, never towards hiding.
+  teamNames?: readonly string[]
+}
+
 // Builds the lookup from whatever list of synced events the caller holds.
 // A plain index, exported so the screens do not each invent one and so the
 // empty and unresolvable cases have somewhere to be tested.
@@ -102,6 +119,23 @@ function eventLabel(event: ClassifiableEvent): string {
 // "cup" exclusion. One optional space or hyphen, and nothing else: "warm"
 // and "up" still have to be adjacent, so "Warm weather cup" is not
 // rescued. "practis" covers the British verb beside the American noun.
+//
+// THE SECOND HALF OF THIS LIST IS THE PRODUCT'S OWN COACHING VOCABULARY,
+// and it is here rather than inside the fixture rule below on purpose.
+// A coach who titles a night "Titans – Shooting" has named what they are
+// coaching, and "Shooting" is a topic, not an opponent. The fixture rule
+// cannot tell those apart by shape: "Shooting" and "Rastrick" are both one
+// capitalised word. Rather than teach that rule a list of things it must
+// refuse to hide, which would be a hiding rule with an exception list, the
+// vocabulary joins the rule that can only ever SHOW a row. Adding a word
+// here can move a title from fixture to training and never the other way,
+// which is the only direction this module is allowed to be incomplete in.
+//
+// The words are the FA's own session taxonomy (themes and player skills,
+// the lists src/lib/fa.ts offers a coach when they fill a session in) plus
+// the coaching words this club's game uses that the FA's lists do not
+// carry. Deliberately not here: "game", "final" and other words a fixture
+// is at least as likely to contain as a training night.
 const TRAINING_WORDS = [
   'training',
   'session',
@@ -109,6 +143,45 @@ const TRAINING_WORDS = [
   'practise',
   'drill',
   'warm[ -]?up',
+  // FA themes.
+  'attacking',
+  'defending',
+  'goalkeeping',
+  'futsal',
+  // FA player skills.
+  'finishing',
+  'passing',
+  'receiving',
+  'pressing',
+  'marking',
+  'tackling',
+  'turning',
+  'intercepting',
+  'covering',
+  // The rest of a coaching vocabulary, which the FA lists do not cover.
+  'shooting',
+  'dribbling',
+  'crossing',
+  'heading',
+  'possession',
+  'transition',
+  'rondo',
+  'mastery',
+  'sided',
+  'conditioning',
+  'fitness',
+  'technique',
+  'skill',
+  'development',
+  'coaching',
+  'prep',
+  // Where a night happens, which is the other thing a coach puts after a
+  // team name. Each of these is far likelier to describe a training venue
+  // than to be the whole name of a club playing.
+  'indoor',
+  'outdoor',
+  'astro',
+  'gym',
 ] as const
 
 const TRAINING_RE = new RegExp(`\\b(?:${TRAINING_WORDS.join('|')})s?\\b`, 'i')
@@ -156,6 +229,162 @@ export const NON_TRAINING_WORDS = [
 // and every fixture named in the plural read as training.
 const NON_TRAINING_RE = new RegExp(`\\b(?:${NON_TRAINING_WORDS.join('|')})(?:e?s)?\\b`, 'i')
 
+// ---- The football fixture shape -------------------------------------
+//
+// WHY A SECOND HIDING RULE EXISTS AT ALL. The word list above only catches
+// a fixture that NAMES itself one. This club names its fixtures after the
+// two sides playing, so production carried "Lindley Moor – TITANS",
+// "Hepworth – TITANS" and "TROJANS – Rastrick", none of which contains a
+// single word the list knows, and all three sat under Training on every
+// screen. The same three titles are also SESSION names, because a coach
+// planned them, so the defect was not confined to the Spond surfaces.
+//
+// SPOND'S OWN ANSWER WAS ASKED FOR FIRST, and it is not available. Every
+// spond_events row in production carries spond_type null, fixtures
+// included, and the rows above were written by the deployed sync that does
+// read the payload's spondType. This club creates plain Spond events, so
+// Spond states no classification to mirror, and no other stored event fact
+// separates the three: team_id records which mapping matched the event
+// (training addressed to the whole group carries none, which is a fact
+// about recipients and not about football), and location is a venue. So
+// the title is the only evidence there is, which is why this rule reads
+// one, and why it is built to be wrong in the tolerable direction.
+//
+// THE SHAPE, AND WHY EACH CLAUSE NARROWS IT. A dash in a title proves
+// nothing on its own: "Training – passing and receiving" is a coach's
+// note, not a fixture, and hiding it would cost them the session. So all
+// of the following must hold at once:
+//
+//   1. The label splits on ONE versus separator into exactly two sides.
+//      The separators need whitespace on both sides, so the hyphen inside
+//      "warm-up" is not one, and a title with two of them is not this
+//      shape at all.
+//   2. One whole side IS one of the club's own team names. Not a substring
+//      and not a word within a longer side: "TITANS" on its own, the way a
+//      fixture names the team playing. Without the club's teams in hand
+//      the rule cannot fire, which is the degrade this whole module
+//      prefers.
+//   3. BOTH sides read as names rather than prose. An opponent is a proper
+//      noun ("Lindley Moor", "Rastrick"); a coaching theme is not
+//      ("passing and receiving"). This clause is the one that keeps
+//      "Titans – passing and receiving" in the Training view, and it is
+//      the reason the rule can be trusted to hide anything at all.
+//
+// The positive training words still outrank all of it, so "Titans – warm
+// up" and "Cup week training" are unaffected.
+//
+// WHAT IT DELIBERATELY MISSES, because every miss shows a fixture and
+// every false catch hides a training night: "U8 v Horbury" (an age group
+// is not a team name), "Titans U9 – Hepworth" (an affix is not the name)
+// and "titans – rastrick" (lower case reads as prose). Each is one line to
+// widen here, and nowhere else, if the club ever titles fixtures that way.
+
+// Whitespace on both sides is what stops "warm-up" and "5-a-side" from
+// looking like two teams. The word forms are the ones football uses.
+const VERSUS_SEPARATOR = /\s+(?:[–—-]|vs?|versus)\s+/i
+
+// Words a name may contain in lower case without ceasing to be a name.
+const NAME_JOINERS = new Set(['of', 'the', 'and', 'at', 'on', 'in', 'de', 'la', 'le'])
+
+// Sides that are a moment rather than an opponent. "Titans – Tuesday" is
+// how half the country titles a training night, and Tuesday passes every
+// shape test a place name passes.
+//
+// A CLOSED SET, which is what makes it different from the coaching
+// vocabulary above. There are seven days and twelve months and there will
+// not be more, so this cannot be incomplete the way a topic list can.
+const NOT_AN_OPPONENT = new Set([
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december',
+])
+
+// Strips the punctuation a title wraps a word in, so "(Titans)" and
+// "Rastrick," are read as the words they are.
+function bareWord(word: string): string {
+  return word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+}
+
+// Whether one side of a title reads as the name of somebody playing: a
+// short run of words, each either capitalised or one of the small joining
+// words above, and none of them a day or a month. "Lindley Moor" and
+// "TITANS" pass; "passing and receiving" does not, because "passing" is
+// neither capitalised nor a joiner.
+//
+// AN UPPERCASE LETTER, NOT A DIGIT. Accepting a leading digit made
+// "5-a-side" and "4v4" read as opponents, because bareWord strips only the
+// edges and leaves the run whole, so "Titans – 5-a-side" was a fixture. It
+// also made "Week 3" a name. A team or a place starts with a letter; the
+// cost is that an opponent written "1874 Northwich" is not recognised,
+// which shows a fixture and is the direction this module fails in.
+function isNameLike(side: string): boolean {
+  const words = side.split(/\s+/).filter(Boolean)
+  // Four is a generous ceiling for a club or place name and a tight one
+  // for a sentence.
+  if (words.length === 0 || words.length > 4) return false
+  let named = false
+  for (const word of words) {
+    const bare = bareWord(word)
+    if (!bare) return false
+    const lower = bare.toLowerCase()
+    if (NOT_AN_OPPONENT.has(lower)) return false
+    if (NAME_JOINERS.has(lower)) continue
+    if (!/^\p{Lu}/u.test(bare)) return false
+    named = true
+  }
+  // A side made of nothing but joining words is not a name.
+  return named
+}
+
+// One spelling of a name, for comparing a side against a team. Runs of
+// whitespace collapse and the punctuation a title wraps the whole side in
+// comes off, so "(Titans)" and "TITANS:" are still the team. Only the
+// EDGES, so a team whose name carries a dot or an apostrophe keeps it.
+function normaliseName(value: string): string {
+  return value
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+    .toLowerCase()
+}
+
+// Whether this side is, in full, one of the club's teams.
+function isClubTeam(side: string, teamNames: readonly string[]): boolean {
+  const wanted = normaliseName(side)
+  if (!wanted) return false
+  return teamNames.some((name) => normaliseName(name) === wanted)
+}
+
+// Whether a label is a fixture between a club team and somebody else.
+// Exported so the tests can state the rule directly; every screen reaches
+// it through isTrainingEvent, like everything else here.
+export function isFixtureTitle(label: string, teamNames?: readonly string[]): boolean {
+  if (!teamNames || teamNames.length === 0) return false
+  const sides = label.split(VERSUS_SEPARATOR).map((s) => s.trim())
+  // Exactly two: a title carrying two separators is some other shape, and
+  // guessing which pair of sides was meant is exactly the kind of guess
+  // this module refuses to make.
+  if (sides.length !== 2) return false
+  if (!sides.every((s) => s.length > 0 && isNameLike(s))) return false
+  return sides.some((s) => isClubTeam(s, teamNames))
+}
+
 // Spond's own classification of its own event, as the mirror stores it in
 // spond_type. Only two values are ever written ("EVENT" or "MATCH"), and
 // only this one carries information: EVENT is the catch-all.
@@ -181,11 +410,16 @@ export function isSpondMatch(event: ClassifiableEvent): boolean {
 //   3. The title says training. A coach who named the row training, a
 //      session, practice or a warm up has answered the question, and the
 //      exclusion list below does not get to overrule them.
-//   4. The title names a non-training event. Whole words and their
+//   4. The title is a fixture between one of the club's teams and
+//      somebody else. Both sides have to read as names and one of them has
+//      to BE a club team, which is what separates "TROJANS – Rastrick"
+//      from "Titans – passing and receiving". See the block above it for
+//      why this rule exists and what it deliberately misses.
+//   5. The title names a non-training event. Whole words and their
 //      plurals, so "Rematching drills" is training and "Matches" is not,
 //      and after the pre match and match day phrases have been taken out,
 //      because those are training.
-//   5. Otherwise it is training. A session a coach planned in Training Hub
+//   6. Otherwise it is training. A session a coach planned in Training Hub
 //      is training unless something says otherwise, which is what keeps
 //      legacy and non-Spond training in the default view instead of
 //      requiring every row to have been named just so.
@@ -198,7 +432,12 @@ export function isSpondMatch(event: ClassifiableEvent): boolean {
 // routes/trainingFirst.screens.test.tsx renders those screens and fails if
 // a linked fixture reaches one of their Training views.
 //
-// Steps 3 and 4 are deliberately lopsided. A word list can be wrong in two
+// A CALLER WITH NO TEAM NAMES loses step 4 the same way, and lands back on
+// exactly the behaviour that shipped before it existed. Both degrades keep
+// a row visible rather than hiding it, which is the only direction this
+// module is allowed to fail in.
+//
+// Steps 3 to 5 are deliberately lopsided. A heuristic can be wrong in two
 // directions and only one of them is tolerable: showing a gala under
 // Training costs a coach one glance, hiding a training night costs them
 // the session. So every rule that can hide is narrow and every rule that
@@ -207,15 +446,24 @@ export function isSpondMatch(event: ClassifiableEvent): boolean {
 //
 // spondType 'EVENT' is deliberately NOT treated as proof of training:
 // Spond uses it for galas and socials too, so the title still decides.
-export function isTrainingEvent(event: ClassifiableEvent, spondEvents?: SpondEventLookup): boolean {
+export function isTrainingEvent(event: ClassifiableEvent, ctx?: EventKindContext): boolean {
   if (isSpondMatch(event)) return false
-  if (spondEvents && event.spondEventId) {
-    const linked = spondEvents(event.spondEventId)
+  if (ctx?.spondEvents && event.spondEventId) {
+    const linked = ctx.spondEvents(event.spondEventId)
     if (linked && isSpondMatch(linked)) return false
   }
   const label = eventLabel(event)
   if (TRAINING_RE.test(label)) return true
-  return !NON_TRAINING_RE.test(label.replace(NOT_A_FIXTURE, ' '))
+  // Both hiding rules read the label with the pre match and match day
+  // phrases already taken out, and they have to. Running the fixture rule
+  // on the raw label made "TITANS – Pre Match" a fixture: the phrase that
+  // exists precisely to say "this is training" became one side of a
+  // two-sided title, and the strip a line below it never got the chance to
+  // rescue it. Removed first, that side is empty and the shape does not
+  // hold, which is the answer both rules were always meant to give.
+  const withoutTrainingPhrases = label.replace(NOT_A_FIXTURE, ' ')
+  if (isFixtureTitle(withoutTrainingPhrases, ctx?.teamNames)) return false
+  return !NON_TRAINING_RE.test(withoutTrainingPhrases)
 }
 
 // The one filter every surface calls. Kept separate from isTrainingEvent so
@@ -225,7 +473,7 @@ export function isTrainingEvent(event: ClassifiableEvent, spondEvents?: SpondEve
 export function matchesEventKind(
   event: ClassifiableEvent,
   kind: EventKind,
-  spondEvents?: SpondEventLookup,
+  ctx?: EventKindContext,
 ): boolean {
-  return kind === 'all' ? true : isTrainingEvent(event, spondEvents)
+  return kind === 'all' ? true : isTrainingEvent(event, ctx)
 }

@@ -8,6 +8,7 @@ import {
   ALL_EVENTS_LABEL,
   DEFAULT_EVENT_KIND,
   EVENT_KIND_LABELS,
+  isFixtureTitle,
   isTrainingEvent,
   matchesEventKind,
   NON_TRAINING_WORDS,
@@ -183,20 +184,20 @@ describe("a session keeps the linked Spond event's classification", () => {
   const lookup = spondEventLookup(events)
 
   it('reads a linked MATCH as a fixture, whatever the session is called', () => {
-    expect(isTrainingEvent({ name: 'U8 v Horbury', spondEventId: 'e-match' }, lookup)).toBe(false)
+    expect(isTrainingEvent({ name: 'U8 v Horbury', spondEventId: 'e-match' }, { spondEvents: lookup })).toBe(false)
   })
 
   it('lets the linked MATCH beat a session title that reads like training', () => {
     // Spond's own classification of its own event outranks the title, and
     // it outranks it through the link exactly as it does directly.
-    expect(isTrainingEvent({ name: 'Tuesday training', spondEventId: 'e-match' }, lookup)).toBe(false)
+    expect(isTrainingEvent({ name: 'Tuesday training', spondEventId: 'e-match' }, { spondEvents: lookup })).toBe(false)
   })
 
   it('leaves a linked non MATCH event to the ordinary rules', () => {
     // EVENT is Spond's catch-all and proves nothing, so the title decides,
     // which is the same thing it does for an unlinked row.
-    expect(isTrainingEvent({ name: 'Titans Tuesday', spondEventId: 'e-training' }, lookup)).toBe(true)
-    expect(isTrainingEvent({ name: 'Summer gala', spondEventId: 'e-training' }, lookup)).toBe(false)
+    expect(isTrainingEvent({ name: 'Titans Tuesday', spondEventId: 'e-training' }, { spondEvents: lookup })).toBe(true)
+    expect(isTrainingEvent({ name: 'Summer gala', spondEventId: 'e-training' }, { spondEvents: lookup })).toBe(false)
   })
 
   it('falls back to the title rules when the link cannot be resolved', () => {
@@ -205,29 +206,29 @@ describe("a session keeps the linked Spond event's classification", () => {
     // title rules, which is the fail towards showing direction this whole
     // heuristic is built around: a fixture in the Training list costs a
     // glance, a hidden session costs the night.
-    expect(isTrainingEvent({ name: 'U8 v Horbury', spondEventId: 'gone' }, lookup)).toBe(true)
+    expect(isTrainingEvent({ name: 'U8 v Horbury', spondEventId: 'gone' }, { spondEvents: lookup })).toBe(true)
     expect(isTrainingEvent({ name: 'U8 v Horbury', spondEventId: 'e-match' })).toBe(true)
-    expect(isTrainingEvent({ name: 'Summer gala', spondEventId: 'gone' }, lookup)).toBe(false)
+    expect(isTrainingEvent({ name: 'Summer gala', spondEventId: 'gone' }, { spondEvents: lookup })).toBe(false)
   })
 
   it('needs no link to classify an unlinked session, exactly as before', () => {
-    expect(isTrainingEvent({ name: 'Tuesday training' }, lookup)).toBe(true)
-    expect(isTrainingEvent({ name: 'Summer gala' }, lookup)).toBe(false)
+    expect(isTrainingEvent({ name: 'Tuesday training' }, { spondEvents: lookup })).toBe(true)
+    expect(isTrainingEvent({ name: 'Summer gala' }, { spondEvents: lookup })).toBe(false)
   })
 
   it("prefers the row's own classification when it carries one", () => {
     // A synced event passes its own spondType and never needs the lookup.
     // If both are present they agree, because they are the same fact; the
     // row's own copy is the fresher one, so it answers first.
-    expect(isTrainingEvent({ title: 'Titans Tuesday', spondType: 'MATCH', spondEventId: 'e-training' }, lookup)).toBe(
+    expect(isTrainingEvent({ title: 'Titans Tuesday', spondType: 'MATCH', spondEventId: 'e-training' }, { spondEvents: lookup })).toBe(
       false,
     )
   })
 
   it('carries through matchesEventKind, which is what the screens call', () => {
     const fixture = { name: 'U8 v Horbury', spondEventId: 'e-match' }
-    expect(matchesEventKind(fixture, 'training', lookup)).toBe(false)
-    expect(matchesEventKind(fixture, 'all', lookup)).toBe(true)
+    expect(matchesEventKind(fixture, 'training', { spondEvents: lookup })).toBe(false)
+    expect(matchesEventKind(fixture, 'all', { spondEvents: lookup })).toBe(true)
   })
 })
 
@@ -303,5 +304,261 @@ describe('matchesEventKind is the one filter every surface uses', () => {
     // The default must not depend on who owns the row: the classifier has no
     // access to a coach id, which is what makes that structurally true.
     expect(matchesEventKind({ title: 'Titans training' }, 'training')).toBe(true)
+  })
+})
+
+// =====================================================================
+// The football fixture shape, from production.
+//
+// THE ROWS THIS WAS WRITTEN AGAINST. Three titles the club's coaches
+// actually used, all three sitting under Training on every screen after
+// the linked-MATCH fix shipped, and all three present in production twice
+// over: once as a synced spond_events row and once as the Hub SESSION a
+// coach planned from it. None of them names a word the exclusion list
+// knows, and Spond states no classification for any of them: every
+// spond_events row in that database carries spond_type null.
+//
+// So this rule reads a title, and the tests below are as much about what
+// it must NOT catch as what it must.
+// =====================================================================
+describe('an opponent-versus-team title is a fixture, not training', () => {
+  const TEAMS = ['Titans', 'Trojans', 'Gladiators', 'Spartans', 'Argonauts']
+  const ctx = { teamNames: TEAMS }
+  const training = (title: string) => isTrainingEvent({ title }, ctx)
+
+  it('classifies the three production fixtures as fixtures', () => {
+    // The en dash is the character the club's own titles use.
+    expect(training('Lindley Moor – TITANS')).toBe(false)
+    expect(training('Hepworth – TITANS')).toBe(false)
+    expect(training('TROJANS – Rastrick')).toBe(false)
+  })
+
+  it('classifies them the same way as SESSION names, not just event titles', () => {
+    // Production holds each of these three as a session a coach planned,
+    // and a session carries no spondType at all. One classifier, two
+    // shapes: `name` has to reach the same answer `title` does.
+    for (const name of ['Lindley Moor – TITANS', 'Hepworth – TITANS', 'TROJANS – Rastrick']) {
+      expect(isTrainingEvent({ name }, ctx)).toBe(false)
+    }
+  })
+
+  it('reads the other separators football writes fixtures with', () => {
+    expect(training('Titans v Rastrick')).toBe(false)
+    expect(training('Titans vs Rastrick')).toBe(false)
+    expect(training('Titans versus Rastrick')).toBe(false)
+    expect(training('Titans - Rastrick')).toBe(false)
+    expect(training('Titans — Rastrick')).toBe(false)
+  })
+
+  it('reads a fixture between two of the club s own teams', () => {
+    expect(training('Titans – Trojans')).toBe(false)
+  })
+
+  it('ignores the case the coach typed the team in', () => {
+    expect(training('TITANS – Rastrick')).toBe(false)
+    expect(training('Titans – Rastrick')).toBe(false)
+  })
+
+  // ---- and everything it must leave alone --------------------------
+
+  it('leaves a training title with a dash alone', () => {
+    // The requirement this rule was nearly broad enough to violate: a dash
+    // is not a fixture, and hiding a coach's training note costs them the
+    // session.
+    expect(training('Training – passing and receiving')).toBe(true)
+    expect(training('Training')).toBe(true)
+    expect(training('Training session')).toBe(true)
+  })
+
+  it('leaves a club team beside a coaching theme alone', () => {
+    // One side IS a team, so only the name-like test on the other side
+    // keeps this in the Training view. It is the clause that earns the
+    // rule its right to hide anything.
+    expect(training('Titans – passing and receiving')).toBe(true)
+    expect(training('Trojans – shooting')).toBe(true)
+  })
+
+  it('leaves two themes alone, team names or not', () => {
+    expect(training('Skills – dribbling')).toBe(true)
+    expect(training('Attack v Defence')).toBe(true)
+  })
+
+  it('needs a whole side to be a team, not a word inside one', () => {
+    expect(training('Titans Tuesday – Wednesday Trojans')).toBe(true)
+  })
+
+  it('is not fooled by the hyphen inside an ordinary word', () => {
+    // The separator needs whitespace on both sides, which is what keeps
+    // "warm-up" and "5-a-side" from reading as two teams.
+    expect(training('Titans warm-up')).toBe(true)
+    expect(training('5-a-side')).toBe(true)
+  })
+
+  it('refuses to guess when a title holds more than two sides', () => {
+    expect(training('Titans – Trojans – Spartans')).toBe(true)
+  })
+
+  it('cannot fire at all without the club s teams', () => {
+    // The documented degrade, and the one that matters: a caller with no
+    // team names lands exactly where the product was before this rule,
+    // which is showing the row rather than hiding it.
+    expect(isTrainingEvent({ title: 'Lindley Moor – TITANS' })).toBe(true)
+    expect(isTrainingEvent({ title: 'Lindley Moor – TITANS' }, { teamNames: [] })).toBe(true)
+  })
+
+  // ---- the review that rewrote this rule ---------------------------
+  //
+  // An adversarial pass over the first version found three ways it hid a
+  // training night, which is the direction this module is not allowed to
+  // fail in. All three are pinned here.
+
+  it('leaves a team beside a coaching topic alone, however it is capitalised', () => {
+    // THE DEFECT. The first version justified itself by saying the other
+    // side reads as prose, and tested only "Titans – passing and
+    // receiving". Title Case is the normal way a title is typed, and
+    // "Shooting" and "Rastrick" are both one capitalised word, so every
+    // one of these was hidden. The rescue is the coaching vocabulary in
+    // TRAINING_WORDS, which can only ever show a row.
+    for (const title of [
+      'Titans – Shooting',
+      'TITANS – Fitness',
+      'TITANS – Development',
+      'Titans – Goalkeeping',
+      'Titans – Finishing',
+      'TITANS – Skills And Shooting',
+      'Titans – Passing And Receiving',
+      'Titans - Rondo',
+      'Titans - Small Sided Games',
+      'Gladiators – Defending As A Unit',
+      'Spartans – Ball Mastery',
+      'Titans – Conditioning',
+      'Titans – Possession',
+      'Titans – Indoor',
+    ]) {
+      expect(training(title)).toBe(true)
+    }
+  })
+
+  it('leaves a team beside a day or a month alone', () => {
+    // A closed set, unlike the topic vocabulary: there are seven days and
+    // twelve months and there will not be more. "Titans – Tuesday" is how
+    // half the country titles a training night.
+    expect(training('Titans - Tuesday')).toBe(true)
+    expect(training('TITANS – Thursday')).toBe(true)
+    expect(training('Titans – August')).toBe(true)
+  })
+
+  it('leaves a numeric side alone, because a club does not start with a digit', () => {
+    // bareWord strips only the edges, so "5-a-side" survived whole and a
+    // leading digit used to read as a name.
+    expect(training('Titans – 5-a-side')).toBe(true)
+    expect(training('Titans - 7 A Side')).toBe(true)
+    expect(training('Titans – 4v4')).toBe(true)
+    expect(training('TITANS – Week 3')).toBe(true)
+  })
+
+  it('lets the pre match and match day rescue reach this rule too', () => {
+    // THE DEFECT. The fixture rule ran on the raw label and the phrases
+    // that exist to say "this is training" were stripped one line later,
+    // so the phrase became one side of a two-sided title and lost. The
+    // repo's own seed data carries "Saturday Pre-Match".
+    for (const title of [
+      'Titans – Pre-Match',
+      'Pre-Match – TITANS',
+      'Titans – Pre Match',
+      'TITANS – Post Match',
+      'Titans – Match Day',
+      'TITANS – Matchday',
+      'Titans – Pre-Match Prep',
+    ]) {
+      expect(training(title)).toBe(true)
+    }
+  })
+
+  it('still hides the three production fixtures after all of that narrowing', () => {
+    // The point of the exercise: every rescue above had to leave the
+    // reported defect fixed. None of these names a day, a month, a digit
+    // or a coaching topic.
+    expect(training('Lindley Moor – TITANS')).toBe(false)
+    expect(training('Hepworth – TITANS')).toBe(false)
+    expect(training('TROJANS – Rastrick')).toBe(false)
+  })
+
+  it('states the shapes it deliberately misses', () => {
+    // Each of these is a real fixture this rule leaves in the Training
+    // view, listed so nobody mistakes the rule for complete. Every miss
+    // costs a coach one glance; the alternative errors hide a session.
+    expect(training('U8 v Horbury')).toBe(true)
+    expect(training('Titans U9 – Hepworth')).toBe(true)
+    expect(training('titans – rastrick')).toBe(true)
+  })
+
+  it('names the residual it cannot close, in the direction that hides', () => {
+    // THE ONE PLACE THIS MODULE IS INCOMPLETE TOWARDS HIDING. A single
+    // capitalised word that is not a day, a month, a digit or a coaching
+    // topic is indistinguishable from an opponent, so a training night
+    // titled this way is under All events rather than Training. There is
+    // no fact in the row that separates the two; adding the word to
+    // TRAINING_WORDS is the one line fix, and doing so can only ever show
+    // more. Pinned so the limit is a decision and not a surprise.
+    expect(training('Titans – Bounce')).toBe(false)
+  })
+
+  it('still lets a positive training word outrank the whole shape', () => {
+    expect(training('Titans – Rastrick training')).toBe(true)
+    expect(training('Titans – Trojans practice')).toBe(true)
+  })
+
+  it("still lets Spond's own MATCH outrank a title that is not this shape", () => {
+    expect(isTrainingEvent({ title: 'Titans Tuesday', spondType: 'MATCH' }, ctx)).toBe(false)
+  })
+
+  it('carries a linked fixture through to the session that plans it', () => {
+    // Requirement 8: a session linked to a Spond MATCH inherits the
+    // fixture classification through the lookup, with the fixture rule
+    // present and not interfering.
+    const lookup = spondEventLookup([{ id: 'e-match', spondType: 'MATCH' }])
+    expect(isTrainingEvent({ name: 'Tuesday training', spondEventId: 'e-match' }, { ...ctx, spondEvents: lookup })).toBe(
+      false,
+    )
+  })
+
+  it('reaches the screens through matchesEventKind, and only narrows Training', () => {
+    const fixture = { title: 'TROJANS – Rastrick' }
+    expect(matchesEventKind(fixture, 'training', ctx)).toBe(false)
+    expect(matchesEventKind(fixture, 'all', ctx)).toBe(true)
+  })
+})
+
+describe('isFixtureTitle, stated directly', () => {
+  const TEAMS = ['Titans', 'Trojans']
+
+  it('is false without teams, whatever the shape', () => {
+    expect(isFixtureTitle('Lindley Moor – TITANS')).toBe(false)
+    expect(isFixtureTitle('Lindley Moor – TITANS', [])).toBe(false)
+  })
+
+  it('needs exactly two sides, both name-like, one of them ours', () => {
+    expect(isFixtureTitle('Lindley Moor – TITANS', TEAMS)).toBe(true)
+    expect(isFixtureTitle('Lindley Moor', TEAMS)).toBe(false)
+    expect(isFixtureTitle('Titans – passing and receiving', TEAMS)).toBe(false)
+    expect(isFixtureTitle('Lindley Moor – Hepworth', TEAMS)).toBe(false)
+  })
+
+  it('tolerates the punctuation a title wraps a name in', () => {
+    expect(isFixtureTitle('(Titans) – Rastrick', TEAMS)).toBe(true)
+  })
+
+  it('reads a name-like side of up to four words and no more', () => {
+    expect(isFixtureTitle('Titans – Ossett Town Juniors Reserves', TEAMS)).toBe(true)
+    expect(isFixtureTitle('Titans – Ossett Town Juniors Reserves Second', TEAMS)).toBe(false)
+  })
+
+  it('lets a lower case joining word sit inside a name', () => {
+    expect(isFixtureTitle('Titans – Sons of Ossett', TEAMS)).toBe(true)
+  })
+
+  it('does not accept a side made only of joining words', () => {
+    expect(isFixtureTitle('Titans – of the', TEAMS)).toBe(false)
   })
 })

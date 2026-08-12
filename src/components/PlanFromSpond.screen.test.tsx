@@ -53,6 +53,7 @@ vi.mock('../lib/queries', () => ({
   // refetch is a named hook, so both are stubbed here rather than dragging a
   // query client into a static render.
   useRefreshSpondPlanning: () => () => {},
+  useEventKindContext: () => ({ teamNames: ['Titans', 'Trojans'] }),
   SpondLinkTakenError: class SpondLinkTakenError extends Error {},
 }))
 

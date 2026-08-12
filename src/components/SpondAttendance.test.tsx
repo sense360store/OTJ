@@ -132,23 +132,42 @@ describe('pickerEvents', () => {
 // check for the caption matched the import line and survived deleting the
 // caption from the JSX.
 
-describe('the attendance card names the population it counts', () => {
+describe('the card states an audience and never a player RSVP', () => {
+  // The production event: 50 people invited, 21 of them going, against 27
+  // linked children of whom 10 accepted. The card used to render 21 and 23
+  // as a split, which is the figure a coach reads as their squad.
   const linked = ev({ id: 'big', accepted: 21, declined: 23, unanswered: 6, waiting: 0 })
 
-  it('captions the four counts as the event audience, not the squad', () => {
-    const html = render({ spondEventId: 'big' }, [linked])
-    expect(html).toContain('Everyone invited to the Spond event')
+  it('names the audience as one labelled sentence', () => {
+    expect(render({ spondEventId: 'big' }, [linked])).toContain('Spond audience: 50 people invited')
   })
 
-  it('states the audience total, which is what the counts add up to', () => {
+  it('shows no reply split at all', () => {
+    // The four API words and the four figures both go. Either one beside a
+    // number is the measurement this card must not appear to make.
     const html = render({ spondEventId: 'big' }, [linked])
-    expect(html).toContain('(50)')
+    for (const word of ['accepted', 'declined', 'unanswered', 'waiting']) {
+      expect(html).not.toContain(word)
+    }
+    expect(html).not.toContain('<b>21</b>')
+    expect(html).not.toContain('<b>23</b>')
   })
 
-  it('still shows the four counts themselves', () => {
+  it('never puts a going or not going figure on this card', () => {
+    // Requirement 10, at the surface the screenshots came from: no
+    // aggregate figure may wear a word a coach reads as players.
     const html = render({ spondEventId: 'big' }, [linked])
-    expect(html).toContain('accepted')
-    expect(html).toContain('<b>21</b>')
+    expect(html).not.toMatch(/\b(Going|Not going|No reply)\b/)
+  })
+
+  it('says where the per player replies actually are', () => {
+    // Not a dead end: the figures a coach acts on exist, on the one screen
+    // that knows which children the session covers.
+    expect(render({ spondEventId: 'big' }, [linked])).toContain('Session day')
+  })
+
+  it('calls the block the event rather than the attendance', () => {
+    expect(render({ spondEventId: 'big' }, [linked])).toContain('Spond event')
   })
 })
 
@@ -160,11 +179,14 @@ describe('the picker row names the population too', () => {
   // ../lib/spond for the same reason.
   const big = ev({ id: 'x', accepted: 21, declined: 23, unanswered: 6, waiting: 0 })
 
-  it('says how many of the invited are going, rather than a bare accepted count', () => {
-    // "21 accepted" is the figure a coach carries to Tonight and cannot
-    // reconcile with a Going chip of 11.
-    expect(spondPickerSummary(big)).toContain('21 of 50 invited going')
-    expect(spondPickerSummary(big)).not.toContain('21 accepted')
+  it('names the audience and states no going figure at all', () => {
+    // "21 accepted", and then "21 of 50 invited going", were both the
+    // figure a coach carried to Tonight and could not reconcile with a
+    // Going chip of 11. Choosing which event a session is arranged as
+    // needs neither.
+    expect(spondPickerSummary(big)).toContain('Spond audience: 50 people invited')
+    expect(spondPickerSummary(big)).not.toContain('21')
+    expect(spondPickerSummary(big)).not.toContain('going')
   })
 
   it('keeps the when and the team beside it', () => {

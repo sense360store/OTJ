@@ -549,3 +549,122 @@ describe('the read only bib cell', () => {
     expect(html).toContain('Red')
   })
 })
+
+// =====================================================================
+// The acceptance case: the linked 11 August Training session.
+//
+// Production, read only, on 2026-08-12: the Spond event's own aggregate
+// was 20 accepted, 24 declined, 6 unanswered, 0 waiting, an audience of
+// 50 people. Against that, the Hub held 40 covered children on the
+// session (it covers all five teams), 27 of them bound to a Spond member,
+// and 27 stored replies for the event: 10 accepted, 14 declined, 3
+// unanswered.
+//
+// The coach's complaint was that 20 and 24 read as a count of players.
+// They are not, and the figures that ARE about players are the chips on
+// this screen. So what has to be true is the thing a coach can check by
+// tapping: each chip's number is the number of rows that chip lists.
+//
+// Names are synthetic. No real child appears in this repo.
+// =====================================================================
+const AUGUST = (() => {
+  const out: Player[] = []
+  const rsvpByPlayer: Record<string, { status: 'accepted' | 'declined' | 'unanswered' | 'waiting'; syncedAt: string }> =
+    {}
+  const at = new Date().toISOString()
+  const replies = [
+    ...Array<'accepted'>(10).fill('accepted'),
+    ...Array<'declined'>(14).fill('declined'),
+    ...Array<'unanswered'>(3).fill('unanswered'),
+  ]
+  for (let i = 0; i < 40; i++) {
+    const id = `aug-${i}`
+    out.push(player(id, `Player ${String(i).padStart(2, '0')} Synthetic`, i % 2 === 0 ? 't1' : 't2'))
+    // The first 27 are the linked children, each carrying the reply the
+    // mirror stored for this event; the remaining 13 are unlinked and have
+    // no reply to give.
+    if (i < replies.length) rsvpByPlayer[id] = { status: replies[i], syncedAt: at }
+  }
+  return {
+    rows: buildTonightRows(buildRegister(out, ['t1', 't2'], teams, [], false), teams, rsvpByPlayer),
+  }
+})()
+
+describe('the linked 11 August Training session, as the coach opens it', () => {
+  const chip = (html: string, label: string) => {
+    const m = html.match(new RegExp(`>${label} (\\d+)</button>`))
+    return m ? Number(m[1]) : null
+  }
+
+  it('shows player figures, not the event audience', () => {
+    // 10 and 14, the covered players who replied, rather than 20 and 24,
+    // which count everybody Spond invited.
+    const html = screen({ rows: AUGUST.rows })
+    expect(chip(html, 'Going')).toBe(10)
+    expect(chip(html, 'Not going')).toBe(14)
+    expect(chip(html, 'No reply')).toBe(3)
+    expect(chip(html, 'Waiting')).toBe(0)
+    expect(chip(html, 'Everyone')).toBe(40)
+  })
+
+  it('lists exactly as many players as each chip claims', () => {
+    // Requirement 9, as a coach would verify it: tap a chip, count the
+    // rows. Every filter, including the widening.
+    for (const [label, filter] of [
+      ['Going', 'going'],
+      ['No reply', 'unanswered'],
+      ['Not going', 'declined'],
+      ['Waiting', 'waiting'],
+      ['Everyone', 'all'],
+    ] as const) {
+      const html = screen({ rows: AUGUST.rows, filter })
+      expect(names(html)).toHaveLength(chip(html, label) as number)
+    }
+  })
+
+  it('never puts the event audience on a chip', () => {
+    // Requirement 10 at the screen: 20, 24 and 50 are the aggregate's
+    // figures and none of them may appear as a chip's number.
+    const html = screen({ rows: AUGUST.rows })
+    for (const n of [20, 24, 50]) {
+      expect(html).not.toContain(`>Going ${n}<`)
+      expect(html).not.toContain(`>Not going ${n}<`)
+      expect(html).not.toContain(`>Everyone ${n}<`)
+    }
+  })
+
+  it('keeps the audience available as a labelled sentence beside them', () => {
+    // Secondary context, named. It is allowed to be on screen; it is not
+    // allowed to look like one of the figures above.
+    const html = screen({ rows: AUGUST.rows, audienceNote: 'Spond audience: 50 people invited' })
+    expect(html).toContain('Spond audience: 50 people invited')
+  })
+
+  it('counts the 13 unlinked children under Everyone and nowhere else', () => {
+    // Requirement 11: no link means no reply to give, which is a different
+    // thing from having given none.
+    const html = screen({ rows: AUGUST.rows })
+    const replied =
+      (chip(html, 'Going') as number) +
+      (chip(html, 'No reply') as number) +
+      (chip(html, 'Not going') as number) +
+      (chip(html, 'Waiting') as number)
+    expect(replied).toBe(27)
+    expect(chip(html, 'Everyone')).toBe(40)
+  })
+})
+
+describe('a session whose coverage was never set', () => {
+  it('counts nobody rather than falling back to the whole club', () => {
+    // Requirement 14. Zero covered teams means coverage was never chosen,
+    // never "all teams" (../lib/sessionTeams), so there is no squad to
+    // count and no denominator to guess at.
+    const html = screen({ rows: [], unset: true })
+    expect(html).toContain('This session has no teams yet')
+    expect(html).toContain('Everyone 0')
+  })
+
+  it('says what to do about it instead of showing a number it cannot back', () => {
+    expect(screen({ rows: [], unset: true })).toContain('Choose the teams it covers')
+  })
+})

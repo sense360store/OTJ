@@ -79,9 +79,23 @@ const spondEvent = (over: Partial<SpondEvent> & Pick<SpondEvent, 'id' | 'title'>
   ...over,
 })
 
+// The club's teams, as the classifier sees them. Named here because the
+// fixture rule reads them: an opponent-versus-team title is only a fixture
+// when one whole side IS one of these.
+const CLUB_TEAMS = [
+  { id: 'titans', name: 'Titans', bibColour: null },
+  { id: 'trojans', name: 'Trojans', bibColour: null },
+]
+const TEAM_NAMES = CLUB_TEAMS.map((t) => t.name)
+
 const MATCH_EVENT = spondEvent({ id: 'e-match', title: 'U8 v Horbury', spondType: 'MATCH' })
 const TRAINING_EVENT = spondEvent({ id: 'e-train', title: 'Titans Tuesday', spondType: 'EVENT' })
-const SYNCED = [MATCH_EVENT, TRAINING_EVENT]
+// Straight from production: a fixture Spond states nothing about. Every
+// spond_events row in that database carries spond_type null, so this is the
+// shape the mirror actually holds, and the only thing separating it from a
+// training night is the title naming the two sides playing.
+const PRODUCTION_FIXTURE = spondEvent({ id: 'e-lindley', title: 'Lindley Moor – TITANS', spondType: null })
+const SYNCED = [MATCH_EVENT, TRAINING_EVENT, PRODUCTION_FIXTURE]
 
 // A linked fixture named so that no word in the exclusion list catches it:
 // without the Spond link resolved, this reads as training.
@@ -97,7 +111,17 @@ const GALA = session({ id: 's-gala', name: 'Summer gala', coachId: THEM })
 const MY_TRAINING = session({ id: 's-mine', name: 'Titans Tuesday', coachId: ME, date: inDays(3) })
 const THEIR_TRAINING = session({ id: 's-theirs', name: 'Trojans Thursday', coachId: THEM, date: inDays(4) })
 
-const WEEK = [LINKED_FIXTURE, PLAIN_FIXTURE, GALA, MY_TRAINING, THEIR_TRAINING]
+// The same three titles production holds as SESSIONS, because a coach
+// planned each of them. A session carries no spondType and these carry no
+// word the exclusion list knows, so only the club's own team names keep
+// them out of a Training view.
+const PRODUCTION_FIXTURES = [
+  session({ id: 's-lindley', name: 'Lindley Moor – TITANS', coachId: ME, date: inDays(1) }),
+  session({ id: 's-hepworth', name: 'Hepworth – TITANS', coachId: THEM, date: inDays(2) }),
+  session({ id: 's-rastrick', name: 'TROJANS – Rastrick', coachId: ME, date: inDays(2) }),
+]
+
+const WEEK = [LINKED_FIXTURE, PLAIN_FIXTURE, GALA, MY_TRAINING, THEIR_TRAINING, ...PRODUCTION_FIXTURES]
 
 // Nights that have finished. Dated whole days back, so the assertions
 // below do not depend on the hour the suite runs at: a 17:30 session two
@@ -165,9 +189,9 @@ vi.mock('./ParentHome', () => ({ ParentHome: () => <span>PARENT_HOME</span>, NoT
 
 vi.mock('../lib/queries', () => ({
   useMyCapabilities: () => ({ caps: state.caps, isPending: false }),
-  useSpondEventLookup: () => spondEventLookup(state.spondEvents),
+  useEventKindContext: () => ({ spondEvents: spondEventLookup(state.spondEvents), teamNames: TEAM_NAMES }),
   useSpondEvents: () => query(state.spondEvents),
-  useTeams: () => query([{ id: 'titans', name: 'Titans', bibColour: null }]),
+  useTeams: () => query(CLUB_TEAMS),
   useTeamMap: () => ({ titans: { id: 'titans', name: 'Titans', bibColour: null } }),
   useVenueMap: () => ({}),
   useMemberMap: () => ({}),
@@ -179,6 +203,7 @@ vi.mock('../lib/queries', () => ({
   useCurrentSeason: () => query({ id: 'season' }),
   useRegisteredPlayers: () => query([]),
   useSpondLinks: () => query({ available: true, links: [] }),
+  useSpondEventResponseCounts: () => query({ byEvent: {}, available: false }),
   useSpondMappings: () => query([]),
   useSpondSync: () => ({ mutate: () => {}, isPending: false, isError: false, data: null, error: null }),
   useInsertSpondMapping: () => ({ mutate: () => {}, isPending: false, isError: false, error: null }),
@@ -216,6 +241,24 @@ describe('the Sessions screen, as it opens', () => {
     // context. "U8 v Horbury" names no word the heuristic knows, so only
     // the resolved link can keep it out.
     expect(html()).not.toContain('U8 v Horbury')
+  })
+
+  it('leaves out the three fixtures production had sitting under Training', () => {
+    // The mutation this catches: dropping the club's team names from the
+    // filter context. Each of these names one of our teams and one
+    // opponent, and nothing else in the row says fixture.
+    const out = html()
+    expect(out).not.toContain('Lindley Moor')
+    expect(out).not.toContain('Hepworth')
+    expect(out).not.toContain('Rastrick')
+  })
+
+  it('still reaches them under All events, because nothing is hidden for good', () => {
+    // The rule narrows the default view; it never removes a session. A
+    // coach who planned Saturday's fixture has to be able to open it.
+    const out = renderToStaticMarkup(<Sessions />)
+    expect(out).toContain('aria-pressed="false">All events</button>')
+    expect(out).not.toContain('Lindley Moor')
   })
 
   it('shows another coach s training, so the default is not secretly Mine', () => {
@@ -273,6 +316,13 @@ describe('the Home screen, as it opens', () => {
     expect(out).not.toContain('Your next training')
   })
 
+  it('keeps the production fixtures out of This week too', () => {
+    const out = renderToStaticMarkup(<Home />)
+    expect(out).not.toContain('Lindley Moor')
+    expect(out).not.toContain('Hepworth')
+    expect(out).not.toContain('Rastrick')
+  })
+
   it('keeps fixtures out of This week', () => {
     const out = html()
     expect(out).toContain('Trojans Thursday')
@@ -302,6 +352,13 @@ describe('the admin synced events list, as it opens', () => {
     expect(out).toContain('Titans Tuesday')
     expect(out).not.toContain('U8 v Horbury')
     expect(out).toContain('aria-pressed="true">Training</button>')
+  })
+
+  it('leaves the fixture Spond states nothing about out of the same list', () => {
+    // The admin screen classifies with the same context the coaches'
+    // screens use, so the mirror's Training view and a coach's cannot
+    // disagree about a row.
+    expect(renderToStaticMarkup(<AdminSpond />)).not.toContain('Lindley Moor')
   })
 })
 

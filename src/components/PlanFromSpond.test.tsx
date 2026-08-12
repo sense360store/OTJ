@@ -49,15 +49,18 @@ function render(props: Partial<Parameters<typeof PlanFromSpondView>[0]> = {}): s
 }
 
 describe('PlanFromSpondView', () => {
-  it('renders a row with the title, team, counts and a plan control', () => {
+  it('renders a row with the title, team, the audience and a plan control', () => {
     const html = render()
     expect(html).toContain('Plan from Spond')
     expect(html).toContain('U8 Training')
     expect(html).toContain('Titans')
     expect(html).toContain('Plan this')
-    // The four attendance counts show as planning context.
-    expect(html).toContain('>9</b> accepted')
-    expect(html).toContain('>2</b> declined')
+    // The audience as one labelled sentence, and no reply split: these
+    // counts are over everybody Spond invited, and a coach choosing a
+    // night to plan reads a going figure as their squad.
+    expect(html).toContain('Spond audience: 12 people invited')
+    expect(html).not.toContain('accepted')
+    expect(html).not.toContain('declined')
   })
 
   it('offers the event kind chips and the all teams toggle', () => {
@@ -145,15 +148,28 @@ describe('PlanFromSpondView', () => {
 // the session planned from the event covers a Hub squad that is a
 // different and usually smaller set. Rendered rather than source checked.
 
-describe('the plan rows name the population their counts describe', () => {
-  it('states how many the event invited beside the four counts', () => {
+describe('the plan rows state an audience and never a player RSVP', () => {
+  it('names the population and shows no reply figure beside it', () => {
     const html = render({ rows: [ev({ id: 'e1', accepted: 21, declined: 23, unanswered: 6, waiting: 0 })] })
-    expect(html).toContain('50 invited')
-    expect(html).toContain('<b>21</b>')
+    expect(html).toContain('Spond audience: 50 people invited')
+    expect(html).not.toContain('<b>21</b>')
+    expect(html).not.toContain('<b>23</b>')
   })
 
   it('counts every reply state into the audience, not just the accepted', () => {
     const html = render({ rows: [ev({ id: 'e1', accepted: 4, declined: 1, unanswered: 1, waiting: 0 })] })
-    expect(html).toContain('6 invited')
+    expect(html).toContain('Spond audience: 6 people invited')
+  })
+
+  it('says person for an audience of one', () => {
+    const html = render({ rows: [ev({ id: 'e1', accepted: 1, declined: 0, unanswered: 0, waiting: 0 })] })
+    expect(html).toContain('Spond audience: 1 person invited')
+  })
+
+  it('never puts a going or not going figure on a plan row', () => {
+    // Requirement 10 on this surface: no aggregate figure wears a word a
+    // coach reads as a count of players.
+    const html = render({ rows: [ev({ id: 'e1', accepted: 21, declined: 23, unanswered: 6, waiting: 0 })] })
+    expect(html).not.toMatch(/\b(Going|Not going|No reply)\b/)
   })
 })

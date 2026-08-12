@@ -19,6 +19,8 @@ import {
   useSpondLinks,
   useSpondMappings,
   useSpondSync,
+  useEventKindContext,
+  useSpondEventResponseCounts,
   useTeams,
 } from '../lib/queries'
 import { linkedCounts } from '../lib/spondRsvp'
@@ -26,8 +28,7 @@ import type { SpondSyncResult } from '../lib/queries'
 import type { SpondMapping, Team } from '../lib/data'
 import {
   parseSpondMappingInput,
-  spondAudience,
-  SPOND_COUNT_LABELS,
+  spondAudienceNote,
   spondEventWhen,
   spondTeamLabel,
   syncedAgo,
@@ -40,7 +41,14 @@ import {
   matchesEventKind,
   TRAINING_LABEL,
 } from '../lib/eventKind'
+import { RESPONSE_FILTER_LABELS, type ResponseFilter } from '../lib/tonight'
 import { Icon } from '../components/icons'
+
+// The four reply states, in the product's own words, on the club's own
+// children. Everyone is deliberately absent: it is rendered as the total
+// beside the label, so the split under it sums to that total and reads as
+// a split rather than as five figures one of which is the sum.
+const LINKED_PLAYER_STATES: ResponseFilter[] = ['going', 'unanswered', 'declined', 'waiting']
 import { CancelledBadge, MatchBadge } from '../components/SpondAttendance'
 import { Chip, ErrorNote, fmtDate, Loading, Modal } from '../components/ui'
 
@@ -337,18 +345,32 @@ function LinksCard() {
 
 function EventsCard() {
   const { data: events = [], isLoading, isError } = useSpondEvents()
+  // The same classifier context the coaches' screens supply. Without the
+  // club's team names an opponent-versus-team fixture reads as training
+  // here and as a fixture there, which is the exact disagreement the one
+  // seam exists to prevent.
+  const kindContext = useEventKindContext()
   // Training first here too. An admin checking the mirror is nearly always
   // asking whether the training nights came through; All events is the tap
   // that answers everything else, and both use the same classifier the
   // coaches' screens use, so the two never disagree about a given row.
+  // The club's own children's replies, per event. Privacy safe by
+  // construction: the read fetches an event id and a status and no member
+  // id, and every stored reply belongs to a linked member because the
+  // foreign key makes an unlinked one unrepresentable (0045).
+  const replies = useSpondEventResponseCounts()
   const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
-  const shown = events.filter((e) => matchesEventKind(e, kind))
+  const shown = events.filter((e) => matchesEventKind(e, kind, kindContext))
+  // Settled and applied, or nothing. A read in flight, a failed read and a
+  // database without 0045 all mean the player figures are unknown, and an
+  // unknown population is said as silence rather than as zero.
+  const playerCounts = replies.data?.available && !replies.isLoading && !replies.isError ? replies.data.byEvent : null
   return (
     <div className="card" style={{ padding: 18 }}>
       <h3 style={{ fontSize: 17, marginBottom: 4 }}>Synced events</h3>
       <p className="muted" style={{ fontSize: 13.5, marginTop: 0, marginBottom: 10 }}>
-        What the mirror holds: counts and event facts only. Sessions link to these from the planner and the session day
-        view.
+        What the mirror holds: event facts, how many people Spond invited, and the club's own children's replies.
+        Session day is where a coach organises a night player by player.
       </p>
       <div className="row" style={{ gap: 7, marginBottom: 10 }}>
         <Chip on={kind === 'training'} onClick={() => setKind('training')}>
@@ -383,20 +405,44 @@ function EventsCard() {
               <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>
                 {spondEventWhen(e.startsAt)}
               </span>
-              {/* The event's own counts, over everybody Spond invited. The
-                  admin screen is an inspection of the mirror, so the raw
-                  figure belongs here; naming its population is what stops
-                  it being read as the club's squad. */}
-              <span className="pill">{spondAudience(e)} invited</span>
-              {SPOND_COUNT_LABELS.map((label) => (
-                <span key={label} className="pill">
-                  <b>{e[label]}</b> {label}
-                </span>
-              ))}
+              {/* THE AUDIENCE, AS A HEADCOUNT, AND NEVER AS A REPLY SPLIT.
+                  This row used to print the event's four counts beside the
+                  four API words, and on the 11 August event that read
+                  "20 accepted, 24 declined" over an audience of 50 people
+                  while the club's own children were 10 going and 14 not.
+                  A reply word beside a figure is read as a statement about
+                  players wherever it appears, this screen included, so the
+                  aggregate keeps one job: how many people Spond reached. */}
+              <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>
+                {spondAudienceNote(e)}
+              </span>
               <span className="muted" style={{ fontSize: 12, fontWeight: 600, marginLeft: 'auto' }}>
                 {syncedAgo(e.syncedAt)}
               </span>
             </div>
+            {/* The reply words, on the only population entitled to wear
+                them: the club's own children. Absent, rather than zero,
+                whenever the read cannot establish them. */}
+            {playerCounts && (
+              <div className="row wrap" style={{ gap: 6, marginTop: 4 }}>
+                {playerCounts[e.id] ? (
+                  <>
+                    <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>
+                      Linked players ({playerCounts[e.id].all})
+                    </span>
+                    {LINKED_PLAYER_STATES.map((f) => (
+                      <span key={f} className="pill">
+                        <b>{playerCounts[e.id][f]}</b> {RESPONSE_FILTER_LABELS[f].toLowerCase()}
+                      </span>
+                    ))}
+                  </>
+                ) : (
+                  <span className="muted" style={{ fontSize: 12.5 }}>
+                    No linked player has replied to this event.
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         ))
       )}

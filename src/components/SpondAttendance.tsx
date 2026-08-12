@@ -3,23 +3,25 @@
 // linking edits the draft and Save writes it) and the session day view
 // (where linking writes at once through useLinkSessionSpondEvent).
 //
-// Counts only, the children's data boundary (CLAUDE.md, Spond integration):
-// the block renders the four counts and event facts from the spond_events
-// read and nothing else. The counts are a synced snapshot, so the freshness
-// label shows synced_at; no client code ever calls Spond, and the numbers
-// change only when someone presses Sync now on the admin Spond screen.
+// Event facts only, the children's data boundary (CLAUDE.md, Spond
+// integration): the block renders what the spond_events read returns and
+// nothing else. It shows the event's audience as one labelled sentence and
+// states no reply split, because that split counts everybody Spond invited
+// and a coach reads a going figure on a football app as players. The per
+// player replies belong to Session day, which is the surface that
+// establishes which children the session covers. The figure is a synced
+// snapshot, so the freshness label shows synced_at; no client code ever
+// calls Spond, and it changes only when somebody syncs.
 //
 // canEdit only surfaces the link and unlink affordances. The sessions update
 // RLS (owner, or sessions.manage) is the real enforcement of who may change
 // the link, unchanged by this feature.
 import { useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { useSpondEvents } from '../lib/queries'
+import { useEventKindContext, useSpondEvents } from '../lib/queries'
 import {
   pickerEvents,
-  spondAudience,
-  SPOND_AUDIENCE_CAPTION,
-  SPOND_COUNT_LABELS,
+  spondAudienceNote,
   spondEventWhen,
   spondPickerSummary,
   spondTeamLabel,
@@ -82,21 +84,26 @@ export function LinkSpondEventModal({
   onClose: () => void
 }) {
   const { data: events = [], isPending, isError } = useSpondEvents()
+  // The club's teams reach the classifier here too: a picker that offered a
+  // fixture under Training would put one back into a coach's Training view
+  // by the act of linking it.
+  const kindContext = useEventKindContext()
   const [kind, setKind] = useState<EventKind>(DEFAULT_EVENT_KIND)
   const [showAll, setShowAll] = useState(!teamId)
-  const shown = useMemo(() => pickerEvents(events, { kind, showAll, teamId, date, time }), [
+  const shown = useMemo(() => pickerEvents(events, { kind, showAll, teamId, date, time, kindContext }), [
     events,
     kind,
     showAll,
     teamId,
     date,
     time,
+    kindContext,
   ])
 
   return (
     <Modal
       title="Link Spond event"
-      sub="Attendance counts from the linked event show on this session."
+      sub="The session shows which event it is arranged as. Replies stay in Spond until the next sync."
       onClose={onClose}
     >
       <div className="row wrap" style={{ gap: 7, marginBottom: 12 }}>
@@ -162,9 +169,10 @@ export function LinkSpondEventModal({
               </span>
               {/* Composed in ../lib/spond, not here: a modal never opens
                   under a static render, so wording left in this JSX is
-                  wording nothing tests. The line names the population
-                  because the bare accepted count is the figure a coach
-                  then compares with Tonight's Going chip. */}
+                  wording nothing tests. The line names the audience and
+                  states no going figure: that figure counts everybody Spond
+                  invited, and a coach carried it to Tonight and read it as
+                  contradicting a chip counting covered players. */}
               <span className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>
                 {spondPickerSummary(e)}
               </span>
@@ -211,13 +219,17 @@ export function SpondAttendanceCard({
 
   return (
     <div className="card" style={{ padding: 16, ...style }}>
+      {/* "Spond event", not "Spond attendance": this block says which
+          event the session is arranged as. Attendance is the coach's own
+          record and the replies are per player, and both live on Session
+          day, on the one surface that knows the covered squad. */}
       <div className="eyebrow" style={{ marginBottom: 8 }}>
-        Spond attendance
+        Spond event
       </div>
       {!spondEventId ? (
         <>
           <p className="muted" style={{ fontSize: 13, marginTop: 0, marginBottom: 10 }}>
-            Link the Spond event this session is arranged as to see who is coming.
+            Link the Spond event this session is arranged as. Replies then show per player on Session day.
           </p>
           <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setPicking(true)}>
             <Icon.link />
@@ -248,19 +260,25 @@ export function SpondAttendanceCard({
           <div className="muted" style={{ fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>
             {spondEventWhen(event.startsAt)} · {spondTeamLabel(event.teamName)}
           </div>
-          {/* The four counts are the EVENT's own, over everybody Spond
-              invited. Tonight counts covered Hub players, which is a
-              smaller and different population, so this row says which one
-              it is rather than leaving a coach to compare the two. */}
-          <div className="eyebrow" style={{ marginTop: 10, marginBottom: 4 }}>
-            {SPOND_AUDIENCE_CAPTION} ({spondAudience(event)})
+          {/* ONE LABELLED LINE, and no split. This card used to show the
+              event's four counts as four figures beside four words, and a
+              coach reasonably read "20 accepted, 24 declined" as a
+              statement about the club's players. It is not one: those
+              figures count every member Spond invited, coaches and
+              unlinked members included, which on the production event was
+              50 people against 27 linked children.
+
+              The per player replies are not reproduced here. Establishing
+              which children a session covers is the register composition
+              behind Tonight, and a second read path arriving at its own
+              answer is exactly how one honest pair of numbers came to look
+              like a contradiction. So this names the audience, says where
+              the player figures live, and counts nobody itself. */}
+          <div className="muted" style={{ fontSize: 12.5, fontWeight: 600, marginTop: 10 }}>
+            {spondAudienceNote(event)}
           </div>
-          <div className="row wrap" style={{ gap: 6 }}>
-            {SPOND_COUNT_LABELS.map((label) => (
-              <span key={label} className="pill">
-                <b>{event[label]}</b> {label}
-              </span>
-            ))}
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>
+            Who is coming, player by player, is on Session day.
           </div>
           <div className="row" style={{ gap: 8, marginTop: 10 }}>
             <span className="muted" style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>

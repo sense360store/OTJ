@@ -66,9 +66,9 @@ import type {
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import { SESSION_SPOND_LINK_TAKEN_ERROR } from './sessionSubmit'
-import { spondEventLookup, type SpondEventLookup } from './eventKind'
+import { type EventKindContext, spondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
-import { tonightUpsertBatches, type TonightChange } from './tonight'
+import { countLinkedResponses, tonightUpsertBatches, type ResponseCounts, type TonightChange } from './tonight'
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
@@ -2363,15 +2363,29 @@ export function useSpondEvents(enabled = true) {
   })
 }
 
-// The synced events indexed by id, for the one job that needs a lookup
-// rather than a list: classifying a SESSION that was planned from a Spond
-// event. A session row cannot carry spond_type, so the screens that filter
-// sessions resolve the link through this. Same query, same cache entry as
-// useSpondEvents, so it costs no extra read on a screen that already has
-// one; `enabled` is false for members who never filter by event kind.
-export function useSpondEventLookup(enabled = true): SpondEventLookup {
-  const { data } = useSpondEvents(enabled)
-  return useMemo(() => spondEventLookup(data ?? []), [data])
+// Everything the training classifier needs beyond the row it is handed,
+// as ONE hook, because a screen that wires half the context reads exactly
+// like a screen that wired all of it.
+//
+// The two facts, and the job each does:
+//
+//   spondEvents  the synced events indexed by id, for classifying a
+//                SESSION planned from a Spond event. A session row cannot
+//                carry spond_type, so the link is resolved through this.
+//   teamNames    the club's own team names, so an opponent-versus-team
+//                fixture title ("TROJANS – Rastrick") is recognised as a
+//                fixture rather than read as training.
+//
+// Both ride queries the screens already hold, so this costs no extra read
+// on a screen that lists sessions; `enabled` is false for members who
+// never filter by event kind. Teams are read unconditionally because the
+// teams query is club wide, tiny and already cached everywhere.
+export function useEventKindContext(enabled = true): EventKindContext {
+  const { data: events } = useSpondEvents(enabled)
+  const { data: teams } = useTeams()
+  const spondEvents = useMemo(() => spondEventLookup(events ?? []), [events])
+  const teamNames = useMemo(() => (teams ?? []).map((t) => t.name), [teams])
+  return useMemo(() => ({ spondEvents, teamNames }), [spondEvents, teamNames])
 }
 
 export interface SpondMappingInput {
@@ -5417,6 +5431,73 @@ export function useSessionSpondRsvp(sessionId: string | undefined, spondEventId:
         // is surfaced as such to the hook, which the register still
         // never gates on.
         if (isMissingRelation(e)) return {}
+        throw e
+      }
+    },
+  })
+}
+
+// ---- Linked player replies, per event (players.view) ----------------
+//
+// THE POPULATION, AND WHY IT CAN BE STATED WITHOUT A SESSION. Every row in
+// spond_event_responses belongs to a LINKED member: the foreign key into
+// player_spond_links makes an unlinked member's reply unrepresentable
+// (migration 0045). So grouping those rows by event and status counts the
+// club's own children, and nothing else, for an event that no session has
+// been planned from yet.
+//
+// WHAT IT IS NOT. Tonight's chips count the children a SESSION covers.
+// This has no session, so it has no coverage to narrow by, and the screen
+// that renders it says "Linked players" rather than borrowing Tonight's
+// words. Two populations, two labels; the reply split itself is built by
+// the one predicate in ../lib/tonight.
+//
+// THE READ IS TWO COLUMNS. spond_event_id and status, never the member id:
+// the counts need no identifier, so none is fetched. Nothing here can
+// resolve to a child even in memory.
+export function spondEventResponseCountsKey() {
+  return ['spond_rsvp', 'event_counts'] as const
+}
+
+interface SpondResponseCountRow {
+  spond_event_id: string
+  status: string
+}
+
+// `available` is false when 0045 has not been applied. An admin screen has
+// to tell that apart from "nobody has replied", which is why the shape
+// carries the flag rather than an empty record standing for both.
+export interface SpondEventResponseCounts {
+  byEvent: Record<string, ResponseCounts>
+  available: boolean
+}
+
+export function useSpondEventResponseCounts(enabled = true) {
+  const { caps } = useMyCapabilities()
+  return useQuery({
+    queryKey: spondEventResponseCountsKey(),
+    enabled: enabled && caps.has('players.view'),
+    retry: (count, error) => !isMissingRelation(error) && count < 2,
+    queryFn: async (): Promise<SpondEventResponseCounts> => {
+      try {
+        const rows = await readAllPages<SpondResponseCountRow>((from, to) =>
+          supabase
+            .from('spond_event_responses')
+            .select('spond_event_id, status')
+            .order('spond_event_id', { ascending: true })
+            .range(from, to),
+        )
+        const statuses = new Map<string, string[]>()
+        for (const r of rows) {
+          const list = statuses.get(r.spond_event_id)
+          if (list) list.push(r.status)
+          else statuses.set(r.spond_event_id, [r.status])
+        }
+        const byEvent: Record<string, ResponseCounts> = {}
+        for (const [eventId, list] of statuses) byEvent[eventId] = countLinkedResponses(list)
+        return { byEvent, available: true }
+      } catch (e) {
+        if (isMissingRelation(e)) return { byEvent: {}, available: false }
         throw e
       }
     },
