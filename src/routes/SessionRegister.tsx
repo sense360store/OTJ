@@ -33,7 +33,7 @@
 // NEEDS NOTHING CONFIGURED. No Spond, no linking: Everyone is the working
 // view, the coach selects who is there, and the team bib does the rest.
 // =====================================================================
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
@@ -79,6 +79,7 @@ import {
   toggleAttendance,
   toggleIncluded,
   tonightGroups,
+  tonightGlanceNote,
   usableFilter,
   hasResponseContext,
   visibleRows,
@@ -88,6 +89,7 @@ import {
   saveState,
   type SaveState,
   type TonightDraft,
+  type TonightGroup,
   type TonightRow,
 } from '../lib/tonight'
 import { BIB_COLOURS, BIB_NONE, bibInheritLabel, bibLabel, bibSwatch, effectiveBib } from '../lib/bibs'
@@ -253,6 +255,43 @@ export function QuickAddView({
         </div>
       )}
     </Modal>
+  )
+}
+
+// THE GROUPS, RENDERED ONCE. The full screen shows them under the list a
+// coach edits; session day shows the identical thing read only, so a coach
+// can answer "who is in, and what bib does each need" without opening
+// anything. Two renderings of one arrangement is how a colour on the card
+// and a colour on the screen start disagreeing, so there is one.
+//
+// EVERY GROUP NAMES ITS COLOUR IN WORDS. `label` is "Red bibs" or "No
+// bibs", never a swatch alone: the swatch is decoration and is marked
+// aria-hidden, so nothing here asks a coach to tell red from green in low
+// light or at all.
+//
+// It reads a composed model and renders it. No bib is resolved here, no
+// player is grouped here and nobody is counted here: tonightGroups did all
+// three, from the one effective bib rule in ../lib/bibs.
+//
+// `children` is the optional head. The editing screen has one, carrying the
+// selected count; session day's head is the card above it.
+export function TonightGroupsView({ groups, children }: { groups: TonightGroup[]; children?: ReactNode }) {
+  if (groups.length === 0) return null
+  return (
+    <div className="tn-groups">
+      {children}
+      {groups.map((g) => (
+        <div className="tn-group" key={g.bib ?? 'none'}>
+          <div className="tn-group-head">
+            {g.bib && <span className="reg-swatch" style={{ background: bibSwatch(g.bib) ?? undefined }} aria-hidden="true" />}
+            <b>{g.label}</b>
+            <span className="muted">{g.teamNames.join(' · ')}</span>
+            <span className="tn-group-count">{g.count}</span>
+          </div>
+          <div className="tn-group-names">{g.rows.map((r) => r.displayName).join(', ')}</div>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -469,26 +508,15 @@ export function TonightScreenView({
 
       {/* The groups, which is what the whole screen is for. Bib first,
           because that is the thing a coach points at on the grass, with
-          the teams named beside it. */}
-      {groups.length > 0 && (
-        <div className="tn-groups">
-          <div className="tn-groups-head">
-            <h3>Groups</h3>
-            <span className="pill">{selectedTotal} selected</span>
-          </div>
-          {groups.map((g) => (
-            <div className="tn-group" key={g.bib ?? 'none'}>
-              <div className="tn-group-head">
-                {g.bib && <span className="reg-swatch" style={{ background: bibSwatch(g.bib) ?? undefined }} aria-hidden="true" />}
-                <b>{g.label}</b>
-                <span className="muted">{g.teamNames.join(' · ')}</span>
-                <span className="tn-group-count">{g.count}</span>
-              </div>
-              <div className="tn-group-names">{g.rows.map((r) => r.displayName).join(', ')}</div>
-            </div>
-          ))}
+          the teams named beside it. Session day renders the SAME component
+          read only, so the arrangement a coach glances at in the car park
+          and the one they edit here cannot be two renderings. */}
+      <TonightGroupsView groups={groups}>
+        <div className="tn-groups-head">
+          <h3>Groups</h3>
+          <span className="pill">{selectedTotal} selected</span>
         </div>
-      )}
+      </TonightGroupsView>
 
       {/* The commit. Sticky, so a long list never hides it. */}
       {canEdit && (
@@ -760,13 +788,39 @@ export function TonightCard({ session }: { session: Session }) {
     ),
   )
   const rows = buildTonightRows(view, teams, rsvp.data ?? {})
+  // THE SAVED ARRANGEMENT, not a draft. draftFromEntries is a pure read of
+  // the stored rows, so this is a projection of what the database holds and
+  // there is no draft state on this screen to edit, dirty or save. The
+  // groups below are therefore read only by construction rather than by a
+  // disabled control.
   const draft = draftFromEntries(entries)
+  // The one grouping the product has. Same function, same effective bib
+  // rule, same order and same labels as the editing screen, over the same
+  // rows: only `included_in_groups` puts a child in one, and attendance is
+  // deliberately not read here or shown below.
+  const groups = tonightGroups(rows, draft)
+  // What to say when there are no groups, decided by the model so the two
+  // empty nights ("nobody registered" and "nobody picked") keep their two
+  // different sentences.
+  const glance = tonightGlanceNote(rows, groups)
   return (
-    <TonightCardView
-      summary={tonightSummary(rows, draft)}
-      note={rows.every((r) => !draft.included[r.playerId]) ? 'Not started' : ''}
-      onOpen={() => nav('register', { sessionId: session.id })}
-    />
+    <div className="tn-glance">
+      <TonightCardView
+        summary={tonightSummary(rows, draft)}
+        // "Not started" over a squad nobody has picked from yet. Not over an
+        // EMPTY squad, where there is nothing to start and the note below
+        // says what is actually wrong: `every` on no rows is true, so this
+        // used to call an unstaffed team's card not started.
+        note={rows.length > 0 && rows.every((r) => !draft.included[r.playerId]) ? 'Not started' : ''}
+        onOpen={() => nav('register', { sessionId: session.id })}
+      />
+      {/* Who is in, and what each of them wears. The whole point of the
+          card growing a preview: a coach in the car park reads the bib
+          colours off their phone without opening the editing screen, which
+          is still one tap away through the button above. */}
+      <TonightGroupsView groups={groups} />
+      {glance && <p className="tn-glance-note">{glance}</p>}
+    </div>
   )
 }
 

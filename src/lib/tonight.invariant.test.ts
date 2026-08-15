@@ -417,6 +417,57 @@ describe('attendance and group inclusion never share a field', () => {
     expect(fn).toMatch(/draftIsDirty\(settled, persisted\) \? settled : null/)
   })
 
+  it('renders the groups from one component, so the card and the screen cannot drift', () => {
+    // Session day shows the saved arrangement read only and the editing
+    // screen shows the working one. A second copy of this markup is how a
+    // colour or a label starts differing between the two.
+    const offenders = sourceFiles()
+      .filter((f) => !isTest(f))
+      .filter((f) => /tn-group-names/.test(read(f)))
+    expect(offenders).toEqual(['routes/SessionRegister.tsx'])
+    const src = read('routes/SessionRegister.tsx')
+    expect(src.match(/tn-group-names/g)).toHaveLength(1)
+    expect(src.match(/className="tn-group"/g)).toHaveLength(1)
+  })
+
+  it('projects the session day preview rather than deriving it again', () => {
+    // The card composes what the model already answered. It must not group
+    // players itself or resolve a bib itself: tonightGroups did both, from
+    // the one effective bib rule in lib/bibs.
+    const src = code(read('routes/SessionRegister.tsx'))
+    const fn = src.slice(src.indexOf('export function TonightCard('), src.indexOf('export function SessionRegister('))
+    expect(fn).toMatch(/tonightGroups\(rows, draft\)/)
+    expect(fn).toMatch(/<TonightGroupsView groups=\{groups\} \/>/)
+    expect(fn).not.toMatch(/effectiveBib\(/)
+    expect(fn).not.toMatch(/bibLabel\(/)
+    expect(fn).not.toMatch(/\.reduce\(|new Map\(/)
+  })
+
+  it('gates the session day preview on players.view, like the card it grew from', () => {
+    // Names and bib allocations are authenticated operational data. The
+    // gate returns before any of it renders, and every read behind it is
+    // enabled on the same flag so a parent never fetches a name either.
+    const src = code(read('routes/SessionRegister.tsx'))
+    const fn = src.slice(src.indexOf('export function TonightCard('), src.indexOf('export function SessionRegister('))
+    expect(fn).toMatch(/const canSee = caps\.has\('players\.view'\)/)
+    expect(fn).toMatch(/if \(!canSee\) return null/)
+    for (const read_ of ['useCurrentSeason', 'useRegisteredPlayers', 'useRegisterEntries', 'useSessionSpondRsvp']) {
+      expect(fn, read_).toMatch(new RegExp(`${read_}\\([^)]*canSee\\)`))
+    }
+  })
+
+  it('keeps the preview out of the public share projection', () => {
+    // TRAIN-02 is the separately reviewed no-login share and excludes
+    // player, register and bib data. Nothing added here may reach it.
+    const share = read('lib/publicShare.ts')
+    for (const key of ['included_in_groups', 'bib_colour_override']) {
+      expect(share).toContain(key)
+    }
+    expect(sourceFiles().filter((f) => !isTest(f) && /TonightGroupsView/.test(read(f)))).toEqual([
+      'routes/SessionRegister.tsx',
+    ])
+  })
+
   it('is named in both share deny lists, so a future projection throws instead of shipping', () => {
     // SOURCE TEXT, and the same rule 0046's diagram follows. A share is a
     // FROZEN COPY: once a key reaches content_shares.snapshot the read path

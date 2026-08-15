@@ -1155,6 +1155,24 @@ export function saveState(dirty: boolean, saving: boolean, failed: boolean): Sav
 }
 
 
+// What the session day preview says INSTEAD of groups, and empty when it
+// has groups to show.
+//
+// Two different nothings, and reading one as the other is what a coach
+// standing in a car park cannot afford. No rows at all means the covered
+// teams hold no registered child, which is a roster problem. Rows but no
+// groups means the squad is there and nobody has been picked yet, which is
+// a job. Neither is "no session teams": that is answered before this is
+// reached, because coverage has its own sentence and its own fix.
+//
+// It counts nothing. The two populations it distinguishes are the ones
+// tonightCounts and tonightGroups already produced, handed in.
+export function tonightGlanceNote(rows: TonightRow[], groups: TonightGroup[]): string {
+  if (groups.length > 0) return ''
+  if (rows.length === 0) return 'No registered players are on the teams this session covers.'
+  return 'Nobody selected yet.'
+}
+
 // A truthful one line summary of tonight: how many are expected from
 // Spond, how many the coach has selected, and how many groups that makes.
 export function tonightSummary(rows: TonightRow[], draft: TonightDraft): string {

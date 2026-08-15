@@ -47,6 +47,7 @@ import {
   tonightGroups,
   tonightUpsertRows,
   tonightSummary,
+  tonightGlanceNote,
   usableFilter,
   visibleRows,
   type TonightRow,
@@ -571,6 +572,33 @@ describe('the session day summary', () => {
   it('counts the groups once something is selected', () => {
     const bare = [row('anna'), row('ben')]
     expect(tonightSummary(bare, selectAll(draftFromEntries([]), bare))).toBe('2 in the squad · 2 selected · 1 group')
+  })
+})
+
+// ---- What the session day preview says when it has no groups ---------
+
+describe('the two different nothings on the session day preview', () => {
+  const bare = [row('anna'), row('ben')]
+
+  it('says nothing at all when there are groups to show', () => {
+    const picked = selectAll(draftFromEntries([]), bare)
+    expect(tonightGlanceNote(bare, tonightGroups(bare, picked))).toBe('')
+  })
+
+  it('blames the roster when the covered teams hold nobody', () => {
+    // A different problem with a different fix from the one below, and
+    // reading either as the other sends a coach to the wrong screen.
+    expect(tonightGlanceNote([], [])).toBe('No registered players are on the teams this session covers.')
+  })
+
+  it('says nobody is picked when the squad is there and unpicked', () => {
+    expect(tonightGlanceNote(bare, [])).toBe('Nobody selected yet.')
+  })
+
+  it('counts nobody itself: it is handed both populations', () => {
+    // It takes rows and groups, so there is no parameter a count could
+    // arrive through and nothing here to drift from tonightCounts.
+    expect(tonightGlanceNote.length).toBe(2)
   })
 })
 
