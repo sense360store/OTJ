@@ -325,13 +325,34 @@ jobs:
           need(".eq('club_id'" in head, "the mapping read is not scoped by club_id")
           need(".eq('team_id'" in head, "the mapping read is not scoped by team_id")
 
-          # 6. Member reduction goes through the shared boundary helper.
-          need(re.search(r"reduceLinkCandidate\s*\(", idx) is not None,
-               "members are not reduced through reduceLinkCandidate")
+          # 6. Member collection goes through the shared, Deno tested rule,
+          #    and that rule routes every member through the staff exclusion
+          #    and THEN the boundary reduction, in that order. PR #178 moved
+          #    the collection loop out of this entrypoint into
+          #    collectLinkCandidates precisely so tests execute it; the
+          #    assertion follows the code it protects rather than requiring
+          #    the reduction back in the entrypoint, and proves the same
+          #    guarantee one call deeper: the entrypoint collects through the
+          #    shared rule, and the shared rule reduces through the boundary
+          #    helper with exclusion ahead of it.
+          shared_raw = pathlib.Path('supabase/functions/_shared/spond.ts').read_text(encoding='utf-8')
+          need(re.search(r"collectLinkCandidates\s*\(", idx) is not None,
+               "members are not collected through collectLinkCandidates")
+          collector = re.search(r"export function collectLinkCandidates[\s\S]*?\n\}", code(shared_raw))
+          need(collector is not None, "collectLinkCandidates body not found in _shared/spond.ts")
+          if collector:
+              cbody = collector.group(0)
+              m_excl = re.search(r"excludeNonPlayers\s*\(", cbody)
+              m_red = re.search(r"reduceLinkCandidate\s*\(", cbody)
+              need(m_excl is not None,
+                   "collectLinkCandidates does not exclude staff and ignored members")
+              need(m_red is not None,
+                   "members are not reduced through reduceLinkCandidate")
+              need(bool(m_excl) and bool(m_red) and m_excl.start() < m_red.start(),
+                   "the staff exclusion does not run before the candidate reduction")
 
           # 7 & 8. The candidate shape is exactly {spond_member_id, display_name}
           #        and the id stays constrained by the Release B pattern.
-          shared_raw = pathlib.Path('supabase/functions/_shared/spond.ts').read_text(encoding='utf-8')
           iface = re.search(r"export interface LinkCandidate\s*\{([^}]*)\}", shared_raw)
           need(iface is not None, "LinkCandidate interface not found")
           if iface:
