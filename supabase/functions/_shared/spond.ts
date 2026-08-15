@@ -1154,17 +1154,24 @@ export function collectLinkDiagnostics(
   const members: LinkDiagnosticMember[] = []
   const seen = new Set<string>()
   let complete = true
-  // Per parent group: the subgroups this team's own mappings already
-  // reach, and whether the team maps the whole group.
+  // The subgroups this team's mappings reach, folded across EVERY group
+  // it maps rather than kept per group. A Spond subgroup id belongs to
+  // one group, so the union is exact, not approximate: a member listed
+  // under one mapped group who also sits in another mapped group's
+  // subgroup is already a candidate, and folding the sets is what stops
+  // them being reported as missing from the first.
+  //
+  // The residual, stated rather than hidden: a team mapped to two parent
+  // groups, one of them WHOLLY, can report a member of the other group
+  // who is also in the wholly mapped one, because whole group membership
+  // is not a subgroup id to fold. Two rows of one name read as ambiguous,
+  // which is the fail closed direction, and no club has that shape today.
   const groupIds: string[] = []
-  const reached = new Map<string, Set<string>>()
+  const reached = new Set<string>()
   const wholeGroup = new Set<string>()
   for (const mapping of mappings) {
-    if (!reached.has(mapping.spond_group_id)) {
-      reached.set(mapping.spond_group_id, new Set())
-      groupIds.push(mapping.spond_group_id)
-    }
-    if (mapping.spond_subgroup_id) reached.get(mapping.spond_group_id)!.add(mapping.spond_subgroup_id)
+    if (!groupIds.includes(mapping.spond_group_id)) groupIds.push(mapping.spond_group_id)
+    if (mapping.spond_subgroup_id) reached.add(mapping.spond_subgroup_id)
     else wholeGroup.add(mapping.spond_group_id)
   }
   // No mapping means no group was read at all, so nothing is proved and
@@ -1183,14 +1190,13 @@ export function collectLinkDiagnostics(
     // candidate list, so nothing in it is outside the mapping. The scan
     // still ran, so this group is proved and complete stays true.
     if (wholeGroup.has(groupId)) continue
-    const reachedHere = reached.get(groupId) ?? new Set<string>()
     // Staff and configured ignores leave before any row is emitted.
     const players = excludeNonPlayers(scan.members, ignoredConfig)
     for (const member of players.members) {
       const subgroupIds = memberSubgroupIds(member)
       // Already offered as a candidate: this is the list of who the
       // mapping MISSES, so a member the mapping reaches is not in it.
-      if (subgroupIds.some((id) => reachedHere.has(id))) continue
+      if (subgroupIds.some((id) => reached.has(id))) continue
       if (members.length >= max) {
         complete = false
         capped = true

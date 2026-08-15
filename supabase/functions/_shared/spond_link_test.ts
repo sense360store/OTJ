@@ -557,6 +557,24 @@ Deno.test('two same named members are BOTH returned, so the screen reads ambigui
   assertEquals(out.members.map((m) => m.display_name), ['Outside Synthetic', 'Outside Synthetic'])
 })
 
+Deno.test('a subgroup mapped through the team s OTHER group still counts as reached', () => {
+  // The team maps two parent groups. A member listed under the first is
+  // also in the second group's mapped subgroup, so they are already a
+  // candidate; keeping the reached set per group would report them as
+  // missing from the first and produce a false second row of that name.
+  const groups = [
+    { id: GROUP_ID, members: [participant(OUTSIDE_A, 'Outside', [SG3])] },
+    { id: GROUP_TWO, members: [participant(OUTSIDE_A, 'Outside', [SG3])] },
+  ]
+  const twoGroups: SpondMapping[] = [
+    mapping(SG1),
+    { id: 'map-two', spond_group_id: GROUP_TWO, spond_subgroup_id: SG3, spond_name: 'SYNTH G2', team_id: 'team-1' },
+  ]
+  const out = collectLinkDiagnostics(groups, twoGroups, new Set<string>())
+  assertEquals(out.members, [])
+  assertEquals(out.complete, true)
+})
+
 Deno.test('one person in two of the team s mapped groups is returned once', () => {
   const shared = participant(OUTSIDE_A, 'Outside', [SG3])
   const groups = [
@@ -636,8 +654,9 @@ Deno.test('rows accumulated across two mapped groups still stop at the cap', () 
   // Each group fits the scan cap on its own; together they overrun the
   // emitted cap. Both caps land on the same answer, and neither returns a
   // short list wearing "this is the whole group".
+  // Nobody sits in either mapped subgroup, so every member is outside.
   const groups = [
-    { id: GROUP_ID, members: [participant(OUTSIDE_A, 'One', [SG2]), participant(OUTSIDE_B, 'Two', [SG2])] },
+    { id: GROUP_ID, members: [participant(OUTSIDE_A, 'One', [SG3]), participant(OUTSIDE_B, 'Two', [SG3])] },
     { id: GROUP_TWO, members: [participant('CCCC222233334444555566667777DDDD', 'Three', [SG3])] },
   ]
   const twoGroups: SpondMapping[] = [
