@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   acceptableSuggestions,
   buildLinkSections,
+  linkLoadComplete,
   normaliseName,
   pickerOptions,
   suggestionPool,
+  unmatchedPlayers,
   type LinkCandidate,
   type SpondLink,
 } from './spondLinking'
@@ -201,6 +203,129 @@ describe('suggestionPool, the roster a suggestion may match', () => {
   })
 
   it('is empty with no team chosen, so nothing club wide can leak through', () => {
-    expect(suggestionPool(club, null)).toEqual([])
+    expect(suggestionPool([player('p1', 'Alpha Synthetic')], null)).toEqual([])
+  })
+})
+
+// ---- The players the screen previously never mentioned ----------------
+//
+// Production, 15 August: Argonauts held six unlinked registered players
+// and Trojans five, none of whom appeared anywhere on the linking screen,
+// because every section is candidate led and these children have no
+// candidate: their Spond member is not in the mapped subgroup, or the
+// family is not in the Spond group at all, or they go by a different
+// name there. The screen showed "Needs a decision" with only a staff
+// member in it and a manager reasonably concluded there was nothing left
+// to do.
+
+describe('unmatchedPlayers', () => {
+  it('names the registered players absent from the loaded members', () => {
+    const out = unmatchedPlayers(
+      [candidate(M1, 'Alpha Synthetic')],
+      [],
+      [player('p1', 'Alpha Synthetic'), player('p2', 'Beta Synthetic'), player('p3', 'Gamma Synthetic')],
+    )
+    expect(out.map((p) => p.playerId)).toEqual(['p2', 'p3'])
+  })
+
+  it('does not list a linked child, whatever the candidate list holds', () => {
+    const out = unmatchedPlayers([], [link(M1, 'p1')], [player('p1', 'Alpha Synthetic')])
+    expect(out).toEqual([])
+  })
+
+  it('lists a child whose only same named candidate is already linked to somebody else', () => {
+    // The reachability rule: a child is matched only by a candidate a
+    // manager could still link, an UNLINKED one. A review found the
+    // first version of this rule excluded by name alone, which made two
+    // same named children, one correctly linked, hide the other in no
+    // section at all: Change would break the correct link, so that
+    // member is not a way to reach this child, and "not matched yet" is
+    // the honest description.
+    const out = unmatchedPlayers(
+      [candidate(M1, 'Alpha Synthetic')],
+      [link(M1, 'p9')],
+      [player('p1', 'Alpha Synthetic')],
+    )
+    expect(out.map((p) => p.playerId)).toEqual(['p1'])
+  })
+
+  it('partitions two same named children: one linked, the other named as unmatched', () => {
+    // The review's concrete counterexample, pinned: with the shared
+    // name's one candidate correctly linked, the second child must not
+    // vanish between the sections.
+    const out = unmatchedPlayers(
+      [candidate(M1, 'Alex Synthetic')],
+      [link(M1, 'p1')],
+      [player('p1', 'Alex Synthetic'), player('p2', 'Alex Synthetic')],
+    )
+    expect(out.map((p) => p.playerId)).toEqual(['p2'])
+  })
+
+  it('still trusts an unlinked candidate to reach a same named child', () => {
+    // One unlinked "Alpha" in Spond, one unlinked Alpha on the list:
+    // that child is reachable (a suggestion, or Choose), so they are
+    // not unmatched.
+    const out = unmatchedPlayers(
+      [candidate(M1, 'Alpha Synthetic')],
+      [],
+      [player('p1', 'Alpha Synthetic')],
+    )
+    expect(out).toEqual([])
+  })
+
+  it('matches names the way the suggestions do, so the two rules cannot disagree', () => {
+    const out = unmatchedPlayers(
+      [candidate(M1, 'ZOË  synthetic')],
+      [],
+      [player('p1', 'Zoe Synthetic'), player('p2', 'Beta Synthetic')],
+    )
+    expect(out.map((p) => p.playerId)).toEqual(['p2'])
+  })
+
+  it('orders by name, the way a manager reads a list', () => {
+    const out = unmatchedPlayers(
+      [],
+      [],
+      [player('p2', 'Gamma Synthetic'), player('p1', 'Beta Synthetic')],
+    )
+    expect(out.map((p) => p.displayName)).toEqual(['Beta Synthetic', 'Gamma Synthetic'])
+  })
+})
+
+// ---- What a load proves ------------------------------------------------
+//
+// A review found the second way to arrive at zero members: a successful,
+// untruncated read whose members were ALL staff, now that staff are
+// excluded server side. Reading that as "the read proved nothing" put a
+// false incompleteness note on screen and suppressed the no-match
+// section for exactly the production shape this work exists to fix, a
+// subgroup holding only the manager. The exclusion counts are data, so
+// completeness is decided from them, in one pure rule.
+
+describe('linkLoadComplete', () => {
+  const load = (members: number, over: Partial<Parameters<typeof linkLoadComplete>[0]> = {}) => ({
+    members: Array.from({ length: members }, (_, i) => candidate(M1, `Synthetic ${i}`)),
+    truncated: false,
+    staffExcluded: 0,
+    ignoredExcluded: 0,
+    ...over,
+  })
+
+  it('a normal read with members is complete', () => {
+    expect(linkLoadComplete(load(2))).toBe(true)
+  })
+
+  it('a read whose members were all staff is still complete', () => {
+    expect(linkLoadComplete(load(0, { staffExcluded: 1 }))).toBe(true)
+    expect(linkLoadComplete(load(0, { ignoredExcluded: 1 }))).toBe(true)
+  })
+
+  it('a read that returned nothing at all proves nothing', () => {
+    expect(linkLoadComplete(load(0))).toBe(false)
+  })
+
+  it('a truncated read is never complete, staff or no staff', () => {
+    expect(linkLoadComplete(load(3, { truncated: true }))).toBe(false)
+    expect(linkLoadComplete(load(0, { truncated: true, staffExcluded: 2 }))).toBe(false)
   })
 })

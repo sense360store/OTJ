@@ -30,20 +30,25 @@ import {
 import {
   acceptableSuggestions,
   buildLinkSections,
+  linkLoadComplete,
   pickerOptions,
   suggestionPool,
+  unmatchedPlayers,
   type LinkCandidate,
-  type LinkSections,
   type SpondLink,
 } from '../lib/spondLinking'
 import { linkedCounts } from '../lib/spondRsvp'
 import type { RegisteredPlayer, Team } from '../lib/data'
 
-// One team's loaded members for this visit, with whether the list is
-// provably the whole group.
+// One team's loaded members for this visit, in the shape linkLoadComplete
+// judges: what came back, whether it was cut short, and how many members
+// the server excluded, because zero members with exclusions is a complete
+// answer while zero with none proves nothing.
 interface LoadedTeam {
   members: LinkCandidate[]
-  complete: boolean
+  truncated: boolean
+  staffExcluded: number
+  ignoredExcluded: number
 }
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
@@ -120,7 +125,7 @@ export function NeedsDecisionRowView({
             ? `Suggested: ${suggestion}`
             : reason === 'ambiguous'
               ? 'More than one possible match'
-              : 'Not on the roster'}
+              : 'Not a registered player'}
         </span>
       </div>
       <div className="sl-row-actions">
@@ -160,7 +165,7 @@ export function LinkedRowView({
         <span className="sl-name">{name}</span>
         <span className="sl-sub">
           {orphan
-            ? `${playerName} · this member is not in the team's Spond group any more`
+            ? `${playerName} · this member is no longer offered from the team's Spond group`
             : `${playerName} · ${matchedBy === 'suggested' ? 'accepted a suggestion' : 'chosen'}`}
         </span>
       </div>
@@ -179,25 +184,40 @@ export function LinkedRowView({
 }
 
 export function LinkSectionsView({
-  sections,
+  candidates,
+  links,
+  pool,
   busy,
   complete,
   onAccept,
   onChoose,
   onUnlink,
 }: {
-  sections: LinkSections
+  // The raw inputs, composed HERE rather than passed pre-composed. A
+  // review showed why: with composition in the container, hardcoding the
+  // unmatched list to [] at the call site resurrected the eleven
+  // invisible children with the whole suite green, because no test
+  // renders the container. Composing inside the rendered component makes
+  // the render tests the wiring tests.
+  candidates: LinkCandidate[]
+  links: SpondLink[]
+  pool: RegisteredPlayer[]
   busy: boolean
-  // Whether the loaded member list is provably the whole group. When it is
-  // not, a stored link whose member is simply missing from a short list
-  // looks exactly like one whose member has left, and unlinking it would
-  // drain that child's stored replies for a reason that was never true.
-  // So the orphan section is suppressed and says why.
+  // Whether the loaded member list is provably the whole group
+  // (linkLoadComplete). When it is not, a stored link whose member is
+  // simply missing from a short list looks exactly like one whose member
+  // has left, and unlinking it would drain that child's stored replies
+  // for a reason that was never true. So the orphan section is
+  // suppressed and says why, and the no-match section below is
+  // suppressed for the same reason: absence from a short list is not
+  // absence from Spond.
   complete: boolean
   onAccept: (memberId: string, playerId: string) => void
   onChoose: (memberId: string) => void
   onUnlink: (memberId: string) => void
 }) {
+  const sections = buildLinkSections(candidates, links, pool)
+  const unmatched = unmatchedPlayers(candidates, links, pool)
   return (
     <>
       <section className="sl-section">
@@ -250,12 +270,31 @@ export function LinkSectionsView({
         </p>
       )}
 
+      {complete && unmatched.length > 0 && (
+        <section className="sl-section">
+          <h3>Registered players not matched yet ({unmatched.length})</h3>
+          <p className="sl-empty">
+            No offered Spond member goes by these names. Add the family to the group or the child to the team's
+            subgroup in Spond, or link them with Choose on a member's row where they go by a different name there.
+          </p>
+          {unmatched.map((p) => (
+            <div className="sl-row" key={p.playerId}>
+              <div className="sl-row-main">
+                <span className="sl-name">{p.displayName}</span>
+                <span className="sl-sub">{p.shirtNumber != null ? `#${p.shirtNumber}` : ''}</span>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
       {complete && sections.orphans.length > 0 && (
         <section className="sl-section">
           <h3>Links with no Spond member</h3>
           <p className="sl-empty">
-            These children are linked to a Spond member the group no longer contains. Each one still holds that child,
-            so nobody else can be linked to them until the link is removed.
+            These children are linked to a Spond member the offered list no longer contains: the member may have left
+            the group, or is now excluded as staff. Each one still holds that child, so nobody else can be linked to
+            them until the link is removed.
           </p>
           {sections.orphans.map((row) => (
             <LinkedRowView
@@ -290,9 +329,9 @@ export function PickerView({
   const [q, setQ] = useState('')
   const options = pickerOptions(roster, links, q)
   return (
-    <Modal title="Which child is this?" sub={memberName} onClose={onClose}>
+    <Modal title="Link Spond member" sub={memberName} onClose={onClose}>
       <div className="field">
-        <label>Search the roster</label>
+        <label>Select the matching registered player</label>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Start typing a name" autoFocus />
       </div>
       {options.length === 0 ? (
@@ -374,6 +413,9 @@ export default function SpondLinks() {
 
   const teamRoster = useMemo(() => rosterFor(teamId), [rosterFor, teamId])
   const candidates = loadedTeam ? loadedTeam.members : null
+  // For the Accept all button only. The rendered sections are composed
+  // INSIDE LinkSectionsView from the same pure functions over the same
+  // inputs, so the toolbar and the rows cannot disagree.
   const sections = useMemo(
     () => buildLinkSections(candidates ?? [], allLinks, teamRoster),
     [candidates, allLinks, teamRoster],
@@ -387,12 +429,13 @@ export default function SpondLinks() {
   if (!canManage) return null
   if (teams.isError || mappings.isError) return <ErrorNote />
   if (season.isError || roster.isError) {
-    return <ErrorNote>Could not read the club roster, so no Spond member can be matched against it.</ErrorNote>
+    return <ErrorNote>Could not read the club player list, so no Spond member can be matched against it.</ErrorNote>
   }
   if (!season.data) {
     return (
       <Empty icon={Icon.users} title="The club has no current season">
-        Spond members are matched against the current season's roster. An admin sets one up under Seasons first.
+        Spond members are matched against the current season's registered players. An admin sets one up under Seasons
+        first.
       </Empty>
     )
   }
@@ -405,12 +448,17 @@ export default function SpondLinks() {
       { teamId: id },
       {
         onSuccess: (result) => {
-          // A truncated list, or a mapping whose group came back with no
-          // members at all, is not proof of anything about existing links.
-          const emptyGroup = result.members.length === 0
+          // Stored whole; linkLoadComplete judges it at render time, so
+          // a subgroup whose members were all staff reads as a complete
+          // answer rather than an unproven read.
           setLoaded((prev) => ({
             ...prev,
-            [id]: { members: result.members, complete: !result.truncated && !emptyGroup },
+            [id]: {
+              members: result.members,
+              truncated: result.truncated,
+              staffExcluded: result.staffExcluded,
+              ignoredExcluded: result.ignoredExcluded,
+            },
           }))
           if (result.warnings.length > 0) setNote(result.warnings.join(' '))
         },
@@ -464,8 +512,8 @@ export default function SpondLinks() {
         <div>
           <h2>Spond links</h2>
           <div className="sub">
-            Which Spond member is which child. Linking lets the register show what each parent replied; it never marks
-            anybody present.
+            Link each Spond member to a registered player. Linking lets Players &amp; groups show what each parent
+            replied; it never marks anybody present.
           </div>
         </div>
         <Link to="/players" className="btn btn-ghost">
@@ -527,9 +575,11 @@ export default function SpondLinks() {
             <Loading />
           ) : candidates ? (
             <LinkSectionsView
-              sections={sections}
+              candidates={candidates ?? []}
+              links={allLinks}
+              pool={teamRoster}
               busy={busy}
-              complete={loadedTeam?.complete ?? false}
+              complete={loadedTeam ? linkLoadComplete(loadedTeam) : false}
               onAccept={(memberId, playerId) => write([{ spondMemberId: memberId, playerId }], 'suggested')}
               onChoose={(memberId) => setPicking(memberId)}
               onUnlink={(memberId) => remove.mutate({ spondMemberId: memberId })}

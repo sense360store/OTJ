@@ -5652,6 +5652,13 @@ export interface LinkCandidatesResult {
   // that is not provably complete must never be used to decide that a
   // stored link has no member behind it.
   truncated: boolean
+  // How many members the server excluded as staff (Spond role holders)
+  // and by admin config. Data, not just prose: zero members WITH
+  // exclusions is a complete answer (a subgroup holding only staff),
+  // while zero members with none is a read that proved nothing, and
+  // linkLoadComplete decides between them.
+  staffExcluded: number
+  ignoredExcluded: number
   warnings: string[]
 }
 
@@ -5684,6 +5691,8 @@ export function useLoadSpondLinkCandidates() {
       const body = (data ?? {}) as {
         members?: { spond_member_id?: string; display_name?: string }[]
         truncated?: boolean
+        staff_excluded?: number
+        ignored_excluded?: number
         warnings?: string[]
       }
       return {
@@ -5691,6 +5700,10 @@ export function useLoadSpondLinkCandidates() {
           .filter((m) => typeof m.spond_member_id === 'string' && typeof m.display_name === 'string')
           .map((m) => ({ spondMemberId: m.spond_member_id as string, displayName: m.display_name as string })),
         truncated: body.truncated === true,
+        // A deployed function predating these fields sends none, which
+        // reads as zero exclusions: exactly the old completeness rule.
+        staffExcluded: typeof body.staff_excluded === 'number' ? body.staff_excluded : 0,
+        ignoredExcluded: typeof body.ignored_excluded === 'number' ? body.ignored_excluded : 0,
         warnings: body.warnings ?? [],
       }
     },

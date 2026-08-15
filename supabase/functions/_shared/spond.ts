@@ -873,6 +873,227 @@ export function buildResponseRows(
   }))
 }
 
+// ---- Staff never enter the player pipelines --------------------------------
+//
+// Production, 15 August: a team's linking screen offered its manager as a
+// candidate child, because staff join the Spond group and its subgroups
+// exactly the way the children do. Spond's own admin roles are the
+// structural signal that separates them: a role uid (member.roles, the
+// reference library's Member.role_uids) is assigned only to group staff,
+// and a plain participant carries no roles key at all. So absent, empty
+// and malformed all read the same, as NO roles, which fails towards
+// offering: linking stays human approved either way, and a strange shape
+// must never hide a child from the list. Only the uids are read; role
+// names are group configuration this pipeline never touches, and no
+// guardian, profile or contact field is reached.
+
+// The role uids a member carries. Same defensive shape as
+// memberSubgroupIds: unexpected input yields an empty list.
+export function memberRoleIds(member: unknown): string[] {
+  const value = asRecord(member).roles
+  if (!Array.isArray(value)) return []
+  return value.filter((id): id is string => typeof id === 'string' && id.length > 0)
+}
+
+// The SPOND_IGNORED_MEMBER_IDS config: the backstop for staff the club
+// never assigned a Spond role. Opaque member ids only, comma separated.
+// An entry the links table would refuse (a name, an email address) is
+// discarded on parse, so the secret cannot quietly become a name match
+// rule and no name can be expressed in it.
+export function parseIgnoredMemberIds(raw: string | undefined | null): Set<string> {
+  const out = new Set<string>()
+  for (const entry of (raw ?? '').split(',')) {
+    const id = entry.trim().toUpperCase()
+    if (id && SPOND_MEMBER_ID_PATTERN.test(id)) out.add(id)
+  }
+  return out
+}
+
+// The members who may be offered as children: staff (any Spond role) and
+// configured ignores dropped and counted, everybody else kept untouched
+// and in order. Classification reads exactly the roles array and the id.
+// The excluded ids ride along so a caller collecting across overlapping
+// mappings can count one person once; they go no further than that
+// arithmetic and are never returned to a client or logged.
+export function excludeNonPlayers(
+  members: unknown[],
+  ignored: ReadonlySet<string>,
+): { members: unknown[]; staff: number; ignored: number; staffIds: string[]; ignoredIds: string[] } {
+  const kept: unknown[] = []
+  const staffIds: string[] = []
+  const ignoredIds: string[] = []
+  let staff = 0
+  let dropped = 0
+  for (const member of members) {
+    const id = asRecord(member).id
+    if (memberRoleIds(member).length > 0) {
+      staff++
+      if (typeof id === 'string') staffIds.push(id.toUpperCase())
+      continue
+    }
+    if (typeof id === 'string' && ignored.has(id.toUpperCase())) {
+      dropped++
+      ignoredIds.push(id.toUpperCase())
+      continue
+    }
+    kept.push(member)
+  }
+  return { members: kept, staff, ignored: dropped, staffIds, ignoredIds }
+}
+
+// ---- Collecting a team's candidates, the whole rule in one place -----------
+//
+// The loop this replaces lived in spond-link-members/index.ts, where no
+// test executes: the cap's position relative to the exclusion, the
+// dedupe, the truncation flag and every warning string were pinned by
+// nothing. A review demonstrated the cost by moving the cap ahead of the
+// exclusion and rewording a warning to carry names, both with every test
+// green. Pure, so the Deno tests hold all of it.
+
+export interface LinkCandidateCollection {
+  members: LinkCandidate[]
+  truncated: boolean
+  // People, not rows: a staff member in two of the team's mappings is one
+  // person and counts once. Members with no usable id cannot be folded
+  // and count per appearance, which can only overstate, never hide.
+  staff: number
+  ignored: number
+  dropped: number
+  emptyMappings: string[]
+}
+
+export function collectLinkCandidates(
+  groups: unknown,
+  mappings: readonly SpondMapping[],
+  ignoredConfig: ReadonlySet<string>,
+  max: number = MAX_LINK_CANDIDATES,
+): LinkCandidateCollection {
+  const members: LinkCandidate[] = []
+  const seen = new Set<string>()
+  const staffSeen = new Set<string>()
+  const ignoredSeen = new Set<string>()
+  let staffAnon = 0
+  let ignoredAnon = 0
+  let dropped = 0
+  let truncated = false
+  const emptyMappings: string[] = []
+  for (const mapping of mappings) {
+    const scoped = selectGroupMembers(groups, mapping.spond_group_id, mapping.spond_subgroup_id)
+    if (scoped.length === 0) emptyMappings.push(mapping.spond_name)
+    // Exclusion runs BEFORE the cap, so staff neither appear nor consume
+    // a candidate slot, and before the reduction, so an excluded member
+    // is never reduced at all.
+    const players = excludeNonPlayers(scoped, ignoredConfig)
+    for (const id of players.staffIds) staffSeen.add(id)
+    for (const id of players.ignoredIds) ignoredSeen.add(id)
+    staffAnon += players.staff - players.staffIds.length
+    ignoredAnon += players.ignored - players.ignoredIds.length
+    for (const member of players.members) {
+      if (members.length >= max) {
+        truncated = true
+        break
+      }
+      const candidate = reduceLinkCandidate(member)
+      if (!candidate) {
+        dropped++
+        continue
+      }
+      // A member in two of the team's mappings appears once.
+      if (seen.has(candidate.spond_member_id)) continue
+      seen.add(candidate.spond_member_id)
+      members.push(candidate)
+    }
+    if (truncated) break
+  }
+  return {
+    members,
+    truncated,
+    staff: staffSeen.size + staffAnon,
+    ignored: ignoredSeen.size + ignoredAnon,
+    dropped,
+    emptyMappings,
+  }
+}
+
+// The warnings a collection earns, counts and mapping labels only. A
+// member name is not representable here: the collection carries none.
+export function linkCollectionWarnings(c: LinkCandidateCollection, max: number = MAX_LINK_CANDIDATES): string[] {
+  const warnings: string[] = []
+  for (const name of c.emptyMappings) {
+    warnings.push(
+      `No members found for ${name}. Check the Spond organiser account can see this group and that the subgroup has members.`,
+    )
+  }
+  if (c.staff > 0) {
+    warnings.push(
+      `Not offering ${c.staff} Spond staff member${c.staff === 1 ? '' : 's'} (group role holder${c.staff === 1 ? '' : 's'}) for linking.`,
+    )
+  }
+  if (c.ignored > 0) {
+    warnings.push(`Not offering ${c.ignored} member${c.ignored === 1 ? '' : 's'} an admin has excluded.`)
+  }
+  if (c.dropped > 0) {
+    warnings.push(`Skipped ${c.dropped} Spond member${c.dropped === 1 ? '' : 's'} with no usable name or id.`)
+  }
+  if (c.truncated) {
+    warnings.push(
+      `Showing the first ${max} members. Map this team to its Spond subgroup rather than the whole group so the list is scoped to the squad.`,
+    )
+  }
+  return warnings
+}
+
+// The roster import's member collection, the same discipline: exclusion
+// before the plan, one person counted once across mappings.
+export interface RosterMemberCollection {
+  members: unknown[]
+  staff: number
+  ignored: number
+  emptyMappings: string[]
+}
+
+export function collectRosterMembers(
+  groups: unknown,
+  mappings: readonly SpondMapping[],
+  ignoredConfig: ReadonlySet<string>,
+): RosterMemberCollection {
+  const members: unknown[] = []
+  const staffSeen = new Set<string>()
+  const ignoredSeen = new Set<string>()
+  let staffAnon = 0
+  let ignoredAnon = 0
+  const emptyMappings: string[] = []
+  for (const mapping of mappings) {
+    const scoped = selectGroupMembers(groups, mapping.spond_group_id, mapping.spond_subgroup_id)
+    if (scoped.length === 0) emptyMappings.push(mapping.spond_name)
+    const players = excludeNonPlayers(scoped, ignoredConfig)
+    for (const id of players.staffIds) staffSeen.add(id)
+    for (const id of players.ignoredIds) ignoredSeen.add(id)
+    staffAnon += players.staff - players.staffIds.length
+    ignoredAnon += players.ignored - players.ignoredIds.length
+    for (const member of players.members) members.push(member)
+  }
+  return { members, staff: staffSeen.size + staffAnon, ignored: ignoredSeen.size + ignoredAnon, emptyMappings }
+}
+
+export function rosterCollectionWarnings(c: RosterMemberCollection): string[] {
+  const warnings: string[] = []
+  for (const name of c.emptyMappings) {
+    warnings.push(
+      `No members found for ${name}. Check the Spond organiser account can see this group and that the subgroup has members.`,
+    )
+  }
+  if (c.staff > 0) {
+    warnings.push(
+      `Skipped ${c.staff} Spond staff member${c.staff === 1 ? '' : 's'} (group role holder${c.staff === 1 ? '' : 's'}); staff are never imported as players.`,
+    )
+  }
+  if (c.ignored > 0) {
+    warnings.push(`Skipped ${c.ignored} member${c.ignored === 1 ? '' : 's'} an admin has excluded.`)
+  }
+  return warnings
+}
+
 // ---- The linking candidate shape -------------------------------------------
 
 // The cap on candidates returned for one team across all of its

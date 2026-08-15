@@ -11,13 +11,21 @@ import { assert, assertEquals } from 'jsr:@std/assert@1'
 import {
   buildEventRow,
   buildResponseRows,
+  collectLinkCandidates,
+  collectRosterMembers,
   deriveMemberStatuses,
+  excludeNonPlayers,
+  linkCollectionWarnings,
   MAX_RESPONSE_IDS_PER_ARRAY,
+  memberRoleIds,
+  parseIgnoredMemberIds,
   reduceLinkCandidate,
+  rosterCollectionWarnings,
   SPOND_EVENT_COLUMNS,
   SPOND_MEMBER_ID_PATTERN,
   SPOND_RESPONSE_COLUMNS,
 } from './spond.ts'
+import type { SpondMapping } from './spond.ts'
 
 // ---- Synthetic fixtures ----------------------------------------------------
 
@@ -198,6 +206,197 @@ Deno.test('a lowercase id is normalised to the stored form rather than refused',
   const candidate = reduceLinkCandidate({ ...SYNTHETIC_MEMBER, id: LINKED_A.toLowerCase() })
   assert(candidate !== null)
   assertEquals(candidate.spond_member_id, LINKED_A)
+})
+
+// ---- Staff are never offered for linking -----------------------------------
+//
+// Production, 15 August: a team's "Needs a decision" list held exactly one
+// row, the group's manager, because she is a member of the mapped subgroup
+// like the children are. Spond's own admin roles are the structural
+// signal: a role uid is assigned only to group staff (admins, coaches,
+// managers), and a plain participant carries no roles key at all. The
+// reduction reads the role uids and nothing else: no role name, no
+// guardian, no profile. The backstop for staff the club never assigned a
+// role is SPOND_IGNORED_MEMBER_IDS, opaque ids in a function secret,
+// where a name cannot even be expressed.
+
+const STAFF_ID = '2222333344445555666677778888AAAA'
+const SYNTHETIC_STAFF = {
+  id: STAFF_ID,
+  firstName: 'Invented',
+  lastName: 'Staffname',
+  subGroups: ['SUBGROUP-SYNTH-1'],
+  roles: ['ROLE-SYNTH-1'],
+}
+
+Deno.test('a member carrying a Spond role is staff and never offered', () => {
+  const out = excludeNonPlayers([SYNTHETIC_STAFF, SYNTHETIC_MEMBER], new Set<string>())
+  assertEquals(out.members, [SYNTHETIC_MEMBER])
+  assertEquals(out.staff, 1)
+  assertEquals(out.ignored, 0)
+})
+
+Deno.test('no roles key and an empty roles list are both plain participants, kept in order', () => {
+  const bare = { id: LINKED_A, firstName: 'Madeup', lastName: 'Childname' }
+  const empty = { ...bare, id: LINKED_B, roles: [] }
+  const out = excludeNonPlayers([bare, empty], new Set<string>())
+  // Deep equality, order included: candidate order flows unsorted to the
+  // screen and decides what a cap truncates.
+  assertEquals(out.members, [bare, empty])
+  assertEquals(out.staff, 0)
+})
+
+Deno.test('a lowercase payload id still matches the ignore config', () => {
+  // The suite already accepts lowercase ids from Spond
+  // (reduceLinkCandidate normalises them), so the backstop must fold the
+  // payload side too, not only the config side.
+  const lower = { ...SYNTHETIC_MEMBER, id: STAFF_ID.toLowerCase() }
+  const out = excludeNonPlayers([lower], parseIgnoredMemberIds(STAFF_ID))
+  assertEquals(out.members, [])
+  assertEquals(out.ignored, 1)
+})
+
+Deno.test('a malformed roles value is not read as staff', () => {
+  // The participant default, the same fail towards offering direction
+  // memberSubgroupIds takes: linking stays human approved either way, so
+  // a odd shape must not silently hide a child from the list.
+  for (const roles of ['admin', 42, { r: 1 }, null]) {
+    const out = excludeNonPlayers([{ ...SYNTHETIC_MEMBER, roles }], new Set<string>())
+    assertEquals(out.members.length, 1, `roles ${JSON.stringify(roles)} excluded a member`)
+    assertEquals(out.staff, 0)
+  }
+  assertEquals(memberRoleIds({ roles: 'admin' }), [])
+  assertEquals(memberRoleIds({}), [])
+  assertEquals(memberRoleIds({ roles: ['R1', 42, ''] }), ['R1'])
+})
+
+Deno.test('the ignored id config drops a member by opaque id, case folded', () => {
+  const ignored = parseIgnoredMemberIds(` ${STAFF_ID.toLowerCase()} , ${LINKED_B}`)
+  const out = excludeNonPlayers([{ ...SYNTHETIC_MEMBER, id: STAFF_ID }, SYNTHETIC_MEMBER], ignored)
+  assertEquals(out.members, [SYNTHETIC_MEMBER])
+  assertEquals(out.ignored, 1)
+  assertEquals(out.staff, 0)
+})
+
+Deno.test('a config entry that could be a person is dropped rather than matched', () => {
+  // The secret takes ids only. A name pasted there must not silently
+  // become a match rule, so anything the links table would refuse is
+  // discarded on parse.
+  const ignored = parseIgnoredMemberIds(`Bekki Staffname, staff@example.invalid, short, ${STAFF_ID}`)
+  assertEquals(ignored, new Set([STAFF_ID]))
+  assertEquals(parseIgnoredMemberIds(undefined), new Set())
+  assertEquals(parseIgnoredMemberIds(''), new Set())
+})
+
+Deno.test('exclusion reads roles and the id, never a guardian or contact field', () => {
+  // A staff member stays staff with every other field stripped, and a
+  // participant stays offered with the sensitive fields present, so the
+  // classification provably depends on nothing the boundary forbids.
+  const stripped = { id: STAFF_ID, firstName: 'Invented', lastName: 'Staffname', roles: ['ROLE-SYNTH-1'] }
+  assertEquals(excludeNonPlayers([stripped], new Set<string>()).staff, 1)
+  assertEquals(excludeNonPlayers([SYNTHETIC_MEMBER], new Set<string>()).members.length, 1)
+})
+
+// ---- The collection rule, executed rather than trusted ---------------------
+//
+// The loop these functions replace lived in the two index.ts files, where
+// no test runs: a review moved the cap ahead of the exclusion and reworded
+// a warning to carry names, both with every test green. The rule is pure
+// in spond.ts now and these hold all of it: exclusion before the cap,
+// dedupe across mappings for members and for excluded people, and
+// warnings that carry counts and mapping labels only.
+
+const SG1 = 'SUBGROUP-SYNTH-1'
+const SG2 = 'SUBGROUP-SYNTH-2'
+const GROUP_ID = 'GRP-SYNTH-1'
+
+const mapping = (subgroup: string | null, name = 'SYNTH SG'): SpondMapping => ({
+  id: `map-${subgroup ?? 'whole'}`,
+  spond_group_id: GROUP_ID,
+  spond_subgroup_id: subgroup,
+  spond_name: name,
+  team_id: 'team-1',
+})
+
+const participant = (id: string, first: string, subGroups: string[] = [SG1]) => ({
+  id,
+  firstName: first,
+  lastName: 'Synthetic',
+  subGroups,
+})
+
+const groupsPayload = (members: unknown[]) => [{ id: GROUP_ID, members }]
+
+Deno.test('exclusion runs before the cap, so staff never consume a candidate slot', () => {
+  const members = [
+    { ...participant(STAFF_ID, 'Staffperson'), roles: ['ROLE-SYNTH-1'] },
+    participant(LINKED_A, 'Alpha'),
+    participant(LINKED_B, 'Beta'),
+  ]
+  const out = collectLinkCandidates(groupsPayload(members), [mapping(SG1)], new Set<string>(), 2)
+  assertEquals(out.members.map((m) => m.spond_member_id), [LINKED_A, LINKED_B])
+  assertEquals(out.truncated, false)
+  assertEquals(out.staff, 1)
+})
+
+Deno.test('the cap still truncates a genuine overflow, in input order', () => {
+  const members = [participant(LINKED_A, 'Alpha'), participant(LINKED_B, 'Beta'), participant(UNLINKED, 'Gamma')]
+  const out = collectLinkCandidates(groupsPayload(members), [mapping(SG1)], new Set<string>(), 2)
+  assertEquals(out.members.map((m) => m.spond_member_id), [LINKED_A, LINKED_B])
+  assertEquals(out.truncated, true)
+})
+
+Deno.test('a staff member in two of the team s mappings is one person, counted once', () => {
+  const members = [
+    { ...participant(STAFF_ID, 'Staffperson', [SG1, SG2]), roles: ['ROLE-SYNTH-1'] },
+    participant(LINKED_A, 'Alpha', [SG1]),
+    participant(LINKED_B, 'Beta', [SG2]),
+  ]
+  const out = collectLinkCandidates(groupsPayload(members), [mapping(SG1), mapping(SG2, 'SYNTH SG2')], new Set<string>())
+  assertEquals(out.staff, 1)
+  assertEquals(out.members.length, 2)
+})
+
+Deno.test('an empty mapping is reported by its label, and the rest continue', () => {
+  const out = collectLinkCandidates(
+    groupsPayload([participant(LINKED_A, 'Alpha', [SG1])]),
+    [mapping(SG1), mapping(SG2, 'EMPTY SG')],
+    new Set<string>(),
+  )
+  assertEquals(out.emptyMappings, ['EMPTY SG'])
+  assertEquals(out.members.length, 1)
+})
+
+Deno.test('warnings carry counts and mapping labels, never a member name or id', () => {
+  const members = [
+    { ...participant(STAFF_ID, 'Staffperson'), roles: ['ROLE-SYNTH-1'] },
+    { ...participant(LINKED_A, 'Alpha'), id: 'not-a-real-id' },
+    participant(LINKED_B, 'Beta'),
+  ]
+  const collected = collectLinkCandidates(groupsPayload(members), [mapping(SG1), mapping(SG2, 'EMPTY SG')], new Set<string>(), 1)
+  const warnings = linkCollectionWarnings(collected, 1)
+  const flat = warnings.join(' ')
+  assert(flat.includes('1 Spond staff member (group role holder)'), flat)
+  assert(flat.includes('EMPTY SG'), flat)
+  for (const leak of ['Staffperson', 'Alpha', 'Beta', 'Synthetic', STAFF_ID, LINKED_A, LINKED_B]) {
+    assert(!flat.includes(leak), `a warning leaked ${leak}`)
+  }
+})
+
+Deno.test('the roster collection applies the same exclusions and reports the same shape', () => {
+  const members = [
+    { ...participant(STAFF_ID, 'Staffperson'), roles: ['ROLE-SYNTH-1'] },
+    participant(LINKED_A, 'Alpha'),
+  ]
+  const out = collectRosterMembers(groupsPayload(members), [mapping(SG1)], parseIgnoredMemberIds(LINKED_A))
+  assertEquals(out.members, [])
+  assertEquals(out.staff, 1)
+  assertEquals(out.ignored, 1)
+  const flat = rosterCollectionWarnings(out).join(' ')
+  assert(flat.includes('staff are never imported as players'), flat)
+  for (const leak of ['Staffperson', 'Alpha', STAFF_ID, LINKED_A]) {
+    assert(!flat.includes(leak), `a roster warning leaked ${leak}`)
+  }
 })
 
 // ---- The member id pattern, the column boundary in code --------------------

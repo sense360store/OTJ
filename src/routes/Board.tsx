@@ -487,7 +487,7 @@ export function BoardStage({
         </label>
 
         <div className="board-field">
-          <span>Roster</span>
+          <span>Squad</span>
           <button
             type="button"
             className="btn btn-ghost btn-sm"
@@ -495,12 +495,12 @@ export function BoardStage({
             disabled={teamPlayerCount === 0}
             title={
               teamPlayerCount === 0
-                ? 'This team has no roster. Add players in Roster, or place a formation.'
+                ? 'This team has no registered players. Add players under Players, or place a formation.'
                 : undefined
             }
           >
             <Icon.users />
-            {teamPlayerCount === 0 ? 'No roster' : `Seed ${side} from roster (${teamPlayerCount})`}
+            {teamPlayerCount === 0 ? 'No players' : `Seed ${side} from squad (${teamPlayerCount})`}
           </button>
           <label className="row" style={{ gap: 6, fontSize: 12.5, marginTop: 6, alignItems: 'center', color: 'var(--slate)' }}>
             <input type="checkbox" checked={includePending} onChange={(e) => onTogglePending(e.target.checked)} />
