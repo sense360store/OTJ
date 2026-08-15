@@ -86,6 +86,17 @@ not outlive the screen.
   schedule and never as part of the attendance sync.
 - `spond-link-members` reads the same two fields and returns them to the
   linking screen. It persists nothing.
+- Both of those functions additionally read one structural field per member,
+  `roles`, the list of opaque role uids Spond assigns only to group staff.
+  It is read solely to exclude staff from the candidate and import lists so
+  a coach or manager in a subgroup is never offered or imported as a child,
+  it is never persisted, never logged, and role names are never read. A
+  plain participant has no `roles` key, and a malformed value reads as no
+  roles, so a strange shape can only offer a member, never hide one. The
+  `SPOND_IGNORED_MEMBER_IDS` function secret is the backstop for staff the
+  club has not assigned a role: opaque member ids only, parsed through the
+  same character class the links table enforces, so a name cannot be
+  expressed in it.
 - `spond-sync` never reads a name at all. Of the member facing payload it
   reads only the four response arrays, for their member ids and their
   lengths. The event facts it stores (title, times, location, type) are read

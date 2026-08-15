@@ -5,6 +5,7 @@ import {
   normaliseName,
   pickerOptions,
   suggestionPool,
+  unmatchedPlayers,
   type LinkCandidate,
   type SpondLink,
 } from './spondLinking'
@@ -201,6 +202,63 @@ describe('suggestionPool, the roster a suggestion may match', () => {
   })
 
   it('is empty with no team chosen, so nothing club wide can leak through', () => {
-    expect(suggestionPool(club, null)).toEqual([])
+    expect(suggestionPool([player('p1', 'Alpha Synthetic')], null)).toEqual([])
+  })
+})
+
+// ---- The players the screen previously never mentioned ----------------
+//
+// Production, 15 August: Argonauts held six unlinked registered players
+// and Trojans five, none of whom appeared anywhere on the linking screen,
+// because every section is candidate led and these children have no
+// candidate: their Spond member is not in the mapped subgroup, or the
+// family is not in the Spond group at all, or they go by a different
+// name there. The screen showed "Needs a decision" with only a staff
+// member in it and a manager reasonably concluded there was nothing left
+// to do.
+
+describe('unmatchedPlayers', () => {
+  it('names the registered players absent from the loaded members', () => {
+    const out = unmatchedPlayers(
+      [candidate(M1, 'Alpha Synthetic')],
+      [],
+      [player('p1', 'Alpha Synthetic'), player('p2', 'Beta Synthetic'), player('p3', 'Gamma Synthetic')],
+    )
+    expect(out.map((p) => p.playerId)).toEqual(['p2', 'p3'])
+  })
+
+  it('does not list a linked child, whatever the candidate list holds', () => {
+    const out = unmatchedPlayers([], [link(M1, 'p1')], [player('p1', 'Alpha Synthetic')])
+    expect(out).toEqual([])
+  })
+
+  it('does not list a child whose name matches a candidate already linked to somebody else', () => {
+    // That child is reachable on the screen: their name is on a member
+    // row, and the manager resolves it with Change. Calling them "no
+    // Spond match" would be false.
+    const out = unmatchedPlayers(
+      [candidate(M1, 'Alpha Synthetic')],
+      [link(M1, 'p9')],
+      [player('p1', 'Alpha Synthetic')],
+    )
+    expect(out).toEqual([])
+  })
+
+  it('matches names the way the suggestions do, so the two rules cannot disagree', () => {
+    const out = unmatchedPlayers(
+      [candidate(M1, 'ZOË  synthetic')],
+      [],
+      [player('p1', 'Zoe Synthetic'), player('p2', 'Beta Synthetic')],
+    )
+    expect(out.map((p) => p.playerId)).toEqual(['p2'])
+  })
+
+  it('orders by name, the way a manager reads a list', () => {
+    const out = unmatchedPlayers(
+      [],
+      [],
+      [player('p2', 'Gamma Synthetic'), player('p1', 'Beta Synthetic')],
+    )
+    expect(out.map((p) => p.displayName)).toEqual(['Beta Synthetic', 'Gamma Synthetic'])
   })
 })

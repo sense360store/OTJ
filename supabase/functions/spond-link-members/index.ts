@@ -62,8 +62,10 @@
 // =====================================================================
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
+  excludeNonPlayers,
   extractAccessToken,
   MAX_LINK_CANDIDATES,
+  parseIgnoredMemberIds,
   readCappedJson,
   reduceLinkCandidate,
   selectGroupMembers,
@@ -75,6 +77,10 @@ import type { LinkCandidate, SpondMapping } from '../_shared/spond.ts'
 
 const SPOND_EMAIL = Deno.env.get('SPOND_EMAIL') ?? ''
 const SPOND_PASSWORD = Deno.env.get('SPOND_PASSWORD') ?? ''
+// Opaque member ids never to offer as children: the backstop for staff
+// the club has not assigned a Spond role. Parsed through the same id
+// pattern the links table enforces, so a name cannot be expressed here.
+const IGNORED_MEMBER_IDS = parseIgnoredMemberIds(Deno.env.get('SPOND_IGNORED_MEMBER_IDS'))
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -232,6 +238,8 @@ Deno.serve(async (req) => {
   const seen = new Set<string>()
   const warnings: string[] = []
   let dropped = 0
+  let staffExcluded = 0
+  let ignoredExcluded = 0
   let truncated = false
   for (const mapping of mappings) {
     const scoped = selectGroupMembers(groups.groups, mapping.spond_group_id, mapping.spond_subgroup_id)
@@ -240,7 +248,13 @@ Deno.serve(async (req) => {
         `No members found for ${mapping.spond_name}. Check the Spond organiser account can see this group and that the subgroup has members.`,
       )
     }
-    for (const member of scoped) {
+    // Staff and configured ignores are removed BEFORE the cap and the
+    // reduction, so a coach in the subgroup can neither be offered as a
+    // child nor consume a candidate slot.
+    const players = excludeNonPlayers(scoped, IGNORED_MEMBER_IDS)
+    staffExcluded += players.staff
+    ignoredExcluded += players.ignored
+    for (const member of players.members) {
       if (members.length >= MAX_LINK_CANDIDATES) {
         truncated = true
         break
@@ -258,6 +272,14 @@ Deno.serve(async (req) => {
     if (truncated) break
   }
 
+  if (staffExcluded > 0) {
+    warnings.push(
+      `Not offering ${staffExcluded} Spond staff member${staffExcluded === 1 ? '' : 's'} (group role holders) for linking.`,
+    )
+  }
+  if (ignoredExcluded > 0) {
+    warnings.push(`Not offering ${ignoredExcluded} member${ignoredExcluded === 1 ? '' : 's'} an admin has excluded.`)
+  }
   if (dropped > 0) {
     warnings.push(`Skipped ${dropped} Spond member${dropped === 1 ? '' : 's'} with no usable name or id.`)
   }

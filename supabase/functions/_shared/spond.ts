@@ -873,6 +873,67 @@ export function buildResponseRows(
   }))
 }
 
+// ---- Staff never enter the player pipelines --------------------------------
+//
+// Production, 15 August: a team's linking screen offered its manager as a
+// candidate child, because staff join the Spond group and its subgroups
+// exactly the way the children do. Spond's own admin roles are the
+// structural signal that separates them: a role uid (member.roles, the
+// reference library's Member.role_uids) is assigned only to group staff,
+// and a plain participant carries no roles key at all. So absent, empty
+// and malformed all read the same, as NO roles, which fails towards
+// offering: linking stays human approved either way, and a strange shape
+// must never hide a child from the list. Only the uids are read; role
+// names are group configuration this pipeline never touches, and no
+// guardian, profile or contact field is reached.
+
+// The role uids a member carries. Same defensive shape as
+// memberSubgroupIds: unexpected input yields an empty list.
+export function memberRoleIds(member: unknown): string[] {
+  const value = asRecord(member).roles
+  if (!Array.isArray(value)) return []
+  return value.filter((id): id is string => typeof id === 'string' && id.length > 0)
+}
+
+// The SPOND_IGNORED_MEMBER_IDS config: the backstop for staff the club
+// never assigned a Spond role. Opaque member ids only, comma separated.
+// An entry the links table would refuse (a name, an email address) is
+// discarded on parse, so the secret cannot quietly become a name match
+// rule and no name can be expressed in it.
+export function parseIgnoredMemberIds(raw: string | undefined | null): Set<string> {
+  const out = new Set<string>()
+  for (const entry of (raw ?? '').split(',')) {
+    const id = entry.trim().toUpperCase()
+    if (id && SPOND_MEMBER_ID_PATTERN.test(id)) out.add(id)
+  }
+  return out
+}
+
+// The members who may be offered as children: staff (any Spond role) and
+// configured ignores dropped and counted, everybody else kept untouched.
+// Classification reads exactly the roles array and the id.
+export function excludeNonPlayers(
+  members: unknown[],
+  ignored: ReadonlySet<string>,
+): { members: unknown[]; staff: number; ignored: number } {
+  const kept: unknown[] = []
+  let staff = 0
+  let dropped = 0
+  for (const member of members) {
+    if (memberRoleIds(member).length > 0) {
+      staff++
+      continue
+    }
+    const id = asRecord(member).id
+    if (typeof id === 'string' && ignored.has(id.toUpperCase())) {
+      dropped++
+      continue
+    }
+    kept.push(member)
+  }
+  return { members: kept, staff, ignored: dropped }
+}
+
 // ---- The linking candidate shape -------------------------------------------
 
 // The cap on candidates returned for one team across all of its

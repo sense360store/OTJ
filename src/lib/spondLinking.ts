@@ -153,6 +153,37 @@ export function buildLinkSections(
   return { needsDecision, linked, orphans }
 }
 
+// The registered players the loaded member list cannot reach: unlinked,
+// and no candidate carries their name. Production, 15 August: eleven such
+// children across two teams, invisible, because every section above is
+// candidate led and these children have no candidate. Their Spond member
+// is not in the mapped subgroup, or the family is not in the group at
+// all, or the child goes by a different name there; all three are fixed
+// in Spond or resolved by Choose on a member row, and the first step of
+// either is a screen that says who they are.
+//
+// A child whose name matches a candidate ALREADY LINKED to somebody else
+// is deliberately not listed: their name is on a member row and Change
+// resolves them, so "no Spond match" would be false. The name rule is
+// normaliseName, the same comparison the suggestions use, so this list
+// and the suggestion rule cannot disagree about what a name matches.
+//
+// The caller must only show this when the loaded list is COMPLETE: on a
+// truncated or empty read, absence is not evidence, the same rule the
+// orphan section follows.
+export function unmatchedPlayers(
+  candidates: readonly LinkCandidate[],
+  links: readonly SpondLink[],
+  roster: readonly RegisteredPlayer[],
+): RegisteredPlayer[] {
+  const linkedPlayerIds = new Set(links.map((l) => l.playerId))
+  const candidateNames = new Set(candidates.map((c) => normaliseName(c.displayName)))
+  return roster
+    .filter((p) => !linkedPlayerIds.has(p.playerId) && !candidateNames.has(normaliseName(p.displayName)))
+    .slice()
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+}
+
 // The rows an Accept all press would write, and nothing else. Explicit by
 // design: nothing on this screen is preselected, so a manager can never
 // commit a set they have not looked at, and a suggestion they have decided

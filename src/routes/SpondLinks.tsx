@@ -32,6 +32,7 @@ import {
   buildLinkSections,
   pickerOptions,
   suggestionPool,
+  unmatchedPlayers,
   type LinkCandidate,
   type LinkSections,
   type SpondLink,
@@ -120,7 +121,7 @@ export function NeedsDecisionRowView({
             ? `Suggested: ${suggestion}`
             : reason === 'ambiguous'
               ? 'More than one possible match'
-              : 'Not on the roster'}
+              : 'Not a registered player'}
         </span>
       </div>
       <div className="sl-row-actions">
@@ -182,6 +183,7 @@ export function LinkSectionsView({
   sections,
   busy,
   complete,
+  unmatched,
   onAccept,
   onChoose,
   onUnlink,
@@ -192,8 +194,14 @@ export function LinkSectionsView({
   // not, a stored link whose member is simply missing from a short list
   // looks exactly like one whose member has left, and unlinking it would
   // drain that child's stored replies for a reason that was never true.
-  // So the orphan section is suppressed and says why.
+  // So the orphan section is suppressed and says why, and the no-match
+  // section below is suppressed for the same reason: absence from a
+  // short list is not absence from Spond.
   complete: boolean
+  // Registered players no loaded member can reach (unmatchedPlayers).
+  // Required, not optional: forgetting to pass it is how eleven children
+  // stayed invisible on this screen for a month.
+  unmatched: RegisteredPlayer[]
   onAccept: (memberId: string, playerId: string) => void
   onChoose: (memberId: string) => void
   onUnlink: (memberId: string) => void
@@ -250,6 +258,25 @@ export function LinkSectionsView({
         </p>
       )}
 
+      {complete && unmatched.length > 0 && (
+        <section className="sl-section">
+          <h3>Registered players with no Spond match ({unmatched.length})</h3>
+          <p className="sl-empty">
+            No member of the team's mapped Spond group list goes by these names. Add the family to the group or the
+            child to the team's subgroup in Spond, or, where a child goes by a different name there, link them with
+            Choose on the member's row.
+          </p>
+          {unmatched.map((p) => (
+            <div className="sl-row" key={p.playerId}>
+              <div className="sl-row-main">
+                <span className="sl-name">{p.displayName}</span>
+                <span className="sl-sub">{p.shirtNumber != null ? `#${p.shirtNumber}` : ''}</span>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
       {complete && sections.orphans.length > 0 && (
         <section className="sl-section">
           <h3>Links with no Spond member</h3>
@@ -290,9 +317,9 @@ export function PickerView({
   const [q, setQ] = useState('')
   const options = pickerOptions(roster, links, q)
   return (
-    <Modal title="Which child is this?" sub={memberName} onClose={onClose}>
+    <Modal title="Link Spond member" sub={memberName} onClose={onClose}>
       <div className="field">
-        <label>Search the roster</label>
+        <label>Select the matching registered player</label>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Start typing a name" autoFocus />
       </div>
       {options.length === 0 ? (
@@ -378,6 +405,12 @@ export default function SpondLinks() {
     () => buildLinkSections(candidates ?? [], allLinks, teamRoster),
     [candidates, allLinks, teamRoster],
   )
+  // The same three inputs the sections read, so the two cannot disagree
+  // about who is reachable. Rendered only when the load was complete.
+  const unmatched = useMemo(
+    () => unmatchedPlayers(candidates ?? [], allLinks, teamRoster),
+    [candidates, allLinks, teamRoster],
+  )
 
   // The roster and the season count. Without them every Spond member
   // would be judged against an unknown pool and labelled "Not on the
@@ -387,12 +420,13 @@ export default function SpondLinks() {
   if (!canManage) return null
   if (teams.isError || mappings.isError) return <ErrorNote />
   if (season.isError || roster.isError) {
-    return <ErrorNote>Could not read the club roster, so no Spond member can be matched against it.</ErrorNote>
+    return <ErrorNote>Could not read the club player list, so no Spond member can be matched against it.</ErrorNote>
   }
   if (!season.data) {
     return (
       <Empty icon={Icon.users} title="The club has no current season">
-        Spond members are matched against the current season's roster. An admin sets one up under Seasons first.
+        Spond members are matched against the current season's registered players. An admin sets one up under Seasons
+        first.
       </Empty>
     )
   }
@@ -464,8 +498,8 @@ export default function SpondLinks() {
         <div>
           <h2>Spond links</h2>
           <div className="sub">
-            Which Spond member is which child. Linking lets the register show what each parent replied; it never marks
-            anybody present.
+            Link each Spond member to a registered player. Linking lets Players &amp; groups show what each parent
+            replied; it never marks anybody present.
           </div>
         </div>
         <Link to="/players" className="btn btn-ghost">
@@ -530,6 +564,7 @@ export default function SpondLinks() {
               sections={sections}
               busy={busy}
               complete={loadedTeam?.complete ?? false}
+              unmatched={unmatched}
               onAccept={(memberId, playerId) => write([{ spondMemberId: memberId, playerId }], 'suggested')}
               onChoose={(memberId) => setPicking(memberId)}
               onUnlink={(memberId) => remove.mutate({ spondMemberId: memberId })}

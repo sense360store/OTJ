@@ -12,7 +12,10 @@ import {
   buildEventRow,
   buildResponseRows,
   deriveMemberStatuses,
+  excludeNonPlayers,
   MAX_RESPONSE_IDS_PER_ARRAY,
+  memberRoleIds,
+  parseIgnoredMemberIds,
   reduceLinkCandidate,
   SPOND_EVENT_COLUMNS,
   SPOND_MEMBER_ID_PATTERN,
@@ -198,6 +201,83 @@ Deno.test('a lowercase id is normalised to the stored form rather than refused',
   const candidate = reduceLinkCandidate({ ...SYNTHETIC_MEMBER, id: LINKED_A.toLowerCase() })
   assert(candidate !== null)
   assertEquals(candidate.spond_member_id, LINKED_A)
+})
+
+// ---- Staff are never offered for linking -----------------------------------
+//
+// Production, 15 August: a team's "Needs a decision" list held exactly one
+// row, the group's manager, because she is a member of the mapped subgroup
+// like the children are. Spond's own admin roles are the structural
+// signal: a role uid is assigned only to group staff (admins, coaches,
+// managers), and a plain participant carries no roles key at all. The
+// reduction reads the role uids and nothing else: no role name, no
+// guardian, no profile. The backstop for staff the club never assigned a
+// role is SPOND_IGNORED_MEMBER_IDS, opaque ids in a function secret,
+// where a name cannot even be expressed.
+
+const STAFF_ID = '2222333344445555666677778888AAAA'
+const SYNTHETIC_STAFF = {
+  id: STAFF_ID,
+  firstName: 'Invented',
+  lastName: 'Staffname',
+  subGroups: ['SUBGROUP-SYNTH-1'],
+  roles: ['ROLE-SYNTH-1'],
+}
+
+Deno.test('a member carrying a Spond role is staff and never offered', () => {
+  const out = excludeNonPlayers([SYNTHETIC_STAFF, SYNTHETIC_MEMBER], new Set<string>())
+  assertEquals(out.members, [SYNTHETIC_MEMBER])
+  assertEquals(out.staff, 1)
+  assertEquals(out.ignored, 0)
+})
+
+Deno.test('no roles key and an empty roles list are both plain participants', () => {
+  const bare = { id: LINKED_A, firstName: 'Madeup', lastName: 'Childname' }
+  const empty = { ...bare, id: LINKED_B, roles: [] }
+  const out = excludeNonPlayers([bare, empty], new Set<string>())
+  assertEquals(out.members.length, 2)
+  assertEquals(out.staff, 0)
+})
+
+Deno.test('a malformed roles value is not read as staff', () => {
+  // The participant default, the same fail towards offering direction
+  // memberSubgroupIds takes: linking stays human approved either way, so
+  // a odd shape must not silently hide a child from the list.
+  for (const roles of ['admin', 42, { r: 1 }, null]) {
+    const out = excludeNonPlayers([{ ...SYNTHETIC_MEMBER, roles }], new Set<string>())
+    assertEquals(out.members.length, 1, `roles ${JSON.stringify(roles)} excluded a member`)
+    assertEquals(out.staff, 0)
+  }
+  assertEquals(memberRoleIds({ roles: 'admin' }), [])
+  assertEquals(memberRoleIds({}), [])
+  assertEquals(memberRoleIds({ roles: ['R1', 42, ''] }), ['R1'])
+})
+
+Deno.test('the ignored id config drops a member by opaque id, case folded', () => {
+  const ignored = parseIgnoredMemberIds(` ${STAFF_ID.toLowerCase()} , ${LINKED_B}`)
+  const out = excludeNonPlayers([{ ...SYNTHETIC_MEMBER, id: STAFF_ID }, SYNTHETIC_MEMBER], ignored)
+  assertEquals(out.members, [SYNTHETIC_MEMBER])
+  assertEquals(out.ignored, 1)
+  assertEquals(out.staff, 0)
+})
+
+Deno.test('a config entry that could be a person is dropped rather than matched', () => {
+  // The secret takes ids only. A name pasted there must not silently
+  // become a match rule, so anything the links table would refuse is
+  // discarded on parse.
+  const ignored = parseIgnoredMemberIds(`Bekki Staffname, staff@example.invalid, short, ${STAFF_ID}`)
+  assertEquals(ignored, new Set([STAFF_ID]))
+  assertEquals(parseIgnoredMemberIds(undefined), new Set())
+  assertEquals(parseIgnoredMemberIds(''), new Set())
+})
+
+Deno.test('exclusion reads roles and the id, never a guardian or contact field', () => {
+  // A staff member stays staff with every other field stripped, and a
+  // participant stays offered with the sensitive fields present, so the
+  // classification provably depends on nothing the boundary forbids.
+  const stripped = { id: STAFF_ID, firstName: 'Invented', lastName: 'Staffname', roles: ['ROLE-SYNTH-1'] }
+  assertEquals(excludeNonPlayers([stripped], new Set<string>()).staff, 1)
+  assertEquals(excludeNonPlayers([SYNTHETIC_MEMBER], new Set<string>()).members.length, 1)
 })
 
 // ---- The member id pattern, the column boundary in code --------------------

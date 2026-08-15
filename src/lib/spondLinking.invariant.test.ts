@@ -33,4 +33,30 @@ describe('SpondLinks hands the section builder the scoped pool, never the roster
     expect(src).toMatch(/teamRoster = useMemo\(\(\) => rosterFor\(teamId\)/)
     expect(src).toMatch(/buildLinkSections\(candidates \?\? \[\], allLinks, teamRoster\)/)
   })
+
+  it('composes the no-match section from the same three inputs the sections read', () => {
+    // Eleven children were invisible on this screen because no section
+    // was player led. The list of registered players with no Spond match
+    // must come from the shared rule over exactly the inputs the
+    // sections read, or the two could disagree about who is reachable.
+    expect(src).toMatch(/unmatchedPlayers\(candidates \?\? \[\], allLinks, teamRoster\)/)
+  })
+})
+
+describe('staff never enter the player pipelines', () => {
+  // The rule lives in _shared/spond.ts (excludeNonPlayers) and its Deno
+  // tests prove it. These pin that both functions actually CALL it on the
+  // scoped members, since a call site that quietly stops calling a
+  // correct rule is exactly how the linking screen offered a manager as
+  // a candidate child. Source text, the usual tripwire honesty.
+  const fn = (name: string) =>
+    readFileSync(join(import.meta.dirname, `../../supabase/functions/${name}/index.ts`), 'utf8')
+
+  it('spond-link-members excludes before the cap and the reduction', () => {
+    expect(fn('spond-link-members')).toMatch(/excludeNonPlayers\(scoped, IGNORED_MEMBER_IDS\)/)
+  })
+
+  it('spond-roster-import excludes before the plan is built', () => {
+    expect(fn('spond-roster-import')).toMatch(/excludeNonPlayers\(scoped, IGNORED_MEMBER_IDS\)/)
+  })
 })

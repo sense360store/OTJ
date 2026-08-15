@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { LinkSectionsView, LinkedRowView, NeedsDecisionRowView, TeamChipsView } from './SpondLinks'
+import { LinkSectionsView, LinkedRowView, NeedsDecisionRowView, PickerView, TeamChipsView } from './SpondLinks'
 import { buildLinkSections, type LinkCandidate, type SpondLink } from '../lib/spondLinking'
 import type { RegisteredPlayer, Team } from '../lib/data'
 
@@ -104,7 +104,10 @@ describe('NeedsDecisionRowView', () => {
         onChoose={noop}
       />,
     )
-    expect(html).toContain('Not on the roster')
+    // British English, and what the pool actually was: this member was
+    // judged against the team's current season registrations.
+    expect(html).toContain('Not a registered player')
+    expect(html).not.toContain('Not on the roster')
   })
 })
 
@@ -149,6 +152,7 @@ describe('LinkSectionsView', () => {
         sections={buildLinkSections(candidates, links, roster)}
         busy={false}
         complete
+        unmatched={[]}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -183,6 +187,7 @@ describe('LinkSectionsView', () => {
         sections={buildLinkSections([candidate(M1, 'Alpha Synthetic')], [], roster)}
         complete
         busy
+        unmatched={[]}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -206,6 +211,7 @@ describe('an incomplete member list is never treated as evidence', () => {
         sections={buildLinkSections(candidates, links, roster)}
         busy={false}
         complete={false}
+        unmatched={[]}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -229,6 +235,7 @@ describe('an incomplete member list is never treated as evidence', () => {
         sections={buildLinkSections([candidate(M1, 'Alpha Synthetic')], [link(M2, 'p2')], roster)}
         busy={false}
         complete
+        unmatched={[]}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -236,5 +243,72 @@ describe('an incomplete member list is never treated as evidence', () => {
     )
     expect(html).toContain('Links with no Spond member')
     expect(html).not.toContain('came back incomplete')
+  })
+})
+
+// ---- The registered players the screen previously never mentioned ------
+//
+// Production, 15 August: Argonauts held six unlinked registered players
+// and Trojans five, and no section named any of them, because every
+// section is candidate led and these children have no candidate. "Needs
+// a decision" showed one staff member and a manager reasonably concluded
+// there was nothing left to do.
+
+describe('registered players with no Spond match', () => {
+  const withUnmatched = (unmatched: RegisteredPlayer[], complete = true) =>
+    renderToStaticMarkup(
+      <LinkSectionsView
+        sections={buildLinkSections([], [], roster)}
+        busy={false}
+        complete={complete}
+        unmatched={unmatched}
+        onAccept={noop}
+        onChoose={noop}
+        onUnlink={noop}
+      />,
+    )
+
+  it('names them, with a count, when the member list is complete', () => {
+    const html = withUnmatched([player('p3', 'Gamma Synthetic'), player('p4', 'Delta Synthetic')])
+    expect(html).toContain('Registered players with no Spond match (2)')
+    expect(html).toContain('Gamma Synthetic')
+    expect(html).toContain('Delta Synthetic')
+    // Where the gap is fixed, since the fix lives in Spond, not here.
+    expect(html).toContain('in Spond')
+  })
+
+  it('claims nothing from an incomplete list, where absence is not evidence', () => {
+    const html = withUnmatched([player('p3', 'Gamma Synthetic')], false)
+    expect(html).not.toContain('Registered players with no Spond match')
+    expect(html).not.toContain('Gamma Synthetic')
+  })
+
+  it('is absent when every registered player has a match', () => {
+    expect(withUnmatched([])).not.toContain('Registered players with no Spond match')
+  })
+})
+
+// ---- The picker: linking a member, in the product's own words ----------
+
+describe('PickerView', () => {
+  const render = () =>
+    renderToStaticMarkup(
+      <PickerView memberName="Synthetic Member" roster={roster} links={[link(M1, 'p1')]} onPick={noop} onClose={noop} />,
+    )
+
+  it('says Link Spond member, never the old question', () => {
+    const html = render()
+    expect(html).toContain('Link Spond member')
+    expect(html).toContain('Select the matching registered player')
+    expect(html).not.toContain('Which child is this?')
+  })
+
+  it('an already linked player cannot be picked, and says why', () => {
+    const html = render()
+    // Alpha is linked: the row is disabled with the reason beside it.
+    expect(html).toMatch(/disabled=""><span>Alpha Synthetic<\/span>/)
+    expect(html).toContain('linked to another Spond member')
+    // Beta is free: no disabled attribute on that row.
+    expect(html).toMatch(/<button class="sl-picker-row"><span>Beta Synthetic<\/span>/)
   })
 })

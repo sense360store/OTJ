@@ -66,7 +66,9 @@
 // =====================================================================
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
+  excludeNonPlayers,
   extractAccessToken,
+  parseIgnoredMemberIds,
   planRosterImport,
   readCappedJson,
   rosterMembersForCommit,
@@ -79,6 +81,10 @@ import type { SpondMapping } from '../_shared/spond.ts'
 
 const SPOND_EMAIL = Deno.env.get('SPOND_EMAIL') ?? ''
 const SPOND_PASSWORD = Deno.env.get('SPOND_PASSWORD') ?? ''
+// Opaque member ids never to import as children: the backstop for staff
+// the club has not assigned a Spond role. Parsed through the member id
+// pattern, so a name cannot be expressed here.
+const IGNORED_MEMBER_IDS = parseIgnoredMemberIds(Deno.env.get('SPOND_IGNORED_MEMBER_IDS'))
 
 // The exact header shape the reference library sends on every
 // authenticated call (base.py auth_headers), mirrored from spond-sync.
@@ -255,8 +261,13 @@ Deno.serve(async (req) => {
   // Collect the members of every mapping for this team, each scoped to its
   // subgroup. A mapping whose group the organiser account cannot see is
   // reported as a warning, not a silent skip, and the rest continue.
+  // Staff (Spond role holders) and configured ignores are removed before
+  // the plan is built, so a coach in the subgroup can never be imported
+  // onto the player list as a child.
   const members: unknown[] = []
   const warnings: string[] = []
+  let staffExcluded = 0
+  let ignoredExcluded = 0
   for (const mapping of mappings) {
     const scoped = selectGroupMembers(groups.groups, mapping.spond_group_id, mapping.spond_subgroup_id)
     if (scoped.length === 0) {
@@ -264,7 +275,18 @@ Deno.serve(async (req) => {
         `No members found for ${mapping.spond_name}. Check the Spond organiser account can see this group and that the subgroup has members.`,
       )
     }
-    for (const member of scoped) members.push(member)
+    const players = excludeNonPlayers(scoped, IGNORED_MEMBER_IDS)
+    staffExcluded += players.staff
+    ignoredExcluded += players.ignored
+    for (const member of players.members) members.push(member)
+  }
+  if (staffExcluded > 0) {
+    warnings.push(
+      `Skipped ${staffExcluded} Spond staff member${staffExcluded === 1 ? '' : 's'} (group role holders); staff are never imported as players.`,
+    )
+  }
+  if (ignoredExcluded > 0) {
+    warnings.push(`Skipped ${ignoredExcluded} member${ignoredExcluded === 1 ? '' : 's'} an admin has excluded.`)
   }
 
   // The names already registered on this team for the current season, read
@@ -299,7 +321,7 @@ Deno.serve(async (req) => {
       .order('player_id', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error) {
-      return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
+      return reply(500, { error: 'Could not read the existing player list. Nothing was imported.' })
     }
     const rows = (data ?? []) as { player_id: string; team_id: string | null }[]
     for (const row of rows) registrations.push(row)
@@ -317,7 +339,7 @@ Deno.serve(async (req) => {
         .order('id', { ascending: true })
         .range(from, from + PAGE - 1)
       if (error) {
-        return reply(500, { error: 'Could not read the existing roster. Nothing was imported.' })
+        return reply(500, { error: 'Could not read the existing player list. Nothing was imported.' })
       }
       const rows = (data ?? []) as { id: string; display_name: string }[]
       for (const row of rows) nameById.set(row.id, row.display_name)
