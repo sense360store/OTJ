@@ -16,6 +16,7 @@ order where each one fails before the next can do damage.
 |---|---|---|
 | `0046_drill_diagram` | `20260811210248` | 2026-08-11 |
 | `0047_register_group_inclusion` | `20260812064038` | 2026-08-12 |
+| `0048_spond_session_link_unique` | `20260812102912` | 2026-08-12 |
 
 `0047` stays in the dropdown and in `REVIEWED_MIGRATIONS` now that it has run.
 Entries are never removed once applied: the register is the closed list of what
@@ -39,25 +40,32 @@ and 0 with `included_in_groups` true immediately afterwards, which is what a
 defaulted column with no backfill must read. The four `register_entries` RLS
 policies remained 4, with no `FOR ALL` policy introduced.
 
-## Reviewed, registered, not yet applied
-
-| Migration | Reviewed against | State |
-|---|---|---|
-| `0048_spond_session_link_unique` | `20260812064038` / `register_group_inclusion` | in the register and the dropdown, never run |
-
 `0048` repairs one bad Spond link and adds
 `sessions_spond_event_id_unique`, so a mirrored Spond event can hold at most
-one Hub session. It is in `REVIEWED_MIGRATIONS` and in the dropdown so it can
-be applied through this workflow after review, and it has not been applied.
-`EXPECTED_LAST_MIGRATION` therefore stays at `20260812064038`.
+one Hub session. Its `expected_previous_version` stays `20260812064038` for the
+same reason `0047`'s stays `20260811210248`: it records the state `0048` was
+REVIEWED against, not the current head. That is a historical review fact and it
+does not move when the ledger does.
 
-**It must be applied BEFORE the frontend from its pull request reaches
-production.** The repository auto-deploys `main` to Vercel, so the safe order
-is: merge nothing, run this workflow on the migration's branch commit, confirm
-the post-apply gate, then merge. Applying it late is not catastrophic (the new
-client works against a database without the index; it simply never sees the
-refusal it knows how to explain), but the duplicate it prevents is silent
-corruption, so early is the right way round.
+`0048`'s ledger row records `created_by` as the workflow and the commit it ran
+from, `74621ef8a04c45cb61ff4963e700a5fad968c2ca`, an `idempotency_key` of
+`otj:migration:0048_spond_session_link_unique`, and one `statements` entry
+hashing to `a559695830bfa6713dc741f9fd27b2e2`, the reviewed file with its
+trailing newline stripped. The post-apply gate confirmed it was the unique
+newest row with `20260812064038` / `register_group_inclusion` before it, and
+that `sessions_spond_event_id_unique` exists as a unique partial index on
+`public.sessions` rather than merely as a matching name. The outcome was read
+back afterwards: across the 10 sessions carrying a `spond_event_id` there are
+zero duplicated links, which is what the repair plus the index must read.
+
+It was applied BEFORE the frontend from its pull request reached production,
+which was the point of ordering it that way. The repository auto-deploys `main`
+to Vercel, so the safe order is: merge nothing, run this workflow on the
+migration's branch commit, confirm the post-apply gate, then merge. Applying it
+late would not have been catastrophic (the new client works against a database
+without the index; it simply never sees the refusal it knows how to explain),
+but the duplicate it prevents is silent corruption, so early was the right way
+round.
 
 It proves it **changed** nothing rather than asserting what the schema looks
 like. That distinction cost a CI run: a first draft asserted that `anon` held
@@ -101,6 +109,13 @@ of `otj:migration:0046_drill_diagram`, and one `statements` entry hashing to
 the reviewed file. The post-apply gate confirmed it was the unique newest row
 with `20260810182333` / `spond_links` before it, and that the column, the check
 constraint and the three validation functions all exist.
+
+## Reviewed, registered, not yet applied
+
+None. Every entry in `REVIEWED_MIGRATIONS` has been applied, and the hosted
+ledger's newest row is `20260812102912` / `spond_session_link_unique`. Applied
+entries are never removed from the register, so this section being empty means
+there is nothing pending, not that nothing is registered.
 
 ## What runs, in order
 

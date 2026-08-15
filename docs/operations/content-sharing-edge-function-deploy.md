@@ -240,40 +240,40 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260812064038` (`0047_register_group_inclusion`, applied
+Current value: `20260812102912` (`0048_spond_session_link_unique`, applied
 2026-08-12 under its own production approval).
 
-Hosted ledger newest migration: **`20260812064038` / `register_group_inclusion`**.
+Hosted ledger newest migration: **`20260812102912` / `spond_session_link_unique`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
 apply, not predicted before it, and was confirmed to be the unique newest row.
 
-0047 was applied by the gated production migration workflow, so its ledger row
+0048 was applied by the gated production migration workflow, so its ledger row
 carries that workflow's evidence, all of it confirmed independently before this
 constant moved:
 
 - `created_by` is
-  `github-actions:apply-production-migration@b3f5d5c1a6610a5ff804a7b1b008adc8a4def6cf`,
+  `github-actions:apply-production-migration@74621ef8a04c45cb61ff4963e700a5fad968c2ca`,
   naming the workflow and the commit it ran from;
-- `idempotency_key` is `otj:migration:0047_register_group_inclusion`, and that
+- `idempotency_key` is `otj:migration:0048_spond_session_link_unique`, and that
   column is UNIQUE, so the same migration cannot be applied a second time;
 - `statements` holds one entry whose MD5 is
-  `317101852faf1ddc68f8e641f24579b9`, the reviewed file with its trailing
+  `a559695830bfa6713dc741f9fd27b2e2`, the reviewed file with its trailing
   newline stripped;
-- the row before it is `20260811210248` / `drill_diagram`, unchanged;
-- `public.register_entries.included_in_groups` exists, as a NOT NULL boolean
-  defaulting to false.
+- the row before it is `20260812064038` / `register_group_inclusion`, unchanged;
+- `sessions_spond_event_id_unique` exists on `public.sessions` and is both
+  unique and partial, which is the shape the migration creates rather than
+  merely a matching name.
 
-0047 adds one column and writes no row, and the read either side proves it: 9
-register rows before and after, 1 with `present` true before and after, and 0
-with `included_in_groups` true immediately afterwards, which is what a defaulted
-column with no backfill must read. Nothing was copied between the two columns in
-either direction. The `register_entries` RLS policy count remained 4 and no
-`FOR ALL` policy was introduced.
+0048 repairs one bad Spond link and adds that index, and the read afterwards
+proves the outcome: across the 10 sessions carrying a `spond_event_id` there
+are now zero duplicated links, which is what the repair plus the index must
+read. It deletes no session, rewrites no status, clears no
+`live_activity_index` and changes no policy, grant or trigger.
 
-The superseded value, `20260811210248` (`0046_drill_diagram`, applied 2026-08-11
-as the drill diagram column), is now rejected by the gate; a test pins that it
-is, alongside the earlier `20260810182333`, `20260809184949` and
-`20260809081118`.
+The superseded value, `20260812064038` (`0047_register_group_inclusion`, applied
+2026-08-12 as the register group inclusion column), is now rejected by the gate;
+a test pins that it is, alongside the earlier `20260811210248`,
+`20260810182333`, `20260809184949` and `20260809081118`.
 
 Moving this constant is a **reconciliation**, never a deployment: it records an
 already applied, already reviewed hosted state so the fail closed verifier
@@ -390,7 +390,7 @@ on the hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260812064038` (0047, the register group inclusion column);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260812102912` (0048, the Spond session link unique index);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
