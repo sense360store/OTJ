@@ -534,10 +534,29 @@ export interface TonightDraft {
   // overwrite by accident.
   attendance: Record<string, boolean>
   bibs: Record<string, string | null>
-  // Children the coach quick added tonight who are not part of the covered
-  // squad. Tracked here because a guest exists only in the draft until the
-  // save, and a guest must never read as a squad member.
-  added: Record<string, boolean>
+  // GUESTS CREATED IN THIS DRAFT, and nothing else. A player is in here
+  // because quickAdd put them here since the last save, so the row exists
+  // on screen with no stored row behind it yet.
+  //
+  // IT IS NOT "IS A GUEST". That question is already answered, and answered
+  // authoritatively, by the stored row's `source`. Seeding this map from
+  // `source === 'manual'` made one flag mean both, and the two meanings
+  // contradict each other the moment a stored guest is removed: the row is
+  // deleted, the readback no longer holds it, and a draft still calling the
+  // player "added" asks draftDelta to CREATE it again. The save then
+  // oscillated, recreating and deleting the same child, and never settled to
+  // Saved. So a stored guest is a guest through `entries`, a new guest is a
+  // guest through this map, and neither is inferred from the other.
+  //
+  // A guest stops being new the moment a save passes over them, which is
+  // what draftAfterSave prunes: after that either the database holds their
+  // row or the coach decided they are not on this session.
+  //
+  // `true` or absent, never false, exactly like `touched` below. A boolean
+  // would let one consumer read the key and another read the value, and
+  // "added: false" would then mean new to one of them and not new to the
+  // other, which is the shape of the defect this flag already caused once.
+  added: Record<string, true>
   // WHICH FIELDS THE COACH ACTUALLY TOUCHED, keyed `${playerId}:${field}`.
   //
   // This exists because "touched" cannot be inferred from a diff. The three
@@ -570,18 +589,25 @@ function wasTouched(draft: TonightDraft, playerId: string, field: TouchedField):
   return draft.touched[touchKey(playerId, field)] === true
 }
 
+// The draft a screen opens with: the stored arrangement, and nothing this
+// coach has done yet.
+//
+// `added` IS DELIBERATELY EMPTY. A stored guest is not a new guest, and
+// seeding them as one is the defect this file's TonightDraft comment
+// describes: their row already exists, so the draft has nothing to create,
+// and claiming otherwise made a removal recreate the child it had just
+// deleted. Their guest identity travels on the stored entry's `source`,
+// which draftRemovals and draftDelta both read from there.
 export function draftFromEntries(entries: RegisterEntry[]): TonightDraft {
   const included: Record<string, boolean> = {}
   const attendance: Record<string, boolean> = {}
   const bibs: Record<string, string | null> = {}
-  const added: Record<string, boolean> = {}
   for (const e of entries) {
     included[e.playerId] = e.includedInGroups
     attendance[e.playerId] = e.present
     bibs[e.playerId] = e.bibColourOverride
-    if (e.source === 'manual') added[e.playerId] = true
   }
-  return { included, attendance, bibs, added, touched: {} }
+  return { included, attendance, bibs, added: {}, touched: {} }
 }
 
 // Someone who is not on the list. Put in tonight's groups straight away,
@@ -608,6 +634,13 @@ export function quickAdd(draft: TonightDraft, playerId: string): TonightDraft {
 // until Save. Without merging the draft in first, the child a coach just
 // added would vanish the moment the modal closed and reappear only after
 // a save whose point they could no longer see.
+//
+// THIS IS THE SCREEN, NOT THE WRITE. draftDelta answers what the database
+// is asked to hold and refuses a row that records nothing; this answers
+// what the coach is looking at, and a guest they added and then unticked is
+// still on the list in front of them. Those were one answer until a save
+// started inserting the empty row purely to keep it visible, and then
+// deleting it on the next pass. Two functions, two questions.
 export function draftEntries(
   draft: TonightDraft,
   entries: RegisterEntry[],
@@ -622,6 +655,23 @@ export function draftEntries(
       includedInGroups: c.includedInGroups,
       bibColourOverride: c.bibColourOverride,
       source: c.source,
+    })
+  }
+  // The guests this draft created who are carrying nothing the save would
+  // write. They are on the list because the coach put them there, so
+  // unticking one leaves the row under their thumb to tick again rather
+  // than snatching it away, and quickAddPool keeps them out of the Add a
+  // player list while it is there. A guest with a stored row, or one the
+  // delta already describes, is set above and is left exactly as it is.
+  for (const playerId of Object.keys(draft.added)) {
+    if (byPlayer.has(playerId)) continue
+    byPlayer.set(playerId, {
+      sessionId,
+      playerId,
+      present: draftPresent(draft, playerId),
+      includedInGroups: draftIncluded(draft, playerId),
+      bibColourOverride: draftBib(draft, playerId),
+      source: 'manual',
     })
   }
   return [...byPlayer.values()]
@@ -783,10 +833,16 @@ export function draftDelta(
     const { includedInGroups, present, bibColourOverride } = effective(draft, stored, playerId)
     // Nothing to write for a player who has no stored row and nothing set
     // on them either: that is simply a child the coach has not touched.
-    // A guest the coach ADDED is different: they are on this list because
-    // somebody put them there, so unticking them must leave the row on
-    // screen rather than deleting it under their thumb.
-    if (!stored && !includedInGroups && !present && bibColourOverride === null && !draft.added[playerId]) continue
+    //
+    // A QUICK ADDED GUEST THE COACH HAS SINCE UNTICKED IS EXACTLY THAT ROW,
+    // and it used to be exempted here so the row would stay on screen. That
+    // put a presentation rule inside the write payload, and the payload
+    // obeyed it: the save INSERTED a row recording nothing, the very next
+    // read made that row removable, and the save after it deleted the child
+    // it had just created. Keeping the row visible is draftEntries' job and
+    // is done there; this function decides only what the database is asked
+    // to hold, and a row that records nothing is never asked for.
+    if (!stored && !includedInGroups && !present && bibColourOverride === null) continue
     // A field travels only when the coach TOUCHED it and it differs from
     // what is stored now. Both halves are load bearing:
     //
@@ -839,12 +895,42 @@ export function draftDelta(
 //
 // So: keep the draft when it still differs from what came back, and clear
 // it only when they agree. Clean means Saved, and Saved then means stored.
+//
+// A GUEST STOPS BEING NEW HERE. `added` means "created in this draft since
+// the last save", so a save that has passed over one settles them: the
+// readback either holds their row, and their guest identity now lives on it
+// like every other stored guest's, or it does not, and the coach's decision
+// was that they are not on this session. Carrying the flag past that point
+// is what let a guest who had been saved and then removed be proposed for
+// creation again by the very next diff.
+//
+// The one guest that stays new is the one the readback still owes a row to.
+// Keeping exactly the players the delta would still write means a refused or
+// missed insert is not quietly forgotten: they stay added, stay in the
+// delta, stay a guest rather than turning into a squad member, and the
+// screen stays dirty. Saved still means stored.
 export function draftAfterSave(
   draft: TonightDraft | null,
   persisted: RegisterEntry[],
 ): TonightDraft | null {
   if (!draft) return null
-  return draftIsDirty(draft, persisted) ? draft : null
+  const settled = settleAdded(draft, persisted)
+  return draftIsDirty(settled, persisted) ? settled : null
+}
+
+// The draft with its new guests aged out, and THE SAME OBJECT when none of
+// them aged. Identity is not cosmetic here: the screen feeds this straight
+// back through setDraft, and React skips the re-render when the value it is
+// handed is the one it already holds.
+function settleAdded(draft: TonightDraft, persisted: RegisterEntry[]): TonightDraft {
+  const ids = Object.keys(draft.added)
+  if (ids.length === 0) return draft
+  const pending = new Set(draftDelta(draft, persisted, '').map((c) => c.playerId))
+  const added: Record<string, true> = {}
+  for (const playerId of ids) {
+    if (pending.has(playerId)) added[playerId] = true
+  }
+  return Object.keys(added).length === ids.length ? draft : { ...draft, added }
 }
 
 // Guests the save should DELETE rather than write.
