@@ -99,7 +99,18 @@ describe('staff never enter the player pipelines', () => {
     const src = fn('spond-link-members')
     expect(src).toMatch(/collectLinkDiagnostics\(groups\.groups, mappings, IGNORED_MEMBER_IDS\)/)
     expect(src).toMatch(/diagnostic_members: diagnostics\.members/)
-    expect(src).toMatch(/diagnostic_complete: diagnostics\.complete/)
+  })
+
+  it('completeness is reconciled against the candidate pass, never taken from the scan alone', () => {
+    // The scan reads a whole group and honestly reports complete; it
+    // cannot know that the candidate pass discarded a member of the mapped
+    // subgroup for an unusable id. Sending diagnostics.complete straight
+    // out is what let the screen say "Not found in Spond group data" about
+    // a child who was in that subgroup, so the entrypoint must go through
+    // the reconciliation and not around it.
+    const src = fn('spond-link-members')
+    expect(src).toMatch(/diagnostic_complete: diagnosticsProved\(diagnostics, collected\)/)
+    expect(src).not.toMatch(/diagnostic_complete: diagnostics\.complete/)
   })
 
   it('a diagnostic row cannot carry a member id, so nothing links from one', () => {

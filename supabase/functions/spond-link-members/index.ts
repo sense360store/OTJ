@@ -77,6 +77,7 @@ import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
   collectLinkCandidates,
   collectLinkDiagnostics,
+  diagnosticsProved,
   extractAccessToken,
   linkCollectionWarnings,
   parseIgnoredMemberIds,
@@ -269,7 +270,12 @@ Deno.serve(async (req) => {
     staff_excluded: collected.staff,
     ignored_excluded: collected.ignored,
     diagnostic_members: diagnostics.members,
-    diagnostic_complete: diagnostics.complete,
+    // Reconciled against what the CANDIDATE pass discarded, not just what
+    // the diagnostic scan read: a member of the mapped subgroup dropped
+    // for an unusable id is a name neither list holds, and a claim about
+    // names cannot survive one. diagnosticsProved holds that rule where
+    // the Deno tests execute it.
+    diagnostic_complete: diagnosticsProved(diagnostics, collected),
     warnings: linkCollectionWarnings(collected),
   })
 })

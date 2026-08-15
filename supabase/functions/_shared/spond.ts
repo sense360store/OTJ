@@ -1203,10 +1203,19 @@ export function collectLinkDiagnostics(
         break
       }
       const reduced = reduceDiagnosticMember(member)
-      // No usable name: this member carries no name that could match a
-      // registered player either way, so dropping it removes no evidence
-      // and the scan stays complete.
-      if (!reduced) continue
+      // A member whose name we could not READ is a name we do not know,
+      // which is not the same as a member who has no name. An earlier
+      // version of this reasoned that dropping one "removes no evidence"
+      // and kept the scan complete; an adversarial review reproduced what
+      // that allows, so the reasoning is recorded as wrong rather than
+      // quietly replaced. The unknown name could be the very child a
+      // later "Not found in Spond group data" row denies exists, and it
+      // could be a second holder of a name a positive row assigns. Both
+      // are claims this scan can no longer support.
+      if (!reduced) {
+        complete = false
+        continue
+      }
       const rawId = asRecord(member).id
       const memberId = typeof rawId === 'string' ? rawId.toUpperCase() : ''
       // Fold one person appearing under two of the team's mapped parent
@@ -1227,6 +1236,30 @@ export function collectLinkDiagnostics(
   // still cannot read a partial list as the whole group, and no name
   // leaves the function that nobody is going to be allowed to use.
   return complete ? { members, complete } : { members: [], complete }
+}
+
+// Whether the diagnostics may be stated at all, given what the CANDIDATE
+// collection also saw. The diagnostics scan knows what it read; it cannot
+// know what the candidate pass discarded, and a discard there is just as
+// fatal to a claim about names.
+//
+// An adversarial review reproduced the hole this closes. A member sitting
+// in the team's own mapped subgroup whose id the links table would refuse
+// (`reduceLinkCandidate` returns null, `dropped` counts it) is not a
+// candidate, and is not a diagnostic row either, because the subgroup it
+// sits in IS reached. That child is invisible on both sides, and the
+// screen confidently said "Not found in Spond group data" about a child
+// who was right there. Truncation is the same argument one step along:
+// members of the mapped subgroup that the cap never read are names we
+// never saw.
+//
+// So the rule is one line and it lives here, beside the two collections it
+// reconciles, rather than in the Edge Function where nothing executes it.
+export function diagnosticsProved(
+  diagnostics: LinkDiagnosticCollection,
+  candidates: LinkCandidateCollection,
+): boolean {
+  return diagnostics.complete && !candidates.truncated && candidates.dropped === 0
 }
 
 // One member reduced to a diagnostic row: the transient display name and

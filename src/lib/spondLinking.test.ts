@@ -433,6 +433,29 @@ describe('spondSetupRows', () => {
     expect(out[0].otherTeam).toBeNull()
   })
 
+  it('one Spond member cannot be claimed by two same named children', () => {
+    // Found by an adversarial review. Ambiguity has two sides and the
+    // first version only had one: two members and one child was caught,
+    // one member and two children was not, and BOTH children read "In
+    // Spond, assigned to another team: Titans" off the same person.
+    const out = rows({
+      pool: [player('p1', 'Sam Synthetic'), player('p2', 'Sam Synthetic')],
+      outsideMembers: [outside('Sam Synthetic', [SG_OTHER])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['ambiguous', 'ambiguous'])
+    expect(out.map((r) => r.otherTeam)).toEqual([null, null])
+  })
+
+  it('two same named children with NO member of that name is still an unambiguous absence', () => {
+    // The narrow half: nobody in the group carries the name, which is a
+    // complete answer for both children however many share it.
+    const out = rows({
+      pool: [player('p1', 'Sam Synthetic'), player('p2', 'Sam Synthetic')],
+      outsideMembers: [outside('Other Synthetic', [])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['not_found', 'not_found'])
+  })
+
   it('ambiguity counts both sides of the mapping, not only the outside one', () => {
     // One "Alex" inside the team's subgroup, linked to another child, and
     // one outside it: two members, one name, no identity to assert.

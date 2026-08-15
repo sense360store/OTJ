@@ -321,6 +321,14 @@ function resolveOtherTeam(
 //   * A name carried by more than one Spond member, on either side of the
 //     mapping, is 'ambiguous' and no category that implies identity is
 //     ever assigned to it.
+//   * AND THE MIRROR OF THAT, which the first version missed. Ambiguity
+//     has two sides, exactly as it does in buildLinkSections: one Spond
+//     member and TWO registered children of that name is equally
+//     unresolvable, and an adversarial review reproduced what the missing
+//     half allows. Two children called "Sam Jones" and one Spond member
+//     of that name each read "In Spond, assigned to another team: Titans",
+//     which asserts one person's identity against two different children
+//     and reads as confirmation to the manager acting on it.
 export function spondSetupRows(ctx: SpondSetupContext): SpondSetupRow[] {
   const unmatched = unmatchedPlayers(ctx.candidates, ctx.links, ctx.pool)
   const outside = ctx.outsideMembers
@@ -344,13 +352,28 @@ export function spondSetupRows(ctx: SpondSetupContext): SpondSetupRow[] {
     else outsideByName.set(key, [m])
   }
 
+  // The other side of the ambiguity: how many of the children being
+  // diagnosed carry each name. Two of them and one Spond member is one
+  // member two children could be, which is unresolvable in exactly the
+  // way two members and one child is.
+  const claimantsByName = new Map<string, number>()
+  for (const p of unmatched) {
+    const key = normaliseName(p.displayName)
+    claimantsByName.set(key, (claimantsByName.get(key) ?? 0) + 1)
+  }
+
   return unmatched.map((player) => {
     const key = normaliseName(player.displayName)
     const inside = insideByName.get(key) ?? 0
     const matches = outsideByName.get(key) ?? []
     if (inside + matches.length > 1) return { player, state: 'ambiguous' as const, otherTeam: null }
-    if (inside === 1) return { player, state: 'name_taken' as const, otherTeam: null }
     const member = matches[0]
+    // Nobody in the group carries this name, which is an unambiguous
+    // answer however many children share it: neither of them is there.
+    if (inside === 0 && !member) return { player, state: 'not_found' as const, otherTeam: null }
+    // Somebody does, and more than one child could be them.
+    if ((claimantsByName.get(key) ?? 1) > 1) return { player, state: 'ambiguous' as const, otherTeam: null }
+    if (inside === 1) return { player, state: 'name_taken' as const, otherTeam: null }
     if (!member) return { player, state: 'not_found' as const, otherTeam: null }
     if (member.subgroupIds.length === 0) return { player, state: 'no_subgroup' as const, otherTeam: null }
     return {

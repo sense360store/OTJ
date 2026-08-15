@@ -15,6 +15,7 @@ import {
   collectLinkDiagnostics,
   collectRosterMembers,
   deriveMemberStatuses,
+  diagnosticsProved,
   excludeNonPlayers,
   linkCollectionWarnings,
   MAX_RESPONSE_IDS_PER_ARRAY,
@@ -725,13 +726,14 @@ Deno.test('a diagnostic row carries no guardian, contact or address field', () =
   }
 })
 
-Deno.test('a member with no usable name is dropped without weakening the proof', () => {
-  // It carries no name that could match a registered player either way,
-  // so nothing about absence is lost by dropping it.
-  const out = diagnose([{ id: OUTSIDE_A, subGroups: [SG2] }, participant(OUTSIDE_B, 'Outside', [SG2])])
-  assertEquals(out.members.map((m) => m.display_name), ['Outside Synthetic'])
-  assertEquals(out.complete, true)
+Deno.test('a member with no readable name has no diagnostic row of its own', () => {
+  // The reduction still refuses it: there is no name to put on a row. What
+  // it does NOT do any more is let the scan call itself complete, which is
+  // the corrected half pinned below under the reconciliation heading.
   assertEquals(reduceDiagnosticMember({ id: OUTSIDE_A }), null)
+  const out = diagnose([{ id: OUTSIDE_A, subGroups: [SG2] }, participant(OUTSIDE_B, 'Outside', [SG2])])
+  assertEquals(out.members, [])
+  assertEquals(out.complete, false)
 })
 
 Deno.test('the diagnostics never widen the candidate shape', () => {
@@ -786,4 +788,61 @@ Deno.test('a scoped read cut short still lets the remaining mappings contribute'
     out.members.some((m) => m.spond_member_id === OUTSIDE_A),
     'the second mapping was skipped because the first was truncated',
   )
+})
+
+// ---- Reconciling the two collections, the hole a review reproduced -------
+//
+// A member sitting in the team's OWN mapped subgroup whose id the links
+// table would refuse is dropped by the candidate reduction and skipped by
+// the diagnostics, because the subgroup they sit in IS reached. They exist
+// in neither list, and the screen said "Not found in Spond group data"
+// about a child who was right there. The diagnostic scan cannot see that
+// on its own: it read a whole group and is honestly complete. Only the
+// reconciliation against the candidate collection knows a name went
+// missing, which is why the rule is a function and not a comment.
+
+Deno.test('a dropped candidate makes the diagnostics unprovable, though the scan is complete', () => {
+  const groups = groupsPayload([
+    // In the mapped subgroup, but the links table would refuse this id.
+    { id: 'a1b2c3d4-e5f6', firstName: 'Unreadable', lastName: 'Synthetic', subGroups: [SG1] },
+    participant(OUTSIDE_A, 'Outside', [SG2]),
+  ])
+  const ignored = new Set<string>()
+  const collected = collectLinkCandidates(groups, [mapping(SG1)], ignored)
+  const diagnostics = collectLinkDiagnostics(groups, [mapping(SG1)], ignored)
+  assertEquals(collected.dropped, 1)
+  assertEquals(diagnostics.complete, true)
+  assertEquals(diagnosticsProved(diagnostics, collected), false)
+})
+
+Deno.test('a truncated candidate pass makes the diagnostics unprovable too', () => {
+  // Members of the mapped subgroup the cap never read are names we never
+  // saw, which is the same argument one step along.
+  const many = Array.from({ length: MAX_ROSTER_MEMBERS + 1 }, (_, i) =>
+    participant(`${i % 10}`.repeat(32), `Person${i}`, [SG1]))
+  const groups = groupsPayload([...many, participant(OUTSIDE_A, 'Outside', [SG2])])
+  const ignored = new Set<string>()
+  const collected = collectLinkCandidates(groups, [mapping(SG1)], ignored)
+  const diagnostics = collectLinkDiagnostics(groups, [mapping(SG1)], ignored)
+  assertEquals(collected.truncated, true)
+  assertEquals(diagnosticsProved(diagnostics, collected), false)
+})
+
+Deno.test('a clean pair is proved, so the reconciliation is not simply always false', () => {
+  const groups = groupsPayload([participant(LINKED_A, 'Alpha', [SG1]), participant(OUTSIDE_A, 'Outside', [SG2])])
+  const ignored = new Set<string>()
+  const collected = collectLinkCandidates(groups, [mapping(SG1)], ignored)
+  const diagnostics = collectLinkDiagnostics(groups, [mapping(SG1)], ignored)
+  assertEquals(collected.dropped, 0)
+  assertEquals(collected.truncated, false)
+  assertEquals(diagnosticsProved(diagnostics, collected), true)
+})
+
+Deno.test('a member outside the mapping with no readable name is a name we do not know', () => {
+  // The scan's own half of the same rule. An earlier version kept the scan
+  // complete here, reasoning the member "carries no name that could match"
+  // either way; an unreadable name is not the same as no name.
+  const out = diagnose([{ id: OUTSIDE_A, subGroups: [SG2] }, participant(OUTSIDE_B, 'Outside', [SG2])])
+  assertEquals(out.complete, false)
+  assertEquals(out.members, [])
 })

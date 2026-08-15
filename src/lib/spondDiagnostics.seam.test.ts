@@ -26,6 +26,7 @@ import { describe, expect, it } from 'vitest'
 import {
   collectLinkCandidates,
   collectLinkDiagnostics,
+  diagnosticsProved,
   parseIgnoredMemberIds,
   type SpondMapping,
 } from '../../supabase/functions/_shared/spond'
@@ -137,7 +138,11 @@ function run(ignoredConfig = '') {
     links: [],
     pool: ROSTER,
     outsideMembers: asClientDiagnostics(diagnostics.members),
-    outsideComplete: diagnostics.complete,
+    // What the FUNCTION sends, not what the scan alone concluded. The
+    // difference is the whole point: the scan cannot know what the
+    // candidate pass discarded, and a probe that read diagnostics.complete
+    // here would model a chain the product does not have.
+    outsideComplete: diagnosticsProved(diagnostics, collected),
     teamBySubgroup: teamNameBySubgroup(CLUB_MAPPINGS),
   })
   return { collected, diagnostics, rows }
@@ -229,6 +234,47 @@ describe('a Spond group payload through the whole chain', () => {
       teamBySubgroup: teamNameBySubgroup(CLUB_MAPPINGS),
     })
     expect(new Set(rows.map((r) => r.state))).toEqual(new Set(['unknown']))
+  })
+
+  it('a member of the mapped subgroup nobody can read makes the whole answer unprovable', () => {
+    // Found by an adversarial review, reproduced before it was fixed. A
+    // member sitting in the team's OWN mapped subgroup whose id the links
+    // table would refuse is dropped by the candidate reduction and skipped
+    // by the diagnostics (their subgroup IS reached), so they exist in
+    // neither list. The screen then said "Not found in Spond group data"
+    // about a child who was right there, which is the one wrong answer a
+    // manager acts on, by adding a child who is already in Spond.
+    const groups = [
+      {
+        id: GROUP,
+        members: [
+          { id: 'a1b2c3d4-e5f6', firstName: 'Reachable', lastName: 'Synthetic', subGroups: [SG_ARGONAUTS] },
+          member('b', 'Noteam', []),
+        ],
+      },
+    ]
+    const ignored = parseIgnoredMemberIds('')
+    const collected = collectLinkCandidates(groups, MAPPINGS, ignored)
+    const diagnostics = collectLinkDiagnostics(groups, MAPPINGS, ignored)
+    // The scan itself saw a whole group and honestly says so; only the
+    // reconciliation against the candidate pass knows a name went missing.
+    expect(collected.dropped).toBe(1)
+    expect(diagnostics.complete).toBe(true)
+    expect(diagnosticsProved(diagnostics, collected)).toBe(false)
+
+    const rows = spondSetupRows({
+      candidates: collected.members.map((m) => ({
+        spondMemberId: m.spond_member_id,
+        displayName: m.display_name,
+      })),
+      links: [],
+      pool: ROSTER,
+      outsideMembers: asClientDiagnostics(diagnostics.members),
+      outsideComplete: diagnosticsProved(diagnostics, collected),
+      teamBySubgroup: teamNameBySubgroup(CLUB_MAPPINGS),
+    })
+    expect(new Set(rows.map((r) => r.state))).toEqual(new Set(['unknown']))
+    expect(rows.map((r) => r.state)).not.toContain('not_found')
   })
 
   it('a client reading the wrong field name cannot pass as working', () => {
