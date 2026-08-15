@@ -10,6 +10,10 @@
 # run a privileged removal against anything outside the temporary root.
 #
 # Source this file and call cleanup_workdir "$dir".
+#
+# Two production deploy workflows source this helper, so it is shared tooling
+# despite the directory it sits in: deploy-content-sharing-functions.yml and
+# deploy-spond-link-members.yml. Move it only by updating both.
 
 # Remove a temporary work directory created by mktemp -d, tolerating files the
 # runner user cannot unlink directly. Returns non-zero ONLY when the path fails
