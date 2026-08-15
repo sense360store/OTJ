@@ -5729,7 +5729,7 @@ export function useLoadSpondLinkCandidates() {
         // screen.
         diagnosticMembers: Array.isArray(body.diagnostic_members)
           ? body.diagnostic_members
-              .filter((m) => typeof m?.display_name === 'string')
+              .filter((m) => typeof m?.display_name === 'string' && m.display_name.length > 0)
               .map((m) => ({
                 displayName: m.display_name as string,
                 subgroupIds: Array.isArray(m.subgroup_ids)

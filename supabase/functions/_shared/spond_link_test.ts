@@ -625,10 +625,11 @@ Deno.test('no mapping at all proves nothing, rather than proving an empty group'
   assertEquals(out.members, [])
 })
 
-Deno.test('a parent group larger than the cap proves nothing', () => {
+Deno.test('a parent group larger than the cap proves nothing, and returns nothing', () => {
   const many = Array.from({ length: 5 }, (_, i) => participant(`${i}`.repeat(32), `Person${i}`, []))
   const out = diagnose(many, [mapping(SG1)], new Set<string>(), 3)
   assertEquals(out.complete, false)
+  assertEquals(out.members, [])
 })
 
 Deno.test('rows accumulated across two mapped groups still stop at the cap', () => {
@@ -645,7 +646,21 @@ Deno.test('rows accumulated across two mapped groups still stop at the cap', () 
   ]
   const out = collectLinkDiagnostics(groups, twoGroups, new Set<string>(), 2)
   assertEquals(out.complete, false)
-  assertEquals(out.members.length, 2)
+  assertEquals(out.members, [])
+})
+
+Deno.test('one unreadable group among several proves nothing for any of them', () => {
+  // The scan is one answer about a team, not one per group. A group the
+  // organiser account cannot see could hold the very member a "not found"
+  // row would deny exists, so a partial scan returns nothing at all.
+  const groups = [{ id: GROUP_ID, members: [participant(OUTSIDE_A, 'One', [SG2])] }]
+  const twoGroups: SpondMapping[] = [
+    mapping(SG1),
+    { id: 'map-two', spond_group_id: GROUP_TWO, spond_subgroup_id: SG3, spond_name: 'SYNTH G2', team_id: 'team-1' },
+  ]
+  const out = collectLinkDiagnostics(groups, twoGroups, new Set<string>())
+  assertEquals(out.complete, false)
+  assertEquals(out.members, [])
 })
 
 // ---- The shape, and what it may never carry --------------------------------

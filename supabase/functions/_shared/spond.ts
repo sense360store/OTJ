@@ -1215,7 +1215,12 @@ export function collectLinkDiagnostics(
       members.push(reduced)
     }
   }
-  return { members, complete }
+  // An unproved scan returns NOTHING, not a short list beside a flag. The
+  // client already states no diagnosis on `complete: false`, but making
+  // the payload itself empty means a future caller that forgets the flag
+  // still cannot read a partial list as the whole group, and no name
+  // leaves the function that nobody is going to be allowed to use.
+  return complete ? { members, complete } : { members: [], complete }
 }
 
 // One member reduced to a diagnostic row: the transient display name and

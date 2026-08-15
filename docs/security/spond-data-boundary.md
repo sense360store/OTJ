@@ -109,13 +109,23 @@ Three properties hold by construction and are pinned by
   a single diagnostic row is emitted, so a manager or coach in another subgroup
   can never be reported as somebody's child, including the case the feature
   exists for, a role holder with no subgroup at all.
-- **An unproved scan claims nothing.** A group the organiser account cannot
-  see, a malformed payload, no mapping, and either cap biting all return
-  `complete: false`, and the client then states no diagnosis in either
-  direction: not a match, because a short list can hide a second member of the
-  same name, and not an absence, because absence from an incomplete read is not
-  absence. A name carried by more than one member is reported as ambiguous and
-  never as a category that implies identity.
+- **An unproved scan returns nothing and claims nothing.** A group the
+  organiser account cannot see, a malformed payload, no mapping, and either cap
+  biting all return `complete: false` **with an empty member list**, so a
+  partial scan cannot be read as the whole group even by a caller that ignores
+  the flag. The client then states no diagnosis in either direction: not a
+  match, because a short list can hide a second member of the same name, and
+  not an absence, because absence from an incomplete read is not absence. A
+  name carried by more than one member is reported as ambiguous and never as a
+  category that implies identity.
+
+Who sees what is unchanged. The caller already holds `players.manage`, the
+club-wide capability that the candidate list, the roster import and the whole
+`players` table already ride, and every name involved is a name in the club's
+own Spond group. The one honest consequence to state: because the scan covers
+the parent group rather than one subgroup, a diagnostic row can name a child who
+sits in a Spond subgroup the Hub maps to no team at all. That is deliberate, and
+it is the case the feature exists for.
 
 Nothing here is persisted. The diagnostics add no table, no column and no row,
 and `player_spond_links` still only ever receives what a manager pressed.
