@@ -5,9 +5,12 @@ import {
   linkLoadComplete,
   normaliseName,
   pickerOptions,
+  spondSetupRows,
   suggestionPool,
+  teamNameBySubgroup,
   unmatchedPlayers,
   type LinkCandidate,
+  type SpondGroupMember,
   type SpondLink,
 } from './spondLinking'
 import type { RegisteredPlayer } from './data'
@@ -327,5 +330,224 @@ describe('linkLoadComplete', () => {
   it('a truncated read is never complete, staff or no staff', () => {
     expect(linkLoadComplete(load(3, { truncated: true }))).toBe(false)
     expect(linkLoadComplete(load(0, { truncated: true, staffExcluded: 2 }))).toBe(false)
+  })
+})
+
+// ---- Why a registered player has no Spond member to link --------------
+//
+// Production, 15 August: an Argonauts player sat under "not matched yet"
+// and Spond showed them present in the club's parent group with no team
+// assigned. The old list could not say so, because three different Spond
+// side problems all present as "no candidate": no subgroup, another
+// subgroup, and not in the group data at all. These pin that the three are
+// distinguished, and that neither ambiguity nor an incomplete scan is ever
+// resolved into one of them.
+
+describe('spondSetupRows', () => {
+  const SG_MINE = 'SUBGROUP-SYNTH-MINE'
+  const SG_OTHER = 'SUBGROUP-SYNTH-OTHER'
+  const SG_UNMAPPED = 'SUBGROUP-SYNTH-UNMAPPED'
+  const teamBySubgroup = new Map([
+    [SG_MINE, 'Argonauts'],
+    [SG_OTHER, 'Titans'],
+  ])
+  const outside = (name: string, subgroupIds: string[] = []): SpondGroupMember => ({
+    displayName: name,
+    subgroupIds,
+  })
+  const rows = (
+    over: Partial<Parameters<typeof spondSetupRows>[0]> = {},
+  ) =>
+    spondSetupRows({
+      candidates: [],
+      links: [],
+      pool: [],
+      outsideMembers: [],
+      outsideComplete: true,
+      teamBySubgroup,
+      ...over,
+    })
+  const stateOf = (list: ReturnType<typeof spondSetupRows>, playerId: string) =>
+    list.find((r) => r.player.playerId === playerId)
+
+  it('A: a parent group member with no subgroup is in Spond with no team assigned', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['no_subgroup'])
+    expect(out[0].otherTeam).toBeNull()
+  })
+
+  it('B: a member in another mapped subgroup names the team it maps to', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [SG_OTHER])],
+    })
+    expect(out[0].state).toBe('other_subgroup')
+    expect(out[0].otherTeam).toBe('Titans')
+  })
+
+  it('B: an unmapped subgroup names no team rather than guessing one', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [SG_UNMAPPED])],
+    })
+    expect(out[0].state).toBe('other_subgroup')
+    expect(out[0].otherTeam).toBeNull()
+  })
+
+  it('B: subgroups pointing at two teams name neither', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [SG_OTHER, SG_MINE])],
+    })
+    expect(out[0].state).toBe('other_subgroup')
+    expect(out[0].otherTeam).toBeNull()
+  })
+
+  it('C: no same named member anywhere in the group data', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Delta Synthetic', [])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['not_found'])
+  })
+
+  it('a member the mapping already reaches is not diagnosed at all', () => {
+    // A candidate in the team's own subgroup makes the child reachable,
+    // so they are not in the unmatched set and get no row.
+    const out = rows({
+      candidates: [candidate(M1, 'Alpha Synthetic')],
+      pool: [player('p1', 'Alpha Synthetic')],
+    })
+    expect(out).toEqual([])
+  })
+
+  it('two Spond members of one name is ambiguous, never a category implying identity', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', []), outside('Gamma Synthetic', [SG_OTHER])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['ambiguous'])
+    expect(out[0].otherTeam).toBeNull()
+  })
+
+  it('ambiguity counts both sides of the mapping, not only the outside one', () => {
+    // One "Alex" inside the team's subgroup, linked to another child, and
+    // one outside it: two members, one name, no identity to assert.
+    const out = rows({
+      candidates: [candidate(M1, 'Alex Synthetic')],
+      links: [link(M1, 'p9')],
+      pool: [player('p1', 'Alex Synthetic')],
+      outsideMembers: [outside('Alex Synthetic', [SG_OTHER])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['ambiguous'])
+  })
+
+  it('a name held by an already linked member of this team is said, not called missing', () => {
+    const out = rows({
+      candidates: [candidate(M1, 'Alex Synthetic')],
+      links: [link(M1, 'p9')],
+      pool: [player('p1', 'Alex Synthetic')],
+    })
+    expect(out.map((r) => r.state)).toEqual(['name_taken'])
+  })
+
+  it('an incomplete scan states nothing, positive or negative', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic'), player('p2', 'Delta Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [])],
+      outsideComplete: false,
+    })
+    expect(out.map((r) => r.state)).toEqual(['unknown', 'unknown'])
+  })
+
+  it('a deployment that does not answer is unknown, never "the mapping misses nobody"', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: null,
+      outsideComplete: true,
+    })
+    expect(out.map((r) => r.state)).toEqual(['unknown'])
+  })
+
+  it('matches names the way the suggestions do, so the two rules cannot disagree', () => {
+    const out = rows({
+      pool: [player('p1', 'Zoe Synthetic')],
+      outsideMembers: [outside('ZOË  synthetic', [])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['no_subgroup'])
+  })
+
+  it('diagnoses exactly the unmatched set, in its order, and nobody else', () => {
+    const out = rows({
+      candidates: [candidate(M1, 'Alpha Synthetic')],
+      pool: [
+        player('p1', 'Alpha Synthetic'),
+        player('p2', 'Gamma Synthetic'),
+        player('p3', 'Beta Synthetic'),
+      ],
+      outsideMembers: [outside('Beta Synthetic', [SG_OTHER])],
+    })
+    // Alpha is reachable through the loaded candidate; the other two are
+    // listed in unmatchedPlayers' name order.
+    expect(out.map((r) => r.player.displayName)).toEqual(['Beta Synthetic', 'Gamma Synthetic'])
+    expect(stateOf(out, 'p3')?.state).toBe('other_subgroup')
+    expect(stateOf(out, 'p2')?.state).toBe('not_found')
+  })
+
+  it('a linked child is never diagnosed, whatever the group data holds', () => {
+    const out = rows({
+      links: [link(M1, 'p1')],
+      pool: [player('p1', 'Alpha Synthetic')],
+      outsideMembers: [outside('Alpha Synthetic', [SG_OTHER])],
+    })
+    expect(out).toEqual([])
+  })
+
+  it('carries no Spond member id into a row, so nothing can be linked from one', () => {
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [SG_OTHER])],
+    })
+    const flat = JSON.stringify(out)
+    for (const id of [M1, M2, M3]) expect(flat).not.toContain(id)
+    expect(Object.keys(out[0]).sort()).toEqual(['otherTeam', 'player', 'state'])
+  })
+})
+
+describe('teamNameBySubgroup', () => {
+  it('keys the club mapped subgroups by the team they belong to', () => {
+    const map = teamNameBySubgroup([
+      { subgroupId: 'SG-1', teamName: 'Argonauts' },
+      { subgroupId: 'SG-2', teamName: 'Titans' },
+    ])
+    expect(map.get('SG-1')).toBe('Argonauts')
+    expect(map.get('SG-2')).toBe('Titans')
+  })
+
+  it('drops a whole group mapping and an unnamed team rather than keying on nothing', () => {
+    const map = teamNameBySubgroup([
+      { subgroupId: null, teamName: 'Argonauts' },
+      { subgroupId: 'SG-3', teamName: '' },
+    ])
+    expect(map.size).toBe(0)
+  })
+
+  it('names neither team where one subgroup is claimed by two', () => {
+    const map = teamNameBySubgroup([
+      { subgroupId: 'SG-1', teamName: 'Argonauts' },
+      { subgroupId: 'SG-1', teamName: 'Titans' },
+    ])
+    expect(map.has('SG-1')).toBe(false)
+  })
+
+  it('a subgroup mapped twice to the same team still resolves', () => {
+    const map = teamNameBySubgroup([
+      { subgroupId: 'SG-1', teamName: 'Argonauts' },
+      { subgroupId: 'SG-1', teamName: 'Argonauts' },
+    ])
+    expect(map.get('SG-1')).toBe('Argonauts')
   })
 })

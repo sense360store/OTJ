@@ -23,6 +23,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | SPOND-01 | Spond | Reconcile registered players ↔ Spond members, expose missing candidates and incomplete coverage | In progress | P0 | Human-approved linking; privacy boundary; Edge review if touched |
 | SPOND-02 | Spond | Exclude staff/non-player Spond members from player-linking flow | In progress | P0 | Prefer role/staff signal or server-side ignored opaque member IDs |
 | SPOND-03 | Spond | Replace confusing manual “Which child is this?” flow with clear member-to-player linking UX | In progress | P0 | SPOND-01 |
+| SPOND-03a | Spond | Read-only setup diagnostics on the unmatched registered players section | In progress | P0 | Part of SPOND-01/SPOND-03; gated `spond-link-members` deploy after merge |
 | SPOND-04 | Spond | Website-wide British-English sweep: remove user-visible “roster” | In progress | P1 | Internal technical names may remain |
 | SPOND-05 | Spond | Audit current Spond API/upstream library and safely usable event/member facts | In progress | P1 | Read-only toward Spond; no new client/fork without a proved gap |
 | OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Next | P0 | Docs/tests only; no production migration |
@@ -68,6 +69,35 @@ deeper design still happens when the item starts.
 - Read only: nothing on the surface writes.
 - Reply context comes through the same `tonightCounts` populations; no new count builder and no aggregate figure on any per player surface.
 - Works with nothing configured beyond a player list; parents never reach it, tested at the screen level.
+
+**SPOND-03a — setup diagnostics for unmatched registered players**
+
+- Captured 15 August 2026 from production, under SPOND-01 and SPOND-03 rather
+  than as a new workstream. The #178 reconciliation works: staff are excluded,
+  linked players read correctly, team counts reconcile, and "Registered players
+  not matched yet" exposes children who were previously invisible. The residual
+  is that the section is not actionable: an Argonauts player appeared there and
+  Spond showed them present in the club's parent group with no team assigned,
+  which the screen could not say because the candidate list is scoped to the
+  mapped subgroup and a member outside it is simply absent from it.
+- The section becomes **Spond setup to fix**, one sentence per player: `In Spond
+  · no team assigned`, `In Spond · assigned to another team: <team>` (or
+  `another Spond subgroup` where no single mapped team resolves), `Not found in
+  Spond group data`, plus `already linked to another registered player` and an
+  ambiguity state. The expected OTJ team is named on the two findings about a
+  Spond team assignment.
+- `spond-link-members` returns a second, closed structure beside the unchanged
+  `LinkCandidate` list: `{ display_name, subgroup_ids }` per member of the same
+  already fetched parent group the team's mappings do not reach, plus whether
+  that scan saw the whole group. No second Spond call, no member id on a
+  diagnostic row, no new persisted data, no write of any kind, and staff
+  excluded before any row is emitted.
+- Fails closed in both directions: an incomplete scan states nothing at all, and
+  a name carried by more than one Spond member is reported as ambiguous rather
+  than assigned a category that implies identity. `Not found in Spond group
+  data` is deliberately not "not in Spond".
+- No migration. The client tolerates a deployment that does not answer yet, so
+  merging is safe before the gated `spond-link-members` deploy runs.
 
 **SPOND-06 — event location to venue**
 

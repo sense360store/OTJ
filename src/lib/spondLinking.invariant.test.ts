@@ -49,7 +49,24 @@ describe('SpondLinks hands the section builder the scoped pool, never the roster
 
   it('the view composes both halves from its own props', () => {
     expect(src).toMatch(/const sections = buildLinkSections\(candidates, links, pool\)/)
-    expect(src).toMatch(/const unmatched = unmatchedPlayers\(candidates, links, pool\)/)
+    expect(src).toMatch(/const setup = spondSetupRows\(\{/)
+  })
+
+  it('hands the diagnostics down as the server sent them, never as a literal', () => {
+    // The same failure the composition rule above exists for, one field
+    // along: hardcoding outsideMembers to [] at the call site would turn
+    // every player into "Not found in Spond group data", which is the one
+    // wrong answer a manager would act on, by re-adding children who are
+    // already in Spond. Null, an absent field and an incomplete scan must
+    // all reach the view as themselves.
+    expect(src).toMatch(/outsideMembers=\{loadedTeam\?\.diagnosticMembers \?\? null\}/)
+    expect(src).toMatch(/outsideComplete=\{loadedTeam\?\.diagnosticComplete === true\}/)
+    expect(src).toMatch(/teamBySubgroup=\{subgroupTeams\}/)
+    expect(src).toMatch(/subgroupTeams = useMemo\(\(\) => teamNameBySubgroup\(mappings\.data \?\? \[\]\)/)
+    // Stored whole from the load, so a reload cannot leave a stale
+    // diagnosis beside fresh candidates.
+    expect(src).toMatch(/diagnosticMembers: result\.diagnosticMembers/)
+    expect(src).toMatch(/diagnosticComplete: result\.diagnosticComplete/)
   })
 })
 
@@ -68,6 +85,38 @@ describe('staff never enter the player pipelines', () => {
     expect(src).toMatch(/collectLinkCandidates\(groups\.groups, mappings, IGNORED_MEMBER_IDS\)/)
     expect(src).toMatch(/staff_excluded: collected\.staff/)
     expect(src).toMatch(/ignored_excluded: collected\.ignored/)
+  })
+
+  it('the setup diagnostics run the same exclusion, over the same already fetched payload', () => {
+    // A second scan of the parent group is a second chance to offer a
+    // manager or a coach as somebody's child. The exclusion lives inside
+    // collectLinkDiagnostics where the Deno tests execute it; this pins
+    // that the entrypoint goes through it, with the SAME ignore config,
+    // and reads the groups payload it already has rather than fetching
+    // again. The deploy workflow's endpoint assertion is the other half:
+    // it fails the deploy if any Spond path but auth2/login and groups/
+    // appears.
+    const src = fn('spond-link-members')
+    expect(src).toMatch(/collectLinkDiagnostics\(groups\.groups, mappings, IGNORED_MEMBER_IDS\)/)
+    expect(src).toMatch(/diagnostic_members: diagnostics\.members/)
+    expect(src).toMatch(/diagnostic_complete: diagnostics\.complete/)
+  })
+
+  it('a diagnostic row cannot carry a member id, so nothing links from one', () => {
+    // The closed LinkCandidate shape is what linking is built on and it
+    // is asserted field for field by the deploy workflow. The diagnostic
+    // shape is its own closed shape beside it, deliberately WITHOUT the
+    // member id: a row nobody can link from cannot become a second,
+    // untested linking path.
+    const shared = readFileSync(
+      join(import.meta.dirname, '../../supabase/functions/_shared/spond.ts'),
+      'utf8',
+    )
+    const iface = shared.match(/export interface LinkDiagnosticMember\s*\{([^}]*)\}/)
+    expect(iface).not.toBeNull()
+    const fields = [...(iface?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => m[1]).sort()
+    expect(fields).toEqual(['display_name', 'subgroup_ids'])
+    expect(shared).toMatch(/export const SPOND_DIAGNOSTIC_MEMBER_FIELDS = \['display_name', 'subgroup_ids'\]/)
   })
 
   it('spond-roster-import collects through the shared rule', () => {
