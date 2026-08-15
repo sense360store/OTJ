@@ -21,14 +21,14 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | ID | Workstream | Item | Status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
 | SPOND-01 | Spond | Reconcile registered players ↔ Spond members, expose missing candidates and incomplete coverage | In progress | P0 | Human-approved linking; privacy boundary; Edge review if touched |
-| SPOND-02 | Spond | Exclude staff/non-player Spond members from player-linking flow | In progress | P0 | Prefer role/staff signal or server-side ignored opaque member IDs |
+| SPOND-02 | Spond | Exclude staff/non-player Spond members from player-linking flow | Done | P0 | Shipped in #178; see the Done table |
 | SPOND-03 | Spond | Replace confusing manual “Which child is this?” flow with clear member-to-player linking UX | In progress | P0 | SPOND-01 |
-| SPOND-03a | Spond | Read-only setup diagnostics on the unmatched registered players section | In progress | P0 | Part of SPOND-01/SPOND-03; gated `spond-link-members` deploy after merge |
+| SPOND-03a | Spond | Read-only setup diagnostics on the unmatched registered players section | Done | P0 | Shipped in #182; gated `spond-link-members` deploy tracked under SPOND-01/SPOND-03 |
 | SPOND-04 | Spond | Website-wide British-English sweep: remove user-visible “roster” | In progress | P1 | Internal technical names may remain |
 | SPOND-05 | Spond | Audit current Spond API/upstream library and safely usable event/member facts | In progress | P1 | Read-only toward Spond; no new client/fork without a proved gap |
-| OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Next | P0 | Docs/tests only; no production migration |
+| OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Done | P0 | Docs/tests only; no production migration. See the Done table |
 | REG-01 | Training Day | Fix stored guest removal oscillation so Saved settles correctly | Next | P1 | Separate from Spond work |
-| PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Next | P1 | No migration/Edge dependency expected |
+| PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
 | TRAIN-01 | Training Day | One-glance authorised coach view of attending players and their actual bib colours | Next | P1 | Spond/player semantics stable first |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Next | P1 | Never fuzzy-overwrite or auto-create venue data |
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
@@ -50,12 +50,11 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 
 When there is capacity, prefer this sequence unless production evidence changes the order:
 
-1. Finish current Spond/player-linking correction.
-2. Land OPS-01 as a tiny housekeeping PR.
-3. Run PLAN-01 in parallel with non-overlapping Spond work.
-4. Ship TRAIN-01 and SPOND-06 once the current player/Spond semantics are stable.
-5. Continue Drill Maker with DRILL-02 before the larger venue composer DRILL-03.
-6. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
+1. Finish the remaining Spond/player-linking correction (SPOND-01 and SPOND-03), including the gated `spond-link-members` deploy.
+2. Pick up REG-01 next, since it is independent of the Spond work.
+3. Ship TRAIN-01 and SPOND-06 once the current player/Spond semantics are stable.
+4. Continue Drill Maker with DRILL-02 before the larger venue composer DRILL-03.
+5. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
 
 ## Acceptance criteria for scheduled items
 
@@ -155,5 +154,8 @@ These documents contain deeper design history and security decisions. They do no
 | Drill Maker C1 diagram editor | #169 | 11 Aug 2026 |
 | Gated production migration workflow | #170 | 11 Aug 2026 |
 | Production migration ledger reconciliations through 0047 | #171, #173 | 12 Aug 2026 |
+| PLAN-01 — Add from Library session planning | #179 | 15 Aug 2026 |
+| SPOND-02 — staff and non-player Spond members excluded from linking | #178 | 15 Aug 2026 |
+| SPOND-03a — setup diagnostics for unmatched registered players | #182 | 15 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.
