@@ -191,10 +191,12 @@ describe('Tonight counts people in exactly one place', () => {
   it('hands the builder a link set that may be unknown, so zero is never guessed', () => {
     // null means the link set could not be read. Collapsing it to an empty
     // set would print "0 of 40 players linked to Spond" at a club that has
-    // linked everybody and simply had a slow read.
+    // linked everybody and simply had a slow read. The screen no longer
+    // decides this itself: linkSetFromRead holds the rule, including the
+    // paused state the inline version misread as known empty.
     const src = read(SCREEN)
-    expect(src).toMatch(/linksUsable \?[^\n]*new Set\(/)
-    expect(src).toMatch(/:\s*null/)
+    expect(src).toMatch(/linkedIds = linkSetFromRead\(/)
+    expect(src).toMatch(/tonightCounts\(rows, live, linkedIds\)/)
   })
 })
 
@@ -282,6 +284,22 @@ describe('the product no longer calls this a register', () => {
     }
     // The model's own user visible strings: the save error and the notes.
     expect(code(read('lib/tonight.ts'))).not.toMatch(/['"`][^'"`\n/]*\btonight\b[^'"`\n/]*['"`]/i)
+  })
+
+  it('keeps every reworded screen free of tonight, as a literal or as JSX text', () => {
+    // The rename reached beyond the surface itself: the parent dashboard
+    // and the sessions list said the word too, and a review mutation put
+    // both back with the whole suite green, because the scan above covers
+    // two files, quoted literals, and the one exact bare form. Bare JSX
+    // text has no quotes, so it needs its own shape, and the two extra
+    // files need scanning at all. Case insensitive throughout: the same
+    // review parked "Tonight's Groups" in a heading unseen.
+    const TIME_NEUTRAL = [...USER_FACING, 'routes/ParentHome.tsx', 'routes/Sessions.tsx']
+    for (const f of TIME_NEUTRAL) {
+      const src = code(read(f))
+      expect(src, f).not.toMatch(/['"`][^'"`\n/]*\btonight\b[^'"`\n/]*['"`]/i)
+      expect(src, f).not.toMatch(/>[^<>{}\n]*\btonight\b[^<>{}\n]*</i)
+    }
   })
 
   for (const f of USER_FACING) {
@@ -516,5 +534,28 @@ describe('the Spond event aggregate is never a player RSVP, on any screen', () =
     const src = code(read('routes/AdminSpond.tsx'))
     expect(src).toMatch(/useSpondEventResponseCounts\(/)
     expect(src).not.toMatch(/\bspondAudience\(/)
+  })
+})
+
+describe('the screen believes a read only once it has answered', () => {
+  // A query that never dispatched (offline and paused, or disabled while
+  // its gate loads) reports isLoading false and isError false with no
+  // data, and the container once read exactly that as a KNOWN EMPTY link
+  // set: "0 of 40 players linked · 40 not linked", pitch side, from a
+  // read that never ran. The rule now lives in ../lib/tonight where its
+  // tests can hold it; what this pins is that the container calls it and
+  // does not grow an inline copy back. The rendered half is
+  // ../routes/sessionRegister.screens.test.tsx, which puts the paused
+  // state through the real container.
+  it('derives the link set and the reply settledness through the shared rules', () => {
+    const src = code(read('routes/SessionRegister.tsx'))
+    expect(src).toMatch(/linkSetFromRead\(/)
+    expect(src).toMatch(/responsesKnownFromRead\(/)
+  })
+
+  it('never reads the link flags inline again', () => {
+    const src = code(read('routes/SessionRegister.tsx'))
+    expect(src).not.toMatch(/available\s*!==\s*false/)
+    expect(src).not.toMatch(/new Set\([^)]*links/)
   })
 })

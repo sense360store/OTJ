@@ -416,6 +416,43 @@ export function tonightLinkNote(counts: TonightCounts, responsesKnown: boolean):
   return parts.join(' · ')
 }
 
+// ---- What a read is allowed to prove ----------------------------------
+//
+// The screen once decided this inline, from isLoading and isError alone,
+// and a query has a third quiet state those two flags cannot see: never
+// dispatched at all. Offline before the first fetch, or disabled while
+// the capability read that gates it is still loading, a query reports
+// isLoading false and isError false with no data, and the inline rule
+// read exactly that as a KNOWN EMPTY link set: "0 of 40 players linked ·
+// 40 not linked", pitch side, from a read that never ran. Data in hand
+// is the only proof a read has answered, so both rules demand it first.
+// The counts and notes above then render null as silence, which is the
+// same fail-towards-saying-nothing direction they already had.
+
+export interface SpondReadState<T> {
+  data: T | undefined
+  isLoading: boolean
+  isError: boolean
+}
+
+export function linkSetFromRead(
+  read: SpondReadState<{ available: boolean; links: { playerId: string }[] }>,
+  hasSpondEvent: boolean,
+): ReadonlySet<string> | null {
+  if (!hasSpondEvent || read.isLoading || read.isError) return null
+  // No data is not an empty answer, it is no answer. An answered read
+  // with no links is a real state and returns a real empty set.
+  if (read.data === undefined || !read.data.available) return null
+  return new Set(read.data.links.map((l) => l.playerId))
+}
+
+export function responsesKnownFromRead(
+  read: SpondReadState<object>,
+  hasSpondEvent: boolean,
+): boolean {
+  return hasSpondEvent && !read.isLoading && !read.isError && read.data !== undefined
+}
+
 // ---- Where the linking gap lives -------------------------------------
 //
 // "13 not linked" sizes the problem; on an all team session the linking

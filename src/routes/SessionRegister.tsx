@@ -57,6 +57,8 @@ import {
   buildTonightRows,
   chipCount,
   clearSelection,
+  linkSetFromRead,
+  responsesKnownFromRead,
   tonightCounts,
   tonightLinkNote,
   tonightUnlinkedNote,
@@ -505,7 +507,7 @@ export function TonightScreenView({
   )
 }
 
-function TonightScreen({ session }: { session: Session }) {
+export function TonightScreen({ session }: { session: Session }) {
   const nav = useNav()
   const { caps } = useMyCapabilities()
   const { user } = useAuth()
@@ -567,23 +569,21 @@ function TonightScreen({ session }: { session: Session }) {
   const status = saveState(dirty, save.isPending, save.isError)
 
   // Only a claim the read can actually back up. A club with no Spond, a
-  // read still in flight, a failed read and a database where linking is
-  // not available yet all pass null, which the model reports as UNKNOWN
-  // and the note renders as silence, rather than "0 of 18 linked", which
-  // would be a confident falsehood of exactly the kind this screen
-  // refuses to print elsewhere.
-  const linksUsable =
-    !!session.spondEventId && links.data?.available !== false && !links.isLoading && !links.isError
-  // The link set is club wide; ../lib/tonight intersects it with the rows,
-  // so a child on a team this session does not cover cannot be counted.
-  const linkedIds = linksUsable ? new Set((links.data?.links ?? []).map((l) => l.playerId)) : null
+  // read still in flight, a failed read, one that never dispatched and a
+  // database where linking is not available yet all resolve to unknown,
+  // which the model renders as silence rather than "0 of 18 linked". The
+  // rule lives in ../lib/tonight because the one time it was inline here
+  // it read a paused query as a known empty link set. The link set is
+  // club wide; tonightCounts intersects it with the rows, so a child on
+  // a team this session does not cover cannot be counted.
+  const linkedIds = linkSetFromRead(links, !!session.spondEventId)
   // EVERY number the screen shows, built once.
   const counts = tonightCounts(rows, live, linkedIds)
-  // Whether the reply read has actually answered. A query in flight and a
-  // failed one both leave every row without a response, which counts the
-  // same as an event nobody replied to, so the note must not claim a reply
-  // figure until this is true.
-  const responsesKnown = !!session.spondEventId && !rsvp.isLoading && !rsvp.isError
+  // Whether the reply read has actually answered. In flight, failed and
+  // never dispatched all leave every row without a response, which counts
+  // the same as an event nobody replied to, so the note must not claim a
+  // reply figure until this is true.
+  const responsesKnown = responsesKnownFromRead(rsvp, !!session.spondEventId)
   const linkNote = tonightLinkNote(counts, responsesKnown)
   // Where the gap lives, by team, from the same rows and link set the
   // coverage line reads. Empty whenever it has nothing honest to say.

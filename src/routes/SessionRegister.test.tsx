@@ -351,11 +351,21 @@ describe('the surface name', () => {
     expect(html).not.toContain('Tonight')
   })
 
-  it('never says Tonight anywhere on the operational screen', () => {
+  it('never says tonight anywhere on the operational screen, groups included', () => {
+    // Case insensitive, because a review mutation parked "Tonight's
+    // Groups" in a heading and the capital-T checks stayed green.
     for (const filter of ['going', 'all'] as const) {
-      expect(screen({ filter })).not.toContain('Tonight')
+      expect(screen({ filter }).toLowerCase()).not.toContain('tonight')
     }
-    expect(screen({ rows: [], unset: true })).not.toContain('Tonight')
+    expect(screen({ rows: [], unset: true }).toLowerCase()).not.toContain('tonight')
+    // With a child included the Groups section renders too, which is
+    // where that mutation lived: the fixtures above include nobody, so
+    // the section was never in the checked markup.
+    const draft = draftFromEntries([])
+    draft.included.p1 = true
+    const withGroups = screen({ draft })
+    expect(withGroups).toContain('Groups')
+    expect(withGroups.toLowerCase()).not.toContain('tonight')
   })
 })
 
@@ -784,8 +794,9 @@ describe('a session whose coverage was never set', () => {
 // The acceptance case: the linked 15 August Training session.
 //
 // Production, read only, on 2026-08-15. The session ran at 10:00, a
-// morning, which is why the surface is no longer called Tonight. It
-// covered all five teams: 40 registered players, 27 linked, and 27
+// morning, which is why the surface is no longer called Tonight. In
+// production it covered all five teams; the fixture keeps the same
+// totals over two synthetic ones: 40 registered players, 27 linked, 27
 // stored replies for the event: 12 accepted, 11 declined, 4 unanswered,
 // 0 waiting. The event's own aggregate was 20 accepted, 18 declined,
 // 11 unanswered over a 49 person audience.

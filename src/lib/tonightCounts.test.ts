@@ -33,6 +33,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   countByResponse,
+  linkSetFromRead,
+  responsesKnownFromRead,
   tonightCounts,
   tonightLinkNote,
   tonightUnlinkedNote,
@@ -782,5 +784,54 @@ describe('tonightUnlinkedNote', () => {
 
   it('says nothing when the link set is unknown, rather than zero missing', () => {
     expect(tonightUnlinkedNote(rows15, null)).toBe('')
+  })
+})
+
+// ---- What a read is allowed to prove ---------------------------------
+//
+// The container once decided this inline from isLoading and isError, and
+// a query has a third quiet state those two cannot see: never dispatched
+// at all, offline before the first fetch or disabled while its gate
+// loads. isLoading and isError are both false there and data is absent,
+// and the inline rule read that as a KNOWN EMPTY link set, printing
+// "0 of 40 players linked · 40 not linked" pitch side from a read that
+// never ran. Data in hand is the only proof a read has answered.
+
+describe('a read that has not answered is unknown, never empty', () => {
+  const answered = {
+    data: { available: true, links: [{ playerId: 'p1' }] },
+    isLoading: false,
+    isError: false,
+  }
+
+  it('turns an answered read into the link set, and an answered reply read into settled', () => {
+    expect(linkSetFromRead(answered, true)).toEqual(new Set(['p1']))
+    expect(responsesKnownFromRead({ data: {}, isLoading: false, isError: false }, true)).toBe(true)
+  })
+
+  it('an empty answer is an answer: a club with no links yet reads as zero, honestly', () => {
+    const set = linkSetFromRead({ data: { available: true, links: [] }, isLoading: false, isError: false }, true)
+    expect(set).toEqual(new Set())
+  })
+
+  it('reads a paused query, which is neither loading nor failed, as unknown', () => {
+    const paused = { data: undefined, isLoading: false, isError: false }
+    expect(linkSetFromRead(paused, true)).toBeNull()
+    expect(responsesKnownFromRead(paused, true)).toBe(false)
+  })
+
+  it('reads in flight, failed reads and an absent migration as unknown', () => {
+    expect(linkSetFromRead({ data: undefined, isLoading: true, isError: false }, true)).toBeNull()
+    expect(linkSetFromRead({ data: undefined, isLoading: false, isError: true }, true)).toBeNull()
+    expect(
+      linkSetFromRead({ data: { available: false, links: [] }, isLoading: false, isError: false }, true),
+    ).toBeNull()
+    expect(responsesKnownFromRead({ data: undefined, isLoading: true, isError: false }, true)).toBe(false)
+    expect(responsesKnownFromRead({ data: undefined, isLoading: false, isError: true }, true)).toBe(false)
+  })
+
+  it('claims nothing for a session with no Spond event', () => {
+    expect(linkSetFromRead(answered, false)).toBeNull()
+    expect(responsesKnownFromRead({ data: {}, isLoading: false, isError: false }, false)).toBe(false)
   })
 })
