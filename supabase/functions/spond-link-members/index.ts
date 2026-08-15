@@ -262,6 +262,13 @@ Deno.serve(async (req) => {
   // diagnostic row, so it carries no member id. No extra Spond call is
   // made, and nothing here is written anywhere.
   const diagnostics = collectLinkDiagnostics(groups.groups, mappings, IGNORED_MEMBER_IDS)
+  // Decided BEFORE the response is shaped, so the names and the verdict
+  // cannot disagree. collectLinkDiagnostics already returns nothing when
+  // its own scan was unproved; this covers the other half, where the scan
+  // was fine and the CANDIDATE pass is what lost a name. Either way no
+  // transient name leaves the function that the screen is then forbidden
+  // to use, which is the minimisation the rest of this file keeps.
+  const proved = diagnosticsProved(diagnostics, collected)
   return reply(200, {
     ok: true,
     team_id: teamId,
@@ -269,13 +276,13 @@ Deno.serve(async (req) => {
     truncated: collected.truncated,
     staff_excluded: collected.staff,
     ignored_excluded: collected.ignored,
-    diagnostic_members: diagnostics.members,
     // Reconciled against what the CANDIDATE pass discarded, not just what
     // the diagnostic scan read: a member of the mapped subgroup dropped
     // for an unusable id is a name neither list holds, and a claim about
     // names cannot survive one. diagnosticsProved holds that rule where
     // the Deno tests execute it.
-    diagnostic_complete: diagnosticsProved(diagnostics, collected),
+    diagnostic_members: proved ? diagnostics.members : [],
+    diagnostic_complete: proved,
     warnings: linkCollectionWarnings(collected),
   })
 })

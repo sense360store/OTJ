@@ -99,7 +99,18 @@ describe('staff never enter the player pipelines', () => {
     // appears.
     const src = fn('spond-link-members')
     expect(src).toMatch(/collectLinkDiagnostics\(groups\.groups, mappings, IGNORED_MEMBER_IDS\)/)
-    expect(src).toMatch(/diagnostic_members: diagnostics\.members/)
+    expect(src).toMatch(/diagnostic_members: proved \? diagnostics\.members : \[\]/)
+  })
+
+  it('sends no transient name the screen is forbidden to use', () => {
+    // The names are the sensitive half of this response. When the
+    // reconciliation says nothing may be stated, the members array goes
+    // out empty rather than full-but-ignored, so the payload and the
+    // verdict cannot disagree and a future client cannot read a list the
+    // server had already ruled unusable.
+    const src = fn('spond-link-members')
+    expect(src).toMatch(/const proved = diagnosticsProved\(diagnostics, collected\)/)
+    expect(src).not.toMatch(/diagnostic_members: diagnostics\.members,/)
   })
 
   it('completeness is reconciled against the candidate pass, never taken from the scan alone', () => {
@@ -110,7 +121,8 @@ describe('staff never enter the player pipelines', () => {
     // a child who was in that subgroup, so the entrypoint must go through
     // the reconciliation and not around it.
     const src = fn('spond-link-members')
-    expect(src).toMatch(/diagnostic_complete: diagnosticsProved\(diagnostics, collected\)/)
+    expect(src).toMatch(/const proved = diagnosticsProved\(diagnostics, collected\)/)
+    expect(src).toMatch(/diagnostic_complete: proved,/)
     expect(src).not.toMatch(/diagnostic_complete: diagnostics\.complete/)
   })
 
