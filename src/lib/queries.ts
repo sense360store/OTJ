@@ -2282,6 +2282,7 @@ interface SpondEventDbRow {
   id: string
   title: string
   starts_at: string
+  location: string | null
   team_id: string | null
   spond_type: string | null
   accepted_count: number
@@ -2295,9 +2296,14 @@ interface SpondEventDbRow {
 
 // Counts and event facts only; there is nothing else in these tables to
 // select, and nothing more may ever be added to these lists.
+//
+// `location` joins the event facts here. It is a column the sync has written
+// since 0013 and the table has no member or payload column to reach by
+// accident, so this widens the read by one FACT ABOUT THE EVENT and by
+// nothing about a person. It is what a new session's venue defaults from.
 const SPOND_MAPPING_COLS = 'id, spond_group_id, spond_subgroup_id, spond_name, team_id, created_at, teams(name)'
 const SPOND_EVENT_COLS =
-  'id, title, starts_at, team_id, spond_type, accepted_count, declined_count, unanswered_count, waiting_count, cancelled, synced_at, teams(name)'
+  'id, title, starts_at, location, team_id, spond_type, accepted_count, declined_count, unanswered_count, waiting_count, cancelled, synced_at, teams(name)'
 
 function toSpondMapping(r: SpondMappingRow): SpondMapping {
   return {
@@ -2316,6 +2322,7 @@ function toSpondEvent(r: SpondEventDbRow): SpondEvent {
     id: r.id,
     title: r.title,
     startsAt: r.starts_at,
+    location: r.location,
     teamId: r.team_id,
     teamName: r.teams?.name ?? null,
     spondType: r.spond_type,

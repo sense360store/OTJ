@@ -189,6 +189,7 @@ describe('14. the next valid training takes its place', () => {
 
 describe('15. a past Spond event does not clutter the default Training list', () => {
   const spondEvent = (over: Partial<SpondEvent> & Pick<SpondEvent, 'id' | 'title' | 'startsAt'>): SpondEvent => ({
+    location: null,
     teamId: 'titans',
     teamName: 'Titans',
     spondType: null,

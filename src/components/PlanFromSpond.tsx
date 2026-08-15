@@ -25,6 +25,7 @@ import {
   useEventKindContext,
   useSpondEvents,
   useTeamMap,
+  useVenues,
 } from '../lib/queries'
 import { memberTeamIds } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
@@ -212,6 +213,15 @@ export function PlanFromSpond({
   const { data: events = [], isLoading, isError } = useSpondEvents()
   const { data: myTeams } = useMyTeams()
   const teamById = useTeamMap()
+  // The club's venues, so a new session can default to the one the event's
+  // location names. A club wide read the planner already holds, so on the
+  // screen this surface usually sits on it costs nothing.
+  //
+  // A list still loading, or one that failed to load, is an empty list here,
+  // which means no match and an unset venue: the same place a hand made
+  // session starts, and the coach picks one field down. Nothing waits on it,
+  // because a venue guess is not worth blocking Plan this for.
+  const { data: venues = [] } = useVenues()
   // The classifier context, so the fixture rule fires here as well. Beside
   // the other reads, above the capability guard: hooks run in one order or
   // they run wrong.
@@ -309,7 +319,7 @@ export function PlanFromSpond({
 
   const plan = (event: SpondEvent) => {
     const session = {
-      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null, Object.keys(teamById)),
+      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null, Object.keys(teamById), venues),
       id: stableCreateId(ids.current, event.id),
     }
     void submit(session)

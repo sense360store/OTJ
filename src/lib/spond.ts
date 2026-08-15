@@ -5,6 +5,7 @@
 // event facts the spond_events read returns (CLAUDE.md, Spond integration).
 import { blankSession } from './data'
 import type { Session, SpondEvent, SpondMapping } from './data'
+import { matchVenueByLocation, type Venue } from './venues'
 
 // ---- The event aggregate, and who it counts --------------------------
 //
@@ -338,11 +339,26 @@ export function spondPlanSuggestions({
 // lists nobody. No drills are added; the coach builds those in the planner.
 // Rides the existing session create path and its RLS, so no new policy. Pure
 // so the test pins the carried fields.
+//
+// THE VENUE IS A DEFAULT AND ONLY EVER A DEFAULT. `venues` is the club's
+// list, and the event's location seeds `venueId` only where it names exactly
+// one of them (matchVenueByLocation). This function builds a session that
+// does not exist yet, which is the only moment such a default is honest:
+// nothing here reads or edits a saved row, so there is no arrangement to
+// contradict. Production holds a session at Flushdyke whose Spond event says
+// Woodkirk Academy, and that is a real decision the club made rather than a
+// mismatch to repair. Once the row exists, the coach's Venue field is the
+// only thing that writes it.
+//
+// No venues in hand, no match, or two venues named in one address all leave
+// the venue unset, exactly as a hand made session starts. The frozen free
+// text `venue` column is never given a value here or anywhere else.
 export function sessionFromSpondEvent(
   event: SpondEvent,
   coachId: string,
   defaultTeamId: string | null,
   allTeamIds: string[] = [],
+  venues: readonly Venue[] = [],
 ): Session {
   const { date, time } = spondEventLocalDateTime(event.startsAt)
   const teamId = event.teamId ?? defaultTeamId
@@ -353,5 +369,6 @@ export function sessionFromSpondEvent(
     date,
     time,
     spondEventId: event.id,
+    venueId: matchVenueByLocation(event.location, venues),
   }
 }

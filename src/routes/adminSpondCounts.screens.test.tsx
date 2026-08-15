@@ -32,6 +32,7 @@ const AUGUST: SpondEvent = {
   id: 'evt-aug-11',
   title: 'Training',
   startsAt: '2026-08-11T17:00:00Z',
+  location: null,
   teamId: null,
   teamName: null,
   spondType: null,

@@ -75,6 +75,7 @@ const ids = (rows: { id: string }[]) => rows.map((r) => r.id)
 
 const spondEvent = (over: Partial<SpondEvent> & Pick<SpondEvent, 'id' | 'title'>): SpondEvent => ({
   startsAt: '2026-08-11T17:30:00Z',
+  location: null,
   teamId: 'titans',
   teamName: 'Titans',
   spondType: null,
