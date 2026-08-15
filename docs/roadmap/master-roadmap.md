@@ -29,7 +29,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Done | P0 | Shipped in #183; docs/tests only, no production migration |
 | REG-01 | Training Day | Fix stored guest removal oscillation so Saved settles correctly | Done | P1 | Shipped in #184; client register state only, no migration, Spond or Edge change |
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
-| TRAIN-01 | Training Day | One-glance authorised coach view of attending players and their actual bib colours | Next | P1 | Spond/player semantics stable first |
+| TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Next | P1 | Never fuzzy-overwrite or auto-create venue data |
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
@@ -159,5 +159,6 @@ These documents contain deeper design history and security decisions. They do no
 | SPOND-03a — setup diagnostics for unmatched registered players | #182 | 15 Aug 2026 |
 | OPS-01 — hosted ledger reconciliation after 0048 | #183 | 15 Aug 2026 |
 | REG-01 — stored guest removal settles correctly | #184 | 15 Aug 2026 |
+| TRAIN-01 — session day player and bib overview | #185 | 15 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.

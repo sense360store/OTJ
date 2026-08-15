@@ -408,6 +408,26 @@
   gap: 8px;
 }
 
+/* Session day's at a glance area: the entry point button, then the saved
+   groups read only. ONE area, not a second card.
+   The gap between the button and the groups is the flex gap, and .reg-card's
+   own bottom margin is dropped inside here: keeping both would leave 24px
+   under the button on a night with no groups, where there used to be 12. */
+.tn-glance {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.tn-glance .reg-card {
+  margin-bottom: 0;
+}
+.tn-glance-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--slate);
+}
+
 .tn-groups {
   display: flex;
   flex-direction: column;
