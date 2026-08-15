@@ -657,10 +657,28 @@ describe('an unsaved guest stays on the list when unticked', () => {
     expect(draftEntries(unticked, [], 's1').map((e) => e.playerId)).toContain('zed')
   })
 
-  it('writes them as a guest who is not included, so the row is not lost on save', () => {
+  it('keeps them a guest on the composed row, never a squad member', () => {
     const unticked = toggleIncluded(quickAdd(draftFromEntries([]), 'zed'), 'zed')
-    const change = draftDelta(unticked, [], 's1').find((c) => c.playerId === 'zed')
-    expect(change).toMatchObject({ present: false, source: 'manual' })
+    const entry = draftEntries(unticked, [], 's1').find((e) => e.playerId === 'zed')
+    expect(entry).toMatchObject({ present: false, includedInGroups: false, source: 'manual' })
+  })
+
+  it('asks the database for nothing, because the row records nothing', () => {
+    // THIS REPLACES A TEST THAT PINNED THE OPPOSITE, and the opposite was
+    // the defect. Keeping the row on screen was implemented by exempting an
+    // added guest from the write payload's "nothing to write" guard, so the
+    // save INSERTED a row saying this child is not here, not in a group and
+    // has no bib. The very next read made that row removable, the save
+    // after it deleted the child it had just created, and the screen
+    // oscillated instead of settling.
+    //
+    // The row survives on screen through draftEntries, which the test above
+    // this one pins. Add and untick before ever saving is now a pair of
+    // gestures that cancel: no insert, no delete, nothing to save.
+    const unticked = toggleIncluded(quickAdd(draftFromEntries([]), 'zed'), 'zed')
+    expect(draftDelta(unticked, [], 's1')).toEqual([])
+    expect(draftRemovals(unticked, [])).toEqual([])
+    expect(draftIsDirty(unticked, [])).toBe(false)
   })
 })
 

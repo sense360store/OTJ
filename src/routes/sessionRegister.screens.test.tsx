@@ -127,12 +127,27 @@ const mutation = () => ({
   reset: () => {},
 })
 
+// A session covering ONE team, so a child from the other is a guest rather
+// than a squad member. The shared SESSION covers both teams, which is a
+// whole club night, and on one of those every registered child is listed
+// and nobody can be a guest at all.
+const GUEST_SESSION: Session = { ...SESSION, id: 's2', teamIds: ['t1'], spondEventId: null }
+
+// Gamma is on Trojans, which this session does not cover, and holds a
+// manual entry: a child a coach added on the day.
+const GUEST = 'Gamma Synthetic'
+const WITH_GUEST: RegisterEntry[] = [
+  ...ENTRIES,
+  { sessionId: 's2', playerId: 'p3', present: false, includedInGroups: true, bibColourOverride: null, source: 'manual' },
+]
+
 const state = {
   links: query({ available: true, links: [{ playerId: 'p1' }, { playerId: 'p2' }] }) as unknown,
   rsvp: query({
     p1: { status: 'accepted', syncedAt: AT },
     p2: { status: 'declined', syncedAt: AT },
   }) as unknown,
+  register: query(ENTRIES) as unknown,
 }
 
 vi.mock('../hooks/useNav', () => ({ useNav: () => () => {} }))
@@ -148,7 +163,7 @@ vi.mock('../lib/queries', () => ({
   useTeams: () => query(TEAMS),
   useCurrentSeason: () => query({ id: 'season' }),
   useRegisteredPlayers: () => query(PLAYERS),
-  useRegisterEntries: () => query(ENTRIES),
+  useRegisterEntries: () => state.register,
   useSessionSpondRsvp: () => state.rsvp,
   useSpondLinks: () => state.links,
   useSpondEvents: () => query([EVENT]),
@@ -162,7 +177,28 @@ vi.mock('../lib/queries', () => ({
 }))
 
 const { TonightScreen } = await import('./SessionRegister')
-const html = () => renderToStaticMarkup(<TonightScreen session={SESSION} />)
+const html = (session: Session = SESSION) => renderToStaticMarkup(<TonightScreen session={session} />)
+
+// The reads a session with no Spond event has: the stored rows, and no
+// replies at all. GUEST_SESSION carries no spondEventId, so leaving the
+// shared reply fixture in place would give it a response context it cannot
+// have, and the Going default would then hide the guest behind a filter
+// rather than showing the list this test is about.
+//
+// The rows move from "the guest is stored" to "the delete landed and the
+// readback came back without them", which is the transition that never
+// used to settle.
+function withStoredRows<T>(rows: RegisterEntry[], run: () => T): T {
+  const was = { register: state.register, rsvp: state.rsvp }
+  state.register = query(rows)
+  state.rsvp = query({})
+  try {
+    return run()
+  } finally {
+    state.register = was.register
+    state.rsvp = was.rsvp
+  }
+}
 
 const chip = (markup: string, label: string) => {
   const m = markup.match(new RegExp(`>${label} (\\d+)</button>`))
@@ -199,6 +235,62 @@ describe('the rendered screen over answered reads', () => {
     expect(out).toContain('Groups')
     expect(out).toContain('Players &amp; groups')
     expect(out.toLowerCase()).not.toContain('tonight')
+  })
+})
+
+describe('the rendered screen after a stored guest is removed', () => {
+  // THE REPORTED DEFECT, at the surface a coach actually looks at. The
+  // model suite in ../lib/tonightGuest.test.ts drives the draft through the
+  // whole round trip; this proves the container reaches the markup with it,
+  // because the seam being right while the screen ignored it is a mistake
+  // this repo has already made twice.
+  //
+  // There is no DOM here, so the tick itself cannot be clicked. What is
+  // rendered is the state that follows the save: the readback has landed
+  // without the guest and draftAfterSave has cleared the draft against it.
+  // Before the fix that combination was not reachable at all, because the
+  // draft never went clean.
+
+  it('lists the guest while their row is stored', () => {
+    withStoredRows(WITH_GUEST, () => {
+      const out = html(GUEST_SESSION)
+      expect(out).toContain(GUEST)
+      expect(out).toContain('Added on the day')
+    })
+  })
+
+  it('says Saved and leaves the guest gone once the delete has landed', () => {
+    withStoredRows(ENTRIES, () => {
+      const out = html(GUEST_SESSION)
+      expect(out).not.toContain(GUEST)
+      expect(out).toContain('>Saved</span>')
+      expect(out).not.toContain('Unsaved changes')
+    })
+  })
+
+  it('offers no Save, because there is nothing left to write', () => {
+    // The button is disabled exactly when the status is saved, so a coach
+    // cannot press the thing that used to recreate the child.
+    withStoredRows(ENTRIES, () => {
+      expect(html(GUEST_SESSION)).toMatch(/<button class="btn btn-primary tn-save-btn" disabled=""/)
+    })
+  })
+
+  it('stays Saved over repeated renders of the same readback', () => {
+    withStoredRows(ENTRIES, () => {
+      expect(html(GUEST_SESSION)).toBe(html(GUEST_SESSION))
+      expect(html(GUEST_SESSION)).toContain('>Saved</span>')
+    })
+  })
+
+  it('still reports Saved with a guest stored and untouched', () => {
+    // The other end of the same claim: a stored guest is not itself a
+    // pending change, so simply opening the screen over one is clean.
+    withStoredRows(WITH_GUEST, () => {
+      const out = html(GUEST_SESSION)
+      expect(out).toContain('>Saved</span>')
+      expect(out).not.toContain('Unsaved changes')
+    })
   })
 })
 

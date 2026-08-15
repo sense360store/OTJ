@@ -376,6 +376,47 @@ describe('attendance and group inclusion never share a field', () => {
     expect(fn).not.toMatch(/draftIncluded\(draft/)
   })
 
+  it('never lets a stored guest be seeded as a guest this draft created', () => {
+    // THE OSCILLATION, as the one line that caused it. `added` was filled
+    // from every stored row whose source was 'manual', which reads as "is
+    // a guest" and is consumed as "has no stored row yet". Those agree
+    // until the row is deleted, and then the diff after the delete
+    // proposed CREATING the child it had just removed.
+    const src = code(read('lib/tonight.ts'))
+    const fn = src.slice(src.indexOf('export function draftFromEntries'), src.indexOf('export function quickAdd'))
+    expect(fn).not.toMatch(/added\[e\.playerId\]/)
+    expect(fn).not.toMatch(/e\.source/)
+    expect(fn).toMatch(/added: \{\}/)
+  })
+
+  it('keeps the write payload free of the rule that keeps a row on screen', () => {
+    // The other half. Exempting an added guest from "nothing to write" put
+    // a presentation rule in the payload, so the save inserted a row that
+    // recorded nothing and the next save deleted it. Keeping the row
+    // visible belongs to draftEntries, which is asserted below.
+    const src = code(read('lib/tonight.ts'))
+    const fn = src.slice(src.indexOf('export function draftDelta'), src.indexOf('export function draftAfterSave'))
+    expect(fn).toMatch(/if \(!stored && !includedInGroups && !present && bibColourOverride === null\) continue/)
+    expect(fn).not.toMatch(/!draft\.added\[playerId\]/)
+  })
+
+  it('composes the on screen list from the draft s own new guests', () => {
+    const src = code(read('lib/tonight.ts'))
+    const fn = src.slice(src.indexOf('export function draftEntries'), src.indexOf('export function toggleIncluded'))
+    expect(fn).toMatch(/Object\.keys\(draft\.added\)/)
+    expect(fn).toMatch(/source: 'manual'/)
+  })
+
+  it('ages a guest out of the draft once a save has passed over them', () => {
+    // Without this a guest who was saved and then removed stays "new" for
+    // the life of the draft, and the diff after their delete proposes
+    // creating them: the same loop entered from the other end.
+    const src = code(read('lib/tonight.ts'))
+    const fn = src.slice(src.indexOf('export function draftAfterSave'), src.indexOf('export function draftRemovals'))
+    expect(fn).toMatch(/settleAdded\(draft, persisted\)/)
+    expect(fn).toMatch(/draftIsDirty\(settled, persisted\) \? settled : null/)
+  })
+
   it('is named in both share deny lists, so a future projection throws instead of shipping', () => {
     // SOURCE TEXT, and the same rule 0046's diagram follows. A share is a
     // FROZEN COPY: once a key reaches content_shares.snapshot the read path

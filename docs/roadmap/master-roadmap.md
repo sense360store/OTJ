@@ -27,7 +27,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | SPOND-04 | Spond | Website-wide British-English sweep: remove user-visible “roster” | In progress | P1 | Internal technical names may remain |
 | SPOND-05 | Spond | Audit current Spond API/upstream library and safely usable event/member facts | In progress | P1 | Read-only toward Spond; no new client/fork without a proved gap |
 | OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Done | P0 | Shipped in #183; docs/tests only, no production migration |
-| REG-01 | Training Day | Fix stored guest removal oscillation so Saved settles correctly | Next | P1 | Separate from Spond work |
+| REG-01 | Training Day | Fix stored guest removal oscillation so Saved settles correctly | Done | P1 | Shipped in #184; client register state only, no migration, Spond or Edge change |
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
 | TRAIN-01 | Training Day | One-glance authorised coach view of attending players and their actual bib colours | Next | P1 | Spond/player semantics stable first |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Next | P1 | Never fuzzy-overwrite or auto-create venue data |
@@ -158,5 +158,6 @@ These documents contain deeper design history and security decisions. They do no
 | SPOND-02 — staff and non-player Spond members excluded from linking | #178 | 15 Aug 2026 |
 | SPOND-03a — setup diagnostics for unmatched registered players | #182 | 15 Aug 2026 |
 | OPS-01 — hosted ledger reconciliation after 0048 | #183 | 15 Aug 2026 |
+| REG-01 — stored guest removal settles correctly | #184 | 15 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.
