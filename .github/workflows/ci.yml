@@ -158,6 +158,28 @@ jobs:
         working-directory: .github/scripts/content-sharing-deploy
         run: python3 test_verify_no_residue.py
 
+  # The gated Edge Function deploy workflows, read as data. These parse each
+  # deploy-*.yml and assert over the executable half of every step, so a broken
+  # run: block or a lost guard fails here rather than when a human dispatches a
+  # production deploy. The rule they carry: a step that downloads into its own
+  # scratch directory must clean it up through cleanup_workdir, because
+  # `supabase functions download` leaves container-owned files there and a
+  # failing EXIT trap replaces the step's exit status (run 31897367086).
+  deploy-workflow-invariants:
+    name: deploy workflow invariants
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # setup-python gives a bare interpreter; these read the YAML as data.
+      - name: Install the YAML parser
+        run: python3 -m pip install --disable-pip-version-check "PyYAML==6.0.2"
+      - name: Deploy workflow invariant tests
+        run: python3 .github/scripts/deploy-workflows/test_workflow_invariants.py
+
   # The production migration workflow's tooling. These tests never touch a
   # hosted project, a database or a secret: they check the reviewed migration
   # register, the pre and post gate assertions against sample hosted reads, the
