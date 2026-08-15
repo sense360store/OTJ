@@ -239,7 +239,7 @@ describe('unmatchedPlayers', () => {
     // first version of this rule excluded by name alone, which made two
     // same named children, one correctly linked, hide the other in no
     // section at all: Change would break the correct link, so that
-    // member is not a way to reach this child, and "no Spond match" is
+    // member is not a way to reach this child, and "not matched yet" is
     // the honest description.
     const out = unmatchedPlayers(
       [candidate(M1, 'Alpha Synthetic')],

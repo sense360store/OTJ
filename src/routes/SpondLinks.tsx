@@ -272,7 +272,7 @@ export function LinkSectionsView({
 
       {complete && unmatched.length > 0 && (
         <section className="sl-section">
-          <h3>Registered players with no Spond match ({unmatched.length})</h3>
+          <h3>Registered players not matched yet ({unmatched.length})</h3>
           <p className="sl-empty">
             No offered Spond member goes by these names. Add the family to the group or the child to the team's
             subgroup in Spond, or link them with Choose on a member's row where they go by a different name there.

@@ -258,7 +258,7 @@ describe('an incomplete member list is never treated as evidence', () => {
 // a decision" showed one staff member and a manager reasonably concluded
 // there was nothing left to do.
 
-describe('registered players with no Spond match', () => {
+describe('registered players not matched yet', () => {
   const render = (candidates: LinkCandidate[], links: SpondLink[], pool: RegisteredPlayer[], complete = true) =>
     renderToStaticMarkup(
       <LinkSectionsView
@@ -278,7 +278,7 @@ describe('registered players with no Spond match', () => {
     // container cannot hand it an empty list while the suite stays
     // green, which a review demonstrated against the first version.
     const html = render([], [], [player('p3', 'Gamma Synthetic'), player('p4', 'Delta Synthetic')])
-    expect(html).toContain('Registered players with no Spond match (2)')
+    expect(html).toContain('Registered players not matched yet (2)')
     expect(html).toContain('Gamma Synthetic')
     expect(html).toContain('Delta Synthetic')
     // Where the gap is fixed, since the fix lives in Spond, not here.
@@ -287,13 +287,13 @@ describe('registered players with no Spond match', () => {
 
   it('claims nothing from an incomplete list, where absence is not evidence', () => {
     const html = render([], [], [player('p3', 'Gamma Synthetic')], false)
-    expect(html).not.toContain('Registered players with no Spond match')
+    expect(html).not.toContain('Registered players not matched yet')
     expect(html).not.toContain('Gamma Synthetic')
   })
 
   it('is absent when every registered player has a match', () => {
     const html = render([candidate(M1, 'Alpha Synthetic'), candidate(M2, 'Beta Synthetic')], [], roster)
-    expect(html).not.toContain('Registered players with no Spond match')
+    expect(html).not.toContain('Registered players not matched yet')
   })
 
   it('surfaces the second of two same named children when the first is correctly linked', () => {
@@ -305,7 +305,7 @@ describe('registered players with no Spond match', () => {
       [link(M1, 'p5')],
       [player('p5', 'Alex Synthetic'), player('p6', 'Alex Synthetic')],
     )
-    expect(html).toContain('Registered players with no Spond match (1)')
+    expect(html).toContain('Registered players not matched yet (1)')
   })
 })
 

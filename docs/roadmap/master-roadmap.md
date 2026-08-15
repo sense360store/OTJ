@@ -56,6 +56,43 @@ When there is capacity, prefer this sequence unless production evidence changes 
 5. Continue Drill Maker with DRILL-02 before the larger venue composer DRILL-03.
 6. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
 
+## Acceptance criteria for scheduled items
+
+Captured 15 August 2026 from the Spond linking investigation (PR #178),
+folded here so there is one roadmap. Each set binds the row above it;
+deeper design still happens when the item starts.
+
+**TRAIN-01 — one-glance coach view**
+
+- A coach holding `players.view` sees every included player for a session with their resolved bib colour (override, else team default, else none), grouped as Players &amp; groups groups them.
+- Read only: nothing on the surface writes.
+- Reply context comes through the same `tonightCounts` populations; no new count builder and no aggregate figure on any per player surface.
+- Works with nothing configured beyond a player list; parents never reach it, tested at the screen level.
+
+**SPOND-06 — event location to venue**
+
+- Production evidence (15 Aug 2026): exact case insensitive equality matches zero of the nine distinct stored locations; unique case insensitive whole word containment of the venue name matches 7 of 14 events with zero false positives and zero ambiguity; one production session shows human venue choice can disagree with the event location.
+- `location` joins the client `SpondEvent` shape as an event fact; a pure `matchVenueByLocation` returns a venue id only on exactly one whole word match, null otherwise, no regex built from user text.
+- Seeds `venueId` on new Plan from Spond drafts only: no match leaves the venue unset, the frozen free text `sessions.venue` is never written, linking an event to an existing session changes no venue, and no existing row is backfilled by a page render. No migration.
+- Tests pin the production positives and negatives, the ambiguity refusal and the substring non match ("Wood" never matches "Woodkirk").
+
+**TRAIN-02 — public training day share**
+
+- Public payload carries session facts only: name, date, time, venue, plan. No player name, register entry, bib, Spond figure or member id; a test asserts the serialised response against that list.
+- Minted and revoked through the existing share tables and capabilities; no new auth surface or token scheme.
+- Separate security review before merge; starts after TRAIN-01, whose composed view it shares.
+
+**PLAYERS-01 — bulk delete**
+
+- Explicit multi select with a count, never all by default; a dependency preview names what each deletion touches (register entries, Spond links and their cascaded replies, board tokens) before anything runs.
+- Explicit confirmation naming the number deleted; one transaction, so a partial failure deletes nobody.
+- Session history is never silently destroyed: removals that would orphan register entries are surfaced, and the chosen semantics are stated on screen.
+- Audit events per run; concurrency tests for overlapping selections; destructive change review gate.
+
+**DRILL-03 — venue/pitch composer**
+
+- Captured, not specified: acceptance criteria are written when the Drill Maker and venue composer direction is confirmed, not before. Do not implement ahead of that decision.
+
 ## Detailed reference roadmaps
 
 These documents contain deeper design history and security decisions. They do not override the status/priority table above.
