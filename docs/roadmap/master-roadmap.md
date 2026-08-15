@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 15 August 2026
+Last reviewed: 15 August 2026 (Spond polish closeout)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -20,17 +20,17 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 
 | ID | Workstream | Item | Status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
-| SPOND-01 | Spond | Reconcile registered players ↔ Spond members, expose missing candidates and incomplete coverage | In progress | P0 | Human-approved linking; privacy boundary; Edge review if touched |
+| SPOND-01 | Spond | Reconcile registered players ↔ Spond members, expose missing candidates and incomplete coverage | In progress | P0 | Deploy gate cleared; one client defect remains, see the closeout note below |
 | SPOND-02 | Spond | Exclude staff/non-player Spond members from player-linking flow | Done | P0 | Shipped in #178; see the Done table |
-| SPOND-03 | Spond | Replace confusing manual “Which child is this?” flow with clear member-to-player linking UX | In progress | P0 | SPOND-01 |
-| SPOND-03a | Spond | Read-only setup diagnostics on the unmatched registered players section | Done | P0 | Shipped in #182; gated `spond-link-members` deploy tracked under SPOND-01/SPOND-03 |
-| SPOND-04 | Spond | Website-wide British-English sweep: remove user-visible “roster” | In progress | P1 | Internal technical names may remain |
-| SPOND-05 | Spond | Audit current Spond API/upstream library and safely usable event/member facts | In progress | P1 | Read-only toward Spond; no new client/fork without a proved gap |
+| SPOND-03 | Spond | Replace confusing manual “Which child is this?” flow with clear member-to-player linking UX | In progress | P0 | Same single defect as SPOND-01; no Edge or schema change needed to close it |
+| SPOND-03a | Spond | Read-only setup diagnostics on the unmatched registered players section | Done | P0 | Shipped in #182; the gated `spond-link-members` deploy has since run |
+| SPOND-04 | Spond | Website-wide British-English sweep: remove user-visible “roster” | Done | P1 | Shipped in #186; audit found nothing to reword, the tripwire was widened |
+| SPOND-05 | Spond | Audit current Spond API/upstream library and safely usable event/member facts | Done | P1 | Shipped in #186; existing docs reconciled, nothing stored was broadened |
 | OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Done | P0 | Shipped in #183; docs/tests only, no production migration |
 | REG-01 | Training Day | Fix stored guest removal oscillation so Saved settles correctly | Done | P1 | Shipped in #184; client register state only, no migration, Spond or Edge change |
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
-| SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Next | P1 | Never fuzzy-overwrite or auto-create venue data |
+| SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
@@ -50,11 +50,12 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 
 When there is capacity, prefer this sequence unless production evidence changes the order:
 
-1. Finish the remaining Spond/player-linking correction (SPOND-01 and SPOND-03), including the gated `spond-link-members` deploy.
-2. Pick up REG-01 next, since it is independent of the Spond work.
-3. Ship TRAIN-01 and SPOND-06 once the current player/Spond semantics are stable.
-4. Continue Drill Maker with DRILL-02 before the larger venue composer DRILL-03.
-5. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
+1. Close SPOND-01 and SPOND-03 with the one remaining client fix described in the closeout note below. The gated `spond-link-members` deploy is no longer part of this: it has run.
+2. Continue Drill Maker with DRILL-02 before the larger venue composer DRILL-03.
+3. Pick up QUALITY-01, since re-auditing the old Product Excellence roadmap gates several later items.
+4. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
+
+REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list.
 
 ## Acceptance criteria for scheduled items
 
@@ -98,12 +99,65 @@ deeper design still happens when the item starts.
 - No migration. The client tolerates a deployment that does not answer yet, so
   merging is safe before the gated `spond-link-members` deploy runs.
 
+**SPOND-01 and SPOND-03 — closeout audit, 15 August 2026**
+
+Audited against current `main`, the deployed Edge Functions and the hosted
+database rather than against the roadmap's own wording. Both rows stay **In
+progress**, for one reason, stated below. Nothing was implemented for this
+audit.
+
+- **Every defined product outcome is shipped**, each with executing tests:
+  staff and non-player exclusion before the cap and before the reduction;
+  human-approved linking, with `matched_by` admitting only `suggested` and
+  `chosen` because no server side matcher exists; the missing registered
+  player diagnostics and their three sentences; no automatic name linking
+  anywhere; ambiguity failing closed on both the Spond side and the player
+  side; explicit member selection, with "Which child is this?" gone and
+  pinned gone; incomplete candidate data stating nothing in either
+  direction; and `SPOND_IGNORED_MEMBER_IDS` as the operational backstop,
+  parsed through the same character class the links column enforces.
+- **The gated `spond-link-members` deploy has run.** The roadmap said three
+  times that it had not. Reading the deployed source back (the check
+  `CLAUDE.md` requires, never a version number) shows the live function at
+  version 3, deployed 15 August 2026, carrying `collectLinkDiagnostics`,
+  `diagnosticsProved`, `SPOND_DIAGNOSTIC_MEMBER_FIELDS` and the
+  `diagnostic_members` / `diagnostic_complete` reply fields. The diagnostics
+  are live, so the unmatched section is answering rather than falling back
+  to "Not compared against the Spond group data".
+- **What is left is one client defect, and it is the duplicate member case.**
+  Once a child is linked to one Spond member, that child leaves
+  `unlinkedByName`, so a SECOND Spond member carrying the same name finds no
+  match at all and takes the `not_on_roster` branch before the ambiguity
+  check is ever reached. It renders as **"Not a registered player"**, which
+  is false about a child who is registered and linked, and it renders it in
+  the one section the screen designates as its highest value outcome, a
+  child who is in Spond and missing from the player list. A manager reading
+  that row is being invited to add somebody who is already there. The player
+  side already has the honest wording for the mirror of this shape
+  (`name_taken`, "that name is already linked to another registered
+  player"); the member side has no equivalent, its reason union carrying
+  three values.
+- That is an OTJ defect rather than Spond hygiene. The duplicate in Spond is
+  the club's to resolve and the product is right to refuse to guess between
+  two unlinked members; describing the leftover one as unregistered is our
+  sentence, not Spond's.
+- **The fix is one reason value and one sentence**, entirely within
+  `src/lib/spondLinking.ts` and `src/routes/SpondLinks.tsx`. No Edge Function
+  change, no migration, no new screen, and no duplicate member management
+  feature. It was deliberately not built in #186, which is a frontend, docs
+  and tests programme.
+- One latent gap recorded so it is not rediscovered: a registration with no
+  team appears in no suggestion pool, no unmatched section and no picker, so
+  it cannot be linked by any route. Every current season registration has a
+  team today (38 of 38), so this is not a live defect.
+
 **SPOND-06 — event location to venue**
 
-- Production evidence (15 Aug 2026): exact case insensitive equality matches zero of the nine distinct stored locations; unique case insensitive whole word containment of the venue name matches 7 of 14 events with zero false positives and zero ambiguity; one production session shows human venue choice can disagree with the event location.
+- Production evidence (15 Aug 2026, re-verified against the hosted database before implementing): exact case insensitive equality matches zero of the nine distinct stored locations; unique case insensitive whole word containment of the venue name matches 7 of 14 events with zero false positives and zero ambiguity; one production session shows human venue choice can disagree with the event location (a session at Flushdyke whose event says Woodkirk Academy).
 - `location` joins the client `SpondEvent` shape as an event fact; a pure `matchVenueByLocation` returns a venue id only on exactly one whole word match, null otherwise, no regex built from user text.
 - Seeds `venueId` on new Plan from Spond drafts only: no match leaves the venue unset, the frozen free text `sessions.venue` is never written, linking an event to an existing session changes no venue, and no existing row is backfilled by a page render. No migration.
 - Tests pin the production positives and negatives, the ambiguity refusal and the substring non match ("Wood" never matches "Woodkirk").
+- Delivered in #186. The column existed since `0013_spond.sql` and the deployed sync has always written it, so this was a client read and a pure rule; no migration and no Edge Function change.
 
 **TRAIN-02 — public training day share**
 
@@ -160,5 +214,8 @@ These documents contain deeper design history and security decisions. They do no
 | OPS-01 — hosted ledger reconciliation after 0048 | #183 | 15 Aug 2026 |
 | REG-01 — stored guest removal settles correctly | #184 | 15 Aug 2026 |
 | TRAIN-01 — session day player and bib overview | #185 | 15 Aug 2026 |
+| SPOND-04 — British English copy sweep and a widened tripwire | #186 | 15 Aug 2026 |
+| SPOND-05 — Spond API and boundary documents reconciled with the code | #186 | 15 Aug 2026 |
+| SPOND-06 — deterministic Spond location to venue prefill | #186 | 15 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.

@@ -3,7 +3,7 @@
 What the Spond consumer API offers versus what the Hub uses, audited on
 2026-08-15 against the reference library `github.com/Olen/Spond` (main)
 and its typed sibling `elliot-100/Spond-classes`, and reconciled against
-the code again on 2026-08-16 (the corrections are marked below). The Hub
+the code again on 2026-08-15 (evening) (the corrections are marked below). The Hub
 ports shapes from the reference at build time; it is a reference, not a
 dependency. Standing policy throughout: read only toward Spond
 (authentication is the only POST), and the children's data boundary in
@@ -110,7 +110,7 @@ Two of them were stored for a long time and read by nothing:
 ## Risks
 
 - `max` is a cap with no paging; the only remedy for overflow is window
-  narrowing. **Corrected 2026-08-16:** "fails closed on truncation
+  narrowing. **Corrected 2026-08-15 (evening):** "fails closed on truncation
   everywhere" was too broad. It holds for the whole group pass, the
   linked member read and the linking candidate and diagnostic lists,
   which all refuse rather than guess. It does not hold in two places:
@@ -121,7 +121,7 @@ Two of them were stored for a long time and read by nothing:
   stated here rather than changed, because changing either is a
   behaviour decision with its own review.
 - Timestamps in query params are day granular.
-- `groups/` grows with the club. **Corrected 2026-08-16:** the 5MB body
+- `groups/` grows with the club. **Corrected 2026-08-15 (evening):** the 5MB body
   cap (`readCappedJson`) is in `spond-link-members` and
   `spond-roster-import` only. `spond-sync` reads login, `groups/` and
   `sponds/` through a bare `res.json()` with no cap, so its exposure to a
