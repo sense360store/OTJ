@@ -322,7 +322,7 @@
   cursor: pointer;
 }
 
-/* ---- Tonight -------------------------------------------------------
+/* ---- Players & groups ----------------------------------------------
    One operational surface: the response filters, the selection bar, the
    list, the groups, and a save affordance a long list can never hide.
    Every control is at least 44px so a cold thumb finds it. */
@@ -395,6 +395,11 @@
    than about the squad the coach is organising. */
 .tn-audience {
   color: var(--slate-2);
+}
+/* Which teams hold the unlinked players. It answers the coverage line
+   beside it, so it reads at the same weight as the note it explains. */
+.tn-unlinked {
+  color: var(--slate);
 }
 
 .tn-list {

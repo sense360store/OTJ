@@ -45,6 +45,20 @@ export function bibLabel(value: string | null | undefined): string | null {
   return BIB_COLOURS.find((b) => b.value === value)?.label ?? null
 }
 
+// The label on the inherit option: the colour the row resolves to today,
+// so a coach on the pitch never has to remember what the team default is.
+// "Team bib" asked exactly that of them, in the rain.
+//
+// DISPLAY ONLY. The option this labels keeps the empty select value, so
+// choosing or rendering it stores nothing and the row keeps following the
+// team: the admin later moving the default from blue to red moves every
+// untouched row with it. A team with no default gets an honest "No team
+// colour" rather than a colour that does not exist.
+export function bibInheritLabel(teamDefault: string | null | undefined): string {
+  const label = bibLabel(teamDefault ?? null)
+  return label ? `${label} (team)` : 'No team colour'
+}
+
 // What a player actually wears: their own override if they have one, the
 // team default otherwise, and nothing when the override says none. The
 // register renders from this, so the rule lives once.

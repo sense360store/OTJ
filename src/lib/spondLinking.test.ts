@@ -4,6 +4,7 @@ import {
   buildLinkSections,
   normaliseName,
   pickerOptions,
+  suggestionPool,
   type LinkCandidate,
   type SpondLink,
 } from './spondLinking'
@@ -165,5 +166,41 @@ describe('pickerOptions', () => {
     expect(pickerOptions(roster, [], 'ALPHA').map((o) => o.player.playerId)).toEqual(['p1'])
     expect(pickerOptions(roster, [], 'synthetic')).toHaveLength(2)
     expect(pickerOptions(roster, [], 'nobody')).toHaveLength(0)
+  })
+})
+
+describe('suggestionPool, the roster a suggestion may match', () => {
+  const club = [
+    player('p1', 'Alpha Synthetic', { teamId: 't1' }),
+    // The same name on ANOTHER team: the case a club wide pool gets
+    // wrong, matching a Titans member to a Gladiators child.
+    player('p2', 'Alpha Synthetic', { teamId: 't2' }),
+    player('p3', 'Beta Synthetic', { teamId: 't1', status: 'withdrawn' }),
+  ]
+
+  it('holds one team only, so a same named child on another team cannot be suggested', () => {
+    const pool = suggestionPool(club, 't1')
+    expect(pool.map((p) => p.playerId)).toEqual(['p1'])
+    // Through the full pipeline: the t1 pool offers the t1 child, and the
+    // t2 child of the same name is simply not there to be matched.
+    const sections = buildLinkSections([candidate(M1, 'Alpha Synthetic')], [], pool)
+    expect(sections.needsDecision[0].reason).toBe('suggested')
+    expect(sections.needsDecision[0].suggestion?.playerId).toBe('p1')
+  })
+
+  it('never lets the other team s pool suggest across', () => {
+    const pool = suggestionPool(club, 't2')
+    const sections = buildLinkSections([candidate(M1, 'Alpha Synthetic')], [], pool)
+    expect(sections.needsDecision[0].suggestion?.playerId).toBe('p2')
+    expect(sections.needsDecision[0].suggestion?.playerId).not.toBe('p1')
+  })
+
+  it('excludes a withdrawn child', () => {
+    const sections = buildLinkSections([candidate(M2, 'Beta Synthetic')], [], suggestionPool(club, 't1'))
+    expect(sections.needsDecision[0].reason).toBe('not_on_roster')
+  })
+
+  it('is empty with no team chosen, so nothing club wide can leak through', () => {
+    expect(suggestionPool(club, null)).toEqual([])
   })
 })

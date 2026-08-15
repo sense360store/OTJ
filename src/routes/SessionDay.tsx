@@ -232,11 +232,11 @@ function SessionDayView({ session }: { session: Session }) {
         </button>
       )}
 
-      {/* ONE operational surface for the night. Tonight holds the Spond
-          responses, the selection and the groups; the passive Spond
-          attendance card that used to sit under here was the same facts
-          with none of the actions, and two cards asking about one night
-          made the coach decide which was the real one. */}
+      {/* ONE operational surface for the night. Players & groups holds
+          the Spond responses, the selection and the groups; the passive
+          Spond attendance card that used to sit under here was the same
+          facts with none of the actions, and two cards asking about one
+          night made the coach decide which was the real one. */}
       <TonightCard session={session} />
 
       {/* The attached tactics board, read only inline. The board row carries

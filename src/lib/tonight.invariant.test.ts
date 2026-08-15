@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { RESPONSE_FILTER_LABELS, RESPONSE_FILTERS } from './tonight'
+import { PLAYERS_GROUPS_TITLE, RESPONSE_FILTER_LABELS, RESPONSE_FILTERS } from './tonight'
 
 const SRC = join(import.meta.dirname, '..')
 
@@ -227,6 +227,16 @@ describe('the bib rule stays centralised', () => {
       .filter((f) => /export function effectiveBib/.test(read(f)))
     expect(offenders).toEqual([])
   })
+
+  it('labels the inherit option with the team s colour and stores nothing for it', () => {
+    // "Team bib" made a coach in the rain remember the default. The label
+    // now says the colour, and the option's VALUE stays empty: rendering
+    // "Blue (team)" must never persist blue as an override, so the label
+    // and the sentinel are pinned together.
+    const src = read('routes/SessionRegister.tsx')
+    expect(src).toMatch(/<option value="">\{bibInheritLabel\(row\.teamBib\)\}<\/option>/)
+    expect(code(src)).not.toMatch(/Team bib/)
+  })
 })
 
 describe('the product no longer calls this a register', () => {
@@ -248,10 +258,30 @@ describe('the product no longer calls this a register', () => {
   // the word, which was a claim about the product, not about the wording.
   const USER_FACING = ['routes/SessionRegister.tsx', 'routes/SessionDay.tsx']
 
-  it('shows Tonight as the title and the card', () => {
+  it('shows Players & groups as the title and the card, from one constant', () => {
+    // One constant for both, so the Session Day card and the opened
+    // screen cannot drift into two names for one surface.
     const src = read('routes/SessionRegister.tsx')
-    expect(src).toMatch(/<h2>Tonight<\/h2>/)
-    expect(src).toMatch(/reg-card-title">Tonight/)
+    expect(src).toMatch(/<h2>\{PLAYERS_GROUPS_TITLE\}<\/h2>/)
+    expect(src).toMatch(/reg-card-title">\{PLAYERS_GROUPS_TITLE\}/)
+    expect(PLAYERS_GROUPS_TITLE).toBe('Players & groups')
+  })
+
+  it('never names the surface after a time of day again', () => {
+    // Training runs at 10:00 on a Saturday as often as 18:00 on a
+    // Tuesday, and a session is organised days either side of it. The
+    // internal module keeps the Tonight name (file names and identifiers
+    // are not user visible); what must not survive is the word reaching
+    // a user, so every string literal and every piece of JSX text on the
+    // two user facing files is checked. Import paths carry a slash and
+    // are excused, which is why the class excludes one.
+    for (const f of USER_FACING) {
+      const src = code(read(f))
+      expect(src).not.toMatch(/>\s*Tonight\s*</)
+      expect(src).not.toMatch(/['"`][^'"`\n/]*\btonight\b[^'"`\n/]*['"`]/i)
+    }
+    // The model's own user visible strings: the save error and the notes.
+    expect(code(read('lib/tonight.ts'))).not.toMatch(/['"`][^'"`\n/]*\btonight\b[^'"`\n/]*['"`]/i)
   })
 
   for (const f of USER_FACING) {
@@ -263,9 +293,9 @@ describe('the product no longer calls this a register', () => {
     })
   }
 
-  it('labels the row target as inclusion in tonight s groups, not as arrival', () => {
+  it('labels the row target as inclusion in the groups, not as arrival', () => {
     const src = read('routes/SessionRegister.tsx')
-    expect(src).toMatch(/Include \$\{row\.displayName\} in tonight/)
+    expect(src).toMatch(/Include \$\{row\.displayName\} in the groups/)
     // The row target must never be the thing that records attendance.
     const rowButton = src.slice(src.indexOf('className="reg-tick"'), src.indexOf('</button>'))
     expect(rowButton).toMatch(/onClick=\{onToggle\}/)
