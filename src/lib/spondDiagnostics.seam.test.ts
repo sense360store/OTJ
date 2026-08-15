@@ -30,7 +30,7 @@ import {
   parseIgnoredMemberIds,
   type SpondMapping,
 } from '../../supabase/functions/_shared/spond'
-import { spondSetupRows, teamNameBySubgroup, type SpondGroupMember, type SpondSetupState } from './spondLinking'
+import { spondSetupRows, teamsBySubgroup, type SpondGroupMember, type SpondSetupState } from './spondLinking'
 import type { RegisteredPlayer } from './data'
 
 const GROUP = 'GRP-SYNTH-1'
@@ -93,8 +93,8 @@ const MAPPINGS: SpondMapping[] = [
 // The club's mappings as the browser holds them (useSpondMappings), which
 // is what resolves another team's subgroup to a name.
 const CLUB_MAPPINGS = [
-  { subgroupId: SG_ARGONAUTS, teamName: 'Argonauts' },
-  { subgroupId: SG_TITANS, teamName: 'Titans' },
+  { subgroupId: SG_ARGONAUTS, teamId: 'team-argonauts', teamName: 'Argonauts' },
+  { subgroupId: SG_TITANS, teamId: 'team-titans', teamName: 'Titans' },
 ]
 
 const player = (playerId: string, displayName: string): RegisteredPlayer => ({
@@ -143,7 +143,8 @@ function run(ignoredConfig = '') {
     // candidate pass discarded, and a probe that read diagnostics.complete
     // here would model a chain the product does not have.
     outsideComplete: diagnosticsProved(diagnostics, collected),
-    teamBySubgroup: teamNameBySubgroup(CLUB_MAPPINGS),
+    teamBySubgroup: teamsBySubgroup(CLUB_MAPPINGS),
+    clubRoster: ROSTER,
   })
   return { collected, diagnostics, rows }
 }
@@ -231,7 +232,8 @@ describe('a Spond group payload through the whole chain', () => {
       pool: ROSTER,
       outsideMembers: asClientDiagnostics(diagnostics.members),
       outsideComplete: diagnostics.complete,
-      teamBySubgroup: teamNameBySubgroup(CLUB_MAPPINGS),
+      teamBySubgroup: teamsBySubgroup(CLUB_MAPPINGS),
+      clubRoster: ROSTER,
     })
     expect(new Set(rows.map((r) => r.state))).toEqual(new Set(['unknown']))
   })
@@ -271,7 +273,8 @@ describe('a Spond group payload through the whole chain', () => {
       pool: ROSTER,
       outsideMembers: asClientDiagnostics(diagnostics.members),
       outsideComplete: diagnosticsProved(diagnostics, collected),
-      teamBySubgroup: teamNameBySubgroup(CLUB_MAPPINGS),
+      teamBySubgroup: teamsBySubgroup(CLUB_MAPPINGS),
+      clubRoster: ROSTER,
     })
     expect(new Set(rows.map((r) => r.state))).toEqual(new Set(['unknown']))
     expect(rows.map((r) => r.state)).not.toContain('not_found')
@@ -292,7 +295,8 @@ describe('a Spond group payload through the whole chain', () => {
       pool: ROSTER,
       outsideMembers: dropped,
       outsideComplete: true,
-      teamBySubgroup: teamNameBySubgroup(CLUB_MAPPINGS),
+      teamBySubgroup: teamsBySubgroup(CLUB_MAPPINGS),
+      clubRoster: ROSTER,
     })
     expect(stateFor(rows, 'Elsewhere Synthetic')).toBe('no_subgroup')
     // Which is exactly what the real mapping must not produce.

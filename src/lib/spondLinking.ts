@@ -265,24 +265,40 @@ export interface SpondSetupContext {
   outsideMembers: readonly SpondGroupMember[] | null
   // Whether that scan saw the whole parent group.
   outsideComplete: boolean
-  // Mapped Spond subgroup id to OTJ team name, club wide, from
-  // teamNameBySubgroup below.
-  teamBySubgroup: ReadonlyMap<string, string>
+  // Mapped Spond subgroup id to the OTJ team it belongs to, club wide,
+  // from teamsBySubgroup below.
+  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>
+  // THE CLUB'S registrations, not this team's. The pool above is scoped to
+  // one team because a suggestion must be, but the diagnosis matches names
+  // across the whole Spond parent group, which spans every team. Without
+  // the club list there is no way to notice that the "Sam Jones" found in
+  // Titans' subgroup is Titans' OWN Sam Jones, correctly filed, and not
+  // this team's child misplaced. suggestionPool's docstring already
+  // records that hazard as real at this club; the diagnostics reintroduced
+  // it and this is what closes it.
+  clubRoster: readonly RegisteredPlayer[]
+}
+
+// One OTJ team a Spond subgroup maps to. The id travels beside the name
+// because the name alone cannot be checked against a player list.
+export interface SubgroupTeam {
+  teamId: string
+  teamName: string
 }
 
 // The club's mapped subgroups, keyed for resolution. A subgroup two
 // mappings claim for two different teams names neither: the point of the
 // diagnosis is to be actionable, and a wrong team name is worse than none.
-export function teamNameBySubgroup(
-  mappings: readonly { subgroupId: string | null; teamName: string }[],
-): Map<string, string> {
-  const out = new Map<string, string>()
+export function teamsBySubgroup(
+  mappings: readonly { subgroupId: string | null; teamId: string; teamName: string }[],
+): Map<string, SubgroupTeam> {
+  const out = new Map<string, SubgroupTeam>()
   const contested = new Set<string>()
   for (const m of mappings) {
     if (!m.subgroupId || !m.teamName) continue
     const held = out.get(m.subgroupId)
-    if (held !== undefined && held !== m.teamName) contested.add(m.subgroupId)
-    else out.set(m.subgroupId, m.teamName)
+    if (held !== undefined && held.teamId !== m.teamId) contested.add(m.subgroupId)
+    else out.set(m.subgroupId, { teamId: m.teamId, teamName: m.teamName })
   }
   for (const id of contested) out.delete(id)
   return out
@@ -294,14 +310,14 @@ export function teamNameBySubgroup(
 // will not guess where.
 function resolveOtherTeam(
   subgroupIds: readonly string[],
-  teamBySubgroup: ReadonlyMap<string, string>,
-): string | null {
-  const names = new Set<string>()
+  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>,
+): SubgroupTeam | null {
+  const teams = new Map<string, SubgroupTeam>()
   for (const id of subgroupIds) {
-    const name = teamBySubgroup.get(id)
-    if (name) names.add(name)
+    const team = teamBySubgroup.get(id)
+    if (team) teams.set(team.teamId, team)
   }
-  return names.size === 1 ? [...names][0] : null
+  return teams.size === 1 ? [...teams.values()][0] : null
 }
 
 // One row per registered player the loaded member list cannot reach, each
@@ -376,11 +392,16 @@ export function spondSetupRows(ctx: SpondSetupContext): SpondSetupRow[] {
     if (inside === 1) return { player, state: 'name_taken' as const, otherTeam: null }
     if (!member) return { player, state: 'not_found' as const, otherTeam: null }
     if (member.subgroupIds.length === 0) return { player, state: 'no_subgroup' as const, otherTeam: null }
-    return {
-      player,
-      state: 'other_subgroup' as const,
-      otherTeam: resolveOtherTeam(member.subgroupIds, ctx.teamBySubgroup),
+    const team = resolveOtherTeam(member.subgroupIds, ctx.teamBySubgroup)
+    // The member sits in a team whose OWN player list already holds this
+    // name. They are far more likely to be that team's child, correctly
+    // filed, than this team's child misplaced, and the row would otherwise
+    // send a manager to "fix" a Spond record that is right. Neither
+    // reading is provable from a name, so it fails closed.
+    if (team && ctx.clubRoster.some((p) => p.teamId === team.teamId && normaliseName(p.displayName) === key)) {
+      return { player, state: 'ambiguous' as const, otherTeam: null }
     }
+    return { player, state: 'other_subgroup' as const, otherTeam: team?.teamName ?? null }
   })
 }
 

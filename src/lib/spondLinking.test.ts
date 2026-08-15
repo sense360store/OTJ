@@ -7,7 +7,7 @@ import {
   pickerOptions,
   spondSetupRows,
   suggestionPool,
-  teamNameBySubgroup,
+  teamsBySubgroup,
   unmatchedPlayers,
   type LinkCandidate,
   type SpondGroupMember,
@@ -348,8 +348,8 @@ describe('spondSetupRows', () => {
   const SG_OTHER = 'SUBGROUP-SYNTH-OTHER'
   const SG_UNMAPPED = 'SUBGROUP-SYNTH-UNMAPPED'
   const teamBySubgroup = new Map([
-    [SG_MINE, 'Argonauts'],
-    [SG_OTHER, 'Titans'],
+    [SG_MINE, { teamId: 'team-argonauts', teamName: 'Argonauts' }],
+    [SG_OTHER, { teamId: 'team-titans', teamName: 'Titans' }],
   ])
   const outside = (name: string, subgroupIds: string[] = []): SpondGroupMember => ({
     displayName: name,
@@ -365,6 +365,7 @@ describe('spondSetupRows', () => {
       outsideMembers: [],
       outsideComplete: true,
       teamBySubgroup,
+      clubRoster: [],
       ...over,
     })
   const stateOf = (list: ReturnType<typeof spondSetupRows>, playerId: string) =>
@@ -430,6 +431,52 @@ describe('spondSetupRows', () => {
       outsideMembers: [outside('Gamma Synthetic', []), outside('Gamma Synthetic', [SG_OTHER])],
     })
     expect(out.map((r) => r.state)).toEqual(['ambiguous'])
+    expect(out[0].otherTeam).toBeNull()
+  })
+
+  it('a same named child on the team the subgroup maps to is not this team s child misplaced', () => {
+    // The cross team case, reproduced by an adversarial review before it
+    // was fixed. Argonauts and Titans each have an "Alex Synthetic". The
+    // Titans one sits correctly in Titans' Spond subgroup. Matching names
+    // across the whole parent group made the Argonauts row read "In Spond,
+    // assigned to another team: Titans", sending a manager to fix a Spond
+    // record that was right. suggestionPool is team scoped for exactly
+    // this hazard; the diagnostics reintroduced it.
+    const out = rows({
+      pool: [player('p1', 'Alex Synthetic', { teamId: 'team-argonauts' })],
+      clubRoster: [
+        player('p1', 'Alex Synthetic', { teamId: 'team-argonauts' }),
+        player('p2', 'Alex Synthetic', { teamId: 'team-titans' }),
+      ],
+      outsideMembers: [outside('Alex Synthetic', [SG_OTHER])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['ambiguous'])
+    expect(out[0].otherTeam).toBeNull()
+  })
+
+  it('still names the other team when that team has nobody of the name', () => {
+    // The narrow half. Without a same named child on Titans, a Titans
+    // subgroup member of this name really is evidence about THIS child,
+    // and the row stays actionable.
+    const out = rows({
+      pool: [player('p1', 'Alex Synthetic', { teamId: 'team-argonauts' })],
+      clubRoster: [
+        player('p1', 'Alex Synthetic', { teamId: 'team-argonauts' }),
+        player('p2', 'Other Synthetic', { teamId: 'team-titans' }),
+      ],
+      outsideMembers: [outside('Alex Synthetic', [SG_OTHER])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['other_subgroup'])
+    expect(out[0].otherTeam).toBe('Titans')
+  })
+
+  it('an unmapped subgroup cannot be checked, so it never names a team either way', () => {
+    const out = rows({
+      pool: [player('p1', 'Alex Synthetic')],
+      clubRoster: [player('p1', 'Alex Synthetic')],
+      outsideMembers: [outside('Alex Synthetic', [SG_UNMAPPED])],
+    })
+    expect(out.map((r) => r.state)).toEqual(['other_subgroup'])
     expect(out[0].otherTeam).toBeNull()
   })
 
@@ -540,37 +587,37 @@ describe('spondSetupRows', () => {
   })
 })
 
-describe('teamNameBySubgroup', () => {
+describe('teamsBySubgroup', () => {
   it('keys the club mapped subgroups by the team they belong to', () => {
-    const map = teamNameBySubgroup([
-      { subgroupId: 'SG-1', teamName: 'Argonauts' },
-      { subgroupId: 'SG-2', teamName: 'Titans' },
+    const map = teamsBySubgroup([
+      { subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' },
+      { subgroupId: 'SG-2', teamId: 'T-2', teamName: 'Titans' },
     ])
-    expect(map.get('SG-1')).toBe('Argonauts')
-    expect(map.get('SG-2')).toBe('Titans')
+    expect(map.get('SG-1')?.teamName).toBe('Argonauts')
+    expect(map.get('SG-2')?.teamName).toBe('Titans')
   })
 
   it('drops a whole group mapping and an unnamed team rather than keying on nothing', () => {
-    const map = teamNameBySubgroup([
-      { subgroupId: null, teamName: 'Argonauts' },
-      { subgroupId: 'SG-3', teamName: '' },
+    const map = teamsBySubgroup([
+      { subgroupId: null, teamId: 'T-1', teamName: 'Argonauts' },
+      { subgroupId: 'SG-3', teamId: 'T-3', teamName: '' },
     ])
     expect(map.size).toBe(0)
   })
 
   it('names neither team where one subgroup is claimed by two', () => {
-    const map = teamNameBySubgroup([
-      { subgroupId: 'SG-1', teamName: 'Argonauts' },
-      { subgroupId: 'SG-1', teamName: 'Titans' },
+    const map = teamsBySubgroup([
+      { subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' },
+      { subgroupId: 'SG-1', teamId: 'T-2', teamName: 'Titans' },
     ])
     expect(map.has('SG-1')).toBe(false)
   })
 
   it('a subgroup mapped twice to the same team still resolves', () => {
-    const map = teamNameBySubgroup([
-      { subgroupId: 'SG-1', teamName: 'Argonauts' },
-      { subgroupId: 'SG-1', teamName: 'Argonauts' },
+    const map = teamsBySubgroup([
+      { subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' },
+      { subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' },
     ])
-    expect(map.get('SG-1')).toBe('Argonauts')
+    expect(map.get('SG-1')?.teamName).toBe('Argonauts')
   })
 })

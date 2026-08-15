@@ -8,7 +8,7 @@ import {
   SpondSetupRowView,
   TeamChipsView,
 } from './SpondLinks'
-import type { LinkCandidate, SpondGroupMember, SpondLink } from '../lib/spondLinking'
+import type { LinkCandidate, SpondGroupMember, SpondLink, SubgroupTeam } from '../lib/spondLinking'
 import type { RegisteredPlayer, Team } from '../lib/data'
 
 // The screen's presentational shells, rendered without hooks or a query
@@ -49,8 +49,8 @@ const SG_MINE = 'SUBGROUP-SYNTH-MINE'
 const SG_OTHER = 'SUBGROUP-SYNTH-OTHER'
 const SG_UNMAPPED = 'SUBGROUP-SYNTH-UNMAPPED'
 const SUBGROUP_TEAMS = new Map([
-  [SG_MINE, 'Argonauts'],
-  [SG_OTHER, 'Titans'],
+  [SG_MINE, { teamId: 't1', teamName: 'Argonauts' }],
+  [SG_OTHER, { teamId: 't2', teamName: 'Titans' }],
 ])
 const outside = (name: string, subgroupIds: string[] = []): SpondGroupMember => ({
   displayName: name,
@@ -64,7 +64,8 @@ const sectionProps = {
   complete: true,
   outsideMembers: null as SpondGroupMember[] | null,
   outsideComplete: false,
-  teamBySubgroup: SUBGROUP_TEAMS as ReadonlyMap<string, string>,
+  teamBySubgroup: SUBGROUP_TEAMS as ReadonlyMap<string, SubgroupTeam>,
+  clubRoster: [] as RegisteredPlayer[],
   expectedTeam: 'Argonauts' as string | null,
   onAccept: noop,
   onChoose: noop,
@@ -356,7 +357,7 @@ describe('Registered players with no Spond member', () => {
       outsideMembers: [outside('Gamma Synthetic', []), outside('Gamma Synthetic', [SG_OTHER])],
       outsideComplete: true,
     })
-    expect(html).toContain('More than one Spond member goes by this name')
+    expect(html).toContain('More than one person here goes by this name')
     expect(html).not.toContain('no team assigned')
     expect(html).not.toContain('assigned to another team')
     expect(html).not.toContain('Not found in Spond group data')

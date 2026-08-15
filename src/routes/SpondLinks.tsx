@@ -34,9 +34,10 @@ import {
   pickerOptions,
   spondSetupRows,
   suggestionPool,
-  teamNameBySubgroup,
+  teamsBySubgroup,
   type LinkCandidate,
   type SpondGroupMember,
+  type SubgroupTeam,
   type SpondLink,
   type SpondSetupState,
 } from '../lib/spondLinking'
@@ -180,7 +181,11 @@ export function SpondSetupRowView({
           ? `In Spond · assigned to another team: ${otherTeam}`
           : 'In Spond · assigned to another Spond subgroup'
         : state === 'ambiguous'
-          ? 'More than one Spond member goes by this name'
+          ? // Direction neutral on purpose. Ambiguity arrives three ways
+            // now, and the old wording named only one of them: two Spond
+            // members of the name, two registered children of it, or one
+            // member sitting in a team whose own player list holds it.
+            'More than one person here goes by this name'
           : state === 'name_taken'
             ? 'In Spond · that name is already linked to another registered player'
             : state === 'not_found'
@@ -254,6 +259,7 @@ export function LinkSectionsView({
   outsideMembers,
   outsideComplete,
   teamBySubgroup,
+  clubRoster,
   expectedTeam,
   onAccept,
   onChoose,
@@ -283,7 +289,8 @@ export function LinkSectionsView({
   // empty list with the whole suite green.
   outsideMembers: SpondGroupMember[] | null
   outsideComplete: boolean
-  teamBySubgroup: ReadonlyMap<string, string>
+  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>
+  clubRoster: RegisteredPlayer[]
   // The team whose links are being worked through, named on the rows that
   // report a Spond team assignment. Null before a team is chosen.
   expectedTeam: string | null
@@ -299,6 +306,7 @@ export function LinkSectionsView({
     outsideMembers,
     outsideComplete,
     teamBySubgroup,
+    clubRoster,
   })
   return (
     <>
@@ -486,7 +494,7 @@ export default function SpondLinks() {
   // purpose: the whole point is to resolve a subgroup this team does not
   // map. Where a subgroup resolves to no team, or to two, the row says
   // "another Spond subgroup" rather than guessing.
-  const subgroupTeams = useMemo(() => teamNameBySubgroup(mappings.data ?? []), [mappings.data])
+  const subgroupTeams = useMemo(() => teamsBySubgroup(mappings.data ?? []), [mappings.data])
 
   const allLinks = useMemo(() => links.data?.links ?? [], [links.data])
   const loadedTeam = teamId ? (loaded[teamId] ?? null) : null
@@ -678,6 +686,7 @@ export default function SpondLinks() {
               outsideMembers={loadedTeam?.diagnosticMembers ?? null}
               outsideComplete={loadedTeam?.diagnosticComplete === true}
               teamBySubgroup={subgroupTeams}
+              clubRoster={roster.data ?? []}
               expectedTeam={mappedTeams.find((t) => t.id === teamId)?.name ?? null}
               onAccept={(memberId, playerId) => write([{ spondMemberId: memberId, playerId }], 'suggested')}
               onChoose={(memberId) => setPicking(memberId)}

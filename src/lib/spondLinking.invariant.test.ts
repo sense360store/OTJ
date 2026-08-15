@@ -62,7 +62,8 @@ describe('SpondLinks hands the section builder the scoped pool, never the roster
     expect(src).toMatch(/outsideMembers=\{loadedTeam\?\.diagnosticMembers \?\? null\}/)
     expect(src).toMatch(/outsideComplete=\{loadedTeam\?\.diagnosticComplete === true\}/)
     expect(src).toMatch(/teamBySubgroup=\{subgroupTeams\}/)
-    expect(src).toMatch(/subgroupTeams = useMemo\(\(\) => teamNameBySubgroup\(mappings\.data \?\? \[\]\)/)
+    expect(src).toMatch(/clubRoster=\{roster\.data \?\? \[\]\}/)
+    expect(src).toMatch(/subgroupTeams = useMemo\(\(\) => teamsBySubgroup\(mappings\.data \?\? \[\]\)/)
     // Stored whole from the load, so a reload cannot leave a stale
     // diagnosis beside fresh candidates.
     expect(src).toMatch(/diagnosticMembers: result\.diagnosticMembers/)
