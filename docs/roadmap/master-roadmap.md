@@ -29,7 +29,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Done | P0 | Shipped in #183; docs/tests only, no production migration |
 | REG-01 | Training Day | Fix stored guest removal oscillation so Saved settles correctly | Done | P1 | Shipped in #184; client register state only, no migration, Spond or Edge change |
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
-| TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | In progress | P1 | Client composition only; projects the existing Players & groups model, gated on `players.view` |
+| TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | In progress | P1 | Open in #185; client composition only, projects the existing Players & groups model, gated on `players.view` |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Next | P1 | Never fuzzy-overwrite or auto-create venue data |
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
