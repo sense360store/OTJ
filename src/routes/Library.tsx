@@ -3,10 +3,16 @@ import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useDrills, useMyCapabilities } from '../lib/queries'
-import { AGES, CORNERS, FA_IMPORT_CAPS, hasAllCaps, LEVELS } from '../lib/data'
+import { CORNERS, FA_IMPORT_CAPS, hasAllCaps } from '../lib/data'
 import type { CornerKey, Drill } from '../lib/data'
-import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
-import { sortLibraryDrills } from '../lib/contentOrder'
+import {
+  applyDrillFilter,
+  clearedRefinements,
+  countRefinements,
+  DEFAULT_DRILL_FILTER,
+  drillFilterOptions,
+} from '../lib/drillFilter'
+import type { DrillFilter } from '../lib/drillFilter'
 import type { LibrarySort } from '../lib/contentOrder'
 import { Icon } from '../components/icons'
 import { Chip, DrillCard, Empty, ErrorNote, Loading } from '../components/ui'
@@ -34,14 +40,11 @@ export function Library() {
   const presetCorner = searchParams.get('corner')
   const initialCorner = presetCorner && presetCorner in CORNERS ? (presetCorner as CornerKey) : null
 
-  const [q, setQ] = useState('')
-  const [corner, setCorner] = useState<CornerKey | null>(initialCorner)
-  const [skill, setSkill] = useState('')
-  const [theme, setTheme] = useState('')
-  const [format, setFormat] = useState('')
-  const [age, setAge] = useState('')
-  const [level, setLevel] = useState('')
-  const [sort, setSort] = useState<LibrarySort>('recent')
+  // One state object for the whole filter, the shape lib/drillFilter reads.
+  // The rules themselves live there, shared with the planner's Add from
+  // library so the two screens cannot drift apart.
+  const [filter, setFilter] = useState<DrillFilter>({ ...DEFAULT_DRILL_FILTER, corner: initialCorner })
+  const set = (patch: Partial<DrillFilter>) => setFilter((f) => ({ ...f, ...patch }))
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [editing, setEditing] = useState<Drill | null>(null)
@@ -55,51 +58,18 @@ export function Library() {
   }, [])
 
   // The filter options are the FA taxonomy plus any values already stored on
-  // drills, so existing values keep appearing. The theme options also carry
-  // every topic tag in use, so a topic captured by the FA import (Marking,
-  // Intercepting) becomes selectable as soon as a drill carries it.
-  const skillOptions = useMemo(() => withExistingValues(FA_PLAYER_SKILLS, drills.map((d) => d.skill)), [drills])
-  const themeOptions = useMemo(
-    () => withExistingValues(FA_THEMES, [...drills.map((d) => d.theme), ...drills.flatMap((d) => d.tags)]),
-    [drills],
-  )
-  const formatOptions = useMemo(() => withExistingValues(FA_FORMATS, drills.map((d) => d.format)), [drills])
+  // drills, so existing values keep appearing (lib/drillFilter).
+  const options = useMemo(() => drillFilterOptions(drills), [drills])
 
   // One pass applies every refinement except the corner, which yields both
   // the visible results and the corner distribution. The distribution stays
   // filter-aware but ignores the corner filter itself, so the strip remains a
   // way to pick a corner. It moved here from Home, where the dashboard
-  // retired the corner block.
-  const { results, cornerCounts } = useMemo(() => {
-    const refined = drills.filter((d) => {
-      if (skill && d.skill !== skill) return false
-      // The theme filter matches the legacy single theme or any topic tag, so
-      // a drill tagged Defending, Marking, Intercepting appears under any one
-      // of them and older themed drills keep matching.
-      if (theme && d.theme !== theme && !d.tags.includes(theme)) return false
-      if (format && d.format !== format) return false
-      if (age && !d.ages.includes(age)) return false
-      if (level && d.level !== level) return false
-      if (q) {
-        const hay = (d.title + ' ' + d.summary + ' ' + d.skill + ' ' + d.tags.join(' ')).toLowerCase()
-        if (!hay.includes(q.toLowerCase())) return false
-      }
-      return true
-    })
-    // Only classified drills count towards the corner distribution; a drill
-    // with no corner sits outside it rather than inflating Technical.
-    const counts: Record<CornerKey, number> = { technical: 0, physical: 0, social: 0, psychological: 0 }
-    refined.forEach((d) => {
-      if (d.corner) counts[d.corner]++
-    })
-    // Every sort is explicit, Recent included: newest first by created_at
-    // with an id tie-break, never the order the read happened to return.
-    const r = sortLibraryDrills(corner ? refined.filter((d) => d.corner === corner) : refined, sort)
-    return { results: r, cornerCounts: counts }
-  }, [drills, q, corner, skill, theme, format, age, level, sort])
+  // retired the corner block. The rules live in lib/drillFilter.
+  const { results, cornerCounts } = useMemo(() => applyDrillFilter(drills, filter), [drills, filter])
   const cornerTotal = Object.values(cornerCounts).reduce((a, b) => a + b, 0)
 
-  const activeFilters = [corner, skill, theme, format, age, level].filter(Boolean).length
+  const activeFilters = countRefinements(filter)
 
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote />
@@ -139,9 +109,13 @@ export function Library() {
         <div className="filter-row">
           <div className="search-lg">
             <Icon.search />
-            <input placeholder="Search drills, skills or tags…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input
+              placeholder="Search drills, skills or tags…"
+              value={filter.q}
+              onChange={(e) => set({ q: e.target.value })}
+            />
           </div>
-          <select className="select" value={sort} onChange={(e) => setSort(e.target.value as LibrarySort)}>
+          <select className="select" value={filter.sort} onChange={(e) => set({ sort: e.target.value as LibrarySort })}>
             <option value="recent">Sort: Recent</option>
             <option value="az">Sort: A–Z</option>
             <option value="duration">Sort: Shortest</option>
@@ -151,7 +125,12 @@ export function Library() {
         <div className="filter-row">
           <span className="filter-label">Corner</span>
           {Object.values(CORNERS).map((c) => (
-            <Chip key={c.key} on={corner === c.key} dot={c.color} onClick={() => setCorner(corner === c.key ? null : c.key)}>
+            <Chip
+              key={c.key}
+              on={filter.corner === c.key}
+              dot={c.color}
+              onClick={() => set({ corner: filter.corner === c.key ? null : c.key })}
+            >
               {c.label}
             </Chip>
           ))}
@@ -159,58 +138,48 @@ export function Library() {
 
         <div className="filter-row">
           <span className="filter-label">Refine</span>
-          <select className="select" value={skill} onChange={(e) => setSkill(e.target.value)} style={{ height: 40 }}>
+          <select className="select" value={filter.skill} onChange={(e) => set({ skill: e.target.value })} style={{ height: 40 }}>
             <option value="">All skills</option>
-            {skillOptions.map((s) => (
+            {options.skills.map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
             ))}
           </select>
-          <select className="select" value={theme} onChange={(e) => setTheme(e.target.value)} style={{ height: 40 }}>
+          <select className="select" value={filter.theme} onChange={(e) => set({ theme: e.target.value })} style={{ height: 40 }}>
             <option value="">All themes</option>
-            {themeOptions.map((t) => (
+            {options.themes.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
             ))}
           </select>
-          <select className="select" value={format} onChange={(e) => setFormat(e.target.value)} style={{ height: 40 }}>
+          <select className="select" value={filter.format} onChange={(e) => set({ format: e.target.value })} style={{ height: 40 }}>
             <option value="">All formats</option>
-            {formatOptions.map((f) => (
+            {options.formats.map((f) => (
               <option key={f} value={f}>
                 {f}
               </option>
             ))}
           </select>
-          <select className="select" value={age} onChange={(e) => setAge(e.target.value)} style={{ height: 40 }}>
+          <select className="select" value={filter.age} onChange={(e) => set({ age: e.target.value })} style={{ height: 40 }}>
             <option value="">All ages</option>
-            {AGES.map((a) => (
+            {options.ages.map((a) => (
               <option key={a} value={a}>
                 {a}
               </option>
             ))}
           </select>
-          <select className="select" value={level} onChange={(e) => setLevel(e.target.value)} style={{ height: 40 }}>
+          <select className="select" value={filter.level} onChange={(e) => set({ level: e.target.value })} style={{ height: 40 }}>
             <option value="">All levels</option>
-            {LEVELS.map((l) => (
+            {options.levels.map((l) => (
               <option key={l} value={l}>
                 {l}
               </option>
             ))}
           </select>
           {activeFilters > 0 && (
-            <button
-              className="btn btn-quiet btn-sm"
-              onClick={() => {
-                setCorner(null)
-                setSkill('')
-                setTheme('')
-                setFormat('')
-                setAge('')
-                setLevel('')
-              }}
-            >
+            <button className="btn btn-quiet btn-sm" onClick={() => setFilter(clearedRefinements)}>
               <Icon.x />
               Clear ({activeFilters})
             </button>
@@ -247,7 +216,7 @@ export function Library() {
                     style={{
                       flex: cornerCounts[c.key],
                       background: c.color,
-                      opacity: corner && corner !== c.key ? 0.25 : 1,
+                      opacity: filter.corner && filter.corner !== c.key ? 0.25 : 1,
                       transition: 'opacity .15s',
                     }}
                   />
@@ -260,8 +229,8 @@ export function Library() {
                   key={c.key}
                   className="pill"
                   title={c.label}
-                  onClick={() => setCorner(corner === c.key ? null : c.key)}
-                  style={{ cursor: 'pointer', border: 0, opacity: corner && corner !== c.key ? 0.45 : 1 }}
+                  onClick={() => set({ corner: filter.corner === c.key ? null : c.key })}
+                  style={{ cursor: 'pointer', border: 0, opacity: filter.corner && filter.corner !== c.key ? 0.45 : 1 }}
                 >
                   <span
                     style={{ width: 8, height: 8, borderRadius: '50%', background: c.color, display: 'inline-block' }}

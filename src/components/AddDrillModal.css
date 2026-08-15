@@ -1,0 +1,39 @@
+/* Add from library: the browse controls and the results.
+
+   The results grid is one column at the base, which IS the phone layout: a
+   full-width row is a comfortable tap target and keeps the title readable.
+   It widens to two columns only where the viewport genuinely has room for
+   two full cards side by side. The base rule must stay one column and the
+   widening must stay behind min-width: drillFilter.invariant.test.ts reads
+   this file and fails the build otherwise. */
+
+.add-drill-controls { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+
+/* The controls are used one-handed on a touchline phone, so the chips and
+   the Clear button get a taller tap target here than the shared 34px and
+   36px primitives, scoped to this modal rather than restyling the app. The
+   selects are capped so one long free-text tag can never widen a select
+   past the modal body and hand the whole pane a horizontal scrollbar. */
+.add-drill-controls .chip { height: 40px; }
+.add-drill-controls .btn-sm { height: 40px; }
+.add-drill-controls .select { max-width: 100%; }
+
+.add-drill-status { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+
+.add-drill-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 760px) { .add-drill-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.add-drill-row { display: flex; gap: 11px; align-items: center; text-align: left; width: 100%;
+  min-height: 56px; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line);
+  background: var(--card); cursor: pointer; }
+.add-drill-row.on { border-color: var(--navy); background: color-mix(in srgb, var(--navy) 5%, var(--card)); }
+
+.add-drill-thumb { width: 58px; height: 40px; border-radius: 8px; overflow: hidden; flex: 0 0 58px; }
+.add-drill-main { flex: 1; min-width: 0; }
+.add-drill-title { font-weight: 700; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.add-drill-meta { font-size: 12px; }
+
+.add-drill-tick { width: 22px; height: 22px; border-radius: 7px; flex: 0 0 22px; display: grid;
+  place-items: center; background: transparent; border: 1.5px solid var(--line); color: #fff; }
+.add-drill-row.on .add-drill-tick { background: var(--navy); border-color: var(--navy); }
+.add-drill-tick svg { width: 14px; height: 14px; }
