@@ -31,6 +31,7 @@ import {
   acceptableSuggestions,
   buildLinkSections,
   pickerOptions,
+  suggestionPool,
   type LinkCandidate,
   type LinkSections,
   type SpondLink,
@@ -364,9 +365,10 @@ export default function SpondLinks() {
   // CURRENT season, withdrawn children excluded. Deliberately not club
   // wide and not season blind, which is how a Titans member could
   // otherwise be matched to a same named child on Gladiators, or to one
-  // who left two seasons ago.
+  // who left two seasons ago. The rule is pure in ../lib/spondLinking so
+  // the test suite pins it; this only binds the loaded roster.
   const rosterFor = useCallback(
-    (id: string | null) => (roster.data ?? []).filter((p) => p.teamId === id && p.status !== 'withdrawn'),
+    (id: string | null) => suggestionPool(roster.data ?? [], id),
     [roster.data],
   )
 

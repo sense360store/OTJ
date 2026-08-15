@@ -39,6 +39,20 @@ export function normaliseName(value: string): string {
     .trim()
 }
 
+// The pool a suggestion may match: ONE team's registrations, withdrawn
+// children excluded. The caller hands buildLinkSections this and nothing
+// wider, and the scoping lives here as a pure rule rather than inline in
+// the screen so the test suite can pin the two failure modes a wide pool
+// invites: a club wide pool lets a Titans member match a same named child
+// on Gladiators, and a season blind one (already excluded by reading the
+// current season's registrations) a child who left two seasons ago.
+export function suggestionPool(
+  roster: readonly RegisteredPlayer[],
+  teamId: string | null,
+): RegisteredPlayer[] {
+  return roster.filter((p) => p.teamId === teamId && p.status !== 'withdrawn')
+}
+
 export interface NeedsDecision {
   candidate: LinkCandidate
   // The single unambiguous roster match, or null. Never preselected: a

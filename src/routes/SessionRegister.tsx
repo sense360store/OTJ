@@ -1,5 +1,10 @@
 // =====================================================================
-// TONIGHT: the one screen a coach holds at the gate.
+// PLAYERS & GROUPS: the one screen a coach holds at the gate.
+//
+// The internal concept keeps its old name, Tonight (../lib/tonight and
+// the identifiers below), but no string a user reads says it: training
+// runs on Saturday mornings as often as Tuesday evenings, so the surface
+// is named for its job.
 //
 // THE JOB. Not "who arrived?". The coach is asking "who is coming, which
 // of them am I including, and what bib does each need so I can split them
@@ -52,8 +57,12 @@ import {
   buildTonightRows,
   chipCount,
   clearSelection,
+  linkSetFromRead,
+  responsesKnownFromRead,
   tonightCounts,
   tonightLinkNote,
+  tonightUnlinkedNote,
+  PLAYERS_GROUPS_TITLE,
   type TonightCounts,
   DEFAULT_RESPONSE_FILTER,
   draftDelta,
@@ -81,7 +90,7 @@ import {
   type TonightDraft,
   type TonightRow,
 } from '../lib/tonight'
-import { BIB_COLOURS, BIB_NONE, bibLabel, bibSwatch, effectiveBib } from '../lib/bibs'
+import { BIB_COLOURS, BIB_NONE, bibInheritLabel, bibLabel, bibSwatch, effectiveBib } from '../lib/bibs'
 import { coveredTeamIds, coverageOf, coversWholeClub, soleCoveredTeamId } from '../lib/sessionTeams'
 import { spondAudienceNote } from '../lib/spond'
 import { SESSION_ID_PARAM } from '../lib/routes'
@@ -155,7 +164,7 @@ export function TonightRowView({
           className="reg-tick"
           onClick={onToggle}
           aria-pressed={included}
-          aria-label={`Include ${row.displayName} in tonight's groups`}
+          aria-label={`Include ${row.displayName} in the groups`}
         >
           {name}
         </button>
@@ -184,7 +193,12 @@ export function TonightRowView({
       <div className="reg-bib">
         {canEdit ? (
           <select value={bib} aria-label={`Bib colour for ${row.displayName}`} onChange={(e) => onBib(e.target.value)}>
-            <option value="">Team bib</option>
+            {/* The inherit option: the empty VALUE is the storage sentinel
+                meaning follow the team, and only the LABEL says which
+                colour that is right now. Rendering "Blue (team)" therefore
+                stores nothing, and a later change of team default moves
+                every untouched row with it. */}
+            <option value="">{bibInheritLabel(row.teamBib)}</option>
             <option value={BIB_NONE}>No bib</option>
             {BIB_COLOURS.map((b) => (
               <option key={b.value} value={b.value}>
@@ -226,7 +240,7 @@ export function QuickAddView({
             ? 'No player matches that.'
             : rosterEmpty
               ? 'Nobody is registered for this season yet. Add players under Players first.'
-              : 'Everyone in the club is already in tonight s list.'}
+              : 'Everyone in the club is already on the list.'}
         </p>
       ) : (
         <div className="reg-quickadd">
@@ -254,6 +268,7 @@ export function TonightScreenView({
   eventNote,
   staleNote,
   linkNote,
+  unlinkedNote,
   audienceNote,
   refreshing,
   refreshFailed,
@@ -290,10 +305,15 @@ export function TonightScreenView({
   // screen replaces. Empty when nothing is linked.
   eventNote: string
   staleNote: string | null
-  // "27 of 40 players linked to Spond", which is the sentence naming the
-  // population every chip above counts. Empty when the link set is
-  // unknown, because "0 of 40" would be a confident falsehood.
+  // "27 of 40 players linked to Spond · 13 not linked", which is the
+  // sentence naming the population every chip above counts and the size
+  // of the gap in it. Empty when the link set is unknown, because "0 of
+  // 40" would be a confident falsehood.
   linkNote: string
+  // "Not linked: Argonauts 8 · Trojans 5": where the gap lives, so an all
+  // team session does not send a coach hunting through five teams for the
+  // thirteen. Empty when there is no gap or the link set is unknown.
+  unlinkedNote: string
   // "Spond event: 50 invited, 21 going": the event's OWN aggregate, over
   // everybody Spond invited. It is here so the coach who saw "21 accepted"
   // in the picker can see why the Going chip says 11, and it is a labelled
@@ -389,6 +409,10 @@ export function TonightScreenView({
               )}
             </span>
           )}
+          {/* Which teams hold the unlinked players, so the coverage line
+              above is actionable rather than a puzzle. Composed by the
+              model from the same rows and link set, never counted here. */}
+          {unlinkedNote && <span className="tn-unlinked">{unlinkedNote}</span>}
           {audienceNote && <span className="tn-audience">{audienceNote}</span>}
           {onLinkEvent && (
             <button className="btn btn-quiet btn-sm" onClick={onLinkEvent}>
@@ -411,7 +435,7 @@ export function TonightScreenView({
       {rows.length === 0 ? (
         <Empty icon={Icon.users} title={unset ? 'This session has no teams yet' : 'Nobody to show'}>
           {unset
-            ? 'Choose the teams it covers in the planner and tonight fills itself in.'
+            ? 'Choose the teams it covers in the planner and the list fills itself in.'
             : 'No registered players are on the teams this session covers.'}
         </Empty>
       ) : shown.length === 0 ? (
@@ -483,7 +507,7 @@ export function TonightScreenView({
   )
 }
 
-function TonightScreen({ session }: { session: Session }) {
+export function TonightScreen({ session }: { session: Session }) {
   const nav = useNav()
   const { caps } = useMyCapabilities()
   const { user } = useAuth()
@@ -545,24 +569,25 @@ function TonightScreen({ session }: { session: Session }) {
   const status = saveState(dirty, save.isPending, save.isError)
 
   // Only a claim the read can actually back up. A club with no Spond, a
-  // read still in flight, a failed read and a database where linking is
-  // not available yet all pass null, which the model reports as UNKNOWN
-  // and the note renders as silence, rather than "0 of 18 linked", which
-  // would be a confident falsehood of exactly the kind this screen
-  // refuses to print elsewhere.
-  const linksUsable =
-    !!session.spondEventId && links.data?.available !== false && !links.isLoading && !links.isError
-  // The link set is club wide; ../lib/tonight intersects it with the rows,
-  // so a child on a team this session does not cover cannot be counted.
-  const linkedIds = linksUsable ? new Set((links.data?.links ?? []).map((l) => l.playerId)) : null
+  // read still in flight, a failed read, one that never dispatched and a
+  // database where linking is not available yet all resolve to unknown,
+  // which the model renders as silence rather than "0 of 18 linked". The
+  // rule lives in ../lib/tonight because the one time it was inline here
+  // it read a paused query as a known empty link set. The link set is
+  // club wide; tonightCounts intersects it with the rows, so a child on
+  // a team this session does not cover cannot be counted.
+  const linkedIds = linkSetFromRead(links, !!session.spondEventId)
   // EVERY number the screen shows, built once.
   const counts = tonightCounts(rows, live, linkedIds)
-  // Whether the reply read has actually answered. A query in flight and a
-  // failed one both leave every row without a response, which counts the
-  // same as an event nobody replied to, so the note must not claim a reply
-  // figure until this is true.
-  const responsesKnown = !!session.spondEventId && !rsvp.isLoading && !rsvp.isError
+  // Whether the reply read has actually answered. In flight, failed and
+  // never dispatched all leave every row without a response, which counts
+  // the same as an event nobody replied to, so the note must not claim a
+  // reply figure until this is true.
+  const responsesKnown = responsesKnownFromRead(rsvp, !!session.spondEventId)
   const linkNote = tonightLinkNote(counts, responsesKnown)
+  // Where the gap lives, by team, from the same rows and link set the
+  // coverage line reads. Empty whenever it has nothing honest to say.
+  const unlinkedNote = tonightUnlinkedNote(rows, linkedIds)
 
   const event = spondEvents.find((e) => e.id === session.spondEventId)
   // A cancelled event was only ever surfaced by the card this screen
@@ -586,7 +611,7 @@ function TonightScreen({ session }: { session: Session }) {
           <Icon.chevL />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h2>Tonight</h2>
+          <h2>{PLAYERS_GROUPS_TITLE}</h2>
           <div className="sd-sub">{[session.name, fmtDate(session.date), session.time].filter(Boolean).join(' · ')}</div>
         </div>
       </div>
@@ -603,6 +628,7 @@ function TonightScreen({ session }: { session: Session }) {
         eventNote={eventNote}
         staleNote={staleNote}
         linkNote={linkNote}
+        unlinkedNote={unlinkedNote}
         audienceNote={audienceNote}
         refreshing={sync.isPending}
         refreshFailed={sync.isError || sync.data?.ok === false}
@@ -681,7 +707,7 @@ export function TonightCardView({
     <button className="card reg-card" onClick={onOpen}>
       <Icon.users size={20} style={{ color: 'var(--slate-2)', flex: '0 0 auto' }} />
       <span style={{ flex: 1, minWidth: 0 }}>
-        <span className="reg-card-title">Tonight</span>
+        <span className="reg-card-title">{PLAYERS_GROUPS_TITLE}</span>
         <span className="reg-card-sub">{summary}</span>
       </span>
       {note && <span className="pill">{note}</span>}
@@ -720,7 +746,7 @@ export function TonightCard({ session }: { session: Session }) {
   // A failed read shows as unknown rather than as a confident zero.
   if (register.isError || roster.isError || season.isError) {
     return (
-      <TonightCardView summary="Could not load tonight" note="" onOpen={() => nav('register', { sessionId: session.id })} />
+      <TonightCardView summary="Could not load the player list" note="" onOpen={() => nav('register', { sessionId: session.id })} />
     )
   }
   const view = buildRegister(
@@ -747,7 +773,7 @@ export function TonightCard({ session }: { session: Session }) {
 export function SessionRegister() {
   // The parameter name comes from the same module that declares the route,
   // so the two cannot drift apart. The URL keeps its old segment to avoid
-  // route churn; the product concept it opens is Tonight.
+  // route churn; the surface it opens is Players & groups.
   const sessionId = useParams()[SESSION_ID_PARAM]
   const { data: session, isLoading, isError } = useSession(sessionId)
   if (isLoading) return <Loading />

@@ -1,6 +1,12 @@
 // =====================================================================
 // Tonight: who is expected, and how are we splitting them up.
 //
+// THE USER VISIBLE NAME IS "PLAYERS & GROUPS". Training runs at 10:00 on
+// a Saturday as often as 18:00 on a Tuesday, and a coach organises a
+// session days before or after it happens, so the surface is named for
+// its job rather than a time of day. Tonight survives as this module's
+// internal concept name only; no string a user reads says it.
+//
 // THE PRODUCT JOB THIS SERVES. Not "who arrived?". The coach standing on
 // the grass is asking "who is coming, which of them am I including, and
 // what bib does each need so I can split them into groups?". Spond
@@ -45,6 +51,11 @@ import { BIB_COLOURS, effectiveBib, bibLabel } from './bibs'
 import type { RegisterEntry, RegisterView } from './register'
 import type { Team } from './data'
 import { isRsvpStatus, type RsvpStatus } from './spondRsvp'
+
+// The name of the operational surface, on the Session Day card and the
+// opened screen alike. One constant so the two can never diverge, and a
+// plain string so nothing can ever vary it by clock or calendar.
+export const PLAYERS_GROUPS_TITLE = 'Players & groups'
 
 // The four Spond reply states plus the widening. Order is the order a
 // coach reads them: the ones they act on first, then everyone.
@@ -386,14 +397,110 @@ export function tonightCounts(
 // once the caller says the answer is actually in.
 export function tonightLinkNote(counts: TonightCounts, responsesKnown: boolean): string {
   if (counts.linked === null || counts.covered === 0) return ''
-  const note = `${counts.linked} of ${counts.covered} players linked to Spond`
+  const parts = [`${counts.linked} of ${counts.covered} players linked to Spond`]
+  // The other half of the same figure, stated rather than left as
+  // arithmetic. "27 of 40 linked" names the coverage; a coach acting on
+  // it needs the size of the gap, and the production defect this serves
+  // was thirteen missing links nobody had been told about. Absent when
+  // the squad is fully linked, and never claimed when the link set is
+  // unknown, which the guard above already refused.
+  if (counts.unlinked !== null && counts.unlinked > 0) {
+    parts.push(`${counts.unlinked} not linked`)
+  }
   // Only when the two differ. A linked child with no stored reply for this
   // event is invisible in every chip, so the screen owes the coach the
   // number rather than letting them read the gap as a mistake.
   if (responsesKnown && counts.awaiting !== null && counts.awaiting > 0) {
-    return `${note} · ${counts.withResponse} with a reply for this event`
+    parts.push(`${counts.withResponse} with a reply for this event`)
   }
-  return note
+  return parts.join(' · ')
+}
+
+// ---- What a read is allowed to prove ----------------------------------
+//
+// The screen once decided this inline, from isLoading and isError alone,
+// and a query has a third quiet state those two flags cannot see: never
+// dispatched at all. Offline before the first fetch, or disabled while
+// the capability read that gates it is still loading, a query reports
+// isLoading false and isError false with no data, and the inline rule
+// read exactly that as a KNOWN EMPTY link set: "0 of 40 players linked ·
+// 40 not linked", pitch side, from a read that never ran. Data in hand
+// is the only proof a read has answered, so both rules demand it first.
+// The counts and notes above then render null as silence, which is the
+// same fail-towards-saying-nothing direction they already had.
+
+export interface SpondReadState<T> {
+  data: T | undefined
+  isLoading: boolean
+  isError: boolean
+}
+
+export function linkSetFromRead(
+  read: SpondReadState<{ available: boolean; links: { playerId: string }[] }>,
+  hasSpondEvent: boolean,
+): ReadonlySet<string> | null {
+  if (!hasSpondEvent || read.isLoading || read.isError) return null
+  // No data is not an empty answer, it is no answer. An answered read
+  // with no links is a real state and returns a real empty set.
+  if (read.data === undefined || !read.data.available) return null
+  return new Set(read.data.links.map((l) => l.playerId))
+}
+
+export function responsesKnownFromRead(
+  read: SpondReadState<object>,
+  hasSpondEvent: boolean,
+): boolean {
+  return hasSpondEvent && !read.isLoading && !read.isError && read.data !== undefined
+}
+
+// ---- Where the linking gap lives -------------------------------------
+//
+// "13 not linked" sizes the problem; on an all team session the linking
+// screen then asks the coach to guess which teams hold them. This names
+// the teams, from the SAME rows and the SAME link set the coverage line
+// reads, under the same rules (guests skipped, a stored reply counted as
+// proof of a link, a duplicate row counted once), so the breakdown and
+// the line can never disagree.
+
+export interface UnlinkedTeamCount {
+  teamName: string
+  count: number
+}
+
+export function unlinkedByTeam(
+  rows: TonightRow[],
+  linkedPlayerIds: ReadonlySet<string> | null,
+): UnlinkedTeamCount[] {
+  // Unknown is not a list. A read in flight or a failed read must never
+  // render as "no team is missing anybody".
+  if (linkedPlayerIds === null) return []
+  const byPlayer = new Map<string, TonightRow>()
+  for (const r of rows) if (!byPlayer.has(r.playerId)) byPlayer.set(r.playerId, r)
+  const gaps = new Map<string, number>()
+  for (const r of byPlayer.values()) {
+    if (r.manual) continue
+    if (linkedPlayerIds.has(r.playerId) || r.response !== null) continue
+    // A covered child always carries their team's name; the fallback keeps
+    // the breakdown summing to the coverage line even for a row that does
+    // not.
+    const key = r.teamName ?? 'No team'
+    gaps.set(key, (gaps.get(key) ?? 0) + 1)
+  }
+  return [...gaps.entries()]
+    .map(([teamName, count]) => ({ teamName, count }))
+    .sort((a, b) => b.count - a.count || a.teamName.localeCompare(b.teamName))
+}
+
+// The breakdown as the one line the screen prints, empty when there is
+// nothing to say: a fully linked squad, and an unknown link set, both
+// deserve silence rather than a claim.
+export function tonightUnlinkedNote(
+  rows: TonightRow[],
+  linkedPlayerIds: ReadonlySet<string> | null,
+): string {
+  const teams = unlinkedByTeam(rows, linkedPlayerIds)
+  if (teams.length === 0) return ''
+  return `Not linked: ${teams.map((t) => `${t.teamName} ${t.count}`).join(' · ')}`
 }
 
 // The number on one chip, read out of the canonical model.
@@ -860,7 +967,7 @@ export function tonightUpsertRows(changes: TonightChange[], clubId: string | nul
   if (changes.length === 0) return []
   // A row with no club is a row RLS refuses, so fail here with something
   // a coach can read rather than at the database with a policy error.
-  if (!clubId) throw new Error('You must be signed in to save tonight s groups.')
+  if (!clubId) throw new Error('You must be signed in to save the groups.')
   return changes.map((c) => {
     const row: TonightUpsertRow = { session_id: c.sessionId, player_id: c.playerId, club_id: clubId }
     // Only the fields this change moved. Omitting a key leaves the stored

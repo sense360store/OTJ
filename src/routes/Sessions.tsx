@@ -293,7 +293,7 @@ export function Sessions() {
           <h2>Sessions</h2>
           <div className="sub">
             {canPlan
-              ? `Training coming up across the club, including tonight's after it has finished. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds earlier days.`
+              ? `Training coming up across the club, including today's after it has finished. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds earlier days.`
               : hasTeam
                 ? "Your team's training nights."
                 : 'Training nights across the club.'}

@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QuickAddView, TonightCardView, TonightRowView, TonightScreenView } from './SessionRegister'
-import { SAVE_LABELS, saveState, tonightCounts, tonightSummary, usableFilter } from '../lib/tonight'
+import { PLAYERS_GROUPS_TITLE, SAVE_LABELS, saveState, tonightCounts, tonightSummary, usableFilter } from '../lib/tonight'
 import { buildTonightRows, draftFromEntries, selectAll, setDraftBib, type TonightRow } from '../lib/tonight'
 import { buildRegister, type RegisterEntry } from '../lib/register'
 import type { Player, Team } from '../lib/data'
@@ -63,6 +63,7 @@ const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) => 
       eventNote="Titans Tuesday"
       staleNote={null}
       linkNote=""
+      unlinkedNote=""
       audienceNote=""
       refreshing={false}
       refreshFailed={false}
@@ -158,7 +159,7 @@ describe('the row', () => {
     const html = renderToStaticMarkup(
       <TonightRowView row={one} included={false} present={false} onPresent={() => {}} bib="" canEdit onToggle={noop} onBib={noop} />,
     )
-    expect(html).toContain("aria-label=\"Include Alpha Synthetic in tonight&#x27;s groups\"")
+    expect(html).toContain('aria-label="Include Alpha Synthetic in the groups"')
     expect(html).not.toMatch(/Mark .* present/)
     expect(html).not.toContain('Arrived')
   })
@@ -300,13 +301,14 @@ describe('Spond, inside Tonight rather than beside it', () => {
 })
 
 describe('the session day card', () => {
-  it('is Tonight, and says what state the night is in', () => {
+  it('is Players & groups, and says what state the night is in', () => {
     const html = renderToStaticMarkup(
       <TonightCardView summary="12 expected · 10 selected · 2 groups" note="" onOpen={noop} />,
     )
-    expect(html).toContain('Tonight')
+    expect(html).toContain('Players &amp; groups')
     expect(html).toContain('12 expected · 10 selected · 2 groups')
     expect(html).not.toContain('Register')
+    expect(html).not.toContain('Tonight')
   })
 
   it('summarises expected, selected and groups', () => {
@@ -316,9 +318,127 @@ describe('the session day card', () => {
   })
 
   it('never presents a failed read as a confident zero', () => {
-    const html = renderToStaticMarkup(<TonightCardView summary="Could not load tonight" note="" onOpen={noop} />)
-    expect(html).toContain('Could not load tonight')
+    const html = renderToStaticMarkup(<TonightCardView summary="Could not load the player list" note="" onOpen={noop} />)
+    expect(html).toContain('Could not load the player list')
     expect(html).not.toContain('0 selected')
+  })
+})
+
+// ---- The surface is named for its job, not for a time of day ---------
+//
+// Training happens at 10:00 on a Saturday as often as 18:00 on a Tuesday,
+// and a coach organises a session days before or after it runs. "Tonight"
+// was wrong for all of those, so the surface is Players & groups
+// everywhere and for every session. The title takes no date and no clock:
+// there is no code path that could render a different name for a morning,
+// evening, past or future session, and the card and the opened screen
+// share one constant so they cannot diverge.
+
+describe('the surface name', () => {
+  it('is Players & groups, with no time of day in it', () => {
+    expect(PLAYERS_GROUPS_TITLE).toBe('Players & groups')
+    expect(PLAYERS_GROUPS_TITLE.toLowerCase()).not.toContain('tonight')
+    expect(PLAYERS_GROUPS_TITLE.toLowerCase()).not.toContain('morning')
+    expect(PLAYERS_GROUPS_TITLE.toLowerCase()).not.toContain('evening')
+  })
+
+  it('renders on the card identically whatever the session s date or time', () => {
+    // The card view takes no session at all, which is the structural form
+    // of tests 1 to 4: a 10:00 session, an 18:00 session, last week's and
+    // next month's all render this exact component with this exact title.
+    const html = renderToStaticMarkup(<TonightCardView summary="9 in the squad · 0 selected" note="" onOpen={noop} />)
+    expect(html).toContain('Players &amp; groups')
+    expect(html).not.toContain('Tonight')
+  })
+
+  it('never says tonight anywhere on the operational screen, groups included', () => {
+    // Case insensitive, because a review mutation parked "Tonight's
+    // Groups" in a heading and the capital-T checks stayed green.
+    for (const filter of ['going', 'all'] as const) {
+      expect(screen({ filter }).toLowerCase()).not.toContain('tonight')
+    }
+    expect(screen({ rows: [], unset: true }).toLowerCase()).not.toContain('tonight')
+    // With a child included the Groups section renders too, which is
+    // where that mutation lived: the fixtures above include nobody, so
+    // the section was never in the checked markup.
+    const draft = draftFromEntries([])
+    draft.included.p1 = true
+    const withGroups = screen({ draft })
+    expect(withGroups).toContain('Groups')
+    expect(withGroups.toLowerCase()).not.toContain('tonight')
+  })
+})
+
+// ---- The bib control says the colour, not a phrase to decode ---------
+//
+// "Team bib" asked a coach in the rain to remember what the team default
+// was. The inherit option now says the colour it resolves to, and stays
+// the empty select value, so displaying "Red (team)" stores nothing: an
+// untouched row keeps following the team when the default changes later.
+
+describe('the bib select a coach reads on the pitch', () => {
+  const one = rows()[0]
+
+  it('labels the inherit option with the team s actual colour', () => {
+    // Alpha Synthetic is on Titans, whose default is red.
+    const html = renderToStaticMarkup(
+      <TonightRowView row={one} included={false} present={false} onPresent={noop} bib="" canEdit onToggle={noop} onBib={noop} />,
+    )
+    expect(html).toMatch(/<option value=""( selected="")?>Red \(team\)<\/option>/)
+    expect(html).not.toContain('Team bib')
+  })
+
+  it('is honest when the team has no default colour', () => {
+    const trojan = buildTonightRows(
+      buildRegister([player('p9', 'Delta Synthetic', 't2')], ['t2'], teams, [], false),
+      teams,
+      {},
+    )[0]
+    const html = renderToStaticMarkup(
+      <TonightRowView row={trojan} included={false} present={false} onPresent={noop} bib="" canEdit onToggle={noop} onBib={noop} />,
+    )
+    expect(html).toMatch(/<option value=""( selected="")?>No team colour<\/option>/)
+    expect(html).not.toContain('Team bib')
+  })
+
+  it('keeps the inherit option s value empty, so showing the colour stores nothing', () => {
+    // The storage semantic the label must not disturb: an untouched row
+    // sends '' which the container reads as null, meaning inherit. If the
+    // option carried the colour as its value, rendering the label would
+    // have turned inheritance into an override.
+    const html = renderToStaticMarkup(
+      <TonightRowView row={one} included={false} present={false} onPresent={noop} bib="" canEdit onToggle={noop} onBib={noop} />,
+    )
+    expect(html).toMatch(/<option value=""[^>]*>Red \(team\)<\/option>/)
+    expect(html).not.toMatch(/<option value="red"[^>]*>Red \(team\)<\/option>/)
+  })
+
+  it('marks the inherit option selected on an untouched row', () => {
+    const html = renderToStaticMarkup(
+      <TonightRowView row={one} included={false} present={false} onPresent={noop} bib="" canEdit onToggle={noop} onBib={noop} />,
+    )
+    const options = html.match(/<option[^>]*selected[^>]*>/g) ?? []
+    expect(options).toHaveLength(1)
+    expect(options[0]).toContain('value=""')
+  })
+
+  it('shows an explicit override as the bare colour, not as the team s', () => {
+    const html = renderToStaticMarkup(
+      <TonightRowView row={one} included={false} present={false} onPresent={noop} bib="yellow" canEdit onToggle={noop} onBib={noop} />,
+    )
+    const options = html.match(/<option[^>]*selected[^>]*>[^<]*/g) ?? []
+    expect(options).toHaveLength(1)
+    expect(options[0]).toContain('Yellow')
+    expect(options[0]).not.toContain('(team)')
+  })
+
+  it('offers No bib as the explicit nothing', () => {
+    const html = renderToStaticMarkup(
+      <TonightRowView row={one} included={false} present={false} onPresent={noop} bib="none" canEdit onToggle={noop} onBib={noop} />,
+    )
+    const options = html.match(/<option[^>]*selected[^>]*>[^<]*/g) ?? []
+    expect(options).toHaveLength(1)
+    expect(options[0]).toContain('No bib')
   })
 })
 
@@ -372,6 +492,7 @@ describe('no filter or selection writes anything', () => {
         eventNote=""
         staleNote={null}
         linkNote=""
+        unlinkedNote=""
         audienceNote=""
         refreshing={false}
         refreshFailed={false}
@@ -666,5 +787,93 @@ describe('a session whose coverage was never set', () => {
 
   it('says what to do about it instead of showing a number it cannot back', () => {
     expect(screen({ rows: [], unset: true })).toContain('Choose the teams it covers')
+  })
+})
+
+// =====================================================================
+// The acceptance case: the linked 15 August Training session.
+//
+// Production, read only, on 2026-08-15. The session ran at 10:00, a
+// morning, which is why the surface is no longer called Tonight. In
+// production it covered all five teams; the fixture keeps the same
+// totals over two synthetic ones: 40 registered players, 27 linked, 27
+// stored replies for the event: 12 accepted, 11 declined, 4 unanswered,
+// 0 waiting. The event's own aggregate was 20 accepted, 18 declined,
+// 11 unanswered over a 49 person audience.
+//
+// Names are synthetic. No real child appears in this repo.
+// =====================================================================
+const AUGUST_15 = (() => {
+  const out: Player[] = []
+  const rsvpByPlayer: Record<string, { status: 'accepted' | 'declined' | 'unanswered' | 'waiting'; syncedAt: string }> =
+    {}
+  const at = new Date().toISOString()
+  const replies = [
+    ...Array<'accepted'>(12).fill('accepted'),
+    ...Array<'declined'>(11).fill('declined'),
+    ...Array<'unanswered'>(4).fill('unanswered'),
+  ]
+  for (let i = 0; i < 40; i++) {
+    const id = `aug15-${i}`
+    out.push(player(id, `Player ${String(i).padStart(2, '0')} Synthetic`, i % 2 === 0 ? 't1' : 't2'))
+    if (i < replies.length) rsvpByPlayer[id] = { status: replies[i], syncedAt: at }
+  }
+  return {
+    rows: buildTonightRows(buildRegister(out, ['t1', 't2'], teams, [], false), teams, rsvpByPlayer),
+  }
+})()
+
+describe('the linked 15 August Training session, as the coach opens it', () => {
+  const chip = (html: string, label: string) => {
+    const m = html.match(new RegExp(`>${label} (\\d+)</button>`))
+    return m ? Number(m[1]) : null
+  }
+
+  it('shows the stored player replies, 12 4 11 0 over 40', () => {
+    const html = screen({ rows: AUGUST_15.rows })
+    expect(chip(html, 'Going')).toBe(12)
+    expect(chip(html, 'No reply')).toBe(4)
+    expect(chip(html, 'Not going')).toBe(11)
+    expect(chip(html, 'Waiting')).toBe(0)
+    expect(chip(html, 'Everyone')).toBe(40)
+  })
+
+  it('lists exactly as many players as each chip claims', () => {
+    for (const [label, filter] of [
+      ['Going', 'going'],
+      ['No reply', 'unanswered'],
+      ['Not going', 'declined'],
+      ['Waiting', 'waiting'],
+      ['Everyone', 'all'],
+    ] as const) {
+      const html = screen({ rows: AUGUST_15.rows, filter })
+      expect(names(html)).toHaveLength(chip(html, label) as number)
+    }
+  })
+
+  it('never puts the 49 person audience or its split on a chip', () => {
+    const html = screen({ rows: AUGUST_15.rows })
+    expect(html).not.toContain('>Going 20<')
+    expect(html).not.toContain('>Not going 18<')
+    expect(html).not.toContain('>No reply 11<')
+    expect(html).not.toContain('>Everyone 49<')
+  })
+
+  it('says the size of the linking gap and where it lives', () => {
+    const html = screen({
+      rows: AUGUST_15.rows,
+      linkNote: '27 of 40 players linked to Spond · 13 not linked',
+      unlinkedNote: 'Not linked: Argonauts 8 · Trojans 5',
+      onLinkPlayers: noop,
+    })
+    expect(html).toContain('27 of 40 players linked to Spond · 13 not linked')
+    expect(html).toContain('Not linked: Argonauts 8 · Trojans 5')
+    // The direct action to resolve it, beside the sentence naming it.
+    expect(html).toContain('Link players')
+  })
+
+  it('shows no team breakdown when there is nothing to say', () => {
+    const html = screen({ rows: AUGUST_15.rows, unlinkedNote: '' })
+    expect(html).not.toContain('Not linked:')
   })
 })

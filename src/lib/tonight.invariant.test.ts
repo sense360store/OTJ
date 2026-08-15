@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { RESPONSE_FILTER_LABELS, RESPONSE_FILTERS } from './tonight'
+import { PLAYERS_GROUPS_TITLE, RESPONSE_FILTER_LABELS, RESPONSE_FILTERS } from './tonight'
 
 const SRC = join(import.meta.dirname, '..')
 
@@ -191,10 +191,12 @@ describe('Tonight counts people in exactly one place', () => {
   it('hands the builder a link set that may be unknown, so zero is never guessed', () => {
     // null means the link set could not be read. Collapsing it to an empty
     // set would print "0 of 40 players linked to Spond" at a club that has
-    // linked everybody and simply had a slow read.
+    // linked everybody and simply had a slow read. The screen no longer
+    // decides this itself: linkSetFromRead holds the rule, including the
+    // paused state the inline version misread as known empty.
     const src = read(SCREEN)
-    expect(src).toMatch(/linksUsable \?[^\n]*new Set\(/)
-    expect(src).toMatch(/:\s*null/)
+    expect(src).toMatch(/linkedIds = linkSetFromRead\(/)
+    expect(src).toMatch(/tonightCounts\(rows, live, linkedIds\)/)
   })
 })
 
@@ -227,6 +229,16 @@ describe('the bib rule stays centralised', () => {
       .filter((f) => /export function effectiveBib/.test(read(f)))
     expect(offenders).toEqual([])
   })
+
+  it('labels the inherit option with the team s colour and stores nothing for it', () => {
+    // "Team bib" made a coach in the rain remember the default. The label
+    // now says the colour, and the option's VALUE stays empty: rendering
+    // "Blue (team)" must never persist blue as an override, so the label
+    // and the sentinel are pinned together.
+    const src = read('routes/SessionRegister.tsx')
+    expect(src).toMatch(/<option value="">\{bibInheritLabel\(row\.teamBib\)\}<\/option>/)
+    expect(code(src)).not.toMatch(/Team bib/)
+  })
 })
 
 describe('the product no longer calls this a register', () => {
@@ -248,10 +260,46 @@ describe('the product no longer calls this a register', () => {
   // the word, which was a claim about the product, not about the wording.
   const USER_FACING = ['routes/SessionRegister.tsx', 'routes/SessionDay.tsx']
 
-  it('shows Tonight as the title and the card', () => {
+  it('shows Players & groups as the title and the card, from one constant', () => {
+    // One constant for both, so the Session Day card and the opened
+    // screen cannot drift into two names for one surface.
     const src = read('routes/SessionRegister.tsx')
-    expect(src).toMatch(/<h2>Tonight<\/h2>/)
-    expect(src).toMatch(/reg-card-title">Tonight/)
+    expect(src).toMatch(/<h2>\{PLAYERS_GROUPS_TITLE\}<\/h2>/)
+    expect(src).toMatch(/reg-card-title">\{PLAYERS_GROUPS_TITLE\}/)
+    expect(PLAYERS_GROUPS_TITLE).toBe('Players & groups')
+  })
+
+  it('never names the surface after a time of day again', () => {
+    // Training runs at 10:00 on a Saturday as often as 18:00 on a
+    // Tuesday, and a session is organised days either side of it. The
+    // internal module keeps the Tonight name (file names and identifiers
+    // are not user visible); what must not survive is the word reaching
+    // a user, so every string literal and every piece of JSX text on the
+    // two user facing files is checked. Import paths carry a slash and
+    // are excused, which is why the class excludes one.
+    for (const f of USER_FACING) {
+      const src = code(read(f))
+      expect(src).not.toMatch(/>\s*Tonight\s*</)
+      expect(src).not.toMatch(/['"`][^'"`\n/]*\btonight\b[^'"`\n/]*['"`]/i)
+    }
+    // The model's own user visible strings: the save error and the notes.
+    expect(code(read('lib/tonight.ts'))).not.toMatch(/['"`][^'"`\n/]*\btonight\b[^'"`\n/]*['"`]/i)
+  })
+
+  it('keeps every reworded screen free of tonight, as a literal or as JSX text', () => {
+    // The rename reached beyond the surface itself: the parent dashboard
+    // and the sessions list said the word too, and a review mutation put
+    // both back with the whole suite green, because the scan above covers
+    // two files, quoted literals, and the one exact bare form. Bare JSX
+    // text has no quotes, so it needs its own shape, and the two extra
+    // files need scanning at all. Case insensitive throughout: the same
+    // review parked "Tonight's Groups" in a heading unseen.
+    const TIME_NEUTRAL = [...USER_FACING, 'routes/ParentHome.tsx', 'routes/Sessions.tsx']
+    for (const f of TIME_NEUTRAL) {
+      const src = code(read(f))
+      expect(src, f).not.toMatch(/['"`][^'"`\n/]*\btonight\b[^'"`\n/]*['"`]/i)
+      expect(src, f).not.toMatch(/>[^<>{}\n]*\btonight\b[^<>{}\n]*</i)
+    }
   })
 
   for (const f of USER_FACING) {
@@ -263,9 +311,9 @@ describe('the product no longer calls this a register', () => {
     })
   }
 
-  it('labels the row target as inclusion in tonight s groups, not as arrival', () => {
+  it('labels the row target as inclusion in the groups, not as arrival', () => {
     const src = read('routes/SessionRegister.tsx')
-    expect(src).toMatch(/Include \$\{row\.displayName\} in tonight/)
+    expect(src).toMatch(/Include \$\{row\.displayName\} in the groups/)
     // The row target must never be the thing that records attendance.
     const rowButton = src.slice(src.indexOf('className="reg-tick"'), src.indexOf('</button>'))
     expect(rowButton).toMatch(/onClick=\{onToggle\}/)
@@ -486,5 +534,28 @@ describe('the Spond event aggregate is never a player RSVP, on any screen', () =
     const src = code(read('routes/AdminSpond.tsx'))
     expect(src).toMatch(/useSpondEventResponseCounts\(/)
     expect(src).not.toMatch(/\bspondAudience\(/)
+  })
+})
+
+describe('the screen believes a read only once it has answered', () => {
+  // A query that never dispatched (offline and paused, or disabled while
+  // its gate loads) reports isLoading false and isError false with no
+  // data, and the container once read exactly that as a KNOWN EMPTY link
+  // set: "0 of 40 players linked · 40 not linked", pitch side, from a
+  // read that never ran. The rule now lives in ../lib/tonight where its
+  // tests can hold it; what this pins is that the container calls it and
+  // does not grow an inline copy back. The rendered half is
+  // ../routes/sessionRegister.screens.test.tsx, which puts the paused
+  // state through the real container.
+  it('derives the link set and the reply settledness through the shared rules', () => {
+    const src = code(read('routes/SessionRegister.tsx'))
+    expect(src).toMatch(/linkSetFromRead\(/)
+    expect(src).toMatch(/responsesKnownFromRead\(/)
+  })
+
+  it('never reads the link flags inline again', () => {
+    const src = code(read('routes/SessionRegister.tsx'))
+    expect(src).not.toMatch(/available\s*!==\s*false/)
+    expect(src).not.toMatch(/new Set\([^)]*links/)
   })
 })

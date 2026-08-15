@@ -33,12 +33,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   countByResponse,
+  linkSetFromRead,
+  responsesKnownFromRead,
   tonightCounts,
   tonightLinkNote,
+  tonightUnlinkedNote,
+  unlinkedByTeam,
   visibleRows,
   draftFromEntries,
   quickAdd,
   toggleIncluded,
+  RESPONSE_FILTERS,
   type TonightDraft,
   type TonightRow,
 } from './tonight'
@@ -227,10 +232,10 @@ describe('a linked player with no reply stored for this event', () => {
     expect(tonightLinkNote(counts, true)).toMatch(/27 of 40/)
   })
 
-  it('says nothing extra when every linked player has a reply', () => {
+  it('adds no reply clause when every linked player has a reply', () => {
     const full = tonightCounts(squad().rows, EMPTY, squad().linkedIds)
     expect(full.awaiting).toBe(0)
-    expect(tonightLinkNote(full, true)).toBe('27 of 40 players linked to Spond')
+    expect(tonightLinkNote(full, true)).toBe('27 of 40 players linked to Spond · 13 not linked')
   })
 })
 
@@ -284,7 +289,7 @@ describe('a player outside this session s coverage', () => {
     expect(counts.covered).toBe(5)
     expect(counts.linked).toBe(3)
     expect(counts.unlinked).toBe(2)
-    expect(tonightLinkNote(counts, true)).toBe('3 of 5 players linked to Spond')
+    expect(tonightLinkNote(counts, true)).toBe('3 of 5 players linked to Spond · 2 not linked')
   })
 })
 
@@ -334,7 +339,7 @@ describe('a quick added guest', () => {
     expect(counts.covered).toBe(4)
     expect(counts.linked).toBe(2)
     expect(counts.guests).toBe(1)
-    expect(tonightLinkNote(counts, true)).toBe('2 of 4 players linked to Spond')
+    expect(tonightLinkNote(counts, true)).toBe('2 of 4 players linked to Spond · 2 not linked')
   })
 
   it('is selected, because that is why the coach added them', () => {
@@ -521,7 +526,9 @@ describe('a linked event that has no stored replies at all', () => {
   })
 
   it('says the replies are missing rather than implying nobody is coming', () => {
-    expect(tonightLinkNote(counts, true)).toBe('27 of 40 players linked to Spond · 0 with a reply for this event')
+    expect(tonightLinkNote(counts, true)).toBe(
+      '27 of 40 players linked to Spond · 13 not linked · 0 with a reply for this event',
+    )
   })
 
   it('does not report a zero Going as a fact about the squad', () => {
@@ -550,7 +557,7 @@ describe('while the replies are still unknown', () => {
   const counts = tonightCounts(rows, EMPTY, linkedIds)
 
   it('claims no reply figure at all', () => {
-    expect(tonightLinkNote(counts, false)).toBe('27 of 40 players linked to Spond')
+    expect(tonightLinkNote(counts, false)).toBe('27 of 40 players linked to Spond · 13 not linked')
   })
 
   it('still states the link coverage, which the reply read does not affect', () => {
@@ -600,5 +607,231 @@ describe('selected matches what a save would store', () => {
     expect(tonightCounts(rows, draft, linkedIds).selected).toBe(3)
     const after = toggleIncluded(draft, rows[0].playerId)
     expect(tonightCounts(rows, after, linkedIds).selected).toBe(2)
+  })
+})
+
+// ---- 15. The 15 August morning session, reconciled -------------------
+//
+// Production, read only, on 2026-08-15. The one Hub session that day was
+// Training at 10:00, covering all five teams: 40 registered players, 27
+// of them bound to a Spond member, the gap concentrated in two teams
+// (8 and 5 children). The linked Spond event's own aggregate was 20
+// accepted, 18 declined, 11 unanswered, 0 waiting, an audience of 49
+// people. The stored replies for the event were 12 accepted, 11 declined,
+// 4 unanswered, 0 waiting, exactly one per linked member.
+//
+// 12 + 4 + 11 + 0 = 27, which is the linked set, not an error. The sync
+// derives the aggregate and the per member rows from the SAME four payload
+// arrays (supabase/functions/_shared/spond.ts, deriveCounts and
+// deriveMemberStatuses), differing only by the linked filter, so the two
+// splits cannot disagree about a member. What was missing on screen was
+// the size of the gap and where it lives, which the notes below now say.
+//
+// Names in fixtures are synthetic. No real child appears in this repo.
+
+describe('the 15 August morning session', () => {
+  const shape = { covered: 40, linked: 27, going: 12, notGoing: 11, noReply: 4, waiting: 0 }
+  const { rows, linkedIds } = squad(shape)
+  const counts = tonightCounts(rows, EMPTY, linkedIds)
+  const aggregate = event({ accepted: 20, declined: 18, unanswered: 11, waiting: 0 })
+
+  it('counts Everyone as the covered squad, 40', () => {
+    expect(counts.responses.everyone).toBe(40)
+  })
+
+  it('counts the four reply states as the stored linked replies, 12 4 11 0', () => {
+    expect(counts.responses.going).toBe(12)
+    expect(counts.responses.noReply).toBe(4)
+    expect(counts.responses.notGoing).toBe(11)
+    expect(counts.responses.waiting).toBe(0)
+  })
+
+  it('sums the reply states to the linked set, 27', () => {
+    const r = counts.responses
+    expect(r.going + r.noReply + r.notGoing + r.waiting).toBe(27)
+    expect(counts.linked).toBe(27)
+    expect(counts.withResponse).toBe(27)
+  })
+
+  it('keeps the 13 unlinked players out of every reply state', () => {
+    expect(counts.unlinked).toBe(13)
+    // An unlinked child is in Everyone and in none of the four states.
+    const unlinkedRow = rows.find((r) => !linkedIds.has(r.playerId))!
+    expect(visibleRows([unlinkedRow], 'all')).toHaveLength(1)
+    for (const f of ['going', 'unanswered', 'declined', 'waiting'] as const) {
+      expect(visibleRows([unlinkedRow], f)).toHaveLength(0)
+    }
+  })
+
+  it('never lets the 49 person audience near a chip', () => {
+    // 20, 18 and 49 are the aggregate's figures. The builder cannot even
+    // receive them: it takes rows and links only.
+    expect(spondAudience(aggregate)).toBe(49)
+    expect(counts.responses.going).not.toBe(aggregate.accepted)
+    expect(counts.responses.notGoing).not.toBe(aggregate.declined)
+    expect(counts.responses.everyone).not.toBe(spondAudience(aggregate))
+    expect(spondAudienceNote(aggregate)).toBe('Spond audience: 49 people invited')
+  })
+
+  it('says both halves of the coverage sentence', () => {
+    expect(tonightLinkNote(counts, true)).toBe('27 of 40 players linked to Spond · 13 not linked')
+  })
+
+  it('gives every chip exactly the rows that chip lists', () => {
+    for (const f of RESPONSE_FILTERS) {
+      const chips = countByResponse(rows)
+      expect(visibleRows(rows, f)).toHaveLength(chips[f])
+    }
+  })
+
+  it('is indifferent to row order, so sorting can never change a count', () => {
+    const reversed = [...rows].reverse()
+    const rotated = [...rows.slice(17), ...rows.slice(0, 17)]
+    for (const variant of [reversed, rotated]) {
+      const c = tonightCounts(variant, EMPTY, linkedIds)
+      expect(c).toEqual(counts)
+      for (const f of RESPONSE_FILTERS) {
+        expect(visibleRows(variant, f)).toHaveLength(visibleRows(rows, f).length)
+      }
+    }
+  })
+})
+
+// ---- 16. Where the gap lives, so a coach is not left hunting ---------
+//
+// "27 of 40 linked" tells a coach the size of the problem and nothing
+// about where to fix it. On an all team session the linking screen then
+// asks them to guess which teams hold the 13. The breakdown names the
+// teams, from the same rows and the same link set the coverage line uses,
+// so the two can never disagree.
+
+describe('unlinkedByTeam', () => {
+  const teamRow = (id: string, teamName: string, over: Partial<TonightRow> = {}) =>
+    row(id, { teamId: teamName.toLowerCase(), teamName, ...over })
+
+  // The 15 August shape in miniature: two teams fully linked, two with
+  // gaps of different sizes.
+  const rows15 = [
+    teamRow('a1', 'Argonauts'),
+    teamRow('a2', 'Argonauts'),
+    teamRow('a3', 'Argonauts'),
+    teamRow('t1', 'Trojans'),
+    teamRow('t2', 'Trojans'),
+    teamRow('s1', 'Spartans', { response: 'accepted' }),
+    teamRow('s2', 'Spartans'),
+  ]
+  const linked = new Set(['a3', 's1', 's2'])
+
+  it('counts the unlinked players per team, largest gap first', () => {
+    expect(unlinkedByTeam(rows15, linked)).toEqual([
+      { teamName: 'Argonauts', count: 2 },
+      { teamName: 'Trojans', count: 2 },
+    ])
+  })
+
+  it('orders two equal gaps by name, so the list is stable', () => {
+    const out = unlinkedByTeam(rows15, linked)
+    expect(out.map((t) => t.teamName)).toEqual(['Argonauts', 'Trojans'])
+  })
+
+  it('sums to exactly the unlinked figure the coverage line prints', () => {
+    const total = unlinkedByTeam(rows15, linked).reduce((n, t) => n + t.count, 0)
+    expect(total).toBe(tonightCounts(rows15, EMPTY, linked).unlinked)
+  })
+
+  it('treats a stored reply as proof of a link, exactly as the counts do', () => {
+    // A row carrying a reply is linked even when the link read has not
+    // caught up, so the breakdown cannot exceed the coverage line.
+    const stale = [teamRow('x1', 'Titans', { response: 'declined' })]
+    expect(unlinkedByTeam(stale, new Set())).toEqual([])
+  })
+
+  it('skips a quick added guest, who is not part of the covered squad', () => {
+    const withGuest = [...rows15, teamRow('g1', 'Gladiators', { manual: true })]
+    expect(unlinkedByTeam(withGuest, linked).find((t) => t.teamName === 'Gladiators')).toBeUndefined()
+  })
+
+  it('counts a duplicated row once', () => {
+    const doubled = [...rows15, rows15[0]]
+    expect(unlinkedByTeam(doubled, linked)).toEqual(unlinkedByTeam(rows15, linked))
+  })
+
+  it('claims nothing when the link set is unknown', () => {
+    // A read in flight or a failed read must not render as "everyone is
+    // linked" or as "nobody is": there is no list to make.
+    expect(unlinkedByTeam(rows15, null)).toEqual([])
+  })
+})
+
+describe('tonightUnlinkedNote', () => {
+  const teamRow = (id: string, teamName: string, over: Partial<TonightRow> = {}) =>
+    row(id, { teamId: teamName.toLowerCase(), teamName, ...over })
+  const rows15 = [
+    teamRow('a1', 'Argonauts'),
+    teamRow('a2', 'Argonauts'),
+    teamRow('t1', 'Trojans'),
+    teamRow('s1', 'Spartans', { response: 'accepted' }),
+  ]
+  const linked = new Set(['s1'])
+
+  it('names the teams holding the gap', () => {
+    expect(tonightUnlinkedNote(rows15, linked)).toBe('Not linked: Argonauts 2 · Trojans 1')
+  })
+
+  it('says nothing when everyone is linked', () => {
+    expect(tonightUnlinkedNote(rows15, new Set(['a1', 'a2', 't1', 's1']))).toBe('')
+  })
+
+  it('says nothing when the link set is unknown, rather than zero missing', () => {
+    expect(tonightUnlinkedNote(rows15, null)).toBe('')
+  })
+})
+
+// ---- What a read is allowed to prove ---------------------------------
+//
+// The container once decided this inline from isLoading and isError, and
+// a query has a third quiet state those two cannot see: never dispatched
+// at all, offline before the first fetch or disabled while its gate
+// loads. isLoading and isError are both false there and data is absent,
+// and the inline rule read that as a KNOWN EMPTY link set, printing
+// "0 of 40 players linked · 40 not linked" pitch side from a read that
+// never ran. Data in hand is the only proof a read has answered.
+
+describe('a read that has not answered is unknown, never empty', () => {
+  const answered = {
+    data: { available: true, links: [{ playerId: 'p1' }] },
+    isLoading: false,
+    isError: false,
+  }
+
+  it('turns an answered read into the link set, and an answered reply read into settled', () => {
+    expect(linkSetFromRead(answered, true)).toEqual(new Set(['p1']))
+    expect(responsesKnownFromRead({ data: {}, isLoading: false, isError: false }, true)).toBe(true)
+  })
+
+  it('an empty answer is an answer: a club with no links yet reads as zero, honestly', () => {
+    const set = linkSetFromRead({ data: { available: true, links: [] }, isLoading: false, isError: false }, true)
+    expect(set).toEqual(new Set())
+  })
+
+  it('reads a paused query, which is neither loading nor failed, as unknown', () => {
+    const paused = { data: undefined, isLoading: false, isError: false }
+    expect(linkSetFromRead(paused, true)).toBeNull()
+    expect(responsesKnownFromRead(paused, true)).toBe(false)
+  })
+
+  it('reads in flight, failed reads and an absent migration as unknown', () => {
+    expect(linkSetFromRead({ data: undefined, isLoading: true, isError: false }, true)).toBeNull()
+    expect(linkSetFromRead({ data: undefined, isLoading: false, isError: true }, true)).toBeNull()
+    expect(
+      linkSetFromRead({ data: { available: false, links: [] }, isLoading: false, isError: false }, true),
+    ).toBeNull()
+    expect(responsesKnownFromRead({ data: undefined, isLoading: true, isError: false }, true)).toBe(false)
+    expect(responsesKnownFromRead({ data: undefined, isLoading: false, isError: true }, true)).toBe(false)
+  })
+
+  it('claims nothing for a session with no Spond event', () => {
+    expect(linkSetFromRead(answered, false)).toBeNull()
+    expect(responsesKnownFromRead({ data: {}, isLoading: false, isError: false }, false)).toBe(false)
   })
 })
