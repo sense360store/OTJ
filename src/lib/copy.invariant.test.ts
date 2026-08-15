@@ -65,6 +65,9 @@ const code = (src: string) =>
 
 const MACHINE_TOKEN = /^[a-z0-9_/-]+$/
 const LITERAL = /(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g
+// Template literals separately, spanning newlines: a review parked a
+// multiline backtick string past the single line scan above.
+const TEMPLATE = /`((?:[^`\\]|\\[\s\S])*)`/g
 
 describe('no user-visible string says roster', () => {
   it('holds across the app and the Edge Function replies', () => {
@@ -77,6 +80,11 @@ describe('no user-visible string says roster', () => {
         const content = match[2]
         if (!/\broster\b/i.test(content)) continue
         expect(content, `${file}: "${content}"`).toMatch(MACHINE_TOKEN)
+      }
+      for (const match of src.matchAll(TEMPLATE)) {
+        const content = match[1]
+        if (!/\broster\b/i.test(content)) continue
+        expect(content, `${file}: \`${content}\``).toMatch(MACHINE_TOKEN)
       }
     }
   })

@@ -29,34 +29,48 @@ describe('SpondLinks hands the section builder the scoped pool, never the roster
     expect(src).toMatch(/rosterFor = useCallback\(\s*\(id[^)]*\)\s*=>\s*suggestionPool\(/)
   })
 
-  it('feeds buildLinkSections from rosterFor and nothing wider', () => {
+  it('feeds the toolbar suggestions from rosterFor and nothing wider', () => {
     expect(src).toMatch(/teamRoster = useMemo\(\(\) => rosterFor\(teamId\)/)
     expect(src).toMatch(/buildLinkSections\(candidates \?\? \[\], allLinks, teamRoster\)/)
   })
 
-  it('composes the no-match section from the same three inputs the sections read', () => {
+  it('hands the view the same raw inputs, and completeness through the shared rule', () => {
     // Eleven children were invisible on this screen because no section
-    // was player led. The list of registered players with no Spond match
-    // must come from the shared rule over exactly the inputs the
-    // sections read, or the two could disagree about who is reachable.
-    expect(src).toMatch(/unmatchedPlayers\(candidates \?\? \[\], allLinks, teamRoster\)/)
+    // was player led, and the FIRST fix left the composition in the
+    // container, where a review hardcoded the list to [] with the whole
+    // suite green. The view composes internally now (its render tests
+    // are the wiring tests); what the container owns is handing it the
+    // scoped pool and a completeness the shared rule decided, never a
+    // literal.
+    expect(src).toMatch(/pool=\{teamRoster\}/)
+    expect(src).toMatch(/candidates=\{candidates \?\? \[\]\}/)
+    expect(src).toMatch(/complete=\{loadedTeam \? linkLoadComplete\(loadedTeam\) : false\}/)
+  })
+
+  it('the view composes both halves from its own props', () => {
+    expect(src).toMatch(/const sections = buildLinkSections\(candidates, links, pool\)/)
+    expect(src).toMatch(/const unmatched = unmatchedPlayers\(candidates, links, pool\)/)
   })
 })
 
 describe('staff never enter the player pipelines', () => {
-  // The rule lives in _shared/spond.ts (excludeNonPlayers) and its Deno
-  // tests prove it. These pin that both functions actually CALL it on the
-  // scoped members, since a call site that quietly stops calling a
-  // correct rule is exactly how the linking screen offered a manager as
-  // a candidate child. Source text, the usual tripwire honesty.
+  // The whole collection rule (exclusion before cap before reduction,
+  // warnings from counts) lives in _shared/spond.ts where the Deno tests
+  // execute it. These pin that both functions actually CALL it, since a
+  // call site that quietly stops calling a correct rule is exactly how
+  // the linking screen offered a manager as a candidate child. Source
+  // text, the usual tripwire honesty.
   const fn = (name: string) =>
     readFileSync(join(import.meta.dirname, `../../supabase/functions/${name}/index.ts`), 'utf8')
 
-  it('spond-link-members excludes before the cap and the reduction', () => {
-    expect(fn('spond-link-members')).toMatch(/excludeNonPlayers\(scoped, IGNORED_MEMBER_IDS\)/)
+  it('spond-link-members collects through the shared rule and returns its counts as data', () => {
+    const src = fn('spond-link-members')
+    expect(src).toMatch(/collectLinkCandidates\(groups\.groups, mappings, IGNORED_MEMBER_IDS\)/)
+    expect(src).toMatch(/staff_excluded: collected\.staff/)
+    expect(src).toMatch(/ignored_excluded: collected\.ignored/)
   })
 
-  it('spond-roster-import excludes before the plan is built', () => {
-    expect(fn('spond-roster-import')).toMatch(/excludeNonPlayers\(scoped, IGNORED_MEMBER_IDS\)/)
+  it('spond-roster-import collects through the shared rule', () => {
+    expect(fn('spond-roster-import')).toMatch(/collectRosterMembers\(groups\.groups, mappings, IGNORED_MEMBER_IDS\)/)
   })
 })

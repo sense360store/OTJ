@@ -66,13 +66,13 @@
 // =====================================================================
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
-  excludeNonPlayers,
+  collectRosterMembers,
   extractAccessToken,
   parseIgnoredMemberIds,
   planRosterImport,
   readCappedJson,
+  rosterCollectionWarnings,
   rosterMembersForCommit,
-  selectGroupMembers,
   SPOND_API_BASE,
   SPOND_MAX_BODY_BYTES,
   SPOND_TIMEOUT_MS,
@@ -258,36 +258,15 @@ Deno.serve(async (req) => {
   const groups = await spondGroups(login.token)
   if ('response' in groups) return groups.response
 
-  // Collect the members of every mapping for this team, each scoped to its
-  // subgroup. A mapping whose group the organiser account cannot see is
-  // reported as a warning, not a silent skip, and the rest continue.
-  // Staff (Spond role holders) and configured ignores are removed before
-  // the plan is built, so a coach in the subgroup can never be imported
-  // onto the player list as a child.
-  const members: unknown[] = []
-  const warnings: string[] = []
-  let staffExcluded = 0
-  let ignoredExcluded = 0
-  for (const mapping of mappings) {
-    const scoped = selectGroupMembers(groups.groups, mapping.spond_group_id, mapping.spond_subgroup_id)
-    if (scoped.length === 0) {
-      warnings.push(
-        `No members found for ${mapping.spond_name}. Check the Spond organiser account can see this group and that the subgroup has members.`,
-      )
-    }
-    const players = excludeNonPlayers(scoped, IGNORED_MEMBER_IDS)
-    staffExcluded += players.staff
-    ignoredExcluded += players.ignored
-    for (const member of players.members) members.push(member)
-  }
-  if (staffExcluded > 0) {
-    warnings.push(
-      `Skipped ${staffExcluded} Spond staff member${staffExcluded === 1 ? '' : 's'} (group role holders); staff are never imported as players.`,
-    )
-  }
-  if (ignoredExcluded > 0) {
-    warnings.push(`Skipped ${ignoredExcluded} member${ignoredExcluded === 1 ? '' : 's'} an admin has excluded.`)
-  }
+  // Collect the members of every mapping for this team, each scoped to
+  // its subgroup, with staff (Spond role holders) and configured ignores
+  // removed before the plan is built, so a coach in the subgroup can
+  // never be imported onto the player list as a child. The whole rule
+  // lives in ../_shared/spond.ts where the Deno tests hold it; a mapping
+  // whose group came back empty is a warning, not a silent skip.
+  const collected = collectRosterMembers(groups.groups, mappings, IGNORED_MEMBER_IDS)
+  const members = collected.members
+  const warnings = rosterCollectionWarnings(collected)
 
   // The names already registered on this team for the current season, read
   // through RLS, so the de-dupe matches on (club, season, team, display_name)

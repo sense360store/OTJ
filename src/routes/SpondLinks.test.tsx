@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { LinkSectionsView, LinkedRowView, NeedsDecisionRowView, PickerView, TeamChipsView } from './SpondLinks'
-import { buildLinkSections, type LinkCandidate, type SpondLink } from '../lib/spondLinking'
+import type { LinkCandidate, SpondLink } from '../lib/spondLinking'
 import type { RegisteredPlayer, Team } from '../lib/data'
 
 // The screen's presentational shells, rendered without hooks or a query
@@ -149,10 +149,11 @@ describe('LinkSectionsView', () => {
   const render = (candidates: LinkCandidate[], links: SpondLink[]) =>
     renderToStaticMarkup(
       <LinkSectionsView
-        sections={buildLinkSections(candidates, links, roster)}
+        candidates={candidates}
+        links={links}
+        pool={roster}
         busy={false}
         complete
-        unmatched={[]}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -184,10 +185,11 @@ describe('LinkSectionsView', () => {
   it('every row is disabled while a write is in flight, so one press cannot double write', () => {
     const html = renderToStaticMarkup(
       <LinkSectionsView
-        sections={buildLinkSections([candidate(M1, 'Alpha Synthetic')], [], roster)}
+        candidates={[candidate(M1, 'Alpha Synthetic')]}
+        links={[]}
+        pool={roster}
         complete
         busy
-        unmatched={[]}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -208,10 +210,11 @@ describe('an incomplete member list is never treated as evidence', () => {
   const incomplete = (candidates: LinkCandidate[], links: SpondLink[]) =>
     renderToStaticMarkup(
       <LinkSectionsView
-        sections={buildLinkSections(candidates, links, roster)}
+        candidates={candidates}
+        links={links}
+        pool={roster}
         busy={false}
         complete={false}
-        unmatched={[]}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -232,10 +235,11 @@ describe('an incomplete member list is never treated as evidence', () => {
   it('a complete list still surfaces a genuine orphan', () => {
     const html = renderToStaticMarkup(
       <LinkSectionsView
-        sections={buildLinkSections([candidate(M1, 'Alpha Synthetic')], [link(M2, 'p2')], roster)}
+        candidates={[candidate(M1, 'Alpha Synthetic')]}
+        links={[link(M2, 'p2')]}
+        pool={roster}
         busy={false}
         complete
-        unmatched={[]}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -255,13 +259,14 @@ describe('an incomplete member list is never treated as evidence', () => {
 // there was nothing left to do.
 
 describe('registered players with no Spond match', () => {
-  const withUnmatched = (unmatched: RegisteredPlayer[], complete = true) =>
+  const render = (candidates: LinkCandidate[], links: SpondLink[], pool: RegisteredPlayer[], complete = true) =>
     renderToStaticMarkup(
       <LinkSectionsView
-        sections={buildLinkSections([], [], roster)}
+        candidates={candidates}
+        links={links}
+        pool={pool}
         busy={false}
         complete={complete}
-        unmatched={unmatched}
         onAccept={noop}
         onChoose={noop}
         onUnlink={noop}
@@ -269,7 +274,10 @@ describe('registered players with no Spond match', () => {
     )
 
   it('names them, with a count, when the member list is complete', () => {
-    const html = withUnmatched([player('p3', 'Gamma Synthetic'), player('p4', 'Delta Synthetic')])
+    // The view composes the list itself from the raw inputs, so a
+    // container cannot hand it an empty list while the suite stays
+    // green, which a review demonstrated against the first version.
+    const html = render([], [], [player('p3', 'Gamma Synthetic'), player('p4', 'Delta Synthetic')])
     expect(html).toContain('Registered players with no Spond match (2)')
     expect(html).toContain('Gamma Synthetic')
     expect(html).toContain('Delta Synthetic')
@@ -278,13 +286,26 @@ describe('registered players with no Spond match', () => {
   })
 
   it('claims nothing from an incomplete list, where absence is not evidence', () => {
-    const html = withUnmatched([player('p3', 'Gamma Synthetic')], false)
+    const html = render([], [], [player('p3', 'Gamma Synthetic')], false)
     expect(html).not.toContain('Registered players with no Spond match')
     expect(html).not.toContain('Gamma Synthetic')
   })
 
   it('is absent when every registered player has a match', () => {
-    expect(withUnmatched([])).not.toContain('Registered players with no Spond match')
+    const html = render([candidate(M1, 'Alpha Synthetic'), candidate(M2, 'Beta Synthetic')], [], roster)
+    expect(html).not.toContain('Registered players with no Spond match')
+  })
+
+  it('surfaces the second of two same named children when the first is correctly linked', () => {
+    // The review's counterexample: one "Alex" candidate, correctly
+    // linked; a second Alex on the player list. The first version left
+    // the second child in no section at all.
+    const html = render(
+      [candidate(M1, 'Alex Synthetic')],
+      [link(M1, 'p5')],
+      [player('p5', 'Alex Synthetic'), player('p6', 'Alex Synthetic')],
+    )
+    expect(html).toContain('Registered players with no Spond match (1)')
   })
 })
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   acceptableSuggestions,
   buildLinkSections,
+  linkLoadComplete,
   normaliseName,
   pickerOptions,
   suggestionPool,
@@ -232,13 +233,41 @@ describe('unmatchedPlayers', () => {
     expect(out).toEqual([])
   })
 
-  it('does not list a child whose name matches a candidate already linked to somebody else', () => {
-    // That child is reachable on the screen: their name is on a member
-    // row, and the manager resolves it with Change. Calling them "no
-    // Spond match" would be false.
+  it('lists a child whose only same named candidate is already linked to somebody else', () => {
+    // The reachability rule: a child is matched only by a candidate a
+    // manager could still link, an UNLINKED one. A review found the
+    // first version of this rule excluded by name alone, which made two
+    // same named children, one correctly linked, hide the other in no
+    // section at all: Change would break the correct link, so that
+    // member is not a way to reach this child, and "no Spond match" is
+    // the honest description.
     const out = unmatchedPlayers(
       [candidate(M1, 'Alpha Synthetic')],
       [link(M1, 'p9')],
+      [player('p1', 'Alpha Synthetic')],
+    )
+    expect(out.map((p) => p.playerId)).toEqual(['p1'])
+  })
+
+  it('partitions two same named children: one linked, the other named as unmatched', () => {
+    // The review's concrete counterexample, pinned: with the shared
+    // name's one candidate correctly linked, the second child must not
+    // vanish between the sections.
+    const out = unmatchedPlayers(
+      [candidate(M1, 'Alex Synthetic')],
+      [link(M1, 'p1')],
+      [player('p1', 'Alex Synthetic'), player('p2', 'Alex Synthetic')],
+    )
+    expect(out.map((p) => p.playerId)).toEqual(['p2'])
+  })
+
+  it('still trusts an unlinked candidate to reach a same named child', () => {
+    // One unlinked "Alpha" in Spond, one unlinked Alpha on the list:
+    // that child is reachable (a suggestion, or Choose), so they are
+    // not unmatched.
+    const out = unmatchedPlayers(
+      [candidate(M1, 'Alpha Synthetic')],
+      [],
       [player('p1', 'Alpha Synthetic')],
     )
     expect(out).toEqual([])
@@ -260,5 +289,43 @@ describe('unmatchedPlayers', () => {
       [player('p2', 'Gamma Synthetic'), player('p1', 'Beta Synthetic')],
     )
     expect(out.map((p) => p.displayName)).toEqual(['Beta Synthetic', 'Gamma Synthetic'])
+  })
+})
+
+// ---- What a load proves ------------------------------------------------
+//
+// A review found the second way to arrive at zero members: a successful,
+// untruncated read whose members were ALL staff, now that staff are
+// excluded server side. Reading that as "the read proved nothing" put a
+// false incompleteness note on screen and suppressed the no-match
+// section for exactly the production shape this work exists to fix, a
+// subgroup holding only the manager. The exclusion counts are data, so
+// completeness is decided from them, in one pure rule.
+
+describe('linkLoadComplete', () => {
+  const load = (members: number, over: Partial<Parameters<typeof linkLoadComplete>[0]> = {}) => ({
+    members: Array.from({ length: members }, (_, i) => candidate(M1, `Synthetic ${i}`)),
+    truncated: false,
+    staffExcluded: 0,
+    ignoredExcluded: 0,
+    ...over,
+  })
+
+  it('a normal read with members is complete', () => {
+    expect(linkLoadComplete(load(2))).toBe(true)
+  })
+
+  it('a read whose members were all staff is still complete', () => {
+    expect(linkLoadComplete(load(0, { staffExcluded: 1 }))).toBe(true)
+    expect(linkLoadComplete(load(0, { ignoredExcluded: 1 }))).toBe(true)
+  })
+
+  it('a read that returned nothing at all proves nothing', () => {
+    expect(linkLoadComplete(load(0))).toBe(false)
+  })
+
+  it('a truncated read is never complete, staff or no staff', () => {
+    expect(linkLoadComplete(load(3, { truncated: true }))).toBe(false)
+    expect(linkLoadComplete(load(0, { truncated: true, staffExcluded: 2 }))).toBe(false)
   })
 })

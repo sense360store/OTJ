@@ -62,18 +62,16 @@
 // =====================================================================
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
-  excludeNonPlayers,
+  collectLinkCandidates,
   extractAccessToken,
-  MAX_LINK_CANDIDATES,
+  linkCollectionWarnings,
   parseIgnoredMemberIds,
   readCappedJson,
-  reduceLinkCandidate,
-  selectGroupMembers,
   SPOND_API_BASE,
   SPOND_MAX_BODY_BYTES,
   SPOND_TIMEOUT_MS,
 } from '../_shared/spond.ts'
-import type { LinkCandidate, SpondMapping } from '../_shared/spond.ts'
+import type { SpondMapping } from '../_shared/spond.ts'
 
 const SPOND_EMAIL = Deno.env.get('SPOND_EMAIL') ?? ''
 const SPOND_PASSWORD = Deno.env.get('SPOND_PASSWORD') ?? ''
@@ -229,67 +227,20 @@ Deno.serve(async (req) => {
   const groups = await spondGroups(login.token)
   if ('response' in groups) return groups.response
 
-  // Reduce every member of every mapping for this team to the closed
-  // candidate shape. A member with no usable name, or with an id the
-  // links table would refuse, is dropped and counted: offering a
-  // candidate the database cannot store would put the failure at the
-  // insert, where the manager has no way to act on it.
-  const members: LinkCandidate[] = []
-  const seen = new Set<string>()
-  const warnings: string[] = []
-  let dropped = 0
-  let staffExcluded = 0
-  let ignoredExcluded = 0
-  let truncated = false
-  for (const mapping of mappings) {
-    const scoped = selectGroupMembers(groups.groups, mapping.spond_group_id, mapping.spond_subgroup_id)
-    if (scoped.length === 0) {
-      warnings.push(
-        `No members found for ${mapping.spond_name}. Check the Spond organiser account can see this group and that the subgroup has members.`,
-      )
-    }
-    // Staff and configured ignores are removed BEFORE the cap and the
-    // reduction, so a coach in the subgroup can neither be offered as a
-    // child nor consume a candidate slot.
-    const players = excludeNonPlayers(scoped, IGNORED_MEMBER_IDS)
-    staffExcluded += players.staff
-    ignoredExcluded += players.ignored
-    for (const member of players.members) {
-      if (members.length >= MAX_LINK_CANDIDATES) {
-        truncated = true
-        break
-      }
-      const candidate = reduceLinkCandidate(member)
-      if (!candidate) {
-        dropped++
-        continue
-      }
-      // A member in two of the team's mappings appears once.
-      if (seen.has(candidate.spond_member_id)) continue
-      seen.add(candidate.spond_member_id)
-      members.push(candidate)
-    }
-    if (truncated) break
-  }
-
-  if (staffExcluded > 0) {
-    warnings.push(
-      `Not offering ${staffExcluded} Spond staff member${staffExcluded === 1 ? '' : 's'} (group role holders) for linking.`,
-    )
-  }
-  if (ignoredExcluded > 0) {
-    warnings.push(`Not offering ${ignoredExcluded} member${ignoredExcluded === 1 ? '' : 's'} an admin has excluded.`)
-  }
-  if (dropped > 0) {
-    warnings.push(`Skipped ${dropped} Spond member${dropped === 1 ? '' : 's'} with no usable name or id.`)
-  }
-  if (truncated) {
-    // The honest remedy, not "reload": the cap applies to the input order
-    // before link state is known, so reloading returns the same names.
-    warnings.push(
-      `Showing the first ${MAX_LINK_CANDIDATES} members. Map this team to its Spond subgroup rather than the whole group so the list is scoped to the squad.`,
-    )
-  }
-
-  return reply(200, { ok: true, team_id: teamId, members, truncated, warnings })
+  // The whole collection rule, exclusion before cap before reduction,
+  // lives in ../_shared/spond.ts where the Deno tests hold it; this
+  // function only carries the result to the response. The exclusion
+  // counts travel as DATA beside the prose warnings, because the client
+  // decides completeness from them: a subgroup whose members were all
+  // staff is a complete answer, not an unproven read.
+  const collected = collectLinkCandidates(groups.groups, mappings, IGNORED_MEMBER_IDS)
+  return reply(200, {
+    ok: true,
+    team_id: teamId,
+    members: collected.members,
+    truncated: collected.truncated,
+    staff_excluded: collected.staff,
+    ignored_excluded: collected.ignored,
+    warnings: linkCollectionWarnings(collected),
+  })
 })

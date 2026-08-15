@@ -162,26 +162,51 @@ export function buildLinkSections(
 // in Spond or resolved by Choose on a member row, and the first step of
 // either is a screen that says who they are.
 //
-// A child whose name matches a candidate ALREADY LINKED to somebody else
-// is deliberately not listed: their name is on a member row and Change
-// resolves them, so "no Spond match" would be false. The name rule is
-// normaliseName, the same comparison the suggestions use, so this list
-// and the suggestion rule cannot disagree about what a name matches.
+// A child counts as matched only by a candidate a manager could still
+// link: an UNLINKED one. The first version of this rule excluded by name
+// alone, and a review produced the hole that allows: two same named
+// children with the shared name's one candidate correctly linked left
+// the second child in no section at all, because Change would break the
+// correct link, so that member was never a way to reach them. The name
+// rule is normaliseName, the same comparison the suggestions use, and
+// the suggestions also only ever offer unlinked candidates, so this
+// list is exactly the unlinked children the member rows cannot reach.
 //
-// The caller must only show this when the loaded list is COMPLETE: on a
-// truncated or empty read, absence is not evidence, the same rule the
-// orphan section follows.
+// The caller must only show this when the loaded list is COMPLETE
+// (linkLoadComplete below): on a truncated or unproven read, absence is
+// not evidence, the same rule the orphan section follows.
 export function unmatchedPlayers(
   candidates: readonly LinkCandidate[],
   links: readonly SpondLink[],
   roster: readonly RegisteredPlayer[],
 ): RegisteredPlayer[] {
+  const linkedMemberIds = new Set(links.map((l) => l.spondMemberId))
   const linkedPlayerIds = new Set(links.map((l) => l.playerId))
-  const candidateNames = new Set(candidates.map((c) => normaliseName(c.displayName)))
+  const reachableNames = new Set(
+    candidates.filter((c) => !linkedMemberIds.has(c.spondMemberId)).map((c) => normaliseName(c.displayName)),
+  )
   return roster
-    .filter((p) => !linkedPlayerIds.has(p.playerId) && !candidateNames.has(normaliseName(p.displayName)))
-    .slice()
+    .filter((p) => !linkedPlayerIds.has(p.playerId) && !reachableNames.has(normaliseName(p.displayName)))
     .sort((a, b) => a.displayName.localeCompare(b.displayName))
+}
+
+// What one load of a team's members proved. Truncated proves nothing
+// beyond what it holds. Zero members with zero exclusions is a read that
+// may not have seen the group at all, so it proves nothing; zero members
+// with exclusions is a real, complete answer, a subgroup holding only
+// staff, and treating it as unproven put a false incompleteness note on
+// screen while suppressing the no-match section for exactly the
+// production shape this module exists to fix.
+export interface LinkLoad {
+  members: readonly LinkCandidate[]
+  truncated: boolean
+  staffExcluded: number
+  ignoredExcluded: number
+}
+
+export function linkLoadComplete(load: LinkLoad): boolean {
+  if (load.truncated) return false
+  return load.members.length > 0 || load.staffExcluded > 0 || load.ignoredExcluded > 0
 }
 
 // The rows an Accept all press would write, and nothing else. Explicit by
