@@ -139,7 +139,7 @@ export function NoTeamNote() {
 // working on. No attendance counts; responses live in Spond.
 function ThisWeekSection({ sessions }: { sessions: ParentSessionView[] }) {
   return (
-    <Section icon={Icon.calendar} title="This week" sub="Tonight and what the team is working on next.">
+    <Section icon={Icon.calendar} title="This week" sub="Today's session and what the team is working on next.">
       <div className="parent-sessions">
         {sessions.map((s) => (
           <div className="psn" key={s.id}>
