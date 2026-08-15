@@ -43,12 +43,21 @@ child.
 
 ## What is persisted, exhaustively
 
-Four tables hold anything Spond derived. Nothing else does.
+Four tables hold a Spond **identifier**. Two other columns elsewhere hold
+something Spond derived, and are named here so the list below is not read as
+covering more than it does:
+
+- `sessions.spond_event_id`, the link one Hub session carries to one mirrored
+  event (`0013_spond.sql`, made unique by `0048_spond_session_link_unique.sql`).
+  It references `spond_events` and holds no Spond value of its own.
+- `players.display_name`, when a manager has run the Spond squad import. The
+  name is then the roster's, and everything downstream reads it from there.
+  See "Two functions read a Spond name; one persists one" below.
 
 | Table | Holds | Never holds |
 |---|---|---|
 | `spond_groups` | a Hub team mapped to a Spond group or subgroup id, plus a team display label | any person |
-| `spond_events` | four integer counts, title, times, location, cancelled, `spond_type` | member ids, names, payload |
+| `spond_events` | four integer counts, title, times, location, cancelled, `spond_type`, plus `club_id`, `team_id` and `synced_at` | member ids, names, payload |
 | `player_spond_links` | one opaque member id bound to one `players` row, who bound it and when | any Spond name, guardian, contact |
 | `spond_event_responses` | one of four reply states per linked member per event, and the sync run that confirmed it | any Spond name, guardian, contact, comment, payload |
 
@@ -73,8 +82,10 @@ Every name the product shows for a linked child is
 `public.players.display_name`. The linking screen receives a Spond display name
 transiently from `spond-link-members` so a manager can tell who they are
 binding, and stores none of it: the function persists nothing, the insert the
-browser then sends carries only `{ player_id, spond_member_id, matched_by }`,
-and the candidate list is held in a mutation result with `gcTime: 0` so it does
+browser then sends carries exactly four fields,
+`{ club_id, player_id, spond_member_id, matched_by }` (`linkRow` in
+`src/lib/queries.ts`), of which only the member id is Spond derived, and the
+candidate list is held in a mutation result with `gcTime: 0` so it does
 not outlive the screen. The setup diagnostics below ride in the same mutation
 result, under the same `gcTime: 0`, and are likewise never written anywhere.
 
@@ -93,8 +104,12 @@ three different Spond side problems presenting as one unexplained list.
 
 The scope of what is read widens by one thing and one thing only: the members of
 the same already fetched parent group who sit outside the mapped subgroup. No
-extra Spond request is made, and the deploy workflow refuses any source reaching
-a Spond path other than `auth2/login` and `groups/`. Per member the fields read
+extra Spond request is made, and this function's own deploy workflow
+(`.github/workflows/deploy-spond-link-members.yml`) refuses any source reaching
+a Spond path other than `auth2/login` and `groups/`. That assertion is
+`spond-link-members`'s alone; the sync and the squad import workflows carry no
+equivalent, and the endpoints each reaches are stated in
+`docs/spond-api-capabilities.md`. Per member the fields read
 are unchanged from the candidate reduction plus the two structural lists already
 described below: the opaque id, `firstName`/`lastName`, `subGroups` and `roles`.
 
@@ -133,10 +148,11 @@ and `player_spond_links` still only ever receives what a manager pressed.
 ### Two functions read a Spond name; one persists one
 
 - `spond-roster-import` reads `firstName` and `lastName` for a specific mapped
-  team when an admin presses Import, and writes the child's full name and an
-  optional shirt number to the `players` roster. It never reads a guardian, a
-  contact or any other profile field. It runs only on that press, never on a
-  schedule and never as part of the attendance sync.
+  team when somebody presses Import, and writes the child's full name and an
+  optional shirt number to the `players` roster. Its gate is `players.import`,
+  which defaults to managers and admins, so it is not admin only. It never
+  reads a guardian, a contact or any other profile field. It runs only on that
+  press, never on a schedule and never as part of the attendance sync.
 - `spond-link-members` reads the same two fields and returns them to the
   linking screen, for the team's mapped subgroup as linking candidates and
   for the rest of the same parent group as setup diagnostics. It persists
@@ -161,10 +177,21 @@ and `player_spond_links` still only ever receives what a manager pressed.
     from "in another team's subgroup". The client resolves it against the
     club's own mappings and names a team only where exactly one is mapped.
 - `spond-sync` never reads a name at all. Of the member facing payload it
-  reads only the four response arrays, for their member ids and their
-  lengths. The event facts it stores (title, times, location, type) are read
-  by `buildEventRow` and name nobody. The event `recipients` object, which
-  embeds member names, is never read.
+  reads only four of the five response arrays, for their member ids and their
+  lengths; `unconfirmedIds` is not one of the four counts the schema holds and
+  is never read. The event facts it stores (title, times, location, type) are
+  read by `buildEventRow` and name nobody. The event `recipients` object, which
+  embeds member names, is never read. It neither reads nor needs
+  `SPOND_IGNORED_MEMBER_IDS`: its filter is the proven linked set, so the
+  backstop covers exactly the two functions that read a name.
+- **The event's `location` reaches a screen**, as of the venue prefill work.
+  It is one free text line the arranger typed, stored since `0013_spond.sql`
+  and written by every sync run; it is a fact about a place, names nobody, and
+  is now selected by the client so a new session planned from an event can
+  default to the club venue that line identifies (`matchVenueByLocation` in
+  `src/lib/venues.ts`). Nothing about it is stored on the session beyond the
+  chosen `venue_id`, and it reaches no public snapshot. The one stored event
+  fact that still reaches no screen is `ends_at`.
 
 ## What is never persisted
 
@@ -220,7 +247,11 @@ even if its own filtering were wrong.
 - It writes response rows only for members it can prove are linked. If it
   cannot read the link set completely, for any reason, it writes and deletes
   **nothing** and reports that it skipped the response context. An inability to
-  prove the linked set is never read as "the linked set is empty".
+  prove the linked set is never read as "the linked set is empty". The reasons,
+  named so the condition is auditable: the caller lacks `players.view`, any
+  page of the link read errors, or the read passes `MAX_LINKED_MEMBERS`
+  (2000, `spond-sync/index.ts`), which is a cap rather than a page size and so
+  proves nothing beyond it.
 - It reconciles an event by upserting what it saw with this run's timestamp and
   then deleting only strictly older rows for that event, so a partial failure
   leaves the previous context intact rather than emptying the event. Of the
