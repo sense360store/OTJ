@@ -261,7 +261,7 @@ describe('an incomplete member list is never treated as evidence', () => {
 // a decision" showed one staff member and a manager reasonably concluded
 // there was nothing left to do.
 
-describe('Spond setup to fix', () => {
+describe('Registered players with no Spond member', () => {
   const render = (
     candidates: LinkCandidate[],
     links: SpondLink[],
@@ -277,7 +277,7 @@ describe('Spond setup to fix', () => {
     // container cannot hand it an empty list while the suite stays
     // green, which a review demonstrated against the first version.
     const html = render([], [], [player('p3', 'Gamma Synthetic'), player('p4', 'Delta Synthetic')])
-    expect(html).toContain('Spond setup to fix (2)')
+    expect(html).toContain('Registered players with no Spond member (2)')
     expect(html).toContain('Gamma Synthetic')
     expect(html).toContain('Delta Synthetic')
     // Where the gap is fixed, since the fix lives in Spond, not here.
@@ -286,13 +286,13 @@ describe('Spond setup to fix', () => {
 
   it('claims nothing from an incomplete list, where absence is not evidence', () => {
     const html = render([], [], [player('p3', 'Gamma Synthetic')], { complete: false })
-    expect(html).not.toContain('Spond setup to fix')
+    expect(html).not.toContain('Registered players with no Spond member')
     expect(html).not.toContain('Gamma Synthetic')
   })
 
   it('is absent when every registered player has a match', () => {
     const html = render([candidate(M1, 'Alpha Synthetic'), candidate(M2, 'Beta Synthetic')], [], roster)
-    expect(html).not.toContain('Spond setup to fix')
+    expect(html).not.toContain('Registered players with no Spond member')
   })
 
   it('surfaces the second of two same named children when the first is correctly linked', () => {
@@ -304,7 +304,7 @@ describe('Spond setup to fix', () => {
       [link(M1, 'p5')],
       [player('p5', 'Alex Synthetic'), player('p6', 'Alex Synthetic')],
     )
-    expect(html).toContain('Spond setup to fix (1)')
+    expect(html).toContain('Registered players with no Spond member (1)')
   })
 
   // ---- The three states, distinguished on the rendered screen ---------
@@ -367,7 +367,7 @@ describe('Spond setup to fix', () => {
       outsideMembers: [outside('Gamma Synthetic', [])],
       outsideComplete: false,
     })
-    expect(html).toContain('Spond setup to fix (1)')
+    expect(html).toContain('Registered players with no Spond member (1)')
     expect(html).toContain('Not compared against the Spond group data')
     expect(html).not.toContain('no team assigned')
     expect(html).not.toContain('Not found in Spond group data')
@@ -380,7 +380,7 @@ describe('Spond setup to fix', () => {
       outsideMembers: null,
       outsideComplete: false,
     })
-    expect(html).toContain('Spond setup to fix (1)')
+    expect(html).toContain('Registered players with no Spond member (1)')
     expect(html).toContain('Gamma Synthetic')
     expect(html).toContain('Not compared against the Spond group data')
   })
@@ -390,7 +390,7 @@ describe('Spond setup to fix', () => {
       outsideMembers: [outside('Gamma Synthetic', [])],
       outsideComplete: true,
     })
-    const section = html.slice(html.indexOf('Spond setup to fix'))
+    const section = html.slice(html.indexOf('Registered players with no Spond member'))
     expect(section).not.toContain('<button')
     expect(section).not.toContain('type="checkbox"')
   })
@@ -403,6 +403,7 @@ describe('SpondSetupRowView', () => {
   it('says a name is already linked rather than calling it missing', () => {
     const html = render({
       name: 'Alex Synthetic',
+      shirtNumber: null,
       state: 'name_taken',
       otherTeam: null,
       expectedTeam: 'Argonauts',
@@ -413,10 +414,51 @@ describe('SpondSetupRowView', () => {
   })
 
   it('carries no member id, so nothing can be linked from a diagnostic row', () => {
-    const html = render({ name: 'Gamma Synthetic', state: 'no_subgroup', otherTeam: null, expectedTeam: 'Argonauts' })
+    const html = render({ name: 'Gamma Synthetic', shirtNumber: 9, state: 'no_subgroup', otherTeam: null, expectedTeam: 'Argonauts' })
     expect(html).not.toContain(M1)
     expect(html).not.toContain(M2)
     expect(html).not.toContain('<button')
+  })
+
+  it('keeps the shirt number, the only thing that tells two same named children apart', () => {
+    // A review found it dropped in the rewrite, which made the ambiguous
+    // state, two children of one name, render as two identical rows.
+    const html = render({ name: 'Sam Synthetic', shirtNumber: 7, state: 'ambiguous', otherTeam: null, expectedTeam: 'Argonauts' })
+    expect(html).toContain('#7')
+    const none = render({ name: 'Sam Synthetic', shirtNumber: null, state: 'ambiguous', otherTeam: null, expectedTeam: 'Argonauts' })
+    expect(none).not.toContain('#')
+  })
+})
+
+describe('the section says what it can and cannot answer', () => {
+  it('names what the list is rather than asserting every row is a fault to fix', () => {
+    // "Spond setup to fix" is false for two of the states it covers, and
+    // false for every row during the window between merging this and
+    // deploying the function, when nothing has been compared at all.
+    const html = renderToStaticMarkup(
+      <LinkSectionsView {...sectionProps} candidates={[]} links={[]} pool={[player('p3', 'Gamma Synthetic')]} />,
+    )
+    expect(html).toContain('Registered players with no Spond member (1)')
+    expect(html).toContain('Not compared against the Spond group data')
+    expect(html).not.toContain('setup to fix')
+  })
+
+  it('keeps the different name remedy, which absence wording alone loses', () => {
+    const html = renderToStaticMarkup(
+      <LinkSectionsView {...sectionProps} candidates={[]} links={[]} pool={[player('p3', 'Gamma Synthetic')]} />,
+    )
+    expect(html).toContain('under a different name')
+    expect(html).toContain('Choose')
+  })
+
+  it('says staff are not searched, since they were removed before the search ran', () => {
+    // "Not found in Spond group data" is an absence claim over a
+    // population staff had already been taken out of, so the population
+    // is named rather than left implied.
+    const html = renderToStaticMarkup(
+      <LinkSectionsView {...sectionProps} candidates={[]} links={[]} pool={[player('p3', 'Gamma Synthetic')]} />,
+    )
+    expect(html).toContain('Staff are not searched')
   })
 })
 

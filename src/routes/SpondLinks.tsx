@@ -157,11 +157,17 @@ export function NeedsDecisionRowView({
 // here is in Spond, or on a member's own row above.
 export function SpondSetupRowView({
   name,
+  shirtNumber,
   state,
   otherTeam,
   expectedTeam,
 }: {
   name: string
+  // Kept from the list this replaced. It is the only thing on the row that
+  // tells two same named children apart, and same named children are now a
+  // state of their own, so dropping it made the case it matters most for
+  // unreadable.
+  shirtNumber: number | null
   state: SpondSetupState
   otherTeam: string | null
   expectedTeam: string | null
@@ -187,7 +193,10 @@ export function SpondSetupRowView({
   return (
     <div className="sl-row">
       <div className="sl-row-main">
-        <span className="sl-name">{name}</span>
+        <span className="sl-name">
+          {name}
+          {shirtNumber != null && <span className="sl-sub"> #{shirtNumber}</span>}
+        </span>
         <span className="sl-sub">{finding}</span>
         {showExpected && <span className="sl-sub">Expected team: {expectedTeam}</span>}
       </div>
@@ -345,15 +354,18 @@ export function LinkSectionsView({
 
       {complete && setup.length > 0 && (
         <section className="sl-section">
-          <h3>Spond setup to fix ({setup.length})</h3>
+          <h3>Registered players with no Spond member ({setup.length})</h3>
           <p className="sl-empty">
-            These registered players have no Spond member to link. Each row says what this team's Spond group shows for
-            that name, so you can put it right in Spond. Nothing here changes anything, in Spond or here.
+            Each row says what this team's Spond group shows for that name. Where the fix is in Spond, it says so; where
+            a child is simply in Spond under a different name, link them with Choose on that member's row above. Staff
+            are not searched, so a member who holds a Spond role will not be found here. Nothing on this list changes
+            anything, in Spond or here.
           </p>
           {setup.map((row) => (
             <SpondSetupRowView
               key={row.player.playerId}
               name={row.player.displayName}
+              shirtNumber={row.player.shirtNumber}
               state={row.state}
               otherTeam={row.otherTeam}
               expectedTeam={expectedTeam}

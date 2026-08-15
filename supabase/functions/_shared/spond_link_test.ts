@@ -846,3 +846,27 @@ Deno.test('a member outside the mapping with no readable name is a name we do no
   assertEquals(out.complete, false)
   assertEquals(out.members, [])
 })
+
+Deno.test('a scoped cap names its own cause, not the whole group remedy', () => {
+  // A team already mapped to its subgroup, whose subgroup is simply larger
+  // than the per group read, was told "Map this team to its Spond subgroup
+  // rather than the whole group" (advice it had already taken) beside a
+  // figure naming a cap that never applied.
+  const many = Array.from({ length: MAX_ROSTER_MEMBERS + 1 }, (_, i) =>
+    participant(`${i % 10}`.repeat(32), `Person${i}`, [SG1]))
+  const out = collectLinkCandidates(groupsPayload(many), [mapping(SG1)], new Set<string>())
+  assertEquals(out.truncated, true)
+  assertEquals(out.scopeTruncated, true)
+  const flat = linkCollectionWarnings(out).join(' ')
+  assert(flat.includes(`more than ${MAX_ROSTER_MEMBERS} members`), flat)
+  assert(!flat.includes('rather than the whole group'), flat)
+})
+
+Deno.test('the whole group cap still gets the whole group remedy', () => {
+  const members = [participant(LINKED_A, 'Alpha'), participant(LINKED_B, 'Beta'), participant(UNLINKED, 'Gamma')]
+  const out = collectLinkCandidates(groupsPayload(members), [mapping(SG1)], new Set<string>(), 2)
+  assertEquals(out.truncated, true)
+  assertEquals(out.scopeTruncated, false)
+  const flat = linkCollectionWarnings(out, 2).join(' ')
+  assert(flat.includes('rather than the whole group'), flat)
+})

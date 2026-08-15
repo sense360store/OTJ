@@ -988,6 +988,11 @@ export interface LinkCandidateCollection {
   staff: number
   ignored: number
   dropped: number
+  // Which cap cut the list, because the remedy differs and a warning that
+  // names the wrong one sends a manager to fix something they already did.
+  // `truncated` stays the single flag every completeness rule reads;
+  // scopeTruncated only decides which sentence to print.
+  scopeTruncated: boolean
   emptyMappings: string[]
 }
 
@@ -1010,6 +1015,7 @@ export function collectLinkCandidates(
   // cut short is truncated too, but the remaining mappings still have
   // members worth offering, so it flags and carries on.
   let capped = false
+  let scopeTruncated = false
   const emptyMappings: string[] = []
   for (const mapping of mappings) {
     const scan = scanGroupMembers(groups, mapping.spond_group_id, mapping.spond_subgroup_id)
@@ -1017,7 +1023,10 @@ export function collectLinkCandidates(
     // A scoped read the per group cap cut short is truncated for the same
     // reason the candidate cap is: what came back is not the whole group,
     // so no absence may be read off it. Before this the slice was silent.
-    if (scan.truncated) truncated = true
+    if (scan.truncated) {
+      truncated = true
+      scopeTruncated = true
+    }
     if (scoped.length === 0) emptyMappings.push(mapping.spond_name)
     // Exclusion runs BEFORE the cap, so staff neither appear nor consume
     // a candidate slot, and before the reduction, so an excluded member
@@ -1051,6 +1060,7 @@ export function collectLinkCandidates(
     staff: staffSeen.size + staffAnon,
     ignored: ignoredSeen.size + ignoredAnon,
     dropped,
+    scopeTruncated,
     emptyMappings,
   }
 }
@@ -1075,7 +1085,16 @@ export function linkCollectionWarnings(c: LinkCandidateCollection, max: number =
   if (c.dropped > 0) {
     warnings.push(`Skipped ${c.dropped} Spond member${c.dropped === 1 ? '' : 's'} with no usable name or id.`)
   }
-  if (c.truncated) {
+  // Two caps, two remedies. The candidate cap bites on a team reading a
+  // whole group, and mapping it to its subgroup fixes that. The per group
+  // scoped cap bites on a subgroup that is genuinely larger than the read,
+  // where "map it to a subgroup" is advice the manager has already taken
+  // and the figure would name a cap that never applied.
+  if (c.scopeTruncated) {
+    warnings.push(
+      `A Spond group returned more than ${MAX_ROSTER_MEMBERS} members, so this list is incomplete and nothing here is being judged as missing.`,
+    )
+  } else if (c.truncated) {
     warnings.push(
       `Showing the first ${max} members. Map this team to its Spond subgroup rather than the whole group so the list is scoped to the squad.`,
     )
