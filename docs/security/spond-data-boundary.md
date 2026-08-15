@@ -75,7 +75,60 @@ transiently from `spond-link-members` so a manager can tell who they are
 binding, and stores none of it: the function persists nothing, the insert the
 browser then sends carries only `{ player_id, spond_member_id, matched_by }`,
 and the candidate list is held in a mutation result with `gcTime: 0` so it does
-not outlive the screen.
+not outlive the screen. The setup diagnostics below ride in the same mutation
+result, under the same `gcTime: 0`, and are likewise never written anywhere.
+
+### The linking screen's setup diagnostics
+
+`spond-link-members` returns two lists from the one `groups/` response it
+already fetches. The first is the linking candidates: the members of the team's
+mapped subgroup, each reduced to `{ spond_member_id, display_name }`. The second
+is the setup diagnostics: the members of that same parent group whom the team's
+mappings do **not** reach, each reduced to `{ display_name, subgroup_ids }`
+(`collectLinkDiagnostics` and `SPOND_DIAGNOSTIC_MEMBER_FIELDS` in
+`supabase/functions/_shared/spond.ts`). They exist so the screen can say why a
+registered player has no candidate: their Spond member is in the group with no
+subgroup, or in another one, or is not in the group data at all. Those were
+three different Spond side problems presenting as one unexplained list.
+
+The scope of what is read widens by one thing and one thing only: the members of
+the same already fetched parent group who sit outside the mapped subgroup. No
+extra Spond request is made, and the deploy workflow refuses any source reaching
+a Spond path other than `auth2/login` and `groups/`. Per member the fields read
+are unchanged from the candidate reduction plus the two structural lists already
+described below: the opaque id, `firstName`/`lastName`, `subGroups` and `roles`.
+
+Three properties hold by construction and are pinned by
+`supabase/functions/_shared/spond_link_test.ts`:
+
+- **A diagnostic row carries no member id.** Nothing can be linked from one, so
+  the closed `LinkCandidate` shape stays the only thing linking is built on.
+  The id is read in memory solely to count one person once across two mapped
+  groups, and is returned nowhere.
+- **Staff leave first.** The exclusion runs over the whole parent group before
+  a single diagnostic row is emitted, so a manager or coach in another subgroup
+  can never be reported as somebody's child, including the case the feature
+  exists for, a role holder with no subgroup at all.
+- **An unproved scan returns nothing and claims nothing.** A group the
+  organiser account cannot see, a malformed payload, no mapping, and either cap
+  biting all return `complete: false` **with an empty member list**, so a
+  partial scan cannot be read as the whole group even by a caller that ignores
+  the flag. The client then states no diagnosis in either direction: not a
+  match, because a short list can hide a second member of the same name, and
+  not an absence, because absence from an incomplete read is not absence. A
+  name carried by more than one member is reported as ambiguous and never as a
+  category that implies identity.
+
+Who sees what is unchanged. The caller already holds `players.manage`, the
+club-wide capability that the candidate list, the roster import and the whole
+`players` table already ride, and every name involved is a name in the club's
+own Spond group. The one honest consequence to state: because the scan covers
+the parent group rather than one subgroup, a diagnostic row can name a child who
+sits in a Spond subgroup the Hub maps to no team at all. That is deliberate, and
+it is the case the feature exists for.
+
+Nothing here is persisted. The diagnostics add no table, no column and no row,
+and `player_spond_links` still only ever receives what a manager pressed.
 
 ### Two functions read a Spond name; one persists one
 
@@ -85,18 +138,28 @@ not outlive the screen.
   contact or any other profile field. It runs only on that press, never on a
   schedule and never as part of the attendance sync.
 - `spond-link-members` reads the same two fields and returns them to the
-  linking screen. It persists nothing.
-- Both of those functions additionally read one structural field per member,
-  `roles`, the list of opaque role uids Spond assigns only to group staff.
-  It is read solely to exclude staff from the candidate and import lists so
-  a coach or manager in a subgroup is never offered or imported as a child,
-  it is never persisted, never logged, and role names are never read. A
-  plain participant has no `roles` key, and a malformed value reads as no
-  roles, so a strange shape can only offer a member, never hide one. The
-  `SPOND_IGNORED_MEMBER_IDS` function secret is the backstop for staff the
-  club has not assigned a role: opaque member ids only, parsed through the
-  same character class the links table enforces, so a name cannot be
-  expressed in it.
+  linking screen, for the team's mapped subgroup as linking candidates and
+  for the rest of the same parent group as setup diagnostics. It persists
+  nothing.
+- Both of those functions additionally read two structural fields per member,
+  and neither is ever persisted or logged.
+  - `roles`, the list of opaque role uids Spond assigns only to group staff.
+    It is read solely to exclude staff from the candidate, diagnostic and
+    import lists so a coach or manager in a subgroup is never offered,
+    reported or imported as a child; role names are never read. A plain
+    participant has no `roles` key, and a malformed value reads as no roles,
+    so a strange shape can only offer a member, never hide one. The
+    `SPOND_IGNORED_MEMBER_IDS` function secret is the backstop for staff the
+    club has not assigned a role: opaque member ids only, parsed through the
+    same character class the links table enforces, so a name cannot be
+    expressed in it.
+  - `subGroups`, the list of opaque subgroup uids a member belongs to. It is
+    Spond's own group structure, the same ids `spond_groups` already stores
+    as mappings. It has always scoped both functions to the mapped subgroup;
+    `spond-link-members` additionally returns it on a diagnostic row, which
+    is how the screen distinguishes "in the group with no team assigned"
+    from "in another team's subgroup". The client resolves it against the
+    club's own mappings and names a team only where exactly one is mapped.
 - `spond-sync` never reads a name at all. Of the member facing payload it
   reads only the four response arrays, for their member ids and their
   lengths. The event facts it stores (title, times, location, type) are read

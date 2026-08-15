@@ -635,21 +635,50 @@ export function memberSubgroupIds(member: unknown): string[] {
   return value.filter((id): id is string => typeof id === 'string' && id.length > 0)
 }
 
+// One scoped read of a group's members, with the two facts a caller needs
+// before it may treat what came back as the whole truth.
+//
+// `found` is whether the group and its member array were actually there.
+// It is deliberately not the same as "the list is empty": a group the
+// organiser account cannot see, and a subgroup with nobody in it, are two
+// different answers with two different consequences.
+//
+// `truncated` is whether the cap cut the list short. Before this existed
+// the cap was a silent slice, so a group larger than the cap returned a
+// short list that every caller read as complete. Absence from a short
+// list is not absence, which is the rule the whole linking screen turns
+// on, so the cap now says when it bit.
+export interface GroupMemberScan {
+  members: unknown[]
+  found: boolean
+  truncated: boolean
+}
+
 // The members of one mapped group, scoped the same way the events query is
 // scoped (eventsQuery): a whole group mapping (no subgroup) reads every
 // member, a subgroup mapping reads only members whose subGroups list
 // contains the subgroup id. The group is found by id in the groups/
 // response, the same response spond-sync reads for visibleGroupIds, which
 // already carries each group's members; spond-sync discards them, this
-// reads them. Returns an empty list when the group is absent or its
-// members are not an array, capped at MAX_ROSTER_MEMBERS.
-export function selectGroupMembers(groups: unknown, groupId: string, subgroupId: string | null): unknown[] {
-  if (!Array.isArray(groups)) return []
+// reads them.
+export function scanGroupMembers(
+  groups: unknown,
+  groupId: string,
+  subgroupId: string | null,
+  max: number = MAX_ROSTER_MEMBERS,
+): GroupMemberScan {
+  if (!Array.isArray(groups)) return { members: [], found: false, truncated: false }
   const group = groups.find((g) => asRecord(g).id === groupId)
   const members = asRecord(group).members
-  if (!Array.isArray(members)) return []
+  if (!Array.isArray(members)) return { members: [], found: false, truncated: false }
   const scoped = subgroupId === null ? members : members.filter((m) => memberSubgroupIds(m).includes(subgroupId))
-  return scoped.slice(0, MAX_ROSTER_MEMBERS)
+  return { members: scoped.slice(0, max), found: true, truncated: scoped.length > max }
+}
+
+// The members alone, for the roster import, whose plan is a de-dupe by
+// name and has never read either flag.
+export function selectGroupMembers(groups: unknown, groupId: string, subgroupId: string | null): unknown[] {
+  return scanGroupMembers(groups, groupId, subgroupId).members
 }
 
 // The import plan from the reduced members and the names already on the
@@ -959,6 +988,11 @@ export interface LinkCandidateCollection {
   staff: number
   ignored: number
   dropped: number
+  // Which cap cut the list, because the remedy differs and a warning that
+  // names the wrong one sends a manager to fix something they already did.
+  // `truncated` stays the single flag every completeness rule reads;
+  // scopeTruncated only decides which sentence to print.
+  scopeTruncated: boolean
   emptyMappings: string[]
 }
 
@@ -976,9 +1010,23 @@ export function collectLinkCandidates(
   let ignoredAnon = 0
   let dropped = 0
   let truncated = false
+  // Only the CANDIDATE cap ends the walk: once `max` candidates are held
+  // there is nothing further to collect. A scoped read the per group cap
+  // cut short is truncated too, but the remaining mappings still have
+  // members worth offering, so it flags and carries on.
+  let capped = false
+  let scopeTruncated = false
   const emptyMappings: string[] = []
   for (const mapping of mappings) {
-    const scoped = selectGroupMembers(groups, mapping.spond_group_id, mapping.spond_subgroup_id)
+    const scan = scanGroupMembers(groups, mapping.spond_group_id, mapping.spond_subgroup_id)
+    const scoped = scan.members
+    // A scoped read the per group cap cut short is truncated for the same
+    // reason the candidate cap is: what came back is not the whole group,
+    // so no absence may be read off it. Before this the slice was silent.
+    if (scan.truncated) {
+      truncated = true
+      scopeTruncated = true
+    }
     if (scoped.length === 0) emptyMappings.push(mapping.spond_name)
     // Exclusion runs BEFORE the cap, so staff neither appear nor consume
     // a candidate slot, and before the reduction, so an excluded member
@@ -991,6 +1039,7 @@ export function collectLinkCandidates(
     for (const member of players.members) {
       if (members.length >= max) {
         truncated = true
+        capped = true
         break
       }
       const candidate = reduceLinkCandidate(member)
@@ -1003,7 +1052,7 @@ export function collectLinkCandidates(
       seen.add(candidate.spond_member_id)
       members.push(candidate)
     }
-    if (truncated) break
+    if (capped) break
   }
   return {
     members,
@@ -1011,6 +1060,7 @@ export function collectLinkCandidates(
     staff: staffSeen.size + staffAnon,
     ignored: ignoredSeen.size + ignoredAnon,
     dropped,
+    scopeTruncated,
     emptyMappings,
   }
 }
@@ -1035,12 +1085,212 @@ export function linkCollectionWarnings(c: LinkCandidateCollection, max: number =
   if (c.dropped > 0) {
     warnings.push(`Skipped ${c.dropped} Spond member${c.dropped === 1 ? '' : 's'} with no usable name or id.`)
   }
-  if (c.truncated) {
+  // Two caps, two remedies. The candidate cap bites on a team reading a
+  // whole group, and mapping it to its subgroup fixes that. The per group
+  // scoped cap bites on a subgroup that is genuinely larger than the read,
+  // where "map it to a subgroup" is advice the manager has already taken
+  // and the figure would name a cap that never applied.
+  if (c.scopeTruncated) {
+    warnings.push(
+      `A Spond group returned more than ${MAX_ROSTER_MEMBERS} members, so this list is incomplete and nothing here is being judged as missing.`,
+    )
+  } else if (c.truncated) {
     warnings.push(
       `Showing the first ${max} members. Map this team to its Spond subgroup rather than the whole group so the list is scoped to the squad.`,
     )
   }
   return warnings
+}
+
+// ---- The setup diagnostics: the parent group this team's mappings miss --
+//
+// WHAT THIS ANSWERS, AND WHY THE SCREEN COULD NOT ANSWER IT. The candidate
+// list above is scoped to the team's mapped subgroup, so a Spond member
+// outside that subgroup is not in it. A registered player therefore lands
+// in "not matched yet" for three completely different reasons that looked
+// identical: their Spond member is in the parent group with NO subgroup at
+// all, or is in a DIFFERENT subgroup, or is not in the parent group data
+// the organiser account can see. Production, 15 August: an Argonauts
+// player was in Spond with no team assigned, and the screen could only say
+// they were unmatched.
+//
+// SAME FETCH, NO SECOND CALL. This reads the groups/ response
+// spond-link-members has already fetched for the candidates. It adds no
+// Spond request, and the endpoint assertion in the deploy workflow holds
+// the function to exactly auth2/login and groups/.
+//
+// WHAT IT READS, AND WHAT IT RETURNS. Per member exactly what the
+// candidate reduction reads plus the subgroup ids the scoping already
+// reads: the opaque id (to fold one person appearing under two of the
+// team's mapped groups, in memory, never returned), first and last name
+// through rosterDisplayName, subGroups, and roles for the staff exclusion.
+// No guardian, contact, address or any other profile field is reached. The
+// returned shape is SPOND_DIAGNOSTIC_MEMBER_FIELDS and nothing else: a
+// transient display name and opaque subgroup ids. The member id is
+// deliberately NOT returned, because nothing links from a diagnostic row;
+// the closed LinkCandidate shape stays the only thing linking is built on.
+// Nothing here is persisted, by this module or by its caller.
+//
+// STAFF FIRST, always. The exclusion runs over the whole parent group
+// before a single row is emitted, so a manager or coach in another
+// subgroup can never be reported as somebody's child.
+
+// The complete set of fields a diagnostic row may carry. The same
+// discipline SPOND_EVENT_COLUMNS and SPOND_RESPONSE_COLUMNS apply to
+// rows: no name beyond the transient display name, no contact, and no
+// free shaped field to hide one in. Pinned by spond_link_test.ts.
+export const SPOND_DIAGNOSTIC_MEMBER_FIELDS = ['display_name', 'subgroup_ids'] as const
+
+export interface LinkDiagnosticMember {
+  display_name: string
+  subgroup_ids: string[]
+}
+
+// A defensive cap on both halves of the scan: how many members of one
+// parent group are read, and how many rows are emitted. A grassroots
+// club's parent group is a few dozen; exceeding this means the scan did
+// not see everything, which is `complete: false` and never a short list
+// presented as the whole truth.
+export const MAX_LINK_DIAGNOSTIC_MEMBERS = 500
+
+export interface LinkDiagnosticCollection {
+  members: LinkDiagnosticMember[]
+  // Whether the parent group member data was read WHOLE. False when a
+  // group is absent from the payload, its members are not an array, or
+  // either cap bit. On false the client states no diagnosis at all: a
+  // positive match off a short list could be one of two same named
+  // members it never saw, which would assert an identity, and a negative
+  // one would be an absence claim off incomplete data.
+  complete: boolean
+}
+
+export function collectLinkDiagnostics(
+  groups: unknown,
+  mappings: readonly SpondMapping[],
+  ignoredConfig: ReadonlySet<string>,
+  max: number = MAX_LINK_DIAGNOSTIC_MEMBERS,
+): LinkDiagnosticCollection {
+  const members: LinkDiagnosticMember[] = []
+  const seen = new Set<string>()
+  let complete = true
+  // The subgroups this team's mappings reach, folded across EVERY group
+  // it maps rather than kept per group. A Spond subgroup id belongs to
+  // one group, so the union is exact, not approximate: a member listed
+  // under one mapped group who also sits in another mapped group's
+  // subgroup is already a candidate, and folding the sets is what stops
+  // them being reported as missing from the first.
+  //
+  // The residual, stated rather than hidden: a team mapped to two parent
+  // groups, one of them WHOLLY, can report a member of the other group
+  // who is also in the wholly mapped one, because whole group membership
+  // is not a subgroup id to fold. Two rows of one name read as ambiguous,
+  // which is the fail closed direction, and no club has that shape today.
+  const groupIds: string[] = []
+  const reached = new Set<string>()
+  const wholeGroup = new Set<string>()
+  for (const mapping of mappings) {
+    if (!groupIds.includes(mapping.spond_group_id)) groupIds.push(mapping.spond_group_id)
+    if (mapping.spond_subgroup_id) reached.add(mapping.spond_subgroup_id)
+    else wholeGroup.add(mapping.spond_group_id)
+  }
+  // No mapping means no group was read at all, so nothing is proved and
+  // no absence may be claimed.
+  if (groupIds.length === 0) return { members: [], complete: false }
+
+  let capped = false
+  for (const groupId of groupIds) {
+    if (capped) break
+    const scan = scanGroupMembers(groups, groupId, null, max)
+    if (!scan.found || scan.truncated) {
+      complete = false
+      continue
+    }
+    // A team mapped to the WHOLE group already has every member in its
+    // candidate list, so nothing in it is outside the mapping. The scan
+    // still ran, so this group is proved and complete stays true.
+    if (wholeGroup.has(groupId)) continue
+    // Staff and configured ignores leave before any row is emitted.
+    const players = excludeNonPlayers(scan.members, ignoredConfig)
+    for (const member of players.members) {
+      const subgroupIds = memberSubgroupIds(member)
+      // Already offered as a candidate: this is the list of who the
+      // mapping MISSES, so a member the mapping reaches is not in it.
+      if (subgroupIds.some((id) => reached.has(id))) continue
+      if (members.length >= max) {
+        complete = false
+        capped = true
+        break
+      }
+      const reduced = reduceDiagnosticMember(member)
+      // A member whose name we could not READ is a name we do not know,
+      // which is not the same as a member who has no name. An earlier
+      // version of this reasoned that dropping one "removes no evidence"
+      // and kept the scan complete; an adversarial review reproduced what
+      // that allows, so the reasoning is recorded as wrong rather than
+      // quietly replaced. The unknown name could be the very child a
+      // later "Not found in Spond group data" row denies exists, and it
+      // could be a second holder of a name a positive row assigns. Both
+      // are claims this scan can no longer support.
+      if (!reduced) {
+        complete = false
+        continue
+      }
+      const rawId = asRecord(member).id
+      const memberId = typeof rawId === 'string' ? rawId.toUpperCase() : ''
+      // Fold one person appearing under two of the team's mapped parent
+      // groups. The id is used here and returned nowhere. A member whose
+      // id the links table would refuse cannot be folded and is kept per
+      // appearance, which can only ADD a same name row, and a second same
+      // name row reads as ambiguous rather than as a false identity.
+      if (SPOND_MEMBER_ID_PATTERN.test(memberId)) {
+        if (seen.has(memberId)) continue
+        seen.add(memberId)
+      }
+      members.push(reduced)
+    }
+  }
+  // An unproved scan returns NOTHING, not a short list beside a flag. The
+  // client already states no diagnosis on `complete: false`, but making
+  // the payload itself empty means a future caller that forgets the flag
+  // still cannot read a partial list as the whole group, and no name
+  // leaves the function that nobody is going to be allowed to use.
+  return complete ? { members, complete } : { members: [], complete }
+}
+
+// Whether the diagnostics may be stated at all, given what the CANDIDATE
+// collection also saw. The diagnostics scan knows what it read; it cannot
+// know what the candidate pass discarded, and a discard there is just as
+// fatal to a claim about names.
+//
+// An adversarial review reproduced the hole this closes. A member sitting
+// in the team's own mapped subgroup whose id the links table would refuse
+// (`reduceLinkCandidate` returns null, `dropped` counts it) is not a
+// candidate, and is not a diagnostic row either, because the subgroup it
+// sits in IS reached. That child is invisible on both sides, and the
+// screen confidently said "Not found in Spond group data" about a child
+// who was right there. Truncation is the same argument one step along:
+// members of the mapped subgroup that the cap never read are names we
+// never saw.
+//
+// So the rule is one line and it lives here, beside the two collections it
+// reconciles, rather than in the Edge Function where nothing executes it.
+export function diagnosticsProved(
+  diagnostics: LinkDiagnosticCollection,
+  candidates: LinkCandidateCollection,
+): boolean {
+  return diagnostics.complete && !candidates.truncated && candidates.dropped === 0
+}
+
+// One member reduced to a diagnostic row: the transient display name and
+// the opaque subgroup ids, and nothing else. Reads exactly what
+// reduceLinkCandidate reads plus the subGroups list the scoping already
+// reads. The member's guardians, email, phoneNumber, address, roles and
+// every other field are never reached, so they cannot be returned even by
+// accident. Null when there is no usable name to match on.
+export function reduceDiagnosticMember(member: unknown): LinkDiagnosticMember | null {
+  const display_name = rosterDisplayName(member)
+  if (!display_name) return null
+  return { display_name, subgroup_ids: memberSubgroupIds(member) }
 }
 
 // The roster import's member collection, the same discipline: exclusion

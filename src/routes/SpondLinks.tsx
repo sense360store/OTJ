@@ -32,10 +32,14 @@ import {
   buildLinkSections,
   linkLoadComplete,
   pickerOptions,
+  spondSetupRows,
   suggestionPool,
-  unmatchedPlayers,
+  teamsBySubgroup,
   type LinkCandidate,
+  type SpondGroupMember,
+  type SubgroupTeam,
   type SpondLink,
+  type SpondSetupState,
 } from '../lib/spondLinking'
 import { linkedCounts } from '../lib/spondRsvp'
 import type { RegisteredPlayer, Team } from '../lib/data'
@@ -49,6 +53,12 @@ interface LoadedTeam {
   truncated: boolean
   staffExcluded: number
   ignoredExcluded: number
+  // The parent group members this team's mappings do not reach, and
+  // whether that scan saw the whole group. Null members means the
+  // deployed function does not answer this yet, which is not the same as
+  // an empty list; see LinkCandidatesResult.
+  diagnosticMembers: SpondGroupMember[] | null
+  diagnosticComplete: boolean
 }
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
@@ -142,6 +152,63 @@ export function NeedsDecisionRowView({
   )
 }
 
+// One registered player with no Spond member to link, and what Spond
+// shows for that name. Read only by construction: the row carries no
+// member id, offers no button and writes nothing. The fix for every state
+// here is in Spond, or on a member's own row above.
+export function SpondSetupRowView({
+  name,
+  shirtNumber,
+  state,
+  otherTeam,
+  expectedTeam,
+}: {
+  name: string
+  // Kept from the list this replaced. It is the only thing on the row that
+  // tells two same named children apart, and same named children are now a
+  // state of their own, so dropping it made the case it matters most for
+  // unreadable.
+  shirtNumber: number | null
+  state: SpondSetupState
+  otherTeam: string | null
+  expectedTeam: string | null
+}) {
+  const finding =
+    state === 'no_subgroup'
+      ? 'In Spond · no team assigned'
+      : state === 'other_subgroup'
+        ? otherTeam
+          ? `In Spond · assigned to another team: ${otherTeam}`
+          : 'In Spond · assigned to another Spond subgroup'
+        : state === 'ambiguous'
+          ? // Direction neutral on purpose. Ambiguity arrives three ways
+            // now, and the old wording named only one of them: two Spond
+            // members of the name, two registered children of it, or one
+            // member sitting in a team whose own player list holds it.
+            'More than one person here goes by this name'
+          : state === 'name_taken'
+            ? 'In Spond · that name is already linked to another registered player'
+            : state === 'not_found'
+              ? 'Not found in Spond group data'
+              : 'Not compared against the Spond group data'
+  // Only the two findings ABOUT a Spond team assignment carry the team
+  // this player is expected on; on the rest there is no assignment to
+  // compare it against.
+  const showExpected = expectedTeam !== null && (state === 'no_subgroup' || state === 'other_subgroup')
+  return (
+    <div className="sl-row">
+      <div className="sl-row-main">
+        <span className="sl-name">
+          {name}
+          {shirtNumber != null && <span className="sl-sub"> #{shirtNumber}</span>}
+        </span>
+        <span className="sl-sub">{finding}</span>
+        {showExpected && <span className="sl-sub">Expected team: {expectedTeam}</span>}
+      </div>
+    </div>
+  )
+}
+
 export function LinkedRowView({
   name,
   playerName,
@@ -189,6 +256,11 @@ export function LinkSectionsView({
   pool,
   busy,
   complete,
+  outsideMembers,
+  outsideComplete,
+  teamBySubgroup,
+  clubRoster,
+  expectedTeam,
   onAccept,
   onChoose,
   onUnlink,
@@ -212,12 +284,30 @@ export function LinkSectionsView({
   // suppressed for the same reason: absence from a short list is not
   // absence from Spond.
   complete: boolean
+  // The Spond setup diagnostics, composed here for the same reason the
+  // sections are: a container that composed them could hand this view an
+  // empty list with the whole suite green.
+  outsideMembers: SpondGroupMember[] | null
+  outsideComplete: boolean
+  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>
+  clubRoster: RegisteredPlayer[]
+  // The team whose links are being worked through, named on the rows that
+  // report a Spond team assignment. Null before a team is chosen.
+  expectedTeam: string | null
   onAccept: (memberId: string, playerId: string) => void
   onChoose: (memberId: string) => void
   onUnlink: (memberId: string) => void
 }) {
   const sections = buildLinkSections(candidates, links, pool)
-  const unmatched = unmatchedPlayers(candidates, links, pool)
+  const setup = spondSetupRows({
+    candidates,
+    links,
+    pool,
+    outsideMembers,
+    outsideComplete,
+    teamBySubgroup,
+    clubRoster,
+  })
   return (
     <>
       <section className="sl-section">
@@ -270,20 +360,24 @@ export function LinkSectionsView({
         </p>
       )}
 
-      {complete && unmatched.length > 0 && (
+      {complete && setup.length > 0 && (
         <section className="sl-section">
-          <h3>Registered players not matched yet ({unmatched.length})</h3>
+          <h3>Registered players with no Spond member ({setup.length})</h3>
           <p className="sl-empty">
-            No offered Spond member goes by these names. Add the family to the group or the child to the team's
-            subgroup in Spond, or link them with Choose on a member's row where they go by a different name there.
+            Each row says what this team's Spond group shows for that name. Where the fix is in Spond, it says so; where
+            a child is simply in Spond under a different name, link them with Choose on that member's row above. Staff
+            are not searched, so a member who holds a Spond role will not be found here. Nothing on this list changes
+            anything, in Spond or here.
           </p>
-          {unmatched.map((p) => (
-            <div className="sl-row" key={p.playerId}>
-              <div className="sl-row-main">
-                <span className="sl-name">{p.displayName}</span>
-                <span className="sl-sub">{p.shirtNumber != null ? `#${p.shirtNumber}` : ''}</span>
-              </div>
-            </div>
+          {setup.map((row) => (
+            <SpondSetupRowView
+              key={row.player.playerId}
+              name={row.player.displayName}
+              shirtNumber={row.player.shirtNumber}
+              state={row.state}
+              otherTeam={row.otherTeam}
+              expectedTeam={expectedTeam}
+            />
           ))}
         </section>
       )}
@@ -395,6 +489,13 @@ export default function SpondLinks() {
     return (teams.data ?? []).filter((t) => mapped.has(t.id))
   }, [teams.data, mappings.data])
 
+  // The club's mapped subgroups, so a member found in somebody else's
+  // subgroup can be named by the OTJ team it belongs to. Club wide on
+  // purpose: the whole point is to resolve a subgroup this team does not
+  // map. Where a subgroup resolves to no team, or to two, the row says
+  // "another Spond subgroup" rather than guessing.
+  const subgroupTeams = useMemo(() => teamsBySubgroup(mappings.data ?? []), [mappings.data])
+
   const allLinks = useMemo(() => links.data?.links ?? [], [links.data])
   const loadedTeam = teamId ? (loaded[teamId] ?? null) : null
   // False only while the migration is not applied yet.
@@ -458,6 +559,8 @@ export default function SpondLinks() {
               truncated: result.truncated,
               staffExcluded: result.staffExcluded,
               ignoredExcluded: result.ignoredExcluded,
+              diagnosticMembers: result.diagnosticMembers,
+              diagnosticComplete: result.diagnosticComplete,
             },
           }))
           if (result.warnings.length > 0) setNote(result.warnings.join(' '))
@@ -580,6 +683,11 @@ export default function SpondLinks() {
               pool={teamRoster}
               busy={busy}
               complete={loadedTeam ? linkLoadComplete(loadedTeam) : false}
+              outsideMembers={loadedTeam?.diagnosticMembers ?? null}
+              outsideComplete={loadedTeam?.diagnosticComplete === true}
+              teamBySubgroup={subgroupTeams}
+              clubRoster={roster.data ?? []}
+              expectedTeam={mappedTeams.find((t) => t.id === teamId)?.name ?? null}
               onAccept={(memberId, playerId) => write([{ spondMemberId: memberId, playerId }], 'suggested')}
               onChoose={(memberId) => setPicking(memberId)}
               onUnlink={(memberId) => remove.mutate({ spondMemberId: memberId })}

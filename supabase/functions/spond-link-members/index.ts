@@ -20,13 +20,26 @@
 //
 // THE NAME BOUNDARY. This is the second of exactly two functions that
 // read a Spond member's name, and the only one that does not persist
-// one. From each member it reads exactly two things: the opaque id, and
-// the first and last name fields joined (rosterDisplayName). The
-// member's guardians (names, emails, phone numbers), its own email and
-// phoneNumber, its subGroups and every other profile field are never
-// reached, so they cannot be returned even by accident. The return shape
-// is closed and pinned by spond_link_test.ts, which asserts the ABSENCE
-// of those fields from the serialised output.
+// one. From each member it reads exactly four things: the opaque id, the
+// first and last name fields joined (rosterDisplayName), the opaque
+// subGroups list (which subgroup a member is in, the scoping the
+// candidate list has always used and the fact the diagnostics report),
+// and the opaque roles list (staff exclusion). The member's guardians
+// (names, emails, phone numbers), its own email, phoneNumber, address and
+// every other profile field are never reached, so they cannot be returned
+// even by accident. Both return shapes are closed, LinkCandidate for
+// linking and LinkDiagnosticMember for the diagnostics, and are pinned by
+// spond_link_test.ts, which asserts the ABSENCE of those fields from the
+// serialised output.
+//
+// THE DIAGNOSTICS ARE READ ONLY AND LINK NOBODY. They report what the
+// team's mapped subgroup MISSES so a manager can fix the Spond side: a
+// member in the parent group with no subgroup, or in another one. They
+// carry no member id, so nothing can be linked from them, and the closed
+// LinkCandidate shape stays the only thing linking is built on. They come
+// from the SAME groups/ response the candidates come from: no second
+// Spond call is made, which the deploy workflow's endpoint assertion
+// holds this function to.
 //
 // The display name is TRANSIENT. It exists so the manager can tell who
 // they are binding. It is stored nowhere, logged nowhere, and the client
@@ -63,6 +76,8 @@
 import { corsHeaders, reply, resolveCaller } from '../_shared/fa.ts'
 import {
   collectLinkCandidates,
+  collectLinkDiagnostics,
+  diagnosticsProved,
   extractAccessToken,
   linkCollectionWarnings,
   parseIgnoredMemberIds,
@@ -217,6 +232,10 @@ Deno.serve(async (req) => {
       team_id: teamId,
       members: [],
       truncated: false,
+      // No mapping means no Spond group was read, so nothing about a
+      // registered player's Spond setup is known and none is claimed.
+      diagnostic_members: [],
+      diagnostic_complete: false,
       warnings: ['This team has no Spond group mapped. An admin adds the mapping on the Spond admin page.'],
     })
   }
@@ -234,6 +253,15 @@ Deno.serve(async (req) => {
   // decides completeness from them: a subgroup whose members were all
   // staff is a complete answer, not an unproven read.
   const collected = collectLinkCandidates(groups.groups, mappings, IGNORED_MEMBER_IDS)
+  // The setup diagnostics: the members of the SAME already fetched parent
+  // group that this team's mappings do not reach, so the screen can say
+  // whether a registered player's Spond member exists with no subgroup, in
+  // another subgroup, or not in the group data at all, instead of showing
+  // three different problems as one unexplained list. A separate, closed
+  // shape rather than a widened LinkCandidate: nothing links from a
+  // diagnostic row, so it carries no member id. No extra Spond call is
+  // made, and nothing here is written anywhere.
+  const diagnostics = collectLinkDiagnostics(groups.groups, mappings, IGNORED_MEMBER_IDS)
   return reply(200, {
     ok: true,
     team_id: teamId,
@@ -241,6 +269,13 @@ Deno.serve(async (req) => {
     truncated: collected.truncated,
     staff_excluded: collected.staff,
     ignored_excluded: collected.ignored,
+    diagnostic_members: diagnostics.members,
+    // Reconciled against what the CANDIDATE pass discarded, not just what
+    // the diagnostic scan read: a member of the mapped subgroup dropped
+    // for an unusable id is a name neither list holds, and a claim about
+    // names cannot survive one. diagnosticsProved holds that rule where
+    // the Deno tests execute it.
+    diagnostic_complete: diagnosticsProved(diagnostics, collected),
     warnings: linkCollectionWarnings(collected),
   })
 })

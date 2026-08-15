@@ -72,7 +72,7 @@ import { countLinkedResponses, tonightUpsertBatches, type ResponseCounts, type T
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
-import type { LinkCandidate, SpondLink } from './spondLinking'
+import type { LinkCandidate, SpondGroupMember, SpondLink } from './spondLinking'
 import type { Rsvp, RsvpLinkRow, RsvpResponseRow } from './spondRsvp'
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
 import type { ManagedShareKind, ManagedShareStatus, ShareFilters } from './sharesView'
@@ -5659,6 +5659,22 @@ export interface LinkCandidatesResult {
   // linkLoadComplete decides between them.
   staffExcluded: number
   ignoredExcluded: number
+  // The parent group members this team's mappings do not reach, so the
+  // screen can say WHY a registered player has no candidate: their Spond
+  // member sits in the group with no subgroup, or in another one.
+  //
+  // NULL is a third state and the reason this is not an empty array: the
+  // deployed function is gated behind its own reviewed deploy, so between
+  // merging this and running that workflow the response carries no such
+  // field. Null means "this deployment does not answer", an empty array
+  // means "it answered, and the mapping misses nobody", and only the
+  // second may be reasoned from. Same discipline as the exclusion counts
+  // above.
+  diagnosticMembers: SpondGroupMember[] | null
+  // Whether that scan saw the whole parent group. False on a group the
+  // organiser account cannot see, or a cap that bit; no diagnosis is
+  // stated then.
+  diagnosticComplete: boolean
   warnings: string[]
 }
 
@@ -5693,6 +5709,8 @@ export function useLoadSpondLinkCandidates() {
         truncated?: boolean
         staff_excluded?: number
         ignored_excluded?: number
+        diagnostic_members?: { display_name?: string; subgroup_ids?: unknown }[]
+        diagnostic_complete?: boolean
         warnings?: string[]
       }
       return {
@@ -5704,6 +5722,22 @@ export function useLoadSpondLinkCandidates() {
         // reads as zero exclusions: exactly the old completeness rule.
         staffExcluded: typeof body.staff_excluded === 'number' ? body.staff_excluded : 0,
         ignoredExcluded: typeof body.ignored_excluded === 'number' ? body.ignored_excluded : 0,
+        // Absent field to null, so a deployment that does not answer this
+        // is not read as "the mapping misses nobody". Only the two fields
+        // the closed diagnostic shape carries are taken across; anything
+        // else a response held would be dropped here rather than reach the
+        // screen.
+        diagnosticMembers: Array.isArray(body.diagnostic_members)
+          ? body.diagnostic_members
+              .filter((m) => typeof m?.display_name === 'string' && m.display_name.length > 0)
+              .map((m) => ({
+                displayName: m.display_name as string,
+                subgroupIds: Array.isArray(m.subgroup_ids)
+                  ? m.subgroup_ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+                  : [],
+              }))
+          : null,
+        diagnosticComplete: body.diagnostic_complete === true,
         warnings: body.warnings ?? [],
       }
     },
