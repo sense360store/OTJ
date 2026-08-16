@@ -143,8 +143,13 @@ const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-// Every mutate call this screen could make lands here, so "rendering writes
-// nothing" is a counted fact rather than a reading of the source.
+// Every mutate call this screen makes DURING RENDER lands here. Static
+// rendering runs no effects, so this counter says nothing about a write moved
+// into a useEffect; what holds that rule is the source check in
+// drillDiagram.invariant.test.ts ("writes nothing from any of the session
+// surfaces"), which refuses the word mutate in the seam at all. The stronger
+// guard in this file is the closed vi.mock factory below: a new hook anywhere
+// in the LiveSession subtree throws until somebody wires it up deliberately.
 const writes: string[] = []
 const mutation = (name: string) => () => ({
   mutate: () => {
