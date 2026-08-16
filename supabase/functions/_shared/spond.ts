@@ -1121,15 +1121,44 @@ export function linkCollectionWarnings(c: LinkCandidateCollection, max: number =
 //
 // WHAT IT READS, AND WHAT IT RETURNS. Per member exactly what the
 // candidate reduction reads plus the subgroup ids the scoping already
-// reads: the opaque id (to fold one person appearing under two of the
-// team's mapped groups, in memory, never returned), first and last name
-// through rosterDisplayName, subGroups, and roles for the staff exclusion.
-// No guardian, contact, address or any other profile field is reached. The
-// returned shape is SPOND_DIAGNOSTIC_MEMBER_FIELDS and nothing else: a
-// transient display name and opaque subgroup ids. The member id is
-// deliberately NOT returned, because nothing links from a diagnostic row;
-// the closed LinkCandidate shape stays the only thing linking is built on.
-// Nothing here is persisted, by this module or by its caller.
+// reads: the opaque id, first and last name through rosterDisplayName,
+// subGroups, and roles for the staff exclusion. No guardian, contact,
+// address or any other profile field is reached. The returned shape is
+// SPOND_DIAGNOSTIC_MEMBER_FIELDS and nothing else.
+//
+// THE MEMBER ID IS NOW RETURNED, AND THAT IS A DELIBERATE AMENDMENT. Until
+// the team reconciliation this row carried no id, on the reasoning that
+// nothing links from a diagnostic row so nothing needed one. That
+// reasoning held exactly as long as the screen could only DESCRIBE a
+// mismatch. It cannot survive the two things the reconciliation must do,
+// and neither of them is a name match:
+//
+//   * A child who IS already linked, whose member has moved subgroup, is
+//     resolved by MEMBER ID against this scan. Without the id the only
+//     available join is the display name, which is precisely the identity
+//     inference the whole feature refuses. The id is what makes the proved
+//     path proved.
+//   * A child who is NOT linked can only be bound to a member that has an
+//     id to bind. The confirmation flow that creates that link is a human
+//     pressing a button on an unambiguous row, which is the same gate the
+//     candidate rows have always ridden and the same fact matched_by
+//     records.
+//
+// What replaces the old rule is stronger than it was, because it is about
+// the ACTION rather than about the payload: nothing links and nothing moves
+// from a diagnostic row without an explicit human press on a row that is
+// unambiguous on both sides (one Spond member of the name, one registered
+// child of it), and the ambiguity rules in src/lib/spondLinking.ts decide
+// that before an id is ever offered. An id with no name attached links
+// nobody, and this scan is still returned to one screen, held under
+// gcTime 0 and persisted nowhere.
+//
+// The id is EMPTY STRING, never absent, when the member carries nothing the
+// links table would accept. A required field keeps the shape closed and
+// assertable; the client treats '' as no identity and offers no action. It
+// deliberately does not drop such a member or mark the scan incomplete: the
+// name based sentences this scan already powers are unaffected by an
+// unusable id, and dropping the row would silently delete a finding.
 //
 // STAFF FIRST, always. The exclusion runs over the whole parent group
 // before a single row is emitted, so a manager or coach in another
@@ -1139,10 +1168,17 @@ export function linkCollectionWarnings(c: LinkCandidateCollection, max: number =
 // discipline SPOND_EVENT_COLUMNS and SPOND_RESPONSE_COLUMNS apply to
 // rows: no name beyond the transient display name, no contact, and no
 // free shaped field to hide one in. Pinned by spond_link_test.ts.
-export const SPOND_DIAGNOSTIC_MEMBER_FIELDS = ['display_name', 'subgroup_ids'] as const
+export const SPOND_DIAGNOSTIC_MEMBER_FIELDS = [
+  'display_name',
+  'spond_member_id',
+  'subgroup_ids',
+] as const
 
 export interface LinkDiagnosticMember {
   display_name: string
+  // The opaque member id, uppercase hex, or '' when this member carries
+  // none the links table would accept. Never a name, never a contact.
+  spond_member_id: string
   subgroup_ids: string[]
 }
 
@@ -1235,16 +1271,16 @@ export function collectLinkDiagnostics(
         complete = false
         continue
       }
-      const rawId = asRecord(member).id
-      const memberId = typeof rawId === 'string' ? rawId.toUpperCase() : ''
       // Fold one person appearing under two of the team's mapped parent
-      // groups. The id is used here and returned nowhere. A member whose
-      // id the links table would refuse cannot be folded and is kept per
-      // appearance, which can only ADD a same name row, and a second same
-      // name row reads as ambiguous rather than as a false identity.
-      if (SPOND_MEMBER_ID_PATTERN.test(memberId)) {
-        if (seen.has(memberId)) continue
-        seen.add(memberId)
+      // groups. Read off the reduced row rather than the payload again, so
+      // the id that folds is byte for byte the id that is returned. A
+      // member whose id the links table would refuse folds under nothing
+      // and is kept per appearance, which can only ADD a same name row, and
+      // a second same name row reads as ambiguous rather than as a false
+      // identity.
+      if (reduced.spond_member_id) {
+        if (seen.has(reduced.spond_member_id)) continue
+        seen.add(reduced.spond_member_id)
       }
       members.push(reduced)
     }
@@ -1281,16 +1317,29 @@ export function diagnosticsProved(
   return diagnostics.complete && !candidates.truncated && candidates.dropped === 0
 }
 
-// One member reduced to a diagnostic row: the transient display name and
-// the opaque subgroup ids, and nothing else. Reads exactly what
-// reduceLinkCandidate reads plus the subGroups list the scoping already
-// reads. The member's guardians, email, phoneNumber, address, roles and
-// every other field are never reached, so they cannot be returned even by
-// accident. Null when there is no usable name to match on.
+// One member reduced to a diagnostic row: the transient display name, the
+// opaque member id and the opaque subgroup ids, and nothing else. Reads
+// exactly what reduceLinkCandidate reads plus the subGroups list the
+// scoping already reads. The member's guardians, email, phoneNumber,
+// address, roles and every other field are never reached, so they cannot
+// be returned even by accident. Null when there is no usable name to match
+// on.
+//
+// The id goes through the same SPOND_MEMBER_ID_PATTERN reduceLinkCandidate
+// applies, so a row can never carry an id the links table would refuse:
+// anything else becomes '', which the client reads as no identity and
+// offers no action on. Refusing the id here rather than at insert time
+// means the screen never offers an action the database would reject.
 export function reduceDiagnosticMember(member: unknown): LinkDiagnosticMember | null {
   const display_name = rosterDisplayName(member)
   if (!display_name) return null
-  return { display_name, subgroup_ids: memberSubgroupIds(member) }
+  const raw = asRecord(member).id
+  const memberId = typeof raw === 'string' ? raw.toUpperCase() : ''
+  return {
+    display_name,
+    spond_member_id: SPOND_MEMBER_ID_PATTERN.test(memberId) ? memberId : '',
+    subgroup_ids: memberSubgroupIds(member),
+  }
 }
 
 // The roster import's member collection, the same discipline: exclusion

@@ -214,6 +214,92 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             ),
         },
     ),
+    # ------------------------------------------------------------------
+    # 0049_spond_team_reconcile: adds ONE function,
+    # public.spond_reconcile_player_team, and nothing else. No table, no
+    # column, no index, no policy, no grant on any table, no capability
+    # key, no trigger, and no value added to any vocabulary (the
+    # audit_events.source CHECK and player_spond_links.matched_by are both
+    # untouched). The only privilege it moves is EXECUTE on its own
+    # function: revoked from public and anon, granted to authenticated,
+    # with the function self gating on players.manage in its body.
+    #
+    # What the function does: makes one child's CURRENT SEASON team
+    # assignment agree with Spond, optionally binding the Spond member id
+    # a human confirmed in the same transaction. It refuses to move a
+    # child who carries no player_spond_links row, AND refuses when that
+    # row no longer points at the member the caller derived its
+    # destination from (stale_link), so "never move anybody on a name
+    # match" is a database rule rather than a screen's convention and
+    # "any link will do" is not representable: exactly one of
+    # p_expected_member_id and p_confirm_member_id must be supplied. It creates no player identity, deletes and repoints no
+    # link, names no season (so no historic or archived registration is
+    # addressable), touches no register entry, session or Spond mirror
+    # row, and makes no network call.
+    #
+    # It changes no data. Its own self-verification takes a BEFORE
+    # fingerprint of the registrations, links, register entries, stored
+    # RSVP, audit rows, policies, grants and triggers in a transaction
+    # local table BEFORE the function is created and compares it AFTER, so
+    # the "changed nothing" claim is a real comparison across the DDL
+    # rather than a value compared with itself. It also reads the STORED
+    # function definition back and asserts the boundaries the header
+    # claims, so those hold against what will actually run.
+    #
+    # Its behaviour was exercised against a real PostgreSQL before
+    # shipping:
+    # .github/scripts/production-migration/test_0049_spond_team_reconcile.sh
+    # builds a stand-in and runs the proved move, the Unassigned move, the
+    # unlinked refusal, the confirm-and-move, the atomicity of those two
+    # halves, both link preservation refusals, every gate, and two
+    # connections racing on one child. It needs a local PostgreSQL server
+    # and is therefore not part of CI; run it by hand when reviewing.
+    #
+    # Written against a hosted database whose newest ledger row is
+    # 20260812102912 / spond_session_link_unique, checked 2026-08-16.
+    # ------------------------------------------------------------------
+    "supabase/migrations/0049_spond_team_reconcile.sql": ReviewedMigration(
+        path="supabase/migrations/0049_spond_team_reconcile.sql",
+        ledger_name="spond_team_reconcile",
+        idempotency_key="otj:migration:0049_spond_team_reconcile",
+        expected_previous_version="20260812102912",
+        expected_previous_name="spond_session_link_unique",
+        objects={
+            # The function exists with exactly the reviewed signature. The
+            # argument types are part of the probe: a different overload
+            # would be a different migration.
+            "public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)": (
+                "(select count(*) > 0 from pg_proc p "
+                "join pg_namespace n on n.oid = p.pronamespace "
+                "where n.nspname = 'public' "
+                "and p.proname = 'spond_reconcile_player_team' "
+                "and pg_get_function_identity_arguments(p.oid) = "
+                "'uuid, uuid, uuid, text, text, uuid')"
+            ),
+            # And it is SECURITY DEFINER with an empty search_path, which
+            # is what makes the in body capability check the enforcement
+            # rather than a suggestion.
+            # chr(34) rather than a literal double quote: the verifier
+            # refuses a probe carrying a quote of any kind, so the empty
+            # search_path setting is composed instead of written.
+            "it is SECURITY DEFINER with an empty search_path": (
+                "(select count(*) > 0 from pg_proc p "
+                "join pg_namespace n on n.oid = p.pronamespace "
+                "where n.nspname = 'public' "
+                "and p.proname = 'spond_reconcile_player_team' "
+                "and p.prosecdef "
+                "and p.proconfig @> array[concat('search_path=', chr(34), chr(34))])"
+            ),
+            # authenticated may execute it and anon may not. Absent
+            # before, present after, like every probe here.
+            "authenticated executes it and anon does not": (
+                "(select has_function_privilege('authenticated', "
+                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', 'EXECUTE') "
+                "and not has_function_privilege('anon', "
+                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', 'EXECUTE'))"
+            ),
+        },
+    ),
 }
 
 

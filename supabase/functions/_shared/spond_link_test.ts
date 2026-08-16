@@ -529,7 +529,9 @@ const diagnose = (
 Deno.test('a member with no subgroups is returned, with an empty subgroup list', () => {
   const out = diagnose([participant(OUTSIDE_A, 'Outside', [])])
   assertEquals(out.complete, true)
-  assertEquals(out.members, [{ display_name: 'Outside Synthetic', subgroup_ids: [] }])
+  assertEquals(out.members, [
+    { display_name: 'Outside Synthetic', spond_member_id: OUTSIDE_A, subgroup_ids: [] },
+  ])
 })
 
 Deno.test('a member the team mapping already reaches is not in the diagnostics', () => {
@@ -541,7 +543,9 @@ Deno.test('a member the team mapping already reaches is not in the diagnostics',
 
 Deno.test('a member in another subgroup is returned with that subgroup id', () => {
   const out = diagnose([participant(OUTSIDE_A, 'Outside', [SG2])])
-  assertEquals(out.members, [{ display_name: 'Outside Synthetic', subgroup_ids: [SG2] }])
+  assertEquals(out.members, [
+    { display_name: 'Outside Synthetic', spond_member_id: OUTSIDE_A, subgroup_ids: [SG2] },
+  ])
 })
 
 Deno.test('a member in one of the team s OTHER mappings is reached, not missed', () => {
@@ -685,19 +689,62 @@ Deno.test('one unreadable group among several proves nothing for any of them', (
 
 // ---- The shape, and what it may never carry --------------------------------
 
-Deno.test('a diagnostic row carries exactly the two allowed fields', () => {
+Deno.test('a diagnostic row carries exactly the three allowed fields', () => {
   const row = reduceDiagnosticMember(SYNTHETIC_MEMBER)
   assert(row !== null)
   assertEquals(Object.keys(row).sort(), [...SPOND_DIAGNOSTIC_MEMBER_FIELDS].sort())
-  assertEquals(SPOND_DIAGNOSTIC_MEMBER_FIELDS.length, 2)
+  assertEquals(SPOND_DIAGNOSTIC_MEMBER_FIELDS.length, 3)
   assertEquals(row.display_name, 'Madeup Childname')
+  assertEquals(row.spond_member_id, LINKED_A)
   assertEquals(row.subgroup_ids, ['SUBGROUP-SYNTH-1'])
 })
 
-Deno.test('a diagnostic row carries no member id, so nothing can be linked from one', () => {
-  const flat = JSON.stringify(diagnose([participant(OUTSIDE_A, 'Outside', [SG2])]).members)
-  assert(!flat.includes(OUTSIDE_A), 'a diagnostic row leaked the member id')
-  assert(!flat.includes('spond_member_id'), 'a diagnostic row leaked the candidate id field')
+// THE AMENDMENT, and the rule that replaced the one it removes. A diagnostic
+// row carried no member id while the screen could only DESCRIBE a mismatch.
+// The team reconciliation must resolve an already linked child BY IDENTITY,
+// which is the whole reason it is not a name match, and a child who is not
+// linked cannot be bound to a member that has no id to bind. So the id is on
+// the row deliberately, and what keeps it honest is the ACTION rule rather
+// than the payload: nothing links and nothing moves without an explicit
+// human press on a row the ambiguity rules have already proved unambiguous,
+// and the database refuses to move an unlinked child at all.
+Deno.test('a diagnostic row carries the member id, in the shape the links table accepts', () => {
+  const rows = diagnose([participant(OUTSIDE_A, 'Outside', [SG2])]).members
+  assertEquals(rows.length, 1)
+  assertEquals(rows[0].spond_member_id, OUTSIDE_A)
+  assert(/^[0-9A-F]{16,64}$/.test(rows[0].spond_member_id))
+})
+
+Deno.test('an id the links table would refuse becomes no identity, not a bad one', () => {
+  // Empty string rather than a missing field, so the shape stays closed and
+  // assertable; the client reads '' as no identity and offers no action. The
+  // row itself survives, because the name based sentences this scan powers
+  // are unaffected by an unusable id and dropping the row would silently
+  // delete a finding.
+  for (const id of ['not-a-member-id', 'jack.thompson', '', 'ABCDEF', 12345, null, undefined]) {
+    const row = reduceDiagnosticMember({ ...SYNTHETIC_MEMBER, id })
+    assert(row !== null, `dropped the row for id ${String(id)}`)
+    assertEquals(row.spond_member_id, '', `kept an unusable id ${String(id)}`)
+  }
+  // And a lowercase id is normalised to the stored form rather than refused,
+  // exactly as the candidate reduction does.
+  const lower = reduceDiagnosticMember({ ...SYNTHETIC_MEMBER, id: LINKED_A.toLowerCase() })
+  assertEquals(lower?.spond_member_id, LINKED_A)
+})
+
+Deno.test('the id a row carries is the id the scan folded duplicates on', () => {
+  // One person listed under two of the team's mapped parent groups appears
+  // once. Reading the fold off the reduced row rather than the payload a
+  // second time is what stops the id that folds and the id that is returned
+  // from ever being two different strings.
+  const groups = [
+    { id: GROUP_ID, members: [participant(OUTSIDE_A, 'Outside', [SG2])] },
+    { id: 'GROUP-SYNTH-2', members: [participant(OUTSIDE_A.toLowerCase(), 'Outside', [SG2])] },
+  ]
+  const twoGroups = [mapping(SG1), { ...mapping(SG1), spond_group_id: 'GROUP-SYNTH-2' }]
+  const out = collectLinkDiagnostics(groups, twoGroups, new Set<string>())
+  assertEquals(out.members.length, 1)
+  assertEquals(out.members[0].spond_member_id, OUTSIDE_A)
 })
 
 Deno.test('a diagnostic row carries no guardian, contact or address field', () => {
@@ -720,7 +767,8 @@ Deno.test('a diagnostic row carries no guardian, contact or address field', () =
     'Made Up Lane',
     'Nowhere',
     'roles',
-    LINKED_A,
+    // The roles list the staff exclusion reads in memory and never returns.
+    'ROLE-SYNTH-1',
   ]) {
     assert(!flat.includes(forbidden), `the diagnostics leaked ${forbidden}`)
   }
@@ -737,8 +785,12 @@ Deno.test('a member with no readable name has no diagnostic row of its own', () 
 })
 
 Deno.test('the diagnostics never widen the candidate shape', () => {
-  // Linking is built on LinkCandidate and stays so: the diagnostic rows
-  // are a separate closed shape and share no field with it but the name.
+  // LinkCandidate is unchanged by the reconciliation, and that was a
+  // decision rather than an oversight. Adding subgroup_ids to it would have
+  // told the reconciliation whether a member of THIS team's subgroup is also
+  // in another team's, and the answer to that question is "offer nothing"
+  // either way, so the two field boundary the deploy workflow asserts buys
+  // more than the precision would.
   const candidate = reduceLinkCandidate(SYNTHETIC_MEMBER)
   assert(candidate !== null)
   assertEquals(Object.keys(candidate).sort(), ['display_name', 'spond_member_id'])

@@ -187,3 +187,62 @@ mistake them for oversights:
 - **No RSVP history.** The tables hold the current reply state per event, not a
   timeline of changes. Reconstructing "who changed their mind" is not a product
   requirement and would mean storing more per child, not less.
+
+## Amendment, 16 August 2026: the link becomes the thing team moves ride on
+
+Implemented by `supabase/migrations/0049_spond_team_reconcile.sql`. This
+amends decision 1 (what a link is for) and nothing else; every other decision
+above stands unchanged.
+
+**What changed and why.** A link was, until now, read only context: it decided
+whose reply appeared beside a child on Players &amp; groups and nothing more.
+Production, 16 August, showed the club paying for that: the Spond links screen
+correctly reported three Argonauts registrations whose Spond member sat in
+Gladiators, in Spartans, and in no team at all, and could offer nothing but a
+sentence. Spond is where the club actually moves a child between teams, so
+Spond is the source of truth for the current team, and the Hub was the copy
+that had drifted.
+
+**The decision.** A durable link is now what a CURRENT SEASON team move may be
+made on, and it is the ONLY thing such a move may be made on through this path.
+`spond_reconcile_player_team` refuses a child who carries no link. The move is
+therefore never a name match, which is the same rule `planRosterImport` states
+in its own cross team guard and explicitly defers to a durable link for; that
+guard is unchanged and still refuses.
+
+**And it must be the SAME link, named.** A review found that "the child has a
+link" is not the proof it looks like. The caller works the destination out from
+ONE member's Spond subgroups; between the scan and the press another manager
+can unlink that member and correctly link the child to a different one, whose
+Spond team may be somewhere else entirely. The child still has a link and their
+OTJ team need not have moved, so neither the link check nor the optimistic team
+check notices, and the move would apply a destination derived from somebody
+this child is no longer. So a proved call NAMES the member it reasoned from and
+the function refuses (`stale_link`) when the link no longer points at it.
+Exactly one of `p_expected_member_id` and `p_confirm_member_id` must be
+supplied: a null never means "any existing link is acceptable".
+
+**The confirm path, and why it does not weaken the rule.** A child who is not
+linked yet cannot be moved by any amount of name agreement. What the product
+may do is offer a person the chance to CONFIRM the identity, on a row the
+existing two sided ambiguity rules have already proved unambiguous, in a dialog
+that names both sides and both effects. The confirmation creates the link and
+the move rides on it, in one transaction. That is the same "a human decided"
+gate `matched_by` has always recorded, which is why the value written is
+`'suggested'` and why there is still no `'auto'`.
+
+**Consequences for the boundary.** One field moved: a setup diagnostic row now
+carries the opaque member id, because resolving a linked child by identity
+needs an identity and a name is not one. That amends the "a diagnostic row
+carries no member id" property recorded in
+`docs/security/spond-data-boundary.md`, and replaces it with a rule about the
+action rather than the payload: nothing links and nothing moves from such a row
+without an explicit human press, and the database refuses an unlinked child
+outright. No table, column, policy, capability, trigger or vocabulary value was
+added, `player_spond_links` is still immutable with no update policy and no
+update grant, and Spond is still read only.
+
+**A recorded non goal.** Nothing reconciles automatically, on a schedule or on
+a page render. Every change is a manager pressing something, and the bulk
+action is hidden outright while any row still needs an identity settled, so a
+press can never quietly cover a row a person has not looked at.

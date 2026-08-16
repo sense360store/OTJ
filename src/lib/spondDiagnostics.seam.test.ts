@@ -121,9 +121,13 @@ const ROSTER = [
 // Exactly the reduction src/lib/queries.ts performs on the response body,
 // so the snake_case to camelCase seam is inside the chain under test.
 function asClientDiagnostics(
-  rows: ReadonlyArray<{ display_name: string; subgroup_ids: string[] }>,
+  rows: ReadonlyArray<{ display_name: string; spond_member_id: string; subgroup_ids: string[] }>,
 ): SpondGroupMember[] {
-  return rows.map((m) => ({ displayName: m.display_name, subgroupIds: m.subgroup_ids }))
+  return rows.map((m) => ({
+    displayName: m.display_name,
+    spondMemberId: m.spond_member_id,
+    subgroupIds: m.subgroup_ids,
+  }))
 }
 
 function run(ignoredConfig = '') {
@@ -175,7 +179,7 @@ describe('a Spond group payload through the whole chain', () => {
 
   it('names the other team only where exactly one is mapped', () => {
     const { rows } = run()
-    expect(rows.find((r) => r.player.displayName === 'Elsewhere Synthetic')?.otherTeam).toBe('Titans')
+    expect(rows.find((r) => r.player.displayName === 'Elsewhere Synthetic')?.otherTeam?.teamName).toBe('Titans')
     // The sixth subgroup maps to nothing, so the row says "another Spond
     // subgroup" rather than naming a team it cannot prove.
     expect(stateFor(rows, 'Unmapped Synthetic')).toBe('other_subgroup')
@@ -193,14 +197,17 @@ describe('a Spond group payload through the whole chain', () => {
     expect(JSON.stringify(diagnostics.members)).not.toContain('Unmapped Synthetic')
   })
 
-  it('carries no member id, guardian, contact or address across the seam', () => {
+  it('carries no guardian, contact, address or role across the seam', () => {
+    // The member id is now DELIBERATELY across this seam, and it is the
+    // only field that moved: the team reconciliation resolves an already
+    // linked child by identity, which is the whole reason it is not a name
+    // match, and a child who is not linked cannot be bound to a member that
+    // has no id to bind. Every other field this ever refused is still
+    // refused, including the roles list the staff exclusion reads in memory
+    // and never returns.
     const { diagnostics, rows } = run()
     const flat = JSON.stringify(diagnostics.members) + JSON.stringify(rows)
     for (const forbidden of [
-      id('a'),
-      id('b'),
-      id('c'),
-      id('d'),
       'guardians',
       'Guardianname',
       'GUARDIAN-SYNTH-1',
@@ -212,6 +219,19 @@ describe('a Spond group payload through the whole chain', () => {
     ]) {
       expect(flat, `the chain leaked ${forbidden}`).not.toContain(forbidden)
     }
+  })
+
+  it('carries the member id, and only for members it could identify', () => {
+    // The positive half of the boundary above, so "the id crossed" is
+    // asserted rather than merely no longer forbidden. It also pins the
+    // shape a row takes when the id is unusable: '' rather than a missing
+    // field, which the client reads as no identity and offers no action on.
+    const { diagnostics } = run()
+    for (const m of diagnostics.members) {
+      expect(m.spond_member_id === '' || /^[0-9A-F]{16,64}$/.test(m.spond_member_id)).toBe(true)
+    }
+    const elsewhere = diagnostics.members.find((m) => m.display_name === 'Elsewhere Synthetic')
+    expect(elsewhere?.spond_member_id).toBe(id('c'))
   })
 
   it('states nothing at all when the group is not the one the mappings name', () => {
@@ -287,6 +307,7 @@ describe('a Spond group payload through the whole chain', () => {
     const { diagnostics } = run()
     const dropped: SpondGroupMember[] = diagnostics.members.map((m) => ({
       displayName: m.display_name,
+      spondMemberId: m.spond_member_id,
       subgroupIds: [],
     }))
     const rows = spondSetupRows({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
+  ConfirmReconcileView,
   LinkSectionsView,
   LinkedRowView,
   NeedsDecisionRowView,
@@ -52,8 +53,9 @@ const SUBGROUP_TEAMS = new Map([
   [SG_MINE, { teamId: 't1', teamName: 'Argonauts' }],
   [SG_OTHER, { teamId: 't2', teamName: 'Titans' }],
 ])
-const outside = (name: string, subgroupIds: string[] = []): SpondGroupMember => ({
+const outside = (name: string, subgroupIds: string[] = [], id = ''): SpondGroupMember => ({
   displayName: name,
+  spondMemberId: id,
   subgroupIds,
 })
 
@@ -67,6 +69,12 @@ const sectionProps = {
   teamBySubgroup: SUBGROUP_TEAMS as ReadonlyMap<string, SubgroupTeam>,
   clubRoster: [] as RegisteredPlayer[],
   expectedTeam: 'Argonauts' as string | null,
+  expectedTeamId: 't1' as string | null,
+  subgroupMappingComplete: true,
+  reconcileBusy: false,
+  onApplyReconcile: noop,
+  onConfirmReconcile: noop,
+  onApplyAllReconcile: noop,
   onAccept: noop,
   onChoose: noop,
   onUnlink: noop,
@@ -599,5 +607,202 @@ describe('PickerView', () => {
     expect(html).toContain('linked to another Spond member')
     // Beta is free: no disabled attribute on that row.
     expect(html).toMatch(/<button class="sl-picker-row"><span>Beta Synthetic<\/span>/)
+  })
+})
+
+// ---- Making OTJ agree with Spond, through the composed screen -------------
+//
+// PRODUCTION, 16 August 2026, Argonauts: three mismatches the screen could
+// see and could only describe. These render the composed view over those
+// three shapes and assert what a manager is offered, because the composition
+// is where this kind of defect lives: the pure rule can be exactly right
+// while the container hands the view a literal, and no test of the rule
+// would notice.
+
+describe('the Spond team assignment section, composed', () => {
+  const M3 = 'AAAABBBBCCCCDDDDEEEEFFFF00001111'
+  // The three Argonauts children of the production report. Alpha is linked
+  // and Spond has them on Titans (t2, the other mapped team); Beta is linked
+  // and Spond has them in no team; Gamma is registered on this team and not
+  // linked at all.
+  const proved = { ...sectionProps, outsideComplete: true }
+
+  const render = (
+    links: SpondLink[],
+    outsideMembers: SpondGroupMember[],
+    pool: RegisteredPlayer[] = roster,
+    over: Partial<typeof sectionProps> = {},
+  ) =>
+    renderToStaticMarkup(
+      <LinkSectionsView
+        {...proved}
+        {...over}
+        candidates={[]}
+        links={links}
+        pool={pool}
+        clubRoster={pool}
+        outsideMembers={outsideMembers}
+      />,
+    )
+
+  it('offers a linked child the move Spond states, both ways round', () => {
+    const html = render([link(M1, 'p1')], [outside('Alpha Synthetic', [SG_OTHER], M1)])
+    expect(html).toContain('In Spond · assigned to another team: Titans')
+    expect(html).toContain('OTJ team: Argonauts')
+    expect(html).toContain('Argonauts → Titans')
+    expect(html).toContain('Update OTJ to Spond')
+  })
+
+  it('offers Unassigned for a linked child Spond has in no team', () => {
+    const html = render([link(M1, 'p1')], [outside('Alpha Synthetic', [], M1)])
+    expect(html).toContain('In Spond · no team assigned')
+    expect(html).toContain('Argonauts → Unassigned')
+    expect(html).toContain('Update OTJ to Spond')
+  })
+
+  it('offers an UNLINKED child confirmation first, never a bare move', () => {
+    // The whole identity rule, at the surface a manager actually reads.
+    const html = render([], [outside('Alpha Synthetic', [SG_OTHER], M1)])
+    expect(html).toContain('Confirm player &amp; update OTJ to Titans')
+    expect(html).not.toContain('Update OTJ to Spond')
+    expect(html).toContain('Not linked to a Spond member yet')
+  })
+
+  it('offers nothing at all when Spond names two teams', () => {
+    const html = render([link(M1, 'p1')], [outside('Alpha Synthetic', [SG_OTHER, SG_MINE], M1)])
+    expect(html).toContain('in more than one team, so Spond gives no single answer')
+    expect(html).not.toContain('Update OTJ to Spond')
+    expect(html).not.toContain('Confirm player')
+  })
+
+  it('offers nothing, and guesses no team, for a subgroup nobody maps', () => {
+    const html = render([link(M1, 'p1')], [outside('Alpha Synthetic', [SG_UNMAPPED], M1)])
+    expect(html).toContain('in a Spond subgroup no team is mapped to')
+    expect(html).not.toContain('Unassigned')
+    expect(html).not.toContain('Update OTJ to Spond')
+  })
+
+  it('says nothing when the club maps a whole Spond group', () => {
+    const html = render(
+      [link(M1, 'p1')],
+      [outside('Alpha Synthetic', [SG_OTHER], M1)],
+      roster,
+      { subgroupMappingComplete: false },
+    )
+    expect(html).toContain('mapped to a whole Spond group')
+    expect(html).not.toContain('Update OTJ to Spond')
+  })
+
+  it('says nothing when the scan is not proved, rather than a shorter list', () => {
+    const html = render(
+      [link(M1, 'p1')],
+      [outside('Alpha Synthetic', [SG_OTHER], M1)],
+      roster,
+      { outsideComplete: false },
+    )
+    expect(html).toContain('did not return the member and group data in full')
+    expect(html).not.toContain('Update OTJ to Spond')
+  })
+
+  it('puts no Spond member id on the screen, even now that the row carries one', () => {
+    const html = render([], [outside('Alpha Synthetic', [SG_OTHER], M1)])
+    for (const id of [M1, M2, M3]) expect(html).not.toContain(id)
+  })
+
+  it('does not also report the moved member as gone from the Spond group', () => {
+    // Before this, a linked child whose member had moved subgroup showed up
+    // under "Links with no Spond member" saying they were no longer offered,
+    // which is false and invites an unlink that drains their stored replies.
+    const html = render([link(M1, 'p1')], [outside('Alpha Synthetic', [SG_OTHER], M1)])
+    expect(html).not.toContain('Links with no Spond member')
+    expect(html).not.toContain('no longer offered from the team')
+  })
+
+  it('still reports a link whose member the scan genuinely never saw', () => {
+    // The narrow half: the orphan section is corrected, not removed.
+    const html = render([link(M2, 'p2')], [outside('Alpha Synthetic', [SG_OTHER], M1)])
+    expect(html).toContain('Links with no Spond member')
+  })
+
+  it('does not describe a child twice, once as a gap and once as an offer', () => {
+    const html = render([], [outside('Alpha Synthetic', [SG_OTHER], M1)])
+    expect(html).toContain('Confirm player')
+    // The read only description of the same finding has moved aside, so the
+    // screen makes one statement about this child rather than two.
+    expect(html).not.toContain('In Spond · assigned to another team: Titans</span><span class="sl-sub">Expected')
+    expect(html.split('Alpha Synthetic').length - 1).toBeLessThanOrEqual(2)
+  })
+
+  it('says so plainly when every linked player agrees with Spond', () => {
+    const html = render([link(M1, 'p1')], [outside('Alpha Synthetic', [SG_MINE], M1)])
+    expect(html).toContain('Every linked player on this team is on the same team in Spond.')
+  })
+
+  it('offers the bulk apply only when nothing needs an identity settled', () => {
+    const both = [player('p1', 'Alpha Synthetic'), player('p2', 'Beta Synthetic')]
+    const allProved = render(
+      [link(M1, 'p1'), link(M2, 'p2')],
+      [outside('Alpha Synthetic', [SG_OTHER], M1), outside('Beta Synthetic', [SG_OTHER], M2)],
+      both,
+    )
+    expect(allProved).toContain('Apply all safe Spond changes (2)')
+
+    const oneUnlinked = render(
+      [link(M1, 'p1')],
+      [outside('Alpha Synthetic', [SG_OTHER], M1), outside('Beta Synthetic', [SG_OTHER], M2)],
+      both,
+    )
+    expect(oneUnlinked).toContain('Confirm player')
+    expect(oneUnlinked).not.toContain('Apply all safe Spond changes')
+  })
+})
+
+describe('the confirmation a name match earns', () => {
+  const gap = player('p1', 'Alpha Synthetic')
+  const row = {
+    player: gap,
+    state: 'confirm' as const,
+    from: { kind: 'team' as const, teamId: 't1', teamName: 'Argonauts' },
+    to: { kind: 'team' as const, teamId: 't2', teamName: 'Titans' },
+    memberId: M1,
+    confirmName: 'Alpha Synthetic',
+  }
+  const render = (busy = false) =>
+    renderToStaticMarkup(
+      <ConfirmReconcileView row={row} busy={busy} onCancel={noop} onConfirm={noop} />,
+    )
+
+  it('says who is being matched to whom, and that it is the manager deciding', () => {
+    const html = render()
+    expect(html).toContain('Alpha Synthetic')
+    expect(html).toContain('except the name')
+    expect(html).toContain('your decision')
+  })
+
+  it('names both effects, and that they land together or not at all', () => {
+    const html = render()
+    expect(html).toContain('together or not at all')
+    expect(html).toContain('links that Spond member')
+    expect(html).toContain('Argonauts')
+    expect(html).toContain('Titans')
+  })
+
+  it('states the three things it does not do', () => {
+    const html = render()
+    expect(html).toContain('Nothing is sent to Spond')
+    expect(html).toContain('no past season changes')
+    expect(html).toContain('no saved session is touched')
+  })
+
+  it('shows no member id, even though the row carries one', () => {
+    expect(render()).not.toContain(M1)
+  })
+
+  it('freezes while the write is in flight, so no half landed change is dismissible', () => {
+    const html = render(true)
+    expect(html).toContain('Saving…')
+    // Both footer buttons disabled, and the dialog's own dismissal routes with
+    // them: this one creates a permanent link.
+    expect(html.match(/disabled=""/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
 })

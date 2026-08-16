@@ -47,9 +47,39 @@ describe('SpondLinks hands the section builder the scoped pool, never the roster
     expect(src).toMatch(/complete=\{loadedTeam \? linkLoadComplete\(loadedTeam\) : false\}/)
   })
 
-  it('the view composes both halves from its own props', () => {
-    expect(src).toMatch(/const sections = buildLinkSections\(candidates, links, pool\)/)
+  it('the view composes all three parts from its own props', () => {
+    expect(src).toMatch(/const sections = buildLinkSections\(candidates, links, pool, elsewhere\)/)
     expect(src).toMatch(/const setup = spondSetupRows\(\{/)
+    expect(src).toMatch(/const reconcile = spondReconcile\(\{/)
+  })
+
+  it('the reconciliation gets the proved scan, never a literal', () => {
+    // The same failure mode the two checks above exist for, one section
+    // along, and with a worse consequence: this section OFFERS A WRITE.
+    // Handing it `candidatesComplete: true` or `subgroupMappingComplete:
+    // true` as a literal would let it act on a scan that proved nothing,
+    // which is exactly the shape "never move anybody on unproven evidence"
+    // forbids. Each must arrive from the shared rule that decided it.
+    expect(src).toMatch(/candidatesComplete: complete/)
+    expect(src).toMatch(/subgroupMappingComplete,/)
+    expect(src).toMatch(/subgroupMappingComplete=\{subgroupMappingComplete\}/)
+    expect(src).toMatch(
+      /subgroupMappingComplete = useMemo\(\s*\(\) => !clubMapsWholeGroup\(mappings\.data \?\? \[\]\)/,
+    )
+    // And the destination the screen sends is the one the rule decided,
+    // through the shared reader, never a team id read off the row by hand.
+    expect(src).toMatch(/targetTeamId: destinationTeamId\(row\.to\)/)
+    expect(src).toMatch(/expectedTeamId: destinationTeamId\(row\.from\)/)
+  })
+
+  it('a member seen one subgroup away is not also reported as gone', () => {
+    // Before the reconciliation, a linked child whose Spond member had
+    // simply moved subgroup rendered under "Links with no Spond member" as
+    // "no longer offered from the team's Spond group", which is false and
+    // invites an unlink that would drain that child's stored replies. The
+    // orphan rule now takes the ids the scan DID see, so the same child
+    // cannot appear in both sections saying opposite things.
+    expect(src).toMatch(/const elsewhere = elsewhereMemberIds\(outsideMembers, outsideComplete\)/)
   })
 
   it('hands the diagnostics down as the server sent them, never as a literal', () => {
@@ -171,21 +201,50 @@ describe('staff never enter the player pipelines', () => {
     expect(src).not.toMatch(/diagnostic_complete: diagnostics\.complete/)
   })
 
-  it('a diagnostic row cannot carry a member id, so nothing links from one', () => {
-    // The closed LinkCandidate shape is what linking is built on and it
-    // is asserted field for field by the deploy workflow. The diagnostic
-    // shape is its own closed shape beside it, deliberately WITHOUT the
-    // member id: a row nobody can link from cannot become a second,
-    // untested linking path.
+  it('the diagnostic shape is exactly three fields, and the id is one of them', () => {
+    // The rule that replaced "a diagnostic row carries no member id". It
+    // carried none while the screen could only DESCRIBE a mismatch; the
+    // reconciliation must resolve an already linked child BY IDENTITY,
+    // which is the whole reason it is not a name match, so the id is on the
+    // row deliberately. What has to stay closed is the shape: three fields,
+    // no fourth, and in particular nothing a guardian or a contact could
+    // ride in. The candidate shape beside it is unchanged and is still
+    // asserted field for field by the deploy workflow.
     const shared = readFileSync(
       join(import.meta.dirname, '../../supabase/functions/_shared/spond.ts'),
       'utf8',
     )
     const iface = shared.match(/export interface LinkDiagnosticMember\s*\{([^}]*)\}/)
     expect(iface).not.toBeNull()
-    const fields = [...(iface?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => m[1]).sort()
-    expect(fields).toEqual(['display_name', 'subgroup_ids'])
-    expect(shared).toMatch(/export const SPOND_DIAGNOSTIC_MEMBER_FIELDS = \['display_name', 'subgroup_ids'\]/)
+    const fields = [...(iface?.[1] ?? '').matchAll(/^\s*(\w+)[?]?\s*:/gm)].map((m) => m[1]).sort()
+    expect(fields).toEqual(['display_name', 'spond_member_id', 'subgroup_ids'])
+    expect(shared).toMatch(
+      /export const SPOND_DIAGNOSTIC_MEMBER_FIELDS = \[\s*'display_name',\s*'spond_member_id',\s*'subgroup_ids',?\s*\]/,
+    )
+    // The candidate shape did NOT move. Widening it would have been the
+    // cheap way to answer "is this member also in another team's subgroup",
+    // and it was deliberately not taken: the answer there is "offer
+    // nothing" either way, so the boundary buys more than the precision.
+    const candidate = shared.match(/export interface LinkCandidate\s*\{([^}]*)\}/)
+    const candidateFields = [...(candidate?.[1] ?? '').matchAll(/^\s*(\w+)[?]?\s*:/gm)].map((m) => m[1]).sort()
+    expect(candidateFields).toEqual(['display_name', 'spond_member_id'])
+  })
+
+  it('an id a diagnostic row carries is one the links table would accept', () => {
+    // An id the column refuses is no identity: offering an action on one
+    // would be offering something the database will reject, which is how a
+    // manager learns to distrust a screen. The reduction constrains it with
+    // the same pattern reduceLinkCandidate uses, and the client drops
+    // anything else on the way in.
+    const shared = readFileSync(
+      join(import.meta.dirname, '../../supabase/functions/_shared/spond.ts'),
+      'utf8',
+    )
+    const body = shared.match(/export function reduceDiagnosticMember[\s\S]*?\n\}/)
+    expect(body).not.toBeNull()
+    expect(body?.[0]).toMatch(/SPOND_MEMBER_ID_PATTERN\.test\(memberId\)/)
+    const queries = readFileSync(join(import.meta.dirname, './queries.ts'), 'utf8')
+    expect(queries).toMatch(/spondMemberId: isSpondMemberId\(m\.spond_member_id\) \? m\.spond_member_id : ''/)
   })
 
   it('spond-roster-import collects through the shared rule', () => {

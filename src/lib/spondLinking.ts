@@ -18,6 +18,19 @@ export interface LinkCandidate {
   displayName: string
 }
 
+// The character class player_spond_links.spond_member_id enforces, restated
+// on the client so an id that the database would refuse is never offered as
+// something to press. Uppercase hex admits no space, no '@', no '+', no '.'
+// and no lowercase letter, so a name, an email address and a phone number
+// are all unrepresentable as an identity here, exactly as they are in the
+// column. Kept beside the link types rather than in a screen: the Edge
+// reduction, the column check and this must all say one thing.
+export const SPOND_MEMBER_ID = /^[0-9A-F]{16,64}$/
+
+export function isSpondMemberId(value: unknown): value is string {
+  return typeof value === 'string' && SPOND_MEMBER_ID.test(value)
+}
+
 // One stored binding.
 export interface SpondLink {
   spondMemberId: string
@@ -120,6 +133,16 @@ export function buildLinkSections(
   candidates: readonly LinkCandidate[],
   links: readonly SpondLink[],
   roster: readonly RegisteredPlayer[],
+  // The member ids the parent group scan DID see outside this team's mapped
+  // subgroup. A link whose member is in there has not left the group, it has
+  // moved within it, and calling that an orphan is a false sentence the
+  // screen used to print: "no longer offered from the team's Spond group" is
+  // exactly wrong about a member who is one subgroup away, and unlinking on
+  // the strength of it would drain that child's stored replies for a reason
+  // that was never true. Those children belong to the team reconciliation
+  // section instead. Defaulting to empty keeps every caller that has no scan
+  // (and every existing test) on the behaviour it had.
+  elsewhereMemberIds: ReadonlySet<string> = new Set(),
 ): LinkSections {
   const linkByMember = new Map(links.map((l) => [l.spondMemberId, l]))
   const candidateByMember = new Map(candidates.map((c) => [c.spondMemberId, c]))
@@ -185,6 +208,9 @@ export function buildLinkSections(
   const orphans: LinkedRow[] = []
   for (const link of links) {
     if (candidateByMember.has(link.spondMemberId)) continue
+    // Seen elsewhere in the parent group: present, not gone. See the
+    // parameter's own note.
+    if (elsewhereMemberIds.has(link.spondMemberId)) continue
     // Only links whose child is on this roster: a link belonging to
     // another team is that team's business, not an orphan here.
     const player = playerById.get(link.playerId)
@@ -258,6 +284,13 @@ export function unmatchedPlayers(
 // not reach, exactly the closed shape the function returns.
 export interface SpondGroupMember {
   displayName: string
+  // The opaque Spond member id, or '' when this member carries none the
+  // links table would accept. It is what lets the team reconciliation in
+  // ./spondReconcile.ts resolve an ALREADY LINKED child by identity rather
+  // than by name, and what a human confirmation has to bind when a child is
+  // not linked yet. An empty id is no identity: the reconciliation offers
+  // nothing on such a row, and this section's own sentences never read it.
+  spondMemberId: string
   // Opaque Spond subgroup ids. Empty is the finding: a member in the
   // group with no team assigned.
   subgroupIds: string[]
@@ -291,8 +324,19 @@ export interface SpondSetupRow {
   // For 'other_subgroup' only: the OTJ team that subgroup maps to, when
   // exactly one can be determined. Null where the subgroup is unmapped or
   // resolves to more than one team, and the row then says "another Spond
-  // subgroup" rather than naming a team it cannot prove.
-  otherTeam: string | null
+  // subgroup" rather than naming a team it cannot prove. The team's ID
+  // travels with its name because a destination a manager can act on has to
+  // be checkable against the club's teams, and a name alone is not.
+  otherTeam: SubgroupTeam | null
+  // The ONE Spond member this finding is about, and only on the two states
+  // that already prove there is exactly one: 'no_subgroup' and
+  // 'other_subgroup'. Every other state is a state in which no single
+  // member has been established, so there is nothing to carry and nothing
+  // to act on. This is what ./spondReconcile.ts offers a human for
+  // confirmation, and the ambiguity rules below are what make offering it
+  // honest: the row exists only when one Spond member and one registered
+  // child of the name were found, across the WHOLE scan.
+  member: SpondGroupMember | null
 }
 
 export interface SpondSetupContext {
@@ -391,7 +435,12 @@ export function spondSetupRows(ctx: SpondSetupContext): SpondSetupRow[] {
   const unmatched = unmatchedPlayers(ctx.candidates, ctx.links, ctx.pool)
   const outside = ctx.outsideMembers
   if (outside === null || !ctx.outsideComplete) {
-    return unmatched.map((player) => ({ player, state: 'unknown' as const, otherTeam: null }))
+    return unmatched.map((player) => ({
+      player,
+      state: 'unknown' as const,
+      otherTeam: null,
+      member: null,
+    }))
   }
 
   // Inside the mapping: the candidates. A candidate whose name matched an
@@ -420,20 +469,31 @@ export function spondSetupRows(ctx: SpondSetupContext): SpondSetupRow[] {
     claimantsByName.set(key, (claimantsByName.get(key) ?? 0) + 1)
   }
 
+  // Every state but the two positive ones carries no member and no team:
+  // nothing about a single Spond person has been established, so there is
+  // nothing for a caller to name or to act on.
+  const nobody = (player: RegisteredPlayer, state: SpondSetupState): SpondSetupRow => ({
+    player,
+    state,
+    otherTeam: null,
+    member: null,
+  })
   return unmatched.map((player) => {
     const key = normaliseName(player.displayName)
     const inside = insideByName.get(key) ?? 0
     const matches = outsideByName.get(key) ?? []
-    if (inside + matches.length > 1) return { player, state: 'ambiguous' as const, otherTeam: null }
+    if (inside + matches.length > 1) return nobody(player, 'ambiguous')
     const member = matches[0]
     // Nobody in the group carries this name, which is an unambiguous
     // answer however many children share it: neither of them is there.
-    if (inside === 0 && !member) return { player, state: 'not_found' as const, otherTeam: null }
+    if (inside === 0 && !member) return nobody(player, 'not_found')
     // Somebody does, and more than one child could be them.
-    if ((claimantsByName.get(key) ?? 1) > 1) return { player, state: 'ambiguous' as const, otherTeam: null }
-    if (inside === 1) return { player, state: 'name_taken' as const, otherTeam: null }
-    if (!member) return { player, state: 'not_found' as const, otherTeam: null }
-    if (member.subgroupIds.length === 0) return { player, state: 'no_subgroup' as const, otherTeam: null }
+    if ((claimantsByName.get(key) ?? 1) > 1) return nobody(player, 'ambiguous')
+    if (inside === 1) return nobody(player, 'name_taken')
+    if (!member) return nobody(player, 'not_found')
+    if (member.subgroupIds.length === 0) {
+      return { player, state: 'no_subgroup' as const, otherTeam: null, member }
+    }
     const team = resolveOtherTeam(member.subgroupIds, ctx.teamBySubgroup)
     // The member sits in a team whose OWN player list already holds this
     // name. They are far more likely to be that team's child, correctly
@@ -441,9 +501,9 @@ export function spondSetupRows(ctx: SpondSetupContext): SpondSetupRow[] {
     // send a manager to "fix" a Spond record that is right. Neither
     // reading is provable from a name, so it fails closed.
     if (team && ctx.clubRoster.some((p) => p.teamId === team.teamId && normaliseName(p.displayName) === key)) {
-      return { player, state: 'ambiguous' as const, otherTeam: null }
+      return nobody(player, 'ambiguous')
     }
-    return { player, state: 'other_subgroup' as const, otherTeam: team?.teamName ?? null }
+    return { player, state: 'other_subgroup' as const, otherTeam: team, member }
   })
 }
 

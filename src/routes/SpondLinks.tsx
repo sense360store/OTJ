@@ -17,11 +17,13 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  RECONCILE_NOTE,
   useCurrentSeason,
   useDeleteSpondLink,
   useInsertSpondLinks,
   useLoadSpondLinkCandidates,
   useMyCapabilities,
+  useReconcileSpondTeam,
   useRegisteredPlayers,
   useSpondLinks,
   useSpondMappings,
@@ -42,6 +44,17 @@ import {
   type SpondLink,
   type SpondSetupState,
 } from '../lib/spondLinking'
+import {
+  applicableMoves,
+  canApplyAll,
+  clubMapsWholeGroup,
+  destinationLabel,
+  destinationTeamId,
+  elsewhereMemberIds,
+  spondReconcile,
+  type ReconcileBlocker,
+  type ReconcileRow,
+} from '../lib/spondReconcile'
 import { linkedCounts } from '../lib/spondRsvp'
 import type { RegisteredPlayer, Team } from '../lib/data'
 
@@ -227,6 +240,138 @@ export function SpondSetupRowView({
   )
 }
 
+// ---- Making OTJ agree with Spond ------------------------------------------
+
+// One sentence per state, a total Record for the reason REASON_SUB is one:
+// a chain with a default arm prints the default over every case it does not
+// name, and the two cases this section must never blur are "Spond says
+// somewhere else" and "Spond says something this cannot read".
+const RECONCILE_FINDING: Record<ReconcileRow['state'], string> = {
+  // Never rendered: a match is not shown at all.
+  match: '',
+  move: '',
+  confirm: '',
+  ambiguous: 'In Spond · in more than one team, so Spond gives no single answer',
+  unmapped: 'In Spond · in a Spond subgroup no team is mapped to',
+}
+
+// Why the whole section can have nothing to say. Also total, and every
+// sentence says which of the three it is rather than one shared shrug.
+const RECONCILE_BLOCKED: Record<ReconcileBlocker, string> = {
+  no_team: '',
+  // Deliberately not the linking section's "came back incomplete" sentence.
+  // They are about different reads with different remedies, and one wording
+  // for both would send a manager to look at the wrong one.
+  not_proved:
+    'Spond did not return the member and group data in full, so no team change is offered and nothing here is judged against it.',
+  whole_group_mapping:
+    'A team in this club is mapped to a whole Spond group rather than to a subgroup, so Spond states no team for its members that this can read. Map every team to its own Spond subgroup to use this.',
+}
+
+export function ReconcileRowView({
+  row,
+  busy,
+  onApply,
+  onConfirm,
+}: {
+  row: ReconcileRow
+  busy: boolean
+  onApply: () => void
+  onConfirm: () => void
+}) {
+  const to = row.to
+  const finding =
+    to === null
+      ? RECONCILE_FINDING[row.state]
+      : to.kind === 'unassigned'
+        ? 'In Spond · no team assigned'
+        : `In Spond · assigned to another team: ${to.teamName}`
+  return (
+    <div className="sl-row">
+      <div className="sl-row-main">
+        <span className="sl-name">{row.player.displayName}</span>
+        <span className="sl-sub">{finding}</span>
+        <span className="sl-sub">OTJ team: {destinationLabel(row.from)}</span>
+        {to !== null && (
+          <span className="sl-change">
+            {destinationLabel(row.from)} → {destinationLabel(to)}
+          </span>
+        )}
+        {row.state === 'confirm' && (
+          <span className="sl-sub">
+            Not linked to a Spond member yet, so confirming who they are comes first.
+          </span>
+        )}
+      </div>
+      <div className="sl-row-actions">
+        {row.state === 'move' && (
+          <button className="btn btn-primary btn-sm" disabled={busy} onClick={onApply}>
+            Update OTJ to Spond
+          </button>
+        )}
+        {row.state === 'confirm' && to !== null && (
+          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={onConfirm}>
+            Confirm player &amp; update OTJ to {destinationLabel(to)}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// The confirmation a name match earns and nothing more. It names both sides
+// and both effects, because it is the one place on this screen where a
+// person, not the product, decides that two names are one child.
+export function ConfirmReconcileView({
+  row,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  row: ReconcileRow
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const to = row.to
+  return (
+    <Modal
+      title="Confirm this player"
+      sub={row.player.displayName}
+      onClose={onCancel}
+      // Frozen while the write is in flight, the Move dialog's rule: this one
+      // creates a permanent link, so a dismissal mid flight would leave a
+      // manager unsure which half landed.
+      dismissible={!busy}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Saving…' : 'Confirm and update'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 13.5 }}>
+        Spond has a member called <strong>{row.confirmName}</strong>. Nothing has matched them to{' '}
+        <strong>{row.player.displayName}</strong> except the name, so confirming is your decision, not the app's.
+      </p>
+      <p style={{ fontSize: 13.5 }}>Confirming does two things, together or not at all:</p>
+      <ul style={{ fontSize: 13.5, paddingLeft: 18 }}>
+        <li>links that Spond member to {row.player.displayName} permanently, so every later change is proved</li>
+        <li>
+          moves their current season team from {destinationLabel(row.from)} to {to ? destinationLabel(to) : ''}
+        </li>
+      </ul>
+      <p className="muted" style={{ fontSize: 13.5 }}>
+        Nothing is sent to Spond, no past season changes, and no saved session is touched.
+      </p>
+    </Modal>
+  )
+}
+
 export function LinkedRowView({
   name,
   playerName,
@@ -279,9 +424,15 @@ export function LinkSectionsView({
   teamBySubgroup,
   clubRoster,
   expectedTeam,
+  expectedTeamId,
+  subgroupMappingComplete,
+  reconcileBusy,
   onAccept,
   onChoose,
   onUnlink,
+  onApplyReconcile,
+  onConfirmReconcile,
+  onApplyAllReconcile,
 }: {
   // The raw inputs, composed HERE rather than passed pre-composed. A
   // review showed why: with composition in the container, hardcoding the
@@ -312,11 +463,28 @@ export function LinkSectionsView({
   // The team whose links are being worked through, named on the rows that
   // report a Spond team assignment. Null before a team is chosen.
   expectedTeam: string | null
+  // The same team by id. The reconciliation needs one it can compare against
+  // the club's teams, because a destination a manager can act on has to be
+  // checkable and a name is not.
+  expectedTeamId: string | null
+  // False when ANY team in the club is mapped to a whole Spond group. See
+  // clubMapsWholeGroup: while one exists, no subgroup based reading of who
+  // is on which team is complete, so the section states nothing.
+  subgroupMappingComplete: boolean
+  reconcileBusy: boolean
   onAccept: (memberId: string, playerId: string) => void
   onChoose: (memberId: string) => void
   onUnlink: (memberId: string) => void
+  onApplyReconcile: (row: ReconcileRow) => void
+  onConfirmReconcile: (row: ReconcileRow) => void
+  onApplyAllReconcile: (rows: ReconcileRow[]) => void
 }) {
-  const sections = buildLinkSections(candidates, links, pool)
+  // A member the parent group scan saw one subgroup away has not left the
+  // group, so a link pointing at them is not an orphan. Without this the
+  // same child appears twice with contradictory sentences: once here as
+  // "moved to Gladiators" and once below as "no longer in this Spond group".
+  const elsewhere = elsewhereMemberIds(outsideMembers, outsideComplete)
+  const sections = buildLinkSections(candidates, links, pool, elsewhere)
   const setup = spondSetupRows({
     candidates,
     links,
@@ -326,6 +494,26 @@ export function LinkSectionsView({
     teamBySubgroup,
     clubRoster,
   })
+  const reconcile = spondReconcile({
+    pool,
+    clubRoster,
+    links,
+    candidates,
+    candidatesComplete: complete,
+    outsideMembers,
+    outsideComplete,
+    teamBySubgroup,
+    subgroupMappingComplete,
+    teamId: expectedTeamId,
+    teamName: expectedTeam,
+  })
+  const bulk = applicableMoves(reconcile.rows)
+  // A child the section above can act on is not also listed below as
+  // something to go and fix in Spond. The confirm rows are a strict subset
+  // of the setup rows (both come from spondSetupRows), so this removes
+  // exactly the duplicates and never a finding that has no other home.
+  const reconciled = new Set(reconcile.rows.map((r) => r.player.playerId))
+  const setupRemaining = setup.filter((row) => !reconciled.has(row.player.playerId))
   return (
     <>
       <section className="sl-section">
@@ -348,6 +536,45 @@ export function LinkSectionsView({
               onChoose={() => onChoose(row.candidate.spondMemberId)}
             />
           ))
+        )}
+      </section>
+
+      <section className="sl-section">
+        <h3>Spond team assignment</h3>
+        {reconcile.blocker !== null ? (
+          reconcile.blocker === 'no_team' ? null : (
+            <p className="sl-empty">{RECONCILE_BLOCKED[reconcile.blocker]}</p>
+          )
+        ) : reconcile.rows.length === 0 ? (
+          <p className="sl-empty">Every linked player on this team is on the same team in Spond.</p>
+        ) : (
+          <>
+            <p className="sl-empty">
+              Spond is where the club moves a child between teams, so Spond decides which team they are in now.
+              Changing one here changes this season's team and nothing else: no past season, no saved session, and
+              nothing at all in Spond.
+            </p>
+            {canApplyAll(reconcile.rows) && (
+              <div className="sl-bar">
+                <button
+                  className="btn btn-primary btn-sm"
+                  disabled={reconcileBusy}
+                  onClick={() => onApplyAllReconcile(bulk)}
+                >
+                  Apply all safe Spond changes ({bulk.length})
+                </button>
+              </div>
+            )}
+            {reconcile.rows.map((row) => (
+              <ReconcileRowView
+                key={row.player.playerId}
+                row={row}
+                busy={reconcileBusy}
+                onApply={() => onApplyReconcile(row)}
+                onConfirm={() => onConfirmReconcile(row)}
+              />
+            ))}
+          </>
         )}
       </section>
 
@@ -378,22 +605,22 @@ export function LinkSectionsView({
         </p>
       )}
 
-      {complete && setup.length > 0 && (
+      {complete && setupRemaining.length > 0 && (
         <section className="sl-section">
-          <h3>Registered players with no Spond member ({setup.length})</h3>
+          <h3>Registered players with no Spond member ({setupRemaining.length})</h3>
           <p className="sl-empty">
             Each row says what this team's Spond group shows for that name. Where the fix is in Spond, it says so; where
             a child is simply in Spond under a different name, link them with Choose on that member's row above. Staff
             are not searched, so a member who holds a Spond role will not be found here. Nothing on this list changes
             anything, in Spond or here.
           </p>
-          {setup.map((row) => (
+          {setupRemaining.map((row) => (
             <SpondSetupRowView
               key={row.player.playerId}
               name={row.player.displayName}
               shirtNumber={row.player.shirtNumber}
               state={row.state}
-              otherTeam={row.otherTeam}
+              otherTeam={row.otherTeam?.teamName ?? null}
               expectedTeam={expectedTeam}
             />
           ))}
@@ -488,8 +715,15 @@ export default function SpondLinks() {
   const load = useLoadSpondLinkCandidates()
   const insert = useInsertSpondLinks()
   const remove = useDeleteSpondLink()
+  const reconcile = useReconcileSpondTeam()
 
   const [teamId, setTeamId] = useState<string | null>(null)
+  // The confirm-then-move row a manager has opened, if any. Held whole
+  // rather than by id: the modal names the Spond member and both
+  // destinations, and re-deriving them from a list that has since refetched
+  // is how a modal comes to describe a different change from the one it is
+  // about to make.
+  const [confirming, setConfirming] = useState<ReconcileRow | null>(null)
   // Candidates per team for this visit only, so moving between two teams
   // does not pay two Spond logins. Never persisted: the names live here.
   // The whole result is kept, not just the members, because whether the
@@ -513,6 +747,15 @@ export default function SpondLinks() {
   // map. Where a subgroup resolves to no team, or to two, the row says
   // "another Spond subgroup" rather than guessing.
   const subgroupTeams = useMemo(() => teamsBySubgroup(mappings.data ?? []), [mappings.data])
+
+  // Club wide, not per team: a whole group mapping anywhere in the club can
+  // hide a second team assignment for any member, so the reconciliation
+  // states nothing at all while one exists. The rule is pure in
+  // ../lib/spondReconcile; this only binds the loaded mappings.
+  const subgroupMappingComplete = useMemo(
+    () => !clubMapsWholeGroup(mappings.data ?? []),
+    [mappings.data],
+  )
 
   const allLinks = useMemo(() => links.data?.links ?? [], [links.data])
   const loadedTeam = teamId ? (loaded[teamId] ?? null) : null
@@ -559,7 +802,64 @@ export default function SpondLinks() {
     )
   }
 
-  const busy = insert.isPending || remove.isPending || load.isPending
+  const busy = insert.isPending || remove.isPending || load.isPending || reconcile.isPending
+  const reconcileBusy = reconcile.isPending
+
+  // Apply one or more reconciliation rows, each its own transaction, one
+  // after another. Sequential rather than concurrent on purpose: the RPC
+  // takes a per child lock, so parallel calls would only queue behind each
+  // other, and a serial loop is what lets a refusal be reported against the
+  // child it belongs to instead of collapsing the press into one failure.
+  //
+  // One press is one batch id, so the audit trail groups a bulk apply, and
+  // groups the link event with the move event on the confirm path.
+  const runReconcile = async (rows: ReconcileRow[], confirmIdentity: boolean) => {
+    setNote(null)
+    const batchId = crypto.randomUUID()
+    let moved = 0
+    const problems: string[] = []
+    for (const row of rows) {
+      if (!row.to) continue
+      // A confirm row without a usable member id is not offered, so this is
+      // defence in depth: pressing must never reach the RPC with nothing to
+      // confirm, because the RPC would then take the proved path and refuse
+      // an unlinked child, which is a correct refusal for the wrong reason.
+      // The member the destination was worked out from, on BOTH paths. A
+      // proved row sends it as the link it expects to still find, so a link
+      // repointed since the scan refuses rather than applying a destination
+      // derived from somebody this child no longer is. A confirm row sends it
+      // as the identity to bind. A row with neither is not offered, so this
+      // is defence in depth: pressing must never reach the RPC with nothing
+      // to name.
+      const memberId = row.memberId ?? ''
+      if (!memberId) continue
+      try {
+        const result = await reconcile.mutateAsync({
+          playerId: row.player.playerId,
+          // The team the SCREEN showed. A child somebody else has moved
+          // since is refused by the RPC rather than overwritten.
+          expectedTeamId: destinationTeamId(row.from),
+          targetTeamId: destinationTeamId(row.to),
+          expectedMemberId: confirmIdentity ? null : memberId,
+          confirmMemberId: confirmIdentity ? memberId : null,
+          batchId,
+        })
+        if (result.outcome === 'moved') moved++
+        else problems.push(`${row.player.displayName}: ${RECONCILE_NOTE[result.outcome]}`)
+      } catch (e) {
+        problems.push(
+          `${row.player.displayName}: ${e instanceof Error ? e.message : 'That change did not save.'}`,
+        )
+      }
+    }
+    // Both halves are reported. Saying only "nothing changed" would be false
+    // about the rows that did land, and saying only "done" would be false
+    // about the ones that did not.
+    const parts: string[] = []
+    if (moved > 0) parts.push(`${moved} player${moved === 1 ? '' : 's'} updated to match Spond.`)
+    parts.push(...problems)
+    if (parts.length > 0) setNote(parts.join(' '))
+  }
 
   const doLoad = (id: string) => {
     setNote(null)
@@ -706,9 +1006,15 @@ export default function SpondLinks() {
               teamBySubgroup={subgroupTeams}
               clubRoster={roster.data ?? []}
               expectedTeam={mappedTeams.find((t) => t.id === teamId)?.name ?? null}
+              expectedTeamId={teamId}
+              subgroupMappingComplete={subgroupMappingComplete}
+              reconcileBusy={reconcileBusy}
               onAccept={(memberId, playerId) => write([{ spondMemberId: memberId, playerId }], 'suggested')}
               onChoose={(memberId) => setPicking(memberId)}
               onUnlink={(memberId) => remove.mutate({ spondMemberId: memberId })}
+              onApplyReconcile={(row) => void runReconcile([row], false)}
+              onConfirmReconcile={(row) => setConfirming(row)}
+              onApplyAllReconcile={(rows) => void runReconcile(rows, false)}
             />
           ) : null}
         </>
@@ -755,6 +1061,19 @@ export default function SpondLinks() {
             } else {
               write([{ spondMemberId: memberId, playerId }], 'chosen')
             }
+          }}
+        />
+      )}
+
+      {confirming && (
+        <ConfirmReconcileView
+          row={confirming}
+          busy={reconcileBusy}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            const row = confirming
+            setConfirming(null)
+            void runReconcile([row], true)
           }}
         />
       )}

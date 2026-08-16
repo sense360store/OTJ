@@ -489,8 +489,9 @@ describe('spondSetupRows', () => {
     [SG_MINE, { teamId: 'team-argonauts', teamName: 'Argonauts' }],
     [SG_OTHER, { teamId: 'team-titans', teamName: 'Titans' }],
   ])
-  const outside = (name: string, subgroupIds: string[] = []): SpondGroupMember => ({
+  const outside = (name: string, subgroupIds: string[] = [], id = ''): SpondGroupMember => ({
     displayName: name,
+    spondMemberId: id,
     subgroupIds,
   })
   const rows = (
@@ -524,7 +525,7 @@ describe('spondSetupRows', () => {
       outsideMembers: [outside('Gamma Synthetic', [SG_OTHER])],
     })
     expect(out[0].state).toBe('other_subgroup')
-    expect(out[0].otherTeam).toBe('Titans')
+    expect(out[0].otherTeam).toEqual({ teamId: 'team-titans', teamName: 'Titans' })
   })
 
   it('B: an unmapped subgroup names no team rather than guessing one', () => {
@@ -605,7 +606,7 @@ describe('spondSetupRows', () => {
       outsideMembers: [outside('Alex Synthetic', [SG_OTHER])],
     })
     expect(out.map((r) => r.state)).toEqual(['other_subgroup'])
-    expect(out[0].otherTeam).toBe('Titans')
+    expect(out[0].otherTeam).toEqual({ teamId: 'team-titans', teamName: 'Titans' })
   })
 
   it('an unmapped subgroup cannot be checked, so it never names a team either way', () => {
@@ -714,14 +715,49 @@ describe('spondSetupRows', () => {
     expect(out).toEqual([])
   })
 
-  it('carries no Spond member id into a row, so nothing can be linked from one', () => {
-    const out = rows({
+  it('carries a member ONLY on the two states that establish exactly one', () => {
+    // The rule that replaced "a diagnostic row carries no member id". The
+    // id is now on the row, because ./spondReconcile.ts needs an identity
+    // to offer a human for confirmation and a name is not one. What keeps
+    // that honest is that only the two POSITIVE states carry a member at
+    // all: every state below is a state in which no single Spond person was
+    // established, so there is nothing to carry and nothing to act on.
+    const carrying = rows({
       pool: [player('p1', 'Gamma Synthetic')],
-      outsideMembers: [outside('Gamma Synthetic', [SG_OTHER])],
+      outsideMembers: [outside('Gamma Synthetic', [SG_OTHER], M1)],
     })
-    const flat = JSON.stringify(out)
-    for (const id of [M1, M2, M3]) expect(flat).not.toContain(id)
-    expect(Object.keys(out[0]).sort()).toEqual(['otherTeam', 'player', 'state'])
+    expect(carrying[0].state).toBe('other_subgroup')
+    expect(carrying[0].member?.spondMemberId).toBe(M1)
+    expect(Object.keys(carrying[0]).sort()).toEqual(['member', 'otherTeam', 'player', 'state'])
+
+    const noSubgroup = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [], M1)],
+    })
+    expect(noSubgroup[0].state).toBe('no_subgroup')
+    expect(noSubgroup[0].member?.spondMemberId).toBe(M1)
+  })
+
+  it('carries no member, and so no identity, on any state that proves none', () => {
+    // Two members of one name is ambiguous, and an ambiguous row must not
+    // hand a caller an id to act on: whichever it handed over would be a
+    // guess wearing a fact.
+    const ambiguous = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [SG_OTHER], M1), outside('Gamma Synthetic', [], M2)],
+    })
+    expect(ambiguous[0].state).toBe('ambiguous')
+    expect(ambiguous[0].member).toBeNull()
+    expect(JSON.stringify(ambiguous)).not.toContain(M1)
+
+    // And nobody of the name at all carries nothing either.
+    const notFound = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Delta Synthetic', [SG_OTHER], M1)],
+    })
+    expect(notFound[0].state).toBe('not_found')
+    expect(notFound[0].member).toBeNull()
+    expect(JSON.stringify(notFound)).not.toContain(M1)
   })
 })
 

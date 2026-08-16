@@ -365,6 +365,30 @@ jobs:
               need('SPOND_MEMBER_ID_PATTERN' in body.group(0),
                    "reduceLinkCandidate no longer constrains the member id")
 
+          # 8b. The DIAGNOSTIC shape is its own closed shape beside the
+          #     candidate one, and it is exactly three fields. It carries the
+          #     member id since the team reconciliation (0049), which resolves
+          #     an already linked child by identity rather than by name and
+          #     needs an identity for a human to confirm; what must stay true
+          #     is that nothing else rides along, and in particular nothing a
+          #     guardian, a contact or a payload fragment could hide in. The
+          #     id goes through the same pattern the links column enforces, so
+          #     a row can never offer an id the database would refuse.
+          diag = re.search(r"export interface LinkDiagnosticMember\s*\{([^}]*)\}", shared_raw)
+          need(diag is not None, "LinkDiagnosticMember interface not found")
+          if diag:
+              dfields = sorted(re.findall(r"^\s*(\w+)\??\s*:", diag.group(1), re.M))
+              need(dfields == ['display_name', 'spond_member_id', 'subgroup_ids'],
+                   f"LinkDiagnosticMember carries unexpected fields: {dfields}")
+          dbody = re.search(r"export function reduceDiagnosticMember[\s\S]*?\n\}", code(shared_raw))
+          need(dbody is not None, "reduceDiagnosticMember body not found")
+          if dbody:
+              need('SPOND_MEMBER_ID_PATTERN' in dbody.group(0),
+                   "reduceDiagnosticMember no longer constrains the member id")
+              for leaked in ('guardians', 'email', 'phoneNumber', 'address'):
+                  need(leaked not in dbody.group(0),
+                       f"reduceDiagnosticMember reaches {leaked}")
+
           # 9. No Supabase mutation of any kind in this function.
           for bad in ('.insert(', '.update(', '.upsert(', '.delete('):
               need(bad not in idx, f"spond-link-members must not call {bad}")

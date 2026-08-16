@@ -72,6 +72,7 @@ import { countLinkedResponses, tonightUpsertBatches, type ResponseCounts, type T
 import type { Venue } from './venues'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
+import { isSpondMemberId } from './spondLinking'
 import type { LinkCandidate, SpondGroupMember, SpondLink } from './spondLinking'
 import type { Rsvp, RsvpLinkRow, RsvpResponseRow } from './spondRsvp'
 import { EMPTY_SHARE_FILTERS, filtersToRequest } from './sharesView'
@@ -5653,6 +5654,163 @@ export function useDeleteSpondLink() {
   })
 }
 
+// ---- Making OTJ's team assignment agree with Spond -------------------------
+
+// The outcomes spond_reconcile_player_team (0049) returns. Every one of them
+// is a normal thing to tell a manager, which is why they are RETURNED rather
+// than raised: a bulk press has to be able to report them per child.
+export type ReconcileOutcome =
+  | 'moved'
+  | 'already_matched'
+  | 'stale'
+  | 'no_registration'
+  | 'not_linked'
+  | 'stale_link'
+  | 'member_linked_elsewhere'
+  | 'player_linked_elsewhere'
+
+export interface ReconcileResultRow {
+  outcome: ReconcileOutcome
+  playerId: string
+  fromTeamId: string | null
+  toTeamId: string | null
+  linkCreated: boolean
+}
+
+interface ReconcileRpcRow {
+  outcome?: string
+  player_id?: string
+  from_team_id?: string | null
+  to_team_id?: string | null
+  link_created?: boolean
+}
+
+const RECONCILE_OUTCOMES: ReconcileOutcome[] = [
+  'moved',
+  'already_matched',
+  'stale',
+  'no_registration',
+  'not_linked',
+  'stale_link',
+  'member_linked_elsewhere',
+  'player_linked_elsewhere',
+]
+
+// One sentence per outcome, a total Record rather than a chain with a
+// default: the linking screen learned that lesson once already, when a
+// default arm printed "Not a registered player" over every case it did not
+// name. The compiler refuses a new outcome with no sentence.
+export const RECONCILE_NOTE: Record<ReconcileOutcome, string> = {
+  moved: '',
+  already_matched: 'That player was already on that team, so nothing changed.',
+  stale: 'Somebody moved that player while this screen was open, so nothing was changed. Reload and look again.',
+  no_registration: 'That player has no registration in the current season, so there was nothing to change.',
+  // The identity rule, refused by the database rather than by this screen.
+  not_linked: 'That player is not linked to a Spond member, so nothing was changed. Confirm who they are first.',
+  // The other half of it. The change was worked out from one Spond member,
+  // and this player is linked to a different one now, so what was worked out
+  // no longer describes them. Reloading is the remedy, not retrying.
+  stale_link:
+    'That player was linked to a different Spond member while this screen was open, so nothing was changed. Reload from Spond and look again.',
+  member_linked_elsewhere:
+    'That Spond member is already linked to a different registered player, so nothing was changed. Unlink them first if that link is wrong.',
+  player_linked_elsewhere:
+    'That player is already linked to a different Spond member, so nothing was changed. Unlink them first if that link is wrong.',
+}
+
+// PostgREST's answer when the function is not in the schema cache: the
+// migration is gated and merging this does not apply it, so the screen has
+// to be able to say so rather than showing a generic failure.
+export function isMissingFunction(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code
+  return code === 'PGRST202' || code === '42883'
+}
+
+export const RECONCILE_UNAVAILABLE =
+  'The database change this needs has not been applied yet, so nothing was changed.'
+
+// Move ONE child's current season registration to the team Spond has them
+// on, optionally confirming which Spond member they are in the same
+// transaction. The whole rule is the RPC's: the club, the actor, the
+// capability and the season are derived server side, an unlinked child
+// cannot be moved at all, and the expected team is what refuses a decision
+// taken against a view somebody else has since changed. Nothing here retries
+// and nothing here recovers a refusal into a different write.
+//
+// Bulk is this hook called once per child, each its own transaction, so a
+// partial run is a set of individually complete moves and can be reported
+// row by row. That is deliberate: one statement covering the whole press
+// would make a single contested child cost a manager every other decision.
+export function useReconcileSpondTeam() {
+  const qc = useQueryClient()
+  return useMutation<
+    ReconcileResultRow,
+    Error,
+    {
+      playerId: string
+      expectedTeamId: string | null
+      targetTeamId: string | null
+      // EXACTLY ONE of these, and a null never means "any link will do".
+      //
+      // expectedMemberId is the proved path: the member whose Spond subgroups
+      // produced the target. The RPC refuses (stale_link) if this child's link
+      // no longer points at it, which is the race a bare "does this child have
+      // a link" check cannot see: another manager can unlink that member and
+      // correctly link the child to a different one whose Spond team is
+      // somewhere else, and the child's OTJ team need not have moved, so the
+      // expected-team check does not catch it either.
+      //
+      // confirmMemberId is the confirm path: the member a human has just said
+      // this child is, bound in the same transaction as the move.
+      expectedMemberId?: string | null
+      confirmMemberId?: string | null
+      batchId?: string | null
+    }
+  >({
+    mutationFn: async ({ playerId, expectedTeamId, targetTeamId, expectedMemberId, confirmMemberId, batchId }) => {
+      // Refused here as well as by the RPC, so a caller that gets it wrong
+      // sees the mistake rather than a database error a manager might read as
+      // being about their data.
+      if ((expectedMemberId == null) === (confirmMemberId == null)) {
+        throw new Error('That change did not save. Reload and try again.')
+      }
+      const { data, error } = await supabase.rpc('spond_reconcile_player_team', {
+        p_player_id: playerId,
+        p_expected_team_id: expectedTeamId,
+        p_target_team_id: targetTeamId,
+        p_expected_member_id: expectedMemberId ?? null,
+        p_confirm_member_id: confirmMemberId ?? null,
+        p_batch_id: batchId ?? null,
+      })
+      if (error) {
+        if (isMissingFunction(error)) throw new Error(RECONCILE_UNAVAILABLE)
+        throw error
+      }
+      const row = (Array.isArray(data) ? data[0] : data) as ReconcileRpcRow | undefined
+      const outcome = row?.outcome
+      // An unrecognised outcome is a failure, never a success: reporting
+      // "done" off a shape this build does not understand is exactly how a
+      // manager comes to believe a change landed that did not.
+      if (!outcome || !RECONCILE_OUTCOMES.includes(outcome as ReconcileOutcome)) {
+        throw new Error('That change did not save. Reload and try again.')
+      }
+      return {
+        outcome: outcome as ReconcileOutcome,
+        playerId: row?.player_id ?? playerId,
+        fromTeamId: row?.from_team_id ?? null,
+        toTeamId: row?.to_team_id ?? null,
+        linkCreated: row?.link_created === true,
+      }
+    },
+    onSettled: () => {
+      // The registration moved, so every player reader refreshes; the link
+      // may have been created, so the linking screen's own read does too.
+      invalidatePlayerReads(qc)
+      qc.invalidateQueries({ queryKey: spondLinksKey() })
+    },
+  })
+}
+
 export interface LinkCandidatesResult {
   members: LinkCandidate[]
   // True when the list is known to be short of the group. A member list
@@ -5716,7 +5874,7 @@ export function useLoadSpondLinkCandidates() {
         truncated?: boolean
         staff_excluded?: number
         ignored_excluded?: number
-        diagnostic_members?: { display_name?: string; subgroup_ids?: unknown }[]
+        diagnostic_members?: { display_name?: string; spond_member_id?: unknown; subgroup_ids?: unknown }[]
         diagnostic_complete?: boolean
         warnings?: string[]
       }
@@ -5739,6 +5897,14 @@ export function useLoadSpondLinkCandidates() {
               .filter((m) => typeof m?.display_name === 'string' && m.display_name.length > 0)
               .map((m) => ({
                 displayName: m.display_name as string,
+                // A deployment predating the reconciliation sends no id,
+                // which lands as '' and reads as no identity: the setup
+                // sentences are unaffected and no reconciliation action is
+                // offered, exactly the null-versus-empty discipline the
+                // diagnostics themselves ride. An id that is not the shape
+                // the links table accepts is dropped here too rather than
+                // offered and refused later.
+                spondMemberId: isSpondMemberId(m.spond_member_id) ? m.spond_member_id : '',
                 subgroupIds: Array.isArray(m.subgroup_ids)
                   ? m.subgroup_ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
                   : [],

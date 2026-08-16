@@ -27,19 +27,26 @@
 // and the opaque roles list (staff exclusion). The member's guardians
 // (names, emails, phone numbers), its own email, phoneNumber, address and
 // every other profile field are never reached, so they cannot be returned
-// even by accident. Both return shapes are closed, LinkCandidate for
-// linking and LinkDiagnosticMember for the diagnostics, and are pinned by
-// spond_link_test.ts, which asserts the ABSENCE of those fields from the
-// serialised output.
+// even by accident. That list of four is unchanged by the team
+// reconciliation: it widened which of them a diagnostic row RETURNS, never
+// which of them this function reads. Both return shapes are closed,
+// LinkCandidate for linking and LinkDiagnosticMember for the diagnostics,
+// and are pinned by spond_link_test.ts, which asserts the ABSENCE of those
+// fields from the serialised output.
 //
-// THE DIAGNOSTICS ARE READ ONLY AND LINK NOBODY. They report what the
-// team's mapped subgroup MISSES so a manager can fix the Spond side: a
-// member in the parent group with no subgroup, or in another one. They
-// carry no member id, so nothing can be linked from them, and the closed
-// LinkCandidate shape stays the only thing linking is built on. They come
-// from the SAME groups/ response the candidates come from: no second
-// Spond call is made, which the deploy workflow's endpoint assertion
-// holds this function to.
+// THE DIAGNOSTICS ARE STILL READ ONLY, AND THEY NOW CARRY THE MEMBER ID.
+// They report what the team's mapped subgroup MISSES so a manager can fix
+// the Spond side: a member in the parent group with no subgroup, or in
+// another one. The team reconciliation added a second use for the same
+// scan, and it needs an identity rather than a name: a child who is
+// already linked is resolved against it BY MEMBER ID, and a child who is
+// not can only be bound to a member that has an id to bind. Both remain
+// human pressed, on rows the ambiguity rules have already proved
+// unambiguous, so the property that matters is unchanged: nothing here
+// links or moves anybody on its own. This function still persists
+// nothing. They come from the SAME groups/ response the candidates come
+// from: no second Spond call is made, which the deploy workflow's endpoint
+// assertion holds this function to.
 //
 // The display name is TRANSIENT. It exists so the manager can tell who
 // they are binding. It is stored nowhere, logged nowhere, and the client

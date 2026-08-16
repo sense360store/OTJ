@@ -95,9 +95,15 @@ result, under the same `gcTime: 0`, and are likewise never written anywhere.
 already fetches. The first is the linking candidates: the members of the team's
 mapped subgroup, each reduced to `{ spond_member_id, display_name }`. The second
 is the setup diagnostics: the members of that same parent group whom the team's
-mappings do **not** reach, each reduced to `{ display_name, subgroup_ids }`
-(`collectLinkDiagnostics` and `SPOND_DIAGNOSTIC_MEMBER_FIELDS` in
-`supabase/functions/_shared/spond.ts`). They exist so the screen can say why a
+mappings do **not** reach, each reduced to
+`{ display_name, spond_member_id, subgroup_ids }` (`collectLinkDiagnostics` and
+`SPOND_DIAGNOSTIC_MEMBER_FIELDS` in `supabase/functions/_shared/spond.ts`; the
+member id was added by the team reconciliation and the reasoning is below).
+`LinkCandidate` was deliberately NOT widened alongside it: adding
+`subgroup_ids` there would only answer whether a member of the team's own
+subgroup is also in another team's, and the answer to that is "offer nothing"
+either way, so the two field boundary the deploy workflow asserts buys more
+than the precision would. They exist so the screen can say why a
 registered player has no candidate: their Spond member is in the group with no
 subgroup, or in another one, or is not in the group data at all. Those were
 three different Spond side problems presenting as one unexplained list.
@@ -116,10 +122,23 @@ described below: the opaque id, `firstName`/`lastName`, `subGroups` and `roles`.
 Three properties hold by construction and are pinned by
 `supabase/functions/_shared/spond_link_test.ts`:
 
-- **A diagnostic row carries no member id.** Nothing can be linked from one, so
-  the closed `LinkCandidate` shape stays the only thing linking is built on.
-  The id is read in memory solely to count one person once across two mapped
-  groups, and is returned nowhere.
+- **A diagnostic row carries the member id, and that is an amendment.** It
+  carried none while this screen could only DESCRIBE a mismatch, on the
+  reasoning that nothing links from a diagnostic row so nothing needs one. The
+  team reconciliation (`0049_spond_team_reconcile.sql`, and the section below)
+  ends that: a child who is ALREADY LINKED is resolved against this scan by
+  member id, which is the whole reason the reconciliation is not a name match,
+  and a child who is not linked can only be bound to a member that has an id to
+  bind. The rule that replaces the old one is about the ACTION rather than the
+  payload, and is stronger for it: **nothing links and nothing moves from a
+  diagnostic row without an explicit human press on a row that is unambiguous
+  on both sides**, and the database refuses to move an unlinked child at all.
+  The id is the same opaque uppercase hex value a candidate row already
+  carries, it is still returned to one screen under `gcTime: 0`, and it is
+  still persisted only when a manager presses. A member whose id the links
+  table would refuse carries `''` instead, which the client reads as no
+  identity and offers no action on; the row survives so the name based
+  sentences below are unaffected.
 - **Staff leave first.** The exclusion runs over the whole parent group before
   a single diagnostic row is emitted, so a manager or coach in another subgroup
   can never be reported as somebody's child, including the case the feature
@@ -144,6 +163,129 @@ it is the case the feature exists for.
 
 Nothing here is persisted. The diagnostics add no table, no column and no row,
 and `player_spond_links` still only ever receives what a manager pressed.
+
+### Making OTJ's team assignment agree with Spond
+
+Spond is where the club moves a child between teams, so Spond is the source of
+truth for which team a child is in now. The linking screen could already see
+the disagreement and could only describe it; `spond_reconcile_player_team`
+(`0049_spond_team_reconcile.sql`) is the write that closes it, and every rule
+below exists because **a name is not an identity**.
+
+That principle is not new here. `planRosterImport`
+(`supabase/functions/_shared/spond.ts`) already refuses to move a child across
+teams for exactly this reason, and says why: refusing on a false name match
+declines one import and reports it, while acting on one would move a different
+child's registration silently and would look correct. Its own comment names
+this work as the sequel: "Moving on a proved identity is the reconciliation
+that the durable Spond member link makes possible; it is deliberately not
+attempted here." That guard is unchanged and still refuses.
+
+**The identity rule is a database rule, not a screen's convention.** The RPC
+refuses to touch a registration for a child with no `player_spond_links` row.
+There are exactly two paths through it:
+
+- **Proved.** The child already carries a link, and the caller NAMES the member
+  whose Spond subgroups produced the destination. Their Spond team is read from
+  the member id and the name is not consulted at all. "This child has a link" is
+  deliberately not sufficient: between the scan and the press another manager
+  can unlink that member and correctly link the child to a different one whose
+  Spond team is somewhere else, and the child's OTJ team need not have moved, so
+  neither a bare link check nor the expected-team check would notice. A link
+  that no longer points at the named member is `stale_link`, and nothing moves.
+- **Confirmed.** The child carries no link, so the caller must supply the
+  opaque member id a human confirmed in a dialog that names both sides and both
+  effects. The link is created and the team moved **in one transaction**;
+  neither lands without the other. `matched_by` records `'suggested'`, which is
+  what that value has always meant: a manager accepted a name suggestion
+  computed in the browser. There is still no `'auto'`, because there is still
+  no server side name matcher.
+
+Exactly one of the two member arguments must be supplied, so a null can never
+mean "any existing link is acceptable"; naming neither, or both, is refused
+outright.
+
+Everything else fails closed and offers nothing: a member Spond has in more
+than one mapped team's subgroup, a member in a subgroup no team maps (which is
+deliberately NOT read as Unassigned, since that would take a child out of a
+squad because a mapping is missing), two Spond members of one name, two
+registered children of one name anywhere in the club's current season, a scan
+that is not provably whole, and a club where any team is mapped to a whole
+Spond group rather than a subgroup. The rules are pure in
+`src/lib/spondReconcile.ts` and the ambiguity half is not reimplemented there:
+it composes `spondSetupRows`, so there is one name matcher on the screen.
+
+What the RPC may never do, enforced by its own self-verification against the
+stored function definition and exercised against a real PostgreSQL by
+`.github/scripts/production-migration/test_0049_spond_team_reconcile.sh`:
+
+- **Name a season.** The season is derived from `seasons.is_current` server
+  side, so no historic or archived registration is addressable through this
+  path at all. Season history is untouched by construction.
+- **Create a player identity.** There is no insert into `public.players`, so
+  this path cannot produce the duplicate child the roster import's cross team
+  guard exists to prevent. An unregistered id is refused, never invented.
+- **Remove or repoint a link.** There is no delete and no update of
+  `player_spond_links` (which still has no update policy and no update grant).
+  A member already bound to a different child, and a child already bound to a
+  different member, are named refusals.
+- **Touch the register or the mirror.** `register_entries`, `sessions`,
+  `session_teams`, `spond_events` and `spond_event_responses` are not read,
+  written or referenced. A saved night's attendance, inclusion and bibs are
+  facts about that night and do not move when a team assignment does.
+- **Contact Spond.** It makes no network call of any kind. It receives one
+  opaque member id a browser already held and stores it in the one column that
+  has always held one. Spond remains read only, and this adds no write toward
+  it, no new endpoint and no new Edge Function.
+
+**It is not a privilege.** It self gates on `players.manage`, exactly the
+capability the `player_spond_links` insert policy and the
+`player_registrations` update policy already name, so it grants no caller any
+authority they did not already hold; it NARROWS that authority, because a
+direct registration update carries no identity rule and this refuses an
+unlinked child. It adds no capability key.
+
+**Concurrency.** Four mechanisms, each covering a case the others cannot:
+
+- a per `(club, player)` advisory lock, so two presses on one child are strictly
+  ordered rather than interleaved;
+- a per `(club, spond_member_id)` advisory lock, taken second and always second,
+  which covers the case the row locks structurally cannot: a member with no link
+  yet has **no row** to hold, so two confirmations of the same free member would
+  both read "nobody owns this" and both reach the insert, and the loser would
+  surface a raw unique violation instead of the documented
+  `member_linked_elsewhere`. The fixed order is what keeps the pair deadlock
+  free;
+- `FOR UPDATE` over every link row the decision could touch, in ONE statement
+  ordered by member id, so two crossed confirmations cannot take the same two
+  rows in opposite orders;
+- `FOR UPDATE` on the registration plus an optimistic expected-team check: a row
+  somebody else moved is refused rather than overwritten, and a row already on
+  the destination is an idempotent no-op rather than a second event.
+
+A bulk apply is one call per child, each its own transaction, so a refusal is
+reported against the child it belongs to.
+
+**The self-verification is checked to bite, not assumed to.** Its stored-source
+assertions use PostgreSQL's own word boundaries (`\y`, `\M`). They previously
+used `\b`, which in PostgreSQL's ARE syntax is the BACKSPACE CHARACTER rather
+than a word boundary, so those checks matched nothing and passed for the wrong
+reason; a review caught it. The mutation section of
+`.github/scripts/production-migration/test_0049_spond_team_reconcile.sh` now
+injects each forbidden thing (an insert into `public.players`, and a reference
+to `register_entries`, `session_teams`, `spond_events` and
+`spond_event_responses`) into the function body and asserts the apply aborts,
+then runs the same injections against a `\b` version and asserts it does not,
+so the tests demonstrate the difference rather than asserting a posture.
+
+**Audit.** No new writer and no new vocabulary. The existing triggers are the
+record: `player.team_changed` from `0032` with the old and new team ids and no
+name, and `player.spond_linked` from `0045` carrying the fact and never the
+member id. Both ride `audit_batch_context`, so one press leaves one batch and
+the confirm path's two events are grouped. `audit_events.source` stays
+`manual`, which is exactly what it means: a signed in person pressed a button.
+Adding a `spond_reconcile` value would be an audit boundary change for a label
+the paired events already imply.
 
 ### Two functions read a Spond name; one persists one
 
