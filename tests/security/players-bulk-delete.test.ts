@@ -350,7 +350,9 @@ describe('bulk permanent deletion of player identities', () => {
     expect(gone).toEqual([])
     const { data: regs } = await service.from('player_registrations').select('id').in('player_id', [one, two])
     expect(regs).toEqual([])
-    const { data: entries } = await service.from('register_entries').select('id').in('player_id', [one, two])
+    // register_entries is keyed (session_id, player_id) and has NO id column,
+    // so the projection names a real one.
+    const { data: entries } = await service.from('register_entries').select('player_id').in('player_id', [one, two])
     expect(entries).toEqual([])
     const { data: links } = await service.from('player_spond_links').select('player_id').in('player_id', [one, two])
     expect(links).toEqual([])
@@ -366,7 +368,7 @@ describe('bulk permanent deletion of player identities', () => {
     expect(session).toHaveLength(1)
     const { data: board } = await service.from('boards').select('id').eq('id', boardId)
     expect(board).toHaveLength(1)
-    const { data: kept } = await service.from('register_entries').select('id').eq('player_id', survivor)
+    const { data: kept } = await service.from('register_entries').select('player_id').eq('player_id', survivor)
     expect(kept).toHaveLength(1)
 
     // Retrying the same run refuses rather than half running.
