@@ -31,17 +31,22 @@
 --   1. THE IDENTITY RULE BECOMES A DATABASE RULE. "Never move a child on a
 --      name match" is enforced here rather than in a screen: the function
 --      refuses to touch a registration for a player who has no
---      player_spond_links row, and the only way to acquire one in the same
---      breath is to pass the member id a human confirmed. A client that
---      forgot the rule cannot move anybody by forgetting it.
+--      player_spond_links row, AND refuses when that row no longer points at
+--      the member the caller derived its destination from. The only way to
+--      acquire a link in the same breath is to pass the member id a human
+--      confirmed. A client that forgot any of that cannot move anybody by
+--      forgetting it.
 --   2. ATOMICITY. Confirming an identity and acting on it are one decision.
 --      Two client calls can leave a link created and the move failed, which
 --      is a child bound to a Spond member for a move that never happened,
 --      or the reverse.
 --   3. CONCURRENCY. Two managers pressing at once are serialised by a per
---      (club, player) advisory lock and a FOR UPDATE row lock, and the
---      second one is told the row moved rather than silently overwriting
---      what the first decided.
+--      (club, player) advisory lock, a per (club, member) advisory lock for
+--      the case where the member has no row to lock yet, a canonically
+--      ordered FOR UPDATE over the link rows, and a FOR UPDATE on the
+--      registration. The second manager is told what happened rather than
+--      silently overwriting what the first decided, or seeing a raw
+--      constraint violation.
 --
 -- WHAT IT IS NOT, and these are the load bearing negatives:
 --
@@ -155,13 +160,34 @@ select
 --
 -- Signature:
 --   spond_reconcile_player_team(
---     p_player_id        uuid,
---     p_expected_team_id uuid,   -- what the screen showed; null = Unassigned
---     p_target_team_id   uuid,   -- Spond's answer; null = Unassigned
---     p_spond_member_id  text,   -- null on the proved path; the member a
---                                -- human confirmed on the confirm path
---     p_batch_id         uuid    -- audit grouping key for one press
+--     p_player_id         uuid,
+--     p_expected_team_id  uuid,  -- what the screen showed; null = Unassigned
+--     p_target_team_id    uuid,  -- Spond's answer; null = Unassigned
+--     p_expected_member_id text, -- PROVED path: the member whose Spond
+--                                -- subgroups produced the target, which must
+--                                -- STILL be this child's link
+--     p_confirm_member_id text,  -- CONFIRM path: the member a human just
+--                                -- confirmed, to bind where there is no link
+--     p_batch_id          uuid   -- audit grouping key for one press
 --   ) returns jsonb
+--
+-- EXACTLY ONE of the two member arguments must be supplied. They are separate
+-- parameters rather than one plus a flag because the two mean different
+-- things about the SAME id, and a review found what conflating them costs.
+--
+-- THE STALE LINK RACE, and why "the player has any link" is not proof. The
+-- screen derives the target from ONE member's Spond subgroups. Between the
+-- scan and the press another manager can unlink that member and correctly
+-- link the child to a DIFFERENT one, whose Spond team may be somewhere else
+-- entirely. The child still "has a link", and their OTJ team need not have
+-- changed, so neither a bare link check nor the expected-team check below
+-- catches it, and the move would apply a destination derived from a member
+-- this child is no longer. So the proved path names the member it reasoned
+-- from and the function refuses when the link no longer points at it.
+--
+-- A null member argument therefore never means "any existing link will do".
+-- The proved path names a member; the confirm path names a member; there is
+-- no third mode.
 --
 -- Outcomes, returned rather than raised, because each is a normal thing for
 -- a manager to be told and a bulk caller has to be able to report them per
@@ -171,8 +197,11 @@ select
 --   stale                    it is on neither the expected nor the target
 --                            team, so somebody else moved it; nothing written
 --   no_registration          this player has no current season registration
---   not_linked               no member id was supplied and the player has no
---                            link, so there is no proved identity to move on
+--   not_linked               the proved path was asked for and this child has
+--                            no link at all, so there is no identity to move on
+--   stale_link               the proved path was asked for and this child's
+--                            link no longer points at the member the target
+--                            was derived from. Reload from Spond and look again
 --   member_linked_elsewhere  that Spond member is already bound to a
 --                            different child
 --   player_linked_elsewhere  this child is already bound to a different
@@ -180,14 +209,15 @@ select
 --
 -- Raised (the whole call fails and nothing is written): not signed in, no
 -- players.manage, a target team outside the caller's club, a malformed
--- member id, no current season.
+-- member id, both or neither member argument supplied, no current season.
 -- ---------------------------------------------------------------------
 create or replace function public.spond_reconcile_player_team(
-  p_player_id        uuid,
-  p_expected_team_id uuid,
-  p_target_team_id   uuid,
-  p_spond_member_id  text default null,
-  p_batch_id         uuid default null
+  p_player_id          uuid,
+  p_expected_team_id   uuid,
+  p_target_team_id     uuid,
+  p_expected_member_id text default null,
+  p_confirm_member_id  text default null,
+  p_batch_id           uuid default null
 )
 returns jsonb
 language plpgsql
@@ -198,7 +228,10 @@ declare
   v_actor        uuid := auth.uid();
   v_club         uuid := public.my_club();
   v_season       uuid;
+  -- The member id this call names, whichever argument carried it, normalised
+  -- once. v_confirming says which of the two modes we are in.
   v_member       text;
+  v_confirming   boolean;
   v_reg          public.player_registrations;
   v_member_owner uuid;
   v_player_member text;
@@ -228,18 +261,24 @@ begin
       using errcode = '42501';
   end if;
 
-  -- ============ The member id, when one is supplied ========================
+  -- ============ Exactly one member argument, and it is well formed =========
+  -- Neither is a caller that has not said what it reasoned from; both is a
+  -- caller that has said two contradictory things. Both are programming
+  -- errors rather than states a manager can be in, so both raise.
+  if (p_expected_member_id is null) = (p_confirm_member_id is null) then
+    raise exception 'spond_reconcile_player_team: name exactly one of the expected or confirmed Spond member'
+      using errcode = 'P0001';
+  end if;
+  v_confirming := p_confirm_member_id is not null;
+  v_member := upper(btrim(coalesce(p_confirm_member_id, p_expected_member_id)));
   -- Normalised and checked HERE as well as by the column, so a malformed id
   -- fails before any lock is taken and before anything is written. The class
   -- is the boundary, not a nicety: it admits no space, no '@', no '+', no
   -- '.' and no lowercase letter, so a name, an email address and a phone
   -- number cannot be passed to this function at all.
-  if p_spond_member_id is not null then
-    v_member := upper(btrim(p_spond_member_id));
-    if v_member !~ '^[0-9A-F]{16,64}$' then
-      raise exception 'spond_reconcile_player_team: that is not a Spond member id'
-        using errcode = 'P0001';
-    end if;
+  if v_member !~ '^[0-9A-F]{16,64}$' then
+    raise exception 'spond_reconcile_player_team: that is not a Spond member id'
+      using errcode = 'P0001';
   end if;
 
   -- ============ The season is the club's CURRENT season, server side =======
@@ -262,6 +301,27 @@ begin
   -- function on one child strictly ordered rather than interleaved.
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtext('otj.spond_reconcile:' || v_club::text || ':' || p_player_id::text)
+  );
+
+  -- ============ And two managers acting on the SAME MEMBER ==================
+  -- A member that is not linked yet has NO ROW, so there is nothing for FOR
+  -- UPDATE to hold: two confirmations of the same free member for two
+  -- different children take two different per child locks, both read "nobody
+  -- owns this member", and both reach the insert. The unique constraint keeps
+  -- the data correct, but the loser comes back as a raw 23505 instead of the
+  -- documented member_linked_elsewhere, which is a refusal a manager cannot
+  -- act on. This lock is what makes the absent row case deterministic.
+  --
+  -- The lock ORDER is fixed and that is what keeps it deadlock free: every
+  -- call takes the player key first and the member key second, and each call
+  -- takes at most one of each. For a cycle, a transaction holding the member
+  -- key would have to wait on a player key it does not already hold, but any
+  -- transaction wanting that player key takes it BEFORE any member key, so it
+  -- cannot be holding one. Both keys are also taken before any row lock, and
+  -- the link rows below are locked in one canonically ordered statement, so
+  -- no row lock can close a cycle either.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtext('otj.spond_member:' || v_club::text || ':' || v_member)
   );
 
   -- ============ The current season registration, locked ====================
@@ -331,17 +391,28 @@ begin
     from public.player_spond_links l
     where l.club_id = v_club and l.player_id = p_player_id;
 
-  if v_member is null then
-    -- THE PROVED PATH. No member id was supplied, so this child must already
-    -- carry a link. This single check is the whole identity rule: without a
-    -- durable binding there is nothing but a name, and a name is not an
-    -- identity. A client that forgot the rule cannot move anybody by
+  if not v_confirming then
+    -- THE PROVED PATH. This child must already carry a link, and it must be
+    -- the SAME link the caller reasoned from. Together those two checks are
+    -- the whole identity rule: without a durable binding there is nothing but
+    -- a name, and with the wrong binding there is a destination derived from
+    -- somebody else. A client that forgot either cannot move anybody by
     -- forgetting it.
     if v_player_member is null then
       return jsonb_build_object(
         'outcome', 'not_linked', 'player_id', p_player_id, 'season_id', v_season,
         'from_team_id', v_reg.team_id, 'to_team_id', p_target_team_id,
         'linked', false, 'link_created', false
+      );
+    end if;
+    if v_player_member <> v_member then
+      -- Somebody re-linked this child between the scan and the press. The
+      -- target came from a member they are no longer, so it is not applied
+      -- and the screen is told to look again rather than to try again.
+      return jsonb_build_object(
+        'outcome', 'stale_link', 'player_id', p_player_id, 'season_id', v_season,
+        'from_team_id', v_reg.team_id, 'to_team_id', p_target_team_id,
+        'linked', true, 'link_created', false
       );
     end if;
   else
@@ -418,11 +489,11 @@ begin
 end;
 $$;
 
-comment on function public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid) is
-  $$Makes one child's CURRENT SEASON team assignment agree with Spond, optionally confirming the Spond member link in the same transaction (0049_spond_team_reconcile.sql). SECURITY DEFINER, self gates on players.manage, derives club, actor and the current season server side, and re validates the destination team belongs to the club. THE IDENTITY RULE IS ENFORCED HERE: a player with no player_spond_links row cannot be moved by this function at all, and the only way to move one is to supply the opaque member id a human confirmed, which is inserted in the same transaction. Never creates a player identity, never deletes or repoints a link (a contested member and an already bound child are named refusals), never names a season (so no historic or archived registration is addressable), never touches register_entries, sessions or any Spond mirror table, and never contacts Spond. Concurrency safe: a per (club, player) advisory lock plus FOR UPDATE on the registration and both link reads, with an optimistic expected-team check that refuses a row somebody else moved and treats a row already on the destination as an idempotent no-op. Audited by the existing triggers only (player.team_changed from 0032, player.spond_linked from 0045), sharing the caller's batch id; adds no audit source value. See docs/security/spond-data-boundary.md.$$;
+comment on function public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid) is
+  $$Makes one child's CURRENT SEASON team assignment agree with Spond, optionally confirming the Spond member link in the same transaction (0049_spond_team_reconcile.sql). SECURITY DEFINER, self gates on players.manage, derives club, actor and the current season server side, and re validates the destination team belongs to the club. THE IDENTITY RULE IS ENFORCED HERE, and it names a member rather than accepting any link: exactly one of p_expected_member_id (the member whose Spond subgroups produced the target, which must STILL be this child's link, else stale_link) and p_confirm_member_id (the member a human just confirmed, bound where there is no link) must be supplied. A child with no link cannot be moved at all. Never creates a player identity, never deletes or repoints a link (a contested member and an already bound child are named refusals), never names a season (so no historic or archived registration is addressable), never touches register_entries, sessions or any Spond mirror table, and never contacts Spond. Concurrency safe: a per (club, player) then per (club, member) advisory lock in that fixed order, a canonically ordered FOR UPDATE over the link rows, FOR UPDATE on the registration, and an optimistic expected-team check that refuses a row somebody else moved and treats a row already on the destination as an idempotent no-op. The member key lock is what makes two confirmations of the same not yet linked member return member_linked_elsewhere instead of a raw unique violation. Audited by the existing triggers only (player.team_changed from 0032, player.spond_linked from 0045), sharing the caller's batch id; adds no audit source value. See docs/security/spond-data-boundary.md.$$;
 
-revoke execute on function public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid) from public, anon;
-grant execute on function public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid) to authenticated;
+revoke execute on function public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid) from public, anon;
+grant execute on function public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Self verification. Same transaction as the creation above, so any failure
@@ -445,7 +516,7 @@ begin
   end if;
 
   -- ---- What the function is -------------------------------------------
-  if to_regprocedure('public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid)') is null then
+  if to_regprocedure('public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)') is null then
     raise exception 'spond_team_reconcile: the function was not created';
   end if;
   if not (select p.prosecdef from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -460,11 +531,11 @@ begin
     raise exception 'spond_team_reconcile: the function must set search_path to empty';
   end if;
   if not has_function_privilege('authenticated',
-        'public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid)', 'EXECUTE') then
+        'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', 'EXECUTE') then
     raise exception 'spond_team_reconcile: authenticated cannot execute the function';
   end if;
   if has_function_privilege('anon',
-        'public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid)', 'EXECUTE') then
+        'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', 'EXECUTE') then
     raise exception 'spond_team_reconcile: anon must not execute the function';
   end if;
   -- Exactly one overload, so a stale signature cannot be reached instead.
@@ -478,15 +549,28 @@ begin
   -- actually run rather than against the file this was reviewed from. Each
   -- is a boundary claim the header makes.
   v_src := pg_get_functiondef(
-    'public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid)'::regprocedure);
-  if v_src ~* 'insert\s+into\s+public\.players\b' then
+    'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)'::regprocedure);
+  -- \y and \M, NEVER \b. In PostgreSQL's ARE syntax \b is the BACKSPACE
+  -- CHARACTER, not a word boundary assertion, so every one of these read as
+  -- "the literal byte 0x08 appears here" and matched nothing at all: the
+  -- checks were vacuous and passed for the wrong reason. A review caught it.
+  -- The correct assertions are \y (a word boundary), \m (word start) and \M
+  -- (word end). The mutation section of
+  -- .github/scripts/production-migration/test_0049_spond_team_reconcile.sh
+  -- injects each forbidden thing into the function body and proves the apply
+  -- ABORTS, so these are checked to bite rather than assumed to.
+  --
+  -- \M rather than \y here: it anchors the end of "players" so
+  -- public.player_spond_links and public.player_registrations are not caught
+  -- by a prefix, while an insert into public.players is.
+  if v_src ~* 'insert\s+into\s+public\.players\M' then
     raise exception 'spond_team_reconcile: the function must never create a player identity';
   end if;
   if v_src ~* 'delete\s+from\s+public\.player_spond_links'
      or v_src ~* 'update\s+public\.player_spond_links' then
     raise exception 'spond_team_reconcile: the function must never remove or repoint a link';
   end if;
-  if v_src ~* '\b(register_entries|session_teams|spond_events|spond_event_responses)\b' then
+  if v_src ~* '\y(register_entries|session_teams|spond_events|spond_event_responses)\y' then
     raise exception 'spond_team_reconcile: the function must not reach the register or the Spond mirror';
   end if;
   -- The season is derived, never named by the caller. A season argument
@@ -505,6 +589,19 @@ begin
   if position('not_linked' in v_src) = 0 then
     raise exception 'spond_team_reconcile: the unlinked refusal is missing from the function';
   end if;
+  -- The other half of the identity rule, and the one a review had to find:
+  -- "this child has a link" is not proof, because the link can have been
+  -- repointed at a different member since the caller read Spond.
+  if position('stale_link' in v_src) = 0 then
+    raise exception 'spond_team_reconcile: the stale link refusal is missing from the function';
+  end if;
+  if position('v_player_member <> v_member' in v_src) = 0 then
+    raise exception 'spond_team_reconcile: the proved path must compare the link against the named member';
+  end if;
+  -- And a null member argument must never be able to mean "any link will do".
+  if v_src !~* 'p_expected_member_id is null\) = \(p_confirm_member_id is null' then
+    raise exception 'spond_team_reconcile: exactly one member argument must be required';
+  end if;
   -- Row locks, and the per child serialisation. The link lock must carry its
   -- canonical ORDER BY: without it two crossed confirmations can deadlock.
   if position('for update' in lower(v_src)) = 0 then
@@ -513,8 +610,20 @@ begin
   if v_src !~* 'order by l\.spond_member_id\s+for update' then
     raise exception 'spond_team_reconcile: the link rows must be locked in a canonical order';
   end if;
-  if position('pg_advisory_xact_lock' in v_src) = 0 then
-    raise exception 'spond_team_reconcile: two managers acting on one child must be serialised';
+  -- TWO advisory locks, in a fixed order. The player key serialises two
+  -- presses on one child; the member key covers the case the row locks
+  -- cannot, a member with no link row yet, where two confirmations would
+  -- otherwise both reach the insert and the loser would surface a raw 23505
+  -- rather than a refusal a manager can act on.
+  if (length(v_src) - length(replace(v_src, 'pg_advisory_xact_lock', ''))) / length('pg_advisory_xact_lock') < 2 then
+    raise exception 'spond_team_reconcile: both the per child and the per member locks are required';
+  end if;
+  if position('otj.spond_reconcile:' in v_src) = 0 or position('otj.spond_member:' in v_src) = 0 then
+    raise exception 'spond_team_reconcile: the two advisory lock keys must both be present';
+  end if;
+  -- And in that order, which is what keeps them deadlock free.
+  if position('otj.spond_reconcile:' in v_src) > position('otj.spond_member:' in v_src) then
+    raise exception 'spond_team_reconcile: the player key must be taken before the member key';
   end if;
   -- No audit vocabulary is widened: the function must not set a source.
   if v_src ~* 'otj\.audit_source' then

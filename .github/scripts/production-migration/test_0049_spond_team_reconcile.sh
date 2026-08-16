@@ -440,7 +440,7 @@ BATCH_A=f0000000-0000-4000-8000-00000000000a
 
 echo
 echo "== B. the proved path: a linked child moves, and only this season moves"
-RES="$(manager_call "'${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${BATCH_A}'::uuid")"
+RES="$(manager_call "'${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_JOEY}', null, '${BATCH_A}'::uuid")"
 same "outcome" "$(outcome "${RES}")" "moved"
 same "the current season registration is on Gladiators" "$(team_of "${P_JOEY}" "${SEASON_NOW}")" "${GLADIATORS}"
 same "the archived season registration did not move" "$(scalar "${DB}" "${HISTORIC_SQL}")" "${HISTORIC_BEFORE}"
@@ -467,7 +467,7 @@ same "the links are untouched" \
 echo
 echo "== C. a repeat press is an idempotent no-op, not a second event"
 AUDIT_BEFORE="$(scalar "${DB}" "select count(*) from public.audit_events")"
-RES="$(manager_call "'${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${BATCH_A}'::uuid")"
+RES="$(manager_call "'${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_JOEY}', null, '${BATCH_A}'::uuid")"
 same "outcome" "$(outcome "${RES}")" "already_matched"
 same "no second audit event" "$(scalar "${DB}" "select count(*) from public.audit_events")" "${AUDIT_BEFORE}"
 
@@ -475,13 +475,13 @@ echo
 echo "== D. a row somebody else moved is refused, not overwritten"
 psql_run -d "${DB}" -qc "set otj.test_uid = '${MANAGER}'; update public.player_registrations set team_id = '${SPARTANS}'
   where player_id='${P_JOEY}' and season_id='${SEASON_NOW}'" >/dev/null
-RES="$(manager_call "'${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, null")"
+RES="$(manager_call "'${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_JOEY}', null, null")"
 same "outcome" "$(outcome "${RES}")" "stale"
 same "the other manager's decision stands" "$(team_of "${P_JOEY}" "${SEASON_NOW}")" "${SPARTANS}"
 
 echo
 echo "== E. Unassigned is a destination, and it is not the same as a refusal"
-RES="$(manager_call "'${P_NOTEAM}'::uuid, '${ARGONAUTS}'::uuid, null, null, null")"
+RES="$(manager_call "'${P_NOTEAM}'::uuid, '${ARGONAUTS}'::uuid, null, '${M_NOTEAM}', null, null")"
 same "outcome" "$(outcome "${RES}")" "moved"
 same "the registration is Unassigned" "$(team_of "${P_NOTEAM}" "${SEASON_NOW}")" "-"
 same "the registration still exists" \
@@ -489,7 +489,7 @@ same "the registration still exists" \
 
 echo
 echo "== F. THE IDENTITY RULE: an unlinked child cannot be moved, whatever the client sends"
-RES="$(manager_call "'${P_UNLINKED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, null")"
+RES="$(manager_call "'${P_UNLINKED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_FRESH}', null, null")"
 same "outcome" "$(outcome "${RES}")" "not_linked"
 same "the registration did not move" "$(team_of "${P_UNLINKED}" "${SEASON_NOW}")" "${ARGONAUTS}"
 same "no link was invented" \
@@ -498,7 +498,7 @@ same "no link was invented" \
 echo
 echo "== G. the confirm path: the link and the move land together, sharing one batch"
 BATCH_B=f0000000-0000-4000-8000-00000000000b
-RES="$(manager_call "'${P_UNLINKED}'::uuid, '${ARGONAUTS}'::uuid, '${SPARTANS}'::uuid, '${M_FRESH}', '${BATCH_B}'::uuid")"
+RES="$(manager_call "'${P_UNLINKED}'::uuid, '${ARGONAUTS}'::uuid, '${SPARTANS}'::uuid, null, '${M_FRESH}', '${BATCH_B}'::uuid")"
 same "outcome" "$(outcome "${RES}")" "moved"
 same "link_created" "$(field "${RES}" link_created)" "True"
 same "the link exists and records a human decision" \
@@ -518,7 +518,7 @@ echo "== H. ATOMICITY: when the move cannot happen, the link is not created eith
 # a fate, not which failure caused it.
 psql_run -d "${DB}" -qc "update public.seasons set archived_at = now() where id = '${SEASON_NOW}'" >/dev/null
 set +e
-OUT="$(manager_call "'${P_ARCHIVED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_TAKEN}0', null" 2>&1)"
+OUT="$(manager_call "'${P_ARCHIVED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${M_TAKEN}0', null" 2>&1)"
 RC=$?
 set -e
 [ "${RC}" -ne 0 ] || fail "the archived season did not refuse the move"
@@ -533,39 +533,39 @@ echo
 echo "== I. an existing link is never taken, repointed or overwritten"
 LINKS_BEFORE="$(scalar "${DB}" "${LINKS_SQL}")"
 # A member already bound to a different child.
-RES="$(manager_call "'${P_ARCHIVED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_JOEY}', null")"
+RES="$(manager_call "'${P_ARCHIVED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${M_JOEY}', null")"
 same "a contested member is refused" "$(outcome "${RES}")" "member_linked_elsewhere"
 same "and nothing moved" "$(team_of "${P_ARCHIVED}" "${SEASON_NOW}")" "${ARGONAUTS}"
 # A child already bound to a different member.
-RES="$(manager_call "'${P_TAKEN}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_SPARE}', null")"
+RES="$(manager_call "'${P_TAKEN}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${M_SPARE}', null")"
 same "an already bound child is refused" "$(outcome "${RES}")" "player_linked_elsewhere"
 same "and the free member stayed free, so nothing was half bound" \
   "$(scalar "${DB}" "select count(*) from public.player_spond_links where spond_member_id='${M_SPARE}'")" "0"
 same "and nothing moved" "$(team_of "${P_TAKEN}" "${SEASON_NOW}")" "${ARGONAUTS}"
 same "every stored link is exactly as it was" "$(scalar "${DB}" "${LINKS_SQL}")" "${LINKS_BEFORE}"
 # Re-confirming the SAME pairing is a no-op on the link and still moves.
-RES="$(manager_call "'${P_TAKEN}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_TAKEN}', null")"
+RES="$(manager_call "'${P_TAKEN}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${M_TAKEN}', null")"
 same "re-confirming the same pairing moves" "$(outcome "${RES}")" "moved"
 same "and creates no second link" "$(field "${RES}" link_created)" "False"
 
 echo
 echo "== J. the gates: capability, club and the member id vocabulary"
 set +e
-OUT="$(call 'players.view' "${COACH}" "${CLUB}" "'${P_JOEY}'::uuid, '${SPARTANS}'::uuid, '${GLADIATORS}'::uuid, null, null" 2>&1)"; RC=$?
+OUT="$(call 'players.view' "${COACH}" "${CLUB}" "'${P_JOEY}'::uuid, '${SPARTANS}'::uuid, '${GLADIATORS}'::uuid, '${M_JOEY}', null, null" 2>&1)"; RC=$?
 set -e
 [ "${RC}" -ne 0 ] || fail "a caller without players.manage was allowed"
 echo "${OUT}" | grep -q "players.manage" || fail "an unexpected error: ${OUT}"
 ok "a coach without players.manage is refused"
 
 set +e
-OUT="$(call '' '' '' "'${P_JOEY}'::uuid, '${SPARTANS}'::uuid, '${GLADIATORS}'::uuid, null, null" 2>&1)"; RC=$?
+OUT="$(call '' '' '' "'${P_JOEY}'::uuid, '${SPARTANS}'::uuid, '${GLADIATORS}'::uuid, '${M_JOEY}', null, null" 2>&1)"; RC=$?
 set -e
 [ "${RC}" -ne 0 ] || fail "an unauthenticated caller was allowed"
 echo "${OUT}" | grep -q "not signed in" || fail "an unexpected error: ${OUT}"
 ok "an unauthenticated caller is refused"
 
 set +e
-OUT="$(manager_call "'${P_JOEY}'::uuid, '${SPARTANS}'::uuid, '${FOREIGN_TEAM}'::uuid, null, null" 2>&1)"; RC=$?
+OUT="$(manager_call "'${P_JOEY}'::uuid, '${SPARTANS}'::uuid, '${FOREIGN_TEAM}'::uuid, '${M_JOEY}', null, null" 2>&1)"; RC=$?
 set -e
 [ "${RC}" -ne 0 ] || fail "a cross club destination team was allowed"
 echo "${OUT}" | grep -q "not in your club" || fail "an unexpected error: ${OUT}"
@@ -573,7 +573,7 @@ ok "a destination team in another club is refused"
 
 for bad in "'Joey Synthetic'" "'parent@example.invalid'" "'+447700900000'" "'ABCDEF'" "'not-a-member-id'" "''"; do
   set +e
-  OUT="$(manager_call "'${P_ARCHIVED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, ${bad}, null" 2>&1)"; RC=$?
+  OUT="$(manager_call "'${P_ARCHIVED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, ${bad}, null" 2>&1)"; RC=$?
   set -e
   [ "${RC}" -ne 0 ] || fail "the member id vocabulary accepted ${bad}"
 done
@@ -584,14 +584,67 @@ same "and none of them moved anybody" "$(team_of "${P_ARCHIVED}" "${SEASON_NOW}"
 # reduceLinkCandidate already does on the way out of Spond. It is stored in
 # the uppercase form the column's own check requires, so the normalisation
 # widens what the caller may SEND and never what the column may HOLD.
-RES="$(manager_call "'${P_ARCHIVED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '$(echo "${M_SPARE}" | tr 'A-Z' 'a-z')', null")"
+RES="$(manager_call "'${P_ARCHIVED}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '$(echo "${M_SPARE}" | tr 'A-Z' 'a-z')', null")"
 same "a lowercase member id is normalised, not refused" "$(outcome "${RES}")" "moved"
 same "and it is stored uppercase" \
   "$(scalar "${DB}" "select spond_member_id from public.player_spond_links where player_id='${P_ARCHIVED}'")" "${M_SPARE}"
 
-RES="$(manager_call "'99999999-9999-4999-8999-999999999999'::uuid, null, '${GLADIATORS}'::uuid, null, null")"
+RES="$(manager_call "'99999999-9999-4999-8999-999999999999'::uuid, null, '${GLADIATORS}'::uuid, '${M_JOEY}', null, null")"
 same "a player with no current season registration is refused, never invented" "$(outcome "${RES}")" "no_registration"
 same "no player identity appeared" "$(scalar "${DB}" "${PLAYERS_SQL}")" "${PLAYERS_BEFORE}"
+
+echo
+echo "== F2. THE STALE LINK RACE: a proved move names the member it reasoned from"
+# The race a review found. The screen works the target out from ONE member's
+# Spond subgroups. Between the scan and the press another manager can unlink
+# that member and correctly link the child to a DIFFERENT one, whose Spond team
+# may be somewhere else entirely. The child still has a link, and their OTJ team
+# need not have changed, so neither "does this child have a link" nor the
+# expected-team check notices. The move must not apply.
+psql_run -d "${DB}" -q <<SQL
+insert into public.players (id, club_id, display_name)
+  values ('eeeeeeee-0000-4000-8000-00000000000c', '${CLUB}', 'Relinked Synthetic');
+insert into public.player_registrations (club_id, player_id, season_id, team_id, status)
+  values ('${CLUB}', 'eeeeeeee-0000-4000-8000-00000000000c', '${SEASON_NOW}', '${ARGONAUTS}', 'registered');
+insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)
+  values ('${CLUB}', 'CCCC2222CCCC2222CCCC2222CCCC2222', 'eeeeeeee-0000-4000-8000-00000000000c', 'chosen');
+SQL
+# The screen read member CCCC and worked out Gladiators. Now somebody unlinks
+# CCCC and links DDDD instead: same child, same OTJ team, different identity.
+psql_run -d "${DB}" -q <<SQL
+delete from public.player_spond_links where spond_member_id = 'CCCC2222CCCC2222CCCC2222CCCC2222';
+insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)
+  values ('${CLUB}', 'DDDD3333DDDD3333DDDD3333DDDD3333', 'eeeeeeee-0000-4000-8000-00000000000c', 'chosen');
+SQL
+RES="$(manager_call "'eeeeeeee-0000-4000-8000-00000000000c'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, 'CCCC2222CCCC2222CCCC2222CCCC2222', null, null")"
+same "a repointed link refuses the move it was not derived from" "$(outcome "${RES}")" "stale_link"
+same "and the child did not move" "$(team_of 'eeeeeeee-0000-4000-8000-00000000000c' "${SEASON_NOW}")" "${ARGONAUTS}"
+same "and the link somebody else made is untouched" \
+  "$(scalar "${DB}" "select spond_member_id from public.player_spond_links where player_id='eeeeeeee-0000-4000-8000-00000000000c'")" \
+  "DDDD3333DDDD3333DDDD3333DDDD3333"
+# The same call naming the member the child IS linked to still works, so the
+# check refuses a stale identity rather than refusing everything.
+RES="$(manager_call "'eeeeeeee-0000-4000-8000-00000000000c'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, 'DDDD3333DDDD3333DDDD3333DDDD3333', null, null")"
+same "naming the current link still moves" "$(outcome "${RES}")" "moved"
+# A proved call for a child with no link at all is still the other refusal.
+RES="$(manager_call "'${P_TAKEN}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_SPARE}', null, null")"
+same "a proved call naming a member this child never had is stale_link, not a move" \
+  "$(outcome "${RES}")" "stale_link"
+
+# And a null member argument can no longer mean "any link will do".
+set +e
+OUT="$(manager_call "'${P_TAKEN}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, null, null" 2>&1)"; RC=$?
+set -e
+[ "${RC}" -ne 0 ] || fail "a call naming no member was accepted"
+echo "${OUT}" | grep -q 'exactly one' || fail "an unexpected error: ${OUT}"
+set +e
+OUT="$(manager_call "'${P_TAKEN}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_TAKEN}', '${M_TAKEN}', null" 2>&1)"; RC=$?
+set -e
+[ "${RC}" -ne 0 ] || fail "a call naming both members was accepted"
+ok "naming neither member, and naming both, are both refused"
+psql_run -d "${DB}" -qc "delete from public.player_spond_links where player_id='eeeeeeee-0000-4000-8000-00000000000c';
+  delete from public.player_registrations where player_id='eeeeeeee-0000-4000-8000-00000000000c';
+  delete from public.players where id='eeeeeeee-0000-4000-8000-00000000000c';" >/dev/null
 
 echo
 echo "== K. CONCURRENCY: two managers pressing on one child at the same moment"
@@ -605,14 +658,14 @@ psql_run -d "${DB}" -qc "delete from public.audit_events" >/dev/null
 (
   psql_run -d "${DB}" -tAc "set otj.test_caps='players.view players.manage'; set otj.test_uid='${MANAGER}'; set otj.test_club='${CLUB}';
     begin;
-    select public.spond_reconcile_player_team('${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, null);
+    select public.spond_reconcile_player_team('${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_JOEY}', null, null);
     select pg_sleep(2);
     commit;" > "${WORK}/racer1.out" 2>&1
 ) &
 RACER1=$!
 sleep 0.6
 psql_run -d "${DB}" -tAc "set otj.test_caps='players.view players.manage'; set otj.test_uid='${COACH}'; set otj.test_club='${CLUB}';
-  select public.spond_reconcile_player_team('${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, null);" \
+  select public.spond_reconcile_player_team('${P_JOEY}'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '${M_JOEY}', null, null);" \
   > "${WORK}/racer2.out" 2>&1
 wait "${RACER1}"
 
@@ -660,7 +713,7 @@ crossed() { # crossed <player> <member> <outfile>
   psql_run -d "${DB}" -tAc "set otj.test_caps='players.view players.manage'; set otj.test_uid='${MANAGER}'; set otj.test_club='${CLUB}';
     begin;
     select pg_sleep(0.2);
-    select public.spond_reconcile_player_team('$1'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, '$2', null);
+    select public.spond_reconcile_player_team('$1'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '$2', null);
     select pg_sleep(0.4);
     commit;" > "$3" 2>&1 || echo "PSQL_FAILED" >> "$3"
 }
@@ -689,6 +742,67 @@ psql_run -d "${DB}" -qc "delete from public.player_spond_links where player_id i
   delete from public.players where id in ('eeeeeeee-0000-4000-8000-00000000000a','eeeeeeee-0000-4000-8000-00000000000b');" >/dev/null
 
 echo
+echo "== K3. CONCURRENCY: the SAME not yet linked member confirmed for two children"
+# The case the row locks structurally cannot cover, found by a review. A member
+# with no link has NO ROW, so there is nothing for FOR UPDATE to hold: two
+# confirmations of the same free member take two different per child locks,
+# both read "nobody owns this member", and both reach the insert. The unique
+# constraint keeps the data correct, but without the per member advisory lock
+# the loser surfaces a raw 23505 rather than the documented refusal.
+psql_run -d "${DB}" -q <<SQL
+insert into public.players (id, club_id, display_name) values
+  ('eeeeeeee-0000-4000-8000-00000000000d', '${CLUB}', 'Contender One Synthetic'),
+  ('eeeeeeee-0000-4000-8000-00000000000e', '${CLUB}', 'Contender Two Synthetic');
+insert into public.player_registrations (club_id, player_id, season_id, team_id, status) values
+  ('${CLUB}', 'eeeeeeee-0000-4000-8000-00000000000d', '${SEASON_NOW}', '${ARGONAUTS}', 'registered'),
+  ('${CLUB}', 'eeeeeeee-0000-4000-8000-00000000000e', '${SEASON_NOW}', '${ARGONAUTS}', 'registered');
+SQL
+FREE_MEMBER=EEEE4444EEEE4444EEEE4444EEEE4444
+same "the contested member starts with no link row to lock" \
+  "$(scalar "${DB}" "select count(*) from public.player_spond_links where spond_member_id='${FREE_MEMBER}'")" "0"
+
+# The first holds its transaction open across the insert; the second starts
+# while it is still open, so without the member key lock it would read an
+# empty ownership and race to the same insert.
+(
+  psql_run -d "${DB}" -tAc "set otj.test_caps='players.view players.manage'; set otj.test_uid='${MANAGER}'; set otj.test_club='${CLUB}';
+    begin;
+    select public.spond_reconcile_player_team('eeeeeeee-0000-4000-8000-00000000000d'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${FREE_MEMBER}', null);
+    select pg_sleep(2);
+    commit;" > "${WORK}/free1.out" 2>&1 || echo "PSQL_FAILED" >> "${WORK}/free1.out"
+) &
+F1=$!
+sleep 0.6
+psql_run -d "${DB}" -tAc "set otj.test_caps='players.view players.manage'; set otj.test_uid='${COACH}'; set otj.test_club='${CLUB}';
+  select public.spond_reconcile_player_team('eeeeeeee-0000-4000-8000-00000000000e'::uuid, '${ARGONAUTS}'::uuid, '${SPARTANS}'::uuid, null, '${FREE_MEMBER}', null);" \
+  > "${WORK}/free2.out" 2>&1 || echo "PSQL_FAILED" >> "${WORK}/free2.out"
+wait "${F1}"
+
+grep -q '"outcome": "moved"' "${WORK}/free1.out" \
+  || fail "the first confirmation did not win: $(cat "${WORK}/free1.out")"
+grep -q 'PSQL_FAILED' "${WORK}/free2.out" \
+  && fail "the loser raised instead of returning an outcome: $(cat "${WORK}/free2.out")"
+grep -qiE 'duplicate key|23505|unique constraint' "${WORK}/free2.out" \
+  && fail "the loser surfaced a raw unique violation: $(cat "${WORK}/free2.out")"
+grep -q 'member_linked_elsewhere' "${WORK}/free2.out" \
+  || fail "the loser did not get the documented refusal: $(cat "${WORK}/free2.out")"
+grep -qi 'deadlock' "${WORK}/free1.out" "${WORK}/free2.out" \
+  && fail "the free member race deadlocked"
+ok "exactly one confirmation won, and the loser got member_linked_elsewhere"
+same "exactly one link exists for that member" \
+  "$(scalar "${DB}" "select count(*) from public.player_spond_links where spond_member_id='${FREE_MEMBER}'")" "1"
+same "and it belongs to the winner" \
+  "$(scalar "${DB}" "select player_id from public.player_spond_links where spond_member_id='${FREE_MEMBER}'")" \
+  "eeeeeeee-0000-4000-8000-00000000000d"
+same "the winner moved" "$(team_of 'eeeeeeee-0000-4000-8000-00000000000d' "${SEASON_NOW}")" "${GLADIATORS}"
+same "the loser did not move" "$(team_of 'eeeeeeee-0000-4000-8000-00000000000e' "${SEASON_NOW}")" "${ARGONAUTS}"
+same "and the loser acquired no link at all" \
+  "$(scalar "${DB}" "select count(*) from public.player_spond_links where player_id='eeeeeeee-0000-4000-8000-00000000000e'")" "0"
+psql_run -d "${DB}" -qc "delete from public.player_spond_links where player_id in ('eeeeeeee-0000-4000-8000-00000000000d','eeeeeeee-0000-4000-8000-00000000000e');
+  delete from public.player_registrations where player_id in ('eeeeeeee-0000-4000-8000-00000000000d','eeeeeeee-0000-4000-8000-00000000000e');
+  delete from public.players where id in ('eeeeeeee-0000-4000-8000-00000000000d','eeeeeeee-0000-4000-8000-00000000000e');" >/dev/null
+
+echo
 echo "== L. after everything above: history, the register and the identities are as they were"
 same "the archived season registration never moved" "$(scalar "${DB}" "${HISTORIC_SQL}")" "${HISTORIC_BEFORE}"
 same "the saved night never moved" "$(scalar "${DB}" "${REGISTER_SQL}")" "${REGISTER_BEFORE}"
@@ -708,6 +822,111 @@ echo "== M. the migration is re-runnable, and a second apply changes nothing"
 psql_run -d "${DB}" -q -f "${MIGRATION}"
 ok "a second apply succeeds (create or replace, no DDL to collide)"
 same "and still no player identity moved" "$(scalar "${DB}" "${PLAYERS_SQL}")" "${PLAYERS_BEFORE}"
+
+# =====================================================================
+echo
+echo "== N. the stored source self-verification actually BITES"
+#
+# A review found every one of these checks vacuous. In PostgreSQL's ARE
+# syntax \b is the BACKSPACE CHARACTER, not a word boundary assertion, so
+# `insert\s+into\s+public\.players\b` read as "followed by the literal byte
+# 0x08" and matched nothing at all. The checks passed, and would have passed
+# over a function that did the forbidden thing.
+#
+# So each forbidden thing is INJECTED into the function body as real (never
+# executed) SQL and the apply must ABORT. Then the same injections are run
+# against a \b version of the same file, which must NOT abort: that is what
+# proves these tests fail on the old form and pass on the corrected one,
+# rather than passing for a third reason nobody checked.
+#
+# This section runs last because the \b half deliberately leaves a mutated
+# function installed. The final step re-applies the reviewed file, so the
+# database ends in a known state.
+
+INJECT_ANCHOR="  if v_actor is null or v_club is null then"
+
+# inject <name> <sql> <outfile>: the reviewed migration with one statement
+# added inside the function body.
+inject() {
+  python3 - "$1" "$2" "${MIGRATION}" <<'PYEOF'
+import sys, pathlib
+sql, out, migration = sys.argv[1], sys.argv[2], sys.argv[3]
+src = pathlib.Path(migration).read_text()
+anchor = "  if v_actor is null or v_club is null then"
+assert src.count(anchor) == 1, "the injection anchor is not unique"
+pathlib.Path(out).write_text(src.replace(anchor, "  " + sql + "\n" + anchor, 1))
+PYEOF
+}
+
+# The five forbidden things, each with the assertion that must fire.
+check_injection() { # check_injection <label> <sql> <expected message> <expect_abort yes|no> <file>
+  local label="$1" sql="$2" expect="$3" must_abort="$4" file="$5"
+  set +e
+  local out; out="$(PGHOST="${WORK}" PGPORT="${PORT}" PGUSER=postgres PGOPTIONS='-c client_min_messages=warning' \
+    psql --no-psqlrc --set ON_ERROR_STOP=1 -q -d "${DB}" -f "${file}" 2>&1)"
+  local rc=$?
+  set -e
+  if [ "${must_abort}" = "yes" ]; then
+    [ "${rc}" -ne 0 ] || fail "${label}: the apply did NOT abort, so the check is vacuous"
+    echo "${out}" | grep -q "${expect}" || fail "${label}: aborted for the wrong reason: ${out}"
+    ok "${label}: detected and the apply aborted"
+  else
+    [ "${rc}" -eq 0 ] || fail "${label}: the \\b form aborted, so this proves nothing about the fix: ${out}"
+    ok "${label}: the \\b form let it through, which is the defect being fixed"
+  fi
+}
+
+INJECTIONS_SQL=(
+  "if false then insert into public.players (id, club_id, display_name) values (p_player_id, v_club, 'x'); end if;"
+  "if false then perform 1 from public.register_entries; end if;"
+  "if false then perform 1 from public.session_teams; end if;"
+  "if false then perform 1 from public.spond_events; end if;"
+  "if false then perform 1 from public.spond_event_responses; end if;"
+)
+INJECTIONS_LABEL=(
+  "inserting public.players"
+  "referencing register_entries"
+  "referencing session_teams"
+  "referencing spond_events"
+  "referencing spond_event_responses"
+)
+INJECTIONS_MSG=(
+  "must never create a player identity"
+  "must not reach the register or the Spond mirror"
+  "must not reach the register or the Spond mirror"
+  "must not reach the register or the Spond mirror"
+  "must not reach the register or the Spond mirror"
+)
+
+echo "  -- with the corrected \y and \M assertions, every injection must abort"
+for i in "${!INJECTIONS_SQL[@]}"; do
+  inject "${INJECTIONS_SQL[$i]}" "${WORK}/inject.sql"
+  check_injection "${INJECTIONS_LABEL[$i]}" "${INJECTIONS_SQL[$i]}" "${INJECTIONS_MSG[$i]}" yes "${WORK}/inject.sql"
+done
+
+echo "  -- and with the old \b form, not one of them is caught"
+for i in "${!INJECTIONS_SQL[@]}"; do
+  inject "${INJECTIONS_SQL[$i]}" "${WORK}/inject.sql"
+  # Put the C escape back exactly where the review found it.
+  python3 - "${WORK}/inject.sql" <<'PYEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+before = s
+s = s.replace(r"public\.players\M", r"public\.players")
+s = s.replace(r"'\y(register_entries|session_teams|spond_events|spond_event_responses)\y'",
+              r"'(register_entries|session_teams|spond_events|spond_event_responses)'")
+assert s != before, "the \b downgrade matched nothing, so this run would prove nothing"
+p.write_text(s)
+PYEOF
+  check_injection "${INJECTIONS_LABEL[$i]}" "${INJECTIONS_SQL[$i]}" "" no "${WORK}/inject.sql"
+done
+
+echo "  -- and the reviewed file goes back on, so the database ends clean"
+psql_run -d "${DB}" -q -f "${MIGRATION}"
+same "the installed function contains no injected statement" \
+  "$(scalar "${DB}" "select case when pg_get_functiondef('public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)'::regprocedure) ~* 'if false then' then 'polluted' else 'clean' end")" \
+  "clean"
 
 echo
 echo "ALL 0049 ASSERTIONS PASSED"

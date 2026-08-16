@@ -185,8 +185,14 @@ attempted here." That guard is unchanged and still refuses.
 refuses to touch a registration for a child with no `player_spond_links` row.
 There are exactly two paths through it:
 
-- **Proved.** The child already carries a link. Their Spond team is read from
-  the member id and the name is not consulted at all.
+- **Proved.** The child already carries a link, and the caller NAMES the member
+  whose Spond subgroups produced the destination. Their Spond team is read from
+  the member id and the name is not consulted at all. "This child has a link" is
+  deliberately not sufficient: between the scan and the press another manager
+  can unlink that member and correctly link the child to a different one whose
+  Spond team is somewhere else, and the child's OTJ team need not have moved, so
+  neither a bare link check nor the expected-team check would notice. A link
+  that no longer points at the named member is `stale_link`, and nothing moves.
 - **Confirmed.** The child carries no link, so the caller must supply the
   opaque member id a human confirmed in a dialog that names both sides and both
   effects. The link is created and the team moved **in one transaction**;
@@ -194,6 +200,10 @@ There are exactly two paths through it:
   what that value has always meant: a manager accepted a name suggestion
   computed in the browser. There is still no `'auto'`, because there is still
   no server side name matcher.
+
+Exactly one of the two member arguments must be supplied, so a null can never
+mean "any existing link is acceptable"; naming neither, or both, is refused
+outright.
 
 Everything else fails closed and offers nothing: a member Spond has in more
 than one mapped team's subgroup, a member in a subgroup no team maps (which is
@@ -235,12 +245,38 @@ authority they did not already hold; it NARROWS that authority, because a
 direct registration update carries no identity rule and this refuses an
 unlinked child. It adds no capability key.
 
-**Concurrency.** A per `(club, player)` advisory lock, `FOR UPDATE` on the
-registration and on both link reads, and an optimistic expected-team check: a
-row somebody else moved is refused rather than overwritten, and a row already
-on the destination is an idempotent no-op rather than a second event. A bulk
-apply is one call per child, each its own transaction, so a refusal is reported
-against the child it belongs to.
+**Concurrency.** Four mechanisms, each covering a case the others cannot:
+
+- a per `(club, player)` advisory lock, so two presses on one child are strictly
+  ordered rather than interleaved;
+- a per `(club, spond_member_id)` advisory lock, taken second and always second,
+  which covers the case the row locks structurally cannot: a member with no link
+  yet has **no row** to hold, so two confirmations of the same free member would
+  both read "nobody owns this" and both reach the insert, and the loser would
+  surface a raw unique violation instead of the documented
+  `member_linked_elsewhere`. The fixed order is what keeps the pair deadlock
+  free;
+- `FOR UPDATE` over every link row the decision could touch, in ONE statement
+  ordered by member id, so two crossed confirmations cannot take the same two
+  rows in opposite orders;
+- `FOR UPDATE` on the registration plus an optimistic expected-team check: a row
+  somebody else moved is refused rather than overwritten, and a row already on
+  the destination is an idempotent no-op rather than a second event.
+
+A bulk apply is one call per child, each its own transaction, so a refusal is
+reported against the child it belongs to.
+
+**The self-verification is checked to bite, not assumed to.** Its stored-source
+assertions use PostgreSQL's own word boundaries (`\y`, `\M`). They previously
+used `\b`, which in PostgreSQL's ARE syntax is the BACKSPACE CHARACTER rather
+than a word boundary, so those checks matched nothing and passed for the wrong
+reason; a review caught it. The mutation section of
+`.github/scripts/production-migration/test_0049_spond_team_reconcile.sh` now
+injects each forbidden thing (an insert into `public.players`, and a reference
+to `register_entries`, `session_teams`, `spond_events` and
+`spond_event_responses`) into the function body and asserts the apply aborts,
+then runs the same injections against a `\b` version and asserts it does not,
+so the tests demonstrate the difference rather than asserting a posture.
 
 **Audit.** No new writer and no new vocabulary. The existing triggers are the
 record: `player.team_changed` from `0032` with the old and new team ids and no

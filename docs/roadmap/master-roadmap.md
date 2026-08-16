@@ -200,12 +200,15 @@ page by hand.
   current team. Making OTJ agree is one action on the Spond links screen.
 - **The identity rule outranks the product rule, and it is enforced in the
   database.** `spond_reconcile_player_team` refuses to move a child who has no
-  `player_spond_links` row. A proved child is resolved by member id and the
-  name is never consulted. An unlinked child can only be moved by a human first
-  confirming which Spond member they are, which creates the link and moves the
-  team in one transaction. This is the case `planRosterImport`'s cross team
-  guard already refuses and explicitly defers to a durable link for; that guard
-  is unchanged.
+  `player_spond_links` row, and refuses again when that row no longer points at
+  the member the caller derived its destination from (`stale_link`). A proved
+  child is resolved by member id and the name is never consulted. An unlinked
+  child can only be moved by a human first confirming which Spond member they
+  are, which creates the link and moves the team in one transaction. Exactly
+  one of the two member arguments must be supplied, so a null can never mean
+  "any link will do". This is the case `planRosterImport`'s cross team guard
+  already refuses and explicitly defers to a durable link for; that guard is
+  unchanged.
 - Everything ambiguous offers nothing and says which ambiguity it is: a member
   in more than one mapped team's subgroup, a member in a subgroup no team maps
   (never read as Unassigned), two Spond members of one name, two registered
@@ -215,8 +218,12 @@ page by hand.
   caller cannot name one. No player identity is created, no link is deleted or
   repointed, no register entry or saved session is touched, and nothing is
   written toward Spond.
-- Concurrency safe by a per (club, player) advisory lock, `FOR UPDATE` and an
-  optimistic expected-team check; a repeat press is an idempotent no-op.
+- Concurrency safe by a per (club, player) then per (club, member) advisory
+  lock in that fixed order, a canonically ordered `FOR UPDATE` over the link
+  rows, `FOR UPDATE` on the registration and an optimistic expected-team check;
+  a repeat press is an idempotent no-op. The member key covers what the row
+  locks cannot, a member with no link row yet, so two confirmations of the same
+  free member return the documented refusal instead of a raw unique violation.
   "Apply all safe Spond changes" is offered only when NO row still needs an
   identity settled.
 - Audited by the existing triggers only (`player.team_changed`,

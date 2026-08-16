@@ -40,6 +40,14 @@ const MIGRATION = read('../../supabase/migrations/0049_spond_team_reconcile.sql'
 // matched_by vocabulary, and a substring test over the prose would fail on
 // the sentence that promises the thing it is checking.
 const MIGRATION_CODE = MIGRATION.replace(/--[^\n]*/g, '')
+// The function's own body, so a count of something inside it is not inflated
+// by the self-verification below, which necessarily names the same things in
+// order to assert about them.
+const FUNCTION_BODY = (() => {
+  const m = MIGRATION_CODE.match(/create or replace function public\.spond_reconcile_player_team[\s\S]*?\nas \$\$([\s\S]*?)\n\$\$;/)
+  if (!m) throw new Error('could not find the function body in 0049')
+  return m[1]
+})()
 
 describe('the rule decides and never writes', () => {
   it('the rule module touches no client, no network and no storage', () => {
@@ -67,6 +75,29 @@ describe('the rule decides and never writes', () => {
     // A literal team id, or a team read straight off the player row, would
     // be a second answer to a question the rule already answered.
     expect(SCREEN).not.toMatch(/targetTeamId: row\.player\./)
+  })
+
+  it('the screen names the member the destination came from, on BOTH paths', () => {
+    // The stale link race a review found. A proved press that named no member
+    // would let the RPC accept "this child has some link" as proof, and apply
+    // a destination derived from a member they were unlinked from since the
+    // scan. The id comes off the row the rule built, never off the link list
+    // the screen happens to be holding.
+    expect(SCREEN).toMatch(/const memberId = row\.memberId \?\? ''/)
+    expect(SCREEN).toMatch(/if \(!memberId\) continue/)
+    expect(SCREEN).toMatch(/expectedMemberId: confirmIdentity \? null : memberId/)
+    expect(SCREEN).toMatch(/confirmMemberId: confirmIdentity \? memberId : null/)
+  })
+
+  it('the hook refuses a call that names neither member or both', () => {
+    // A null must never mean "any existing link is acceptable". The RPC
+    // raises on it too; this is the half that catches a caller mistake before
+    // it looks like a database error about the manager's data.
+    expect(QUERIES).toMatch(/if \(\(expectedMemberId == null\) === \(confirmMemberId == null\)\)/)
+    expect(QUERIES).toContain('p_expected_member_id: expectedMemberId ?? null')
+    expect(QUERIES).toContain('p_confirm_member_id: confirmMemberId ?? null')
+    // And the outcome the RPC returns for a repointed link has a sentence.
+    expect(QUERIES).toMatch(/stale_link:\s*\n?\s*'/)
   })
 })
 
@@ -98,10 +129,21 @@ describe('the identity rule has one implementation and one gate', () => {
   })
 
   it('and the database refuses an unlinked child regardless of any of that', () => {
-    // The only assertion here that is a guarantee rather than a tripwire:
-    // every rule above lives in a browser, and this one does not.
+    // The only assertions here that are a guarantee rather than a tripwire:
+    // every rule above lives in a browser, and these do not.
     expect(MIGRATION_CODE).toContain("'outcome', 'not_linked'")
     expect(MIGRATION_CODE).toMatch(/if v_player_member is null then/)
+  })
+
+  it('and refuses a link that has been repointed since the caller read Spond', () => {
+    expect(MIGRATION_CODE).toContain("'outcome', 'stale_link'")
+    expect(MIGRATION_CODE).toMatch(/if v_player_member <> v_member then/)
+    // Exactly one of the two member arguments, so a null can never be read as
+    // "any link will do".
+    expect(MIGRATION_CODE).toMatch(
+      /\(p_expected_member_id is null\) = \(p_confirm_member_id is null\)/,
+    )
+    expect(MIGRATION_CODE).toMatch(/v_confirming\s*:=\s*p_confirm_member_id is not null/)
   })
 })
 
@@ -166,7 +208,18 @@ describe('the migration keeps the negatives it claims', () => {
   })
 
   it('serialises two managers on one child, and locks every row it decides from', () => {
-    expect(MIGRATION_CODE).toContain('pg_advisory_xact_lock')
+    // TWO advisory locks. The member key covers the case the row locks
+    // structurally cannot: a member with no link row yet has nothing to hold,
+    // so two confirmations of the same free member would both reach the
+    // insert and the loser would surface a raw unique violation instead of
+    // the documented refusal. Player key first, which is what keeps the pair
+    // deadlock free.
+    expect(FUNCTION_BODY.match(/pg_advisory_xact_lock/g)?.length ?? 0).toBe(2)
+    expect(FUNCTION_BODY).toContain("'otj.spond_reconcile:'")
+    expect(FUNCTION_BODY).toContain("'otj.spond_member:'")
+    expect(FUNCTION_BODY.indexOf("'otj.spond_reconcile:'")).toBeLessThan(
+      FUNCTION_BODY.indexOf("'otj.spond_member:'"),
+    )
     // Two: the registration row, and every link row this decision could touch.
     expect(MIGRATION_CODE.match(/for update/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
     // The link lock's canonical ORDER BY. Two crossed confirmations touch the
@@ -180,6 +233,39 @@ describe('the migration keeps the negatives it claims', () => {
     for (const forbidden of ['http', 'spond.com', 'display_name', 'guardian', 'email', 'phone']) {
       expect(MIGRATION_CODE.toLowerCase(), `0049 reaches ${forbidden}`).not.toContain(forbidden)
     }
+  })
+})
+
+describe('the self-verification uses PostgreSQL word boundaries, not C escapes', () => {
+  // A review found every one of these vacuous. In PostgreSQL's ARE syntax
+  // \b is the BACKSPACE CHARACTER, not a word boundary assertion, so
+  // `...public\.players\b` read as "followed by the literal byte 0x08" and
+  // matched nothing at all: the checks passed for the wrong reason and would
+  // have passed over a function that did the forbidden thing. The correct
+  // assertions are \y, \m and \M.
+  //
+  // This is the source-text half. The half that proves the checks BITE is the
+  // mutation section of
+  // .github/scripts/production-migration/test_0049_spond_team_reconcile.sh,
+  // which injects each forbidden object into the function body and asserts
+  // the apply aborts.
+  const storedSourceChecks = MIGRATION_CODE.split('\n').filter((l) => /v_src\s*[!]?~/.test(l))
+
+  it('there are stored source checks to check', () => {
+    expect(storedSourceChecks.length).toBeGreaterThanOrEqual(6)
+  })
+
+  it('not one of them uses \\b, which would silently match nothing', () => {
+    for (const line of storedSourceChecks) {
+      expect(line, `a stored source check uses \\b: ${line.trim()}`).not.toMatch(/\\b/)
+    }
+  })
+
+  it('the two that need a boundary use the PostgreSQL ones', () => {
+    expect(MIGRATION_CODE).toMatch(/insert\\s\+into\\s\+public\\\.players\\M/)
+    expect(MIGRATION_CODE).toMatch(
+      /\\y\(register_entries\|session_teams\|spond_events\|spond_event_responses\)\\y/,
+    )
   })
 })
 

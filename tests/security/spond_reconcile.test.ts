@@ -12,7 +12,13 @@
 //                the roster import's cross team guard defers to, enforced
 //                here rather than in a screen. The only way to move an
 //                unlinked child is to supply the opaque member id a human
-//                confirmed, which is bound in the same transaction.
+//                confirmed, which is bound in the same transaction. And a
+//                proved move NAMES the member its destination was derived
+//                from: "this child has some link" is not proof, because the
+//                link can have been repointed since the caller read Spond,
+//                which is stale_link and never a move. Exactly one of the two
+//                member arguments must be supplied, so a null can never mean
+//                "any link will do".
 //   season       Derived server side from seasons.is_current. The caller
 //                cannot name a season, so a historic or archived
 //                registration is not addressable through this path at all.
@@ -21,10 +27,13 @@
 //                are named refusals, not overwrites.
 //   isolation    The destination team is re validated against the caller's
 //                club, and a cross club player id finds no registration.
-//   concurrency  A per (club, player) advisory lock plus FOR UPDATE, with an
+//   concurrency  A per (club, player) then per (club, member) advisory lock,
+//                a canonically ordered FOR UPDATE over the link rows, and an
 //                optimistic expected-team check: a row somebody else moved is
 //                refused, and a row already on the destination is an
-//                idempotent no-op rather than a second event.
+//                idempotent no-op rather than a second event. The member key
+//                lock covers the case the row locks cannot, a member with no
+//                link row yet.
 //
 // Maps the reconciliation cells of docs/security/spond-data-boundary.md. The
 // atomicity and racing proofs that need two open transactions live in
@@ -162,7 +171,11 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
       player: string
       expected: string | null
       target: string | null
-      member?: string | null
+      // Exactly one of these. expectedMember is the proved path (the member
+      // whose Spond subgroups produced the target, which must still be this
+      // child's link); confirmMember is the confirm path.
+      expectedMember?: string | null
+      confirmMember?: string | null
       batch?: string | null
     },
   ) =>
@@ -170,7 +183,8 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
       p_player_id: args.player,
       p_expected_team_id: args.expected,
       p_target_team_id: args.target,
-      p_spond_member_id: args.member ?? null,
+      p_expected_member_id: args.expectedMember ?? null,
+      p_confirm_member_id: args.confirmMember ?? null,
       p_batch_id: args.batch ?? null,
     })
 
@@ -179,20 +193,20 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
   // ---- the capability gate --------------------------------------------------
 
   it('refuses a coach who holds players.view but not players.manage (42501)', async () => {
-    const { error } = await call(coachOne, { player: pLinked, expected: TEST_TEAM, target: OTHER_TEAM })
+    const { error } = await call(coachOne, { player: pLinked, expected: TEST_TEAM, target: OTHER_TEAM, expectedMember: M_LINKED })
     expect(error).not.toBeNull()
     expect(error!.message).toContain('players.manage')
     expect((await reg(pLinked, currentA))!.team_id).toBe(TEST_TEAM)
   })
 
   it('refuses a parent (42501), who holds no capability at all', async () => {
-    const { error } = await call(parent, { player: pLinked, expected: TEST_TEAM, target: OTHER_TEAM })
+    const { error } = await call(parent, { player: pLinked, expected: TEST_TEAM, target: OTHER_TEAM, expectedMember: M_LINKED })
     expect(error).not.toBeNull()
     expect((await reg(pLinked, currentA))!.team_id).toBe(TEST_TEAM)
   })
 
   it('refuses a member of another club, whose own club has no such player', async () => {
-    const { data, error } = await call(outsider, { player: pLinked, expected: TEST_TEAM, target: OTHER_TEAM })
+    const { data, error } = await call(outsider, { player: pLinked, expected: TEST_TEAM, target: OTHER_TEAM, expectedMember: M_LINKED })
     // The outsider holds players.manage in club B, so the capability gate
     // passes and the CLUB scoping is what refuses: the player id belongs to
     // another club, so there is no registration to find and nothing moves.
@@ -207,7 +221,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
   // ---- the identity rule ----------------------------------------------------
 
   it('refuses to move an UNLINKED child, however the client asks', async () => {
-    const { data, error } = await call(manager, { player: pUnlinked, expected: TEST_TEAM, target: OTHER_TEAM })
+    const { data, error } = await call(manager, { player: pUnlinked, expected: TEST_TEAM, target: OTHER_TEAM, expectedMember: M_FRESH })
     expect(error).toBeNull()
     expect(row(data).outcome).toBe('not_linked')
     expect((await reg(pUnlinked, currentA))!.team_id).toBe(TEST_TEAM)
@@ -220,6 +234,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
       player: pLinked,
       expected: TEST_TEAM,
       target: OTHER_TEAM,
+      expectedMember: M_LINKED,
       batch,
     })
     expect(error).toBeNull()
@@ -256,7 +271,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
   })
 
   it('moves to Unassigned, which is a destination and not a refusal', async () => {
-    const { data, error } = await call(manager, { player: pLinked, expected: OTHER_TEAM, target: null })
+    const { data, error } = await call(manager, { player: pLinked, expected: OTHER_TEAM, target: null, expectedMember: M_LINKED })
     expect(error).toBeNull()
     expect(row(data).outcome).toBe('moved')
     const after = (await reg(pLinked, currentA))!
@@ -270,6 +285,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
       player: pLinked,
       expected: OTHER_TEAM,
       target: null,
+      expectedMember: M_LINKED,
       batch,
     })
     expect(error).toBeNull()
@@ -280,9 +296,78 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
 
   it('refuses a row somebody else moved, rather than overwriting their decision', async () => {
     await svc.from('player_registrations').update({ team_id: TEST_TEAM }).eq('player_id', pLinked).eq('season_id', currentA)
-    const { data, error } = await call(manager, { player: pLinked, expected: OTHER_TEAM, target: null })
+    const { data, error } = await call(manager, { player: pLinked, expected: OTHER_TEAM, target: null, expectedMember: M_LINKED })
     expect(error).toBeNull()
     expect(row(data).outcome).toBe('stale')
+    expect((await reg(pLinked, currentA))!.team_id).toBe(TEST_TEAM)
+  })
+
+  it('refuses a proved move whose link has been repointed since the caller read Spond', async () => {
+    // The stale link race. The caller worked the destination out from ONE
+    // member; another manager unlinks that member and correctly links the
+    // child to a different one. The child still has a link and their OTJ team
+    // need not have changed, so nothing but naming the member catches it.
+    {
+      await svc.from('player_spond_links').delete().eq('player_id', pLinked)
+      await svc
+        .from('player_spond_links')
+        .insert({ club_id: CLUB_A, spond_member_id: M_SPARE, player_id: pLinked, matched_by: 'chosen' })
+
+      const { data, error } = await call(manager, {
+        player: pLinked,
+        expected: TEST_TEAM,
+        target: OTHER_TEAM,
+        expectedMember: M_LINKED,
+      })
+      expect(error).toBeNull()
+      expect(row(data).outcome).toBe('stale_link')
+      expect((await reg(pLinked, currentA))!.team_id).toBe(TEST_TEAM)
+      // And the link the other manager made is untouched.
+      const links = await linksFor(pLinked)
+      expect(links).toHaveLength(1)
+      expect(links[0].spond_member_id).toBe(M_SPARE)
+
+      // Naming the member they ARE linked to still works, so the check
+      // refuses a stale identity rather than refusing everything.
+      const ok = await call(manager, {
+        player: pLinked,
+        expected: TEST_TEAM,
+        target: OTHER_TEAM,
+        expectedMember: M_SPARE,
+      })
+      expect(ok.error).toBeNull()
+      expect(row(ok.data).outcome).toBe('moved')
+
+      // Put the fixture back the way the later tests expect it.
+      await svc.from('player_registrations').update({ team_id: TEST_TEAM }).eq('player_id', pLinked).eq('season_id', currentA)
+      await svc.from('player_spond_links').delete().eq('player_id', pLinked)
+      await svc
+        .from('player_spond_links')
+        .insert({ club_id: CLUB_A, spond_member_id: M_LINKED, player_id: pLinked, matched_by: 'chosen' })
+    }
+  })
+
+  it('refuses a call that names neither member or both, so a null never means any link', async () => {
+    const neither = await manager.rpc('spond_reconcile_player_team', {
+      p_player_id: pLinked,
+      p_expected_team_id: TEST_TEAM,
+      p_target_team_id: OTHER_TEAM,
+      p_expected_member_id: null,
+      p_confirm_member_id: null,
+      p_batch_id: null,
+    })
+    expect(neither.error).not.toBeNull()
+    expect(neither.error!.message).toContain('exactly one')
+
+    const both = await manager.rpc('spond_reconcile_player_team', {
+      p_player_id: pLinked,
+      p_expected_team_id: TEST_TEAM,
+      p_target_team_id: OTHER_TEAM,
+      p_expected_member_id: M_LINKED,
+      p_confirm_member_id: M_LINKED,
+      p_batch_id: null,
+    })
+    expect(both.error).not.toBeNull()
     expect((await reg(pLinked, currentA))!.team_id).toBe(TEST_TEAM)
   })
 
@@ -294,7 +379,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
       player: pSpare,
       expected: TEST_TEAM,
       target: OTHER_TEAM,
-      member: M_FRESH,
+      confirmMember: M_FRESH,
       batch,
     })
     expect(error).toBeNull()
@@ -320,7 +405,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
       player: pUnlinked,
       expected: TEST_TEAM,
       target: OTHER_TEAM,
-      member: M_SECOND,
+      confirmMember: M_SECOND,
     })
     expect(error).toBeNull()
     expect(row(data).outcome).toBe('member_linked_elsewhere')
@@ -334,7 +419,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
       player: pSecond,
       expected: TEST_TEAM,
       target: OTHER_TEAM,
-      member: M_SPARE,
+      confirmMember: M_SPARE,
     })
     expect(error).toBeNull()
     expect(row(data).outcome).toBe('player_linked_elsewhere')
@@ -350,7 +435,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
   // ---- what cannot be passed in at all --------------------------------------
 
   it('refuses a destination team in another club', async () => {
-    const { error } = await call(manager, { player: pSecond, expected: TEST_TEAM, target: CLUB_B_TEAM })
+    const { error } = await call(manager, { player: pSecond, expected: TEST_TEAM, target: CLUB_B_TEAM, expectedMember: M_SECOND })
     expect(error).not.toBeNull()
     expect(error!.message).toContain('not in your club')
     expect((await reg(pSecond, currentA))!.team_id).toBe(TEST_TEAM)
@@ -362,7 +447,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
         player: pUnlinked,
         expected: TEST_TEAM,
         target: OTHER_TEAM,
-        member: bad,
+        confirmMember: bad,
       })
       expect(error, `the member id vocabulary accepted ${JSON.stringify(bad)}`).not.toBeNull()
     }
@@ -372,7 +457,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
 
   it('never creates a player identity: an unregistered id is refused, not invented', async () => {
     const invented = '00000000-0000-4000-8000-0000000000ff'
-    const { data, error } = await call(manager, { player: invented, expected: null, target: OTHER_TEAM })
+    const { data, error } = await call(manager, { player: invented, expected: null, target: OTHER_TEAM, expectedMember: M_LINKED })
     expect(error).toBeNull()
     expect(row(data).outcome).toBe('no_registration')
     const { data: made } = await svc.from('players').select('id').eq('id', invented)
@@ -380,7 +465,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
   })
 
   it('finds no registration for a player in another club, so a forged id moves nobody', async () => {
-    const { data, error } = await call(manager, { player: clubBPlayer, expected: null, target: OTHER_TEAM })
+    const { data, error } = await call(manager, { player: clubBPlayer, expected: null, target: OTHER_TEAM, expectedMember: M_LINKED })
     expect(error).toBeNull()
     expect(row(data).outcome).toBe('no_registration')
     expect((await reg(clubBPlayer, currentB))!.team_id).toBeNull()
@@ -389,7 +474,7 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
   // ---- an admin holds the same capability -----------------------------------
 
   it('an admin may reconcile too, because the gate is the capability and not the role', async () => {
-    const { data, error } = await call(admin, { player: pSecond, expected: TEST_TEAM, target: OTHER_TEAM })
+    const { data, error } = await call(admin, { player: pSecond, expected: TEST_TEAM, target: OTHER_TEAM, expectedMember: M_SECOND })
     expect(error).toBeNull()
     expect(row(data).outcome).toBe('moved')
     expect((await reg(pSecond, currentA))!.team_id).toBe(OTHER_TEAM)
@@ -403,7 +488,8 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
       p_player_id: pLinked,
       p_expected_team_id: TEST_TEAM,
       p_target_team_id: OTHER_TEAM,
-      p_spond_member_id: null,
+      p_expected_member_id: M_LINKED,
+      p_confirm_member_id: null,
       p_batch_id: null,
     })
     expect(error).not.toBeNull()

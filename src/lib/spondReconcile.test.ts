@@ -115,9 +115,11 @@ describe('a linked player whose Spond member is in another team subgroup', () =>
     expect(destinationLabel(rows[0].from)).toBe('Argonauts')
     expect(rows[0].to && destinationLabel(rows[0].to)).toBe('Gladiators')
     expect(destinationTeamId(rows[0].to!)).toBe(GLADIATORS)
-    // Proved rows never carry a member to confirm: there is nothing left to
-    // decide about who this child is.
-    expect(rows[0].confirm).toBeNull()
+    // A proved row names the member the destination came FROM, so the RPC can
+    // refuse a link that has been repointed since the scan. It carries no
+    // display name: there is nothing left for a human to recognise.
+    expect(rows[0].memberId).toBe(M_JOEY)
+    expect(rows[0].confirmName).toBeNull()
   })
 
   it('is decided by the member id, so a name that agrees with nobody changes nothing', () => {
@@ -241,7 +243,8 @@ describe('an unlinked player whose name matches a member on another Spond team',
     expect(rows).toHaveLength(1)
     expect(rows[0].state).toBe('confirm')
     expect(rows[0].to && destinationLabel(rows[0].to)).toBe('Gladiators')
-    expect(rows[0].confirm?.spondMemberId).toBe(M_OTHER)
+    expect(rows[0].memberId).toBe(M_OTHER)
+    expect(rows[0].confirmName).toBe('Gap Synthetic')
     // The identity rule, stated as a property of the output: nothing that
     // can be applied without a human first settling who this child is.
     expect(applicableMoves(rows)).toEqual([])
@@ -495,6 +498,81 @@ describe('clubMapsWholeGroup', () => {
 
   it('is true when any single mapping in the club maps a whole group', () => {
     expect(clubMapsWholeGroup([{ subgroupId: SG_ARGONAUTS }, { subgroupId: null }])).toBe(true)
+  })
+})
+
+// ---- 9b. The member the destination came from travels with the row --------
+//
+// A review found the race this closes. The screen derives the target from ONE
+// member's Spond subgroups. Between the scan and the press another manager can
+// unlink that member and correctly link the child to a different one, whose
+// Spond team may be somewhere else entirely. The child still "has a link", and
+// their OTJ team need not have changed, so neither a bare link check nor the
+// expected-team check notices. The row therefore names the member it reasoned
+// from, and the RPC refuses when the link no longer points at it (stale_link).
+
+describe('every actionable row names the member its destination came from', () => {
+  it('a proved row carries the linked member, and no display name', () => {
+    const { rows } = run({
+      pool: [player('p-joey', 'Joey Synthetic')],
+      links: [link(M_JOEY, 'p-joey')],
+      outsideMembers: [outside('Joey Synthetic', [SG_GLADIATORS], M_JOEY)],
+    })
+    expect(rows[0].memberId).toBe(M_JOEY)
+    expect(rows[0].confirmName).toBeNull()
+  })
+
+  it('a confirm row carries the member to bind, and the name to recognise', () => {
+    const { rows } = run({
+      pool: [player('p-gap', 'Gap Synthetic')],
+      outsideMembers: [outside('Gap Synthetic', [SG_GLADIATORS], M_OTHER)],
+    })
+    expect(rows[0].memberId).toBe(M_OTHER)
+    expect(rows[0].confirmName).toBe('Gap Synthetic')
+  })
+
+  it('and it is the member whose subgroups produced the destination, not the child name match', () => {
+    // The linked member's display name is somebody else's entirely, and the
+    // destination still comes from that member's subgroups. If the row carried
+    // a name derived id instead, this would name the wrong person.
+    const { rows } = run({
+      pool: [player('p-joey', 'Joey Synthetic')],
+      links: [link(M_JOEY, 'p-joey')],
+      outsideMembers: [
+        outside('Completely Different Synthetic', [SG_SPARTANS], M_JOEY),
+        outside('Joey Synthetic', [SG_GLADIATORS], M_OTHER),
+      ],
+    })
+    expect(rows[0].memberId).toBe(M_JOEY)
+    expect(rows[0].to && destinationLabel(rows[0].to)).toBe('Spartans')
+  })
+
+  it('a row that offers nothing names no member either', () => {
+    for (const subgroups of [[SG_GLADIATORS, SG_SPARTANS], [SG_UNMAPPED]]) {
+      const { rows } = run({
+        pool: [player('p-x', 'Ambiguous Synthetic')],
+        links: [link(M_JOEY, 'p-x')],
+        outsideMembers: [outside('Ambiguous Synthetic', subgroups, M_JOEY)],
+      })
+      expect(rows[0].to).toBeNull()
+      expect(rows[0].memberId).toBeNull()
+    }
+  })
+
+  it('every actionable row has one, so a press can never reach the RPC unnamed', () => {
+    const a = player('p-a', 'Alpha Synthetic')
+    const b = player('p-b', 'Beta Synthetic')
+    const { rows } = run({
+      pool: [a, b],
+      clubRoster: [a, b],
+      links: [link(M_JOEY, 'p-a')],
+      outsideMembers: [
+        outside('Alpha Synthetic', [SG_GLADIATORS], M_JOEY),
+        outside('Beta Synthetic', [SG_SPARTANS], M_OTHER),
+      ],
+    })
+    expect(rows.map((r) => r.state).sort()).toEqual(['confirm', 'move'])
+    for (const r of rows) expect(r.memberId).toBeTruthy()
   })
 })
 

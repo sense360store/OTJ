@@ -210,6 +210,18 @@ therefore never a name match, which is the same rule `planRosterImport` states
 in its own cross team guard and explicitly defers to a durable link for; that
 guard is unchanged and still refuses.
 
+**And it must be the SAME link, named.** A review found that "the child has a
+link" is not the proof it looks like. The caller works the destination out from
+ONE member's Spond subgroups; between the scan and the press another manager
+can unlink that member and correctly link the child to a different one, whose
+Spond team may be somewhere else entirely. The child still has a link and their
+OTJ team need not have moved, so neither the link check nor the optimistic team
+check notices, and the move would apply a destination derived from somebody
+this child is no longer. So a proved call NAMES the member it reasoned from and
+the function refuses (`stale_link`) when the link no longer points at it.
+Exactly one of `p_expected_member_id` and `p_confirm_member_id` must be
+supplied: a null never means "any existing link is acceptable".
+
 **The confirm path, and why it does not weaken the rule.** A child who is not
 linked yet cannot be moved by any amount of name agreement. What the product
 may do is offer a person the chance to CONFIRM the identity, on a row the

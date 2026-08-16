@@ -5665,6 +5665,7 @@ export type ReconcileOutcome =
   | 'stale'
   | 'no_registration'
   | 'not_linked'
+  | 'stale_link'
   | 'member_linked_elsewhere'
   | 'player_linked_elsewhere'
 
@@ -5690,6 +5691,7 @@ const RECONCILE_OUTCOMES: ReconcileOutcome[] = [
   'stale',
   'no_registration',
   'not_linked',
+  'stale_link',
   'member_linked_elsewhere',
   'player_linked_elsewhere',
 ]
@@ -5705,6 +5707,11 @@ export const RECONCILE_NOTE: Record<ReconcileOutcome, string> = {
   no_registration: 'That player has no registration in the current season, so there was nothing to change.',
   // The identity rule, refused by the database rather than by this screen.
   not_linked: 'That player is not linked to a Spond member, so nothing was changed. Confirm who they are first.',
+  // The other half of it. The change was worked out from one Spond member,
+  // and this player is linked to a different one now, so what was worked out
+  // no longer describes them. Reloading is the remedy, not retrying.
+  stale_link:
+    'That player was linked to a different Spond member while this screen was open, so nothing was changed. Reload from Spond and look again.',
   member_linked_elsewhere:
     'That Spond member is already linked to a different registered player, so nothing was changed. Unlink them first if that link is wrong.',
   player_linked_elsewhere:
@@ -5743,19 +5750,36 @@ export function useReconcileSpondTeam() {
       playerId: string
       expectedTeamId: string | null
       targetTeamId: string | null
-      // Null on the proved path. On the confirm path it is the member a
-      // human has just said this child is, and the RPC binds it in the same
-      // transaction as the move.
-      spondMemberId?: string | null
+      // EXACTLY ONE of these, and a null never means "any link will do".
+      //
+      // expectedMemberId is the proved path: the member whose Spond subgroups
+      // produced the target. The RPC refuses (stale_link) if this child's link
+      // no longer points at it, which is the race a bare "does this child have
+      // a link" check cannot see: another manager can unlink that member and
+      // correctly link the child to a different one whose Spond team is
+      // somewhere else, and the child's OTJ team need not have moved, so the
+      // expected-team check does not catch it either.
+      //
+      // confirmMemberId is the confirm path: the member a human has just said
+      // this child is, bound in the same transaction as the move.
+      expectedMemberId?: string | null
+      confirmMemberId?: string | null
       batchId?: string | null
     }
   >({
-    mutationFn: async ({ playerId, expectedTeamId, targetTeamId, spondMemberId, batchId }) => {
+    mutationFn: async ({ playerId, expectedTeamId, targetTeamId, expectedMemberId, confirmMemberId, batchId }) => {
+      // Refused here as well as by the RPC, so a caller that gets it wrong
+      // sees the mistake rather than a database error a manager might read as
+      // being about their data.
+      if ((expectedMemberId == null) === (confirmMemberId == null)) {
+        throw new Error('That change did not save. Reload and try again.')
+      }
       const { data, error } = await supabase.rpc('spond_reconcile_player_team', {
         p_player_id: playerId,
         p_expected_team_id: expectedTeamId,
         p_target_team_id: targetTeamId,
-        p_spond_member_id: spondMemberId ?? null,
+        p_expected_member_id: expectedMemberId ?? null,
+        p_confirm_member_id: confirmMemberId ?? null,
         p_batch_id: batchId ?? null,
       })
       if (error) {

@@ -355,7 +355,7 @@ export function ConfirmReconcileView({
       }
     >
       <p style={{ fontSize: 13.5 }}>
-        Spond has a member called <strong>{row.confirm?.displayName}</strong>. Nothing has matched them to{' '}
+        Spond has a member called <strong>{row.confirmName}</strong>. Nothing has matched them to{' '}
         <strong>{row.player.displayName}</strong> except the name, so confirming is your decision, not the app's.
       </p>
       <p style={{ fontSize: 13.5 }}>Confirming does two things, together or not at all:</p>
@@ -824,8 +824,15 @@ export default function SpondLinks() {
       // defence in depth: pressing must never reach the RPC with nothing to
       // confirm, because the RPC would then take the proved path and refuse
       // an unlinked child, which is a correct refusal for the wrong reason.
-      const memberId = confirmIdentity ? (row.confirm?.spondMemberId ?? '') : ''
-      if (confirmIdentity && !memberId) continue
+      // The member the destination was worked out from, on BOTH paths. A
+      // proved row sends it as the link it expects to still find, so a link
+      // repointed since the scan refuses rather than applying a destination
+      // derived from somebody this child no longer is. A confirm row sends it
+      // as the identity to bind. A row with neither is not offered, so this
+      // is defence in depth: pressing must never reach the RPC with nothing
+      // to name.
+      const memberId = row.memberId ?? ''
+      if (!memberId) continue
       try {
         const result = await reconcile.mutateAsync({
           playerId: row.player.playerId,
@@ -833,7 +840,8 @@ export default function SpondLinks() {
           // since is refused by the RPC rather than overwritten.
           expectedTeamId: destinationTeamId(row.from),
           targetTeamId: destinationTeamId(row.to),
-          spondMemberId: memberId || null,
+          expectedMemberId: confirmIdentity ? null : memberId,
+          confirmMemberId: confirmIdentity ? memberId : null,
           batchId,
         })
         if (result.outcome === 'moved') moved++

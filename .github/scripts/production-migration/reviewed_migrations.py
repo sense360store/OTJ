@@ -227,9 +227,12 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # What the function does: makes one child's CURRENT SEASON team
     # assignment agree with Spond, optionally binding the Spond member id
     # a human confirmed in the same transaction. It refuses to move a
-    # child who carries no player_spond_links row, so "never move anybody
-    # on a name match" is a database rule rather than a screen's
-    # convention. It creates no player identity, deletes and repoints no
+    # child who carries no player_spond_links row, AND refuses when that
+    # row no longer points at the member the caller derived its
+    # destination from (stale_link), so "never move anybody on a name
+    # match" is a database rule rather than a screen's convention and
+    # "any link will do" is not representable: exactly one of
+    # p_expected_member_id and p_confirm_member_id must be supplied. It creates no player identity, deletes and repoints no
     # link, names no season (so no historic or archived registration is
     # addressable), touches no register entry, session or Spond mirror
     # row, and makes no network call.
@@ -265,13 +268,13 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             # The function exists with exactly the reviewed signature. The
             # argument types are part of the probe: a different overload
             # would be a different migration.
-            "public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid)": (
+            "public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)": (
                 "(select count(*) > 0 from pg_proc p "
                 "join pg_namespace n on n.oid = p.pronamespace "
                 "where n.nspname = 'public' "
                 "and p.proname = 'spond_reconcile_player_team' "
                 "and pg_get_function_identity_arguments(p.oid) = "
-                "'uuid, uuid, uuid, text, uuid')"
+                "'uuid, uuid, uuid, text, text, uuid')"
             ),
             # And it is SECURITY DEFINER with an empty search_path, which
             # is what makes the in body capability check the enforcement
@@ -291,9 +294,9 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             # before, present after, like every probe here.
             "authenticated executes it and anon does not": (
                 "(select has_function_privilege('authenticated', "
-                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid)', 'EXECUTE') "
+                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', 'EXECUTE') "
                 "and not has_function_privilege('anon', "
-                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, uuid)', 'EXECUTE'))"
+                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', 'EXECUTE'))"
             ),
         },
     ),

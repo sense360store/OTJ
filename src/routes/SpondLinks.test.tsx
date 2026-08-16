@@ -764,7 +764,8 @@ describe('the confirmation a name match earns', () => {
     state: 'confirm' as const,
     from: { kind: 'team' as const, teamId: 't1', teamName: 'Argonauts' },
     to: { kind: 'team' as const, teamId: 't2', teamName: 'Titans' },
-    confirm: outside('Alpha Synthetic', [SG_OTHER], M1),
+    memberId: M1,
+    confirmName: 'Alpha Synthetic',
   }
   const render = (busy = false) =>
     renderToStaticMarkup(

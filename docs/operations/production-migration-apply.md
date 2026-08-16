@@ -127,10 +127,13 @@ capability both writes it performs already require. It changes no row.
 The function makes one child's CURRENT SEASON team assignment agree with Spond,
 optionally binding the opaque Spond member id a human confirmed in the same
 transaction. It refuses to move a child who carries no `player_spond_links`
-row, creates no player identity, deletes and repoints no link, names no season
-(so no historic or archived registration is addressable through it), touches no
-register entry, session or Spond mirror row, and makes no network call. See
-`docs/security/spond-data-boundary.md` and the file's own header.
+row, and refuses again when that row no longer points at the member the caller
+derived its destination from; exactly one of `p_expected_member_id` and
+`p_confirm_member_id` must be supplied, so a null never means "any link will
+do". It creates no player identity, deletes and repoints no link, names no
+season (so no historic or archived registration is addressable through it),
+touches no register entry, session or Spond mirror row, and makes no network
+call. See `docs/security/spond-data-boundary.md` and the file's own header.
 
 Its self-verification takes a BEFORE fingerprint of the registrations, links,
 register entries, stored RSVP, audit rows, policies, grants and triggers into a
@@ -144,11 +147,30 @@ Its behaviour was exercised against a real PostgreSQL before shipping:
 `.github/scripts/production-migration/test_0049_spond_team_reconcile.sh` builds
 a stand-in with the tables, triggers, policies and grants the function reads or
 asserts against, and runs the proved move, the Unassigned move, the idempotent
-repeat, the stale refusal, the unlinked refusal, the confirm-and-move, the
-atomicity of those two halves when the move is refused, both link preservation
-refusals, every gate (capability, club, member id vocabulary, unregistered id)
-and two connections racing on one child. It needs a local PostgreSQL server and
-is therefore not part of CI; run it by hand when reviewing this migration.
+repeat, the stale refusal, the unlinked refusal, the repointed-link refusal,
+the confirm-and-move, the atomicity of those two halves when the move is
+refused, both link preservation refusals, every gate (capability, club, member
+id vocabulary, unregistered id, naming neither or both members), and three
+concurrency shapes: two managers on one child, two crossed confirmations, and
+two confirmations of the same not yet linked member.
+
+It also proves the self-verification BITES rather than asserting that it does.
+Section N injects each forbidden thing (an insert into `public.players`, and a
+reference to `register_entries`, `session_teams`, `spond_events` and
+`spond_event_responses`) into the function body and asserts the apply aborts,
+then runs the same five injections against a `\b` version of the file and
+asserts it does NOT. That second half is the point: the checks originally used
+`\b`, which in PostgreSQL's ARE syntax is the backspace character rather than a
+word boundary, so every one of them matched nothing and passed for the wrong
+reason. A review caught it and the assertions now use `\y` and `\M`.
+
+The two concurrency mechanisms were mutation tested the same way: removing the
+per member advisory lock reproduces the raw `23505` the loser used to see, and
+the crossed confirmation section states plainly that it exercises the shape
+without reliably reproducing the interleaving.
+
+It needs a local PostgreSQL server and is therefore not part of CI; run it by
+hand when reviewing this migration.
 
 Ordering. Unlike `0048`, this one is safe to apply either side of the frontend:
 a client running against a database without it gets `PGRST202` from the RPC and

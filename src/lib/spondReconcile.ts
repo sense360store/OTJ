@@ -105,10 +105,20 @@ export interface ReconcileRow {
   // Where Spond says they are. Null on the two states that establish no
   // destination.
   to: SpondDestination | null
-  // Non null only on 'confirm': the Spond member a human must confirm this
-  // child is, before anything moves. Its display name is transient, exactly
-  // as every other name on this screen is.
-  confirm: SpondGroupMember | null
+  // THE MEMBER THE DESTINATION WAS DERIVED FROM, and the whole reason this
+  // field exists rather than a boolean. On 'move' it is the member this child
+  // is already linked to, and the RPC re-checks that the link STILL points at
+  // it: between the scan and the press another manager can unlink that member
+  // and correctly link the child to a different one, whose Spond team may be
+  // somewhere else, and the child's OTJ team need not have changed, so
+  // nothing else on this row would notice. On 'confirm' it is the member a
+  // human must confirm, which the RPC then binds. Null on the states that
+  // establish no destination, exactly as `to` is.
+  memberId: string | null
+  // Only on 'confirm': the transient Spond display name, so the dialog can
+  // name the person a manager is being asked to recognise. There is nothing
+  // to recognise on a proved row, so it stays null there.
+  confirmName: string | null
 }
 
 // Why the whole section can be unable to say anything, as its own closed
@@ -272,15 +282,25 @@ export function spondReconcile(ctx: SpondReconcileContext): ReconcileResult {
     if (!member) continue
     const verdict = memberVerdict(member.subgroupIds, ctx.teamBySubgroup)
     if (verdict.kind === 'ambiguous') {
-      rows.push({ player, state: 'ambiguous', from: here, to: null, confirm: null })
+      rows.push({ player, state: 'ambiguous', from: here, to: null, memberId: null, confirmName: null })
       continue
     }
     if (verdict.kind === 'unmapped') {
-      rows.push({ player, state: 'unmapped', from: here, to: null, confirm: null })
+      rows.push({ player, state: 'unmapped', from: here, to: null, memberId: null, confirmName: null })
       continue
     }
     if (sameDestination(verdict.to, here)) continue
-    rows.push({ player, state: 'move', from: here, to: verdict.to, confirm: null })
+    // The member id travels with the row: it is what the RPC is told to
+    // expect, so a link repointed since the scan refuses instead of applying
+    // a destination derived from somebody this child no longer is.
+    rows.push({
+      player,
+      state: 'move',
+      from: here,
+      to: verdict.to,
+      memberId: link.spondMemberId,
+      confirmName: null,
+    })
   }
 
   // ---- The unproved half: a child with no link at all. ------------------
@@ -312,7 +332,14 @@ export function spondReconcile(ctx: SpondReconcileContext): ReconcileResult {
     const verdict = memberVerdict(member.subgroupIds, ctx.teamBySubgroup)
     if (verdict.kind !== 'destination') continue
     if (sameDestination(verdict.to, here)) continue
-    rows.push({ player: row.player, state: 'confirm', from: here, to: verdict.to, confirm: member })
+    rows.push({
+      player: row.player,
+      state: 'confirm',
+      from: here,
+      to: verdict.to,
+      memberId: member.spondMemberId,
+      confirmName: member.displayName,
+    })
   }
 
   rows.sort((a, b) => a.player.displayName.localeCompare(b.player.displayName))
