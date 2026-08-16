@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 15 August 2026 (Spond polish closeout)
+Last reviewed: 16 August 2026 (SPOND-01/03 closeout fix, PR #187 open)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -20,9 +20,9 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 
 | ID | Workstream | Item | Status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
-| SPOND-01 | Spond | Reconcile registered players ↔ Spond members, expose missing candidates and incomplete coverage | In progress | P0 | Deploy gate cleared; one client defect remains, see the closeout note below |
+| SPOND-01 | Spond | Reconcile registered players ↔ Spond members, expose missing candidates and incomplete coverage | In progress | P0 | Deploy gate cleared; the one remaining client defect is fixed in open PR #187, Done on merge |
 | SPOND-02 | Spond | Exclude staff/non-player Spond members from player-linking flow | Done | P0 | Shipped in #178; see the Done table |
-| SPOND-03 | Spond | Replace confusing manual “Which child is this?” flow with clear member-to-player linking UX | In progress | P0 | Same single defect as SPOND-01; no Edge or schema change needed to close it |
+| SPOND-03 | Spond | Replace confusing manual “Which child is this?” flow with clear member-to-player linking UX | In progress | P0 | Same single defect as SPOND-01, fixed in open PR #187; client only, no Edge or schema change |
 | SPOND-03a | Spond | Read-only setup diagnostics on the unmatched registered players section | Done | P0 | Shipped in #182; the gated `spond-link-members` deploy has since run |
 | SPOND-04 | Spond | Website-wide British-English sweep: remove user-visible “roster” | Done | P1 | Shipped in #186; audit found nothing to reword, the tripwire was widened |
 | SPOND-05 | Spond | Audit current Spond API/upstream library and safely usable event/member facts | Done | P1 | Shipped in #186; existing docs reconciled, nothing stored was broadened |
@@ -50,7 +50,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 
 When there is capacity, prefer this sequence unless production evidence changes the order:
 
-1. Close SPOND-01 and SPOND-03 with the one remaining client fix described in the closeout note below. The gated `spond-link-members` deploy is no longer part of this: it has run.
+1. Close SPOND-01 and SPOND-03 by merging PR #187, which builds the one remaining client fix described in the closeout note below. The gated `spond-link-members` deploy is no longer part of this: it has run.
 2. Continue Drill Maker with DRILL-02 before the larger venue composer DRILL-03.
 3. Pick up QUALITY-01, since re-auditing the old Product Excellence roadmap gates several later items.
 4. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
@@ -150,6 +150,36 @@ audit.
   team appears in no suggestion pool, no unmatched section and no picker, so
   it cannot be linked by any route. Every current season registration has a
   team today (38 of 38), so this is not a live defect.
+
+**SPOND-01 and SPOND-03 — the closeout fix, 16 August 2026 (PR #187, open)**
+
+- Built as described above and no wider. The reason union gains `name_taken`,
+  the mirror of the player side's state of the same name, and the row reads
+  "Same name as a registered player who is already linked". That is the
+  deterministic data fact and the whole claim: same normalised name, a
+  registered player in the same pool a suggestion may match, that player's one
+  link already spent on a different member. It does not say duplicate child,
+  duplicate account, same person or wrong Spond record, because two equal names
+  prove none of those and the club may hold two children of one name. Choose
+  stays on the row, so the case where they are two different children is
+  resolved the way it always was, by a human.
+- The presentation carried the other half. The sub line was a conditional chain
+  whose default arm was "Not a registered player", so every case it did not
+  name rendered as that one; it is a `Record` keyed on the union now, and the
+  union has one home rather than a copy in the screen, so the compiler refuses
+  a reason with no sentence.
+- `SPOND_IGNORED_MEMBER_IDS` is untouched: exact opaque ids in a function
+  secret, no ignore by name, no ignore UI, no change to the secret's format.
+  Identifying which opaque id to ignore is an operational runbook question,
+  deliberately separate from this client defect.
+- Production re-verified 16 August, read only and aggregates only: 38 current
+  season registrations, 0 with no team, 0 withdrawn, 0 names shared by more
+  than one registration, 24 links over 24 distinct players. Zero shared names
+  on the OTJ side is what makes `name_taken` the right classification rather
+  than an ambiguity: the duplicate is entirely Spond side. Zero registrations
+  with no team confirms the latent gap above is still latent and is correctly
+  not addressed here.
+- Both rows go to Done on merge, with the merge date, not before.
 
 **SPOND-06 — event location to venue**
 
