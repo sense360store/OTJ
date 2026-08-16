@@ -246,14 +246,32 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # function definition back and asserts the boundaries the header
     # claims, so those hold against what will actually run.
     #
+    # The advisory locks it takes serialise callers of THIS function and
+    # nobody else. The ordinary linking screen still inserts into
+    # player_spond_links directly, holding no lock, so the confirmation
+    # insert can lose either unique key to it. That is handled where the
+    # promise is made rather than by requiring every future direct insert
+    # to join a lock protocol: the insert sits in a unique_violation
+    # handler that re-reads ownership after the winner has committed and
+    # returns member_linked_elsewhere or player_linked_elsewhere, never a
+    # raw 23505, never a move on an identity it lost, and never a
+    # repointed or deleted link. The audit batch stamp is set outside that
+    # block, so the subtransaction rollback cannot take it.
+    #
     # Its behaviour was exercised against a real PostgreSQL before
     # shipping:
     # .github/scripts/production-migration/test_0049_spond_team_reconcile.sh
     # builds a stand-in and runs the proved move, the Unassigned move, the
     # unlinked refusal, the confirm-and-move, the atomicity of those two
-    # halves, both link preservation refusals, every gate, and two
-    # connections racing on one child. It needs a local PostgreSQL server
-    # and is therefore not part of CI; run it by hand when reviewing.
+    # halves, both link preservation refusals, every gate, and four
+    # concurrency shapes: two connections racing on one child, two crossed
+    # confirmations (the deadlock shape), the same free member confirmed
+    # for two children, and a DIRECT insert racing the confirmation on
+    # each unique key in turn. Its last two sections mutate the function
+    # and prove the stored source checks abort, so a check that has gone
+    # vacuous is caught rather than counted as a pass. It needs a local
+    # PostgreSQL server and is therefore not part of CI; run it by hand
+    # when reviewing.
     #
     # Written against a hosted database whose newest ledger row is
     # 20260812102912 / spond_session_link_unique, checked 2026-08-16.

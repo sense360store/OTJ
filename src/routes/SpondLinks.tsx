@@ -36,11 +36,11 @@ import {
   pickerOptions,
   spondSetupRows,
   suggestionPool,
-  teamsBySubgroup,
+  subgroupIndex,
   type LinkCandidate,
   type NeedsDecisionReason,
   type SpondGroupMember,
-  type SubgroupTeam,
+  type SubgroupIndex,
   type SpondLink,
   type SpondSetupState,
 } from '../lib/spondLinking'
@@ -183,6 +183,27 @@ export function NeedsDecisionRowView({
   )
 }
 
+// One sentence per setup state, TOTAL rather than a chain with a default.
+// 'other_subgroup' interpolates a team name and is written at the call site;
+// everything else is here, so the compiler refuses a new state with no
+// sentence rather than handing it the "not compared" default.
+const SETUP_FINDING: Record<SpondSetupState, string> = {
+  no_subgroup: 'In Spond · no team assigned',
+  // Never read: the call site writes this one, because it names a team.
+  other_subgroup: '',
+  // Direction neutral on purpose. Ambiguity arrives three ways: two Spond
+  // members of the name, two registered children of it, or one member
+  // sitting in a team whose own player list holds it. All three are about
+  // WHO, which is why a member in two teams' subgroups is not one of them.
+  ambiguous: 'More than one person here goes by this name',
+  // One person, plural team. The same sentence the reconciliation section
+  // uses for the same fact, so the two halves of the screen agree.
+  contested_subgroup: 'In Spond · in more than one team, so Spond gives no single answer',
+  name_taken: 'In Spond · that name is already linked to another registered player',
+  not_found: 'Not found in Spond group data',
+  unknown: 'Not compared against the Spond group data',
+}
+
 // One registered player with no Spond member to link, and what Spond
 // shows for that name. Read only by construction: the row carries no
 // member id, offers no button and writes nothing. The fix for every state
@@ -204,28 +225,25 @@ export function SpondSetupRowView({
   otherTeam: string | null
   expectedTeam: string | null
 }) {
+  // 'other_subgroup' is the one state whose sentence interpolates, so it is
+  // handled before the map rather than turning the map into a function. The
+  // rest is a TOTAL Record, the discipline REASON_SUB above was rewritten
+  // into: this used to be a conditional chain ending in "Not compared
+  // against the Spond group data", so adding a state gave it that sentence
+  // silently, and that sentence is false about a member the scan read
+  // perfectly well.
   const finding =
-    state === 'no_subgroup'
-      ? 'In Spond · no team assigned'
-      : state === 'other_subgroup'
-        ? otherTeam
-          ? `In Spond · assigned to another team: ${otherTeam}`
-          : 'In Spond · assigned to another Spond subgroup'
-        : state === 'ambiguous'
-          ? // Direction neutral on purpose. Ambiguity arrives three ways
-            // now, and the old wording named only one of them: two Spond
-            // members of the name, two registered children of it, or one
-            // member sitting in a team whose own player list holds it.
-            'More than one person here goes by this name'
-          : state === 'name_taken'
-            ? 'In Spond · that name is already linked to another registered player'
-            : state === 'not_found'
-              ? 'Not found in Spond group data'
-              : 'Not compared against the Spond group data'
-  // Only the two findings ABOUT a Spond team assignment carry the team
-  // this player is expected on; on the rest there is no assignment to
-  // compare it against.
-  const showExpected = expectedTeam !== null && (state === 'no_subgroup' || state === 'other_subgroup')
+    state === 'other_subgroup'
+      ? otherTeam
+        ? `In Spond · assigned to another team: ${otherTeam}`
+        : 'In Spond · assigned to another Spond subgroup'
+      : SETUP_FINDING[state]
+  // Only the findings ABOUT a Spond team assignment carry the team this
+  // player is expected on; on the rest there is no assignment to compare it
+  // against.
+  const showExpected =
+    expectedTeam !== null &&
+    (state === 'no_subgroup' || state === 'other_subgroup' || state === 'contested_subgroup')
   return (
     <div className="sl-row">
       <div className="sl-row-main">
@@ -421,7 +439,7 @@ export function LinkSectionsView({
   complete,
   outsideMembers,
   outsideComplete,
-  teamBySubgroup,
+  subgroups,
   clubRoster,
   expectedTeam,
   expectedTeamId,
@@ -458,7 +476,7 @@ export function LinkSectionsView({
   // empty list with the whole suite green.
   outsideMembers: SpondGroupMember[] | null
   outsideComplete: boolean
-  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>
+  subgroups: SubgroupIndex
   clubRoster: RegisteredPlayer[]
   // The team whose links are being worked through, named on the rows that
   // report a Spond team assignment. Null before a team is chosen.
@@ -491,7 +509,7 @@ export function LinkSectionsView({
     pool,
     outsideMembers,
     outsideComplete,
-    teamBySubgroup,
+    subgroups,
     clubRoster,
   })
   const reconcile = spondReconcile({
@@ -502,7 +520,7 @@ export function LinkSectionsView({
     candidatesComplete: complete,
     outsideMembers,
     outsideComplete,
-    teamBySubgroup,
+    subgroups,
     subgroupMappingComplete,
     teamId: expectedTeamId,
     teamName: expectedTeam,
@@ -746,7 +764,7 @@ export default function SpondLinks() {
   // purpose: the whole point is to resolve a subgroup this team does not
   // map. Where a subgroup resolves to no team, or to two, the row says
   // "another Spond subgroup" rather than guessing.
-  const subgroupTeams = useMemo(() => teamsBySubgroup(mappings.data ?? []), [mappings.data])
+  const subgroupTeams = useMemo(() => subgroupIndex(mappings.data ?? []), [mappings.data])
 
   // Club wide, not per team: a whole group mapping anywhere in the club can
   // hide a second team assignment for any member, so the reconciliation
@@ -1003,7 +1021,7 @@ export default function SpondLinks() {
               complete={loadedTeam ? linkLoadComplete(loadedTeam) : false}
               outsideMembers={loadedTeam?.diagnosticMembers ?? null}
               outsideComplete={loadedTeam?.diagnosticComplete === true}
-              teamBySubgroup={subgroupTeams}
+              subgroups={subgroupTeams}
               clubRoster={roster.data ?? []}
               expectedTeam={mappedTeams.find((t) => t.id === teamId)?.name ?? null}
               expectedTeamId={teamId}

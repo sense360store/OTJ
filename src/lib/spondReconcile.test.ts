@@ -22,7 +22,8 @@ import {
   spondReconcile,
   type SpondReconcileContext,
 } from './spondReconcile'
-import type { LinkCandidate, SpondGroupMember, SpondLink, SubgroupTeam } from './spondLinking'
+import { subgroupIndex } from './spondLinking'
+import type { LinkCandidate, SpondGroupMember, SpondLink, SubgroupIndex } from './spondLinking'
 import type { RegisteredPlayer } from './data'
 
 // ---- The club, as production has it ---------------------------------------
@@ -35,11 +36,26 @@ const SG_ARGONAUTS = 'SUBGROUPARGONAUTS00000000000000A'
 const SG_GLADIATORS = 'SUBGROUPGLADIATORS0000000000000B'
 const SG_SPARTANS = 'SUBGROUPSPARTANS000000000000000C'
 const SG_UNMAPPED = 'SUBGROUPNOBODYMAPSTHIS000000000D'
+// A subgroup two teams both claim. Distinct from SG_UNMAPPED on purpose:
+// nobody claiming a subgroup is silence, two teams claiming it is a conflict,
+// and only the second one can hide a second team assignment.
+const SG_CONTESTED = 'SUBGROUPTWOTEAMSCLAIMTHIS00000E'
 
-const TEAM_BY_SUBGROUP: ReadonlyMap<string, SubgroupTeam> = new Map([
-  [SG_ARGONAUTS, { teamId: ARGONAUTS, teamName: 'Argonauts' }],
-  [SG_GLADIATORS, { teamId: GLADIATORS, teamName: 'Gladiators' }],
-  [SG_SPARTANS, { teamId: SPARTANS, teamName: 'Spartans' }],
+// The club's mapped subgroups as one value, exactly as subgroupIndex returns
+// them. Built through the real function wherever a test is about the
+// contested rule, so the fixture cannot disagree with the resolver.
+const SUBGROUPS: SubgroupIndex = subgroupIndex([
+  { subgroupId: SG_ARGONAUTS, teamId: ARGONAUTS, teamName: 'Argonauts' },
+  { subgroupId: SG_GLADIATORS, teamId: GLADIATORS, teamName: 'Gladiators' },
+  { subgroupId: SG_SPARTANS, teamId: SPARTANS, teamName: 'Spartans' },
+])
+// The same club, plus one subgroup Gladiators and Spartans both claim.
+const SUBGROUPS_CONTESTED: SubgroupIndex = subgroupIndex([
+  { subgroupId: SG_ARGONAUTS, teamId: ARGONAUTS, teamName: 'Argonauts' },
+  { subgroupId: SG_GLADIATORS, teamId: GLADIATORS, teamName: 'Gladiators' },
+  { subgroupId: SG_SPARTANS, teamId: SPARTANS, teamName: 'Spartans' },
+  { subgroupId: SG_CONTESTED, teamId: GLADIATORS, teamName: 'Gladiators' },
+  { subgroupId: SG_CONTESTED, teamId: SPARTANS, teamName: 'Spartans' },
 ])
 
 // Synthetic uppercase hex member ids, the only shape the links table accepts.
@@ -86,7 +102,7 @@ function run(over: Partial<SpondReconcileContext> = {}) {
     candidatesComplete: true,
     outsideMembers: [],
     outsideComplete: true,
-    teamBySubgroup: TEAM_BY_SUBGROUP,
+    subgroups: SUBGROUPS,
     subgroupMappingComplete: true,
     teamId: ARGONAUTS,
     teamName: 'Argonauts',
@@ -215,18 +231,118 @@ describe('a linked player whose Spond member is in more than one mapped subgroup
     expect(applicableMoves(rows)).toEqual([])
   })
 
-  it('treats a subgroup two teams both claim as unmapped, never as either team', () => {
-    // teamsBySubgroup drops a contested subgroup, so it reaches this rule as
-    // a subgroup mapping to nothing. Naming either team would be a coin
-    // toss printed as a fact.
-    const contested: ReadonlyMap<string, SubgroupTeam> = new Map(TEAM_BY_SUBGROUP)
+  it('treats a subgroup two teams both claim as AMBIGUOUS, never as either team', () => {
+    // A review finding. A contested subgroup is membership of a MAPPED team
+    // that cannot be named, which is a conflict, not silence. Reading it as
+    // "unmapped" was the first version and was wrong in the companion case
+    // below.
     const { rows } = run({
       pool: [player('p-contested', 'Contested Synthetic')],
       links: [link(M_JOEY, 'p-contested')],
-      outsideMembers: [outside('Contested Synthetic', ['SUBGROUPCONTESTED0000000000000EE'], M_JOEY)],
-      teamBySubgroup: contested,
+      outsideMembers: [outside('Contested Synthetic', [SG_CONTESTED], M_JOEY)],
+      subgroups: SUBGROUPS_CONTESTED,
     })
+    expect(rows.map((r) => r.state)).toEqual(['ambiguous'])
+    expect(rows[0].to).toBeNull()
+    expect(rows[0].memberId).toBeNull()
+    expect(applicableMoves(rows)).toEqual([])
+  })
+})
+
+// ---- 4b. The contested companion subgroup, in every shape ------------------
+//
+// A REVIEW FINDING, and the reason the contested ids are carried rather than
+// deleted. When a member is in one subgroup that maps uniquely to team A AND
+// in another that two teams both claim, the first version resolved only the
+// nameable one and offered an actionable move to A. That is acting on half
+// the evidence: the member is in TWO mapped teams' subgroups, and one of them
+// happens to be the one this club cannot name. Contested membership must
+// outrank a simultaneous unique mapping.
+
+describe('a contested subgroup outranks any unique mapping beside it', () => {
+  const withSubgroups = (subgroupIds: string[]) =>
+    run({
+      pool: [player('p-x', 'Contested Synthetic')],
+      links: [link(M_JOEY, 'p-x')],
+      outsideMembers: [outside('Contested Synthetic', subgroupIds, M_JOEY)],
+      subgroups: SUBGROUPS_CONTESTED,
+    })
+
+  it('unique + contested is ambiguous, not the unique team', () => {
+    const { rows } = withSubgroups([SG_GLADIATORS, SG_CONTESTED])
+    expect(rows.map((r) => r.state)).toEqual(['ambiguous'])
+    expect(rows[0].to).toBeNull()
+    expect(rows[0].memberId).toBeNull()
+    expect(applicableMoves(rows)).toEqual([])
+    expect(canApplyAll(rows)).toBe(false)
+  })
+
+  it('and the order of the two subgroups changes nothing', () => {
+    const { rows } = withSubgroups([SG_CONTESTED, SG_GLADIATORS])
+    expect(rows.map((r) => r.state)).toEqual(['ambiguous'])
+  })
+
+  it('contested only is ambiguous, and never Unassigned', () => {
+    const { rows } = withSubgroups([SG_CONTESTED])
+    expect(rows.map((r) => r.state)).toEqual(['ambiguous'])
+    expect(rows[0].to).toBeNull()
+  })
+
+  it('two unique teams is ambiguous, as it always was', () => {
+    const { rows } = withSubgroups([SG_GLADIATORS, SG_SPARTANS])
+    expect(rows.map((r) => r.state)).toEqual(['ambiguous'])
+  })
+
+  it('unique only is actionable', () => {
+    const { rows } = withSubgroups([SG_GLADIATORS])
+    expect(rows.map((r) => r.state)).toEqual(['move'])
+    expect(rows[0].to && destinationLabel(rows[0].to)).toBe('Gladiators')
+    expect(canApplyAll(rows)).toBe(true)
+  })
+
+  it('unmapped only stays unmapped, because nobody claiming it is not a conflict', () => {
+    const { rows } = withSubgroups([SG_UNMAPPED])
     expect(rows.map((r) => r.state)).toEqual(['unmapped'])
+  })
+
+  it('unmapped + unique is still the unique team: silence hides nothing', () => {
+    // The companion case that proves the contested rule is about CONFLICT
+    // rather than about "an id we could not resolve". A subgroup nobody maps
+    // cannot be a second team, so it does not make the answer plural.
+    const { rows } = withSubgroups([SG_UNMAPPED, SG_GLADIATORS])
+    expect(rows.map((r) => r.state)).toEqual(['move'])
+  })
+
+  it('a contested member never reaches the bulk apply, even beside proved rows', () => {
+    const clean = player('p-clean', 'Clean Synthetic')
+    const dirty = player('p-dirty', 'Contested Synthetic')
+    const { rows } = run({
+      pool: [clean, dirty],
+      clubRoster: [clean, dirty],
+      links: [link(M_JOEY, 'p-clean'), link(M_OTHER, 'p-dirty')],
+      outsideMembers: [
+        outside('Clean Synthetic', [SG_GLADIATORS], M_JOEY),
+        outside('Contested Synthetic', [SG_SPARTANS, SG_CONTESTED], M_OTHER),
+      ],
+      subgroups: SUBGROUPS_CONTESTED,
+    })
+    expect(rows.map((r) => r.state).sort()).toEqual(['ambiguous', 'move'])
+    const bulk = applicableMoves(rows)
+    expect(bulk).toHaveLength(1)
+    expect(bulk[0].player.playerId).toBe('p-clean')
+    expect(bulk.map((r) => r.player.playerId)).not.toContain('p-dirty')
+  })
+
+  it('and an UNLINKED child in a contested subgroup is offered no confirmation', () => {
+    // The confirm path is the other way a contested member could be acted on.
+    // It rides spondSetupRows, which reports the ambiguity and carries no
+    // member, so nothing here has an identity to bind.
+    const { rows } = run({
+      pool: [player('p-gap', 'Gap Synthetic')],
+      outsideMembers: [outside('Gap Synthetic', [SG_GLADIATORS, SG_CONTESTED], M_OTHER)],
+      subgroups: SUBGROUPS_CONTESTED,
+    })
+    expect(rows).toEqual([])
   })
 })
 
@@ -387,20 +503,20 @@ describe('the section states nothing rather than guessing', () => {
 
 describe('memberVerdict', () => {
   it('reads no subgroup as Unassigned', () => {
-    expect(memberVerdict([], TEAM_BY_SUBGROUP)).toEqual({ kind: 'destination', to: { kind: 'unassigned' } })
+    expect(memberVerdict([], SUBGROUPS)).toEqual({ kind: 'destination', to: { kind: 'unassigned' } })
   })
 
   it('reads one mapped subgroup as that team', () => {
-    expect(memberVerdict([SG_GLADIATORS], TEAM_BY_SUBGROUP)).toEqual({
+    expect(memberVerdict([SG_GLADIATORS], SUBGROUPS)).toEqual({
       kind: 'destination',
       to: { kind: 'team', teamId: GLADIATORS, teamName: 'Gladiators' },
     })
   })
 
   it('reads two subgroups of ONE team as that team, not as ambiguity', () => {
-    const twoWays: ReadonlyMap<string, SubgroupTeam> = new Map([
-      ...TEAM_BY_SUBGROUP,
-      ['SUBGROUPGLADIATORSSECOND000000FF', { teamId: GLADIATORS, teamName: 'Gladiators' }],
+    const twoWays = subgroupIndex([
+      { subgroupId: SG_GLADIATORS, teamId: GLADIATORS, teamName: 'Gladiators' },
+      { subgroupId: 'SUBGROUPGLADIATORSSECOND000000FF', teamId: GLADIATORS, teamName: 'Gladiators' },
     ])
     expect(memberVerdict([SG_GLADIATORS, 'SUBGROUPGLADIATORSSECOND000000FF'], twoWays)).toEqual({
       kind: 'destination',
@@ -409,15 +525,31 @@ describe('memberVerdict', () => {
   })
 
   it('reads two teams as ambiguous', () => {
-    expect(memberVerdict([SG_GLADIATORS, SG_SPARTANS], TEAM_BY_SUBGROUP)).toEqual({ kind: 'ambiguous' })
+    expect(memberVerdict([SG_GLADIATORS, SG_SPARTANS], SUBGROUPS)).toEqual({ kind: 'ambiguous' })
   })
 
   it('reads a subgroup nobody maps as unmapped, never as Unassigned', () => {
-    expect(memberVerdict([SG_UNMAPPED], TEAM_BY_SUBGROUP)).toEqual({ kind: 'unmapped' })
+    expect(memberVerdict([SG_UNMAPPED], SUBGROUPS)).toEqual({ kind: 'unmapped' })
+  })
+
+  it('reads a CONTESTED subgroup as ambiguous, which is not the same as unmapped', () => {
+    expect(memberVerdict([SG_CONTESTED], SUBGROUPS_CONTESTED)).toEqual({ kind: 'ambiguous' })
+  })
+
+  it('lets a contested subgroup outrank a unique one, whichever way round', () => {
+    expect(memberVerdict([SG_GLADIATORS, SG_CONTESTED], SUBGROUPS_CONTESTED)).toEqual({ kind: 'ambiguous' })
+    expect(memberVerdict([SG_CONTESTED, SG_GLADIATORS], SUBGROUPS_CONTESTED)).toEqual({ kind: 'ambiguous' })
+  })
+
+  it('lets a contested subgroup outrank an empty list too, so it is never Unassigned', () => {
+    // Vacuously true (an empty list contains no contested id) and asserted
+    // anyway, because the ordering of these two branches is what a future
+    // edit could get wrong.
+    expect(memberVerdict([], SUBGROUPS_CONTESTED)).toEqual({ kind: 'destination', to: { kind: 'unassigned' } })
   })
 
   it('reads a mapped subgroup beside an unmapped one as the mapped team', () => {
-    expect(memberVerdict([SG_UNMAPPED, SG_SPARTANS], TEAM_BY_SUBGROUP)).toEqual({
+    expect(memberVerdict([SG_UNMAPPED, SG_SPARTANS], SUBGROUPS)).toEqual({
       kind: 'destination',
       to: { kind: 'team', teamId: SPARTANS, teamName: 'Spartans' },
     })

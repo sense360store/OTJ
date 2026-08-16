@@ -91,13 +91,26 @@ describe('SpondLinks hands the section builder the scoped pool, never the roster
     // all reach the view as themselves.
     expect(src).toMatch(/outsideMembers=\{loadedTeam\?\.diagnosticMembers \?\? null\}/)
     expect(src).toMatch(/outsideComplete=\{loadedTeam\?\.diagnosticComplete === true\}/)
-    expect(src).toMatch(/teamBySubgroup=\{subgroupTeams\}/)
+    expect(src).toMatch(/subgroups=\{subgroupTeams\}/)
     expect(src).toMatch(/clubRoster=\{roster\.data \?\? \[\]\}/)
-    expect(src).toMatch(/subgroupTeams = useMemo\(\(\) => teamsBySubgroup\(mappings\.data \?\? \[\]\)/)
+    expect(src).toMatch(/subgroupTeams = useMemo\(\(\) => subgroupIndex\(mappings\.data \?\? \[\]\)/)
     // Stored whole from the load, so a reload cannot leave a stale
     // diagnosis beside fresh candidates.
     expect(src).toMatch(/diagnosticMembers: result\.diagnosticMembers/)
     expect(src).toMatch(/diagnosticComplete: result\.diagnosticComplete/)
+  })
+
+  it('the screen hands down the whole index, contested set included', () => {
+    // subgroupIndex answers two questions at once: which subgroup maps to
+    // exactly one team, and which subgroups more than one team claims. The
+    // second half is the only evidence a contested membership leaves, so a
+    // call site that rebuilt the index around byId alone would typecheck
+    // and quietly hand the rule an empty conflict set, which reads as "no
+    // conflict" rather than as "not known". The screen therefore passes
+    // the value the builder returned, whole.
+    expect(src).toMatch(/subgroups=\{subgroupTeams\}/)
+    expect(src).not.toMatch(/contested:\s*new Set\(\)/)
+    expect(src).not.toMatch(/subgroupTeams\.byId/)
   })
 })
 

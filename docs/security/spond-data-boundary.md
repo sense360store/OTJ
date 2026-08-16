@@ -206,12 +206,30 @@ mean "any existing link is acceptable"; naming neither, or both, is refused
 outright.
 
 Everything else fails closed and offers nothing: a member Spond has in more
-than one mapped team's subgroup, a member in a subgroup no team maps (which is
-deliberately NOT read as Unassigned, since that would take a child out of a
-squad because a mapping is missing), two Spond members of one name, two
-registered children of one name anywhere in the club's current season, a scan
-that is not provably whole, and a club where any team is mapped to a whole
-Spond group rather than a subgroup. The rules are pure in
+than one mapped team's subgroup, a member in a subgroup **two teams both
+claim**, a member in a subgroup no team maps (which is deliberately NOT read as
+Unassigned, since that would take a child out of a squad because a mapping is
+missing), two Spond members of one name, two registered children of one name
+anywhere in the club's current season, a scan that is not provably whole, and a
+club where any team is mapped to a whole Spond group rather than a subgroup.
+
+**A contested subgroup is evidence, not a leftover, and that was a review
+finding.** When two mappings claim one subgroup for two different teams it
+names neither, and the first version simply deleted it from the resolution map.
+Deleting it made it indistinguishable from a subgroup nobody maps, and those
+are opposite facts: nobody claiming a subgroup is silence, and a member in it
+plus one properly mapped subgroup really is on that one team; two teams
+claiming it is membership of a MAPPED team that cannot be named, and the same
+member is then in two mapped teams' subgroups, one nameable and one not. The
+first version resolved only the nameable one and offered an actionable move on
+half the evidence. The contested ids are now carried beside the map as one
+value (`SubgroupIndex` in `src/lib/spondLinking.ts`, one object for the reason
+`EventKindContext` is one object), and membership of a contested subgroup is
+checked FIRST by both readers, so it
+outranks any simultaneous unique mapping. The read only diagnostic refuses too,
+with its own sentence: `In Spond · in more than one team, so Spond gives no
+single answer`, rather than naming one of the two teams or borrowing the
+sentence about two people of one name. The rules are pure in
 `src/lib/spondReconcile.ts` and the ambiguity half is not reimplemented there:
 it composes `spondSetupRows`, so there is one name matcher on the screen.
 
@@ -256,6 +274,20 @@ unlinked child. It adds no capability key.
   surface a raw unique violation instead of the documented
   `member_linked_elsewhere`. The fixed order is what keeps the pair deadlock
   free;
+- a `unique_violation` handler around the confirmation insert, because **the
+  locks bind only callers of this function** and a review made that explicit.
+  The ordinary linking screen still inserts into `player_spond_links` directly,
+  from Accept and from Choose, taking no advisory lock, so the confirmation
+  insert can lose either unique key between its ownership read and its write.
+  The database stays correct (the constraints are the enforcement); what would
+  be wrong is the report. The handler re-reads ownership after the conflicting
+  transaction has resolved and returns `member_linked_elsewhere` or
+  `player_linked_elsewhere`, never a raw `23505`, never a move, and never a
+  repointed or deleted link. A violation neither read explains is re-raised
+  rather than guessed at, and the audit batch stamp is set outside the block so
+  the subtransaction rollback cannot take it. This is fixed at the RPC boundary
+  deliberately: requiring every present and future direct insert to join a lock
+  protocol is the assumption that would rot;
 - `FOR UPDATE` over every link row the decision could touch, in ONE statement
   ordered by member id, so two crossed confirmations cannot take the same two
   rows in opposite orders;
