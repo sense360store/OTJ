@@ -31,7 +31,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
-| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
+| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Open PR #188; authenticated surfaces only, print/share is a separate reviewed gate, see below |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
 | PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | Later | P2 | Destructive-change review; no silent history loss |
@@ -203,6 +203,35 @@ Nothing was implemented for this audit.
 - Explicit confirmation naming the number deleted; one transaction, so a partial failure deletes nobody.
 - Session history is never silently destroyed: removals that would orphan register entries are surfaced, and the chosen semantics are stated on screen.
 - Audit events per run; concurrency tests for overlapping selections; destructive change review gate.
+
+**DRILL-02 — drill diagrams through session delivery (PR #188, open)**
+
+- The row's wording assumed one thing being made consistent. Investigation
+  found two: the Drill Maker diagram (`drills.diagram`, 0046, rendered by
+  `DrillDiagramView`) was on the drill page and nowhere else, while Planner,
+  Session Day and Live showed MEDIA. A drill can carry both and they answer
+  different questions, so the diagram is added beside the media rather than
+  instead of it and no media path moves.
+- Resolution is one module, `src/lib/activityDiagram.ts`, carrying the two
+  rules that must not be restated: an empty diagram is no diagram, and an
+  England Football derived drill shows no hand drawn diagram even when it is
+  holding one. The second is the club's licence rather than a permission it
+  grants, so it binds every viewer and every surface. That state is reachable
+  (a coach draws on their own drill, then records an FA source), the drill page
+  already refuses it, and before this module no session surface had the rule at
+  all.
+- One batch read for a session's drills. `DRILL_COLS` still does not carry the
+  diagram, so the library list, the planner's drill read and the share snapshot
+  builders are unchanged, and no new grant is involved.
+- **Print/share is deliberately not included, and that is a separate gate.**
+  The public projection refuses the `diagram` key. Publishing one needs the
+  server forbidden list in `read-content-share`, the snapshot schema and its
+  version, and a security review: an Edge Function change and a public sharing
+  change together, which roadmap rule 5 keeps out of a client PR. Recorded here
+  so the row is not read as unfinished work that was skipped.
+- A mutation recorded a fact worth keeping: the public boundary does not rest
+  on the forbidden list alone. `TOP_KEYS` and `MEDIA_KEYS` are strict allow
+  lists, so an unknown key is refused whatever it is called.
 
 **DRILL-03 — venue/pitch composer**
 
