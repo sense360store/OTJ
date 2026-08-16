@@ -48,6 +48,7 @@ import {
 import type { PlannerAction, PlannerActions } from '../lib/sessionSubmit'
 import { useShare } from '../hooks/useShare'
 import { canonicalUrl, SAVE_AND_SHARE_NOTE, SHARE_ACCOUNT_NOTE, type ShareFeedback } from '../lib/share'
+import { ActivityDiagram } from '../components/ActivityDiagram'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
@@ -162,6 +163,7 @@ export function ActivityCardView({
   drill,
   thumb,
   expandedMedia,
+  expandedDiagram,
   drillHref,
   expanded,
   onToggle,
@@ -179,6 +181,11 @@ export function ActivityCardView({
   drill: Drill | null
   thumb: ReactNode
   expandedMedia: ReactNode
+  // The drill's saved Drill Maker diagram (DRILL-02), passed in rather than
+  // read here so this stays presentational and rendable with no query client.
+  // Note the name: `diagram` alone is already taken in this file by the
+  // uploaded image viewer's mode, which is a different thing entirely.
+  expandedDiagram: ReactNode
   drillHref: string
   expanded: boolean
   onToggle: () => void
@@ -305,6 +312,13 @@ export function ActivityCardView({
       {expanded && drill && (
         <div className="act-panel" id={panelId} role="region" aria-label={`${drill.title} details`}>
           {expandedMedia}
+          {/* The saved Drill Maker diagram, beside the uploaded media rather
+              than instead of it: a drill may have both, and neither replaces
+              the other. It sits in the panel, never in .act-card, because the
+              card is the drag source and the row is already full at phone
+              width. Read only, and no editing affordance: building a diagram
+              belongs to Drill Maker. */}
+          {expandedDiagram}
           {drill.summary && <p className="act-panel-summary">{drill.summary}</p>}
           <div className="setup-grid">
             <MetaCell icon={Icon.clock} k="Duration" v={drill.duration + ' min'} />
@@ -398,6 +412,9 @@ function ActivityRow({
       // Built lazily: the element only renders, and so only mints a signed
       // URL, when the panel is open.
       expandedMedia={drill ? <ActivityPanelMedia media={media} drill={drill} /> : null}
+      // Lazy for the same reason: the diagram read only fires when a coach
+      // opens the panel, so a long session costs nothing until it is looked at.
+      expandedDiagram={drill ? <ActivityDiagram drill={drill} className="dd-in-panel" /> : null}
       drillHref={drill ? `/drill/${drill.id}` : ''}
       expanded={expanded}
       onToggle={onToggle}

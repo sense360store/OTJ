@@ -241,6 +241,140 @@ describe('one renderer draws a diagram', () => {
     expect(editor).toContain('<DiagramSurfaceBackdrop')
     expect(editor).not.toContain('data-el=')
   })
+
+  // ---- The session surfaces (DRILL-02) ----------------------------------
+
+  it('leaves every session surface with no SVG of its own', () => {
+    // SOURCE TEXT. The one renderer rule got four new call sites when the
+    // diagram reached the planner, session day and both live stages, and the
+    // realistic mistake is the same one the drill page could have made:
+    // somebody drawing a quick simplified pitch inline rather than mounting
+    // the component, which then drifts from what the coach actually drew.
+    for (const file of ['routes/Planner.tsx', 'routes/SessionDay.tsx', 'routes/LiveSession.tsx']) {
+      const src = read(file)
+      expect(src, `${file} draws its own SVG`).not.toContain('<svg')
+      expect(src, `${file} declares its own viewBox`).not.toContain('viewBox')
+      expect(src, `${file} draws its own element shapes`).not.toContain('data-el=')
+      // Each reaches the diagram through the one seam and nothing else.
+      expect(src, `${file} should mount ActivityDiagram`).toContain('<ActivityDiagram')
+    }
+  })
+
+  it('keeps the session seam a mount rather than a second renderer', () => {
+    // SOURCE TEXT. ActivityDiagram exists to own the read and the rule; the
+    // moment it draws anything itself there are two renderers again.
+    const seam = read('components/ActivityDiagram.tsx')
+    expect(seam).toContain('<DrillDiagramView')
+    expect(seam).not.toContain('<svg')
+    expect(seam).not.toContain('viewBox')
+    expect(seam).not.toContain('data-el=')
+  })
+
+  it('decides whether to show a diagram in exactly one place', () => {
+    // SOURCE TEXT, and the one that matters most for England Football. Four
+    // surfaces answering "may this be shown" for themselves is four chances to
+    // disagree about a restricted drill, so the rule lives in
+    // drillDiagramRights and no screen derives provenance for a diagram.
+    for (const file of [
+      'routes/Planner.tsx',
+      'routes/SessionDay.tsx',
+      'routes/LiveSession.tsx',
+      'components/ActivityDiagram.tsx',
+    ]) {
+      const src = read(file)
+      if (file === 'components/ActivityDiagram.tsx') {
+        expect(src).toContain('diagramForDisplay')
+        continue
+      }
+      expect(src, `${file} decides diagram display for itself`).not.toContain('diagramForDisplay')
+      expect(src, `${file} derives provenance for a diagram`).not.toContain('deriveProvenance')
+    }
+  })
+
+  it('reads a diagram through the one hook, per drill, with no second read shape', () => {
+    // SOURCE TEXT. The tempting shortcut for a session showing N activities is
+    // a batched `.in('id', ids)` diagram read. It would mint a SECOND cache
+    // shape over rows already cached under ['drill_diagram', id], which is the
+    // duplicated diagram state this work exists to avoid, and it would need a
+    // second column constant beside the one pinned above.
+    const q = read('lib/queries.ts')
+    // One column constant, declared once.
+    expect(q.match(/DRILL_DIAGRAM_COLS\s*=\s*'/g) ?? []).toHaveLength(1)
+    // Every diagram select goes through it, and none of them is a batch: an
+    // `.in(` beside a diagram select is the second read shape this forbids.
+    for (const sel of q.match(/\.select\(DRILL_DIAGRAM_COLS\)[^\n]*/g) ?? []) {
+      expect(sel, 'a batched diagram read').not.toContain('.in(')
+    }
+    expect(q).not.toContain("select('id, diagram")
+    // Only the seam mounts the hook; the screens go through the seam.
+    expect(read('components/ActivityDiagram.tsx')).toContain('useDrillDiagram')
+    for (const file of ['routes/Planner.tsx', 'routes/SessionDay.tsx', 'routes/LiveSession.tsx']) {
+      expect(read(file), `${file} reads a diagram itself`).not.toContain('useDrillDiagram')
+    }
+  })
+
+  it('parses a diagram nowhere but the model and the query layer', () => {
+    // SOURCE TEXT. One parser. A screen calling parseDrillDiagram on something
+    // it fetched its own way is the second reading this rule forbids.
+    for (const file of [
+      'routes/Planner.tsx',
+      'routes/SessionDay.tsx',
+      'routes/LiveSession.tsx',
+      'components/ActivityDiagram.tsx',
+      'components/DrillDiagramView.tsx',
+    ]) {
+      // A CALL, not a mention: the seam's comments explain why a corrupt row
+      // reads as no diagram, and naming the parser there is the explanation,
+      // not a second parse.
+      expect(read(file), `${file} parses a diagram`).not.toContain('parseDrillDiagram(')
+    }
+  })
+
+  it('never turns a structured diagram into stored or uploaded media', () => {
+    // SOURCE TEXT. The two diagram systems stay apart: a DrillDiagram is never
+    // rasterised, wrapped as a MediaItem or pushed through the uploaded image
+    // viewer to borrow its modal. Session day renders both, side by side,
+    // through their own paths.
+    const seam = read('components/ActivityDiagram.tsx')
+    for (const forbidden of ['MediaItem', 'DiagramViewer', 'DiagramSlide', 'storagePath', 'toDataURL', 'canvas']) {
+      expect(seam, `the seam reaches for ${forbidden}`).not.toContain(forbidden)
+    }
+  })
+
+  it('writes nothing from any of the session surfaces to show a diagram', () => {
+    // SOURCE TEXT. Rendering a picture is a read. The seam holds no mutation
+    // and imports no write hook.
+    const seam = read('components/ActivityDiagram.tsx')
+    expect(seam).not.toContain('mutate')
+    expect(seam).not.toContain('useUpdateDrillDiagram')
+    expect(seam).not.toContain('saveDrillDiagram')
+  })
+
+  it('bounds the size of a diagram on every surface that is not the drill page', () => {
+    // SOURCE TEXT, and the weakest check in this file, for the reason the
+    // editor canvas check already gives: there is no DOM here to measure a box
+    // in, so this reads the declared CSS rather than a rendered one. It exists
+    // because the tall case is genuinely tall (a portrait full pitch is one and
+    // a half times as high as it is wide, so roughly 840px on a 560px live
+    // stage), and an unbounded diagram on a phone pushes the coaching points
+    // and the rest of the session off the screen.
+    const css = readFileSync(join(SRC, 'components/DrillDiagram.css'), 'utf8')
+    const block = (name: string) => {
+      const at = css.indexOf(`.${name} {`)
+      expect(at, `.${name} is not declared`).toBeGreaterThan(-1)
+      return css.slice(at, css.indexOf('}', at))
+    }
+    // The planner panel matches the media cap above it in the same column.
+    expect(block('dd-in-panel')).toContain('max-width: 420px')
+    // The two surfaces whose hazard is height rather than width.
+    expect(block('dd-in-sd')).toContain('max-height')
+    expect(block('dd-in-live')).toContain('max-height')
+    // And the shared surface itself is unchanged: still full width, still
+    // taking its ratio from the diagram rather than from a stylesheet.
+    const surface = block('dd-surface')
+    expect(surface).toContain('width: 100%')
+    expect(surface).not.toContain('aspect-ratio')
+  })
 })
 
 describe('the diagram stays out of a public link', () => {

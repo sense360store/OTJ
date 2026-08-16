@@ -20,6 +20,7 @@ import {
 } from '../lib/queries'
 import { embedSrc, sessionMinutes } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
+import { ActivityDiagram } from '../components/ActivityDiagram'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
 import { isSessionLive, liveActivityNow } from '../lib/sessionLifecycle'
@@ -398,6 +399,15 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
           {/* media */}
           {media && drill && <LiveMediaPeek media={media} drill={drill} />}
 
+          {/* The saved Drill Maker diagram for the CURRENT activity (DRILL-02).
+              Keyed off the same `drill` the rest of this stage renders, so
+              moving to the next activity swaps the diagram with everything
+              else; there is no separate diagram state to fall out of step.
+              Below the timer and above the coaching points, so the controls
+              stay the primary thing on the screen, and capped in height by
+              .dd-in-live. Read only: it renders no control and writes nothing. */}
+          {drill && <ActivityDiagram drill={drill} className="dd-in-live" />}
+
           {/* coaching points */}
           {drill && (
             <div className="live-card" style={{ padding: '16px 18px' }}>
@@ -672,6 +682,15 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
 
           {/* media */}
           {media && drill && <LiveMediaPeek media={media} drill={drill} />}
+
+          {/* The saved Drill Maker diagram for the CURRENT activity (DRILL-02).
+              Keyed off the same `drill` the rest of this stage renders, so
+              moving to the next activity swaps the diagram with everything
+              else; there is no separate diagram state to fall out of step.
+              Below the timer and above the coaching points, so the controls
+              stay the primary thing on the screen, and capped in height by
+              .dd-in-live. Read only: it renders no control and writes nothing. */}
+          {drill && <ActivityDiagram drill={drill} className="dd-in-live" />}
 
           {/* coaching points */}
           {drill && (

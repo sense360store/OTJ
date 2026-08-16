@@ -104,3 +104,48 @@
 .dd-on-detail {
   max-width: 460px;
 }
+
+/* ---- The same diagram, inside a session (DRILL-02) ---------------------- */
+
+/* WHY THESE CAPS EXIST AT ALL. .dd-surface is width:100% and takes its height
+   from the surface's own aspect ratio, which is right on the drill page where
+   the diagram IS the content. Inside a session it is context beside other
+   content, and the tall case is genuinely tall: a portrait full pitch is 740 by
+   1110 view units, so its height is one and a half times its width. Left
+   uncapped on a 560px live stage that is roughly 840px, taller than most phone
+   screens, and the coach would scroll past the drill to reach anything under
+   it.
+
+   A CAP ON HEIGHT DOES NOT DISTORT THE DRAWING. The svg keeps its viewBox and
+   the default preserveAspectRatio, so a box shorter than the ratio wants
+   letterboxes the pitch inside it rather than stretching it. The bars that
+   leaves are invisible: .dd-surface's own background and the .dd-grass rect are
+   both var(--pitch-grass), so a clamped box reads as a pitch with a wider grass
+   margin, which is what a pitch has. */
+
+/* The planner's activity panel. Matched to .act-panel-media (420px) so the
+   diagram and the media thumbnail above it line up as one column rather than
+   two widths. Deliberately not .dd-on-detail's 460px: this is a panel inside a
+   row, not a page. */
+.dd-in-panel {
+  max-width: 420px;
+  margin-top: 12px;
+}
+
+/* Session day, preparing before the session. The card is the width of the
+   column, so the cap is height: a setup card should show the shape of the drill
+   without pushing the next activity off the screen. */
+.dd-in-sd {
+  margin-top: 12px;
+  max-height: 340px;
+}
+
+/* Live delivery. The tightest case, and the one that matters most: the timer,
+   the transport controls and Mark done & next stay the primary things on the
+   screen. Bounded in vh rather than px because the hazard is the phone's
+   viewport, not a fixed size. .live-foot sits outside .live-body's scroll
+   container, so the primary action is pinned however tall the stage grows; this
+   cap is what keeps the coaching points reachable without a long scroll. */
+.dd-in-live {
+  max-height: 42vh;
+}
