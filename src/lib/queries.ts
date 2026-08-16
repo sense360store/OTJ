@@ -4273,7 +4273,7 @@ export function useDeletePlayer() {
 }
 
 // ---------------------------------------------------------------------
-// Bulk permanent deletion (roadmap PLAYERS-01, 0049_bulk_delete_players.sql)
+// Bulk permanent deletion (roadmap PLAYERS-01, 0050_bulk_delete_players.sql)
 // ---------------------------------------------------------------------
 
 // The dependency preview a bulk deletion opens with. A QUERY rather than a
@@ -4305,7 +4305,7 @@ export function useDeletePlayersPreview(playerIds: string[], enabled: boolean) {
 
 // The server refused because the selection is no longer what was previewed:
 // another admin deleted one of these children, or an id is not this club's.
-// Recognised by the message the RPC raises (0049) so the dialog can say
+// Recognised by the message the RPC raises (0050) so the dialog can say
 // something a person can act on ("review the preview again") rather than a
 // generic failure. Pure, so it is unit tested directly.
 export function isStaleBulkSelection(err: unknown): boolean {

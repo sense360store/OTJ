@@ -36,7 +36,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
-| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Draft PR open, blocked on #190 for its migration number; destructive-change review gate; boundary in `docs/security/player-deletion-boundary.md` |
+| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Draft PR open. Migration renamed to 0050 now #190 has merged; registering it for apply stays blocked until production 0049 is applied. Destructive-change review gate; boundary in `docs/security/player-deletion-boundary.md` |
 | SPOND-07 | Spond | Scheduled/automatic Spond refresh with visible freshness/failure state | Later | P2 | Rate behaviour and scheduling review |
 | LIVE-01 | Live session | Screen wake lock while delivering a session | Later | P2 | Browser capability/fallback |
 | LIVE-02 | Live session | Unmissable time-up cue and improved live connectivity/offline state | Later | P2 | Coordinate with accessibility |
@@ -300,11 +300,17 @@ the reversible action for a player genuinely leaving the club. No anonymised
 history redesign is in scope.
 
 The migration is written, self verifying and wrapped in its own explicit
-transaction, and is NOT applied to production by this PR. It is **blocked on
-#190**, which owns slot 0049: once #190 merges and its 0049 is applied, this
-branch rebases, the file becomes `0050_bulk_delete_players.sql`, and only then
-is 0050 registered against the actual new ledger version. See the file header
-and `docs/security/player-deletion-boundary.md` for the full sequence.
+transaction, and is NOT applied to production by this PR.
+
+Numbering: slot 0049 belongs to SPOND-08's `0049_spond_team_reconcile.sql`.
+Now that #190 has merged, this file is `0050_bulk_delete_players.sql`; the
+rename was forced, because two files carrying one version make
+`supabase db reset` abort and take the security suite with it. Registering 0050
+for apply stays blocked: production has not applied 0049 (the hosted ledger's
+newest row is still `spond_session_link_unique`), so the previous version 0050
+must name does not exist yet and has not been guessed. The file is deliberately
+absent from the reviewed register, so the production workflow cannot select it.
+See the file header and `docs/security/player-deletion-boundary.md`.
 
 **DRILL-02 — drill diagrams across session delivery**
 

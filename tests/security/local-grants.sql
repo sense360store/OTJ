@@ -143,7 +143,7 @@ revoke all on public.spond_event_responses from anon, authenticated;
 grant select, insert, delete         on public.player_spond_links    to authenticated;
 grant select, insert, update, delete on public.spond_event_responses to authenticated;
 
--- 0049 bulk player deletion. Two client RPCs and one internal helper. The
+-- 0050 bulk player deletion. Two client RPCs and one internal helper. The
 -- migration's end state in production is: authenticated may execute
 -- preview_delete_players and delete_players (both self gate on players.delete
 -- and the caller's own club in their SECURITY DEFINER bodies), anon may
@@ -158,7 +158,7 @@ grant select, insert, update, delete on public.spond_event_responses to authenti
 -- audit_bulk_delete_metadata_ok is deliberately NOT revoked: it is an
 -- immutable argument only predicate that reads no table and returns a boolean,
 -- the same posture as audit_metadata_ok and audit_safe_changes_ok from 0030.
--- See 0049_bulk_delete_players.sql and docs/security/player-deletion-boundary.md.
+-- See 0050_bulk_delete_players.sql and docs/security/player-deletion-boundary.md.
 revoke execute on function public.player_deletion_counts(uuid, uuid[]) from anon, authenticated;
 revoke execute on function public.preview_delete_players(uuid[])       from anon;
 revoke execute on function public.delete_players(uuid[], int)          from anon;

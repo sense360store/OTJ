@@ -1,4 +1,4 @@
-// The bulk permanent deletion path added by 0049: preview_delete_players and
+// The bulk permanent deletion path added by 0050: preview_delete_players and
 // delete_players (roadmap PLAYERS-01).
 //
 // Intended contract:

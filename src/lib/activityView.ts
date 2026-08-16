@@ -37,7 +37,7 @@ export type AuditEntityType =
   | 'programme'
   | 'session'
   | 'venue'
-  // The bulk permanent deletion run (0049_bulk_delete_players.sql). Its
+  // The bulk permanent deletion run (0050_bulk_delete_players.sql). Its
   // entity_id is the run's batch id, so the reference opens the run and lists
   // the identities that went with it, the way an import batch does.
   | 'delete_batch'
@@ -316,7 +316,7 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'players.import_failed', label: 'Import failed' },
   { value: 'players.exported', label: 'Players exported' },
   { value: 'players.spond_imported', label: 'Spond import' },
-  // The bulk permanent deletion run (0049_bulk_delete_players.sql). The per
+  // The bulk permanent deletion run (0050_bulk_delete_players.sql). The per
   // identity player.deleted events above are written alongside it and share its
   // batch id; this is the run itself.
   { value: 'players.bulk_deleted', label: 'Players deleted in bulk' },

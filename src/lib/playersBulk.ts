@@ -7,7 +7,7 @@
 // No child name is written, encoded or logged by this module. Names reach the
 // confirmation dialog from rows the caller already holds, and they never enter
 // a URL, a query key, a log line or the audit payload; the server's audit
-// metadata is numbers only (0049_bulk_delete_players.sql).
+// metadata is numbers only (0050_bulk_delete_players.sql).
 import type { RegisteredPlayer } from './data'
 
 // ---------------------------------------------------------------------

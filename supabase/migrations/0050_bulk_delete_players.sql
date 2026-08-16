@@ -1,5 +1,5 @@
 -- =====================================================================
--- OTJ Training Hub, migration 0049_bulk_delete_players: the transactional
+-- OTJ Training Hub, migration 0050_bulk_delete_players: the transactional
 -- bulk permanent deletion of player identities (roadmap PLAYERS-01)
 --
 -- REVIEW REQUIRED, DESTRUCTIVE. This file adds a child data DELETE path
@@ -10,34 +10,41 @@
 -- only once the live ledger is confirmed to have this slot free. Do not
 -- auto-merge. Nothing in this pull request applies it.
 --
--- BLOCKED ON PR #190. THIS FILE WILL BE RENUMBERED BEFORE IT IS APPLIED.
+-- NOT REGISTERED FOR APPLY. BLOCKED ON PRODUCTION 0049.
 --
--- Slot 0049 is owned by PR #190 (0049_spond_team_reconcile.sql), which was
--- already an open draft when this was written. Two files cannot be 0049. The
--- agreed sequence is:
+-- Slot 0049 belongs to 0049_spond_team_reconcile.sql (PR #190), which is now
+-- MERGED to main but has NOT been applied to production. This file was written
+-- as 0049 while #190 was still a draft and was renamed to 0050 the moment the
+-- merge landed, because two files carrying one version make `supabase db reset`
+-- abort on schema_migrations_pkey and take the whole security suite with it.
+-- The rename is a file name and a set of references; it registers nothing and
+-- applies nothing.
 --
---   1. #190 merges and its 0049 is applied to production. The hosted ledger
---      then gains a row whose 14 digit version is stamped AT APPLY TIME.
---   2. This branch rebases on the new main and this file is renamed to
---      0050_bulk_delete_players.sql, with every code, test and documentation
---      reference moved with it.
---   3. Only then is the hosted ledger read again and 0050 registered in
---      .github/scripts/production-migration/reviewed_migrations.py, with the
---      ACTUAL new previous version and name, and added to the workflow's
---      closed dropdown.
+-- What is still blocked, and why. The production apply workflow selects a
+-- migration from the closed register in
+-- .github/scripts/production-migration/reviewed_migrations.py, and every entry
+-- names the ledger row that must still be the newest one before it runs. For
+-- this file that row is the one 0049's apply will stamp, and a hosted ledger
+-- version is a 14 digit timestamp assigned AT APPLY TIME. It does not exist
+-- yet. A guessed value would make the pre-apply gate either refuse a correct
+-- database or, worse, pass against one it was never reviewed against, so none
+-- has been invented. This file is deliberately ABSENT from the register, which
+-- means the production workflow cannot select it at all: the correct state for
+-- a migration whose base has not landed.
 --
--- Step 3 cannot be done now and is deliberately not attempted: the previous
--- version does not exist until #190's apply stamps it, and a guessed value
--- would make the pre-apply gate either refuse a correct database or, worse,
--- pass against one it was never reviewed against. This file is therefore NOT
--- in the reviewed register, so the production workflow cannot select it, which
--- is the correct state for a migration whose base has not landed.
+-- To finish, after 0049 is applied to production:
+--   1. read the hosted ledger and take the new newest row (version and name);
+--   2. add this file to REVIEWED_MIGRATIONS with that ACTUAL previous version,
+--      its object checks and its idempotency key;
+--   3. add it to the workflow's dropdown and re-run the migration workflow
+--      invariant tests.
 --
--- Numbering evidence as read on 2026-08-16: the hosted ledger's newest row was
--- spond_session_link_unique (0048, version 20260812102912) and the files on
--- disk ended at 0048. 0033_players_legacy_columns.sql remains MERGED BUT
--- DEFERRED and unapplied, so its slot stays taken. Confirm the free number
--- against the live ledger again immediately before applying.
+-- Numbering evidence, read from the hosted ledger on 2026-08-16 AFTER #190
+-- merged: the newest row is still spond_session_link_unique (0048, version
+-- 20260812102912); there is no spond_team_reconcile row, which is the direct
+-- confirmation that 0049 has not been applied. 0033_players_legacy_columns.sql
+-- remains MERGED BUT DEFERRED and unapplied, so its slot stays taken. Confirm
+-- the free number against the live ledger again immediately before applying.
 --
 -- TRANSACTION SHAPE. The file opens with BEGIN and closes with COMMIT, which
 -- the production apply relies on: it wraps the file in an outer transaction
@@ -149,7 +156,7 @@ as $$
 $$;
 
 comment on function public.audit_bulk_delete_metadata_ok(jsonb) is
-  $$True when a bulk player deletion audit metadata value is a jsonb object whose keys all come from the closed bulk delete count list and whose every value is a number. No text is admitted, so a child name cannot enter the metadata of a players.bulk_deleted event. Deliberately separate from audit_metadata_ok (0030), whose vocabulary describes an uploaded spreadsheet and is shared by the private writer. See 0049_bulk_delete_players.sql and docs/security/app-audit-boundary.md.$$;
+  $$True when a bulk player deletion audit metadata value is a jsonb object whose keys all come from the closed bulk delete count list and whose every value is a number. No text is admitted, so a child name cannot enter the metadata of a players.bulk_deleted event. Deliberately separate from audit_metadata_ok (0030), whose vocabulary describes an uploaded spreadsheet and is shared by the private writer. See 0050_bulk_delete_players.sql and docs/security/app-audit-boundary.md.$$;
 
 -- ---------------------------------------------------------------------
 -- player_deletion_counts: the ONE implementation of "what would deleting
@@ -232,7 +239,7 @@ as $$
 $$;
 
 comment on function public.player_deletion_counts(uuid, uuid[]) is
-  $$The single implementation of what permanently deleting a set of player identities would touch: registrations (total, distinct seasons, current season, archived seasons), register entries and the sessions they belong to, Spond links and the replies that cascade from them, and the saved board tokens that would stop resolving a name (the boards themselves are never touched; there is no foreign key from boards to players). Club scoped and duplicate tolerant; a cross club or already deleted id contributes nothing. Called by BOTH preview_delete_players and delete_players so the previewed number and the audited number cannot diverge. Internal: EXECUTE revoked from every client. See 0049_bulk_delete_players.sql.$$;
+  $$The single implementation of what permanently deleting a set of player identities would touch: registrations (total, distinct seasons, current season, archived seasons), register entries and the sessions they belong to, Spond links and the replies that cascade from them, and the saved board tokens that would stop resolving a name (the boards themselves are never touched; there is no foreign key from boards to players). Club scoped and duplicate tolerant; a cross club or already deleted id contributes nothing. Called by BOTH preview_delete_players and delete_players so the previewed number and the audited number cannot diverge. Internal: EXECUTE revoked from every client. See 0050_bulk_delete_players.sql.$$;
 
 revoke execute on function public.player_deletion_counts(uuid, uuid[]) from public, anon, authenticated;
 
@@ -283,7 +290,7 @@ end;
 $$;
 
 comment on function public.preview_delete_players(uuid[]) is
-  $$The read only dependency preview for a permanent bulk deletion: SECURITY DEFINER, self gates on players.delete (the capability that would run it), club scoped, duplicate and null tolerant. Returns the player_deletion_counts object plus `requested`, the number of distinct ids supplied, so a screen can say when its selection is already stale. Writes nothing, audits nothing, returns no child name. See 0049_bulk_delete_players.sql.$$;
+  $$The read only dependency preview for a permanent bulk deletion: SECURITY DEFINER, self gates on players.delete (the capability that would run it), club scoped, duplicate and null tolerant. Returns the player_deletion_counts object plus `requested`, the number of distinct ids supplied, so a screen can say when its selection is already stale. Writes nothing, audits nothing, returns no child name. See 0050_bulk_delete_players.sql.$$;
 
 revoke execute on function public.preview_delete_players(uuid[]) from public, anon;
 grant execute on function public.preview_delete_players(uuid[]) to authenticated;
@@ -446,7 +453,7 @@ end;
 $$;
 
 comment on function public.delete_players(uuid[], int) is
-  $$The transactional permanent deletion of many player identities (roadmap PLAYERS-01): SECURITY DEFINER, self gates on players.delete and the caller's club, folds duplicate and null ids, caps a run at 200, locks the identities FOR UPDATE in id order (so overlapping concurrent runs queue rather than deadlock and no child row can be added under the lock), refuses whole if any id is not a live player of the club or if the caller's confirmed count no longer matches server truth, deletes them in ONE statement whose cascades remove every registration, register entry, Spond link and cascaded Spond reply, and writes ONE players.bulk_deleted audit event carrying safe numeric counts only, sharing a batch id with the per identity player.deleted events. Any refusal raises and rolls the whole transaction back, so a failure deletes nobody and a retry is safe. Deletes nothing on Spond and calls no Spond endpoint. See 0049_bulk_delete_players.sql.$$;
+  $$The transactional permanent deletion of many player identities (roadmap PLAYERS-01): SECURITY DEFINER, self gates on players.delete and the caller's club, folds duplicate and null ids, caps a run at 200, locks the identities FOR UPDATE in id order (so overlapping concurrent runs queue rather than deadlock and no child row can be added under the lock), refuses whole if any id is not a live player of the club or if the caller's confirmed count no longer matches server truth, deletes them in ONE statement whose cascades remove every registration, register entry, Spond link and cascaded Spond reply, and writes ONE players.bulk_deleted audit event carrying safe numeric counts only, sharing a batch id with the per identity player.deleted events. Any refusal raises and rolls the whole transaction back, so a failure deletes nobody and a retry is safe. Deletes nothing on Spond and calls no Spond endpoint. See 0050_bulk_delete_players.sql.$$;
 
 revoke execute on function public.delete_players(uuid[], int) from public, anon;
 grant execute on function public.delete_players(uuid[], int) to authenticated;

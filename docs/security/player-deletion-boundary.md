@@ -2,7 +2,7 @@
 
 What permanently deleting a child's identity actually removes, proved from the
 schema rather than described from memory, and the rules the bulk path
-(`0049_bulk_delete_players.sql`, roadmap PLAYERS-01) adds on top of it.
+(`0050_bulk_delete_players.sql`, roadmap PLAYERS-01) adds on top of it.
 
 This document is authoritative where an older comment, spec paragraph or pull
 request disagrees. Withdraw remains the normal, reversible way to remove a
@@ -65,24 +65,32 @@ path), not a UI change, and it is out of scope for PLAYERS-01.
 
 ## 3. The bulk path
 
-Two functions, added by `0049_bulk_delete_players.sql`. Neither adds a
+Two functions, added by `0050_bulk_delete_players.sql`. Neither adds a
 capability, a table, a column, a policy or a grant on any table.
 
-> **Numbering: blocked, and the file will be renumbered.** PR #190 was already
-> an open draft owning slot `0049` (`0049_spond_team_reconcile.sql`). Two files
-> cannot be 0049. The agreed sequence is: #190 merges and its 0049 is applied to
-> production, stamping a new 14 digit ledger version; then this branch rebases
-> on the new main, the file becomes `0050_bulk_delete_players.sql` with every
-> code, test and documentation reference moved with it; then the hosted ledger
-> is read again and 0050 is registered in
-> `.github/scripts/production-migration/reviewed_migrations.py` with the ACTUAL
-> new previous version and name, and added to the workflow's closed dropdown.
+> **Numbering: renamed to 0050, and still not registered for apply.** Slot
+> `0049` belongs to `0049_spond_team_reconcile.sql` (PR #190). That PR is now
+> **merged**, so the file was renamed from 0049 to 0050 immediately: two files
+> carrying one version make `supabase db reset` abort on
+> `schema_migrations_pkey` and take the whole security suite with it. The rename
+> is a file name and a set of references; it registers nothing and applies
+> nothing.
 >
-> Registration cannot happen before that apply, because
-> `expected_previous_version` does not exist until it is stamped, and a guessed
-> value would make the pre-apply gate either refuse a correct database or pass
-> against one it was never reviewed against. The file is deliberately NOT in the
-> reviewed register today, so the production workflow cannot select it.
+> #190's 0049 has **not** been applied to production. Read from the hosted
+> ledger on 16 August 2026 after the merge: the newest row is still
+> `spond_session_link_unique` (`20260812102912`) and there is no
+> `spond_team_reconcile` row. So registration in
+> `.github/scripts/production-migration/reviewed_migrations.py` remains blocked:
+> `expected_previous_version` for 0050 is the 14 digit stamp 0049's apply will
+> assign, it does not exist yet, and a guessed value would make the pre-apply
+> gate either refuse a correct database or pass against one it was never
+> reviewed against. The file is deliberately absent from the register, so the
+> production workflow cannot select it.
+>
+> To finish, after 0049 is applied: read the hosted ledger, add this file to
+> `REVIEWED_MIGRATIONS` with the actual new previous version and name plus its
+> object checks, add it to the workflow dropdown, and re-run the migration
+> workflow invariant tests.
 >
 > The file already opens with `BEGIN` and closes with `COMMIT`, which the apply
 > requires: it wraps the file with the ledger insert in an outer transaction and
@@ -168,7 +176,7 @@ one a person defeats by copying.
 
 | Rule | Enforced by |
 |---|---|
-| Dependency graph is what the preview counts | `0049`'s self verification, which fails the migration if a fourth foreign key into `players` appears |
+| Dependency graph is what the preview counts | `0050`'s self verification, which fails the migration if a fourth foreign key into `players` appears |
 | Capability and club | In body checks in both RPCs, `tests/security/players-bulk-delete.test.ts` |
 | One transaction, no partial run | One statement plus a raise on any refusal; the migration's SQL behaviour proof |
 | Nothing selected by default, Select all means the shown rows, a filter change cannot broaden a selection | `src/lib/playersBulk.ts` and its tests, `src/routes/Players.bulk.test.tsx` |
