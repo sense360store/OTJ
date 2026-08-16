@@ -36,7 +36,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
-| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Draft PR open; migration 0049 not applied; destructive-change review gate; boundary in `docs/security/player-deletion-boundary.md` |
+| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Draft PR open, blocked on #190 for its migration number; destructive-change review gate; boundary in `docs/security/player-deletion-boundary.md` |
 | SPOND-07 | Spond | Scheduled/automatic Spond refresh with visible freshness/failure state | Later | P2 | Rate behaviour and scheduling review |
 | LIVE-01 | Live session | Screen wake lock while delivering a session | Later | P2 | Browser capability/fallback |
 | LIVE-02 | Live session | Unmissable time-up cue and improved live connectivity/offline state | Later | P2 | Coordinate with accessibility |
@@ -292,8 +292,19 @@ before review: `register_entries` is destroyed rather than degraded to a
 neutral reference, which the single row Delete permanently has done since 0044
 without saying so. The bulk dialog states it in full and counts it; changing
 that outcome would be a schema decision, not a UI one, and is out of scope
-here. Migration `0049_bulk_delete_players.sql` is written and self verifying and
-is NOT applied to production by this PR.
+here. The permanent delete semantic is approved as it stands: Delete
+permanently is full erasure of that player identity, their historic register
+entries go with them by cascade, the sessions and every other player's history
+remain, and the preview and confirmation state that plainly. Withdraw remains
+the reversible action for a player genuinely leaving the club. No anonymised
+history redesign is in scope.
+
+The migration is written, self verifying and wrapped in its own explicit
+transaction, and is NOT applied to production by this PR. It is **blocked on
+#190**, which owns slot 0049: once #190 merges and its 0049 is applied, this
+branch rebases, the file becomes `0050_bulk_delete_players.sql`, and only then
+is 0050 registered against the actual new ledger version. See the file header
+and `docs/security/player-deletion-boundary.md` for the full sequence.
 
 **DRILL-02 — drill diagrams across session delivery**
 

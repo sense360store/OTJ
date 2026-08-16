@@ -68,6 +68,28 @@ path), not a UI change, and it is out of scope for PLAYERS-01.
 Two functions, added by `0049_bulk_delete_players.sql`. Neither adds a
 capability, a table, a column, a policy or a grant on any table.
 
+> **Numbering: blocked, and the file will be renumbered.** PR #190 was already
+> an open draft owning slot `0049` (`0049_spond_team_reconcile.sql`). Two files
+> cannot be 0049. The agreed sequence is: #190 merges and its 0049 is applied to
+> production, stamping a new 14 digit ledger version; then this branch rebases
+> on the new main, the file becomes `0050_bulk_delete_players.sql` with every
+> code, test and documentation reference moved with it; then the hosted ledger
+> is read again and 0050 is registered in
+> `.github/scripts/production-migration/reviewed_migrations.py` with the ACTUAL
+> new previous version and name, and added to the workflow's closed dropdown.
+>
+> Registration cannot happen before that apply, because
+> `expected_previous_version` does not exist until it is stamped, and a guessed
+> value would make the pre-apply gate either refuse a correct database or pass
+> against one it was never reviewed against. The file is deliberately NOT in the
+> reviewed register today, so the production workflow cannot select it.
+>
+> The file already opens with `BEGIN` and closes with `COMMIT`, which the apply
+> requires: it wraps the file with the ledger insert in an outer transaction and
+> the file's own `COMMIT` commits both. Proved by applying it against a database
+> with a deliberately broken precondition: the self verification aborted and
+> **zero** of its four functions were left behind.
+
 - `preview_delete_players(uuid[])` is read only, gated on **`players.delete`**
   rather than `players.view` (what a deletion would cost is a shape of a child's
   record), club scoped, duplicate and null tolerant. It writes nothing and

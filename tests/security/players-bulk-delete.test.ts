@@ -29,10 +29,14 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { CLUB_A, CLUB_B, TEST_TEAM, runId, seedPlayer, serviceClient, signIn } from './stack'
+import { CLUB_A, CLUB_B, SEEDED_SESSION, TEST_TEAM, runId, seedPlayer, serviceClient, signIn } from './stack'
 
 const RUN = runId()
 const prefix = `SEC TEST bulk delete ${RUN}`
+// seasons.name is bounded to 20 characters and is unique per club, so the
+// archived season fixture gets a short unique label rather than the row prefix
+// above (the player-registrations suite's convention).
+const SEASON_NAME = `bd${RUN.slice(0, 6)}-past`
 
 // Synthetic opaque ids, uppercase hex, 32 characters like Spond's own.
 const MEMBER_ONE = '00BB11BB22BB33BB44BB55BB66BB77BB'
@@ -91,22 +95,28 @@ describe('bulk permanent deletion of player identities', () => {
     // An archived season, so the "every season, archived included" half of the
     // cascade is exercised rather than assumed. registrations_guard_archived
     // guards INSERT and UPDATE only, so the row is written before archiving.
+    // starts_on and ends_on are NOT NULL and ordered (seasons_dates_ordered),
+    // and the name is bounded to 20 characters and unique per club; the dates
+    // are long past so they collide with no other suite's fixtures.
     const { data: past, error: pastErr } = await service
       .from('seasons')
-      .insert({ club_id: CLUB_A, name: `${prefix} past season`, is_current: false })
+      .insert({
+        club_id: CLUB_A,
+        name: SEASON_NAME,
+        starts_on: '2014-07-01',
+        ends_on: '2015-06-30',
+        is_current: false,
+      })
       .select('id')
       .single()
     if (pastErr) throw new Error(`could not seed the archived season: ${pastErr.message}`)
     archivedSeason = past!.id as string
 
-    const { data: session, error: sessionErr } = await service
-      .from('sessions')
-      .select('id')
-      .eq('club_id', CLUB_A)
-      .limit(1)
-      .single()
-    if (sessionErr) throw new Error(`could not read a seeded session: ${sessionErr.message}`)
-    sessionId = session!.id as string
+    // The seeded club A session, so the register entry counts below are about a
+    // session that exists whatever order the suite runs in. The assertions only
+    // ever count entries for this file's own players, so sharing it with
+    // another suite changes nothing.
+    sessionId = SEEDED_SESSION
 
     const { data: event, error: eventErr } = await service
       .from('spond_events')
@@ -138,8 +148,11 @@ describe('bulk permanent deletion of player identities', () => {
     await service.from('boards').delete().eq('id', boardId)
     await service.from('spond_event_responses').delete().eq('spond_event_id', eventId)
     await service.from('spond_events').delete().eq('id', eventId)
+    // Players first: their registrations cascade, so the archived season is
+    // unreferenced by the time it is removed (registrations reference seasons
+    // ON DELETE RESTRICT).
     await service.from('players').delete().like('display_name', `${prefix}%`)
-    await service.from('seasons').delete().eq('id', archivedSeason)
+    await service.from('seasons').delete().like('name', `${SEASON_NAME}%`)
   })
 
   // ---- the capability gate ------------------------------------------
@@ -430,9 +443,12 @@ describe('bulk permanent deletion of player identities', () => {
   })
 
   it('still refuses a direct registration delete, bulk path or not', async () => {
+    // No client holds a DELETE grant on registrations, so this is refused at
+    // the grant rather than filtered to zero rows. A registration goes only
+    // through the identity cascade, which is exactly what the bulk path uses.
     const { one } = seedPair('registration delete')
-    const { data } = await admin.from('player_registrations').delete().eq('player_id', one).select('id')
-    expect(data).toEqual([])
+    const { error } = await admin.from('player_registrations').delete().eq('player_id', one)
+    expect(error).not.toBeNull()
     const { data: still } = await serviceClient().from('player_registrations').select('id').eq('player_id', one)
     expect(still).toHaveLength(1)
   })

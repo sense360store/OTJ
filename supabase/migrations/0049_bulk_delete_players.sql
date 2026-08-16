@@ -10,12 +10,40 @@
 -- only once the live ledger is confirmed to have this slot free. Do not
 -- auto-merge. Nothing in this pull request applies it.
 --
--- Numbering: the hosted ledger's newest row is spond_session_link_unique
--- (0048, version 20260812102912), read 2026-08-16, and the files on disk
--- end at 0048. 0033_players_legacy_columns.sql remains MERGED BUT DEFERRED
--- and unapplied, so its slot stays taken. The next free number confirmed
--- against both is 0049. Confirm 0049 is still free against the live ledger
--- immediately before applying.
+-- BLOCKED ON PR #190. THIS FILE WILL BE RENUMBERED BEFORE IT IS APPLIED.
+--
+-- Slot 0049 is owned by PR #190 (0049_spond_team_reconcile.sql), which was
+-- already an open draft when this was written. Two files cannot be 0049. The
+-- agreed sequence is:
+--
+--   1. #190 merges and its 0049 is applied to production. The hosted ledger
+--      then gains a row whose 14 digit version is stamped AT APPLY TIME.
+--   2. This branch rebases on the new main and this file is renamed to
+--      0050_bulk_delete_players.sql, with every code, test and documentation
+--      reference moved with it.
+--   3. Only then is the hosted ledger read again and 0050 registered in
+--      .github/scripts/production-migration/reviewed_migrations.py, with the
+--      ACTUAL new previous version and name, and added to the workflow's
+--      closed dropdown.
+--
+-- Step 3 cannot be done now and is deliberately not attempted: the previous
+-- version does not exist until #190's apply stamps it, and a guessed value
+-- would make the pre-apply gate either refuse a correct database or, worse,
+-- pass against one it was never reviewed against. This file is therefore NOT
+-- in the reviewed register, so the production workflow cannot select it, which
+-- is the correct state for a migration whose base has not landed.
+--
+-- Numbering evidence as read on 2026-08-16: the hosted ledger's newest row was
+-- spond_session_link_unique (0048, version 20260812102912) and the files on
+-- disk ended at 0048. 0033_players_legacy_columns.sql remains MERGED BUT
+-- DEFERRED and unapplied, so its slot stays taken. Confirm the free number
+-- against the live ledger again immediately before applying.
+--
+-- TRANSACTION SHAPE. The file opens with BEGIN and closes with COMMIT, which
+-- the production apply relies on: it wraps the file in an outer transaction
+-- with the ledger insert, and the file's own COMMIT is what commits both. Every
+-- self verification below therefore runs before that COMMIT, so a failed
+-- assertion rolls the whole migration back and takes the ledger row with it.
 --
 -- WHAT THIS IS. Three functions and one predicate. NO table, NO column, NO
 -- policy, NO grant on any table, NO trigger and NO capability key. The
@@ -85,6 +113,8 @@
 -- public; internal helpers revoked from every client; the migration self
 -- verifies with a DO block before it commits.
 -- =====================================================================
+
+begin;
 
 -- ---------------------------------------------------------------------
 -- The metadata predicate for the one bulk delete audit event. Deliberately
@@ -575,3 +605,5 @@ begin
   end if;
 end
 $$;
+
+commit;
