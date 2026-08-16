@@ -267,7 +267,7 @@ describe('spondPlanSuggestions', () => {
 describe('sessionFromSpondEvent', () => {
   it("carries the event's date, time, team and link, owned by the coach", () => {
     const event = ev({ id: 'e1', startsAt: '2026-06-16T17:30:00', teamId: 'team-1', title: 'U8 Training' })
-    const s = sessionFromSpondEvent(event, 'coach-1', 'default-team')
+    const s = sessionFromSpondEvent(event, 'coach-1', 'default-team', [], [])
     expect(s.coachId).toBe('coach-1')
     expect(s.teamId).toBe('team-1')
     expect(s.spondEventId).toBe('e1')
@@ -280,18 +280,18 @@ describe('sessionFromSpondEvent', () => {
 
   it("falls back to the coach's default team for a club event with no team", () => {
     const event = ev({ id: 'e2', startsAt: '2026-06-16T17:30:00', teamId: null })
-    expect(sessionFromSpondEvent(event, 'coach-1', 'default-team').teamId).toBe('default-team')
+    expect(sessionFromSpondEvent(event, 'coach-1', 'default-team', [], []).teamId).toBe('default-team')
   })
 
   it("covers the event's team, and never lands unset", () => {
     // A session planned from Spond is SAVED before the coach sees it, so
     // leaving coverage unset would hand them a register listing nobody.
     const teamed = ev({ id: 'e3', startsAt: '2026-06-16T17:30:00', teamId: 'team-1' })
-    expect(sessionFromSpondEvent(teamed, 'coach-1', null, ['t1', 't2']).teamIds).toEqual(['team-1'])
+    expect(sessionFromSpondEvent(teamed, 'coach-1', null, ['t1', 't2'], []).teamIds).toEqual(['team-1'])
 
     const club = ev({ id: 'e4', startsAt: '2026-06-16T17:30:00', teamId: null })
-    expect(sessionFromSpondEvent(club, 'coach-1', null, ['t1', 't2']).teamIds).toEqual(['t1', 't2'])
-    expect(sessionFromSpondEvent(club, 'coach-1', 'default-team', ['t1', 't2']).teamIds).toEqual(['default-team'])
+    expect(sessionFromSpondEvent(club, 'coach-1', null, ['t1', 't2'], []).teamIds).toEqual(['t1', 't2'])
+    expect(sessionFromSpondEvent(club, 'coach-1', 'default-team', ['t1', 't2'], []).teamIds).toEqual(['default-team'])
   })
 })
 
@@ -340,7 +340,7 @@ describe('sessionFromSpondEvent, and the venue', () => {
     // on a guess would be worse than not making it.
     const known = at({ location: FLUSHDYKE_ADDRESS })
     expect(sessionFromSpondEvent(known, 'coach-1', null, [], []).venueId).toBeNull()
-    expect(sessionFromSpondEvent(known, 'coach-1', null, []).venueId).toBeNull()
+    expect(sessionFromSpondEvent(known, 'coach-1', null, [], []).venueId).toBeNull()
   })
 
   it('never writes the frozen free text venue label', () => {
@@ -432,7 +432,7 @@ describe('a scheduled training event, once synced', () => {
   })
 
   it('Plan this, and only Plan this, produces the session', () => {
-    const session = sessionFromSpondEvent(scheduledTraining, 'coach-1', null, ['team-1', 'team-2'])
+    const session = sessionFromSpondEvent(scheduledTraining, 'coach-1', null, ['team-1', 'team-2'], [])
     expect(session.spondEventId).toBe('scheduled-training')
     expect(session.name).toBe('Titans training')
     expect(session.teamIds).toEqual(['team-1'])

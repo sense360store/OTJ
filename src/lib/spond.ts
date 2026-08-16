@@ -353,12 +353,20 @@ export function spondPlanSuggestions({
 // No venues in hand, no match, or two venues named in one address all leave
 // the venue unset, exactly as a hand made session starts. The frozen free
 // text `venue` column is never given a value here or anywhere else.
+//
+// `venues` carries NO DEFAULT, deliberately, unlike the parameter above it.
+// A default of [] would mean the whole feature could be switched off by
+// deleting one argument at the one call site, with the types, the lint and
+// every test still green: an empty list is a legitimate club with no venues,
+// so nothing downstream could tell the two apart. Required, dropping it
+// fails the build. A caller that genuinely has no venues passes [] and says
+// so.
 export function sessionFromSpondEvent(
   event: SpondEvent,
   coachId: string,
   defaultTeamId: string | null,
-  allTeamIds: string[] = [],
-  venues: readonly Venue[] = [],
+  allTeamIds: string[],
+  venues: readonly Venue[],
 ): Session {
   const { date, time } = spondEventLocalDateTime(event.startsAt)
   const teamId = event.teamId ?? defaultTeamId

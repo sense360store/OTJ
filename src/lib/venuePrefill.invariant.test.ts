@@ -56,6 +56,38 @@ function stripComments(src: string): string {
 const read = (rel: string) => stripComments(readFileSync(join(SRC, rel), 'utf8'))
 const isTest = (f: string) => /\.test\.tsx?$/.test(f)
 
+// Every useEffect call's arguments, taken by balancing parentheses rather
+// than by matching a shape. A regex for `useEffect(() => {` misses the two
+// cleanup only effects in this repo, which are written
+// `useEffect(() => () => …)` and have no braced body at all, and it would
+// miss the next shape somebody writes too. Quotes are tracked so a bracket
+// inside a string cannot unbalance the count.
+function effectBodies(src: string): string[] {
+  const out: string[] = []
+  const needle = 'useEffect('
+  for (let at = src.indexOf(needle); at !== -1; at = src.indexOf(needle, at + 1)) {
+    let depth = 0
+    let quote = ''
+    let i = at + needle.length - 1
+    for (; i < src.length; i++) {
+      const ch = src[i]
+      if (quote) {
+        if (ch === '\\') i++
+        else if (ch === quote) quote = ''
+        continue
+      }
+      if (ch === "'" || ch === '"' || ch === '`') quote = ch
+      else if (ch === '(') depth++
+      else if (ch === ')') {
+        depth--
+        if (depth === 0) break
+      }
+    }
+    out.push(src.slice(at + needle.length, i))
+  }
+  return out
+}
+
 describe('one venue matcher, consulted from one place', () => {
   it('is implemented only in lib/venues.ts', () => {
     // A second implementation is how the strict rule and a looser one end
@@ -81,6 +113,19 @@ describe('one venue matcher, consulted from one place', () => {
     const builder = src.slice(src.indexOf('export function sessionFromSpondEvent'))
     expect(builder).toMatch(/matchVenueByLocation\(/)
     expect(src.slice(0, src.indexOf('export function sessionFromSpondEvent'))).not.toMatch(/matchVenueByLocation\(/)
+  })
+
+  it('is handed the club’s real venues by the one surface that plans', () => {
+    // The parameter is required, so tsc already refuses a call that drops
+    // it. What tsc cannot tell is a real list from an `[]` somebody typed
+    // to make the compiler quiet, which would leave the feature dead with
+    // the whole suite green. So the call site names the query's value.
+    const src = read('components/PlanFromSpond.tsx')
+    expect(src).toMatch(/useVenues\(\)/)
+    // Bounded rather than open ended: the arguments carry their own
+    // parentheses (`Object.keys(teamById)`), so this cannot be a simple
+    // "anything but a bracket" run.
+    expect(src).toMatch(/sessionFromSpondEvent\([\s\S]{0,200}?,\s*venues\)/)
   })
 
   it('builds no regex out of a venue name or a Spond location', () => {
@@ -135,14 +180,20 @@ describe('nothing else moves a venue', () => {
     // Deliberately not "no effect writes anything": the live view's driver
     // starts the first activity from an effect, which is a real render time
     // write of live state and has nothing to do with where the session is.
+    let scanned = 0
     for (const file of sourceFiles()) {
       if (isTest(file)) continue
-      const src = read(file)
-      for (const effect of src.matchAll(/useEffect\(\s*\(\)\s*=>\s*\{([\s\S]*?)\n\s*\}, \[/g)) {
-        expect(effect[1], `${file}: useEffect`).not.toMatch(/upsertSession\s*\(/)
-        expect(effect[1], `${file}: useEffect`).not.toMatch(/venue/i)
+      for (const effect of effectBodies(read(file))) {
+        scanned++
+        expect(effect, `${file}: useEffect`).not.toMatch(/upsertSession\s*\(/)
+        expect(effect, `${file}: useEffect`).not.toMatch(/venue/i)
       }
     }
+    // A count, so a scan that silently stopped finding effects fails here
+    // rather than passing on nothing. The number moves whenever an effect
+    // is added or removed, which is the point: it is a prompt to look, not
+    // a rule about how many there should be.
+    expect(scanned).toBeGreaterThanOrEqual(29)
   })
 })
 
@@ -158,7 +209,9 @@ describe('what this cannot catch', () => {
     //  2. A second matcher that is not a `function` declaration: a const
     //     arrow, a method, or one inlined into a component.
     //  3. A session write inside a helper the effect calls, rather than in
-    //     the effect body the scan reads.
+    //     the effect body the scan reads. The scan balances parentheses so
+    //     it sees every effect whatever shape it is written in, cleanup
+    //     only ones included, but it reads only what is inside the call.
     //  4. A venue assignment routed through a spread or a computed key, so
     //     the literal `venue:` never appears.
     //  5. Anything at all in the database or an Edge Function. This reads
