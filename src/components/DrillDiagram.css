@@ -94,7 +94,14 @@
   font-family: var(--display, inherit);
   font-weight: 800;
   font-size: 22px;
-  fill: var(--ink, #16181d);
+  /* A LITERAL, not the theme's ink. The chip is a fixed near white pill over a
+     pitch that deliberately stays green in dark mode (see the top of this
+     file), so the surface under this text never flips and the text must not
+     either. Reading --ink here put near white on near white, a contrast of
+     about 1 to 1: the pill stayed and the word disappeared. Latent for a dark
+     mode coach on the drill page, and certain once a session shows the diagram,
+     because the live view forces .theme-dark on everyone. */
+  fill: #16181d;
   text-anchor: middle;
   dominant-baseline: central;
 }
@@ -110,18 +117,29 @@
 /* WHY THESE CAPS EXIST AT ALL. .dd-surface is width:100% and takes its height
    from the surface's own aspect ratio, which is right on the drill page where
    the diagram IS the content. Inside a session it is context beside other
-   content, and the tall case is genuinely tall: a portrait full pitch is 740 by
-   1110 view units, so its height is one and a half times its width. Left
-   uncapped on a 560px live stage that is roughly 840px, taller than most phone
-   screens, and the coach would scroll past the drill to reach anything under
-   it.
+   content, and the tall case is genuinely tall: a portrait full pitch is 680 by
+   1050 view units, so its height is one and a half times its width. Left
+   uncapped on a 560px live stage that is roughly 865px, taller than most phone
+   screens, and a coach would scroll past the drill to reach anything under it.
 
-   A CAP ON HEIGHT DOES NOT DISTORT THE DRAWING. The svg keeps its viewBox and
-   the default preserveAspectRatio, so a box shorter than the ratio wants
-   letterboxes the pitch inside it rather than stretching it. The bars that
-   leaves are invisible: .dd-surface's own background and the .dd-grass rect are
-   both var(--pitch-grass), so a clamped box reads as a pitch with a wider grass
-   margin, which is what a pitch has. */
+   A HEIGHT CAP ALONE IS NOT ENOUGH, AND THIS PROJECT ALREADY KNOWS WHY.
+   width:100% plus an aspect ratio plus a max-height cannot all hold: with the
+   width definite the height clamps and the ratio is lost, so the box keeps the
+   whole column while the SVG's own preserveAspectRatio draws the pitch only as
+   large as the cap allows and centres it. That is the defect the editor canvas
+   fixed once already (DrillDiagramEditor.css: a box 844 by 118 with the pitch
+   drawn 76 pixels wide in the middle of it). Here it would be quieter and no
+   better: a 688px session day card capping at 340px draws a portrait pitch
+   220px wide with 234px of grass either side, and identically on a phone and a
+   laptop, so the larger screen would buy nothing but bars.
+
+   SO THE WIDTH IS BOUND FROM THE HEIGHT. --dd-ratio is the surface's own
+   width over height, emitted by the renderer from the same geometry the aspect
+   ratio comes from, so a cap of H allows a width of at most H times the ratio
+   and the box then measures exactly the drawing. The height caps still do their
+   job, the bars collapse to nothing, and margin: 0 auto centres what is left. A
+   diagram rendered without the property falls back to 1, which is harmless.
+   Nothing here is a second geometry: the ratio has one source. */
 
 /* The planner's activity panel. Matched to .act-panel-media (420px) so the
    diagram and the media thumbnail above it line up as one column rather than
@@ -137,7 +155,9 @@
    without pushing the next activity off the screen. */
 .dd-in-sd {
   margin-top: 12px;
-  max-height: 340px;
+  --dd-cap: 340px;
+  max-height: var(--dd-cap);
+  max-width: calc(var(--dd-cap) * var(--dd-ratio, 1));
 }
 
 /* Live delivery. The tightest case, and the one that matters most: the timer,
@@ -147,5 +167,7 @@
    container, so the primary action is pinned however tall the stage grows; this
    cap is what keeps the coaching points reachable without a long scroll. */
 .dd-in-live {
-  max-height: 42vh;
+  --dd-cap: 42vh;
+  max-height: var(--dd-cap);
+  max-width: calc(var(--dd-cap) * var(--dd-ratio, 1));
 }

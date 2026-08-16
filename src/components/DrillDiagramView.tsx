@@ -13,7 +13,7 @@
 // It carries no person. A diagram holds generic players; there is no name, no
 // playerId and no roster lookup anywhere in this file, unlike the tactics board
 // which deliberately resolves one (see tacticsBoard.ts).
-import { useId } from 'react'
+import { useId, type CSSProperties } from 'react'
 import {
   ARROW_LABEL,
   describeDiagram,
@@ -265,8 +265,25 @@ export function DiagramElementLayer({ diagram }: { diagram: DrillDiagram }) {
 // The read only diagram. The one renderer a drill page, and from C2 a session,
 // uses.
 export function DrillDiagramView({ diagram, className }: { diagram: DrillDiagram; className?: string }) {
+  const size = surfaceSize(diagram.surface)
   return (
-    <div className={'dd-surface' + (className ? ' ' + className : '')} style={{ aspectRatio: surfaceAspect(diagram.surface) }}>
+    <div
+      className={'dd-surface' + (className ? ' ' + className : '')}
+      style={
+        {
+          aspectRatio: surfaceAspect(diagram.surface),
+          // The SAME ratio as a bare number, so a stylesheet can bound the box
+          // in BOTH directions. A surface capped only in height keeps its full
+          // column width while the pitch inside shrinks to the cap, which is the
+          // "postage stamp with a toolbar" the editor canvas already fixed once
+          // (see DrillDiagramEditor.css). A caller that caps height can now cap
+          // width at the cap times this ratio, and the box then measures exactly
+          // the drawing. Emitted here because the ratio has one source: the
+          // surface geometry the aspect ratio itself comes from.
+          '--dd-ratio': String(size.width / size.height),
+        } as CSSProperties
+      }
+    >
       <svg className="dd-svg" viewBox={viewBox(diagram.surface)} role="img" aria-label={describeDiagram(diagram)}>
         <DiagramSurfaceBackdrop surface={diagram.surface} />
         <DiagramElementLayer diagram={diagram} />

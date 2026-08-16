@@ -364,16 +364,42 @@ describe('one renderer draws a diagram', () => {
       expect(at, `.${name} is not declared`).toBeGreaterThan(-1)
       return css.slice(at, css.indexOf('}', at))
     }
-    // The planner panel matches the media cap above it in the same column.
+    // The planner panel matches the media cap above it in the same column. A
+    // width cap IS a height bound while the ratio holds, so it needs no second.
     expect(block('dd-in-panel')).toContain('max-width: 420px')
-    // The two surfaces whose hazard is height rather than width.
-    expect(block('dd-in-sd')).toContain('max-height')
-    expect(block('dd-in-live')).toContain('max-height')
+    // The two surfaces whose hazard is height rather than width. EACH MUST CAP
+    // BOTH: width:100% plus an aspect ratio plus a max-height cannot all hold,
+    // and a height cap on its own leaves the box the whole column with the
+    // pitch drawn small in the middle of it. That is the defect the editor
+    // canvas fixed once already, so it is pinned rather than rediscovered.
+    for (const name of ['dd-in-sd', 'dd-in-live']) {
+      const b = block(name)
+      expect(b, `.${name} has no height cap`).toContain('max-height')
+      expect(b, `.${name} caps height without bounding width`).toContain('max-width')
+      expect(b, `.${name} should bound width from the surface ratio`).toContain('--dd-ratio')
+    }
+    // And the ratio has ONE source: the renderer emits it from the same
+    // geometry the aspect ratio comes from, so the stylesheet never hard codes
+    // a per surface number.
+    expect(read('components/DrillDiagramView.tsx')).toContain("'--dd-ratio'")
+    expect(css, 'a hard coded ratio in the stylesheet').not.toMatch(/--dd-ratio:\s*[\d.]/)
     // And the shared surface itself is unchanged: still full width, still
     // taking its ratio from the diagram rather than from a stylesheet.
     const surface = block('dd-surface')
     expect(surface).toContain('width: 100%')
     expect(surface).not.toContain('aspect-ratio')
+  })
+
+  it('paints nothing over the pitch from a theme token', () => {
+    // SOURCE TEXT. The pitch stays green in dark mode by decision, so every
+    // mark drawn ON it has to be theme independent too. .dd-chip-text read
+    // var(--ink), which the live view's forced .theme-dark flips to near white
+    // on a fixed near white chip: the pill stayed and the word disappeared.
+    // Latent on the drill page for a dark mode coach, certain on the touchline.
+    const css = readFileSync(join(SRC, 'components/DrillDiagram.css'), 'utf8')
+    for (const m of css.match(/(fill|stroke|color):\s*var\(--[a-z-]+/g) ?? []) {
+      expect(m, `${m} takes a theme token over the pitch`).toContain('--pitch')
+    }
   })
 })
 
