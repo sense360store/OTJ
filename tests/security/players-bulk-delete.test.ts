@@ -32,10 +32,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { CLUB_A, CLUB_B, SEEDED_SESSION, TEST_TEAM, runId, seedPlayer, serviceClient, signIn } from './stack'
 
 const RUN = runId()
-const prefix = `SEC TEST bulk delete ${RUN}`
+// players.display_name is bounded to 40 characters, so the fixture prefix is
+// kept short (15 characters) and every label below is a few more. It is still
+// unique per run, which is what the afterAll cleanup matches on.
+const prefix = `SEC BD ${RUN}`
 // seasons.name is bounded to 20 characters and is unique per club, so the
-// archived season fixture gets a short unique label rather than the row prefix
-// above (the player-registrations suite's convention).
+// archived season fixture gets its own short unique label (the
+// player-registrations suite's convention).
 const SEASON_NAME = `bd${RUN.slice(0, 6)}-past`
 
 // Synthetic opaque ids, uppercase hex, 32 characters like Spond's own.
@@ -140,7 +143,7 @@ describe('bulk permanent deletion of player identities', () => {
     if (boardErr) throw new Error(`could not seed the test board: ${boardErr.message}`)
     boardId = board!.id as string
 
-    outsiderPlayer = seedPlayer({ club: CLUB_B, season: seasonB, display: `${prefix} other club` }).playerId
+    outsiderPlayer = seedPlayer({ club: CLUB_B, season: seasonB, display: `${prefix} other` }).playerId
   })
 
   afterAll(async () => {
@@ -158,7 +161,7 @@ describe('bulk permanent deletion of player identities', () => {
   // ---- the capability gate ------------------------------------------
 
   it('a manager holding players.manage but not players.delete cannot preview or delete', async () => {
-    const { one, two } = seedPair('manager gate')
+    const { one, two } = seedPair('mgr')
     const preview = await manager.rpc('preview_delete_players', { p_player_ids: [one, two] })
     expect(preview.error).not.toBeNull()
     expect(preview.error!.message).toMatch(/players\.delete/)
@@ -172,7 +175,7 @@ describe('bulk permanent deletion of player identities', () => {
   })
 
   it('a coach with players.view only, and a parent, cannot reach either function', async () => {
-    const { one } = seedPair('coach gate')
+    const { one } = seedPair('coach')
     for (const client of [coachOne, parent]) {
       const preview = await client.rpc('preview_delete_players', { p_player_ids: [one] })
       expect(preview.error).not.toBeNull()
@@ -187,7 +190,7 @@ describe('bulk permanent deletion of player identities', () => {
 
   it('the preview counts every dependency and writes nothing', async () => {
     const service = serviceClient()
-    const { one, two } = seedPair('preview')
+    const { one, two } = seedPair('prev')
 
     // One archived-season registration, three register entries across one
     // session, two Spond links and three replies, two board tokens.
@@ -252,7 +255,7 @@ describe('bulk permanent deletion of player identities', () => {
   })
 
   it('duplicate ids in the input are counted once', async () => {
-    const { one } = seedPair('duplicates')
+    const { one } = seedPair('dup')
     const { data, error } = await admin.rpc('preview_delete_players', { p_player_ids: [one, one, one] })
     expect(error).toBeNull()
     expect((data as Record<string, number>).requested).toBe(1)
@@ -280,7 +283,7 @@ describe('bulk permanent deletion of player identities', () => {
   // ---- the destructive run ------------------------------------------
 
   it('refuses the whole run when one selected id belongs to another club, and deletes nobody', async () => {
-    const { one, two } = seedPair('cross club')
+    const { one, two } = seedPair('xclub')
     const { error } = await admin.rpc('delete_players', {
       p_player_ids: [one, two, outsiderPlayer],
       p_expected_count: 3,
@@ -296,7 +299,7 @@ describe('bulk permanent deletion of player identities', () => {
   })
 
   it('refuses when the confirmed count no longer matches server truth, and deletes nobody', async () => {
-    const { one, two } = seedPair('stale count')
+    const { one, two } = seedPair('stale')
     const { error } = await admin.rpc('delete_players', { p_player_ids: [one, two], p_expected_count: 5 })
     expect(error).not.toBeNull()
     expect(error!.message).toMatch(/selection changed/)
@@ -306,7 +309,7 @@ describe('bulk permanent deletion of player identities', () => {
   })
 
   it('a member of another club cannot delete this club players', async () => {
-    const { one } = seedPair('outsider')
+    const { one } = seedPair('out')
     const { error } = await outsider.rpc('delete_players', { p_player_ids: [one], p_expected_count: 1 })
     expect(error).not.toBeNull()
     const { data: still } = await serviceClient().from('players').select('id').eq('id', one)
@@ -316,7 +319,7 @@ describe('bulk permanent deletion of player identities', () => {
   it('deletes every selected identity and its whole dependency set in one run', async () => {
     const service = serviceClient()
     const { one, two } = seedPair('run')
-    const survivor = seedPlayer({ club: CLUB_A, season: seasonA, display: `${prefix} run survivor` }).playerId
+    const survivor = seedPlayer({ club: CLUB_A, season: seasonA, display: `${prefix} surv` }).playerId
 
     await service.from('register_entries').insert([
       { club_id: CLUB_A, session_id: sessionId, player_id: one, present: true, included_in_groups: true },
@@ -446,7 +449,7 @@ describe('bulk permanent deletion of player identities', () => {
     // No client holds a DELETE grant on registrations, so this is refused at
     // the grant rather than filtered to zero rows. A registration goes only
     // through the identity cascade, which is exactly what the bulk path uses.
-    const { one } = seedPair('registration delete')
+    const { one } = seedPair('regdel')
     const { error } = await admin.from('player_registrations').delete().eq('player_id', one)
     expect(error).not.toBeNull()
     const { data: still } = await serviceClient().from('player_registrations').select('id').eq('player_id', one)
