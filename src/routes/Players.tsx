@@ -32,6 +32,18 @@ import {
   type PlayersFilters,
   type StatusFilter,
 } from '../lib/playersView'
+import {
+  EMPTY_SELECTION,
+  allShownSelected,
+  canBulkDelete,
+  clearSelection,
+  confineToShown,
+  selectAllShown,
+  selectedRows,
+  selectionAfterFilterChange,
+  toggleSelected,
+  type PlayerSelection,
+} from '../lib/playersBulk'
 import { fmtRegDate } from '../lib/playersFormat'
 import { downloadTemplate } from '../lib/playersTemplate'
 import { mappingForTeam } from '../lib/spond'
@@ -51,6 +63,7 @@ import {
   RestoreModal,
   WithdrawModal,
 } from '../components/PlayerActionModals'
+import { BulkDeletePlayersModal, BulkSelectionBar } from '../components/BulkDeletePlayersModal'
 
 type ModalState =
   | { kind: 'add' }
@@ -64,7 +77,17 @@ type ModalState =
   | { kind: 'importFile' }
   | { kind: 'renew' }
   | { kind: 'export' }
+  | { kind: 'bulkDelete' }
   | null
+
+// The checkbox column, present only while bulk selection mode is on. Passed to
+// the table and the cards as ONE object so both surfaces read the same
+// selection through the same toggle: there is no way to give the desktop table
+// a different selection from the phone cards, because there is only one.
+export interface RowSelection {
+  selected: PlayerSelection
+  onToggle: (playerId: string) => void
+}
 
 // A coloured dot plus the word, so status is never conveyed by colour alone.
 export function StatusBadge({ status }: { status: RegistrationStatus }) {
@@ -190,8 +213,24 @@ export function Players() {
   const [q, setQ] = useState('')
   const urlFilters = useMemo<PlayersFilters>(() => parseFilters(searchParams), [searchParams])
   const filters = useMemo<PlayersFilters>(() => ({ ...urlFilters, q }), [urlFilters, q])
+  // Bulk selection state (roadmap PLAYERS-01). Declared here because patch()
+  // below is the handler that has to drop a hidden selection at the moment the
+  // filters change; see the note there.
+  const [bulkMode, setBulkMode] = useState(false)
+  const [selected, setSelected] = useState<PlayerSelection>(EMPTY_SELECTION)
   const patch = (p: Partial<PlayersFilters>) => {
     const { q: nextQ, ...rest } = p
+    // A change to what is SHOWN drops anybody the new view would hide, computed
+    // from the new filters in this handler rather than reacted to afterwards.
+    // That is what makes "changing a filter cannot silently broaden the
+    // selection" true in both directions: a hidden player is deselected as the
+    // filter changes, so widening the filter again brings their row back
+    // unticked. Sort is deliberately not in the list: reordering the same rows
+    // shows nobody new. A season change is a different register, so nothing
+    // carries over at all. Which keys count as a view change, and what each
+    // case does, is selectionAfterFilterChange's decision, not this handler's.
+    const changedKeys = Object.keys(p)
+    setSelected((prev) => selectionAfterFilterChange(prev, changedKeys, filterRows(rows, { ...filters, ...p })))
     if (nextQ !== undefined) setQ(nextQ)
     if (Object.keys(rest).length > 0) {
       setSearchParams(filtersToParams({ ...urlFilters, ...rest }), { replace: true })
@@ -249,6 +288,38 @@ export function Players() {
   const [modal, setModal] = useState<ModalState>(null)
   const open = (m: ModalState) => setModal(m)
   const close = () => setModal(null)
+
+  // ---- bulk selection (roadmap PLAYERS-01) ---------------------------
+  // A mode rather than always-on checkboxes: the register is read far more
+  // often than it is pruned, and a permanent checkbox column on a phone card is
+  // noise in front of the common case. The two state hooks are declared with
+  // the filters above, because patch() owns the drop-on-filter-change rule.
+  //
+  // Gated exactly as the single row Delete permanently is: players.manage plus
+  // players.delete on a writable (current) season. Bulk mode spends an existing
+  // permission faster; it does not create one, and it does not make an archived
+  // or superseded season writable.
+  const bulkAllowed = canBulkDelete({ canManage, canDelete, writable })
+  const bulkActive = bulkMode && bulkAllowed
+  const shownIds = sorted.map((r) => r.playerId)
+  // The selection is confined to what is shown TWICE, and neither is a
+  // reaction after the fact:
+  //   * patch() drops anybody the new filters would hide, in the same handler
+  //     as the filter change, so there is no moment where a hidden player is
+  //     still selected and no way for widening the filter again to bring a
+  //     tick back;
+  //   * this derivation is the belt to that brace, so whatever the stored set
+  //     holds, the count, the list and the delete only ever see rows the coach
+  //     can currently see. A background refetch that removes a row therefore
+  //     shrinks the selection immediately rather than sending an id the server
+  //     would refuse.
+  // Losing the capability or moving to a read only season empties it the same
+  // way, because bulkActive gates the whole derivation.
+  const selectedNow = bulkActive ? confineToShown(selected, shownIds).next : EMPTY_SELECTION
+  const selectedPlayers = selectedRows(sorted, selectedNow)
+  const rowSelection: RowSelection | undefined = bulkActive
+    ? { selected: selectedNow, onToggle: (id) => setSelected((prev) => toggleSelected(prev, id)) }
+    : undefined
 
   // The team the page filter resolves to, for the Add default and the Spond
   // affordance. A specific team id, or null (All teams or Unassigned).
@@ -358,6 +429,22 @@ export function Players() {
     </button>
   ) : null
 
+  // Enters and leaves bulk selection mode. Never selects anything by itself:
+  // the mode opens with nothing selected, every time.
+  const selectButton = bulkAllowed ? (
+    <button
+      className={'btn ' + (bulkActive ? 'btn-quiet' : 'btn-ghost')}
+      aria-pressed={bulkActive}
+      onClick={() => {
+        setSelected(clearSelection())
+        setBulkMode((on) => !on)
+      }}
+    >
+      <Icon.check />
+      {bulkActive ? 'Done selecting' : 'Select players'}
+    </button>
+  ) : null
+
   const templateButton = showTemplate ? (
     <button className="btn btn-quiet" onClick={() => downloadTemplate('csv')}>
       <Icon.fileText />
@@ -374,6 +461,7 @@ export function Players() {
       <div className="row" style={{ gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         {seasonSelect}
         {addButton}
+        {selectButton}
         {spondButton}
         {linksButton}
         {renewButton}
@@ -444,6 +532,7 @@ export function Players() {
           canHistory={canHistory}
           writable={writable}
           open={open}
+          selection={rowSelection}
         />
         <div className="reg-cards">
           {sorted.map((p) => (
@@ -456,6 +545,7 @@ export function Players() {
               canHistory={canHistory}
               writable={writable}
               open={open}
+              selection={rowSelection}
             />
           ))}
         </div>
@@ -519,6 +609,26 @@ export function Players() {
 
       <PlayerFilters filters={filters} onChange={patch} teams={teams} />
 
+      {bulkActive && (
+        <>
+          <BulkSelectionBar
+            selectedCount={selectedNow.size}
+            shownCount={shownIds.length}
+            allSelected={allShownSelected(selectedNow, shownIds)}
+            onSelectAllShown={() => setSelected((prev) => selectAllShown(prev, shownIds))}
+            onClear={() => setSelected(clearSelection())}
+            onDelete={() => open({ kind: 'bulkDelete' })}
+            onExit={() => {
+              setSelected(clearSelection())
+              setBulkMode(false)
+            }}
+          />
+          <p className="bulk-bar-note">
+            Selecting applies to the players shown here. Changing a filter or the search deselects anybody it hides.
+          </p>
+        </>
+      )}
+
       {body()}
 
       {modal?.kind === 'add' && (
@@ -546,6 +656,20 @@ export function Players() {
       {modal?.kind === 'withdraw' && <WithdrawModal player={modal.player} seasonName={seasonName} onClose={close} />}
       {modal?.kind === 'restore' && <RestoreModal player={modal.player} seasonName={seasonName} onClose={close} />}
       {modal?.kind === 'delete' && <DeletePlayerModal player={modal.player} onClose={close} />}
+      {/* Zero selected is not a destructive state: the bar's button is disabled
+          at zero, and this refuses to mount a dialog for nobody even if it were
+          reached another way. */}
+      {modal?.kind === 'bulkDelete' && selectedPlayers.length > 0 && (
+        <BulkDeletePlayersModal
+          players={selectedPlayers}
+          onClose={close}
+          onDeleted={() => {
+            // The run committed, so the selection it described is gone.
+            setSelected(clearSelection())
+            setBulkMode(false)
+          }}
+        />
+      )}
       {modal?.kind === 'history' && (
         <PlayerHistoryModal
           playerId={modal.player.playerId}
@@ -655,6 +779,7 @@ export function DesktopTable({
   canHistory,
   writable,
   open,
+  selection,
 }: {
   rows: RegisteredPlayer[]
   teamDisplay: (id: string | null) => string
@@ -665,6 +790,9 @@ export function DesktopTable({
   canHistory: boolean
   writable: boolean
   open: (m: ModalState) => void
+  // Present only in bulk selection mode. The same object the phone cards get,
+  // so the two surfaces cannot show different selections.
+  selection?: RowSelection
 }) {
   return (
     <div className="reg-table-wrap">
@@ -672,6 +800,7 @@ export function DesktopTable({
         <caption className="sr-only">Registered players</caption>
         <thead>
           <tr>
+            {selection && <th scope="col" className="col-select" aria-label="Select" />}
             <SortTh label="Shirt" k="shirt" sort={sort} onSort={onSort} />
             <SortTh label="Name" k="name" sort={sort} onSort={onSort} />
             <SortTh label="Team" k="team" sort={sort} onSort={onSort} />
@@ -684,6 +813,16 @@ export function DesktopTable({
         <tbody>
           {rows.map((p) => (
             <tr key={p.registrationId} className={p.status === 'withdrawn' ? 'withdrawn' : undefined}>
+              {selection && (
+                <td className="col-select">
+                  <input
+                    type="checkbox"
+                    checked={selection.selected.has(p.playerId)}
+                    onChange={() => selection.onToggle(p.playerId)}
+                    aria-label={`Select ${p.displayName}`}
+                  />
+                </td>
+              )}
               <td className={p.shirtNumber == null ? 'muted-cell' : undefined}>{p.shirtNumber ?? '—'}</td>
               <td>{p.displayName}</td>
               <td className={p.teamId == null ? 'muted-cell' : undefined}>{teamDisplay(p.teamId)}</td>
@@ -726,6 +865,7 @@ export function PlayerCard({
   canHistory,
   writable,
   open,
+  selection,
 }: {
   player: RegisteredPlayer
   teamDisplay: (id: string | null) => string
@@ -734,12 +874,30 @@ export function PlayerCard({
   canHistory: boolean
   writable: boolean
   open: (m: ModalState) => void
+  // The same object the desktop table gets (see DesktopTable).
+  selection?: RowSelection
 }) {
   const items = rowMenuItems(player, { canManage, canDelete, writable, open })
   if (canManage && writable) items.unshift({ key: 'edit', label: 'Edit', onClick: () => open({ kind: 'edit', player }) })
   if (canHistory) items.push({ key: 'history', label: 'History', onClick: () => open({ kind: 'history', player }) })
   return (
-    <div className={'player-card' + (player.status === 'withdrawn' ? ' withdrawn' : '')}>
+    <div
+      className={
+        'player-card' +
+        (player.status === 'withdrawn' ? ' withdrawn' : '') +
+        (selection?.selected.has(player.playerId) ? ' selected' : '')
+      }
+    >
+      {selection && (
+        <label className="pc-select">
+          <input
+            type="checkbox"
+            checked={selection.selected.has(player.playerId)}
+            onChange={() => selection.onToggle(player.playerId)}
+            aria-label={`Select ${player.displayName}`}
+          />
+        </label>
+      )}
       <span className="pc-shirt">{player.shirtNumber ?? '—'}</span>
       <div className="pc-main">
         <div className="pc-name">{player.displayName}</div>

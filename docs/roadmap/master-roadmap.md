@@ -36,7 +36,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
-| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | Later | P2 | Destructive-change review; no silent history loss |
+| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Draft PR open; migration 0049 not applied; destructive-change review gate; boundary in `docs/security/player-deletion-boundary.md` |
 | SPOND-07 | Spond | Scheduled/automatic Spond refresh with visible freshness/failure state | Later | P2 | Rate behaviour and scheduling review |
 | LIVE-01 | Live session | Screen wake lock while delivering a session | Later | P2 | Browser capability/fallback |
 | LIVE-02 | Live session | Unmissable time-up cue and improved live connectivity/offline state | Later | P2 | Coordinate with accessibility |
@@ -284,6 +284,16 @@ the behaviour was confirmed against production rather than against this file.
 - Explicit confirmation naming the number deleted; one transaction, so a partial failure deletes nobody.
 - Session history is never silently destroyed: removals that would orphan register entries are surfaced, and the chosen semantics are stated on screen.
 - Audit events per run; concurrency tests for overlapping selections; destructive change review gate.
+
+In progress against the draft PR. The proven cascade, the refusal matrix, the
+concurrency argument and the audit shape are recorded in
+`docs/security/player-deletion-boundary.md`. The one finding worth reading
+before review: `register_entries` is destroyed rather than degraded to a
+neutral reference, which the single row Delete permanently has done since 0044
+without saying so. The bulk dialog states it in full and counts it; changing
+that outcome would be a schema decision, not a UI one, and is out of scope
+here. Migration `0049_bulk_delete_players.sql` is written and self verifying and
+is NOT applied to production by this PR.
 
 **DRILL-02 — drill diagrams across session delivery**
 
