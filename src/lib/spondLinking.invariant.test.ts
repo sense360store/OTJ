@@ -71,6 +71,63 @@ describe('SpondLinks hands the section builder the scoped pool, never the roster
   })
 })
 
+describe('one sentence per reason, and the false one reachable from one reason', () => {
+  // "Not a registered player" was the DEFAULT arm of a conditional chain,
+  // so every reason the chain did not name rendered as it. That is how a
+  // second Spond member of an already linked name came to be reported as
+  // a child missing from the player list, in the section whose stated
+  // highest value outcome is exactly that finding.
+  //
+  // Two things keep it closed, and only the second is a real guarantee:
+  // the vocabulary has one home, so the screen cannot drift from the
+  // rule; and the mapping is a total Record keyed on that union, so the
+  // compiler refuses a new reason with no sentence. This file only pins
+  // that those two shapes are still the shapes in use.
+  const lib = readFileSync(join(import.meta.dirname, './spondLinking.ts'), 'utf8')
+
+  it('the reason vocabulary is declared once, in the rule, not in the screen', () => {
+    expect(lib).toMatch(/export type NeedsDecisionReason =/)
+    expect(lib).toMatch(/reason: NeedsDecisionReason/)
+    expect(src).toMatch(/type NeedsDecisionReason,?\n/)
+    expect(src).toMatch(/reason: NeedsDecisionReason/)
+    // The screen must not retype the union, which is what let the two
+    // copies disagree about how many cases there are.
+    expect(src).not.toMatch(/'suggested'\s*\|\s*'ambiguous'/)
+  })
+
+  it('the sub line is a total map, never a chain with a default', () => {
+    expect(src).toMatch(/const REASON_SUB: Record<NeedsDecisionReason, string> = \{/)
+    expect(src).toMatch(/REASON_SUB\[reason\]/)
+  })
+
+  it('the false sentence is written once, against not_on_roster alone', () => {
+    const sentence = 'Not a registered player'
+    expect(src.split(sentence).length - 1).toBe(1)
+    expect(src).toMatch(/not_on_roster: 'Not a registered player',/)
+    // And the new case says the data fact without claiming identity.
+    expect(src).toMatch(/name_taken: 'Same name as a registered player who is already linked',/)
+  })
+
+  it('the rule reads a taken name off the same pool the suggestions use', () => {
+    // Scoping this club wide would let a Titans member read name_taken
+    // off a Gladiators child, the hazard suggestionPool's own docstring
+    // records as real here.
+    expect(lib).toMatch(/const takenNames = new Set<string>\(\)/)
+    expect(lib).toMatch(/for \(const p of roster\) \{/)
+    expect(lib).toMatch(/takenNames\.has\(key\) \? 'name_taken' : 'not_on_roster'/)
+  })
+
+  it('names what it cannot catch', () => {
+    // Source text, so: a rename defeats every check above, a sentence
+    // assembled from parts rather than written whole is invisible to the
+    // count, and nothing here proves which reason a given production row
+    // takes. What proves the behaviour is ../routes/SpondLinks.test.tsx,
+    // which renders the composed view over the production shape, and
+    // ./spondLinking.test.ts, which runs the rule.
+    expect(true).toBe(true)
+  })
+})
+
 describe('staff never enter the player pipelines', () => {
   // The whole collection rule (exclusion before cap before reduction,
   // warnings from counts) lives in _shared/spond.ts where the Deno tests

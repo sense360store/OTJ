@@ -53,6 +53,29 @@ export function suggestionPool(
   return roster.filter((p) => p.teamId === teamId && p.status !== 'withdrawn')
 }
 
+// Why a member row reads the way it does. One home for the vocabulary,
+// imported by the screen rather than retyped there: the union was written
+// out twice, and the copy is what let a fourth case render through the
+// third one's sentence.
+export type NeedsDecisionReason =
+  // Exactly one unlinked registered player of this name, and exactly one
+  // member of it. Offered, never preselected.
+  | 'suggested'
+  // More than one member or more than one child could be meant, so the
+  // product refuses to guess. Both sides of that count.
+  | 'ambiguous'
+  // A registered player of this name exists in the same pool a suggestion
+  // may match, and their one link is already spent on a DIFFERENT Spond
+  // member. Says only that. It does not say the two members are the same
+  // child, that either is a duplicate, or that either Spond record is
+  // wrong: two equal names prove none of those, and a club may hold two
+  // children of one name. The mirror of the player side's 'name_taken',
+  // and named for it.
+  | 'name_taken'
+  // No registered player of this name in the pool at all, linked or not.
+  // The screen's highest value finding, so it stays narrow.
+  | 'not_on_roster'
+
 export interface NeedsDecision {
   candidate: LinkCandidate
   // The single unambiguous roster match, or null. Never preselected: a
@@ -61,7 +84,7 @@ export interface NeedsDecision {
   suggestion: RegisteredPlayer | null
   // Why there is no suggestion, so the row can say which case this is
   // rather than looking identical to every other unmatched member.
-  reason: 'suggested' | 'ambiguous' | 'not_on_roster'
+  reason: NeedsDecisionReason
 }
 
 export interface LinkedRow {
@@ -113,9 +136,19 @@ export function buildLinkSections(
 
   // Unlinked roster children by normalised name.
   const unlinkedByName = new Map<string, RegisteredPlayer[]>()
+  // And its complement over the SAME pool: names carried by a child whose
+  // one link is already spent. Linking a child removes them from
+  // unlinkedByName, so without this a second member of that name finds no
+  // match and reads as unregistered, which is false about a child who is
+  // both registered and linked. Same pool as the suggestions, so this can
+  // no more reach across teams or seasons than a suggestion can.
+  const takenNames = new Set<string>()
   for (const p of roster) {
-    if (linkedPlayerIds.has(p.playerId)) continue
     const key = normaliseName(p.displayName)
+    if (linkedPlayerIds.has(p.playerId)) {
+      takenNames.add(key)
+      continue
+    }
     const list = unlinkedByName.get(key)
     if (list) list.push(p)
     else unlinkedByName.set(key, [p])
@@ -132,7 +165,16 @@ export function buildLinkSections(
     const key = normaliseName(candidate.displayName)
     const matches = unlinkedByName.get(key) ?? []
     if (matches.length === 0) {
-      needsDecision.push({ candidate, suggestion: null, reason: 'not_on_roster' })
+      // Nothing free of this name. Either no registered player carries it
+      // at all, or one does and is already linked. This candidate is
+      // unlinked (the branch above took the linked ones), so a taken name
+      // is necessarily taken by a DIFFERENT member, which is the whole of
+      // what the row then claims. Ambiguity among the members does not
+      // change the answer here: with no free child to link, there is
+      // nothing for them to be ambiguous about, and the more specific
+      // sentence is the one a manager can act on.
+      const reason = takenNames.has(key) ? 'name_taken' : 'not_on_roster'
+      needsDecision.push({ candidate, suggestion: null, reason })
     } else if (matches.length > 1 || (candidateNameCount.get(key) ?? 0) > 1) {
       needsDecision.push({ candidate, suggestion: null, reason: 'ambiguous' })
     } else {

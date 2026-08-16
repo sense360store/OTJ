@@ -98,10 +98,14 @@ describe('buildLinkSections', () => {
       [link(M2, 'p1')],
       roster,
     )
-    // M2 holds Alpha, so Alpha is no longer an available match for M1,
-    // which therefore has nobody left to match.
+    // M2 holds Alpha, so Alpha is no longer an available match for M1.
+    // The half this test exists for is unchanged: M1 gets no suggestion
+    // and nothing is written. What it used to also assert was
+    // 'not_on_roster', which was the defect rather than the rule: Alpha
+    // IS registered. See the name_taken describe below.
     const m1 = sections.needsDecision.find((r) => r.candidate.spondMemberId === M1)
-    expect(m1?.reason).toBe('not_on_roster')
+    expect(m1?.suggestion).toBeNull()
+    expect(m1?.reason).toBe('name_taken')
     expect(sections.linked.map((r) => r.link.spondMemberId)).toEqual([M2])
   })
 
@@ -129,6 +133,140 @@ describe('buildLinkSections', () => {
     const sections = buildLinkSections([], [], roster)
     expect(sections.needsDecision).toHaveLength(0)
     expect(sections.linked).toHaveLength(0)
+  })
+})
+
+// ---- The second Spond member of a name already linked ----------------------
+//
+// Production, 15 August: two Spond member rows both display "Billy
+// Abbott". One is linked to the registered Billy. The other found no
+// match in unlinkedByName, because linking the first took that child out
+// of it, so it took the no-match branch and the screen said "Not a
+// registered player" about a child who is registered AND linked, in the
+// one section whose stated highest value outcome is finding a child who
+// is missing from the player list. A manager reading it is invited to add
+// somebody who is already there.
+//
+// The fix states the data fact and stops. It does NOT say the two members
+// are one child, one is a duplicate account, or either Spond record is
+// wrong: none of that is provable from two equal names, and the club may
+// have two Billy Abbotts. What is provable is that a registered player of
+// this name exists and that player's one link is already spent.
+//
+// Scope is the same pool a suggestion may match, so this can never reach
+// across teams: the mirror hazard suggestionPool exists for.
+describe('a member whose namesake registered player is already linked', () => {
+  const roster = [player('p1', 'Alpha Synthetic'), player('p2', 'Beta Synthetic')]
+
+  it('says the name is taken rather than that the child is unregistered', () => {
+    // The Billy shape exactly: both members loaded, one linked.
+    const sections = buildLinkSections(
+      [candidate(M1, 'Alpha Synthetic'), candidate(M2, 'Alpha Synthetic')],
+      [link(M2, 'p1')],
+      roster,
+    )
+    const m1 = sections.needsDecision.find((r) => r.candidate.spondMemberId === M1)
+    expect(m1?.reason).toBe('name_taken')
+    expect(m1?.reason).not.toBe('not_on_roster')
+    // Nothing is offered to accept: the product still refuses to guess.
+    expect(m1?.suggestion).toBeNull()
+    expect(acceptableSuggestions(sections)).toEqual([])
+  })
+
+  it('holds when the linked member is not in the loaded list at all', () => {
+    // The link is an orphan here, so the only evidence the name is taken
+    // is the stored link itself. Reading it off the candidate list would
+    // miss this and fall back to the false sentence.
+    const sections = buildLinkSections([candidate(M1, 'Alpha Synthetic')], [link(M3, 'p1')], roster)
+    expect(sections.needsDecision[0].reason).toBe('name_taken')
+    expect(sections.orphans.map((r) => r.player?.playerId)).toEqual(['p1'])
+  })
+
+  it('still says not registered when no registered player carries the name', () => {
+    // The genuine case has to survive: this is the finding the section
+    // exists for, and widening name_taken over it would cost the screen
+    // its highest value outcome.
+    const sections = buildLinkSections([candidate(M1, 'Gamma Synthetic')], [link(M2, 'p1')], roster)
+    expect(sections.needsDecision[0].reason).toBe('not_on_roster')
+  })
+
+  it('never reaches across teams, because the pool is one team', () => {
+    // A same named child on ANOTHER team, already linked, must not make
+    // this team's member read name_taken: that child is not this team's
+    // to claim, which is the hazard suggestionPool is scoped for.
+    const club = [
+      player('p1', 'Alpha Synthetic', { teamId: 't1' }),
+      player('p2', 'Alpha Synthetic', { teamId: 't2' }),
+    ]
+    const sections = buildLinkSections(
+      [candidate(M1, 'Alpha Synthetic')],
+      [link(M2, 'p2')],
+      suggestionPool(club, 't1'),
+    )
+    // t1's own Alpha is unlinked and in the pool, so this is an ordinary
+    // suggestion, unaffected by t2's link.
+    expect(sections.needsDecision[0].reason).toBe('suggested')
+    expect(sections.needsDecision[0].suggestion?.playerId).toBe('p1')
+
+    // And with t1's own Alpha linked instead, the t2 link is still not
+    // what decides it.
+    const taken = buildLinkSections(
+      [candidate(M1, 'Alpha Synthetic')],
+      [link(M2, 'p1')],
+      suggestionPool(club, 't1'),
+    )
+    expect(taken.needsDecision[0].reason).toBe('name_taken')
+
+    // t2's pool holds no Alpha that is free either way, and t1's link is
+    // invisible to it.
+    const other = buildLinkSections([candidate(M1, 'Alpha Synthetic')], [], suggestionPool(club, 't2'))
+    expect(other.needsDecision[0].reason).toBe('suggested')
+    expect(other.needsDecision[0].suggestion?.playerId).toBe('p2')
+  })
+
+  it('a withdrawn namesake is not a registered player, so the honest answer stays', () => {
+    // Withdrawn children are out of the pool by suggestionPool, so they
+    // are neither a suggestion nor evidence that a name is taken.
+    const club = [player('p1', 'Alpha Synthetic', { status: 'withdrawn' })]
+    const sections = buildLinkSections([candidate(M1, 'Alpha Synthetic')], [link(M2, 'p1')], suggestionPool(club, 't1'))
+    expect(sections.needsDecision[0].reason).toBe('not_on_roster')
+  })
+
+  it('two unlinked members of a name are still ambiguous, not name_taken', () => {
+    // Nothing here weakens the refusal to link automatically. Two free
+    // members and one free child stays the two sided ambiguity rule.
+    const sections = buildLinkSections(
+      [candidate(M1, 'Alpha Synthetic'), candidate(M2, 'Alpha Synthetic')],
+      [],
+      roster,
+    )
+    expect(sections.needsDecision.map((r) => r.reason)).toEqual(['ambiguous', 'ambiguous'])
+  })
+
+  it('two registered children of a name, one linked, leaves the other suggestable', () => {
+    // Not name_taken: there is a free registered Alpha to link, so the
+    // ordinary rule applies and the row is a normal suggestion.
+    const sections = buildLinkSections(
+      [candidate(M1, 'Alpha Synthetic')],
+      [link(M2, 'p1')],
+      [player('p1', 'Alpha Synthetic'), player('p3', 'Alpha Synthetic')],
+    )
+    expect(sections.needsDecision[0].reason).toBe('suggested')
+    expect(sections.needsDecision[0].suggestion?.playerId).toBe('p3')
+  })
+
+  it('compares names the way every other rule here does', () => {
+    const sections = buildLinkSections([candidate(M1, '  ALPHA   Synthetic ')], [link(M2, 'p1')], roster)
+    expect(sections.needsDecision[0].reason).toBe('name_taken')
+  })
+
+  it('carries no member id into anything a name_taken row could write', () => {
+    const sections = buildLinkSections(
+      [candidate(M1, 'Alpha Synthetic'), candidate(M2, 'Alpha Synthetic')],
+      [link(M2, 'p1')],
+      roster,
+    )
+    expect(acceptableSuggestions(sections)).toEqual([])
   })
 })
 
