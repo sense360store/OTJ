@@ -441,6 +441,13 @@ export interface SpondEvent {
   id: string
   title: string
   startsAt: string
+  // Where Spond says the event is, as the one free text line the sync
+  // already stores (0013): usually a postal address, null when the event
+  // carries none. An event fact about the event, the same kind of thing as
+  // the title and the start time, and nothing to do with a member. It is
+  // read as a DEFAULT for a new session's venue and never as an authority
+  // over one a coach has chosen (see matchVenueByLocation in ./venues).
+  location: string | null
   teamId: string | null
   teamName: string | null
   spondType: string | null

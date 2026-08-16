@@ -13,6 +13,7 @@ function ev(over: Partial<SpondEvent> & Pick<SpondEvent, 'id'>): SpondEvent {
   return {
     title: 'U8 Training',
     startsAt: '2026-06-16T17:30:00Z',
+    location: null,
     teamId: 'team-1',
     teamName: 'Titans',
     spondType: null,

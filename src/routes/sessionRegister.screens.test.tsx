@@ -90,6 +90,7 @@ const EVENT: SpondEvent = {
   id: 'evt1',
   title: 'Saturday Session',
   startsAt: AT,
+  location: null,
   teamId: null,
   teamName: null,
   spondType: null,

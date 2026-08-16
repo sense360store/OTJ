@@ -15,6 +15,7 @@ import type { SpondEvent } from '../lib/data'
 
 const spondEvent = (over: Partial<SpondEvent> & Pick<SpondEvent, 'id' | 'title'>): SpondEvent => ({
   startsAt: '2999-01-02T17:30:00Z',
+  location: null,
   teamId: 'titans',
   teamName: 'Titans',
   spondType: null,
@@ -49,6 +50,10 @@ vi.mock('../lib/queries', () => ({
   useMyTeams: () => query({ teamIds: ['titans'], allTeams: false }),
   useSpondEvents: () => query([TRAINING, MATCH, GALA]),
   useTeamMap: () => ({ titans: { id: 'titans', name: 'Titans', bibColour: null } }),
+  // The club's venues, read so a new session can default to the one the
+  // event's location names. Empty here: this file is about which rows the
+  // container offers, and the venue rule has its own tests.
+  useVenues: () => query([]),
   // The duplicate link refusal (0048) is recognised by class and the catch up
   // refetch is a named hook, so both are stubbed here rather than dragging a
   // query client into a static render.

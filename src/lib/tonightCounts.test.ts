@@ -106,6 +106,7 @@ const event = (over: Partial<SpondEvent> = {}): SpondEvent => ({
   id: 'evt',
   title: 'Training',
   startsAt: '2026-08-11T17:00:00Z',
+  location: null,
   teamId: null,
   teamName: null,
   spondType: null,

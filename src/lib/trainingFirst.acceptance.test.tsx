@@ -75,6 +75,7 @@ const ids = (rows: { id: string }[]) => rows.map((r) => r.id)
 
 const spondEvent = (over: Partial<SpondEvent> & Pick<SpondEvent, 'id' | 'title'>): SpondEvent => ({
   startsAt: '2026-08-11T17:30:00Z',
+  location: null,
   teamId: 'titans',
   teamName: 'Titans',
   spondType: null,
@@ -226,8 +227,8 @@ describe('9. a fixture planned from Spond is still a fixture on every screen', (
   const lookup = spondEventLookup([matchEvent, trainingEvent])
 
   // Exactly what "Plan this" writes, built by the real function.
-  const plannedMatch = { ...sessionFromSpondEvent(matchEvent, ME, 'titans'), id: 'planned-match' }
-  const plannedTraining = { ...sessionFromSpondEvent(trainingEvent, THEM, 'titans'), id: 'planned-training' }
+  const plannedMatch = { ...sessionFromSpondEvent(matchEvent, ME, 'titans', [], []), id: 'planned-match' }
+  const plannedTraining = { ...sessionFromSpondEvent(trainingEvent, THEM, 'titans', [], []), id: 'planned-training' }
   const schedule = [plannedMatch, plannedTraining, myTraining]
 
   it('carries no classification of its own, which is the whole problem', () => {

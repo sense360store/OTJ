@@ -19,6 +19,7 @@ import type { SpondEvent, SpondMapping } from './data'
 function ev(over: Partial<SpondEvent> & Pick<SpondEvent, 'id' | 'startsAt'>): SpondEvent {
   return {
     title: 'Training',
+    location: null,
     teamId: null,
     teamName: null,
     spondType: null,
@@ -266,7 +267,7 @@ describe('spondPlanSuggestions', () => {
 describe('sessionFromSpondEvent', () => {
   it("carries the event's date, time, team and link, owned by the coach", () => {
     const event = ev({ id: 'e1', startsAt: '2026-06-16T17:30:00', teamId: 'team-1', title: 'U8 Training' })
-    const s = sessionFromSpondEvent(event, 'coach-1', 'default-team')
+    const s = sessionFromSpondEvent(event, 'coach-1', 'default-team', [], [])
     expect(s.coachId).toBe('coach-1')
     expect(s.teamId).toBe('team-1')
     expect(s.spondEventId).toBe('e1')
@@ -279,18 +280,96 @@ describe('sessionFromSpondEvent', () => {
 
   it("falls back to the coach's default team for a club event with no team", () => {
     const event = ev({ id: 'e2', startsAt: '2026-06-16T17:30:00', teamId: null })
-    expect(sessionFromSpondEvent(event, 'coach-1', 'default-team').teamId).toBe('default-team')
+    expect(sessionFromSpondEvent(event, 'coach-1', 'default-team', [], []).teamId).toBe('default-team')
   })
 
   it("covers the event's team, and never lands unset", () => {
     // A session planned from Spond is SAVED before the coach sees it, so
     // leaving coverage unset would hand them a register listing nobody.
     const teamed = ev({ id: 'e3', startsAt: '2026-06-16T17:30:00', teamId: 'team-1' })
-    expect(sessionFromSpondEvent(teamed, 'coach-1', null, ['t1', 't2']).teamIds).toEqual(['team-1'])
+    expect(sessionFromSpondEvent(teamed, 'coach-1', null, ['t1', 't2'], []).teamIds).toEqual(['team-1'])
 
     const club = ev({ id: 'e4', startsAt: '2026-06-16T17:30:00', teamId: null })
-    expect(sessionFromSpondEvent(club, 'coach-1', null, ['t1', 't2']).teamIds).toEqual(['t1', 't2'])
-    expect(sessionFromSpondEvent(club, 'coach-1', 'default-team', ['t1', 't2']).teamIds).toEqual(['default-team'])
+    expect(sessionFromSpondEvent(club, 'coach-1', null, ['t1', 't2'], []).teamIds).toEqual(['t1', 't2'])
+    expect(sessionFromSpondEvent(club, 'coach-1', 'default-team', ['t1', 't2'], []).teamIds).toEqual(['default-team'])
+  })
+})
+
+// ---- The venue a new Plan from Spond session starts at ---------------------
+//
+// The event's location DEFAULTS the venue on the session this function
+// builds, and defaults nothing else anywhere. This function is the only
+// caller of matchVenueByLocation in the product, and it only ever builds a
+// session that does not exist yet, so there is no coach's choice here to
+// contradict. Production holds a session at Flushdyke whose Spond event says
+// Woodkirk Academy; a rule that could reach a saved row would have "fixed"
+// that and sent somebody to the wrong ground.
+
+const VENUES = [
+  { id: 'v-flush', name: 'Flushdyke' },
+  { id: 'v-wood', name: 'Woodkirk' },
+]
+const FLUSHDYKE_ADDRESS = 'Ossett Flushdyke Junior & Infant School, Wakefield Rd, Ossett'
+
+describe('sessionFromSpondEvent, and the venue', () => {
+  const at = (over: Partial<SpondEvent> = {}) =>
+    ev({ id: 'e-venue', startsAt: '2026-06-16T17:30:00', ...over })
+
+  it('starts the new session at the one venue the location names', () => {
+    const s = sessionFromSpondEvent(at({ location: FLUSHDYKE_ADDRESS }), 'coach-1', null, [], VENUES)
+    expect(s.venueId).toBe('v-flush')
+  })
+
+  it('leaves the venue unset when the location names none of the club’s', () => {
+    const away = at({ location: 'Brighouse High School, Finkil St, Brighouse' })
+    expect(sessionFromSpondEvent(away, 'coach-1', null, [], VENUES).venueId).toBeNull()
+  })
+
+  it('leaves the venue unset when the location names more than one', () => {
+    const both = at({ location: 'Flushdyke Road, near Woodkirk Academy' })
+    expect(sessionFromSpondEvent(both, 'coach-1', null, [], VENUES).venueId).toBeNull()
+  })
+
+  it('leaves the venue unset for an event carrying no location', () => {
+    expect(sessionFromSpondEvent(at({ location: null }), 'coach-1', null, [], VENUES).venueId).toBeNull()
+  })
+
+  it('leaves the venue unset when the club’s venues are not in hand', () => {
+    // The list is still loading, or its read failed. An unset venue is where
+    // a hand made session starts and the coach picks one field down; waiting
+    // on a guess would be worse than not making it.
+    const known = at({ location: FLUSHDYKE_ADDRESS })
+    expect(sessionFromSpondEvent(known, 'coach-1', null, [], []).venueId).toBeNull()
+    expect(sessionFromSpondEvent(known, 'coach-1', null, [], []).venueId).toBeNull()
+  })
+
+  it('never writes the frozen free text venue label', () => {
+    // 0044 froze sessions.venue. New code retires it and never gives it a
+    // value, so the read fallback behind it cannot resurrect and contradict
+    // the real field. A matched venue and an unmatched one both leave it
+    // empty.
+    expect(sessionFromSpondEvent(at({ location: FLUSHDYKE_ADDRESS }), 'coach-1', null, [], VENUES).venue).toBe('')
+    expect(sessionFromSpondEvent(at({ location: 'Somewhere else' }), 'coach-1', null, [], VENUES).venue).toBe('')
+  })
+
+  it('carries the same fields it always did beside the venue', () => {
+    // The venue is an addition, not a rewrite: nothing else about the
+    // pre filled session moved.
+    const s = sessionFromSpondEvent(
+      at({ location: FLUSHDYKE_ADDRESS, teamId: 'team-1', title: 'Training' }),
+      'coach-1',
+      'default-team',
+      ['t1'],
+      VENUES,
+    )
+    expect(s.coachId).toBe('coach-1')
+    expect(s.teamId).toBe('team-1')
+    expect(s.teamIds).toEqual(['team-1'])
+    expect(s.spondEventId).toBe('e-venue')
+    expect(s.name).toBe('Training')
+    expect(s.date).toBe('2026-06-16')
+    expect(s.time).toBe('17:30')
+    expect(s.activities).toEqual([])
   })
 })
 
@@ -353,7 +432,7 @@ describe('a scheduled training event, once synced', () => {
   })
 
   it('Plan this, and only Plan this, produces the session', () => {
-    const session = sessionFromSpondEvent(scheduledTraining, 'coach-1', null, ['team-1', 'team-2'])
+    const session = sessionFromSpondEvent(scheduledTraining, 'coach-1', null, ['team-1', 'team-2'], [])
     expect(session.spondEventId).toBe('scheduled-training')
     expect(session.name).toBe('Titans training')
     expect(session.teamIds).toEqual(['team-1'])

@@ -67,6 +67,7 @@ const session = (over: Partial<Session> & Pick<Session, 'id' | 'name'>): Session
 
 const spondEvent = (over: Partial<SpondEvent> & Pick<SpondEvent, 'id' | 'title'>): SpondEvent => ({
   startsAt: '2026-08-12T17:30:00Z',
+  location: null,
   teamId: 'titans',
   teamName: 'Titans',
   spondType: null,

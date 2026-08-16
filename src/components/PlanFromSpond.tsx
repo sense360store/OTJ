@@ -25,6 +25,7 @@ import {
   useEventKindContext,
   useSpondEvents,
   useTeamMap,
+  useVenues,
 } from '../lib/queries'
 import { memberTeamIds } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
@@ -212,6 +213,22 @@ export function PlanFromSpond({
   const { data: events = [], isLoading, isError } = useSpondEvents()
   const { data: myTeams } = useMyTeams()
   const teamById = useTeamMap()
+  // The club's venues, so a new session can default to the one the event's
+  // location names. A club wide read the planner already holds, so on the
+  // screen this surface usually sits on it costs nothing.
+  //
+  // ITS LOADING JOINS THE CARD'S, and that is the whole of the race
+  // handling. Both reads start together and this one is far the smaller, so
+  // in practice the rows appear when the events do; but a coach who pressed
+  // Plan this in the gap would have created a session with no venue and no
+  // way back to the one this was for, because a successful create navigates
+  // away and the retry path never runs again.
+  //
+  // A FAILED read is not a wait. isError leaves the data undefined, which is
+  // an empty list, which means no match and an unset venue: the same place a
+  // hand made session starts, and the coach picks one field down. Blocking
+  // on that would take planning away over a venue guess.
+  const { data: venues = [], isLoading: venuesLoading } = useVenues()
   // The classifier context, so the fixture rule fires here as well. Beside
   // the other reads, above the capability guard: hooks run in one order or
   // they run wrong.
@@ -309,7 +326,7 @@ export function PlanFromSpond({
 
   const plan = (event: SpondEvent) => {
     const session = {
-      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null, Object.keys(teamById)),
+      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null, Object.keys(teamById), venues),
       id: stableCreateId(ids.current, event.id),
     }
     void submit(session)
@@ -327,7 +344,7 @@ export function PlanFromSpond({
       onShowAll={setShowAll}
       showAllToggle={showAllToggle}
       onPlan={plan}
-      loading={isLoading}
+      loading={isLoading || venuesLoading}
       error={isError}
       planPendingId={planPendingId}
       planFailed={planFailed}
