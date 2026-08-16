@@ -146,6 +146,120 @@ describe('NeedsDecisionRowView', () => {
     expect(html).toContain('Not a registered player')
     expect(html).not.toContain('Not on the roster')
   })
+
+  it('says the name is taken without claiming the two members are one child', () => {
+    const html = renderToStaticMarkup(
+      <NeedsDecisionRowView
+        name="Alpha Synthetic"
+        reason="name_taken"
+        suggestion={null}
+        busy={false}
+        onAccept={noop}
+        onChoose={noop}
+      />,
+    )
+    expect(html).toContain('Same name as a registered player who is already linked')
+    // The false claim this closes.
+    expect(html).not.toContain('Not a registered player')
+    // And none of the claims the data cannot support. Two equal names do
+    // not prove one child, a duplicate registration, or a wrong record;
+    // the club may simply hold two children of one name.
+    for (const forbidden of ['uplicate', 'same child', 'same person', 'wrong Spond', 'wrong record']) {
+      expect(html).not.toContain(forbidden)
+    }
+    // Nothing is offered to accept, and the human path stays.
+    expect(html).not.toContain('Accept')
+    expect(html).toContain('Choose')
+  })
+
+  it('renders no member id on any reason', () => {
+    // The id is a React key and a callback argument, never markup: it is
+    // an opaque implementation identifier and a manager has no use for
+    // it. Every reason, because the sub line is the thing that changed.
+    for (const reason of ['suggested', 'ambiguous', 'name_taken', 'not_on_roster'] as const) {
+      const html = renderToStaticMarkup(
+        <NeedsDecisionRowView
+          name="Alpha Synthetic"
+          reason={reason}
+          suggestion={reason === 'suggested' ? 'Alpha Synthetic' : null}
+          busy={false}
+          onAccept={noop}
+          onChoose={noop}
+        />,
+      )
+      expect(html).not.toContain(M1)
+      expect(html).not.toContain(M1.toLowerCase())
+    }
+  })
+})
+
+// ---- The production shape, through the composed screen ---------------------
+//
+// The unit above renders one row from a prop. This renders the view that
+// composes buildLinkSections itself, which is where the defect actually
+// lived: the reason was computed correctly for every case the screen had
+// a sentence for, and the case it had none for fell through to the
+// sentence for "missing from the player list".
+//
+// Two Spond members both displaying one name, one of them linked, is the
+// 15 August production shape. Names are synthetic.
+describe('the second Spond member of an already linked name, composed', () => {
+  const billyShape = (
+    <LinkSectionsView
+      {...sectionProps}
+      candidates={[candidate(M1, 'Alpha Synthetic'), candidate(M2, 'Alpha Synthetic')]}
+      links={[link(M2, 'p1')]}
+      pool={roster}
+    />
+  )
+
+  it('does not tell a manager that a linked, registered child is unregistered', () => {
+    const html = renderToStaticMarkup(billyShape)
+    expect(html).toContain('Same name as a registered player who is already linked')
+    expect(html).not.toContain('Not a registered player')
+  })
+
+  it('still shows the link it already has, so both facts are on screen', () => {
+    const html = renderToStaticMarkup(billyShape)
+    expect(html).toContain('Alpha Synthetic · chosen')
+  })
+
+  it('keeps the genuine finding for a member no registered player matches', () => {
+    // The same screen, one member of an unregistered name: the sentence
+    // that matters must not have been widened away.
+    const html = renderToStaticMarkup(
+      <LinkSectionsView
+        {...sectionProps}
+        candidates={[candidate(M1, 'Gamma Synthetic')]}
+        links={[]}
+        pool={roster}
+      />,
+    )
+    expect(html).toContain('Not a registered player')
+    expect(html).not.toContain('Same name as a registered player')
+  })
+
+  it('leaves the two sided ambiguity refusal exactly as it was', () => {
+    // Two free members, one free child: no automatic link, no Accept,
+    // and the ambiguity sentence rather than the new one.
+    const html = renderToStaticMarkup(
+      <LinkSectionsView
+        {...sectionProps}
+        candidates={[candidate(M1, 'Alpha Synthetic'), candidate(M2, 'Alpha Synthetic')]}
+        links={[]}
+        pool={roster}
+      />,
+    )
+    expect(html).toContain('More than one possible match')
+    expect(html).not.toContain('Same name as a registered player')
+    expect(html).not.toContain('Accept')
+  })
+
+  it('puts no Spond member id on the screen', () => {
+    const html = renderToStaticMarkup(billyShape)
+    expect(html).not.toContain(M1)
+    expect(html).not.toContain(M2)
+  })
 })
 
 describe('LinkedRowView', () => {

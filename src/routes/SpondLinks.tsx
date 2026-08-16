@@ -36,6 +36,7 @@ import {
   suggestionPool,
   teamsBySubgroup,
   type LinkCandidate,
+  type NeedsDecisionReason,
   type SpondGroupMember,
   type SubgroupTeam,
   type SpondLink,
@@ -107,10 +108,31 @@ export function TeamChipsView({
   )
 }
 
+// One sentence per reason, TOTAL rather than a chain ending in a default.
+// The chain this replaces ended in "Not a registered player", so every
+// case it did not name rendered as that one, which is how a child who was
+// registered and linked came to be reported as missing from the player
+// list. A Record keyed on the shared union makes the compiler, not a
+// reviewer, the thing that notices an unhandled reason.
+const REASON_SUB: Record<NeedsDecisionReason, string> = {
+  // Never read: a suggested row renders the suggested child's name
+  // instead. Silence rather than a sentence if a suggestion ever goes
+  // missing, because every sentence here would be a false one.
+  suggested: '',
+  ambiguous: 'More than one possible match',
+  // The data fact and nothing beyond it. Not "duplicate", not "the same
+  // child", not "the wrong Spond record": two equal names prove none of
+  // those. Choose stays on the row, because the case where these are two
+  // different children of one name is real and is resolved by hand.
+  name_taken: 'Same name as a registered player who is already linked',
+  not_on_roster: 'Not a registered player',
+}
+
 // The one line each unlinked member gets. Every case says which case it
 // is: the highest value outcome of this screen is finding a child who is
-// in Spond and missing from the roster, so that one is named rather than
-// left looking like every other unmatched row.
+// in Spond and missing from the player list, so that one is named rather
+// than left looking like every other unmatched row, and nothing else is
+// allowed to borrow its sentence.
 export function NeedsDecisionRowView({
   name,
   reason,
@@ -120,7 +142,7 @@ export function NeedsDecisionRowView({
   onChoose,
 }: {
   name: string
-  reason: 'suggested' | 'ambiguous' | 'not_on_roster'
+  reason: NeedsDecisionReason
   suggestion: string | null
   busy: boolean
   onAccept: () => void
@@ -131,11 +153,7 @@ export function NeedsDecisionRowView({
       <div className="sl-row-main">
         <span className="sl-name">{name}</span>
         <span className="sl-sub">
-          {reason === 'suggested' && suggestion
-            ? `Suggested: ${suggestion}`
-            : reason === 'ambiguous'
-              ? 'More than one possible match'
-              : 'Not a registered player'}
+          {reason === 'suggested' && suggestion ? `Suggested: ${suggestion}` : REASON_SUB[reason]}
         </span>
       </div>
       <div className="sl-row-actions">
