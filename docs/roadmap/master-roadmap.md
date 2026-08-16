@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 16 August 2026 (SPOND-01/03 closed in #187; DRILL-02 is next)
+Last reviewed: 16 August 2026 (SPOND-01/03 closed in #187; SPOND-08 opened as their follow-up; DRILL-02 is next)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -31,6 +31,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
+| SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | In progress | P0 | Follow-up to the closed SPOND-01/03 programme, not a reopening. Gated migration 0049 and a gated `spond-link-members` deploy, both reviewed and NOT applied |
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
@@ -54,7 +55,7 @@ When there is capacity, prefer this sequence unless production evidence changes 
 2. Pick up QUALITY-01, since re-auditing the old Product Excellence roadmap gates several later items.
 3. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
 
-REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have now shipped too, so the Spond linking programme is closed and DRILL-02 is the first active step.
+REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have shipped too, so the Spond linking programme that ran from #178 to #187 is closed and stays closed. SPOND-08 is its follow-up rather than its continuation: those items scoped exposing a mismatch and delivered it, and acting on one is a separate piece of work because it writes to a child's registration. It outranks DRILL-02 while it is open, under roadmap rule 4.
 
 ## Acceptance criteria for scheduled items
 
@@ -182,6 +183,49 @@ Nothing was implemented for this audit.
   #187 is closed, and nothing in its scope is outstanding: the one recorded
   latent item, a registration with no team, stays latent and is deliberately
   not carried forward as work.
+
+**SPOND-08 — reconcile the OTJ team from Spond**
+
+Opened 16 August 2026 as a NEW follow-up, deliberately not by reopening
+SPOND-01 or SPOND-03. Those two shipped exactly what they scoped: the
+diagnostics correctly EXPOSE a mismatch, and the closeout audit in this file
+records that nothing in their scope is outstanding. Production then showed the
+next thing, which is a different piece of work with a different risk profile
+because it WRITES: the diagnostics now say `OTJ Argonauts / Spond Gladiators`,
+`OTJ Argonauts / Spond Spartans` and `OTJ Argonauts / Spond no team`, and the
+only remedy on offer is a manager retyping Spond's answer into the players
+page by hand.
+
+- Spond is where the club moves a child between teams, so Spond decides the
+  current team. Making OTJ agree is one action on the Spond links screen.
+- **The identity rule outranks the product rule, and it is enforced in the
+  database.** `spond_reconcile_player_team` refuses to move a child who has no
+  `player_spond_links` row. A proved child is resolved by member id and the
+  name is never consulted. An unlinked child can only be moved by a human first
+  confirming which Spond member they are, which creates the link and moves the
+  team in one transaction. This is the case `planRosterImport`'s cross team
+  guard already refuses and explicitly defers to a durable link for; that guard
+  is unchanged.
+- Everything ambiguous offers nothing and says which ambiguity it is: a member
+  in more than one mapped team's subgroup, a member in a subgroup no team maps
+  (never read as Unassigned), two Spond members of one name, two registered
+  children of one name in the club, an unproved scan, and a club where any team
+  maps a whole Spond group rather than a subgroup.
+- Only the CURRENT season moves, because the RPC derives the season and the
+  caller cannot name one. No player identity is created, no link is deleted or
+  repointed, no register entry or saved session is touched, and nothing is
+  written toward Spond.
+- Concurrency safe by a per (club, player) advisory lock, `FOR UPDATE` and an
+  optimistic expected-team check; a repeat press is an idempotent no-op.
+  "Apply all safe Spond changes" is offered only when NO row still needs an
+  identity settled.
+- Audited by the existing triggers only (`player.team_changed`,
+  `player.spond_linked`), sharing one batch id per press. No new audit source
+  value.
+- Gated: migration `0049_spond_team_reconcile` is reviewed and registered but
+  **not applied**, and the `spond-link-members` deploy that adds the member id
+  to a diagnostic row is its own gated step. Both are safe in either order and
+  the client tolerates each being absent.
 
 **SPOND-06 — event location to venue**
 
