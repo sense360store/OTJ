@@ -85,6 +85,27 @@ describe('validatePublicDrillSnapshot', () => {
     }))).toBe(false)
   })
 
+  it('rejects a drill diagram, at the top level or nested', () => {
+    // DRILL-02 put the Drill Maker diagram on Planner, Session Day and Live,
+    // which are authenticated screens. It publishes nothing, and this is the
+    // half of that statement a test can hold: a diagram key is refused by
+    // VALIDATION rather than merely absent from the builders.
+    //
+    // WHICH mechanism refuses it is worth stating, because a mutation showed
+    // it is not the one the FORBIDDEN list's own comment implies. TOP_KEYS
+    // and MEDIA_KEYS are strict allow lists, so an unknown key is rejected
+    // whatever it is called; deleting 'diagram' from FORBIDDEN leaves these
+    // two assertions passing. That is the boundary being stronger than one
+    // list, not weaker, and it is why this test is written against the
+    // validator rather than against the list. The FORBIDDEN entry is the
+    // second line and is kept aligned with the server's; the text of it is
+    // pinned in activityDiagram.invariant.test.ts.
+    expect(validatePublicDrillSnapshot({ ...snapshot(), diagram: { version: 1, elements: [] } })).toBe(false)
+    expect(validatePublicDrillSnapshot(snapshot({
+      media: [{ ref: 'm1', type: 'image', caption: null, sourceAttribution: null, link: null, diagram: {} } as never],
+    }))).toBe(false)
+  })
+
   it('rejects a non-object and a null', () => {
     expect(validatePublicDrillSnapshot(null)).toBe(false)
     expect(validatePublicDrillSnapshot('drill')).toBe(false)

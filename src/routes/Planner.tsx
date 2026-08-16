@@ -7,6 +7,7 @@ import { useSessions } from '../context/SessionsContext'
 import {
   useActivityTitle,
   useBoards,
+  useDrillDiagramMap,
   useDrillMap,
   useMediaMap,
   useMemberMap,
@@ -15,6 +16,9 @@ import {
   useTeams,
   useVenues,
 } from '../lib/queries'
+import { activityDiagram, activityDrillIds } from '../lib/activityDiagram'
+import type { DrillDiagram } from '../lib/drillDiagram'
+import { ActivityDiagram } from '../components/ActivityDiagram'
 import { blankSession, embedSrc, isSampleMedia, PHASES } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
@@ -162,6 +166,7 @@ export function ActivityCardView({
   drill,
   thumb,
   expandedMedia,
+  expandedDiagram,
   drillHref,
   expanded,
   onToggle,
@@ -179,6 +184,11 @@ export function ActivityCardView({
   drill: Drill | null
   thumb: ReactNode
   expandedMedia: ReactNode
+  // The drill's diagram, beside the media rather than instead of it: the two
+  // answer different questions and a drill can carry both. Null whenever
+  // activityDiagram says there is nothing to show, which includes an England
+  // Football derived drill that is holding one.
+  expandedDiagram: ReactNode
   drillHref: string
   expanded: boolean
   onToggle: () => void
@@ -305,6 +315,7 @@ export function ActivityCardView({
       {expanded && drill && (
         <div className="act-panel" id={panelId} role="region" aria-label={`${drill.title} details`}>
           {expandedMedia}
+          {expandedDiagram}
           {drill.summary && <p className="act-panel-summary">{drill.summary}</p>}
           <div className="setup-grid">
             <MetaCell icon={Icon.clock} k="Duration" v={drill.duration + ' min'} />
@@ -368,6 +379,7 @@ function ActivityRow({
   busy,
   expanded,
   onToggle,
+  diagramByDrill,
 }: {
   act: Activity
   idx: number
@@ -380,6 +392,9 @@ function ActivityRow({
   busy: boolean
   expanded: boolean
   onToggle: () => void
+  // Read once for the whole session by the planner, not per row: a row level
+  // read would be one request per activity for a screen that shows them all.
+  diagramByDrill: Record<string, DrillDiagram | null>
 }) {
   const drillById = useDrillMap()
   const mediaById = useMediaMap()
@@ -388,6 +403,9 @@ function ActivityRow({
   // with a removed drill placeholder from actTitle and is not expandable.
   const drill = act.drillId ? (drillById[act.drillId] ?? null) : null
   const media = drill && drill.mediaId ? (mediaById[drill.mediaId] ?? null) : null
+  // The shared rule, never a local one: empty diagrams and England Football
+  // derived drills are refused here exactly as they are on every other screen.
+  const diagram = activityDiagram(act, drillById, diagramByDrill)
   return (
     <ActivityCardView
       act={act}
@@ -398,6 +416,7 @@ function ActivityRow({
       // Built lazily: the element only renders, and so only mints a signed
       // URL, when the panel is open.
       expandedMedia={drill ? <ActivityPanelMedia media={media} drill={drill} /> : null}
+      expandedDiagram={diagram ? <ActivityDiagram diagram={diagram} /> : null}
       drillHref={drill ? `/drill/${drill.id}` : ''}
       expanded={expanded}
       onToggle={onToggle}
@@ -951,6 +970,11 @@ function PlannerEditor({
   const readOnly = !!existing && existing.coachId !== user?.id && !caps.has('sessions.manage')
   const owner = existing ? memberById[existing.coachId] : undefined
 
+  // The diagrams for every drill this session plans, in one read rather than
+  // one per row. Keyed on the drill ids, so reordering activities or changing
+  // a duration does not refetch, and a drill used twice is fetched once.
+  const diagramByDrill = useDrillDiagramMap(activityDrillIds(session.activities))
+
   const setField = (k: SessionFieldKey, v: string) => setSession((s) => ({ ...s, [k]: v }))
   const setIntentions = (v: string[]) => setSession((s) => ({ ...s, intentions: v }))
   const setVenue = (v: string | null) => setSession((s) => ({ ...s, venueId: v }))
@@ -1169,6 +1193,7 @@ function PlannerEditor({
                   busy={busy}
                   expanded={expandedIdx === i}
                   onToggle={() => setExpandedIdx((cur) => (cur === i ? null : i))}
+                  diagramByDrill={diagramByDrill}
                   dragHandlers={{
                     onDragStart: () => {
                       dragFrom.current = i

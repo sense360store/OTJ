@@ -17,7 +17,10 @@ import {
   useTeamMap,
   useLiveSessionSync,
   useSetLiveActivity,
+  useDrillDiagramMap,
 } from '../lib/queries'
+import { activityDiagram, activityDrillIds } from '../lib/activityDiagram'
+import { ActivityDiagram } from '../components/ActivityDiagram'
 import { embedSrc, sessionMinutes } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
@@ -213,6 +216,9 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
   // A session without a team is a club-wide event, shown as Club.
   const teamName = sessionTeamsLabel(session, teamById)
   const acts = session.activities
+  // Every drill's diagram up front, so stepping between activities on the
+  // touchline never waits on a request.
+  const diagramByDrill = useDrillDiagramMap(activityDrillIds(acts))
   const load = (): LiveSaved | null => {
     try {
       return JSON.parse(localStorage.getItem(lsKey(session.id)) ?? 'null') as LiveSaved | null
@@ -273,6 +279,10 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
   const act = acts[idx]
   const drill = act?.drillId ? drillById[act.drillId] : null
   const media = drill && drill.mediaId ? mediaById[drill.mediaId] : null
+  // The current activity's diagram, through the shared rule. Resolved per
+  // render off a map read once for the whole session, so stepping to the next
+  // activity swaps the diagram with no new request.
+  const diagram = act ? activityDiagram(act, drillById, diagramByDrill) : null
   const total = sessionMinutes(session)
   const actSecs = (act?.duration ?? 0) * 60
   const frac = actSecs ? 1 - remaining / actSecs : 0
@@ -398,6 +408,12 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
           {/* media */}
           {media && drill && <LiveMediaPeek media={media} drill={drill} />}
 
+          {/* the drill's diagram, below the timer and the controls so it can
+              never come between a coach and the buttons this screen exists
+              for. Beside the media, not instead of it: a clip and a drawn
+              plan are different things and a drill can carry both. */}
+          {diagram && <ActivityDiagram diagram={diagram} size="stage" />}
+
           {/* coaching points */}
           {drill && (
             <div className="live-card" style={{ padding: '16px 18px' }}>
@@ -488,6 +504,7 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
   const teamById = useTeamMap()
   const teamName = sessionTeamsLabel(session, teamById)
   const acts = session.activities
+  const diagramByDrill = useDrillDiagramMap(activityDrillIds(acts))
   // The activity the driver is on, or null when nobody is driving. Through
   // the seam, never off the column: a marker nobody ever cleared is not
   // somebody running a session, and reading it raw gave a watcher who opened
@@ -615,6 +632,10 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
 
   const drill = act.drillId ? drillById[act.drillId] : null
   const media = drill && drill.mediaId ? mediaById[drill.mediaId] : null
+  // A watcher sees the same diagram the driver does. No new boundary: the
+  // diagram is a column on a drill every role already reads, which is why the
+  // drill page's own read fires for parents too.
+  const diagram = activityDiagram(act, drillById, diagramByDrill)
   const actSecs = (act.duration || 0) * 60
   const remaining = Math.max(0, actSecs - elapsedSince(session.liveActivityStartedAt))
   const frac = actSecs ? 1 - remaining / actSecs : 0
@@ -672,6 +693,12 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
 
           {/* media */}
           {media && drill && <LiveMediaPeek media={media} drill={drill} />}
+
+          {/* the drill's diagram, below the timer and the controls so it can
+              never come between a coach and the buttons this screen exists
+              for. Beside the media, not instead of it: a clip and a drawn
+              plan are different things and a drill can carry both. */}
+          {diagram && <ActivityDiagram diagram={diagram} size="stage" />}
 
           {/* coaching points */}
           {drill && (

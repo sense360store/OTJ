@@ -1512,6 +1512,61 @@ export function useUpdateDrillDiagram() {
   })
 }
 
+// The diagrams for a SET of drills, which is what a session needs (DRILL-02).
+//
+// A session shows every activity at once, so the per drill useDrillDiagram
+// above would be one request per activity on three different screens. This is
+// one request keyed on the ids the session actually references, and it selects
+// DRILL_DIAGRAM_COLS, the same two columns: the rule that DRILL_COLS never
+// gains `diagram` is untouched, so the library list, the planner's drill read
+// and the share snapshot builders still carry exactly what they carried
+// before. Nothing new is granted either; this is the drills SELECT policy that
+// already lets these screens list the drills.
+//
+// The ids are sorted into the query key so two activity orders naming the same
+// drills share one cache entry rather than fetching twice.
+//
+// FAILURE IS SILENCE, DELIBERATELY. retry is false for the reason
+// useDrillDiagram gives (the one real failure is migration 0046 not being
+// applied, which no retry fixes), and a failed or unsettled read resolves to
+// an empty map, which activityDiagram turns into "this activity has no
+// diagram". That is the same thing a coach sees for the many drills that
+// genuinely have none, so a slow or broken read costs a diagram and never
+// shows an error where a pitch should be. No surface is gated on it: the
+// media, the plan and the timer all render regardless.
+export function useDrillDiagrams(drillIds: readonly string[]) {
+  const ids = useMemo(() => [...new Set(drillIds)].sort(), [drillIds])
+  return useQuery({
+    queryKey: ['drill_diagrams', ids.join(',')],
+    enabled: ids.length > 0,
+    retry: false,
+    queryFn: async (): Promise<Record<string, DrillDiagram | null>> => {
+      const { data, error } = await supabase.from('drills').select(DRILL_DIAGRAM_COLS).in('id', ids)
+      if (error) throw error
+      const out: Record<string, DrillDiagram | null> = {}
+      for (const row of (data ?? []) as { id: string; diagram: unknown }[]) {
+        // A stored value that will not parse reads as no diagram, exactly as
+        // the single read does, so one hand edited row cannot break a screen.
+        out[row.id] = parseDrillDiagram(row.diagram)
+      }
+      return out
+    },
+  })
+}
+
+// The same read as a plain map, the shape every surface composes with. An
+// unsettled or failed read is an empty map rather than undefined, so a caller
+// cannot forget to handle "not yet" and accidentally render a crash instead of
+// a missing diagram.
+export function useDrillDiagramMap(drillIds: readonly string[]): Record<string, DrillDiagram | null> {
+  const { data } = useDrillDiagrams(drillIds)
+  return data ?? EMPTY_DIAGRAMS
+}
+
+// One frozen identity, so a surface memoising on this map does not rerender on
+// every read while the query is still unsettled.
+const EMPTY_DIAGRAMS: Record<string, DrillDiagram | null> = {}
+
 // Sessions and templates that reference a deleted drill keep their activities
 // jsonb untouched; the planner, live view and template screens render a quiet
 // removed drill placeholder for the dangling id.

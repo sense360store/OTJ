@@ -1,0 +1,48 @@
+/* The frame around a session activity's diagram. DrillDiagram.css owns how
+   the pitch itself looks; this owns only where it sits and how big it gets. */
+
+.act-diagram {
+  margin-top: 12px;
+  /* Never wider than the column it is in. The pitch inside is width: 100%
+     with an aspect ratio, so without this a portrait diagram would take the
+     full column width and a matching height, and a phone would scroll. */
+  max-width: 100%;
+}
+
+.act-diagram-label {
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+/* The planner panel and Session Day row. Capped so a portrait pitch does not
+   dominate a card whose job is the plan, not the picture. */
+.act-diagram-panel .dd-surface {
+  max-width: 320px;
+  margin: 0;
+}
+
+/* Live. The coach is holding a phone at arm's length on a touchline, so the
+   diagram is bigger here, but it is still bounded: the timer and the activity
+   controls are the reason this screen exists and they must stay reachable
+   without scrolling past a pitch. */
+.act-diagram-stage {
+  margin-top: 14px;
+}
+.act-diagram-stage .dd-surface {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+@media (max-width: 900px) {
+  /* On a phone the column is already narrow, so the cap does nothing and the
+     pitch simply fits the column. Stated rather than left implicit because
+     the panel cap above is a desktop concern only. */
+  .act-diagram-panel .dd-surface,
+  .act-diagram-stage .dd-surface {
+    max-width: 100%;
+  }
+}

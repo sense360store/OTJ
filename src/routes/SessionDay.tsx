@@ -16,6 +16,7 @@ import { useAuth } from '../hooks/useAuth'
 import {
   useActivityTitle,
   useBoard,
+  useDrillDiagramMap,
   useDrillMap,
   useLinkSessionBoard,
   useMediaMap,
@@ -26,6 +27,9 @@ import {
   useTeamMap,
   useVenueMap,
 } from '../lib/queries'
+import { activityDiagram, activityDrillIds } from '../lib/activityDiagram'
+import type { DrillDiagram } from '../lib/drillDiagram'
+import { ActivityDiagram } from '../components/ActivityDiagram'
 import { sessionMinutes } from '../lib/data'
 import { sessionTeamsLabel, soleCoveredTeamId } from '../lib/sessionTeams'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
@@ -49,8 +53,15 @@ interface RowData {
   act: Activity
   drill: Drill | null
   media: MediaItem | null
-  // Index into the diagram slides when this activity has one.
-  diagramIndex: number | null
+  // Index into the full screen image carousel when this activity's media is
+  // an image. Called a slide rather than a diagram since DRILL-02: the drill's
+  // DRAWN diagram is the field below, and one word for both is how two
+  // different things end up rendered through one path.
+  slideIndex: number | null
+  // The drill's Drill Maker diagram, from the shared resolver. Null covers
+  // every reason at once, the England Football licence included. Beside the
+  // media, never instead of it.
+  diagram: DrillDiagram | null
 }
 
 function kitKey(sessionId: string) {
@@ -74,6 +85,8 @@ function SessionDayView({ session }: { session: Session }) {
   const mediaById = useMediaMap()
   const teamById = useTeamMap()
   const actTitle = useActivityTitle()
+  // One read for the session's drills, not one per activity.
+  const diagramByDrill = useDrillDiagramMap(activityDrillIds(session.activities))
   // Driving, editing and deleting all follow the sessions update RLS arms:
   // sessions.manage on any session, an owner holding sessions.create on
   // their own. The capability condition matters for a coach demoted to
@@ -103,23 +116,30 @@ function SessionDayView({ session }: { session: Session }) {
   // Linking writes at once here, unlike the planner's draft: this view shows
   // the saved session, so there is no save step to ride.
 
-  // Activities resolved once: drill, diagram media (images only; videos and
-  // PDFs are not part of the diagram carousel) and the slide index.
+  // Activities resolved once: drill, image media (images only; videos and PDFs
+  // are not part of the full screen carousel), the slide index, and the
+  // drill's drawn diagram through the shared resolver.
   const { rows, slides } = useMemo(() => {
     const slides: DiagramSlide[] = []
     const rows: RowData[] = session.activities.map((act) => {
       const drill = act.drillId ? (drillById[act.drillId] ?? null) : null
       const media = drill?.mediaId ? (mediaById[drill.mediaId] ?? null) : null
-      const isDiagram = !!media && media.type === 'image' && !!media.storagePath
-      let diagramIndex: number | null = null
-      if (isDiagram && media && drill) {
-        diagramIndex = slides.length
+      const isSlideImage = !!media && media.type === 'image' && !!media.storagePath
+      let slideIndex: number | null = null
+      if (isSlideImage && media && drill) {
+        slideIndex = slides.length
         slides.push({ media, title: drill.title, summary: drill.summary })
       }
-      return { act, drill, media: isDiagram ? media : null, diagramIndex }
+      return {
+        act,
+        drill,
+        media: isSlideImage ? media : null,
+        slideIndex,
+        diagram: activityDiagram(act, drillById, diagramByDrill),
+      }
     })
     return { rows, slides }
-  }, [session.activities, drillById, mediaById])
+  }, [session.activities, drillById, mediaById, diagramByDrill])
 
   // The kit list is the union of equipment across the session's drills, each
   // item remembering which drills need it, in session order.
@@ -289,11 +309,12 @@ function SessionDayView({ session }: { session: Session }) {
                 )}
               </div>
               {r.drill?.setupNotes && <p className="sd-notes">{r.drill.setupNotes}</p>}
-              {r.media && r.diagramIndex !== null && (
-                <button className="sd-thumb" aria-label="Open diagram full screen" onClick={() => setViewerAt(r.diagramIndex)}>
+              {r.media && r.slideIndex !== null && (
+                <button className="sd-thumb" aria-label="Open diagram full screen" onClick={() => setViewerAt(r.slideIndex)}>
                   <MediaThumb media={r.media} showPlay={false} showBadge={false} label="" />
                 </button>
               )}
+              {r.diagram && <ActivityDiagram diagram={r.diagram} />}
             </div>
           ))}
         </div>

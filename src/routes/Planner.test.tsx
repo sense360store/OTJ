@@ -54,7 +54,10 @@ const act: Activity = { phase: 'Skill', drillId: 'd1', duration: 15 }
 
 const noop = () => {}
 
-function render(expanded: boolean, opts: { readOnly?: boolean; busy?: boolean; drill?: Drill | null } = {}): string {
+function render(
+  expanded: boolean,
+  opts: { readOnly?: boolean; busy?: boolean; drill?: Drill | null; diagram?: boolean } = {},
+): string {
   const rowDrill = 'drill' in opts ? opts.drill! : drill
   return renderToStaticMarkup(
     <MemoryRouter>
@@ -65,6 +68,7 @@ function render(expanded: boolean, opts: { readOnly?: boolean; busy?: boolean; d
         drill={rowDrill}
         thumb={<span>thumb</span>}
         expandedMedia={<span>media-preview</span>}
+        expandedDiagram={opts.diagram ? <span>diagram-preview</span> : null}
         drillHref="/drill/d1"
         expanded={expanded}
         onToggle={noop}
