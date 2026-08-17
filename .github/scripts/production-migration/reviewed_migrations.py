@@ -282,17 +282,41 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
         idempotency_key="otj:migration:0049_spond_team_reconcile",
         expected_previous_version="20260812102912",
         expected_previous_name="spond_session_link_unique",
+        # THE THREE PROBES BELOW RESOLVE THE FUNCTION THROUGH to_regprocedure,
+        # AND A PRODUCTION RUN FOUND OUT WHY IT HAS TO BE THAT AND NOT A CAST.
+        # A probe is TOTAL or it is not a probe: false when the object is
+        # absent, true when it is present and correct, and never an error
+        # merely because the thing it was written to look for is not there
+        # yet. The pre gate runs against a database where, by definition,
+        # none of this exists.
+        #
+        # Two separate defects broke that here, one at each gate:
+        #
+        #   * has_function_privilege(role, 'public.f(uuid, ...)', 'EXECUTE')
+        #     resolves the textual signature FIRST, and raises 42883 when
+        #     nothing matches. It cannot return false for an absent
+        #     function, so the PRE gate died on the reviewed object being
+        #     absent, which is the one state the pre gate exists to confirm.
+        #   * pg_get_function_identity_arguments() renders the argument
+        #     NAMES too, so it returns "p_player_id uuid, ..." and never
+        #     "uuid, uuid, ...". That comparison was false with the
+        #     function correctly in place, so the POST gate would have
+        #     failed AFTER the apply had already run. It was not reached
+        #     only because the pre gate stopped the run first.
+        #
+        # to_regprocedure answers both: it returns null rather than raising
+        # for a name, a schema, a type or an overload that does not resolve,
+        # and it resolves the EXACT signature, so the argument types stay
+        # part of the probe and a different overload is still a different
+        # migration. It is the same idiom to_regclass already provides for
+        # the table probes above. Every privilege test is then made against
+        # that resolved p.oid, never against a textual signature.
         objects={
-            # The function exists with exactly the reviewed signature. The
-            # argument types are part of the probe: a different overload
-            # would be a different migration.
+            # The function exists with exactly the reviewed signature.
             "public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)": (
-                "(select count(*) > 0 from pg_proc p "
-                "join pg_namespace n on n.oid = p.pronamespace "
-                "where n.nspname = 'public' "
-                "and p.proname = 'spond_reconcile_player_team' "
-                "and pg_get_function_identity_arguments(p.oid) = "
-                "'uuid, uuid, uuid, text, text, uuid')"
+                "(select to_regprocedure("
+                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)'"
+                ") is not null)"
             ),
             # And it is SECURITY DEFINER with an empty search_path, which
             # is what makes the in body capability check the enforcement
@@ -302,19 +326,24 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             # search_path setting is composed instead of written.
             "it is SECURITY DEFINER with an empty search_path": (
                 "(select count(*) > 0 from pg_proc p "
-                "join pg_namespace n on n.oid = p.pronamespace "
-                "where n.nspname = 'public' "
-                "and p.proname = 'spond_reconcile_player_team' "
+                "where p.oid = to_regprocedure("
+                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)'"
+                ") "
                 "and p.prosecdef "
                 "and p.proconfig @> array[concat('search_path=', chr(34), chr(34))])"
             ),
             # authenticated may execute it and anon may not. Absent
-            # before, present after, like every probe here.
+            # before, present after, like every probe here. anon is tested
+            # rather than assumed from PUBLIC because a grant to PUBLIC
+            # would reach anon without ever naming it, and that reads as
+            # true here.
             "authenticated executes it and anon does not": (
-                "(select has_function_privilege('authenticated', "
-                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', 'EXECUTE') "
-                "and not has_function_privilege('anon', "
-                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', 'EXECUTE'))"
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure("
+                "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)'"
+                ") "
+                "and has_function_privilege('authenticated', p.oid, 'EXECUTE') "
+                "and not has_function_privilege('anon', p.oid, 'EXECUTE'))"
             ),
         },
     ),

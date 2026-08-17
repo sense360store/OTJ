@@ -206,6 +206,15 @@ jobs:
       - name: Workflow invariant tests
         working-directory: .github/scripts/production-migration
         run: python3 test_workflow_invariants.py
+      # The offline tests above pin the SHAPE of an object probe. This one
+      # runs the composed query against a real PostgreSQL in both the state
+      # the pre gate reads and the state the post gate reads, because the
+      # defect it exists for was a true statement about the wrong string
+      # rather than a shape mistake, and only a server could tell them apart.
+      # The runner image ships the server binaries; the script skips itself
+      # if they are ever absent rather than failing for the wrong reason.
+      - name: Object probes are total, against a real PostgreSQL
+        run: bash .github/scripts/production-migration/test_probe_totality.sh
 
   # The Edge Function parser tests are hermetic Deno tests pinned against
   # real FA fixture pages; npm ci first because Deno resolves the npm

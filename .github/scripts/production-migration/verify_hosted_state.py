@@ -80,6 +80,27 @@ _MD5_RE = re.compile(r"\A[0-9a-f]{32}\Z")
 # than assumed: no quote of any kind and no statement separator.
 _PROBE_FORBIDDEN = ('"', "\\", ";", "--", "/*")
 
+# A PROBE MUST BE TOTAL, and a production run found out what it costs when one
+# is not. Total means: false when the reviewed object is absent, true when it
+# is present and correct, and never an error merely because the thing it was
+# written to find is not there yet. The pre gate reads a database where, by
+# definition, none of it exists.
+#
+# What breaks that is EAGER NAME RESOLUTION. Both
+#
+#   'public.f(uuid)'::regprocedure
+#   has_function_privilege('authenticated', 'public.f(uuid)', 'EXECUTE')
+#
+# resolve the text before doing anything else and raise 42883 when nothing
+# matches, so neither can ever answer false. The to_reg* family returns null
+# instead, which is why it is the only resolver allowed here and why every
+# privilege test is made against the oid it hands back rather than against a
+# signature. These two rules are checked before the run connects, so a probe
+# of the broken shape fails at composition rather than against production.
+_PROBE_REG_CAST = re.compile(r"::\s*reg[a-z]+", re.I)
+_PROBE_QUOTED = re.compile(r"'([^']*)'")
+_PROBE_TO_REG_CALL = re.compile(r"to_reg[a-z]+\(\s*\Z", re.I)
+
 
 def get_db_url() -> str:
     url = os.environ.get(DB_URL_ENV, "")
@@ -140,6 +161,36 @@ def sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def assert_probe_is_total(label: str, probe: str) -> None:
+    """Refuse a probe that would raise, rather than return false, when absent.
+
+    See _PROBE_REG_CAST above for why. Both rules are about the same mistake:
+    resolving an object name eagerly, in a gate whose whole job is to report
+    that the object is not there.
+    """
+    cast = _PROBE_REG_CAST.search(probe)
+    if cast:
+        raise SystemExit(
+            f"FAIL: object probe {label!r} uses a {cast.group(0).strip()} cast, which "
+            "raises for an object that does not exist. Use to_regclass or "
+            "to_regprocedure, which return null."
+        )
+    for match in _PROBE_QUOTED.finditer(probe):
+        # A textual OBJECT reference is the one that carries an argument list.
+        # 'public.drills' is a table name and resolves lazily wherever it sits;
+        # 'public.f(uuid)' is a function signature and does not.
+        if "(" not in match.group(1):
+            continue
+        if not _PROBE_TO_REG_CALL.search(probe[: match.start()]):
+            raise SystemExit(
+                f"FAIL: object probe {label!r} passes the signature "
+                f"{match.group(1)!r} somewhere other than to_regprocedure(). Given "
+                "straight to has_function_privilege it raises when the function is "
+                "absent, so the pre gate could never report it absent. Resolve it "
+                "with to_regprocedure and test the privilege against that oid."
+            )
+
+
 def state_select(entry: ReviewedMigration, expected_md5: str) -> str:
     """The one read-only SELECT both phases run."""
     if not _MD5_RE.match(expected_md5):
@@ -150,6 +201,7 @@ def state_select(entry: ReviewedMigration, expected_md5: str) -> str:
                 raise SystemExit(
                     f"FAIL: object probe {label!r} contains {bad!r}; refusing to run it"
                 )
+        assert_probe_is_total(label, probe)
 
     name = sql_literal(entry.ledger_name)
     key = sql_literal(entry.idempotency_key)
@@ -204,7 +256,14 @@ def classify_error(returncode: int, stderr: str, db_url: str) -> str:
     if "statement timeout" in low:
         return f"FAIL: the state query exceeded statement_timeout. ({excerpt})"
     if "permission denied" in low or "does not exist" in low:
-        return f"FAIL: a queried schema or table is unreadable to this role. ({excerpt})"
+        # "does not exist" is not only a permissions symptom. A probe that
+        # resolves a name eagerly raises this for an object that is simply
+        # absent, which is the NORMAL pre-apply state, so the wording says
+        # both rather than sending a reader to look at grants.
+        return (
+            "FAIL: a queried schema object is unreadable to this role or "
+            f"unexpectedly missing. ({excerpt})"
+        )
     return f"FAIL: psql exited {returncode}. ({excerpt})"
 
 
