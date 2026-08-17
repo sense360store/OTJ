@@ -5,10 +5,15 @@ programmes, sessions, drills, Drill Maker, the drill library, Spond attendance,
 groups and bibs, venue and pitch layout, training-day delivery and shareable
 outputs.
 
-**Status: architecture and design pass complete, awaiting approval. No
-application or database behaviour has been implemented.**
+**Status: direction approved as the working model; several parts revised after
+review and awaiting implementation authorisation. No application or database
+behaviour has been implemented by this document set.**
 
-Captured 17 August 2026 against `main` at `2283350`.
+Captured 17 August 2026 against `main` at `2283350`, and revised the same day
+after review. The revision corrected four things: Phase A is reconciled with open
+PR #189 rather than redesigned, station placement carries a position rather than
+only a sub-area id, "a group is a bib colour" is reopened as a product question,
+and the station duration claim is corrected against the arithmetic.
 
 ## The outcome this serves
 
@@ -32,29 +37,43 @@ Captured 17 August 2026 against `main` at `2283350`.
 | 07 | [Roadmap reconciliation](07-roadmap-reconciliation.md) | How this relates to DRILL-02, DRILL-03, TRAIN-02 and the rest. |
 | 08 | [Open questions](08-open-questions.md) | Eight decisions needing human input. Only one blocks any work. |
 
-## The three findings that shaped everything else
+## The findings that shaped everything else
 
-1. **The session model is a linear timeline, and station training is parallel.**
-   Four ten-minute stations read as forty minutes of sequential work, the live
-   timer runs them in series, and there is no data answer to "which activities are
-   the stations?". This is the one structural addition the programme makes.
+1. **Station-based training has no representation at all.** Not a duration
+   defect: four ten-minute stations over four rotations lasts forty minutes and
+   the current sum says forty. What is missing is **station identity** (nothing
+   says which activities form one carousel), **rotation count** (the thing
+   attendance changes), and **parallel delivery** (the live view walks stations in
+   series and has no concept of "rotate"). The total is correct until the
+   operational layer adjusts the group count, and wrong from then on.
 
-2. **Drill Maker is finished as a model and unfinished as a workflow.** The
-   diagram schema, its identity boundary and the editor are all sound. The
-   diagram is invisible in the planner, on session day and in the live view, and
-   a drill cannot be created without leaving the session being planned.
+2. **Drill Maker's delivery half is in flight, and its authoring half is the
+   gap.** PR #189 puts the saved diagram on the planner, session day and both
+   live stages. What remains is that a drill still cannot be created without
+   leaving the plan being written, on either planning surface.
 
-3. **Public sharing is deliberately incapable of carrying an operational plan.**
+3. **Authoring is already duplicated.** The planner and the week plan editor each
+   keep their own activity list, add bar, custom activity literal and row
+   component. Long range planning happens in the week plan editor, so any
+   authoring work must go through one shared seam or diverge three ways.
+
+4. **Venue is a word.** `venues` carries a name and nothing else, so there is no
+   coordinate space to build on. A station needs a position within the allocated
+   area, not just a pitch, or two stations on one pitch are indistinguishable.
+
+5. **Public sharing is deliberately incapable of carrying an operational plan.**
    Every field a group and bib plan is made of sits on a deny list enforced twice.
-   Any share of groups and bibs is a new, separately reviewed decision, and the
-   recommended answer publishes nothing at all.
+   The recommended answer publishes nothing at all, and no phase depends on
+   widening it.
 
-## Recommended first phase
+## Recommended next steps
 
-**COACH-A, which is roadmap item DRILL-02**: show saved drill diagrams in the
-planner, on session day and in the live view. No schema change, already agreed as
-Next, and the cheapest possible proof that the diagram is the right primitive for
-the whole training-day experience.
+1. **Review and merge PR #189** (DRILL-02). Already built, CI green, awaiting
+   human review, a phone check and a roadmap merge conflict resolution. Not this
+   programme's work.
+2. **COACH-B1**, the shared authoring seam: a no-op refactor that gates every
+   later authoring phase and stops week plan authoring becoming a port of dated
+   authoring.
 
 ## House rules these documents follow
 

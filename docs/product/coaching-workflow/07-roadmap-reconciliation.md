@@ -43,34 +43,51 @@ approved.
 | ID | Workstream | Item | Proposed status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
 | COACH-00 | Coaching workflow | End-to-end coaching workflow discovery and architecture | Done (docs only) | P1 | This document set. No code, no migration. |
-| COACH-A | Coaching workflow | Show saved drill diagrams in planner, session day and live | Next | P1 | **Is DRILL-02.** See section 3. |
-| COACH-B | Coaching workflow | Create and draw a drill without leaving the planner | Next | P1 | No schema. Draft preservation is the review. |
-| COACH-C | Coaching workflow | Copy and adapt a drill without rewriting history | Later | P1 | Migration M1, gated. |
+| COACH-A | Coaching workflow | Show saved drill diagrams in planner, session day and live | In progress | P1 | **Is DRILL-02, implemented in open PR #189.** Not this programme's work. See section 3. |
+| COACH-B1 | Coaching workflow | Extract one activity authoring seam, shared by the planner and the week plan editor | Next | P1 | Pure refactor, no user-visible change. Gates every later authoring phase. |
+| COACH-B2 | Coaching workflow | Create and draw a drill from either planning surface | Next | P1 | No schema. Draft preservation across two hosts is the review. Depends on B1. |
+| COACH-C | Coaching workflow | Copy and adapt a drill without rewriting history | Later | P1 | Migration M1, gated. Depends on B1. |
 | COACH-D | Coaching workflow | Drill Maker authoring improvements | Later | P2 | No schema. Can run in parallel. |
 | COACH-E | Coaching workflow | Week plans, promotion and two deliveries of one plan | Later | P2 | Migration M2, gated. Copy rename. |
-| COACH-F | Coaching workflow | Station blocks: parallel stations and honest session duration | Later | P1 | Migration M3, gated. Touches lifecycle and ics. |
-| COACH-G | Coaching workflow | Suggested groups and derived readiness | Later | P2 | Depends on COACH-F. No schema. |
+| COACH-F | Coaching workflow | Station blocks: station identity, rotation and parallel delivery | Later | P1 | Migration M3, gated. Touches lifecycle and ics. |
+| COACH-G | Coaching workflow | Suggested groups, surfaced group collisions and derived readiness | Later | P2 | Depends on COACH-F. No schema under the recommended option. Scope revisited if Q9 answers option B. |
 | COACH-H | Coaching workflow | Venue layout: reusable training areas | Later | P2 | Migration M4, gated. Audit label correction. |
-| COACH-I | Coaching workflow | Session venue composer: place the week's stations | Later | P2 | **Is DRILL-03.** Depends on F and H. |
-| COACH-J | Coaching workflow | Training-day mobile delivery | Later | P1 | Depends on A, F, G, H, I. Pull QUALITY-02 in here. |
-| COACH-K | Coaching workflow | Safe group and bib share output | Later | P2 | **Supersedes TRAIN-02's scope.** Security review. |
+| COACH-I | Coaching workflow | Session venue composer: place stations by position within the venue | Later | P2 | **Is DRILL-03.** Depends on F and H. |
+| COACH-J | Coaching workflow | Training-day mobile delivery | Later | P1 | Depends on #189, F, G, H, I. Pull QUALITY-02 in here. |
+| COACH-K | Coaching workflow | Safe group and bib share output (generated message) | Later | P2 | Depends on G. Publishes nothing. Blocks nothing. |
+| COACH-K2 | Coaching workflow | Public operational projection, and DRILL-02b (publishing a diagram) | Parked | P3 | **Separate security decision. Not a prerequisite for any other row.** Relates to TRAIN-02. |
 | COACH-L | Coaching workflow | Optional drill motion | Parked | P3 | Gated on evidence of use, not enthusiasm. |
 
 ## 3. How this relates to existing items
 
-### DRILL-02 (Next, P1)
+### DRILL-02 (In progress, P1): already implemented in PR #189
 
-**Recommendation: keep the row, keep the status, and record that COACH-A is the
-same work.** Do not renumber it and do not mark it superseded. Its outcome
-("Show existing drill diagrams across Planner, Session Day, Live and print/share
-views") is accurate and the audit confirms it is genuinely open: `drills.diagram`
-is read only by `DrillDetail.tsx` and `DrillDiagramEditor.tsx`.
+**Corrected after review.** The first version of this section described DRILL-02
+as open and recommended designing it. It is not open: **PR #189 implements it**,
+is CI green on all 10 checks, and has moved DRILL-02 to **In progress** on the
+roadmap in its own diff. This programme reconciles with it rather than
+redesigning it.
 
-One narrowing this programme proposes: DRILL-02's wording includes **print and
-share** views. Publishing a diagram is a rights and free-text decision
-(`05-security-share-boundary.md` section 5), not a rendering one. Recommend
-splitting the share half out to COACH-K so DRILL-02 stays a small, shippable,
-no-schema PR.
+**Recommendation: nothing to change on the row.** #189 already sets it to In
+progress with a reference to itself, and deliberately does not mark it Done
+because the print and share half of its wording needs a separate decision.
+
+**Two things this programme adopts from #189 rather than deciding for itself:**
+
+1. **DRILL-02b**, proposed in the PR: whether a coach-drawn diagram may be
+   published at all. It is adopted here as **COACH-K2**, parked, and it blocks
+   nothing.
+2. **Print needs no row.** #189 traced it: `window.print()` exists once in
+   `src/`, in `PublicShare.tsx`, and `@media print` targets only `.public-*`.
+   There is no authenticated print path, so print inherits the public share gate
+   and there is nothing to schedule separately.
+
+**One merge hazard, flagged rather than resolved.** #189 is `mergeable_state:
+dirty` against current `main`, and the conflicting file is
+`docs/roadmap/master-roadmap.md`, which this documentation branch also touches.
+Whoever merges second must reconcile the DRILL-02 row by hand so it does not end
+up asserting two different statuses. This branch only adds a pointer line in a
+different section, so the conflict should be small, but it is not automatic.
 
 ### DRILL-03 (Later, P2)
 
@@ -87,7 +104,11 @@ blocks (COACH-F).
 
 ### TRAIN-02 (Later, P1) — safe no-login Training Day share
 
-**Recommendation: keep the row, and revise its stated payload before it starts.**
+**Recommendation: keep the row, keep it off the critical path, and revise its
+stated payload before it starts.** Reaffirmed after review: widening login-free
+public sharing is **not** a prerequisite for any part of the coaching workflow
+programme, and no phase depends on it. The parent-facing outcome is met by the
+generated message in COACH-K, which publishes nothing.
 
 Its current acceptance criteria say the public payload carries "name, date, time,
 venue, plan". The audit found that **three of those five are on the forbidden-key
@@ -179,26 +200,31 @@ will benefit from it if it lands first, but none of them depends on it.
 The current roadmap's delivery order says: continue Drill Maker with DRILL-02
 before the larger venue composer DRILL-03, then pick up QUALITY-01.
 
-**This programme agrees with that order and refines it.** DRILL-02 is COACH-A, it
-is still the right next thing, and this document set has now given it a reason
-beyond "it is next": it is the cheapest possible proof that the diagram is the
-right primitive for the whole training-day experience. If coaches do not use the
-diagram once it is visible everywhere, the rest of the programme needs
-rethinking, and that is worth knowing after one small PR rather than after five
+**This programme agrees with that order and refines it.** DRILL-02 is COACH-A and
+is already built; merging it is the cheapest possible proof that the diagram is
+the right primitive for the whole training-day experience. If coaches do not use
+the diagram once it is visible everywhere, the rest of the programme needs
+rethinking, and that is worth knowing from one merged PR rather than after five
 migrations.
 
-Proposed sequence:
+Proposed sequence, revised after review:
 
-1. **COACH-A** (DRILL-02). Small, no schema, already agreed.
-2. **COACH-B**. The workflow gap coaches actually feel.
-3. **QUALITY-01**, unchanged, since it gates several later items and this audit
+1. **Review and merge PR #189** (COACH-A / DRILL-02), including the phone check
+   its own author asked for and the roadmap conflict resolution. Not new work.
+2. **COACH-B1**, the shared authoring seam. A no-op refactor that gates every
+   later authoring phase, and the thing that stops week plan authoring becoming a
+   port of dated authoring.
+3. **COACH-B2**, create and draw a drill from either surface. The workflow gap
+   coaches actually feel.
+4. **QUALITY-01**, unchanged, since it gates several later items and this audit
    has reduced its cost.
-4. **COACH-F**, because it unblocks G, I and J and because its arithmetic is the
-   riskiest thing in the programme and should not be rushed at the end.
-5. **COACH-H**, in parallel if capacity allows, since it is independent.
-6. Then C, D, E, G, I, J by capacity.
-7. **COACH-K** only after a club decision on section 3's TRAIN-02 revision.
-8. **COACH-L** only on evidence.
+5. **COACH-F**, because it unblocks G, I and J, and because station identity is
+   a hard prerequisite rather than a nicety.
+6. **COACH-H**, in parallel if capacity allows, since it is independent.
+7. Then C, D, E, G, I, J by capacity.
+8. **COACH-K** (the generated message) after G. It needs no club decision.
+9. **COACH-K2** and **COACH-L** only on an explicit decision and on evidence
+   respectively. Neither blocks anything.
 
 ## 5. What this task changed on the roadmap
 

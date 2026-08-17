@@ -111,9 +111,32 @@ payload, and to attach controls proportionate to it:
 Recorded as `08-open-questions.md`, Q1. It is a club decision, not an engineering
 one.
 
+## 4a. Public operational sharing is not a prerequisite for anything
+
+Stated plainly after review, because a design document that merely *permits* a
+decision tends to be read as scheduling one.
+
+**No phase of the coaching workflow programme depends on widening login-free
+public sharing.** Checked per phase: B, C, D, E, F, G, H, I and J neither read
+nor write a share. COACH-K's deliverable is a generated message composed in the
+browser and sent by a coach, which publishes nothing, mints no URL and stores no
+snapshot. The public projection (COACH-K2) and DRILL-02b are parked behind
+explicit decisions and block nothing.
+
+If Q1 is never answered, the parent-facing outcome the discovery asks for is
+still delivered in full.
+
 ## 5. Should a drill diagram be publishable?
 
 `diagram` is on the forbidden list today, and `0046` says C1 does not publish one.
+**PR #189 confirmed this independently and declined to change it**, recording the
+work as DRILL-02b: it would require changing the Edge `DRILL_COLS`,
+`projectDrillFields`, `TOP_ALLOWED` and `REF_DRILL_ALLOWED`, removing `'diagram'`
+from `FORBIDDEN_ANYWHERE`, the three client snapshot types and their mirrored key
+sets, redeploying **both** Edge Functions (they share `_shared/share.ts`, and
+`read-content-share` is the only `verify_jwt = false` function in the project),
+and refreshing every existing share because a snapshot is frozen. It would also
+delete the invariant test block that currently fails the build on exactly this.
 
 The arguments for publishing: it is the club's own drawing, it carries no person
 by construction and by check constraint, and a shared session plan without its
@@ -261,8 +284,9 @@ review and are not auto-merged:
 | M3 blocks | Migration review | Same. |
 | M4 `venues.layout` | Migration review, plus shape-boundary review | A new jsonb shape boundary and a new check constraint. |
 | M5 diagram widening | Migration review, plus rollout review | Version rollout hazard. |
+| Station `place` on an activity | Ordinary PR review, plus a deny-list update | It names a location. Add it to both forbidden-key lists when it lands, not when it is first shared. |
 | Generated message composer | Security review | It renders children's names into text a human will send. |
-| Any public projection widening | **Full security review**, separately | Sections 4, 5 and 6. |
+| Any public projection widening (COACH-K2, DRILL-02b) | **Full security review**, separately | Sections 4, 4a, 5 and 6. Parked; blocks nothing. |
 | Edge Function deploy for a new projection | Deploy from files, read the source back byte for byte | `CLAUDE.md`, Edge Function deploys. |
 
 Nothing else in the programme touches the security boundary. Drill authoring,

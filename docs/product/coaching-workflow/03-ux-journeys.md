@@ -44,32 +44,56 @@ the week plan.
 **Key detail:** a session with no block is unchanged in every respect. The block
 is opt-in and additive.
 
-## Journey 3: create a drill without leaving the session
+**The block belongs to the plan, not to the date.** A week plan carries its
+station structure so that applying it to Tuesday and Saturday delivers the same
+carousel twice. That is why `templates` gains the block metadata alongside
+`sessions`, and why the block editor lives in the shared authoring seam rather
+than in the planner.
+
+## Journey 3: create a drill without leaving the plan
 
 **Device: laptop. When: mid-planning. This is the journey the product does not
-have today.**
+have today, and it must work from BOTH planning surfaces.**
 
-1. In the planner's add bar, **New drill** beside Add from library and Add
-   custom.
+**Revised after review.** An earlier draft described this from the dated planner
+only. Long range planning happens in the week plan editor, weeks or months before
+a dated session exists, and that editor already keeps its own separate copy of
+the activity list, add bar and row component
+(`00-current-state-audit.md` section 9). Building this in the planner alone would
+leave the long range surface last to receive it and turn a two-way divergence
+into a three-way one.
+
+**So the journey is written once, against the shared authoring seam, and both
+hosts get it in the same change.**
+
+From a week plan (Programmes, week 3) or from a dated session (the planner):
+
+1. In the add bar, **New drill** beside Add from library and Add custom.
 2. A small form: title, phase, duration, objective. Nothing else is required.
-   *Reuses `DrillFormModal.tsx`, opened from the planner for the first time.*
-3. Save. The drill exists in the library and the activity is already in the
-   session.
-4. **Draw it** opens the Drill Maker on the new drill and returns to the planner
-   on save, with the session draft intact.
+   *Reuses `DrillFormModal.tsx`.*
+3. Save. The drill exists in the library and the activity is already in the plan.
+4. **Draw it** opens the Drill Maker on the new drill and returns to where it was
+   opened from, with the draft intact.
    *Reuses `src/routes/DrillDiagramEditor.tsx` at `/drill/:id/diagram`, plus a
-   return path.*
+   return path that knows its origin.*
 5. A **custom activity** (title only) gains **Turn into a drill**, which is the
    same journey starting from a title the coach already typed.
 
-**The rule that makes this safe:** the planner holds an unsaved draft. Leaving it
-to draw must not lose the draft. The session is saved before the editor opens, or
-the draft is preserved and restored. `sessionSubmit.ts` and the existing guarded
-submit are where that is decided.
+**The rule that makes this safe, and it now has two cases:** both hosts hold an
+unsaved draft, and leaving to draw must not lose either. The planner's draft
+lives in `sessionSubmit.ts` and `useGuardedSubmit`; the week plan editor's lives
+in `TemplateFormModal`'s own form state, inside a modal, which is the harder of
+the two because a modal unmounts. Deciding this once, in the seam, is the point.
 
-**England Football drills are excluded from step 4**, unchanged. The club may use
-FA diagrams as they are and may not redraw them
-(`src/lib/drillDiagramRights.ts`).
+**England Football drills are excluded from step 4**, unchanged, and now on every
+surface: `diagramForDisplay` (added by PR #189) already withholds an FA drill's
+hand drawn diagram wherever a session shows it, and `diagramEditDecision`
+withholds the affordance to draw one. The two agree by construction and a test in
+#189 pins that they do.
+
+**What a coach sees of the diagram afterwards** is already built: PR #189 renders
+it in the planner's expanded panel, on session day and on both live stages
+(`00-current-state-audit.md` section 18).
 
 ## Journey 4: reuse a drill, as-is or adapted
 
@@ -128,10 +152,25 @@ coming".
 **Coach, weekly:**
 
 1. On the session, **Where the stations go**.
-2. The venue's areas render. Each station in the block is a numbered marker,
-   dragged into an area or tapped into it.
-3. A station with no area is shown as unplaced rather than hidden, because an
-   unplaced station is the thing a coach needs to notice.
+2. The venue's areas render as named rectangles. Each station in the block is a
+   numbered marker, **dragged to the spot on the ground where it should be set
+   up**, not merely dropped onto a pitch.
+3. The marker's derived area is shown as a label beside it ("Station 3, Pitch
+   2"), read from where it landed rather than chosen separately, so the two can
+   never disagree.
+4. A station placed on the grass between two pitches reads as "not in a marked
+   area", which is a legitimate answer and not an error.
+5. A station **not yet placed** is listed as unplaced rather than hidden or drawn
+   at a default position, because an unplaced station is the thing a coach needs
+   to notice.
+6. Optionally, a station can be given a footprint rather than a spot, for the
+   case where the answer is "this drill uses the whole of Pitch 2".
+
+**Why the position and not just the pitch.** At Flushdyke, two pitches side by
+side and four stations means two per pitch. Told only "station 3 is on Pitch 2",
+a coach arriving still has to ask where on Pitch 2, and which of the two stations
+on it is theirs. That question is exactly the verbal briefing this programme
+exists to remove.
 
 **A venue with no layout** offers no composer and says so in one sentence, with a
 link an admin can follow. It is not an error state.
@@ -148,7 +187,9 @@ link an admin can follow. It is not an error state.
    answers "where does everything go".
 4. Tap station 2. The drill fills the screen: the diagram large, the objective,
    the coaching points, the setup notes, what equipment it needs.
-   *Reuses `DrillDiagramView`, the drill's own fields.*
+   *Reuses `ActivityDiagram` and `DrillDiagramView` exactly as PR #189 mounts
+   them on session day, so this is a layout around an existing seam rather than
+   a new rendering path.*
 5. Back to the overview. Swipe or tap moves between stations.
 6. "Your group starts here" is stated on the station a coach's group begins at,
    derived from group order.
@@ -166,16 +207,22 @@ everyone, not a briefing one person gives.
 The discovery asks how to fit all the stations on a phone and lists pinch zoom,
 pan, swipe, tap to focus, zoom to station and return to overview.
 
-**Decision: overview with numbered markers, tap to focus, back to overview.
-Swipe moves between stations. Pinch and pan are available and load-bearing for
-nothing.**
+**Decision: overview with numbered markers at their real positions, tap to focus,
+back to overview. Swipe moves between stations. Pinch and pan are available and
+load-bearing for nothing.**
 
 The reason is what gets drawn. If the overview tries to render four drill
 diagrams inside four pitch areas at 390 pixels wide, nothing is legible and zoom
 becomes mandatory to use the product at all. If the overview draws **areas and
-numbers only**, it is legible at phone width with no zoom, and the detail lives
-one tap away where it has the whole screen. Zoom then becomes what it should be:
-something a coach may do, not something they must do.
+numbered markers only**, it is legible at phone width with no zoom, and the
+detail lives one tap away where it has the whole screen. Zoom then becomes what
+it should be: something a coach may do, not something they must do.
+
+**The placement model is what makes this work rather than a cost against it.**
+Four stations carrying positions are four separated tap targets. Four stations
+carrying only a pitch id would coincide in pairs at each pitch's centre, and no
+amount of zooming would separate them, because the information is not in the
+data. The lighter model is also the legible one.
 
 Accessibility consequences, which point the same way:
 

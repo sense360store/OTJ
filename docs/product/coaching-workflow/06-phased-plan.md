@@ -31,94 +31,149 @@ from `docs/roadmap/master-roadmap.md`.
 
 ## Phase A: show the drill diagram everywhere a drill appears
 
-*This is roadmap item DRILL-02, already **Next**.*
+*This is roadmap item DRILL-02, and it is **implemented in open PR #189**.*
 
-**Outcome.** A coach sees the drill's own diagram in the planner, on session day
-and in the live view, not only on the drill page.
+**Revised after review. This phase is not to be designed, scoped or built by
+this programme. It exists, it is in review, and the plan's job is to reconcile
+with it and inherit from it.** PR #189 was read directly at head `262ab0e`;
+`00-current-state-audit.md` section 18 records what it does.
 
-**Scope.**
-- Planner expanded activity panel renders the saved diagram beside the media.
-- Session Day Setup card renders it, and it opens full screen.
-- Live view renders it for the current activity.
-- The full-screen viewer handles a saved diagram as well as a media image.
+**Status.** Open, CI green on all 10 checks, no human review yet,
+`mergeable_state: dirty` because it branched from `e07a4cf` and `main` has moved
+to `2283350`. The conflict is `docs/roadmap/master-roadmap.md`, which both it and
+this documentation branch changed.
 
-**Non-goals.** No editing from those surfaces. No public sharing of a diagram
-(that is Phase K). No schema change.
+**Outcome, as delivered by #189.** A coach sees the drill's own diagram in the
+planner's expanded panel, on session day and on both live stages, not only on the
+drill page.
 
-**Reuse.** `src/lib/drillDiagram.ts`, `src/components/DrillDiagramView.tsx`,
-`useDrillDiagram` (`src/lib/queries.ts:1488`), `DiagramViewer`. Note the naming
-collision recorded in `00-current-state-audit.md` section 7: `DiagramViewer`
-shows media images, `DrillDiagramView` shows saved diagrams.
+### The design decisions this programme inherits and must not contradict
 
-**Database.** None. **RLS.** None. **Edge Functions.** None.
+| Decision in #189 | What later phases must respect |
+|---|---|
+| `DrillDiagramView` is the canonical renderer | Phase J's station screen mounts it; it does not draw a pitch. |
+| Structured diagrams stay separate from uploaded-media `DiagramViewer` | Nothing rasterises a diagram, wraps it as a `MediaItem`, or pushes it through the media viewer to borrow a modal. |
+| `ActivityDiagram` owns the read, `ActivityDiagramView` is pure | Phase J reuses the seam rather than calling `useDrillDiagram` itself. |
+| `diagramForDisplay(diagram, source)` is the ONE display rule | No screen derives provenance for a diagram. An invariant test enforces this. |
+| **The per-drill cached read is deliberate** | It shares `['drill_diagram', id]` with the drill page and TanStack dedupes concurrent mounts. A batched `.in('id', ids)` read was considered and rejected as a second cache shape over already-cached rows. **Do not change it** unless a later, measured problem justifies it, and then say what was measured. |
+| `DRILL_COLS` is never widened to carry `diagram` | Still holds. An invariant test fails the build on it. |
+| Planner diagram lives in `.act-panel`, never the draggable `.act-card` | Phase B's authoring seam keeps the same separation. |
+| No public share, no print | Phase K, and only after the security decision. |
 
-**Backwards compatibility.** A drill with no diagram renders exactly as today.
+An earlier draft of this document proposed batching the diagram read and adding a
+full-screen treatment on session day. **Both are withdrawn.** The read is
+intentional and #189 states why; the full-screen question was explicitly declined
+there as a bigger UX decision than that work needed, and it belongs to Phase J
+where the whole training-day interaction is designed at once.
 
-**Reads to watch.** The diagram is a per-drill read today
-(`useDrillDiagram(id)`). A session with six drills would issue six reads on
-session day. Either batch it into a list read or accept the cost after measuring;
-decide with the code in front of you, not here.
+**Also inherited: print is not a deferred item.** #189 traced it rather than
+assuming: `window.print()` appears once in `src/`, in `PublicShare.tsx:113`, and
+`@media print` targets only `.public-*`. There is no authenticated print path, so
+print inherits the public share gate exactly and there is nothing to defer.
 
-**Tests.** Screen-level tests that a session's saved diagram appears on planner,
-session day and live. Existing `drillMaker.screens.test.tsx` is the pattern.
+### What is left of DRILL-02 after #189
 
-**Manual smoke.** Draw a diagram, add the drill to a session, open the planner
-row, open session day, start the live view, confirm it renders in all three and
-opens full screen on a phone-width viewport.
+**DRILL-02b**, proposed by #189 itself and adopted here as part of **Phase K**:
+whether a coach-drawn diagram may be published at all. It requires changing the
+Edge `DRILL_COLS`, `projectDrillFields`, `TOP_ALLOWED`, `REF_DRILL_ALLOWED`,
+removing `'diagram'` from `FORBIDDEN_ANYWHERE`, the three client snapshot types
+and their mirrored key sets, redeploying **both** Edge Functions, and refreshing
+every existing share because a snapshot is frozen. That is a security-reviewed
+change and it is not a prerequisite for anything else in this programme.
 
-**Dependencies.** None. **Rollout risk.** Low.
+**This programme's only action on Phase A: nothing.** Do not implement it, do not
+duplicate it, and do not open a competing PR. If it needs anything, it needs a
+human review and a merge, plus the phone check its own author asked for.
 
-**Rollback.** Revert. Nothing was written.
+**Dependencies.** None. **Rollout risk.** Carried by #189.
 
-**PR boundary.** One PR, or two if the read shape needs changing first.
+**PR boundary.** #189, unchanged.
 
 ---
 
-## Phase B: create a drill without leaving the planner
+## Phase B: one authoring seam, serving the week plan and the dated session
 
-**Outcome.** A coach planning a session can create the drill they have in mind,
-draw it, and carry on planning.
+**Revised after review.** An earlier draft scoped this as "create a drill without
+leaving the planner". That would have delivered the feature to the dated surface
+only, while long range planning happens in the week plan editor weeks earlier,
+and it would have deepened a divergence that already exists.
+
+**Outcome.** A coach writing a plan, whether a programme week or Tuesday's
+session, can create the drill they have in mind, draw it, and carry on.
+
+### B1: extract the seam (no new feature)
+
+**Scope.** One shared activity-list editor, used by `Planner.tsx` and
+`TemplateFormModal.tsx`. It owns the list, the add bar, the row, reorder, phase
+and duration. Its hosts supply what genuinely differs: what the list belongs to,
+how the draft is held and saved, and whether dated affordances appear.
+
+**Why first, and why on its own.** The two editors already duplicate the add bar,
+the custom activity literal
+(`{ phase: 'Skill', title: 'Custom activity', duration: 10 }`, in both files),
+the reorder handlers and the row component
+(`00-current-state-audit.md` section 9). Every later authoring phase adds to that
+surface, so extracting once is cheaper than porting three times. It is also a
+pure refactor with no user-visible change, which makes it independently
+reviewable against the existing tests.
+
+**Non-goals.** No new affordance at all in B1. If a user notices B1, it went
+wrong.
+
+**Tests.** The existing `Planner.test.tsx` and `TemplateFormModal.test.tsx`
+suites pass unchanged. A test that both hosts mount the same seam, in the style
+of the existing source-text invariants.
+
+**Rollback.** Revert. Nothing user-visible moved.
+
+### B2: create and draw a drill, from either host
 
 **Scope.**
-- **New drill** in the planner's add bar.
+- **New drill** in the shared add bar, beside Add from library and Add custom.
 - A minimal create form: title, phase, duration, objective.
-- **Draw it** opens `/drill/:id/diagram` and returns to the planner afterwards.
+- **Draw it** opens `/drill/:id/diagram` and returns to **where it was opened
+  from**, with the draft intact.
 - **Turn into a drill** on a custom (title-only) activity.
 
 **Non-goals.** No adaptation semantics (Phase C). No Drill Maker tool changes
-(Phase D). No new capability: creating a drill from here needs `drills.create`,
-which is exactly what creating one from the library needs.
+(Phase D). No new capability: this needs `drills.create`, exactly as creating one
+from the library does.
 
-**Reuse.** `DrillFormModal.tsx`, `useInsertDrill`, `AddActivityBar`
-(`src/routes/Planner.tsx:570`), `DrillDiagramEditor`.
+**Reuse.** `DrillFormModal.tsx`, `useInsertDrill`, `DrillDiagramEditor`, and the
+B1 seam.
 
 **Database.** None. **RLS.** None. **Edge Functions.** None.
 
-**The one hazard.** The planner holds an unsaved draft. Leaving it to draw must
-not lose it. Decide explicitly: save the session first, or preserve and restore
-the draft. `src/lib/sessionSubmit.ts` and `useGuardedSubmit` are where this is
-settled.
+**The hazard, and it has two cases.** Both hosts hold an unsaved draft and
+leaving to draw must not lose either.
 
-**England Football.** An FA-derived drill gets no Draw it, unchanged
-(`src/lib/drillDiagramRights.ts`).
+- The planner's draft lives in `sessionSubmit.ts` and `useGuardedSubmit`.
+- The week plan editor's lives in `TemplateFormModal`'s own form state **inside a
+  modal**, which unmounts. This is the harder case and it is the reason the seam
+  decides the round trip once rather than each host improvising.
 
-**Tests.** The return path preserves the draft. A coach without `drills.create`
-sees no New drill. A custom activity promotes to a drill and keeps its title,
-phase and duration.
+Decide explicitly per host: save before opening the editor, or persist and
+restore the draft. Do not let the two answers diverge silently.
 
-**Manual smoke.** Plan a session, create a drill mid-flow, draw it, return, save,
-confirm the drill is in the library and in the session.
+**England Football.** An FA-derived drill gets no Draw it, unchanged, and PR
+#189's `diagramForDisplay` already withholds a stranded FA diagram on every
+surface that shows one. The two rules agree by construction and #189 pins it.
 
-**Dependencies.** Better after Phase A, so the drawing is visible where it was
-made. Not blocked by it.
+**Tests.** The return path preserves the draft, from both hosts. A coach without
+`drills.create` sees no New drill on either. A custom activity promotes to a
+drill and keeps its title, phase and duration. An FA drill offers no Draw it.
 
-**Rollout risk.** Low, except the draft-preservation hazard, which is the whole
-review.
+**Manual smoke.** Create a drill mid-flow from a programme week, draw it, return,
+save. Repeat from the dated planner. Confirm the drill is in the library and in
+both plans.
 
-**Rollback.** Revert.
+**Dependencies.** B1. Better after #189 merges, so the drawing is visible where
+it was made, but not blocked by it.
 
-**PR boundary.** One PR for the create path, one for the diagram round trip if
-draft preservation turns out to be substantial.
+**Rollout risk.** Low, except draft preservation, which is the whole review.
+
+**PR boundary.** B1 one PR. B2 one PR, possibly two if the modal round trip is
+substantial.
 
 ---
 
@@ -249,8 +304,35 @@ text.
 
 ## Phase F: station blocks
 
-**Outcome.** Four stations of ten minutes reads as forty minutes of rotation, not
-forty minutes of sequence, and the session total is honest.
+**Reframed after review.** An earlier draft justified this phase as a duration
+defect and claimed a one hour session reads as ninety minutes. **That was wrong.**
+Four 10 minute stations run as four rotations lasts 40 minutes and the sum of
+four 10 minute activities is 40. The present total is not wrong merely because
+the stations are parallel (`00-current-state-audit.md` section 17).
+
+**The genuine need is station identity, parallel delivery and rotation. Duration
+correctness is a consequence, and a narrow one.**
+
+**Outcome.** A session can say which activities form one carousel, how many
+rotations it runs, and deliver it as a carousel rather than a queue.
+
+### Why this phase exists, in priority order
+
+1. **Station identity.** Nothing today says which activities are stations of one
+   block. The venue composer (Phase I), "your group starts at station 2" (Phase
+   G) and the training-day overview (Phase J) all need that set, and none of
+   them can be built without it. **This is the reason the phase exists.**
+2. **Parallel delivery.** `LiveSession.tsx` walks activities one at a time and
+   shows the current one to everybody, but during a carousel every group is at a
+   different station and the event that matters is **rotate**. This is wrong
+   today, independently of any arithmetic.
+3. **Rotation count.** The number of rotations is what attendance changes, one
+   or two days before the session, and there is nowhere to record it.
+4. **Duration, last.** The total is correct while `rotations == stations` with
+   equal-length stations, and diverges otherwise: 4 stations with 3 groups is 30
+   minutes against a stated 40; 6 stations with 4 groups is 40 against 60. So
+   this is not a standing defect, it is a correct answer that stops being correct
+   the moment the operational layer adjusts the group count.
 
 **Scope.**
 - `sessions.blocks` and `templates.blocks`; `block_id` on an activity.
@@ -311,13 +393,25 @@ four colours, ready".
 - **Suggest groups**: a pure function proposing a balanced split of the included
   children into the block's station count, keeping team mates together, assigning
   a bib colour per group. It produces a **draft** the coach edits.
-- Group order determines starting station, derived.
+- Group order determines starting station, derived from the bib vocabulary order
+  `tonightGroups` already applies.
+- **Surface the two group collisions**, which is new scope added after review:
+  two teams sharing a default `teams.bib_colour` currently merge into one group
+  silently, and every child with no effective bib merges into one "No bibs"
+  group. Both become stated, with the fix beside them, rather than left silent
+  (`00-current-state-audit.md` finding 2, `02-target-product-model.md` section
+  6.2).
 - A **readiness readout** on the session, derived and stored nowhere.
 
 **Non-goals.** **No stored workflow states**
-(`02-target-product-model.md` section 5). No group entity. No change to how
-Spond, presence or inclusion work. No automatic anything: nothing suggests
-without a press and nothing saves without Save groups.
+(`02-target-product-model.md` section 5). **No group entity**, which is the
+recommendation in `02-target-product-model.md` section 6.4 (option C) and is
+subject to the explicit product decision at `08-open-questions.md` Q9. If that
+decision comes back as option B, this phase gains one column on
+`register_entries` and one jsonb list, and its scope is revisited before it
+starts rather than during it. No change to how Spond, presence or inclusion work.
+No automatic anything: nothing suggests without a press and nothing saves without
+Save groups.
 
 **Reuse.** `src/lib/tonight.ts` in its entirety, `src/lib/bibs.ts`,
 `src/routes/SessionRegister.tsx`, `useSaveTonight`, `sessionLifecycle.ts`.
@@ -409,44 +503,68 @@ One for the admin editor.
 
 *This is roadmap item DRILL-03, reframed by this programme.*
 
-**Outcome.** "Station 1 goes here, station 2 goes here", set once a week, seen by
-every coach.
+**Outcome.** "Station 1 goes *here*, station 2 goes *there*", set once a week,
+seen by every coach, precise enough that nobody has to be told.
+
+**Revised after review.** An earlier draft stored only an `area_id` per station.
+That is too coarse for the stated requirement: at Flushdyke two pitches side by
+side host four stations, so two stations share a pitch and `area_id` renders them
+coincident at its centre. A coach arriving still has to ask which is theirs and
+where on the pitch it goes, which is the briefing this programme exists to
+remove.
 
 **Scope.**
-- `area_id` on a station activity, in `sessions.activities`.
-- A composer on the session: drag or tap each station into an area.
-- Unplaced stations are shown as unplaced.
-- An orphaned `area_id` after a layout or venue change is stated, never silently
-  dropped and never drawn at a guess.
+- A `place` object on a station activity: `{ x, y }` in the venue layout's own
+  fraction space, optionally `{ x, y, w, h }` for a station that occupies an area
+  rather than a spot.
+- **The sub-area is derived from the position, never stored beside it**, so the
+  two can never disagree.
+- A composer on the session: drag each numbered station to where it should
+  physically be set up. The derived area is shown as a label read back from where
+  it landed.
+- A station placed between marked areas reads as "not in a marked area", a
+  legitimate answer.
+- An unplaced station is listed as unplaced, never drawn at a default position.
 
 **Non-goals.** No editing the venue layout from here; that is admin work. No
-per-station geometry. No automatic placement.
+copying of venue geometry onto the session. No automatic placement. No metres:
+positions are fractions, and the venue's declared real size is for labelling.
 
-**Database.** None, provided the key rides `sessions.activities`. `toActivity`
-and `toActivityRow` gain `area_id` alongside `block_id`.
+**Database.** None, provided `place` rides `sessions.activities`. `toActivity`
+and `toActivityRow` gain it alongside `block_id`. **`place` is a nested object
+and those two functions currently rebuild flat scalars only**, so it must be
+rebuilt field by field or an unknown key inside it survives a round trip the
+allow-list is meant to prevent.
+
+**Reuse.** The clamping and minimum-size rules of the `zone` element in
+`src/lib/drillDiagram.ts`, rather than a second set.
 
 **RLS.** None. Editing a session's plan is already the sessions update policy.
 
-**Edge Functions.** None. `area_id` must be added to both forbidden-key lists
-when it lands, not when it is first shared
-(`05-security-share-boundary.md` section 8, rule 7).
+**Edge Functions.** None. `place` must be added to both forbidden-key lists when
+it lands, not when it is first shared
+(`05-security-share-boundary.md` section 8, rule 7). It names a location, which
+is exactly the class of field those lists already refuse.
 
-**Backwards compatibility.** No `area_id` is every existing session.
+**Backwards compatibility.** No `place` is every existing session.
 
-**Tests.** Placement round trips. An `area_id` that no longer resolves renders as
-unplaced with the stated sentence. Changing the venue does not silently clear
-placements.
+**Tests.** Placement round trips, including the nested rebuild dropping an
+unknown key. Area membership derives correctly, including a position inside no
+area. Moving a sub-area in the venue layout leaves positions untouched and
+recomputes the derived area. Deleting a sub-area leaves the station placed.
+Changing the session's venue does not silently clear placements.
 
-**Manual smoke.** Place four stations at Flushdyke, change one pitch in the venue
-layout, confirm the stations move with it. Change the session's venue, confirm the
-warning.
+**Manual smoke.** Place four stations across Flushdyke's two pitches, two per
+pitch, at distinct spots. Confirm they are four separable markers at 390 pixels
+wide. Move a pitch in the venue layout and confirm the stations stay where they
+were on the ground. Change the session's venue and confirm the warning.
 
 **Dependencies.** Phase F (which activities are stations) and Phase H (the
 areas). Both hard.
 
 **Rollout risk.** Low.
 
-**Rollback.** Revert. Stored `area_id` values become inert and are dropped on the
+**Rollback.** Revert. Stored `place` objects become inert and are dropped on the
 next save, which is acceptable and should be stated in the PR.
 
 **PR boundary.** One PR.
@@ -585,19 +703,33 @@ column".
 ## 13. Dependency graph
 
 ```
-0 ─┬─ A ─┬─────────────────────────────── J
-   ├─ B  │
-   ├─ C  │
-   ├─ D ─┘                    (D also gates L)
+A (= PR #189, in review, not this programme's work)
+                     └──────────────────────────── J
+
+0 ─┬─ B1 ── B2 ─┬─ C
+   │            └─ (all later authoring)
+   ├─ D                                (D also gates L)
    ├─ E
-   ├─ F ─┬─ G ─┬────────────── K
-   │     └─ I ─┘
-   └─ H ─── I
-                              L (gated on evidence, after A–J)
+   ├─ F ─┬─ G ─┬────────────────────── K (message half)
+   │     └─ I ─┘                       K (public half: gated on Q1, NOT a
+   └─ H ─── I ─── J                        prerequisite for anything)
+
+                 L (gated on evidence, after the static workflow is in use)
 ```
 
-A, B, C, D, E and H have no dependencies and can be scheduled freely. F gates G
-and I. H gates I. I gates J. G gates K.
+**Changes from the first version, all from the review:**
+
+- **A is no longer scheduled work.** It is PR #189 awaiting review and merge.
+- **B is split.** B1 extracts the shared authoring seam (pure refactor); B2 adds
+  create and draw to both hosts. B1 gates B2 and everything later that touches
+  authoring, including C.
+- **I now depends on F and H as before**, but its own model changed from an area
+  reference to a position.
+- **K's public half is explicitly off the critical path.** Nothing depends on it.
+
+B1, D, E, F and H have no dependencies on each other and can be scheduled freely.
+F gates G and I. H gates I. F and H together gate I; I and H gate J. G gates K's
+message half.
 
 ---
 
@@ -606,29 +738,110 @@ and I. H gates I. I gates J. G gates K.
 | Suggested | This plan | Note |
 |---|---|---|
 | 0 current-state audit | Phase 0 | Same. |
-| 1 drill/session authoring | Phases **B** and **C**, plus **A** first | Split because creating and adapting are different risks, and because A is already Next, is free, and makes B and C worth having. |
+| 1 drill/session authoring | Phases **B1**, **B2** and **C**; **A** is PR #189 | A is in review, not scoped here. B is split so the shared seam is extracted before any feature lands on it, because the week plan editor and the planner already duplicate the activity editor. |
 | 2 visual Drill Maker | Phase **D** | Deliberately later: the tool is already capable; the workflow was the gap. |
-| 3 programme → weekly session | Phase **E**, plus **F** | F is new and was not in the suggested list. It is the single most important structural finding of the audit. |
-| 4 Spond operational preparation | Phase **G** | Smaller than expected: most of it already ships. |
+| 3 programme → weekly session | Phase **E**, plus **F** | F is new and was not in the suggested list. B1 also serves this: week plan authoring is first-class from the start rather than ported later. |
+| 4 Spond operational preparation | Phase **G** | Smaller than expected: most of it already ships. Gains the group collision surfacing. |
 | 5 venue model | Phase **H** | Same. |
-| 6 session venue composer | Phase **I** | Same, but dependent on F as well as H. |
-| 7 training-day mobile | Phase **J** | Same. |
-| 8 shareable outputs | Phase **K** | Reshaped: a generated message first, a public projection only by club decision. |
+| 6 session venue composer | Phase **I** | Depends on F as well as H, and now places stations by position rather than by area. |
+| 7 training-day mobile | Phase **J** | Same, and it mounts PR #189's seam rather than a new renderer. |
+| 8 shareable outputs | Phase **K** | Reshaped: a generated message is the deliverable; the public projection is a separate club decision and blocks nothing. |
 | 9 optional motion | Phase **L** | Same, with the version rollout hazard named. |
 
 ---
 
-## 15. Adversarial pass
+## 15. Adversarial pass, second round
 
-Performed against this plan before publishing it. Where the critique held, the
-plan above already carries the revision.
+Run after the review that produced this revision. The first-round pass is kept
+below as section 16, because two of its conclusions were wrong and the record of
+how they were reached is worth keeping.
+
+**Was the duration claim actually wrong, or merely imprecise?** Wrong, and it
+should have been caught by doing the arithmetic. `m × r` against `m × n` is one
+line, and the claim "a one hour session says ninety minutes" does not survive it
+for any plausible carousel. The lesson generalises: the first pass reasoned from
+"the model is linear, training is parallel, therefore the total is wrong", which
+is a shape argument, not a calculation. **Where a claim is numeric, calculate it.**
+
+**Does Phase F survive losing that argument?** Yes, and it is stronger without
+it. Station identity is a hard blocker for Phases G, I and J: none of them can be
+built on a flat activity list. Parallel delivery in Live is wrong today
+regardless of duration. The duration case is real but narrow, and it is now
+stated as "correct until the operational layer adjusts the group count" rather
+than as a standing defect.
+
+**Is the position-based placement over-engineering?** It is two numbers per
+station where the first draft had one string, and it removes a stored fact rather
+than adding one, because the area is now derived. The test is whether the
+requirement can be met without it: it cannot, because two stations on one pitch
+are indistinguishable by area alone, which is the actual Flushdyke case. The
+optional `w`/`h` is the part most at risk of being unused, and it is optional
+precisely so that it can be left unimplemented in the first cut.
+
+**Does deriving the area create a new failure mode?** One: a station on a
+boundary derives whichever area contains its point, which may not be the one the
+coach meant. That is answered by showing the derived label live while dragging,
+so the coach sees the answer at the moment they choose. It is strictly better
+than the stored alternative, where the same ambiguity is frozen and can later
+contradict the geometry.
+
+**Was reopening group-versus-bib worth it, or is the answer the same?** The
+recommendation is materially the same (bib stays the identity) but the reasoning
+changed and the scope grew. The first pass justified it by pointing at
+`tonightGroups`, which is the implementation deciding the model. Reopening it
+found two real collisions that nobody had written down, and surfacing them is now
+scope in Phase G. So the answer held and the work did not.
+
+**Is option B being dismissed too easily?** It is not dismissed; it is deferred
+with a stated trigger. The honest risk is that the trigger never gets checked
+because nobody asks a coach the question. That is why it is Q9 with a named
+decision owner rather than a line in a design document.
+
+**Does splitting B into a refactor and a feature actually help, or is it
+ceremony?** It helps, because B1 is provable against the existing test suites
+with no user-visible change, and because the alternative is a single PR that
+simultaneously moves two editors into one and adds three affordances to it. The
+risk B1 carries is the classic one: a refactor that quietly changes behaviour in
+one host. Its tests are the existing suites of both hosts, unchanged, which is
+the right guard.
+
+**Is week plan authoring genuinely first-class now, or first-class on paper?**
+The check is whether any phase delivers a feature to the planner that the week
+plan editor does not get. After this revision, none does: B2, C and F all land on
+the seam. The dated-only affordances are exactly the ones that cannot exist
+without a date (venue, Spond, station placement, delivery), and that is a real
+distinction rather than a convenience.
+
+**Does the plan now depend on public sharing anywhere?** No, and this was checked
+per phase rather than assumed. Nothing in B, C, D, E, F, G, H, I or J reads or
+writes a share. K's message half depends on G alone and publishes nothing. K's
+public half and DRILL-02b are both gated on human decisions and block nothing.
+
+**Is #189 correctly represented, or merely cited?** Its decisions are now
+inherited as constraints on later phases in a table, including the one this
+programme previously proposed to violate: batching the diagram read. The first
+draft suggested batching and a session-day full-screen treatment, both of which
+#189 considered and rejected with stated reasons. Both are withdrawn.
+
+**What could still go wrong that this plan does not cover?** #189 has a merge
+conflict with `main` and no human review, and this documentation branch touches
+the same file it conflicts on. If both merge without care, the roadmap's DRILL-02
+row could end up saying two different things. Flagged in
+`07-roadmap-reconciliation.md`.
+
+## 16. Adversarial pass, first round
+
+Performed before the first publication. Two of its conclusions were wrong and are
+corrected above; the rest stand. Kept because the corrections are more useful
+beside the reasoning that produced them.
 
 **Is the workflow unnecessarily complex?** The plan adds exactly one new concept
 to what a coach must understand: the station block. Everything else is either an
-existing concept made reachable (creating a drill from the planner), an existing
+existing concept made reachable (creating a drill while planning), an existing
 concept renamed (week plan), or invisible (variants under a parent, derived
 readiness). One new concept for a workflow that is genuinely parallel is
-proportionate.
+proportionate. *(Second round: still one concept. The placement revision adds
+precision to an existing gesture, not a concept.)*
 
 **Are programme, session and event duplicated?** Four things exist:
 `programmes`, `templates`, `sessions` and `spond_events`. The first three are the
@@ -674,14 +887,18 @@ already say, so there is none. A session-local drill overlay would duplicate
 `drills` in an unconstrained column, so adaptation is a copy instead. The one
 accepted near-duplication is a third fraction-coordinate jsonb column, and it is
 accepted only on condition that it inherits the existing discipline rather than
-inventing a second one.
+inventing a second one. *(Second round: there was a fourth candidate and this
+pass missed it. Storing an `area_id` beside a station position would be two facts
+about one thing, and the first draft was heading there. The revision stores the
+position and derives the area, so there is nothing to disagree.)*
 
 **Is each phase independently shippable?** Checked one at a time. A, B, D, E, G,
 J and K ship alone. C ships alone because `variant_of` unused is current
 behaviour. F ships alone because a session with no block is unchanged. H ships
 alone because a venue with no layout is unchanged. I is the only phase that
 genuinely cannot ship before its dependencies, and it is the only one where the
-plan says so.
+plan says so. *(Second round: B1 and B2 both ship alone, B1 as a no-op refactor.
+A is PR #189 and ships on its own review.)*
 
 **What the adversarial pass could not resolve, and left as questions.** Whether
 date, time and venue may be public; whether the club wants a parent-to-child

@@ -141,21 +141,58 @@ holds a diagram. An adaptation holds its own because an adaptation is a drill.
 **Decision: introduce an explicit parallel block. This is the one structural
 addition to the session plan.**
 
-Today a session is a linear timeline. `sessionMinutes` is the sum of every
-activity's duration and the Live view walks activities one at a time. Real
-station training is parallel: four stations run simultaneously for ten minutes,
-everybody rotates, repeat.
+**Revised after review.** An earlier draft justified this by claiming the session
+total is wrong for station work. That claim was overstated and the arithmetic
+refutes it. Four 10 minute stations run as four rotations by four groups lasts
+40 minutes, and the sum of four 10 minute activities is 40. **The present total
+is not wrong merely because the stations are parallel.** See
+`00-current-state-audit.md` section 17 for the full working.
 
-The consequences of not modelling it are concrete, not theoretical:
+The real justification is three structural absences, of which duration is the
+smallest.
 
-- A four-station block of ten minutes each reads as forty minutes of session, so
-  a one hour session says ninety minutes.
-- `sessionLifecycle.ts` derives the expected end from that total, so the session
-  stays "active" long after it finished.
-- `src/lib/ics.ts` exports the wrong length to a calendar.
-- The Live timer runs four stations in series, which is not what happens.
-- There is nothing for the venue composer to place, because "which activities are
-  the stations?" has no answer in the data.
+### 4.1 There is no station identity
+
+Nothing in the data says which activities form one carousel. Every question this
+programme exists to answer needs that fact:
+
+- "Where does station 3 go at the venue?" The composer has nothing to place.
+- "Which station does my group start at?" There is no set to index into.
+- "Show me the four stations together" on the training-day overview. There is no
+  four.
+
+A venue composer cannot be built on top of a flat activity list, which is why
+this precedes the composer rather than following it.
+
+### 4.2 Live delivery is sequential, and that is wrong today
+
+`LiveSession.tsx` walks `activities` one at a time and shows the current one to
+everybody. During a carousel every group is at a *different* station at the same
+moment, and the event that matters is **rotate**, which the live view has no
+concept of. This is wrong regardless of duration, and it is wrong right now.
+
+### 4.3 The total is correct until the operational layer does its job
+
+`wall clock = minutesPerRotation × rotations`, while
+`sum of durations = minutesPerRotation × stations`. They agree exactly when the
+rotation count equals the station count and the stations are equal length.
+
+That holds for the planned default and stops holding in every shape below, of
+which the first is the common one:
+
+| Shape | Actual | Sum says |
+|---|---|---|
+| 4 stations, 3 groups | 30 | 40 |
+| 6 stations, 4 groups | 40 | 60 |
+| 4 stations, 5 groups | 50 | 40 |
+| Unequal stations under a shared rotation length | 48 | 40 |
+| 5 stations, each group visiting 4 | 40 | 50 |
+
+The discovery says the group count is set by attendance one or two days before
+the session. **So the total is right while nothing changes and becomes wrong at
+exactly the moment the operational layer adjusts it.** The knock-on effects on
+`plannedMinutes`, the derived lifecycle and the calendar export are real but they
+are consequences of that one case, not a standing defect.
 
 ### The shape
 
@@ -210,26 +247,101 @@ session, and never written anywhere.
 
 ## 6. Groups, bibs and rotation
 
-**Decision: a group is a bib colour. Introduce no group entity.**
+**Reopened after review.** An earlier draft settled this by pointing at
+`tonightGroups` and declaring a group to be a bib colour. That let the current
+implementation decide the product model, which is the wrong direction of travel.
+The question is reopened properly here, and the final call is left to a human in
+`08-open-questions.md`, Q9.
 
-This is already true in the code (`tonightGroups` keys the selected children on
-effective bib colour) and it is already true on the pitch: coaches say "reds go
-to station two". The bib vocabulary is closed and shared with the diagram
-palette, so a group's colour and the colour of the players drawn on the drill are
-the same word.
+### 6.1 Are group identity and bib colour the same concept?
 
-Nine colours is a hard ceiling on group count. Four to six groups is the
-requirement. That is comfortable.
+What the discovery says: the age group trains together; where possible a coach
+stays with their own team's players while rotating; attendance may require
+combining or rebalancing groups; and the bib colour is how the operational group
+is recognised.
 
-**Starting stations are derived, not stored.** Groups in a stable order start at
-stations in order: reds at 1, blues at 2, greens at 3, yellows at 4. Rotation is
-then modular arithmetic over the rotation index. This costs no state, no
-migration and no write, and it is correct for the normal case the discovery
-describes.
+Read carefully, that describes a group as having **three** properties, of which
+the bib is one:
 
-An override ("actually put the blues on the goalkeeping station first") is
-deliberately **not** in the plan. If coaches ask for it, it is one small piece of
-per-session state and can be added then. Recorded in `08-open-questions.md`, Q5.
+| Property | Carried by a colour? |
+|---|---|
+| How everyone recognises it on the grass | **Yes.** This is exactly what a bib is for. |
+| Which children are in it | Yes, transitively, through each child's effective bib. |
+| Where it came from (which team's players) | **No.** Kept beside the group today as `teamNames`. |
+| Which station it starts at, and its rotation order | **No.** Nothing carries this. |
+| Its continuity when rebalanced | **No.** Rebalancing means re-bibbing children. |
+
+So the colour is an excellent **label** and a workable **key**, and it is not the
+whole concept.
+
+### 6.2 Two real collisions in the current derivation
+
+`tonightGroups` (`src/lib/tonight.ts:1103`) keys on `bib ?? ''`:
+
+1. **Two teams whose `teams.bib_colour` default is the same colour silently
+   merge into one group.** Nothing prevents an admin setting two teams to blue,
+   and nothing surfaces it when they have. A whole-club session then shows one
+   blue group of 18 where the coach expects two of 9.
+2. **Every child with no effective bib merges into one "No bibs" group**, which
+   already mixes two different facts (a coach who chose no bib, and a team with
+   no colour configured). The code says so in its own comment. If a club runs
+   five groups with four sets of bibs, the fifth group is not representable.
+
+Neither is fatal and neither is common with five teams and nine colours. Both are
+real, and neither is visible to the coach it happens to.
+
+### 6.3 The three options
+
+**A. Keep bib as the group identity, and surface the collisions.**
+No schema, no migration, no new concept for a coach to learn. The two collisions
+become stated rather than silent: the groups screen says "Titans and Trojans both
+default to blue, so they are showing as one group" with the fix beside it.
+Rebalancing stays a bib change, which is the gesture coaches already use.
+Cost: two groups cannot share a colour, and a group has no identity that survives
+a re-bib.
+
+**B. A lightweight operational group, per session.**
+An ordered list on the session, each entry `{ id, label, bibColour }`, and a
+`group_id` on the register entry. Groups gain continuity, a name, a start station
+and the ability to share a colour or have none. Cost: a new column on
+`register_entries`, which is currently a very clean table; a second thing a coach
+can edit that must stay consistent with the bib; and the genuine risk that the
+group and the bib disagree, which is worse on a pitch than either collision above.
+
+**C. Bib as identity, plus a derived group order only.**
+Option A, plus the ordering needed for rotation, derived from the club's bib
+vocabulary order, which `tonightGroups` already applies.
+
+### 6.4 Recommendation
+
+**Option C for this programme, with option B recorded and not built.**
+
+The reasoning is that B's cost lands in the wrong place. Its benefit is
+expressible only in cases the club has not reported (two groups of one colour, a
+group that must survive a re-bib, a named group), while its cost is a second
+editable identity that can disagree with the colour every child is actually
+wearing. On a pitch, the colour wins that argument every time, which means the
+stored group id would be the thing that is wrong.
+
+What C commits to:
+
+- The bib colour remains the operational group identity.
+- The two collisions in 6.2 are **surfaced**, not left silent. That is a client
+  change with no schema.
+- Group order comes from the existing bib vocabulary order, so it is stable
+  across a re-bib of one child.
+
+**Starting stations are derived, not stored.** Groups in that stable order start
+at stations in order, and rotation is modular arithmetic over the rotation index.
+No state, no migration, no write.
+
+An override ("put the blues on the goalkeeping station first") is deliberately
+not in the plan (`08-open-questions.md`, Q5).
+
+**The trigger for revisiting B is stated in advance**, so this is a decision
+rather than a default: if the club reports wanting two groups of one colour, a
+group that keeps its identity through a re-bib, or a coach assigned to a named
+group, option B is the answer and it is one column plus one jsonb list.
 
 **What Spond contributes, and what it does not.** Spond suggests the pool. The
 coach decides the groups. Nothing in the Spond pipeline reads, writes, defaults
@@ -266,12 +378,53 @@ plus named sub-areas inside it.
 
 ### Layer 2: station placement (weekly)
 
-Each station in a session's block is assigned to a venue sub-area. That is the
-session venue composer, the item the roadmap calls DRILL-03.
+**Revised after review. An earlier draft assigned each station only a sub-area
+id, and that is too coarse to meet the requirement.**
 
-The assignment is **per session**, because that is what changes weekly, and it is
-**a reference to a sub-area id**, not a copy of the geometry, so moving a pitch
-in the venue layout moves every future session's stations with it.
+The product requirement is that a coach arriving at the venue can recreate the
+layout without another coach explaining it. A sub-area id cannot do that. At
+Flushdyke, two pitches side by side hosting four stations means two stations per
+pitch, and `area_id` alone renders them stacked at the centre of their pitch,
+indistinguishable from each other. The coach still has to be told where station 3
+actually goes.
+
+**Decision: a station carries a position, in the venue layout's own fraction
+space. Area membership is derived from that position, never stored beside it.**
+
+```json
+{ "x": 0.22, "y": 0.35 }
+```
+
+optionally with a footprint when the station occupies a meaningful area rather
+than a spot:
+
+```json
+{ "x": 0.22, "y": 0.35, "w": 0.18, "h": 0.22 }
+```
+
+Both are fractions of the whole allocated training area, the same 0 to 1 space
+the sub-areas use, clamped by the same rules `drills.diagram` already applies to
+a `zone` element. Nothing here is metres and nothing is pixels.
+
+**Why derive the area rather than store it too.** Storing both a position and an
+`area_id` creates two facts that can disagree: drag a station across a boundary
+and the stored area is now wrong, or move a pitch in the venue layout and every
+stored area id is a claim the geometry no longer supports. One fact, derived,
+cannot contradict itself. A station whose position falls outside every sub-area
+is honestly "placed, not in a marked area" rather than silently reassigned.
+
+**Why this is still not copying the venue geometry.** The station stores two
+numbers, or four. The rectangles, their names and their sizes stay on the venue
+and are read at render time, so moving Pitch 2 moves every future session's
+stations that sit on it, and no session holds a stale copy of the ground.
+
+**Phone consequence, which drove the shape.** With positions, the overview draws
+numbered markers where the stations actually go, and four markers spread across
+two pitches are four distinguishable tap targets at 390 pixels wide. With area
+ids alone they would coincide, and the only way to tell them apart would be to
+zoom into something that carries no more information at higher magnification.
+The lighter data model is what makes the phone interaction work, not a cost paid
+against it.
 
 A session whose venue has no layout, or which has no block, simply has no
 composer. The rest of the session is unaffected.
@@ -293,13 +446,42 @@ Session day (phone)
   └─ back to overview
 ```
 
-The overview draws **areas and numbers**, not four drill diagrams shrunk to fit.
-That is the trap at phone width, and drawing it is what makes zoom unnecessary
-rather than what makes zoom essential. Pinch and pan remain available on the
-surface because they cost nothing, but the design does not depend on them.
+The overview draws **areas and numbered markers at the stations' actual
+positions**, not four drill diagrams shrunk to fit. That is the trap at phone
+width, and drawing it this way is what makes zoom unnecessary rather than what
+makes zoom essential. Pinch and pan remain available on the surface because they
+cost nothing, but the design does not depend on them.
 
 Everything on this screen comes from rows the coach is already authorised to
 read. There is no new payload, no new read path and no new permission.
+
+The diagram half of this journey is already built. PR #189 puts the saved
+diagram on session day and both live stages through `ActivityDiagram`, so the
+station focus screen mounts the existing seam rather than a new renderer
+(`00-current-state-audit.md` section 18).
+
+## 8a. One authoring seam, two hosts
+
+**Added after review.** Long range planning happens in the week plan editor,
+weeks or months before a dated session exists. Dated planning happens in the
+planner. Both edit an activity list, and **both already have their own editor**:
+`TemplateFormModal` maintains its own add bar, custom activity literal, row
+component and reorder handlers beside the planner's
+(`00-current-state-audit.md` section 9).
+
+**Decision: authoring improvements go into one shared seam used by both hosts,
+never into the planner alone.**
+
+The seam owns the activity list and its affordances: add from library, add
+custom, **new drill**, **draw it**, copy and adapt, reorder, phase and duration.
+Its hosts supply what differs, which is very little: what the list belongs to,
+how a draft is held and saved, and whether dated affordances (venue, Spond,
+station placement) appear at all.
+
+Building "create a drill in the dated planner" first and porting it afterwards
+would make a two-way divergence into a three-way one, and would leave the surface
+where long range planning actually happens as the last to get the feature. That
+is the wrong way round.
 
 ## 9. Motion
 
@@ -330,15 +512,16 @@ Two hard constraints, from `00-current-state-audit.md` section 7:
 | Session activity → drill | Reference, as today | None |
 | Adapting a drill | **Copy**, never version, never overlay | `drills.variant_of` |
 | Editing a library drill | Stays live. Made non-silent in the UI. | None |
-| Drill diagram | Stays on the drill | None |
-| Station block | **New**: parallel activities with a rotation count | Block metadata |
+| Drill diagram | Stays on the drill. Delivery surfaces in PR #189. | None |
+| Activity authoring | **One seam**, hosted by the planner and the week plan editor | None |
+| Station block | **New**: station identity, rotation count, parallel delivery | Block metadata |
 | Session workflow state | **Derived**, never stored | None |
-| Group | A bib colour, as today | None |
-| Starting station | Derived by order | None |
+| Group | Bib colour stays the identity (option C). Collisions surfaced. Reviewed at Q9. | None |
+| Starting station | Derived by bib vocabulary order | None |
 | Suggested split | A pure function producing a draft | None |
 | Venue layout | **New**: fraction-coordinate areas, admin owned | `venues.layout` |
-| Station placement | A reference to a sub-area, per session | Activity key |
-| Training-day view | Composed from existing reads | None |
+| Station placement | **A position** in the venue's fraction space; area derived | Activity key |
+| Training-day view | Composed from existing reads and PR #189's seam | None |
 | Motion | Deferred. Additive, gated, reader-first. | Diagram schema widening |
 
 Exact column and constraint proposals are in `04-data-model-proposal.md`.

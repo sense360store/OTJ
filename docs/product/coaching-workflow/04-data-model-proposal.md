@@ -21,14 +21,18 @@ constraint widening that only happens if motion is approved.
 |---|---|---|---|---|
 | M1 | `variant_of uuid null` (+ `drills_id_club_unique`) | `drills` | C | Low |
 | M2 | `template_id uuid null` (+ `templates_id_club_unique`) | `sessions`, `templates` | E | Low |
-| M3 | `blocks jsonb null` + activity key | `sessions` | F | Low, but touches duration maths |
+| M3 | `blocks jsonb null` + `block_id` on an activity | `sessions`, `templates` | F | Low. Duration is unchanged while `rotations` defaults to the station count. |
 | M4 | `layout jsonb null` + shape constraint | `venues` | H | Medium, new shape boundary |
 | M5 | diagram element allow-list widening | `drills` | L, optional | Medium, version rollout hazard |
 
 Three named non-changes, each deliberate:
 
-- **No group table.** A group is a bib colour (`02-target-product-model.md`
-  section 6).
+- **No group table**, under the recommended option. The bib colour stays the
+  operational group identity and the two collisions in that derivation are
+  surfaced rather than modelled around (`02-target-product-model.md` section 6,
+  `08-open-questions.md` Q9). A lightweight group would be one column on
+  `register_entries` plus one jsonb list, and it is deferred with a stated
+  trigger rather than refused.
 - **No session workflow state column.** Readiness is derived (section 5 there).
 - **No drill version table.** Adaptation is a copy (section 3 there).
 
@@ -151,8 +155,19 @@ it; the client allow-list is the boundary there, as it is today.
 
 ### The duration change and its blast radius
 
-`sessionMinutes` (`src/lib/data.ts:539`) becomes block-aware. Everything reading
-it must be checked:
+**Scoped correctly after review.** The current total is *not* wrong for a
+carousel run as planned: four 10 minute stations over four rotations is 40
+minutes either way. It diverges only when the rotation count differs from the
+station count, when stations are unequal under a shared rotation length, or when
+groups skip stations (`00-current-state-audit.md` section 17). So this is a
+change that makes an existing correct answer stay correct once `rotations`
+becomes adjustable, not a defect repair.
+
+`sessionMinutes` (`src/lib/data.ts:539`) becomes block-aware, computing
+`minutesPerRotation × rotations` for a block instead of summing its members.
+With `rotations` defaulting to the station count, **every existing session and
+every newly blocked session returns the same number it does today**, which is
+what makes this safe to ship. Everything reading it must still be checked:
 
 - `src/lib/sessionLifecycle.ts` computes its own total for the expected end
   (`:145`, `FALLBACK_SESSION_MINUTES`). It must use the same rule, and it must
@@ -233,25 +248,88 @@ kind of quiet falsehood the repository's own commentary style exists to catch.
 
 ## 6. Station placement
 
-**No migration.** Each station activity gains `"area_id": "a1"` in
-`sessions.activities`, a reference to an area inside the session's venue layout,
-and `toActivity` / `toActivityRow` gain the key alongside `block_id`.
+**Revised after review. An earlier draft stored only an `area_id` per station,
+which cannot express where within an area a station goes.** Four stations across
+two side-by-side pitches at Flushdyke would render as two coincident markers per
+pitch, and a coach would still need telling where station 3 is.
 
-**Why a reference and not a copy of the geometry.** Moving Pitch 1 in the venue
-layout should move every future session's station with it. A copied rectangle
-would freeze each session against a layout that has since changed, with no way to
-tell which sessions are stale.
+**No migration.** Each station activity gains a `place` object in
+`sessions.activities`:
 
-**What happens when the layout changes underneath a session.** An `area_id` that
-no longer resolves renders as an unplaced station with a sentence saying the
-venue layout changed. It is never silently dropped and never drawn at a guessed
-position. This is the same fail-towards-showing asymmetry the training classifier
-and the session lifecycle use.
+```json
+{ "phase": "Skill", "drill_id": "…", "duration": 10,
+  "block_id": "b1",
+  "place": { "x": 0.22, "y": 0.35 } }
+```
 
-**What happens when the venue changes.** Changing a session's venue orphans every
-`area_id` on it. The session says so and offers to clear them. It does not clear
-them silently, because a coach who changed the venue by mistake would lose the
-placement.
+with an optional footprint where a station occupies an area rather than a spot:
+
+```json
+"place": { "x": 0.22, "y": 0.35, "w": 0.18, "h": 0.22 }
+```
+
+`toActivity` and `toActivityRow` gain the key alongside `block_id`. **`place` is
+a nested object, and those two functions currently rebuild only flat scalars**,
+so it must be rebuilt field by field rather than assigned through, or an unknown
+key inside it would survive a round trip that the allow-list is supposed to
+prevent.
+
+### The coordinate space, and the rules it inherits
+
+Fractions from 0 to 1 across the **whole allocated training area**, the same
+space `venues.layout` uses for its sub-areas. Never metres, never pixels, never
+relative to a sub-area. One space means a station's position is meaningful
+whether or not any sub-area contains it, and a layout redraw does not renumber
+anything.
+
+Clamping and minimum size follow the `zone` element in `src/lib/drillDiagram.ts`
+(`clampFraction`, `MIN_ZONE_SIZE`, corner pulled back so the rectangle stays on
+the surface). That is an existing, reviewed rule and there is no reason for a
+second one.
+
+### Area membership is derived, never stored
+
+A station's sub-area is computed from its position at render time. Storing both
+would create two facts that can disagree in two ordinary ways: dragging a station
+across a boundary leaves the stored area wrong, and moving a pitch in the venue
+layout invalidates every stored area id at once with nothing to detect it.
+
+A position inside no sub-area is honestly **"placed, not in a marked area"**. It
+is never silently reassigned to the nearest one, and never treated as unplaced,
+because a coach may legitimately set a station on the grass between two pitches.
+
+### What happens when things change underneath a session
+
+- **A sub-area moves or is renamed.** Nothing on the session changes. The
+  station's position is unchanged and its derived area is recomputed. This is the
+  whole benefit of not copying the geometry.
+- **A sub-area is deleted.** The station is still placed; it now derives no area.
+- **The venue layout's overall shape changes.** Positions are fractions of the
+  allocated area, so they scale with it. A club that re-measures its allocation
+  gets stations in the same relative places, which is the honest reading of
+  "approximately where".
+- **The session's venue changes.** Every position is now a claim about different
+  ground. The session says so and offers to clear the placements. It does not
+  clear them silently, because a coach who changed the venue by mistake would
+  lose the layout.
+- **A station leaves its block, or the block is dissolved.** The `place` stays on
+  the activity and simply stops being rendered by the composer. Nothing is
+  destroyed by a structural edit.
+
+### Why not a separate table
+
+A `session_stations` table was considered. It would give a station a durable id
+and its own constraints, but a station has no existence apart from the activity
+it is, so the table would need a foreign key to a position inside a jsonb array,
+which does not exist. Keeping the placement on the activity means reordering,
+removing and copying an activity carry its placement automatically, with no
+join to keep in step.
+
+The cost is honest and stated: `sessions.activities` has **no check constraint**,
+so `place` earns none of the guarantees `venues.layout` and `drills.diagram`
+have. The client allow-list is the only boundary, exactly as it is for `phase`,
+`duration` and `title` today. `place` carries no person and no free text, so
+there is nothing here for a privacy constraint to protect.
 
 ## 7. M5: motion, only if approved
 
@@ -288,10 +366,16 @@ Stated so a future session does not go looking:
 
 - M1 and M2 are independent of everything and of each other.
 - M3 must precede any station placement work, because placement needs to know
-  which activities are stations.
-- M4 must precede the composer.
+  which activities are stations. Station placement itself is **not** a migration
+  (section 6); it rides `sessions.activities`.
+- M4 must precede the composer, because a station's position is expressed in the
+  venue layout's coordinate space and there is no space without a layout.
 - M3 and M4 are independent of each other.
 - M5, if it happens, is last and depends on nothing.
+
+**None of these is on the critical path of the public sharing decision, and none
+of them depends on it.** M1 through M4 change no policy, no grant and no
+projection.
 
 **Apply order relative to the frontend**, following the rule `0046` had to learn:
 each of these columns is new and null everywhere, so **the migration goes first

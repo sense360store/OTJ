@@ -10,8 +10,10 @@ Nothing here is an engineering question. Every one is a club or product decision
 
 ## Q1. May a public share carry the date, time and venue of a session?
 
-**Blocks:** COACH-K's public half, and roadmap item TRAIN-02 as currently
-worded.
+**Blocks:** COACH-K2 and roadmap item TRAIN-02 as currently worded. **Blocks
+nothing else in the programme.** Reaffirmed after review: widening login-free
+public sharing is deliberately not a prerequisite for the coaching workflow, and
+the parent-facing outcome is met without it.
 
 **The situation.** Today the public session snapshot carries no date, no time and
 no venue, on the server (the builder never reads those columns) and in the
@@ -180,11 +182,58 @@ thought rather than being decided as a footnote here.
 
 ---
 
+## Q9. Is an operational group the same thing as a bib colour?
+
+**Added after review**, because the first version of these documents settled this
+by pointing at the current implementation rather than asking the product
+question.
+
+**Blocks:** nothing immediately. It decides whether COACH-G stays schema-free or
+gains a column, so it wants answering before COACH-G starts rather than during
+it.
+
+**The situation.** Today a group *is* a bib colour: `tonightGroups` keys the
+included children on their effective bib. That reads correctly on the pitch,
+where the colour is exactly how a group is identified. It has two collisions
+nobody has written down before now:
+
+1. Two teams whose default bib colour is the same **merge into one group**,
+   silently. Nothing prevents it and nothing says it happened.
+2. Every child with no effective bib merges into one "No bibs" group, so a fifth
+   group at a club with four sets of bibs is not representable.
+
+**What a colour cannot carry:** which station a group starts at, its rotation
+order, its continuity when the coach rebalances, and a name.
+
+**The options**, in full in `02-target-product-model.md` section 6.3:
+
+- **A.** Keep bib as identity; surface the collisions. No schema.
+- **B.** A lightweight per-session group: an ordered list on the session and a
+  `group_id` on `register_entries`. Groups gain names, continuity, and the
+  ability to share a colour or have none. One column on a currently very clean
+  table, plus a second editable identity that can disagree with the bib every
+  child is actually wearing.
+- **C.** A, plus a derived group order for rotation. No schema.
+
+**Recommendation: C**, with B's trigger stated in advance rather than left to be
+rediscovered. B's benefit is expressible only in cases the club has not reported;
+its cost lands on the pitch, where a stored group id that disagrees with the
+colour a child is wearing is worse than either collision above.
+
+**Revisit B if any of these turns out to be real:** the club wants two groups
+wearing one colour, a group that keeps its identity when children are re-bibbed,
+or a named group with a coach assigned to it.
+
+**If unanswered.** Option C is the default and COACH-G ships schema-free, with
+the two collisions surfaced.
+
+---
+
 ## Summary: what actually blocks work
 
 | Question | Blocks | Default if unanswered |
 |---|---|---|
-| Q1 date/time/venue public | COACH-K public half, TRAIN-02 | Message only, no public page |
+| Q1 date/time/venue public | COACH-K2 and TRAIN-02 only | Message only, no public page |
 | Q2 parent identity binding | Nothing | Not built |
 | Q3 freeze delivered sessions | Nothing | Not frozen |
 | Q4 default group count | Nothing | One group per station |
@@ -192,7 +241,9 @@ thought rather than being decided as a footnote here.
 | Q6 venue background imagery | Nothing | No imagery |
 | Q7 rename template | COACH-E copy only | Ships with the current word |
 | Q8 audible rotation cue | Nothing | LIVE-02 unchanged |
+| Q9 group identity versus bib colour | COACH-G's shape, not its start | Option C, no schema |
 
-**Only Q1 blocks a phase, and only half of one.** Everything else has a
-defensible default, so the programme can start on COACH-A tomorrow without a
-single answer.
+**Nothing blocks the critical path.** Q1 governs only the parked public
+projection, which nothing depends on. Q9 wants answering before COACH-G starts
+but has a defensible default. So the programme can proceed today: review and
+merge PR #189, then start COACH-B1, without a single answer.

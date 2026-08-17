@@ -2,6 +2,9 @@
 
 Status: reference. Captured 17 August 2026 against `main` at `2283350`, by reading
 the code and the migration files rather than by trusting any earlier document.
+Revised 17 August 2026 after review: the station duration finding was overstated
+and has been corrected (section 17), and open PR #189 is now recorded as the
+in-flight implementation of DRILL-02 (section 18).
 
 This is the factual half of the coaching workflow discovery. It answers the
 questions the overhaul depends on, with the repository path, table or function
@@ -203,6 +206,22 @@ The planner's only two add affordances are `Add from library` and `Add custom`
 drill from the planner.** `DrillFormModal` is reachable from `Home.tsx`,
 `Library.tsx` and `DrillDetail.tsx` only.
 
+### There are already two activity editors, not one
+
+`src/components/TemplateFormModal.tsx` carries its own activities editor, whose
+own comment says it "mirrors the planner": it mounts the same `AddDrillModal`
+(`:188`), adds the same custom activity literal
+`{ phase: 'Skill', title: 'Custom activity', duration: 10 }` (`:146`), and has
+its own `setAct`, remove and reorder handlers (`:42` to `:59`) and its own
+`TemplateActivityRow` (`:206`) beside the planner's `ActivityCardView`.
+
+**This matters for sequencing.** A week plan is authored in the template editor
+and a dated session in the planner, so any authoring improvement built in one
+place is immediately absent from the other. Adding a "New drill" affordance to
+the planner alone would make the divergence three-way rather than two-way. Long
+range planning happens in the template editor, weeks before a dated session
+exists, so it is not the secondary surface.
+
 ## 10. How attendance and Spond replies join a session
 
 - `spond-sync` (Edge Function, manual trigger through `useSpondSync`,
@@ -311,8 +330,10 @@ The substrate is `0038_content_sharing.sql`, `0039_public_share_read.sql`,
 - A shared board carries shape and numbers only, never a `playerId` and never a
   name (`0028_board_player_boundary.sql`).
 - Print: there is no separate print template. `@media print` in
-  `src/styles.css:739` hides the interactive chrome of the public page. Nothing
-  in the authenticated app has a print path.
+  `src/styles.css:739` targets only `.public-*` classes, and `window.print()`
+  appears in exactly one place in `src/`, `PublicShare.tsx:113`. **There is no
+  authenticated print path in this product**, so print inherits the public share
+  gate exactly. Traced independently by PR #189 (section 18) and confirmed here.
 
 **A group and bib plan cannot be added to the current public share contract by
 widening it.** The projection is deliberately built from a builder that never
@@ -368,10 +389,11 @@ Edge Functions in the repository: `fa-import`, `fa-import-programme`,
 
 ## 16. Which pieces can remain entirely client side
 
-- Rendering a saved drill diagram anywhere (DRILL-02). The data is already in
-  `drills.diagram` and already read by `useDrillDiagram`.
-- Creating a drill from the planner. `useInsertDrill` already exists; this is
-  navigation and a modal.
+- Rendering a saved drill diagram anywhere (DRILL-02). Done in PR #189, client
+  only, no migration (section 18).
+- Creating a drill while planning. `useInsertDrill` already exists; this is
+  navigation, a modal and a shared authoring seam serving both the planner and
+  the week plan editor (section 9).
 - The suggested split of attending children into groups. Groups are already
   derived from bib colour; a suggestion is a pure function over the draft.
 - The readiness readout for a session. Derivable from data already read.
@@ -385,32 +407,159 @@ explicit template link, station block metadata, and any public projection.
 
 ---
 
+## 17. Station-based training: what the model can and cannot express
+
+**Corrected after review. The first version of this section claimed the session
+total is simply wrong for station work. It is not, and the arithmetic says so.**
+
+`sessionMinutes` (`src/lib/data.ts:539`) is the sum of every activity's duration.
+`plannedMinutes` (`src/lib/sessionLifecycle.ts:150`) reimplements the same sum
+with the 90 minute fallback, and the expected end is derived from it.
+
+For a carousel of *n* stations each lasting *m* minutes, run for *r* rotations:
+
+```
+wall clock       = m × r
+sum of durations = m × n
+```
+
+**The two are equal exactly when `r == n` and every station lasts the same
+length.** Four 10 minute stations with four groups completing four rotations
+lasts 40 minutes, and the sum is 40. The default case is correct, and it is
+correct by coincidence rather than by construction.
+
+The sum becomes wrong in these shapes, all of which are real:
+
+| Shape | Actual | Sum says |
+|---|---|---|
+| 4 stations, 3 groups (3 rotations) | 30 | 40 |
+| 6 stations, 4 groups (4 rotations) | 40 | 60 |
+| 4 stations, 5 groups (5 rotations) | 50 | 40 |
+| Stations of 8, 10, 12, 10 with a shared 12 minute rotation | 48 | 40 |
+| 5 stations, each group visiting 4 of them | 40 | 50 |
+| One station run continuously beside a rotating carousel | varies | wrong |
+
+The first row is the one that matters most, because the discovery says the group
+count is decided by attendance one or two days before the session. **So the
+total is right while nothing changes and becomes wrong at precisely the moment
+the operational layer does its job.** That is a narrower and more accurate
+statement than "the total is wrong", and it is the honest basis for the work.
+
+**The structural gaps are separate from the arithmetic and are the stronger
+reason for the work:**
+
+1. **There is no station identity.** Nothing in the data says which activities
+   are stations of one carousel. So "which station does my group start at", "put
+   station 3 on pitch 2" and "show me the four stations together" have no answer
+   to compute from. The venue composer cannot be built without this.
+2. **There is no rotation concept.** The number of rotations is the thing
+   attendance changes, and there is nowhere to record it.
+3. **Live delivery is sequential.** `LiveSession.tsx` walks `activities` one at a
+   time and shows the current one to everybody. During a carousel every group is
+   at a different station simultaneously, and the event that matters is
+   **rotate**, which the live view has no concept of. This is wrong today even
+   when the total happens to be right.
+
+Consumers that would be touched by a duration model change: `sessionMinutes`,
+`plannedMinutes`, `src/lib/ics.ts`, `LiveSession.tsx`, `Home.tsx`,
+`SessionDay.tsx`, `ProgrammeDetail.tsx`, `TemplateFormModal.tsx`,
+`ProgrammeFormModal.tsx`.
+
+## 18. In-flight work: PR #189 (DRILL-02)
+
+Read directly at head `262ab0e` on 17 August 2026, not inferred.
+
+**Open, CI green on all 10 checks, `mergeable_state: dirty`** (it branched from
+`e07a4cf` and `main` has since moved to `2283350`; the conflict is
+`docs/roadmap/master-roadmap.md`, which both changed). The only PR comment is the
+Vercel deployment bot, so it has had no human review yet.
+
+Client only: 14 files, +1374/-9. No migration, no SQL, no Edge Function change.
+
+What it establishes, which later phases must build on rather than redo:
+
+- **`diagramForDisplay(diagram, source)`** in `src/lib/drillDiagramRights.ts`, the
+  single rule for whether a saved diagram is *shown*, beside `diagramEditDecision`
+  which answers whether it may be *drawn*. It returns null for three cases a
+  screen cannot tell apart: the read has not answered, there is no diagram or it
+  is empty, and the drill is England Football derived.
+- **`src/components/ActivityDiagram.tsx`**, new. `ActivityDiagram` owns the read
+  and the rule; `ActivityDiagramView` is the pure half that renders without a
+  query client. A component rather than a hook per screen for a structural
+  reason: `LiveWatcher` resolves its drill after three conditional returns, so a
+  top level hook there would break the rules of hooks.
+- **`DrillDiagramView` stays the canonical renderer.** The seam draws no SVG of
+  its own, and an invariant test fails the build if a screen does.
+- **The two diagram systems stay apart.** A structured `drills.diagram` is never
+  rasterised, wrapped as a `MediaItem` or pushed through `DiagramViewer`.
+  `DiagramViewer`, the uploaded-media full-screen viewer, is untouched.
+  Coexistence rule: a drill carrying both an uploaded image and a drawn diagram
+  shows both, and neither suppresses the other.
+- **The per-drill cached read is preserved deliberately.** `useDrillDiagram(id)`
+  under cache key `['drill_diagram', id]`, sharing the drill page's entry so a
+  drill opened, planned and delivered is fetched once and TanStack dedupes
+  concurrent mounts. A batched `.in('id', ids)` read was considered and
+  **rejected**, because it would mint a second cache shape over rows already
+  cached under the first. `DRILL_COLS` is still never widened to carry the
+  column, and an invariant test enforces both.
+- **Surfaces:** Planner expanded panel (in `.act-panel`, never the draggable
+  `.act-card`, passed as a lazily built `ReactNode` so the read fires only on
+  expand), Session Day inline in the setup card beside the existing image button,
+  and Live in both the driver and the watcher stage between the media and the
+  coaching points.
+- **No public share and no print.** Section 13's deny list is untouched and its
+  containment test is still green. The PR records a proposed **DRILL-02b** for
+  the snapshot contract change, and keeps DRILL-02 **In progress** rather than
+  Done.
+- **Print, traced rather than assumed:** `window.print()` appears in exactly one
+  place in `src/`, `PublicShare.tsx:113`, and the `@media print` block targets
+  only `.public-*` classes. **There is no authenticated print path in this
+  product**, so print inherits the public share gate exactly.
+- Two defects were found and fixed by its own adversarial pass: a height cap that
+  shrank the drawing rather than the box (fixed by emitting `--dd-ratio` from the
+  renderer so a height cap also bounds width), and `.dd-chip-text` reading
+  `var(--ink)`, which vanished under the live view's forced `.theme-dark`.
+
+Its own honest gap, worth carrying: the repository's tests render to static
+markup with no DOM, so no layout claim in it has been measured. A real device
+check on a phone is recommended before merge, particularly Live in portrait.
+
 ## Notable current-state findings the overhaul must design around
 
-1. **The session model is a linear timeline.** `sessionMinutes`
-   (`src/lib/data.ts:539`) is the sum of every activity's duration, and the Live
-   view walks activities one at a time. Station-based training is parallel: four
-   stations run at once and groups rotate. Today four 10 minute stations read as
-   a 40 minute block of sequential work, and the live timer runs them in series.
-   This single fact affects `sessionMinutes`, `sessionLifecycle.ts`
-   (`FALLBACK_SESSION_MINUTES` and the expected end), `src/lib/ics.ts`,
-   `LiveSession.tsx`, `Home.tsx`, `SessionDay.tsx`, `ProgrammeDetail.tsx`,
-   `TemplateFormModal.tsx` and `ProgrammeFormModal.tsx`.
+1. **Station-based training has no representation at all.** Not primarily a
+   duration defect (section 17 corrects that), but an absence of station
+   identity, rotation count and parallel delivery semantics. The total is right
+   in the default case and wrong as soon as the group count changes.
 
-2. **A group is a bib colour.** There is no group row anywhere. This is a good
-   thing and should be preserved; it means "the reds start at station 2" needs no
-   new entity.
+2. **A group is a bib colour, and the derivation has a collision.**
+   `tonightGroups` (`src/lib/tonight.ts:1103`) keys on `bib ?? ''`, so **two
+   teams sharing a default `teams.bib_colour` merge into one group**, and every
+   child with no effective bib merges into a single "No bibs" group. With five
+   club teams and nine colours this is avoidable but nothing prevents or
+   surfaces it. Group identity and bib colour are therefore the same thing
+   today, which is mostly right and not always right.
 
-3. **Drill Maker is finished as a model and unfinished as a workflow.** The
-   diagram schema, the identity boundary, the parser and the editor are all
-   sound. The diagram is invisible everywhere a coach actually works.
+3. **Drill Maker is finished as a model, and its delivery half is in flight.**
+   The diagram schema, the identity boundary, the parser and the editor are all
+   sound. PR #189 puts the diagram on the planner, session day and both live
+   stages (section 18). What remains after it is authoring: a drill still cannot
+   be created without leaving the plan being written.
 
-4. **Venue is a word.** Every layout concept is new.
+4. **Authoring is already duplicated across two editors.** The planner and
+   `TemplateFormModal` each maintain their own activity list, add bar, custom
+   activity literal and row component (section 9). Any authoring work must go
+   through one seam or it will diverge three ways.
 
-5. **Public sharing is deliberately incapable of carrying an operational plan.**
-   Any share of groups and bibs is a new decision, not a wider snapshot.
+5. **Venue is a word.** Every layout concept is new. `venues` carries a name and
+   nothing else, so there is no coordinate space, no geometry and no imagery to
+   build on.
 
-6. **`sessions.activities` is an unconstrained jsonb array read through a strict
+6. **Public sharing is deliberately incapable of carrying an operational plan.**
+   Any share of groups and bibs is a new decision, not a wider snapshot. PR #189
+   reached the same conclusion independently for the diagram alone and declined
+   to widen it.
+
+7. **`sessions.activities` is an unconstrained jsonb array read through a strict
    client allow-list.** Adding a key is cheap in the database and requires
    touching exactly two functions in `src/lib/queries.ts`. Nothing validates the
    shape server side, so a key added there earns none of the guarantees that
