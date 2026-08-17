@@ -49,8 +49,9 @@ approved.
 | COACH-C | Coaching workflow | Copy and adapt a drill without rewriting history | Later | P1 | Migration M1, gated. Depends on B1. |
 | COACH-D | Coaching workflow | Drill Maker authoring improvements | Later | P2 | No schema. Can run in parallel. |
 | COACH-E | Coaching workflow | Week plans, promotion and two deliveries of one plan | Later | P2 | Migration M2, gated. Copy rename. |
-| COACH-F | Coaching workflow | Station blocks: station identity, rotation and parallel delivery | Later | P1 | Migration M3, gated. Touches lifecycle and ics. |
-| COACH-G | Coaching workflow | Suggested groups, surfaced group collisions and derived readiness | Later | P2 | Depends on COACH-F. No schema under the recommended option. Scope revisited if Q9 answers option B. |
+| COACH-F | Coaching workflow | Station blocks: station identity, parallel delivery and phase-specific setup | Later | P1 | Migration M3, gated. **Duration model untouched**, so no lifecycle or ics risk. Depends on B1. |
+| COACH-F2 | Coaching workflow | The game phase: attendance-aware game count and banded sides | Later | P2 | No migration beyond M3. Depends on F and G. |
+| COACH-G | Coaching workflow | Team ability order, suggested groups, surfaced collisions and derived readiness | Later | P2 | Migration M6 (`teams.sort_order`), gated. Depends on COACH-F. Q9 is settled, so the scope is fixed. |
 | COACH-H | Coaching workflow | Venue layout: reusable training areas | Later | P2 | Migration M4, gated. Audit label correction. |
 | COACH-I | Coaching workflow | Session venue composer: place stations by position within the venue | Later | P2 | **Is DRILL-03.** Depends on F and H. |
 | COACH-J | Coaching workflow | Training-day mobile delivery | Later | P1 | Depends on #189, F, G, H, I. Pull QUALITY-02 in here. |
@@ -192,7 +193,7 @@ Unaffected.
 
 ### OPS-02 (Later, P2)
 
-Unaffected. It is migration-tooling work and this programme's five migrations
+Unaffected. It is migration-tooling work and this programme's six migrations
 will benefit from it if it lands first, but none of them depends on it.
 
 ## 4. Delivery order recommendation
@@ -207,24 +208,32 @@ the diagram once it is visible everywhere, the rest of the programme needs
 rethinking, and that is worth knowing from one merged PR rather than after five
 migrations.
 
-Proposed sequence, revised after review:
+Proposed sequence, revised again after the August coach discovery:
 
 1. **Review and merge PR #189** (COACH-A / DRILL-02), including the phone check
    its own author asked for and the roadmap conflict resolution. Not new work.
 2. **COACH-B1**, the shared authoring seam. A no-op refactor that gates every
    later authoring phase, and the thing that stops week plan authoring becoming a
    port of dated authoring.
-3. **COACH-B2**, create and draw a drill from either surface. The workflow gap
-   coaches actually feel.
+3. **COACH-B2**, create and draw a drill from either surface.
 4. **QUALITY-01**, unchanged, since it gates several later items and this audit
    has reduced its cost.
-5. **COACH-F**, because it unblocks G, I and J, and because station identity is
-   a hard prerequisite rather than a nicety.
+5. **COACH-F**, station blocks. **Moved earlier in effective priority and
+   downgraded in risk**: with the duration model untouched it is no longer the
+   phase that must not be rushed, and it unblocks G, I, F2 and J.
 6. **COACH-H**, in parallel if capacity allows, since it is independent.
-7. Then C, D, E, G, I, J by capacity.
-8. **COACH-K** (the generated message) after G. It needs no club decision.
-9. **COACH-K2** and **COACH-L** only on an explicit decision and on evidence
-   respectively. Neither blocks anything.
+7. **COACH-G**, which now carries M6 (the team ability order) alongside the
+   suggestion and readiness.
+8. Then C, D, E, I, F2, J by capacity. F2 wants G for the groups and M6 for the
+   banding.
+9. **COACH-K** (the generated message) after G. It needs no club decision.
+10. **COACH-K2** and **COACH-L** only on an explicit decision and on evidence
+    respectively. Neither blocks anything.
+
+**One ordering note worth stating.** M6 is one nullable column on a five-row
+table and has no consumer until the suggestion exists, so it travels inside
+COACH-G rather than ahead of it. Shipping it earlier would put an unread column
+in the schema for no benefit.
 
 ## 5. What this task changed on the roadmap
 

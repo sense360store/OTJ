@@ -82,45 +82,6 @@ scoped.
 
 ---
 
-## Q4. How many groups should the suggested split aim for by default?
-
-**Blocks:** a small default in COACH-G. Not the phase.
-
-**The situation.** The discovery says four to six stations with four as a good
-default, and that groups rotate between them. So the natural default is "one
-group per station". But a club with 22 children and four stations gets groups of
-five or six, and with 40 children gets ten, which is a different kind of session.
-
-**Recommendation.** Default to one group per station, and show the resulting
-group size prominently so the coach can immediately see whether it is sensible
-and change the count. Do not add a target group size setting until someone asks
-for one.
-
-**If unanswered.** The recommendation is the default.
-
----
-
-## Q5. Should a coach be able to choose which group starts at which station?
-
-**Blocks:** nothing. It is the difference between zero state and a small amount
-of per-session state in COACH-G.
-
-**The situation.** The plan derives starting stations from group order: the first
-group starts at station 1, the second at station 2, and rotation is arithmetic
-from there. That is correct for the normal case and costs nothing to store.
-
-**When it would be wrong.** If a coach wants the youngest group to start at the
-easiest station, or wants to avoid a particular group starting at the goalkeeping
-drill.
-
-**Recommendation.** Ship derived. If coaches ask, add an override then; it is one
-small map per session and it can ride the same jsonb as the block metadata.
-Building it first is speculative complexity.
-
-**If unanswered.** The recommendation is the default.
-
----
-
 ## Q6. Should a venue layout be allowed a traced or aerial background image?
 
 **Blocks:** the scope of COACH-H. Not the phase.
@@ -182,68 +143,138 @@ thought rather than being decided as a footnote here.
 
 ---
 
-## Q9. Is an operational group the same thing as a bib colour?
+## SETTLED. Q4, Q5 and Q9, answered by the August coach discovery
 
-**Added after review**, because the first version of these documents settled this
-by pointing at the current implementation rather than asking the product
-question.
+Recorded here rather than deleted, so the reasoning is not rediscovered.
 
-**Blocks:** nothing immediately. It decides whether COACH-G stays schema-free or
-gains a column, so it wants answering before COACH-G starts rather than during
-it.
+### Q9. Is an operational group the same thing as a bib colour? **Settled: yes.**
 
-**The situation.** Today a group *is* a bib colour: `tonightGroups` keys the
-included children on their effective bib. That reads correctly on the pitch,
-where the colour is exactly how a group is identified. It has two collisions
-nobody has written down before now:
+- **The station group's coach-facing identity is its bib colour.**
+- **Active station groups have unique bib colours within a session.** The coach
+  reports no use case for two intended groups sharing one, and the silent merge
+  that happens today is a defect.
+- **"No bibs" is not a valid group.** An included player with no effective bib
+  means Groups and bibs is **not ready**.
+- **Not ready is a soft state, never a blocker.** The session opens, edits and
+  runs regardless, and a late arrival added to a group recalculates it.
+- **Uniqueness is a domain and UI rule, not a database constraint**, because a
+  group is emergent from per-player bib resolution and there is no row a unique
+  index could sit on without inventing the entity this decision declines.
+- **No new Group entity**, unless implementation evidence later proves the
+  existing model cannot carry the behaviour.
+- **The normal team from Spond supplies the default grouping context**, and
+  **tonight's bib assignment is session-only** and already is, through
+  `register_entries.bib_colour_override`.
+- **No per-player ability score, level or permanent training classification.**
+  The context derives through the team's position in the club order.
 
-1. Two teams whose default bib colour is the same **merge into one group**,
-   silently. Nothing prevents it and nothing says it happened.
-2. Every child with no effective bib merges into one "No bibs" group, so a fifth
-   group at a club with four sets of bibs is not representable.
+The one thing that must be stored is the club's ordering of its own teams, one
+integer per team, because nothing in the schema can express or derive it
+(`00-current-state-audit.md` section 19). That is M6.
 
-**What a colour cannot carry:** which station a group starts at, its rotation
-order, its continuity when the coach rebalances, and a name.
+### Q4. How many groups should the split aim for? **Settled.**
 
-**The options**, in full in `02-target-product-model.md` section 6.3:
+One group per station remains the starting point, but the rules that shape it are
+now explicit: keep normal teams whole where practical, combine only **adjacent**
+ability bands, and prefer slightly uneven groups (6/5/5/4) over splitting squads
+to reach even ones (5/5/5/5). Higher attendance makes existing groups bigger; it
+does not invent a group to fill a station that was never planned.
 
-- **A.** Keep bib as identity; surface the collisions. No schema.
-- **B.** A lightweight per-session group: an ordered list on the session and a
-  `group_id` on `register_entries`. Groups gain names, continuity, and the
-  ability to share a colour or have none. One column on a currently very clean
-  table, plus a second editable identity that can disagree with the bib every
-  child is actually wearing.
-- **C.** A, plus a derived group order for rotation. No schema.
+### Q5. Should a coach choose which group starts at which station? **Settled: no.**
 
-**Recommendation: C**, with B's trigger stated in advance rather than left to be
-rediscovered. B's benefit is expressible only in cases the club has not reported;
-its cost lands on the pitch, where a stored group id that disagrees with the
-colour a child is wearing is worse than either collision above.
+The coach reports no preference about starting stations or rotation direction. So
+OTJ picks deterministically and **offers no configuration UI for either**. This
+was previously deferred with a recommendation; it is now an answer.
 
-**Revisit B if any of these turns out to be real:** the club wants two groups
-wearing one colour, a group that keeps its identity when children are re-bibbed,
-or a named group with a coach assigned to it.
+---
 
-**If unanswered.** Option C is the default and COACH-G ships schema-free, with
-the two collisions surfaced.
+## SETTLED. The game phase
+
+Answered by the same discovery, and new since the last revision.
+
+- A session has at least two physical phases: the station carousel, then
+  small-sided games, with the ground rearranged between them.
+- **A game side is not a bib group.** One side may contain two bib colours, and
+  nothing forces a redistribution to make each side one colour.
+- A side is modelled as **a set of bib groups**, never a player list and never
+  one colour.
+- **Game count is an attendance-driven recommendation**, roughly one game around
+  a dozen children and two above twenty, with those numbers adjustable and in one
+  named place. It never rewrites the planned session.
+- **Sides are banded, not averaged**: stronger groups together, weaker groups
+  together, using the club team order.
+- The setup views are derived from blocks, so the two-phase model needs no new
+  entity.
+
+---
+
+## Q10. How is the transition between the phases timed?
+
+**New, and genuinely open.**
+
+**The situation.** The plan models the transition as an ordinary activity
+("Reset, 5 min"), which needs no new structure and occupies real time in the
+total. But nobody has said whether coaches actually want it in the plan, or
+whether they treat it as slack inside the carousel's last rotation.
+
+**Why it matters slightly.** If it is a real activity, the session total is
+honest and the live view has something to show. If coaches never add one, the
+live view moves from the last station straight to the first game with no cue that
+the ground has to change, which is exactly the unexplained moment this programme
+exists to remove.
+
+**Recommendation.** Ship it as an optional ordinary activity, and have the games
+setup view announce itself ("Next: two games, pitches here") whether or not a
+Reset activity exists. That way the cue does not depend on the coach having
+planned for it.
+
+**If unanswered.** The recommendation is the default and nothing is blocked.
+
+## Q11. Does the grouping suggestion need a "why" line?
+
+**New, and worth deciding before Phase G rather than after.**
+
+**The situation.** The suggestion combines adjacent bands and prefers uneven
+groups. A coach looking at 6/5/5/4 cannot tell whether OTJ chose it deliberately
+or fell into it, and the previous experience with two honest numbers wearing one
+word (`CLAUDE.md`, Tonight) says this club notices that kind of ambiguity.
+
+**Recommendation.** One sentence under the suggestion: "Titans and Trojans
+combined to keep the numbers workable." It costs nothing, it is derived from the
+decision the function already made, and it makes an override an informed choice.
+
+**If unanswered.** Ship without it and add it when a coach asks why.
+
+---
 
 ---
 
 ## Summary: what actually blocks work
+
+**Open questions**
 
 | Question | Blocks | Default if unanswered |
 |---|---|---|
 | Q1 date/time/venue public | COACH-K2 and TRAIN-02 only | Message only, no public page |
 | Q2 parent identity binding | Nothing | Not built |
 | Q3 freeze delivered sessions | Nothing | Not frozen |
-| Q4 default group count | Nothing | One group per station |
-| Q5 starting station override | Nothing | Derived |
 | Q6 venue background imagery | Nothing | No imagery |
 | Q7 rename template | COACH-E copy only | Ships with the current word |
 | Q8 audible rotation cue | Nothing | LIVE-02 unchanged |
-| Q9 group identity versus bib colour | COACH-G's shape, not its start | Option C, no schema |
+| Q10 transition timing | Nothing | Optional activity, games view announces itself |
+| Q11 a "why" line on the suggestion | Nothing | Ship without, add on request |
+
+**Settled by the August coach discovery, and not to be reopened without evidence**
+
+| Was | Decision |
+|---|---|
+| Q4 group count | One per station, teams kept whole, adjacent bands combined, uneven preferred |
+| Q5 starting station and rotation direction | Derived, deterministic, no configuration UI |
+| Q9 group identity | Bib colour, unique per session, no Group entity, no ability field |
+| Game phase | Sides are sets of bib groups, banded not averaged, count is a recommendation |
+| Session-only override | Already satisfied by `register_entries.bib_colour_override` |
+| Team ability order | One integer per team (M6), the only irreducible new fact |
 
 **Nothing blocks the critical path.** Q1 governs only the parked public
-projection, which nothing depends on. Q9 wants answering before COACH-G starts
-but has a defensible default. So the programme can proceed today: review and
-merge PR #189, then start COACH-B1, without a single answer.
+projection. Q10 and Q11 are refinements with defaults. The programme can proceed
+today: review and merge PR #189, then start COACH-B1.

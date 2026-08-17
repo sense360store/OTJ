@@ -2,7 +2,7 @@
 
 Status: proposal, awaiting approval.
 
-Seven journeys, written as what the coach does rather than as screens. Each names
+Eight journeys, written as what the coach does rather than as screens. Each names
 the existing components it reuses, because the point of the audit was to find
 what already works. Each names its device, because principle 7 says authoring may
 optimise for a laptop and delivery must be excellent on a phone.
@@ -34,12 +34,14 @@ the week plan.
 1. Open the week plan, or start a session directly in the planner.
    *Reuses `src/routes/Planner.tsx`, `useStartFromTemplate`.*
 2. Warm-up first. Add from library, or create.
-3. **Add the stations.** Add four drills, then select them and press **Make these
-   a station block**. Set the rotation length, for example ten minutes. The block
-   shows "4 stations, 10 min each, 4 rotations, 40 min".
-   *New in the planner. The rotation count defaults to the station count.*
-4. Small-sided game at the end, as an ordinary activity.
-5. The session total now reads sixty minutes, not the ninety it reads today.
+3. **Add the stations.** Add four drills, then select them and press **Make
+   these a station carousel**. The block shows "4 stations, 10 min each, 4
+   rotations, 40 min". **The rotation count is the station count**, so it is
+   stated rather than asked for.
+4. **Add the games.** Add one or two game activities and mark them as the game
+   phase. Add a **Reset** activity between the two if the ground needs clearing,
+   which is an ordinary custom activity.
+5. The session total reads sixty minutes, computed exactly as it is today.
 
 **Key detail:** a session with no block is unchanged in every respect. The block
 is opt-in and additive.
@@ -124,18 +126,55 @@ choice rather than a surprise.
    *Reuses `src/routes/SessionRegister.tsx`, `src/lib/tonight.ts`, entirely.*
 2. Refresh Spond, on the existing authenticated sync path.
 3. The Going filter is already the default. Select all on the visible set.
-4. **Suggest groups** proposes a balanced split of the included children into the
-   number of groups the block has stations for, keeping team mates together where
-   the numbers allow, and assigns a bib colour to each.
+4. **Suggest groups** proposes a split of the included children, and it works
+   from the normal teams the club already holds rather than from anything new.
    *New: a pure function producing a draft. It writes nothing.*
-5. The coach edits it: move a child, change a bib, add a guest who turned up.
+   - Keep each normal team whole where the numbers allow.
+   - Where teams must be combined, combine **adjacent** ability bands.
+   - Prefer slightly uneven groups over splitting a team: 6/5/5/4 beats 5/5/5/5
+     bought by breaking up two squads.
+   - Assign each group a **unique** bib colour.
+5. The coach edits it: move a child into another bib group, change a colour, add
+   a guest who turned up. **Moving a child tonight changes nothing durable**: not
+   their Spond team, not their OTJ team, not next week's default.
 6. **Save groups.** The readback is compared field by field, as today.
-7. A readiness line appears on the session: "Plan ready. 22 in 4 groups. Stations
-   placed. Ready for Tuesday." Derived on every read, stored nowhere.
+7. A readiness line appears: "22 in 4 groups. Everyone has a bib. Stations
+   placed." Derived on every read, stored nowhere.
+
+**Readiness never blocks.** An included child with no effective bib means not
+ready, and the coach can still open, edit and run the session. A late arrival
+dropped into an existing bib group recalculates it on the next render.
+
+**Two states the screen now names rather than hides**
+(`00-current-state-audit.md` finding 2): two teams whose default colour is the
+same, which would otherwise merge two intended groups into one; and children with
+no bib at all, which is not a valid group. Both come with the fix beside them.
 
 **The rule that survives unchanged:** a club with no Spond configuration gets the
 complete surface. A Spond failure renders as no context, never as "nobody is
 coming".
+
+## Journey 5a: the move from stations into games
+
+**Device: phone or laptop. When: one or two days before, and again on the night.**
+
+1. On the session, the game phase shows how many games are planned and how many
+   the attendance suggests. Roughly a dozen children is one game and twenty plus
+   is two; the numbers are adjustable and live in one place.
+2. **The suggestion changes nothing.** A week plan authored with two games keeps
+   two games. The coach is told what the attendance implies and decides.
+3. OTJ proposes the sides from the same team order the grouping used: stronger
+   groups together, weaker groups together, never averaged into two identical
+   mixtures and never the strongest mixed with the weakest to even the numbers.
+4. **A side may wear two bib colours.** With four station groups and one game,
+   "reds and blues against greens and yellows" is the expected shape. Nothing
+   forces a bib change to make each side one colour.
+5. The coach adjusts the sides. Moving one child is a bib change, which is one tap
+   and already session-only.
+
+**The distinction the screen must keep visible:** a station bib group and a game
+side are related and not the same. The sides are drawn as sets of groups, so a
+coach reads "red + blue" rather than a list of children.
 
 ## Journey 6: lay out the venue
 
@@ -172,6 +211,15 @@ a coach arriving still has to ask where on Pitch 2, and which of the two station
 on it is theirs. That question is exactly the verbal briefing this programme
 exists to remove.
 
+**The setup changes during the session, so there are two composer views.**
+
+- **Stations**: the carousel block's members, placed as numbered markers.
+- **Games**: the game block's members, placed as pitches, which is where the
+  optional footprint earns its place.
+
+They are two views of the same venue, not two venues and not two layouts. The
+transition between them is an ordinary Reset activity in the plan.
+
 **A venue with no layout** offers no composer and says so in one sentence, with a
 link an admin can follow. It is not an error state.
 
@@ -183,8 +231,8 @@ link an admin can follow. It is not an error state.
    *Reuses `pickNextEvent`, `eventFilter.ts`, `sessionLifecycle.ts`. Unchanged.*
 2. **Groups and bibs.** Four groups, each a colour, each with its children.
    *Reuses `tonightGroups`, `TRAIN-01`'s read-only overview.*
-3. **The setup.** The venue area with four numbered stations in place. One glance
-   answers "where does everything go".
+3. **The setup, stations.** The venue area with four numbered stations at their
+   positions. One glance answers "where does everything go".
 4. Tap station 2. The drill fills the screen: the diagram large, the objective,
    the coaching points, the setup notes, what equipment it needs.
    *Reuses `ActivityDiagram` and `DrillDiagramView` exactly as PR #189 mounts
@@ -192,9 +240,15 @@ link an admin can follow. It is not an error state.
    a new rendering path.*
 5. Back to the overview. Swipe or tap moves between stations.
 6. "Your group starts here" is stated on the station a coach's group begins at,
-   derived from group order.
-7. Optional: **Start** opens the live view, which runs one timer per rotation and
-   says **Rotate** rather than walking four stations in series.
+   derived from group order. No setting was involved: the coach expressed no
+   preference about which group starts where or which way the carousel turns, so
+   OTJ picks deterministically and offers no configuration for either.
+7. **The setup, games.** After the carousel, the second setup view: the game
+   pitches, and which groups make up each side. A side may read "red + blue".
+8. Optional: **Start** opens the live view, which runs one timer per rotation and
+   says **Rotate** rather than walking four stations in series. Four planned
+   stations means four rotations whether three groups turned up or four; with
+   three, one station stands empty each rotation and nothing is dropped.
    *Reuses `src/routes/LiveSession.tsx`, `useSetLiveActivity`, `0006` live state.*
 
 **What every coach sees is identical**, because it is one session read by

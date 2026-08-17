@@ -2,7 +2,7 @@
 
 Status: proposal, awaiting approval. Nothing in this plan has been implemented.
 
-Twelve phases. Every one leaves OTJ usable and deployable, and every one is
+Fourteen phases. Every one leaves OTJ usable and deployable, and every one is
 useful on its own to a coach even if the next never ships. Phase boundaries were
 chosen from the code rather than from the suggested numbering; the mapping to the
 discovery's suggested phases is in section 14.
@@ -304,141 +304,205 @@ text.
 
 ## Phase F: station blocks
 
-**Reframed after review.** An earlier draft justified this phase as a duration
-defect and claimed a one hour session reads as ninety minutes. **That was wrong.**
-Four 10 minute stations run as four rotations lasts 40 minutes and the sum of
-four 10 minute activities is 40. The present total is not wrong merely because
-the stations are parallel (`00-current-state-audit.md` section 17).
+**Reframed twice, and it got smaller both times.** The first version justified
+this as a duration defect. The second said the total goes wrong when the group
+count changes. **Both were wrong**, and the second was wrong because it assumed
+rotations follow groups.
 
-**The genuine need is station identity, parallel delivery and rotation. Duration
-correctness is a consequence, and a narrow one.**
+**The rule: every active bib group completes every planned station once, so the
+rotation count is the station count.** Four planned stations run four rotations
+with three groups or four; with three, one station stands empty each rotation.
 
-**Outcome.** A session can say which activities form one carousel, how many
-rotations it runs, and deliver it as a carousel rather than a queue.
+`rotations = stations`, so `wall clock = m × stations = sum of durations`. **The
+existing total is already correct at every attendance level, and this phase
+changes no duration code at all.**
 
-### Why this phase exists, in priority order
+**Outcome.** A session can say which activities occupy the ground at the same
+time, and deliver a carousel as a carousel rather than a queue.
 
-1. **Station identity.** Nothing today says which activities are stations of one
-   block. The venue composer (Phase I), "your group starts at station 2" (Phase
-   G) and the training-day overview (Phase J) all need that set, and none of
-   them can be built without it. **This is the reason the phase exists.**
+### Why this phase exists
+
+1. **Station identity.** Nothing says which activities form one carousel. Phase
+   G ("your group starts at station 2"), Phase I (the composer) and Phase J (the
+   overview) all need that set and none can be built without it.
 2. **Parallel delivery.** `LiveSession.tsx` walks activities one at a time and
-   shows the current one to everybody, but during a carousel every group is at a
-   different station and the event that matters is **rotate**. This is wrong
-   today, independently of any arithmetic.
-3. **Rotation count.** The number of rotations is what attendance changes, one
-   or two days before the session, and there is nowhere to record it.
-4. **Duration, last.** The total is correct while `rotations == stations` with
-   equal-length stations, and diverges otherwise: 4 stations with 3 groups is 30
-   minutes against a stated 40; 6 stations with 4 groups is 40 against 60. So
-   this is not a standing defect, it is a correct answer that stops being correct
-   the moment the operational layer adjusts the group count.
+   shows the current one to everybody. During a carousel every group is at a
+   different station and the event that matters is **rotate**.
+3. **Phase-specific setup.** A block is also what makes "the ground is
+   rearranged after the carousel" expressible, because a block is exactly the
+   set of activities sharing the ground at one time.
+
+**Not on this list: duration.** It is correct as it stands.
 
 **Scope.**
-- `sessions.blocks` and `templates.blocks`; `block_id` on an activity.
-- Planner: select activities, **Make these a station block**, set the rotation
-  length, adjust the rotation count.
-- `sessionMinutes` becomes block-aware, and every consumer with it.
-- Live view: one timer per rotation, with **Rotate** as the cue and all stations
-  listed.
+- `sessions.blocks` and `templates.blocks`, each entry `{ id, kind }` with `kind`
+  in `carousel | games`; `block_id` on an activity.
+- The shared authoring seam (B1) gains **Make these a station carousel** and
+  **Mark as the game phase**.
+- Live: one timer per rotation, **Rotate** as the cue, all stations listed.
+- A planning warning where members of one carousel carry unequal durations.
 
-**Non-goals.** No group assignment (Phase G). No venue placement (Phase I). No
-per-station coach assignment, ever: the discovery says coaches rotate with their
-group and that exceptions should not be modelled.
+**Non-goals.** **No duration model change.** No `rotations` field and no
+`minutes_per_rotation` field: both are derivable and a stored copy can disagree
+with the list it describes. No group assignment (Phase G). No venue placement
+(Phase I). No game side allocation (Phase F2). No per-station coach assignment,
+ever: coaches rotate with their group and the exceptions should not be modelled.
+**Nothing may drop a drill, shorten the carousel or edit the plan because
+attendance is low.**
 
-**Reuse.** `src/lib/data.ts` (`sessionMinutes`), `src/lib/sessionLifecycle.ts`,
-`src/lib/ics.ts`, `LiveSession.tsx`, the planner's activity list.
+**Reuse.** The existing `Phase` vocabulary already distinguishes `Game` from
+`Skill` (`src/lib/data.ts:9`), so the game block leans on a field every screen
+already reads rather than inventing a second classification.
 
-**Database.** **M3**. Two nullable jsonb columns and a light shape constraint.
-Plus the mandatory client change to `toActivity` and `toActivityRow`, without
-which `block_id` is dropped on read and lost on save.
+**Database.** **M3**. Two nullable jsonb columns and a light shape constraint,
+plus `block_id` added to `toActivity` and `toActivityRow`, without which it is
+dropped on read and lost on save.
 
-**RLS.** No new policy on either table. **Edge Functions.** The session share
-builder derives `totalDuration` from the activities; it must use the same rule or
-a shared session will report a different length from the app. Check
-`_shared/share.ts` and keep the two in step.
+**Migration risk.** Low. Null blocks and no `block_id` is every existing session
+and template. **The lifecycle and calendar risk the previous revision warned
+about no longer exists**, because no total changes.
 
-**Backwards compatibility.** Total. No blocks and no `block_id` is every existing
-session, and the maths reduces exactly to the current sum.
+**Security and privacy.** None. A block carries no person and no free text.
 
-**Tests.** Duration maths for a session with a block, without one, and with two.
-`sessionLifecycle` derives the expected end from the same total, and the
-invariant test still finds exactly one fallback duration. An ics export of a
-blocked session has the right length. Live advances by rotation.
+**Dependencies.** B1 for the authoring surface. Nothing else.
 
-**Manual smoke.** Build a real one hour session with a warm-up, four stations and
-a game. Confirm the total is sixty. Run it live and rotate.
+**Manual acceptance test.** Build a one hour session: warm-up, four 10 minute
+stations marked as a carousel, a 5 minute Reset, two games. Confirm the total
+reads 60 and matches what it read before the blocks existed. Run it live with
+three groups and confirm four rotations, one empty station per rotation, and no
+drill dropped.
 
-**Dependencies.** None, but it must precede Phase I.
+**Rollback.** Drop the columns. Sessions lose their block structure and read as
+sequential again; no activity and no duration is lost.
 
-**Rollout risk.** **The highest in the programme**, because duration feeds the
-lifecycle and the lifecycle decides whether a session appears on Home. A wrong
-total puts a session in the wrong list. This is why the phase is on its own and
-why its tests are about arithmetic before they are about UI.
-
-**Rollback.** Drop the columns. Sessions with blocks lose their block structure
-and read as sequential again; no activity is lost.
-
-**PR boundary.** One migration PR (gated). One PR for the duration model and its
-consumers, with no UI. One PR for the planner UI. One for the live view.
+**PR boundary.** One migration PR (gated). One PR for the model and the authoring
+affordance. One for the live view.
 
 ---
+
+## Phase F2: the game phase
+
+**New, from coach discovery.** Sessions have at least two physical phases, and
+the second groups players differently from the first.
+
+**Outcome.** A coach can see how many games the attendance suggests, and which
+groups make up each side, without a bib redistribution.
+
+**Scope.**
+- A **game count recommendation** from attendance: roughly a dozen children is
+  one game, twenty plus is two.
+- **Game side allocation**, suggested from the club's team order: stronger groups
+  together, weaker groups together.
+- A side is **a set of bib groups**, stored on the `'games'` block entry.
+
+**Non-goals, and each of these is a mistake the design is guarding against.**
+- **The thresholds are not policy.** They live in one named, adjustable place
+  with the reasoning beside them, and they produce a sentence, never a change.
+- **The recommendation never rewrites the plan.** A week plan authored with two
+  games keeps two games whatever attendance says.
+- **A side is never assumed to be one bib colour.** With four groups and one
+  game, a side wearing two colours is the expected shape, and nothing forces a
+  redistribution to tidy it.
+- **No per-player side assignment.** Moving one child is a bib change, already
+  one tap and already session-only. Storing a player list would duplicate
+  tonight's membership, which already lives in `register_entries`.
+- No averaging two games into identical ability mixtures.
+
+**Reuse.** `tonightGroups` for the groups, the M6 team order for the banding, the
+existing `Game` activity phase.
+
+**Database.** None beyond M3: the allocation rides the `'games'` block entry.
+
+**Migration risk.** None.
+
+**Security and privacy.** None new. The allocation names bib colours, not
+children, so it holds no child data even in memory.
+
+**Dependencies.** F (the block), G (the groups), M6 (the team order, for the
+suggestion only; without it the sides are suggested by group order alone).
+
+**Manual acceptance test.** Twenty-two children in four groups, one game
+planned. Confirm the suggestion puts two groups a side, that neither side is
+forced to one colour, and that changing it and reloading keeps the change.
+Repeat with two games and confirm the stronger pair play each other.
+
+**Rollback.** Revert. Stored allocations become inert.
+
+**PR boundary.** One PR.
 
 ## Phase G: operational preparation
 
 **Outcome.** One or two days out, a coach turns "22 replies" into "four groups,
-four colours, ready".
+four colours, everyone has a bib".
 
 **Scope.**
-- **Suggest groups**: a pure function proposing a balanced split of the included
-  children into the block's station count, keeping team mates together, assigning
-  a bib colour per group. It produces a **draft** the coach edits.
+- **M6, the team ability order**: one integer per team, set on the existing
+  `AdminTeams` screen by a `teams.manage` holder.
+- **Suggest groups**: a pure function producing a draft. Keep each normal team
+  whole where practical; combine **adjacent** bands when combining is needed;
+  prefer 6/5/5/4 over splitting two squads to reach 5/5/5/5; give each group a
+  **unique** bib colour.
+- **Readiness**, derived: an included child with no effective bib means not
+  ready; two active groups sharing a colour means not ready. Both name the fix.
 - Group order determines starting station, derived from the bib vocabulary order
   `tonightGroups` already applies.
-- **Surface the two group collisions**, which is new scope added after review:
-  two teams sharing a default `teams.bib_colour` currently merge into one group
-  silently, and every child with no effective bib merges into one "No bibs"
-  group. Both become stated, with the fix beside them, rather than left silent
-  (`00-current-state-audit.md` finding 2, `02-target-product-model.md` section
-  6.2).
-- A **readiness readout** on the session, derived and stored nowhere.
 
-**Non-goals.** **No stored workflow states**
-(`02-target-product-model.md` section 5). **No group entity**, which is the
-recommendation in `02-target-product-model.md` section 6.4 (option C) and is
-subject to the explicit product decision at `08-open-questions.md` Q9. If that
-decision comes back as option B, this phase gains one column on
-`register_entries` and one jsonb list, and its scope is revisited before it
-starts rather than during it. No change to how Spond, presence or inclusion work.
-No automatic anything: nothing suggests without a press and nothing saves without
-Save groups.
+**Non-goals, each one a mistake this design is guarding against.**
+- **No per-player ability score, level or classification.** The context derives
+  through the team's position in the club order. M6 stores that order once per
+  team, five rows for this club, never per child.
+- **No new Group entity** and no `group_id` on `register_entries`. The bib colour
+  is the identity, and uniqueness is a domain rule surfaced as readiness rather
+  than a constraint, because a group is emergent from per-player bib resolution
+  and there is no row a unique index could sit on.
+- **No new column for the session-only override.**
+  `register_entries.bib_colour_override` already is one.
+- **Moving a child tonight writes nothing durable.** Not `players`, not
+  `player_registrations`, not `teams`. A test should assert this directly,
+  because it is the requirement most likely to be broken by a well-meaning
+  "also update their team" convenience.
+- **Not ready is never blocked.** The coach opens, edits and runs the session
+  regardless.
+- No stored workflow states (`02-target-product-model.md` section 5). No change
+  to how Spond, presence or inclusion work. Nothing suggests without a press and
+  nothing saves without Save groups.
 
-**Reuse.** `src/lib/tonight.ts` in its entirety, `src/lib/bibs.ts`,
-`src/routes/SessionRegister.tsx`, `useSaveTonight`, `sessionLifecycle.ts`.
+**Reuse.** `src/lib/tonight.ts` entirely, `src/lib/bibs.ts`,
+`src/routes/SessionRegister.tsx`, `useSaveTonight`, `sessionLifecycle.ts`,
+`AdminTeams.tsx`.
 
-**Database.** None. **RLS.** None. **Edge Functions.** None.
+**Database.** **M6** only: `teams.sort_order` plus a partial unique index. Null
+everywhere is today's behaviour, and with it null the suggestion keeps each team
+whole and declines to claim which teams are adjacent.
+
+**Migration risk.** Low. One nullable column on a five-row table.
+
+**Security and privacy.** None new. `sort_order` is a club configuration value
+about teams, not about children. No read path widens and no capability changes:
+`teams_manage` already gates the write.
 
 **Rules that must survive.** The three independent facts per child. Spond as
 context only. A club with no Spond configuration gets the whole surface. A Spond
 failure renders as no context, never as "nobody is coming". One count builder.
 Nothing persists outside Save groups.
 
-**Tests.** The split is deterministic and balanced; it keeps team mates together
-where the numbers allow and says so when they do not; it produces a draft and
-writes nothing; it never touches `present`; readiness derives from the same seam
-as the lifecycle and never writes.
+**Dependencies.** F for the station count. Degrades to a coach-entered group
+count without it. M6 is inside this phase rather than before it.
 
-**Manual smoke.** A real session with real replies. Suggest, adjust, save,
-reload, confirm the readback matches.
+**Manual acceptance test.** Set the club order on the admin screen. Take a
+session with 22 replies across five teams and confirm the suggestion keeps teams
+whole where it can, combines only adjacent bands, and gives four unique colours.
+Move one child into another bib group, save, then open that child on the Players
+screen and confirm **their team is unchanged**. Set two teams to the same default
+colour and confirm the screen says so rather than merging them. Remove a child's
+bib and confirm not ready, and that the session still opens and runs. Add a late
+arrival to a group and confirm readiness recalculates.
 
-**Dependencies.** Phase F for the station count. Degrades to a coach-entered
-group count without it.
+**Rollback.** Revert the client. Drop `sort_order` if the column is unwanted;
+nothing else reads it.
 
-**Rollout risk.** Low. Everything is a draft until Save.
-
-**Rollback.** Revert. Nothing new was stored.
-
-**PR boundary.** One PR for the split, one for the readiness readout.
+**PR boundary.** One migration PR (gated, M6). One PR for the suggestion. One for
+readiness and the collision surfacing.
 
 ---
 
@@ -554,10 +618,24 @@ area. Moving a sub-area in the venue layout leaves positions untouched and
 recomputes the derived area. Deleting a sub-area leaves the station placed.
 Changing the session's venue does not silently clear placements.
 
-**Manual smoke.** Place four stations across Flushdyke's two pitches, two per
-pitch, at distinct spots. Confirm they are four separable markers at 390 pixels
-wide. Move a pitch in the venue layout and confirm the stations stay where they
-were on the ground. Change the session's venue and confirm the warning.
+### Two setup views, and why they cost nothing extra
+
+The ground is rearranged mid-session: the cones come in and the game pitches go
+out. So the composer has **two views, one per block**: the carousel's members
+placed as numbered markers, and the game block's members placed as pitches.
+
+This needs no setup phase entity, no layout versioning and no per-phase placement
+set, because a placement already belongs to an activity and an activity already
+belongs to a block. The transition is an ordinary Reset activity in the plan.
+
+A game pitch is where the optional footprint (`w`, `h`) earns its place.
+
+**Manual acceptance test.** Place four stations across Flushdyke's two pitches,
+two per pitch, at distinct spots. Confirm they are four separable markers at 390
+pixels wide. Switch to the games view and place two pitches with footprints.
+Confirm the two views are independent and that neither redraws the other. Move a
+pitch in the venue layout and confirm the stations stay where they were on the
+ground. Change the session's venue and confirm the warning.
 
 **Dependencies.** Phase F (which activities are stations) and Phase H (the
 areas). Both hard.
@@ -577,8 +655,8 @@ next save, which is acceptable and should be stated in the PR.
 and needs no briefing.
 
 **Scope.**
-- Session day on a phone: groups and bibs, then the venue overview with numbered
-  station markers, then a station, then back.
+- Session day on a phone: groups and bibs, then the **stations** setup view with
+  numbered markers, then a station, then back, then the **games** setup view.
 - The station screen is the drill visual large, the objective, the coaching
   points, the setup notes and the equipment, and little else.
 - "Your group starts here" on the relevant station.
@@ -704,34 +782,38 @@ column".
 
 ```
 A (= PR #189, in review, not this programme's work)
-                     └──────────────────────────── J
+                       └───────────────────────────── J
 
 0 ─┬─ B1 ── B2 ─┬─ C
-   │            └─ (all later authoring)
-   ├─ D                                (D also gates L)
+   │            └─ (all later authoring, incl. the block editor in F)
+   ├─ D                                    (D also gates L)
    ├─ E
-   ├─ F ─┬─ G ─┬────────────────────── K (message half)
-   │     └─ I ─┘                       K (public half: gated on Q1, NOT a
-   └─ H ─── I ─── J                        prerequisite for anything)
+   ├─ B1 ── F ─┬─ F2 ──────────────────────┐
+   │           ├─ G ──┬─ F2                ├─ K (message)
+   │           └─ I ──┤                    │
+   └─ H ───────── I ──┴─ J ────────────────┘
 
-                 L (gated on evidence, after the static workflow is in use)
+                 K2 / DRILL-02b  (gated on Q1, prerequisite for NOTHING)
+                 L               (gated on evidence of use)
 ```
 
-**Changes from the first version, all from the review:**
+**Changes from the previous revision:**
 
-- **A is no longer scheduled work.** It is PR #189 awaiting review and merge.
-- **B is split.** B1 extracts the shared authoring seam (pure refactor); B2 adds
-  create and draw to both hosts. B1 gates B2 and everything later that touches
-  authoring, including C.
-- **I now depends on F and H as before**, but its own model changed from an area
-  reference to a position.
-- **K's public half is explicitly off the critical path.** Nothing depends on it.
+- **F no longer gates a duration change**, because there is not one. Its risk
+  drops from "the highest in the programme" to low, and it stops being the phase
+  that must not be rushed.
+- **F now gates F2**, the new game phase, and F2 also wants G for the groups and
+  M6 for the banding.
+- **M6 moved inside G** rather than standing alone. It is one nullable column on
+  a five-row table and it has no consumer until the suggestion exists.
+- **F depends on B1**, because the block editor is an authoring affordance and
+  belongs in the shared seam rather than in the planner alone.
 
-B1, D, E, F and H have no dependencies on each other and can be scheduled freely.
-F gates G and I. H gates I. F and H together gate I; I and H gate J. G gates K's
-message half.
+B1, D, E and H have no dependencies on each other and can be scheduled freely.
+B1 gates B2, C and F. F gates G, I and F2. H gates I. I and H gate J. G gates F2
+and K's message half.
 
----
+**Nothing on this graph depends on a public sharing decision.**
 
 ## 14. Mapping to the discovery's suggested phases
 
@@ -750,7 +832,101 @@ message half.
 
 ---
 
-## 15. Adversarial pass, second round
+## 15. Adversarial pass, third round
+
+Run after the coach discovery that produced this revision, and checked
+specifically against the contradiction list that discovery supplied. Earlier
+rounds are kept below, because two of their conclusions were wrong and the record
+matters.
+
+**Does group count control rotation count anywhere?** It did, and it was wrong in
+three documents. `02` said rotations default to the station count but "three
+groups turning up means three, and the operational layer adjusts it"; `00` and
+`06` both carried a table whose first row read "4 stations, 3 groups (3
+rotations) = 30 minutes". All are corrected: **rotations are the station count,
+full stop**, and `rotations` is no longer a stored field at all because it is
+derivable from the member list. The corrected rule is stated in `00` section 17,
+`02` section 4.3 and Phase F, and the "one station stands empty" case is now an
+explicit acceptance test.
+
+**Does low attendance silently delete a planned drill anywhere?** Not now.
+Phase F's non-goals say it in the imperative, `02` section 4.3 has a "what must
+never happen" paragraph, and Phase F2 says the game recommendation never rewrites
+the plan. The previous revision's "the operational layer adjusts it" was the
+sentence that would have licensed it, and it is gone.
+
+**Is a bib group ever confused with a game side?** This was the highest risk of
+the new material, because the two are one tap apart on the same screen. Guarded
+in four places: `02` section 7a states they are different entities, the side is
+modelled as a **set** of groups so the two-colour case is the natural shape
+rather than an exception, Phase F2's non-goals refuse the one-colour assumption
+outright, and the acceptance test checks that a side wearing two colours is not
+"tidied".
+
+**Is the Spond team duplicated as a new ability field?** No, and the design is
+now explicit about the distinction that makes it safe. M6 stores **one integer
+per team**, which is a club-level fact about five rows that genuinely does not
+exist anywhere (`00` section 19 proves it against the schema). There is no
+per-player field, and a player's ability context is a derivation through their
+existing registration. The audit records that `useTeams` orders by name and that
+nothing else could carry the order, so this is not a convenience column.
+
+**Can a session override modify permanent team membership?** Structurally no:
+`register_entries.bib_colour_override` is keyed on `(session_id, player_id)` and
+has no path to `players`, `player_registrations` or `teams`. The risk is a future
+convenience ("they're always in blue now, shall I move them?"), so Phase G's
+acceptance test opens the child's record after a bib move and asserts the team is
+unchanged. That is a cheap test for the most plausible regression in the
+programme.
+
+**Do the game count thresholds become policy?** They are stated as illustrative
+in `02` section 7a, required to live in one adjustable named place, and Phase F2
+lists "the thresholds are not policy" as a non-goal. The residual risk is a
+reviewer hard-coding `if (players >= 20)` inline, which is why the requirement is
+"one named place" rather than "a constant somewhere".
+
+**Is the venue still modelled as one static setup?** It was, and the discovery
+was right that this was too static. Fixed by generalising the block: a block is
+"the activities occupying the ground at the same time", so a setup view is the
+placements of one block's members and the carousel and the games get one each.
+**No new entity was needed**, which is the outcome to prefer. The transition is
+an ordinary activity that already exists.
+
+**Are any new entities being created where existing tables work?** Checked one at
+a time and the answer improved this round. No group table (bib colour). No
+ability column (team order, derived per player). No override column
+(`bib_colour_override` already is one). No rotations field (derived). No setup
+phase entity (derived from a block). No game side table (a set of colours on the
+block). **One** new column in the whole round, M6, with a proof that nothing can
+derive it.
+
+**Is child data exposed anywhere new?** No. The game allocation names bib
+colours, so it holds no child identity even in memory. `sort_order` is about
+teams. Public sharing is untouched and stays parked, and no phase depends on it.
+
+**Did the block get justified by bad maths again?** This is the third framing of
+Phase F and the first with no duration argument in it at all. The justification
+is now station identity, parallel delivery and phase-specific setup, each of
+which is a structural absence rather than a number. The pleasing consequence is
+that the phase got **less** risky as the argument got weaker: no duration change
+means no lifecycle risk and no calendar risk.
+
+**What is genuinely weaker after this round?** Two things, both recorded rather
+than hidden. The grouping suggestion's quality is unprovable in advance: "keep
+teams whole, combine adjacent bands, prefer uneven" is easy to state and will
+meet real squads that satisfy none of it cleanly, so it needs coach feedback
+after one real use rather than more design. And the game side allocation stores
+an override whose shape is defended on reasoning rather than on use, since no
+coach has yet adjusted one in this product.
+
+**What could still go wrong that this plan does not cover?** #189 still has a
+merge conflict and no human review, unchanged from the last round. And M6 has a
+sequencing subtlety worth stating: if the suggestion ships before an admin sets
+the order, every team reads as unordered and the suggestion silently declines to
+combine anything. That is the correct failure but it will look like a bug, so the
+screen should say the order is unset rather than quietly doing less.
+
+## 16. Adversarial pass, second round
 
 Run after the review that produced this revision. The first-round pass is kept
 below as section 16, because two of its conclusions were wrong and the record of
@@ -795,7 +971,9 @@ scope in Phase G. So the answer held and the work did not.
 **Is option B being dismissed too easily?** It is not dismissed; it is deferred
 with a stated trigger. The honest risk is that the trigger never gets checked
 because nobody asks a coach the question. That is why it is Q9 with a named
-decision owner rather than a line in a design document.
+decision owner rather than a line in a design document. *(Third round: the coach
+was asked, and the answer settled it. Bib colour is the identity, colours are
+unique per session, and there is no Group entity. Q9 is closed.)*
 
 **Does splitting B into a refactor and a feature actually help, or is it
 ceremony?** It helps, because B1 is provable against the existing test suites
@@ -829,7 +1007,7 @@ the same file it conflicts on. If both merge without care, the roadmap's DRILL-0
 row could end up saying two different things. Flagged in
 `07-roadmap-reconciliation.md`.
 
-## 16. Adversarial pass, first round
+## 17. Adversarial pass, first round
 
 Performed before the first publication. Two of its conclusions were wrong and are
 corrected above; the rest stand. Kept because the corrections are more useful

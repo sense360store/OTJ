@@ -409,61 +409,113 @@ explicit template link, station block metadata, and any public projection.
 
 ## 17. Station-based training: what the model can and cannot express
 
-**Corrected after review. The first version of this section claimed the session
-total is simply wrong for station work. It is not, and the arithmetic says so.**
+**Corrected twice. The first version claimed the session total is simply wrong
+for station work. The second version said it becomes wrong when the group count
+changes. Both were wrong, and the second was wrong because it assumed the
+rotation count follows the group count. It does not.**
+
+**The rule, from coach discovery:** every active bib group completes every
+planned station once. So the number of rotations is the number of **stations**,
+never the number of groups. Four planned stations run four rotations whether
+three groups or four turn up; with three groups, one station stands empty each
+rotation. Low attendance does not drop a drill, shorten the carousel or rewrite
+the plan.
 
 `sessionMinutes` (`src/lib/data.ts:539`) is the sum of every activity's duration.
 `plannedMinutes` (`src/lib/sessionLifecycle.ts:150`) reimplements the same sum
 with the 90 minute fallback, and the expected end is derived from it.
 
-For a carousel of *n* stations each lasting *m* minutes, run for *r* rotations:
+For a carousel of *n* stations each lasting *m* minutes:
 
 ```
-wall clock       = m × r
+rotations        = n            (every group visits every station)
+wall clock       = m × n
 sum of durations = m × n
 ```
 
-**The two are equal exactly when `r == n` and every station lasts the same
-length.** Four 10 minute stations with four groups completing four rotations
-lasts 40 minutes, and the sum is 40. The default case is correct, and it is
-correct by coincidence rather than by construction.
-
-The sum becomes wrong in these shapes, all of which are real:
+**They are the same expression. The existing total is correct, and it stays
+correct at every attendance level.**
 
 | Shape | Actual | Sum says |
 |---|---|---|
-| 4 stations, 3 groups (3 rotations) | 30 | 40 |
-| 6 stations, 4 groups (4 rotations) | 40 | 60 |
-| 4 stations, 5 groups (5 rotations) | 50 | 40 |
-| Stations of 8, 10, 12, 10 with a shared 12 minute rotation | 48 | 40 |
-| 5 stations, each group visiting 4 of them | 40 | 50 |
-| One station run continuously beside a rotating carousel | varies | wrong |
+| 4 stations, 4 groups | 40 | 40 |
+| 4 stations, 3 groups (still 4 rotations, one station empty) | 40 | 40 |
+| 6 stations, 4 groups | 60 | 60 |
 
-The first row is the one that matters most, because the discovery says the group
-count is decided by attendance one or two days before the session. **So the
-total is right while nothing changes and becomes wrong at precisely the moment
-the operational layer does its job.** That is a narrower and more accurate
-statement than "the total is wrong", and it is the honest basis for the work.
+**One residual divergence, and it is a planning error rather than a model gap.**
+Stations in one carousel must share a rotation length, because the groups move
+together. If a coach sets stations of 8, 10, 12 and 10 minutes, the carousel
+actually runs at whatever length the coach calls, and the sum of 40 describes no
+real session. The answer is a planning warning ("stations in a carousel run for
+the same length"), not a new duration rule.
 
-**The structural gaps are separate from the arithmetic and are the stronger
+**Consequence for the plan: the duration model needs no change at all.**
+`sessionMinutes`, `plannedMinutes`, the derived lifecycle and `src/lib/ics.ts`
+are all correct as they stand and are not touched by station blocks. This
+removes the largest rollout risk previously attributed to that work.
+
+**The structural gaps are entirely separate from the arithmetic and are the only
 reason for the work:**
 
 1. **There is no station identity.** Nothing in the data says which activities
    are stations of one carousel. So "which station does my group start at", "put
    station 3 on pitch 2" and "show me the four stations together" have no answer
    to compute from. The venue composer cannot be built without this.
-2. **There is no rotation concept.** The number of rotations is the thing
-   attendance changes, and there is nowhere to record it.
-3. **Live delivery is sequential.** `LiveSession.tsx` walks `activities` one at a
+2. **Live delivery is sequential.** `LiveSession.tsx` walks `activities` one at a
    time and shows the current one to everybody. During a carousel every group is
    at a different station simultaneously, and the event that matters is
-   **rotate**, which the live view has no concept of. This is wrong today even
-   when the total happens to be right.
+   **rotate**, which the live view has no concept of. This is wrong today
+   independently of any total.
+3. **There is nothing that says the ground is rearranged mid-session.** A session
+   is one flat list, so the fact that the cones come in and two game pitches go
+   out after the carousel has no representation. See section 20.
 
-Consumers that would be touched by a duration model change: `sessionMinutes`,
-`plannedMinutes`, `src/lib/ics.ts`, `LiveSession.tsx`, `Home.tsx`,
-`SessionDay.tsx`, `ProgrammeDetail.tsx`, `TemplateFormModal.tsx`,
-`ProgrammeFormModal.tsx`.
+## 19. Teams: what exists, and what an ability order would need
+
+`public.teams` (`0002_teams_roles.sql:23`, extended by `0032` and `0044`) carries
+exactly:
+
+```
+id, club_id, name, created_at, bib_colour
+```
+
+plus `teams_id_club_unique (id, club_id)` from 0032. Write is gated on
+`has_perm('teams.manage')` (`teams_manage`, `0012_rbac.sql:376`). The admin
+surface `src/routes/AdminTeams.tsx` offers add, rename, delete and set default
+bib colour. **There is no reorder affordance and no ordering column.**
+
+`useTeams` (`src/lib/queries.ts:628`) reads `.order('name', { ascending: true })`,
+and `sessionTeamsLabel` (`src/lib/sessionTeams.ts:93`) sorts by name too. **Every
+team order in the product today is alphabetical.** For this club that yields
+Argonauts, Gladiators, Spartans, Titans, Trojans, which is the reverse-ish of the
+stated ability order and matches it nowhere.
+
+**Nothing in the schema can express or derive a club-defined team order.**
+Checked: no `sort_order`, `display_order`, `position`, `rank` or `ability` column
+exists on any table, and a grep for those concepts across `src` and
+`supabase/migrations` returns nothing relevant. `created_at` exists but records
+when a row was inserted, which is an accident of setup rather than a statement
+about football, and relying on it is exactly the silently-wrong answer this
+codebase refuses elsewhere.
+
+**This is the one genuinely new fact the programme needs and cannot derive.** It
+is a club-level fact about five rows, not a per-player one: a player's ability
+context is `player → registration → team → that team's position in the club
+order`, all of which except the last already exists.
+
+## 20. The activity phase vocabulary already distinguishes games
+
+`Phase` (`src/lib/data.ts:9`) is `'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'`,
+and `PHASES` (`:533`) is the ordered list the planner and the week plan editor
+both render. `phaseFor` (`src/lib/drillPicker.ts:17`) already routes a social
+drill to `Game` and everything else to `Skill` when a drill is added from the
+library.
+
+So a session already records which activities are small-sided games and which
+are station work, in a field every screen reads. What it does **not** record is
+that the ground is physically rearranged between them, or where anything is set
+up. That is the gap section 20's phase-specific setup work addresses, and it can
+lean on this vocabulary rather than inventing a second one.
 
 ## 18. In-flight work: PR #189 (DRILL-02)
 
@@ -526,18 +578,30 @@ check on a phone is recommended before merge, particularly Live in portrait.
 
 ## Notable current-state findings the overhaul must design around
 
-1. **Station-based training has no representation at all.** Not primarily a
-   duration defect (section 17 corrects that), but an absence of station
-   identity, rotation count and parallel delivery semantics. The total is right
-   in the default case and wrong as soon as the group count changes.
+1. **Station-based training has no representation, and this is not a duration
+   defect.** Section 17 corrects two earlier attempts to make it one. Rotations
+   follow the station count, not the group count, so the existing total is
+   correct at every attendance level and the duration model needs no change. The
+   real absences are station identity, parallel delivery semantics, and any
+   record that the ground is rearranged mid-session.
 
 2. **A group is a bib colour, and the derivation has a collision.**
    `tonightGroups` (`src/lib/tonight.ts:1103`) keys on `bib ?? ''`, so **two
    teams sharing a default `teams.bib_colour` merge into one group**, and every
    child with no effective bib merges into a single "No bibs" group. With five
    club teams and nine colours this is avoidable but nothing prevents or
-   surfaces it. Group identity and bib colour are therefore the same thing
-   today, which is mostly right and not always right.
+   surfaces it. Coach discovery has since settled that unique active bib colours
+   are the rule and that "No bibs" is not a valid group, so both collisions are
+   now readiness failures with a defined product answer rather than open
+   questions (`02-target-product-model.md` section 6).
+
+2b. **A session-only bib override already exists and already behaves
+   correctly.** `register_entries.bib_colour_override` (0044) is per session and
+   per player, writes nothing back to `players`, `player_registrations` or
+   `teams`, and resolves through `effectiveBib` as override, else team default,
+   else none. **The durable team and tonight's bib group are already separate
+   facts in the schema**, which is most of what the "session only override"
+   requirement asks for.
 
 3. **Drill Maker is finished as a model, and its delivery half is in flight.**
    The diagram schema, the identity boundary, the parser and the editor are all

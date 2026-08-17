@@ -93,10 +93,18 @@ unknowable:
 - how many coaches
 - group sizes and who is in which group
 - bib colours
-- possibly a revised station count
+- how many groups the coach chooses to run
+- how many small-sided games to set up
 - final drill adaptations
 - where each station goes at the venue
 - the coach-facing plan for the night
+
+**What the operational layer does NOT change: the planned drills.** The station
+count is a coaching and programme decision made when the week was planned.
+Attendance changes group sizes, the number of groups and how many stations are
+occupied at once. It never drops a drill, shortens the carousel or rewrites the
+session. An earlier draft of this list said "possibly a revised station count",
+and that was wrong.
 
 Spond must never gate planning. A programme planned in June for September cannot
 wait for RSVPs, and a Spond failure on the night must render as no context, never
@@ -109,10 +117,35 @@ groups together where they can. The real grouping shifts with who replied, who
 turns up, how many coaches are present and how the team numbers fall.
 
 Bibs matter because they are how a coach and a child identify a group in one
-glance across a pitch. The bib colour is, in practice, the group's name.
+glance across a pitch. **The bib colour is the group's name**, and two active
+groups never share one.
 
 The operational plan needs to show, for the night: who is attending, their group,
 their bib colour, and the shape of the groups.
+
+**The normal team is the default grouping context.** Every child already belongs
+to a team, in Spond and mirrored in OTJ, and the club orders its teams from
+strongest to weakest. That ordering is the only thing about it OTJ does not
+already hold. There is no per-child ability rating and there should never be one.
+
+**Moving a child for one night changes nothing durable.** Their Spond team, their
+OTJ team and next week's default are untouched. A bib assignment is a fact about
+one session.
+
+**How groups are built**, in priority order: keep normal teams whole as far as
+practical; combine only **adjacent** ability bands when combining is needed; keep
+numbers sensible; and prefer slightly uneven groups over splitting a squad.
+6/5/5/4 beats 5/5/5/5 bought by breaking up two teams. All of it is a suggestion
+the coach adjusts.
+
+**Rotations follow stations, not groups.** Every active group completes every
+planned station once, so four planned stations means four rotations whether three
+groups turn up or four. With three, one station stands empty each rotation.
+Nothing drops a drill, shortens the carousel or rewrites the plan because fewer
+children replied. More children means bigger groups, not an invented fifth group.
+
+**The coach has no preference** about which group starts where or which way the
+carousel turns, so the product should choose and offer no setting for either.
 
 ## 7. Sharing before training
 
@@ -133,8 +166,38 @@ third. The requirement is to model the training area allocated to our age group,
 not the whole site and not other age groups.
 
 The layout should be accurate enough to say "Station 1 goes here, Station 2 goes
-here". A clean rendered representation is likely to be more useful than a
-satellite photograph. Four stations is the default; the number must be flexible.
+here", which means a position on the ground rather than only which pitch. A clean
+rendered representation is likely to be more useful than a satellite photograph.
+Four stations is the default; the number must be flexible.
+
+**The venue base is static. The session's setup is not**: see 8a.
+
+## 8a. A session has at least two physical phases
+
+The earlier venue thinking was too static. A normal hour is:
+
+**Phase A, the station carousel.** Four to six stations set up across the area,
+groups rotating between them.
+
+**Then the ground changes.** Cones come in, one or two game pitches go out.
+
+**Phase B, small-sided games.** Players play, in sides drawn from the groups.
+
+So the venue base is reusable and static, but **the session's physical setup is
+phase-specific**. One picture cannot describe the night.
+
+**Game count follows attendance**, roughly one game around a dozen children and
+two above twenty. Those numbers are a starting point, not a rule, and the
+suggestion never rewrites a planned session.
+
+**A game side is not a bib group.** With four station groups and one game, a side
+wearing two colours is the expected shape, and forcing a full bib redistribution
+to make each side one colour is unnecessary churn at the worst moment.
+
+**Sides are banded, not averaged.** Stronger players play with and against
+appropriately strong players; weaker players stay in an appropriate band. Two
+games are not deliberately levelled into identical mixtures, and the strongest
+group is not mixed with the weakest to even the numbers.
 
 ## 9. On the day
 

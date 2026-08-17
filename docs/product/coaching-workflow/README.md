@@ -5,15 +5,22 @@ programmes, sessions, drills, Drill Maker, the drill library, Spond attendance,
 groups and bibs, venue and pitch layout, training-day delivery and shareable
 outputs.
 
-**Status: direction approved as the working model; several parts revised after
-review and awaiting implementation authorisation. No application or database
+**Status: direction approved as the working model. Revised twice after review,
+most recently by the August coach discovery. No application or database
 behaviour has been implemented by this document set.**
 
-Captured 17 August 2026 against `main` at `2283350`, and revised the same day
-after review. The revision corrected four things: Phase A is reconciled with open
-PR #189 rather than redesigned, station placement carries a position rather than
-only a sub-area id, "a group is a bib colour" is reopened as a product question,
-and the station duration claim is corrected against the arithmetic.
+Captured 17 August 2026 against `main` at `2283350`.
+
+**Revision 2** reconciled Phase A with open PR #189, replaced the station
+placement model with a position, reopened "a group is a bib colour", and
+corrected the station duration claim.
+
+**Revision 3** (this one) settles the grouping model from coach discovery:
+rotations follow the station count and not the group count, so the duration model
+needs no change at all; the bib colour is the station group's identity and must
+be unique; the club's team order is the only new fact worth storing; and a
+session has two physical phases, so the venue setup is phase-specific rather than
+static.
 
 ## The outcome this serves
 
@@ -30,41 +37,48 @@ and the station duration claim is corrected against the arithmetic.
 | 00 | [Current-state architecture audit](00-current-state-audit.md) | What exists today, with repository paths, tables and functions. Read this first. |
 | 01 | [Coach workflow and product principles](01-coach-workflow-principles.md) | How training is actually planned and delivered, and the ten principles that follow. |
 | 02 | [Target product model](02-target-product-model.md) | What each concept is: reference, snapshot, copy or hybrid, and why. |
-| 03 | [Target UX journeys](03-ux-journeys.md) | Seven journeys, the components each reuses, and the mobile interaction decision. |
-| 04 | [Data model proposal](04-data-model-proposal.md) | The five anticipated migrations, and the three deliberate non-changes. |
+| 03 | [Target UX journeys](03-ux-journeys.md) | Eight journeys, the components each reuses, and the mobile interaction decision. |
+| 04 | [Data model proposal](04-data-model-proposal.md) | The six anticipated migrations, and the seven deliberate non-changes. |
 | 05 | [Security, privacy and share boundary](05-security-share-boundary.md) | Why the existing public contract cannot carry a group plan, and what to do instead. |
-| 06 | [Phased implementation plan](06-phased-plan.md) | Twelve phases, each independently shippable, plus the adversarial pass. |
+| 06 | [Phased implementation plan](06-phased-plan.md) | Fourteen phases, each independently shippable, plus three adversarial passes. |
 | 07 | [Roadmap reconciliation](07-roadmap-reconciliation.md) | How this relates to DRILL-02, DRILL-03, TRAIN-02 and the rest. |
-| 08 | [Open questions](08-open-questions.md) | Eight decisions needing human input. Only one blocks any work. |
+| 08 | [Open questions](08-open-questions.md) | Eight open decisions and six now settled. None blocks the critical path. |
 
 ## The findings that shaped everything else
 
-1. **Station-based training has no representation at all.** Not a duration
-   defect: four ten-minute stations over four rotations lasts forty minutes and
-   the current sum says forty. What is missing is **station identity** (nothing
-   says which activities form one carousel), **rotation count** (the thing
-   attendance changes), and **parallel delivery** (the live view walks stations in
-   series and has no concept of "rotate"). The total is correct until the
-   operational layer adjusts the group count, and wrong from then on.
+1. **Rotations follow stations, not groups, so the duration model is already
+   correct.** Every active bib group completes every planned station once, so
+   four planned stations run four rotations whether three groups turn up or four;
+   with three, one station stands empty. `sessionMinutes`, the derived lifecycle
+   and the calendar export all stay as they are. Two earlier revisions of these
+   documents claimed otherwise and both were wrong.
 
-2. **Drill Maker's delivery half is in flight, and its authoring half is the
-   gap.** PR #189 puts the saved diagram on the planner, session day and both
-   live stages. What remains is that a drill still cannot be created without
-   leaving the plan being written, on either planning surface.
+2. **Station blocks are still needed, for structure rather than arithmetic.**
+   Nothing says which activities form one carousel, so the venue composer, the
+   "your group starts at station 2" statement and the training-day overview have
+   nothing to compute from. Live also walks stations in series when every group
+   is at a different one.
 
-3. **Authoring is already duplicated.** The planner and the week plan editor each
-   keep their own activity list, add bar, custom activity literal and row
-   component. Long range planning happens in the week plan editor, so any
-   authoring work must go through one shared seam or diverge three ways.
+3. **A session has two physical phases.** The carousel comes down and the game
+   pitches go out. A block generalises to "the activities occupying the ground at
+   the same time", so both setup views come free and no new entity is needed.
 
-4. **Venue is a word.** `venues` carries a name and nothing else, so there is no
-   coordinate space to build on. A station needs a position within the allocated
-   area, not just a pitch, or two stations on one pitch are indistinguishable.
+4. **A station bib group is not a game side.** One side may wear two colours, and
+   forcing a redistribution to tidy that is unnecessary kit churn at the worst
+   moment.
 
-5. **Public sharing is deliberately incapable of carrying an operational plan.**
-   Every field a group and bib plan is made of sits on a deny list enforced twice.
-   The recommended answer publishes nothing at all, and no phase depends on
-   widening it.
+5. **Most of the grouping requirement is already in the schema.**
+   `register_entries.bib_colour_override` is already a session-only assignment
+   that writes back to nothing. The one thing missing is the club's ordering of
+   its own teams, which nothing can derive: `teams` carries no order and every
+   team list in the product is alphabetical.
+
+6. **Drill Maker's delivery half is in flight** (PR #189) and its authoring half
+   is the gap, on both planning surfaces. Authoring is already duplicated between
+   the planner and the week plan editor, so it must go through one seam.
+
+7. **Public sharing stays parked and blocks nothing.** The parent-facing outcome
+   is met by a generated message that publishes nothing at all.
 
 ## Recommended next steps
 

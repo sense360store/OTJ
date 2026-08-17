@@ -14,25 +14,37 @@ reviewed by a human, applied by hand after the live ledger is checked, never
 
 ## 1. Summary of anticipated database change
 
-Across the entire programme, five migrations. Four are additive columns; one is a
+Across the entire programme, six migrations. Five are additive columns; one is a
 constraint widening that only happens if motion is approved.
 
 | # | Change | Table | Phase | Risk |
 |---|---|---|---|---|
 | M1 | `variant_of uuid null` (+ `drills_id_club_unique`) | `drills` | C | Low |
 | M2 | `template_id uuid null` (+ `templates_id_club_unique`) | `sessions`, `templates` | E | Low |
-| M3 | `blocks jsonb null` + `block_id` on an activity | `sessions`, `templates` | F | Low. Duration is unchanged while `rotations` defaults to the station count. |
+| M3 | `blocks jsonb null` + `block_id` on an activity | `sessions`, `templates` | F | Low. **Duration model untouched.** |
 | M4 | `layout jsonb null` + shape constraint | `venues` | H | Medium, new shape boundary |
 | M5 | diagram element allow-list widening | `drills` | L, optional | Medium, version rollout hazard |
+| M6 | `sort_order integer null` + partial unique index | `teams` | G | Low. Null everywhere is today's behaviour. |
 
-Three named non-changes, each deliberate:
+**Six named non-changes, each deliberate and each now settled rather than
+deferred:**
 
-- **No group table**, under the recommended option. The bib colour stays the
-  operational group identity and the two collisions in that derivation are
-  surfaced rather than modelled around (`02-target-product-model.md` section 6,
-  `08-open-questions.md` Q9). A lightweight group would be one column on
-  `register_entries` plus one jsonb list, and it is deferred with a stated
-  trigger rather than refused.
+- **No group table.** The bib colour is the station group's identity, unique per
+  session, enforced in the domain rather than in persistence because a group is
+  emergent from per-player bib resolution and there is no row a unique index
+  could sit on (`02-target-product-model.md` section 6).
+- **No per-player ability score, level or training classification.** A player's
+  ability context derives through their team's position in the club order. M6
+  stores that order once per team, never per child.
+- **No new column for session-only bib overrides.**
+  `register_entries.bib_colour_override` (0044) already is one: keyed on
+  `(session_id, player_id)`, writing nothing back to `players`,
+  `player_registrations` or `teams`.
+- **No `rotations` or `minutes_per_rotation` field.** Rotations are the station
+  count; the rotation length is the members' own duration.
+- **No setup phase entity and no layout versioning.** A phase-specific setup view
+  is the placements of one block's members, and the transition between them is an
+  ordinary activity (`02-target-product-model.md` section 7, layer 3).
 - **No session workflow state column.** Readiness is derived (section 5 there).
 - **No drill version table.** Adaptation is a copy (section 3 there).
 
@@ -114,74 +126,157 @@ changed a session's identity, not for its provenance.
 
 ## 4. M3: station blocks
 
-Two parts. Only the first is a migration.
+**Simplified after coach discovery.** The previous version added `blocks` with
+`minutes_per_rotation` and `rotations`, and changed the duration model. Both are
+withdrawn: rotations follow the station count rather than the group count, so the
+existing total is already correct and neither field has anything to arbitrate
+(`00-current-state-audit.md` section 17).
 
 ```sql
-alter table public.sessions add column blocks jsonb;
+alter table public.sessions  add column blocks jsonb;
+alter table public.templates add column blocks jsonb;
 ```
 
 Stored shape:
 
 ```json
-[{ "id": "b1", "minutes_per_rotation": 10, "rotations": 4 }]
+[{ "id": "b1", "kind": "carousel" },
+ { "id": "b2", "kind": "games" }]
 ```
 
-And each member activity in `sessions.activities` gains `"block_id": "b1"`.
+And each member activity in `activities` gains `"block_id": "b1"`.
+
+**Two fields, and neither is a number.** Rotations are the count of members with
+that `block_id`. The rotation length is the members' own shared `duration`, which
+they already carry. Storing either would create a value that can disagree with
+the list it describes.
+
+`kind` exists because a carousel and a game phase behave differently at delivery
+time (groups rotate through members, or groups become sides and stay) while being
+the same thing structurally: the activities that occupy the ground at once. One
+concept, one field, no second entity.
 
 ### The client change that is not optional
 
 `toActivity` and `toActivityRow` (`src/lib/queries.ts:289`, `:296`) rebuild an
 activity field by field from an allow-list. **A key they do not name is dropped
-on read and lost on the next save.** So `block_id` must be added to both, in the
-same change, or blocks silently evaporate. `00-current-state-audit.md` section 4
-records this.
+on read and lost on the next save.** So `block_id` must be added to both in the
+same change, or blocks silently evaporate.
 
-### Should blocks be constrained in the database?
+### The duration model is untouched
+
+`sessionMinutes` (`src/lib/data.ts:539`), `plannedMinutes`
+(`src/lib/sessionLifecycle.ts:150`), `src/lib/ics.ts`, the derived lifecycle,
+`Home.tsx`, `SessionDay.tsx`, `LiveSession.tsx`, `ProgrammeDetail.tsx`,
+`TemplateFormModal.tsx` and `ProgrammeFormModal.tsx` **all stay as they are**.
+
+This removes what the previous revision called the highest rollout risk in the
+programme. A wrong total could have put a session in the wrong list through the
+derived lifecycle; there is now no total change to get wrong.
+
+The one thing worth adding is a **planning warning**, not a rule: stations in one
+carousel move together, so unequal member durations describe no real session. The
+planner says so; nothing is refused and nothing is auto-corrected.
+
+### Should `blocks` be constrained in the database?
 
 `sessions.activities` carries no check constraint today, so there is precedent
-for an unconstrained plan column. But the precedent that matters more is `0046`
-and `0028`: where a jsonb column has a fixed vocabulary, this repository states
-it as schema.
+for an unconstrained plan column. The precedent that matters more is `0046` and
+`0028`: where a jsonb column has a fixed vocabulary, this repository states it as
+schema.
 
-**Recommendation: a light check constraint on `blocks`.** Not for privacy (a
-block carries no person and structurally cannot) but for correctness: an array of
-objects with exactly `id`, `minutes_per_rotation` and `rotations`, positive
-integers, at most a handful of blocks. It costs one immutable predicate function
-and it stops a future client writing a shape the reader cannot understand.
+**Recommendation: a light check constraint.** An array of objects with exactly
+`id` and `kind`, `kind` drawn from a closed two-value set, a small maximum number
+of blocks. It costs one immutable predicate function, it is now a much smaller
+predicate than the previous version would have needed, and it stops a future
+client writing a shape the reader cannot understand.
 
 `activities.block_id` cannot be constrained without constraining `activities`
-itself, which is out of scope and would need every existing row validated. Leave
-it; the client allow-list is the boundary there, as it is today.
+itself, which is out of scope and would require validating every existing row.
+Leave it; the client allow-list is the boundary there, as it is for `phase`,
+`duration` and `title` today.
 
-### The duration change and its blast radius
+### Backwards compatibility
 
-**Scoped correctly after review.** The current total is *not* wrong for a
-carousel run as planned: four 10 minute stations over four rotations is 40
-minutes either way. It diverges only when the rotation count differs from the
-station count, when stations are unequal under a shared rotation length, or when
-groups skip stations (`00-current-state-audit.md` section 17). So this is a
-change that makes an existing correct answer stay correct once `rotations`
-becomes adjustable, not a defect repair.
+Total. `blocks` null and no `block_id` anywhere is every existing session, every
+existing template, and the current behaviour exactly.
 
-`sessionMinutes` (`src/lib/data.ts:539`) becomes block-aware, computing
-`minutesPerRotation × rotations` for a block instead of summing its members.
-With `rotations` defaulting to the station count, **every existing session and
-every newly blocked session returns the same number it does today**, which is
-what makes this safe to ship. Everything reading it must still be checked:
+## 4a. M6: the team ability order
 
-- `src/lib/sessionLifecycle.ts` computes its own total for the expected end
-  (`:145`, `FALLBACK_SESSION_MINUTES`). It must use the same rule, and it must
-  stay the only fallback duration in the product, which
-  `sessionLifecycle.invariant.test.ts` already enforces.
-- `src/lib/ics.ts`, `Home.tsx`, `SessionDay.tsx`, `LiveSession.tsx`,
-  `ProgrammeDetail.tsx`, `TemplateFormModal.tsx`, `ProgrammeFormModal.tsx`.
+**New, and the only irreducible new fact in the whole programme.**
 
-**Templates need blocks too**, or a week plan cannot carry a station structure
-and promoting a session to a plan loses it. `templates.blocks jsonb` alongside,
-in the same migration.
+```sql
+alter table public.teams add column sort_order integer;
+create unique index teams_sort_order_unique
+  on public.teams (club_id, sort_order) where sort_order is not null;
+```
 
-**Backwards compatibility is total.** `blocks` null and no `block_id` anywhere is
-every existing session, and the maths reduces exactly to the current sum.
+### Why nothing existing can carry it
+
+Verified against the schema rather than assumed
+(`00-current-state-audit.md` section 19). `public.teams` carries
+`id, club_id, name, created_at, bib_colour` and nothing else. A grep for
+`sort_order`, `display_order`, `position`, `rank` and `ability` across `src` and
+`supabase/migrations` returns nothing relevant. Every team order in the product
+is alphabetical: `useTeams` reads `.order('name')` and `sessionTeamsLabel` sorts
+by name.
+
+Three alternatives were considered and rejected:
+
+- **Alphabetical.** For this club it gives Argonauts, Gladiators, Spartans,
+  Titans, Trojans, which matches the stated ability order nowhere.
+- **`created_at`.** It records when a row was inserted during setup. Reading it
+  as a statement about football is the kind of confident wrong answer this
+  codebase refuses elsewhere.
+- **An ordered array of team ids on `clubs`.** It would list teams in a second
+  place, drift when a team is added or deleted, and need its own repair story.
+  A column on the row it describes cannot drift.
+
+### What it is, and what it is emphatically not
+
+It is **the club's ordering of its own teams**, five integers for this club, set
+by a `teams.manage` holder on the existing `AdminTeams` screen.
+
+It is **not an ability score, an ability level or a training classification**,
+and there is no per-player field of any kind. A player's ability context is
+derived: `player → current registration → team → that team's position`. Every
+link in that chain except the last already exists, and the last is a property of
+the team, not of the child.
+
+**No literal team name appears in any rule.** Titans, Trojans, Gladiators,
+Spartans and Argonauts are this season's contents of an ordered set, and the
+order is expected to change between seasons.
+
+### Nullable, and what null means
+
+Null means unordered. A club that never sets it gets today's behaviour: the
+grouping suggestion falls back to keeping each team whole and does not claim to
+know which teams are adjacent. That is honest and it fails towards doing less
+rather than guessing.
+
+The partial unique index prevents two teams claiming one position while allowing
+any number of unordered teams.
+
+### RLS, audit and compatibility
+
+**No new policy.** An ordinary column on `teams`, whose write already takes
+`teams.manage` via `teams_manage` (`0012_rbac.sql:376`).
+
+**Audit needs a decision, and it is the same shape as the venue one below.**
+`audit_teams()` (0044) has an allow list, and `describeActivityEvent` renders
+`team.updated` as the deliberately general "Team updated"
+(`src/lib/activityView.ts:432`), whose comment already says it stays general
+because the list carries both the name and the bib colour. Adding a third field
+does not falsify that sentence, so this is a smaller decision than `venues.layout`
+poses. Confirm whether `sort_order` joins the audited allow list; the default
+answer is yes, since re-banding the club's teams is a club-level change worth a
+feed entry.
+
+**Backwards compatibility.** Null everywhere is every existing team.
+
+**Two orders coexist and must not be confused.** Labels stay alphabetical
+(`sessionTeamsLabel`, unchanged); grouping uses the club order. A future reviewer
+seeing two sorts should not unify them.
 
 ## 5. M4: `venues.layout`
 
@@ -331,6 +426,58 @@ have. The client allow-list is the only boundary, exactly as it is for `phase`,
 `duration` and `title` today. `place` carries no person and no free text, so
 there is nothing here for a privacy constraint to protect.
 
+### Phase-specific setup needs no extra structure
+
+The session's physical setup changes mid-session: stations come in, game pitches
+go out (`02-target-product-model.md` section 7, layer 3). This looked like it
+would need setup phases, layout versions or per-phase placement sets. It needs
+none of them.
+
+**A placement belongs to an activity, and an activity belongs to a block.** So
+the carousel setup view is the placements of the `'carousel'` block's members and
+the game setup view is the placements of the `'games'` block's members. Two
+views, one field, zero new structure.
+
+A game pitch is a placement with a footprint (`w`, `h`) rather than a spot, which
+is exactly what the optional pair is for and why it survived the last revision.
+
+**The transition is an ordinary activity.** "Reset, 5 min" is a custom activity
+the planner already supports, it already occupies real time in the total, and it
+already sits between the two blocks in the list. There is nothing to add.
+
+### Game side allocation
+
+A game side is a **set of bib groups**, not a player list and not one colour
+(`02-target-product-model.md` section 7a).
+
+It rides the `'games'` block entry rather than a new column:
+
+```json
+{ "id": "b2", "kind": "games",
+  "games": [{ "a": ["red", "blue"], "b": ["green"] }] }
+```
+
+**Why bib colours rather than player ids.** Naming the colour cannot duplicate
+player membership, which already lives in `register_entries`, and it survives a
+child being re-bibbed because it never named the child. A player list would be a
+second copy of tonight's membership that could silently disagree with the
+register.
+
+**Why stored at all rather than derived.** The suggestion is derived from the
+team order, but the coach adjusts it on the night and an adjustment lost to a
+page reload on a wet touchline is worse than a small field. It is stored beside
+the block whose delivery it describes.
+
+**Per-player exceptions are not modelled.** Moving one child between sides is a
+bib change, which is one tap and already session-only. If coaches later report
+wanting to move a player without re-bibbing, that is the stated trigger to
+revisit.
+
+**The check constraint** on `blocks` therefore admits `games` as an optional
+array of two-key objects whose values are arrays of bib colour strings from the
+existing `is_bib_colour` vocabulary. That keeps the closed vocabulary closed on
+both sides.
+
 ## 7. M5: motion, only if approved
 
 Not scoped here beyond its two hazards, both recorded in
@@ -350,10 +497,14 @@ Stated so a future session does not go looking:
 - `players`, `player_registrations`, `seasons`: unchanged.
 - `player_spond_links`, `spond_event_responses`, `spond_events`, `spond_groups`:
   unchanged, read only, and Spond stays read-only from OTJ.
-- `register_entries`: unchanged. The three-facts model of 0044 plus 0047 is
-  correct and the suggested split writes through the existing draft and
-  `useSaveTonight`.
-- `teams.bib_colour`, `is_bib_colour`: unchanged.
+- `register_entries`: **unchanged, and this is now a positive finding rather than
+  an omission.** The three-facts model of 0044 plus 0047 is correct;
+  `bib_colour_override` already is the session-only group assignment the coach
+  discovery asked for, keyed on `(session_id, player_id)` and writing back to
+  nothing; the suggested split and the game allocation both write through the
+  existing draft and `useSaveTonight`. No `group_id` and no ability column.
+- `teams.bib_colour`, `is_bib_colour`: unchanged. `teams` gains `sort_order`
+  (M6) and nothing else.
 - `boards`: unchanged. A tactics board seats a team; a drill diagram is an
   exercise; a venue layout is a place. Three things, three columns, one shared
   coordinate discipline.
@@ -364,17 +515,22 @@ Stated so a future session does not go looking:
 
 ## 9. Ordering constraints between migrations
 
-- M1 and M2 are independent of everything and of each other.
+- M1, M2 and M6 are independent of everything and of each other.
 - M3 must precede any station placement work, because placement needs to know
   which activities are stations. Station placement itself is **not** a migration
   (section 6); it rides `sessions.activities`.
 - M4 must precede the composer, because a station's position is expressed in the
   venue layout's coordinate space and there is no space without a layout.
 - M3 and M4 are independent of each other.
+- M3 must precede the game side allocation, which rides the `'games'` block.
+- M6 should precede the grouping suggestion, which needs the team order to
+  combine adjacent bands. It is not a hard blocker: with `sort_order` null
+  everywhere the suggestion keeps each team whole and declines to claim which
+  teams are adjacent.
 - M5, if it happens, is last and depends on nothing.
 
 **None of these is on the critical path of the public sharing decision, and none
-of them depends on it.** M1 through M4 change no policy, no grant and no
+of them depends on it.** M1 through M4 and M6 change no policy, no grant and no
 projection.
 
 **Apply order relative to the frontend**, following the rule `0046` had to learn:
