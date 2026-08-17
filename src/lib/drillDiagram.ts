@@ -225,8 +225,15 @@ export interface DrillDiagram {
   elements: DiagramElement[]
 }
 
+// What a NEW diagram starts as. A blank area, because most drills are a grid,
+// a channel or a box in a corner of the pitch rather than a game on a full
+// one, and a coach who does want a pitch says so from the surface selector in
+// one tap. Opening on markings that have to be cleared is the more common cost
+// of the two. This is the default for a diagram nobody has drawn yet, and it is
+// deliberately NOT the fallback parseSurface applies to a STORED diagram: see
+// there.
 export function emptyDiagram(): DrillDiagram {
-  return { version: DRILL_DIAGRAM_VERSION, surface: { kind: 'full_pitch', orientation: 'portrait' }, elements: [] }
+  return { version: DRILL_DIAGRAM_VERSION, surface: { kind: 'blank', orientation: 'portrait' }, elements: [] }
 }
 
 export function diagramIsEmpty(d: DrillDiagram | null | undefined): boolean {
@@ -401,6 +408,12 @@ function parseElement(raw: unknown): DiagramElement | null {
   }
 }
 
+// The surface a STORED diagram was drawn on. The fallback is a full pitch, and
+// it stays one however emptyDiagram's default moves: a row written before the
+// default changed, or one whose surface will not read, has to come back drawn
+// the way it was saved, and every diagram this module has ever written carries
+// a surface. A new diagram and a stored one are two different questions, so
+// they are answered in two places rather than one shared literal.
 function parseSurface(raw: unknown): DiagramSurface {
   if (!isObject(raw)) return { kind: 'full_pitch', orientation: 'portrait' }
   return {
