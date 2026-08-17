@@ -9,7 +9,8 @@ import {
   SpondSetupRowView,
   TeamChipsView,
 } from './SpondLinks'
-import type { LinkCandidate, SpondGroupMember, SpondLink, SubgroupTeam } from '../lib/spondLinking'
+import { subgroupIndex } from '../lib/spondLinking'
+import type { LinkCandidate, SpondGroupMember, SpondLink } from '../lib/spondLinking'
 import type { RegisteredPlayer, Team } from '../lib/data'
 
 // The screen's presentational shells, rendered without hooks or a query
@@ -49,9 +50,19 @@ const noop = () => {}
 const SG_MINE = 'SUBGROUP-SYNTH-MINE'
 const SG_OTHER = 'SUBGROUP-SYNTH-OTHER'
 const SG_UNMAPPED = 'SUBGROUP-SYNTH-UNMAPPED'
-const SUBGROUP_TEAMS = new Map([
-  [SG_MINE, { teamId: 't1', teamName: 'Argonauts' }],
-  [SG_OTHER, { teamId: 't2', teamName: 'Titans' }],
+// The club's mapped subgroups as one value, through the real resolver, plus
+// a variant where two teams claim one subgroup so the contested rule can be
+// rendered rather than only unit tested.
+const SUBGROUP_TEAMS = subgroupIndex([
+  { subgroupId: SG_MINE, teamId: 't1', teamName: 'Argonauts' },
+  { subgroupId: SG_OTHER, teamId: 't2', teamName: 'Titans' },
+])
+const SG_CONTESTED = 'SUBGROUP-SYNTH-CONTESTED'
+const SUBGROUPS_CONTESTED = subgroupIndex([
+  { subgroupId: SG_MINE, teamId: 't1', teamName: 'Argonauts' },
+  { subgroupId: SG_OTHER, teamId: 't2', teamName: 'Titans' },
+  { subgroupId: SG_CONTESTED, teamId: 't2', teamName: 'Titans' },
+  { subgroupId: SG_CONTESTED, teamId: 't3', teamName: 'Gladiators' },
 ])
 const outside = (name: string, subgroupIds: string[] = [], id = ''): SpondGroupMember => ({
   displayName: name,
@@ -66,7 +77,7 @@ const sectionProps = {
   complete: true,
   outsideMembers: null as SpondGroupMember[] | null,
   outsideComplete: false,
-  teamBySubgroup: SUBGROUP_TEAMS as ReadonlyMap<string, SubgroupTeam>,
+  subgroups: SUBGROUP_TEAMS,
   clubRoster: [] as RegisteredPlayer[],
   expectedTeam: 'Argonauts' as string | null,
   expectedTeamId: 't1' as string | null,
@@ -804,5 +815,52 @@ describe('the confirmation a name match earns', () => {
     // Both footer buttons disabled, and the dialog's own dismissal routes with
     // them: this one creates a permanent link.
     expect(html.match(/disabled=""/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('a contested subgroup, through the composed screen', () => {
+  // A review finding, rendered rather than only unit tested: a member in one
+  // subgroup that maps uniquely to Titans AND one that two teams both claim
+  // must offer no action at all, on either path.
+  const render = (links: SpondLink[], subgroupIds: string[]) =>
+    renderToStaticMarkup(
+      <LinkSectionsView
+        {...sectionProps}
+        outsideComplete
+        subgroups={SUBGROUPS_CONTESTED}
+        candidates={[]}
+        links={links}
+        pool={roster}
+        clubRoster={roster}
+        outsideMembers={[outside('Alpha Synthetic', subgroupIds, M1)]}
+      />,
+    )
+
+  it('offers a linked child nothing, and names no team', () => {
+    const html = render([link(M1, 'p1')], [SG_OTHER, SG_CONTESTED])
+    expect(html).toContain('in more than one team, so Spond gives no single answer')
+    expect(html).not.toContain('Update OTJ to Spond')
+    expect(html).not.toContain('Argonauts → Titans')
+    expect(html).not.toContain('Apply all safe Spond changes')
+  })
+
+  it('offers an unlinked child no confirmation either', () => {
+    const html = render([], [SG_OTHER, SG_CONTESTED])
+    expect(html).not.toContain('Confirm player')
+    expect(html).not.toContain('Update OTJ to Spond')
+    // The read only diagnostic says which ambiguity this is, rather than
+    // naming Titans and rather than borrowing the sentence about two people
+    // of one name. One person, plural team.
+    expect(html).not.toContain('assigned to another team: Titans')
+    expect(html).not.toContain('More than one person here goes by this name')
+    expect(html).toContain('In Spond · in more than one team, so Spond gives no single answer')
+  })
+
+  it('still offers the move when the same member is only in the unique subgroup', () => {
+    // The narrow half: the refusal is about the contested id, not about the
+    // member, so removing it restores the ordinary answer.
+    const html = render([link(M1, 'p1')], [SG_OTHER])
+    expect(html).toContain('Update OTJ to Spond')
+    expect(html).toContain('Argonauts → Titans')
   })
 })

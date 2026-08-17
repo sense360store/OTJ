@@ -210,10 +210,12 @@ page by hand.
   already refuses and explicitly defers to a durable link for; that guard is
   unchanged.
 - Everything ambiguous offers nothing and says which ambiguity it is: a member
-  in more than one mapped team's subgroup, a member in a subgroup no team maps
-  (never read as Unassigned), two Spond members of one name, two registered
-  children of one name in the club, an unproved scan, and a club where any team
-  maps a whole Spond group rather than a subgroup.
+  in more than one mapped team's subgroup, a member in a subgroup TWO teams
+  both claim (carried as evidence rather than deleted, and outranking any
+  unique mapping beside it), a member in a subgroup no team maps (never read as
+  Unassigned), two Spond members of one name, two registered children of one
+  name in the club, an unproved scan, and a club where any team maps a whole
+  Spond group rather than a subgroup.
 - Only the CURRENT season moves, because the RPC derives the season and the
   caller cannot name one. No player identity is created, no link is deleted or
   repointed, no register entry or saved session is touched, and nothing is
@@ -224,6 +226,9 @@ page by hand.
   a repeat press is an idempotent no-op. The member key covers what the row
   locks cannot, a member with no link row yet, so two confirmations of the same
   free member return the documented refusal instead of a raw unique violation.
+  Because those locks bind only callers of the RPC while the ordinary linking
+  screen inserts directly, the confirmation insert also handles
+  unique_violation by re-reading ownership and naming which side lost.
   "Apply all safe Spond changes" is offered only when NO row still needs an
   identity settled.
 - Audited by the existing triggers only (`player.team_changed`,

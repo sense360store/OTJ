@@ -7,7 +7,7 @@ import {
   pickerOptions,
   spondSetupRows,
   suggestionPool,
-  teamsBySubgroup,
+  subgroupIndex,
   unmatchedPlayers,
   type LinkCandidate,
   type SpondGroupMember,
@@ -485,9 +485,9 @@ describe('spondSetupRows', () => {
   const SG_MINE = 'SUBGROUP-SYNTH-MINE'
   const SG_OTHER = 'SUBGROUP-SYNTH-OTHER'
   const SG_UNMAPPED = 'SUBGROUP-SYNTH-UNMAPPED'
-  const teamBySubgroup = new Map([
-    [SG_MINE, { teamId: 'team-argonauts', teamName: 'Argonauts' }],
-    [SG_OTHER, { teamId: 'team-titans', teamName: 'Titans' }],
+  const subgroups = subgroupIndex([
+    { subgroupId: SG_MINE, teamId: 'team-argonauts', teamName: 'Argonauts' },
+    { subgroupId: SG_OTHER, teamId: 'team-titans', teamName: 'Titans' },
   ])
   const outside = (name: string, subgroupIds: string[] = [], id = ''): SpondGroupMember => ({
     displayName: name,
@@ -503,7 +503,7 @@ describe('spondSetupRows', () => {
       pool: [],
       outsideMembers: [],
       outsideComplete: true,
-      teamBySubgroup,
+      subgroups,
       clubRoster: [],
       ...over,
     })
@@ -715,6 +715,49 @@ describe('spondSetupRows', () => {
     expect(out).toEqual([])
   })
 
+  it('a contested companion subgroup is reported as ambiguity, never as one team', () => {
+    // The read only half of a review finding. The lower diagnostic must not
+    // confidently name Titans for a member who is ALSO in a subgroup two
+    // teams both claim: that member is in two mapped teams' subgroups, one of
+    // which this club cannot name. "Another Spond subgroup" would be wrong
+    // too, because it reads as one place.
+    const contestedIndex = subgroupIndex([
+      { subgroupId: SG_MINE, teamId: 'team-argonauts', teamName: 'Argonauts' },
+      { subgroupId: SG_OTHER, teamId: 'team-titans', teamName: 'Titans' },
+      { subgroupId: 'SG-CONTESTED', teamId: 'team-titans', teamName: 'Titans' },
+      { subgroupId: 'SG-CONTESTED', teamId: 'team-spartans', teamName: 'Spartans' },
+    ])
+    const out = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [SG_OTHER, 'SG-CONTESTED'], M1)],
+      subgroups: contestedIndex,
+    })
+    // Its OWN state, not 'ambiguous': that one's sentence is about two people
+    // of one name, and this is one person whose team is plural.
+    expect(out[0].state).toBe('contested_subgroup')
+    expect(out[0].otherTeam).toBeNull()
+    // And it carries no member, so nothing downstream has an identity to act
+    // on: the confirm path is closed for this row by construction.
+    expect(out[0].member).toBeNull()
+
+    // The contested subgroup alone is the same answer.
+    const alone = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', ['SG-CONTESTED'], M1)],
+      subgroups: contestedIndex,
+    })
+    expect(alone[0].state).toBe('contested_subgroup')
+
+    // While the same member in the uncontested subgroup alone still names it.
+    const clean = rows({
+      pool: [player('p1', 'Gamma Synthetic')],
+      outsideMembers: [outside('Gamma Synthetic', [SG_OTHER], M1)],
+      subgroups: contestedIndex,
+    })
+    expect(clean[0].state).toBe('other_subgroup')
+    expect(clean[0].otherTeam?.teamName).toBe('Titans')
+  })
+
   it('carries a member ONLY on the two states that establish exactly one', () => {
     // The rule that replaced "a diagnostic row carries no member id". The
     // id is now on the row, because ./spondReconcile.ts needs an identity
@@ -761,9 +804,9 @@ describe('spondSetupRows', () => {
   })
 })
 
-describe('teamsBySubgroup', () => {
+describe('subgroupIndex', () => {
   it('keys the club mapped subgroups by the team they belong to', () => {
-    const map = teamsBySubgroup([
+    const { byId: map } = subgroupIndex([
       { subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' },
       { subgroupId: 'SG-2', teamId: 'T-2', teamName: 'Titans' },
     ])
@@ -772,26 +815,39 @@ describe('teamsBySubgroup', () => {
   })
 
   it('drops a whole group mapping and an unnamed team rather than keying on nothing', () => {
-    const map = teamsBySubgroup([
+    const { byId: map } = subgroupIndex([
       { subgroupId: null, teamId: 'T-1', teamName: 'Argonauts' },
       { subgroupId: 'SG-3', teamId: 'T-3', teamName: '' },
     ])
     expect(map.size).toBe(0)
   })
 
-  it('names neither team where one subgroup is claimed by two', () => {
-    const map = teamsBySubgroup([
+  it('names neither team where one subgroup is claimed by two, and REMEMBERS that', () => {
+    // The second assertion is the review finding. Dropping the contested id
+    // from the map is right; forgetting that it was contested is not, because
+    // it then reads exactly like a subgroup nobody maps, and those two carry
+    // opposite consequences for a member who is also in one properly mapped
+    // subgroup.
+    const index = subgroupIndex([
       { subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' },
       { subgroupId: 'SG-1', teamId: 'T-2', teamName: 'Titans' },
     ])
-    expect(map.has('SG-1')).toBe(false)
+    expect(index.byId.has('SG-1')).toBe(false)
+    expect(index.contested.has('SG-1')).toBe(true)
   })
 
-  it('a subgroup mapped twice to the same team still resolves', () => {
-    const map = teamsBySubgroup([
+  it('a subgroup nobody maps is not contested, which is a different fact', () => {
+    const index = subgroupIndex([{ subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' }])
+    expect(index.byId.has('SG-9')).toBe(false)
+    expect(index.contested.has('SG-9')).toBe(false)
+  })
+
+  it('a subgroup mapped twice to the same team still resolves, and is not contested', () => {
+    const { byId: map, contested } = subgroupIndex([
       { subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' },
       { subgroupId: 'SG-1', teamId: 'T-1', teamName: 'Argonauts' },
     ])
     expect(map.get('SG-1')?.teamName).toBe('Argonauts')
+    expect(contested.size).toBe(0)
   })
 })

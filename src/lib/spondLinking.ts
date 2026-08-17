@@ -305,6 +305,14 @@ export type SpondSetupState =
   // More than one Spond member goes by this name, so no row may claim
   // which one this player is. Fails closed by rule.
   | 'ambiguous'
+  // The one same named member is in a subgroup MORE THAN ONE OTJ team
+  // claims, so Spond puts them in a mapped team this club cannot name. Its
+  // own state rather than 'ambiguous', because that one says a sentence
+  // about NAMES ("more than one person goes by this name") and this is one
+  // person whose TEAM is plural. Reporting it as the name case would be a
+  // false sentence, and reporting it as 'other_subgroup' would name one of
+  // the two teams it might be.
+  | 'contested_subgroup'
   // A member of this team's own mapped subgroup goes by this name and is
   // already linked to a different registered player. Said out loud
   // because "not found in Spond group data" would be false, and because
@@ -351,9 +359,10 @@ export interface SpondSetupContext {
   outsideMembers: readonly SpondGroupMember[] | null
   // Whether that scan saw the whole parent group.
   outsideComplete: boolean
-  // Mapped Spond subgroup id to the OTJ team it belongs to, club wide,
-  // from teamsBySubgroup below.
-  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>
+  // The club's mapped subgroups, resolved once by subgroupIndex below. One
+  // value rather than a map plus a contested set, so a caller cannot supply
+  // the half that names a team without the half that refuses to.
+  subgroups: SubgroupIndex
   // THE CLUB'S registrations, not this team's. The pool above is scoped to
   // one team because a suggestion must be, but the diagnosis matches names
   // across the whole Spond parent group, which spans every team. Without
@@ -372,35 +381,79 @@ export interface SubgroupTeam {
   teamName: string
 }
 
-// The club's mapped subgroups, keyed for resolution. A subgroup two
-// mappings claim for two different teams names neither: the point of the
-// diagnosis is to be actionable, and a wrong team name is worse than none.
-export function teamsBySubgroup(
+// The club's mapped subgroups, resolved once, as ONE value.
+//
+// It is one object rather than a map plus a set for the reason
+// EventKindContext is one object: a caller that can supply half the answer
+// will eventually supply half the answer and read as though it had supplied
+// all of it. Here that mistake has teeth, because the half a caller would
+// drop is the half that REFUSES.
+//
+// THE CONTESTED SET IS NOT A LEFTOVER, IT IS EVIDENCE. A review found what
+// dropping it costs. When two mappings claim one subgroup for two different
+// teams, that subgroup names neither team, and the first version simply
+// deleted it from the map. Deleting it makes it indistinguishable from a
+// subgroup nobody maps at all, and those are not the same fact:
+//
+//   * a subgroup NOBODY maps is silence. A member in it and in exactly one
+//     properly mapped subgroup is unambiguously on that one team.
+//   * a CONTESTED subgroup is Spond membership of a mapped team we cannot
+//     name. A member in it and in exactly one properly mapped subgroup is
+//     in TWO mapped teams' subgroups, one of which we can name and one of
+//     which we cannot. That is ambiguous, and deleting the contested id let
+//     it read as the single unique team and offer an actionable move.
+//
+// So the contested ids are kept, and every reader treats membership of one
+// as ambiguity that outranks any simultaneous unique mapping.
+export interface SubgroupIndex {
+  // Subgroup id to the one team it maps to. Contested ids are absent here,
+  // exactly as before; what changed is that they are recorded below rather
+  // than forgotten.
+  byId: ReadonlyMap<string, SubgroupTeam>
+  // Subgroup ids more than one team claims.
+  contested: ReadonlySet<string>
+}
+
+export function subgroupIndex(
   mappings: readonly { subgroupId: string | null; teamId: string; teamName: string }[],
-): Map<string, SubgroupTeam> {
-  const out = new Map<string, SubgroupTeam>()
+): SubgroupIndex {
+  const byId = new Map<string, SubgroupTeam>()
   const contested = new Set<string>()
   for (const m of mappings) {
     if (!m.subgroupId || !m.teamName) continue
-    const held = out.get(m.subgroupId)
+    const held = byId.get(m.subgroupId)
     if (held !== undefined && held.teamId !== m.teamId) contested.add(m.subgroupId)
-    else out.set(m.subgroupId, { teamId: m.teamId, teamName: m.teamName })
+    else byId.set(m.subgroupId, { teamId: m.teamId, teamName: m.teamName })
   }
-  for (const id of contested) out.delete(id)
-  return out
+  for (const id of contested) byId.delete(id)
+  return { byId, contested }
+}
+
+// Whether any of these subgroups is claimed by more than one team. The one
+// predicate both readers share, so the diagnosis and the reconciliation
+// cannot disagree about what contested means.
+export function touchesContestedSubgroup(
+  subgroupIds: readonly string[],
+  index: SubgroupIndex,
+): boolean {
+  return subgroupIds.some((id) => index.contested.has(id))
 }
 
 // The one OTJ team a member's subgroups point at, or null. Null covers
-// both "no mapped subgroup" and "more than one team", which is the same
-// answer to a manager: this member is somewhere else in Spond and the row
-// will not guess where.
+// "no mapped subgroup", "more than one team" and "one team plus a contested
+// subgroup", which is the same answer to a manager: this member is somewhere
+// else in Spond and the row will not guess where.
 function resolveOtherTeam(
   subgroupIds: readonly string[],
-  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>,
+  index: SubgroupIndex,
 ): SubgroupTeam | null {
+  // A contested subgroup outranks a unique one. Naming the unique team here
+  // would be confidently naming ONE of the two mapped teams this member is
+  // in, which is the finding.
+  if (touchesContestedSubgroup(subgroupIds, index)) return null
   const teams = new Map<string, SubgroupTeam>()
   for (const id of subgroupIds) {
-    const team = teamBySubgroup.get(id)
+    const team = index.byId.get(id)
     if (team) teams.set(team.teamId, team)
   }
   return teams.size === 1 ? [...teams.values()][0] : null
@@ -494,7 +547,18 @@ export function spondSetupRows(ctx: SpondSetupContext): SpondSetupRow[] {
     if (member.subgroupIds.length === 0) {
       return { player, state: 'no_subgroup' as const, otherTeam: null, member }
     }
-    const team = resolveOtherTeam(member.subgroupIds, ctx.teamBySubgroup)
+    // A member in a CONTESTED subgroup is in a mapped team's subgroup this
+    // club cannot name, so nothing here may claim which team they are in,
+    // and that holds even when they are also in exactly one properly mapped
+    // subgroup. It gets its own state rather than borrowing 'ambiguous',
+    // whose sentence is about two people of one name, or 'other_subgroup',
+    // which reads as one place and would name one of the two teams this
+    // member might be in. It carries no member either, so nothing offers an
+    // action on it.
+    if (touchesContestedSubgroup(member.subgroupIds, ctx.subgroups)) {
+      return nobody(player, 'contested_subgroup')
+    }
+    const team = resolveOtherTeam(member.subgroupIds, ctx.subgroups)
     // The member sits in a team whose OWN player list already holds this
     // name. They are far more likely to be that team's child, correctly
     // filed, than this team's child misplaced, and the row would otherwise

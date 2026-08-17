@@ -123,6 +123,46 @@ describe('the identity rule has one implementation and one gate', () => {
     expect(RULE_CODE.split("state: 'move'").length - 1).toBe(1)
   })
 
+  it('a contested subgroup is carried, not discarded, and outranks a unique one', () => {
+    // A REVIEW FINDING. Deleting a contested subgroup from the map made it
+    // indistinguishable from one nobody maps, so a member in one properly
+    // mapped subgroup AND one contested subgroup resolved to the single
+    // nameable team and was offered as an actionable move. The contested ids
+    // are kept beside the map, in ONE value so a caller cannot pass the half
+    // that names a team without the half that refuses to, and the check runs
+    // FIRST so no later branch can shadow it.
+    const linking = code(read('./spondLinking.ts'))
+    expect(linking).toMatch(/export interface SubgroupIndex \{/)
+    expect(linking).toMatch(/contested: ReadonlySet<string>/)
+    expect(linking).toMatch(/for \(const id of contested\) byId\.delete\(id\)/)
+    expect(linking).toMatch(/return \{ byId, contested \}/)
+    expect(linking).toMatch(/export function touchesContestedSubgroup\(/)
+
+    // memberVerdict checks it before anything else can answer.
+    const verdict = RULE_CODE.match(/export function memberVerdict\([\s\S]*?\n\}/)?.[0] ?? ''
+    expect(verdict).not.toBe('')
+    const contestedAt = verdict.indexOf('touchesContestedSubgroup')
+    expect(contestedAt).toBeGreaterThan(-1)
+    for (const later of ['subgroupIds.length === 0', 'resolveTeams(']) {
+      expect(verdict.indexOf(later), `${later} must not precede the contested check`).toBeGreaterThan(contestedAt)
+    }
+    // And the read only diagnostic refuses too, with its own state rather
+    // than borrowing the sentence about two people of one name.
+    expect(linking).toMatch(/touchesContestedSubgroup\(member\.subgroupIds, ctx\.subgroups\)/)
+    expect(linking).toMatch(/return nobody\(player, 'contested_subgroup'\)/)
+    expect(SCREEN).toMatch(/const SETUP_FINDING: Record<SpondSetupState, string> = \{/)
+  })
+
+  it('the whole club subgroup answer travels as ONE value', () => {
+    // The EventKindContext lesson: a caller that CAN pass half the context
+    // will pass half the context. Here the half that would be dropped is the
+    // half that refuses, so the two are one parameter.
+    expect(RULE_CODE).toMatch(/subgroups: SubgroupIndex/)
+    expect(RULE_CODE).not.toMatch(/teamBySubgroup/)
+    expect(SCREEN).toMatch(/subgroupIndex\(mappings\.data \?\? \[\]\)/)
+    expect(SCREEN).toMatch(/subgroups=\{subgroupTeams\}/)
+  })
+
   it('a member with no usable id is never offered as an identity', () => {
     expect(RULE_CODE).toMatch(/if \(!member\.spondMemberId\) continue/)
     expect(RULE_CODE).toMatch(/if \(m\.spondMemberId\) outsideById\.set/)
@@ -227,6 +267,42 @@ describe('the migration keeps the negatives it claims', () => {
     // are refusals, so it would be safe rather than corrupting, and one
     // ordered statement removes it.
     expect(MIGRATION_CODE).toMatch(/order by l\.spond_member_id\s+for update/)
+  })
+
+  it('handles losing the link race to a DIRECT insert, rather than assuming it cannot', () => {
+    // A REVIEW FINDING. The advisory locks serialise callers of this function
+    // and nothing else; the ordinary linking screen inserts into
+    // player_spond_links directly from Accept and from Choose and takes no
+    // lock. The confirmation insert can therefore lose either unique key, and
+    // the promise this function makes is NAMED outcomes, not a raw 23505.
+    expect(FUNCTION_BODY).toMatch(/exception when unique_violation then/)
+    // It must RE-READ rather than assume which side lost, so both refusals are
+    // RETURNED twice: once from the ordinary read, once from the handler.
+    // Counted on the returned literal rather than the bare name, because the
+    // prose inside the body names them too, and a count a comment can satisfy
+    // would survive deleting the handler it exists to pin. The migration's own
+    // self-verification counts the same shape, for the same reason.
+    const returned = (outcome: string) =>
+      FUNCTION_BODY.split(`'outcome', '${outcome}'`).length - 1
+    expect(returned('member_linked_elsewhere')).toBeGreaterThanOrEqual(2)
+    expect(returned('player_linked_elsewhere')).toBeGreaterThanOrEqual(2)
+    // A violation neither read explains is re-raised, not swallowed into a
+    // move on evidence the function cannot describe.
+    expect(FUNCTION_BODY).toMatch(/raise;/)
+    // And the audit batch stamp is set OUTSIDE the block, so the
+    // subtransaction rollback cannot take it with it.
+    const blockAt = FUNCTION_BODY.indexOf('exception when unique_violation')
+    const stampAt = FUNCTION_BODY.indexOf("set_config('otj.audit_batch'")
+    expect(stampAt).toBeGreaterThan(-1)
+    expect(stampAt).toBeLessThan(blockAt)
+  })
+
+  it('and the direct linking path is still allowed to be direct', () => {
+    // The fix is at the RPC boundary deliberately: requiring every present
+    // and future direct insert to join a lock protocol is the assumption that
+    // would rot. So the ordinary path is unchanged, and this pins that it
+    // still exists as a plain insert rather than having been quietly rerouted.
+    expect(QUERIES).toMatch(/supabase\.from\('player_spond_links'\)\.insert\(/)
   })
 
   it('contacts nothing and reads no name', () => {

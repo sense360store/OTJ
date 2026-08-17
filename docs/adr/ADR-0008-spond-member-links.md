@@ -246,3 +246,23 @@ update grant, and Spond is still read only.
 a page render. Every change is a manager pressing something, and the bulk
 action is hidden outright while any row still needs an identity settled, so a
 press can never quietly cover a row a person has not looked at.
+
+### Two corrections from a follow-up review, before either gate ran
+
+Both landed in the unapplied `0049`, so the migration was corrected in place
+rather than superseded; the reviewed path and ledger predecessor are unchanged.
+
+- **A contested subgroup is ambiguity, and it outranks a unique one.** Two
+  mappings claiming one Spond subgroup for two teams names neither team, and
+  deleting the id from the resolution map made it indistinguishable from a
+  subgroup nobody maps. Those carry opposite consequences for a member who is
+  ALSO in one properly mapped subgroup: nobody claiming a subgroup cannot be a
+  second team, two teams claiming it is a second team we cannot name. The
+  contested ids are carried and checked first, in both the reconciliation and
+  the read only diagnostic.
+- **Losing the link race to a direct insert is a named outcome.** The RPC's
+  advisory locks serialise its own callers; the linking screen's Accept and
+  Choose still insert directly and take none of them. The confirmation insert
+  therefore handles `unique_violation`, re-reads ownership, and reports which
+  side lost instead of surfacing a raw `23505`. It never moves the team after
+  losing the identity race, and never repoints or deletes the winner's link.

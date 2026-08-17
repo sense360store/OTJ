@@ -30,7 +30,7 @@ import {
   parseIgnoredMemberIds,
   type SpondMapping,
 } from '../../supabase/functions/_shared/spond'
-import { spondSetupRows, teamsBySubgroup, type SpondGroupMember, type SpondSetupState } from './spondLinking'
+import { spondSetupRows, subgroupIndex, type SpondGroupMember, type SpondSetupState } from './spondLinking'
 import type { RegisteredPlayer } from './data'
 
 const GROUP = 'GRP-SYNTH-1'
@@ -147,7 +147,7 @@ function run(ignoredConfig = '') {
     // candidate pass discarded, and a probe that read diagnostics.complete
     // here would model a chain the product does not have.
     outsideComplete: diagnosticsProved(diagnostics, collected),
-    teamBySubgroup: teamsBySubgroup(CLUB_MAPPINGS),
+    subgroups: subgroupIndex(CLUB_MAPPINGS),
     clubRoster: ROSTER,
   })
   return { collected, diagnostics, rows }
@@ -252,7 +252,7 @@ describe('a Spond group payload through the whole chain', () => {
       pool: ROSTER,
       outsideMembers: asClientDiagnostics(diagnostics.members),
       outsideComplete: diagnostics.complete,
-      teamBySubgroup: teamsBySubgroup(CLUB_MAPPINGS),
+      subgroups: subgroupIndex(CLUB_MAPPINGS),
       clubRoster: ROSTER,
     })
     expect(new Set(rows.map((r) => r.state))).toEqual(new Set(['unknown']))
@@ -293,7 +293,7 @@ describe('a Spond group payload through the whole chain', () => {
       pool: ROSTER,
       outsideMembers: asClientDiagnostics(diagnostics.members),
       outsideComplete: diagnosticsProved(diagnostics, collected),
-      teamBySubgroup: teamsBySubgroup(CLUB_MAPPINGS),
+      subgroups: subgroupIndex(CLUB_MAPPINGS),
       clubRoster: ROSTER,
     })
     expect(new Set(rows.map((r) => r.state))).toEqual(new Set(['unknown']))
@@ -316,7 +316,7 @@ describe('a Spond group payload through the whole chain', () => {
       pool: ROSTER,
       outsideMembers: dropped,
       outsideComplete: true,
-      teamBySubgroup: teamsBySubgroup(CLUB_MAPPINGS),
+      subgroups: subgroupIndex(CLUB_MAPPINGS),
       clubRoster: ROSTER,
     })
     expect(stateFor(rows, 'Elsewhere Synthetic')).toBe('no_subgroup')

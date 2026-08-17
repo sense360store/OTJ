@@ -44,9 +44,11 @@
 import {
   normaliseName,
   spondSetupRows,
+  touchesContestedSubgroup,
   type LinkCandidate,
   type SpondGroupMember,
   type SpondLink,
+  type SubgroupIndex,
   type SubgroupTeam,
 } from './spondLinking'
 import type { RegisteredPlayer } from './data'
@@ -88,13 +90,17 @@ export type ReconcileState =
   // unambiguous destination. Offered ONLY as confirm-then-move: the
   // confirmation creates the link, and the move rides on it.
   | 'confirm'
-  // Spond puts this member in more than one mapped team's subgroup, so
-  // Spond's own answer is not single valued. Nothing is offered.
+  // Spond's own answer is not single valued: this member is in more than one
+  // mapped team's subgroup, OR in one that two teams both claim, which is
+  // membership of a mapped team that cannot be named and counts the same way.
+  // Nothing is offered.
   | 'ambiguous'
-  // Spond puts this member in a subgroup no OTJ team maps, or in one two
-  // teams both claim. There IS a Spond team; we cannot say which OTJ team it
-  // is. Deliberately NOT read as Unassigned, which would move a child out of
-  // a squad on the strength of a missing mapping.
+  // Spond puts this member in a subgroup NO OTJ team maps. There IS a Spond
+  // team; we cannot say which OTJ team it is. Deliberately NOT read as
+  // Unassigned, which would move a child out of a squad on the strength of a
+  // missing mapping, and deliberately NOT the same state as a contested
+  // subgroup: nobody claiming a subgroup is silence, two teams claiming it is
+  // a conflict, and only the second one can hide a second team.
   | 'unmapped'
 
 export interface ReconcileRow {
@@ -170,10 +176,11 @@ export interface SpondReconcileContext {
   candidatesComplete: boolean
   outsideMembers: readonly SpondGroupMember[] | null
   outsideComplete: boolean
-  // Mapped Spond subgroup to OTJ team, club wide, from teamsBySubgroup. A
-  // subgroup two mappings contest is already absent from it, which lands
-  // here as 'unmapped' rather than as a guess.
-  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>
+  // The club's mapped subgroups, resolved once by subgroupIndex. ONE value
+  // carrying both the unique map and the contested ids, because a caller
+  // that could pass the map alone would be passing the half that names a
+  // team without the half that refuses to.
+  subgroups: SubgroupIndex
   // True when NO mapping in the club maps a whole group.
   subgroupMappingComplete: boolean
   // The selected team.
@@ -188,17 +195,17 @@ export interface ReconcileResult {
   blocker: ReconcileBlocker | null
 }
 
-// The teams a set of Spond subgroups resolves to, club wide. A subgroup no
-// mapping claims, and one two mappings contest, both contribute nothing:
-// teamsBySubgroup has already dropped the contested ones for the reason this
-// module needs, which is that a wrong team name is worse than none.
+// The teams a set of Spond subgroups uniquely resolves to, club wide. A
+// subgroup no mapping claims contributes nothing here; a CONTESTED subgroup
+// is handled before this is ever reached, because it contributes something
+// this function cannot express, which is "a mapped team we cannot name".
 function resolveTeams(
   subgroupIds: readonly string[],
-  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>,
+  index: SubgroupIndex,
 ): SubgroupTeam[] {
   const out = new Map<string, SubgroupTeam>()
   for (const id of subgroupIds) {
-    const team = teamBySubgroup.get(id)
+    const team = index.byId.get(id)
     if (team) out.set(team.teamId, team)
   }
   return [...out.values()]
@@ -212,22 +219,28 @@ export type MemberVerdict =
   | { kind: 'ambiguous' }
   | { kind: 'unmapped' }
 
-export function memberVerdict(
-  subgroupIds: readonly string[],
-  teamBySubgroup: ReadonlyMap<string, SubgroupTeam>,
-): MemberVerdict {
+export function memberVerdict(subgroupIds: readonly string[], index: SubgroupIndex): MemberVerdict {
+  // A CONTESTED subgroup outranks everything below, and this ordering is the
+  // whole of a review finding. Two mappings claiming one subgroup for two
+  // teams means this member is in a MAPPED team's subgroup that cannot be
+  // named. If they are also in exactly one properly mapped subgroup, they
+  // are in two mapped teams' subgroups, and resolving only the nameable one
+  // would offer an actionable move on half the evidence. Checked first so no
+  // later branch can shadow it.
+  if (touchesContestedSubgroup(subgroupIds, index)) return { kind: 'ambiguous' }
   // No subgroup at all is a positive statement, not missing data: Spond has
   // this member in the parent group and in no squad.
   if (subgroupIds.length === 0) return { kind: 'destination', to: UNASSIGNED }
-  const teams = resolveTeams(subgroupIds, teamBySubgroup)
+  const teams = resolveTeams(subgroupIds, index)
   if (teams.length === 1) {
     return { kind: 'destination', to: { kind: 'team', teamId: teams[0].teamId, teamName: teams[0].teamName } }
   }
   // More than one mapped team claims this member. Spond's answer is real and
   // it is plural, which is not an answer this can act on.
   if (teams.length > 1) return { kind: 'ambiguous' }
-  // Subgroups exist and none of them maps to exactly one OTJ team. There IS
-  // a Spond team; nothing here can name it. Never Unassigned.
+  // Subgroups exist and none of them maps to exactly one OTJ team, and none
+  // of them is contested either. There IS a Spond team; nothing here can name
+  // it. Never Unassigned.
   return { kind: 'unmapped' }
 }
 
@@ -280,7 +293,7 @@ export function spondReconcile(ctx: SpondReconcileContext): ReconcileResult {
     // The scan did not see this member. That is the orphan question, not
     // this one, and the link section answers it.
     if (!member) continue
-    const verdict = memberVerdict(member.subgroupIds, ctx.teamBySubgroup)
+    const verdict = memberVerdict(member.subgroupIds, ctx.subgroups)
     if (verdict.kind === 'ambiguous') {
       rows.push({ player, state: 'ambiguous', from: here, to: null, memberId: null, confirmName: null })
       continue
@@ -315,7 +328,7 @@ export function spondReconcile(ctx: SpondReconcileContext): ReconcileResult {
     pool: ctx.pool,
     outsideMembers: ctx.outsideMembers,
     outsideComplete: ctx.outsideComplete,
-    teamBySubgroup: ctx.teamBySubgroup,
+    subgroups: ctx.subgroups,
     clubRoster: ctx.clubRoster,
   })
   for (const row of setup) {
@@ -329,7 +342,7 @@ export function spondReconcile(ctx: SpondReconcileContext): ReconcileResult {
     // because confirming an identity is a bigger claim than describing one
     // and the confirmation is what a later move rides on.
     if (nameIsSharedInClub(ctx.clubRoster, row.player)) continue
-    const verdict = memberVerdict(member.subgroupIds, ctx.teamBySubgroup)
+    const verdict = memberVerdict(member.subgroupIds, ctx.subgroups)
     if (verdict.kind !== 'destination') continue
     if (sameDestination(verdict.to, here)) continue
     rows.push({

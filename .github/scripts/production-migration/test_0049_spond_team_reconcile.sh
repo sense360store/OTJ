@@ -803,6 +803,140 @@ psql_run -d "${DB}" -qc "delete from public.player_spond_links where player_id i
   delete from public.players where id in ('eeeeeeee-0000-4000-8000-00000000000d','eeeeeeee-0000-4000-8000-00000000000e');" >/dev/null
 
 echo
+echo "== K4. CONCURRENCY: a DIRECT link insert racing an RPC confirmation"
+#
+# A REVIEW FINDING. The two advisory locks serialise callers of this function
+# and nothing else. The ordinary linking screen still inserts into
+# player_spond_links DIRECTLY, from Accept and from Choose, and takes no
+# advisory lock, so the confirmation insert can lose either unique key to it.
+# The database stays correct because the constraints are the enforcement;
+# what was wrong was the REPORT, a raw 23505 rather than a named outcome.
+#
+# Both shapes are forced deterministically by holding the direct insert open
+# in its own transaction: the RPC reads ownership (sees nothing, the row is
+# uncommitted), reaches its INSERT, and BLOCKS on the index until the direct
+# transaction commits, at which point it raises and the handler re-reads.
+
+direct_insert_holds() { # direct_insert_holds <member> <player> <outfile>
+  psql_run -d "${DB}" -tAc "set otj.test_uid='${MANAGER}';
+    begin;
+    insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)
+      values ('${CLUB}', '$1', '$2'::uuid, 'chosen');
+    select pg_sleep(2);
+    commit;" > "$3" 2>&1 || echo "PSQL_FAILED" >> "$3"
+}
+
+no_raw_violation() { # no_raw_violation <label> <outfile>
+  grep -qiE 'duplicate key|23505|unique constraint' "$2" \
+    && fail "$1: the RPC surfaced a raw unique violation: $(cat "$2")"
+  grep -q 'PSQL_FAILED' "$2" && fail "$1: the RPC raised instead of returning: $(cat "$2")"
+  grep -qi 'deadlock' "$2" && fail "$1: deadlocked"
+  return 0
+}
+
+# ---- A. the direct insert claims the same MEMBER for another child --------
+psql_run -d "${DB}" -q <<SQL
+insert into public.players (id, club_id, display_name) values
+  ('eeeeeeee-0000-4000-8000-000000000010', '${CLUB}', 'Racer One Synthetic'),
+  ('eeeeeeee-0000-4000-8000-000000000011', '${CLUB}', 'Racer Two Synthetic');
+insert into public.player_registrations (club_id, player_id, season_id, team_id, status) values
+  ('${CLUB}', 'eeeeeeee-0000-4000-8000-000000000010', '${SEASON_NOW}', '${ARGONAUTS}', 'registered'),
+  ('${CLUB}', 'eeeeeeee-0000-4000-8000-000000000011', '${SEASON_NOW}', '${ARGONAUTS}', 'registered');
+SQL
+RACE_MEMBER=FFFF5555FFFF5555FFFF5555FFFF5555
+( direct_insert_holds "${RACE_MEMBER}" 'eeeeeeee-0000-4000-8000-000000000011' "${WORK}/directA.out" ) &
+DA=$!
+sleep 0.6
+RES="$(manager_call "'eeeeeeee-0000-4000-8000-000000000010'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${RACE_MEMBER}', null" 2>&1 || echo PSQL_FAILED)"
+printf '%s\n' "${RES}" > "${WORK}/rpcA.out"
+wait "${DA}"
+grep -q 'PSQL_FAILED' "${WORK}/directA.out" && fail "the direct insert did not land: $(cat "${WORK}/directA.out")"
+no_raw_violation "member race" "${WORK}/rpcA.out"
+same "the RPC names the member side loss" "$(outcome "${RES}")" "member_linked_elsewhere"
+same "and the losing child did not move" "$(team_of 'eeeeeeee-0000-4000-8000-000000000010' "${SEASON_NOW}")" "${ARGONAUTS}"
+same "exactly one link exists for the contested member" \
+  "$(scalar "${DB}" "select count(*) from public.player_spond_links where spond_member_id='${RACE_MEMBER}'")" "1"
+same "and it belongs to the direct inserter" \
+  "$(scalar "${DB}" "select player_id from public.player_spond_links where spond_member_id='${RACE_MEMBER}'")" \
+  "eeeeeeee-0000-4000-8000-000000000011"
+same "the losing child acquired no link, so nothing landed by halves" \
+  "$(scalar "${DB}" "select count(*) from public.player_spond_links where player_id='eeeeeeee-0000-4000-8000-000000000010'")" "0"
+same "and the direct inserter was not moved either, since nothing asked for it" \
+  "$(team_of 'eeeeeeee-0000-4000-8000-000000000011' "${SEASON_NOW}")" "${ARGONAUTS}"
+
+# ---- B. the direct insert claims the same PLAYER for another member -------
+psql_run -d "${DB}" -q <<SQL
+insert into public.players (id, club_id, display_name)
+  values ('eeeeeeee-0000-4000-8000-000000000012', '${CLUB}', 'Racer Three Synthetic');
+insert into public.player_registrations (club_id, player_id, season_id, team_id, status)
+  values ('${CLUB}', 'eeeeeeee-0000-4000-8000-000000000012', '${SEASON_NOW}', '${ARGONAUTS}', 'registered');
+SQL
+RACE_MEMBER_B=AAAA6666AAAA6666AAAA6666AAAA6666
+RACE_MEMBER_C=BBBB7777BBBB7777BBBB7777BBBB7777
+( direct_insert_holds "${RACE_MEMBER_C}" 'eeeeeeee-0000-4000-8000-000000000012' "${WORK}/directB.out" ) &
+DB_PID=$!
+sleep 0.6
+RES="$(manager_call "'eeeeeeee-0000-4000-8000-000000000012'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${RACE_MEMBER_B}', null" 2>&1 || echo PSQL_FAILED)"
+printf '%s\n' "${RES}" > "${WORK}/rpcB.out"
+wait "${DB_PID}"
+grep -q 'PSQL_FAILED' "${WORK}/directB.out" && fail "the direct insert did not land: $(cat "${WORK}/directB.out")"
+no_raw_violation "player race" "${WORK}/rpcB.out"
+same "the RPC names the player side loss" "$(outcome "${RES}")" "player_linked_elsewhere"
+same "and the child did not move" "$(team_of 'eeeeeeee-0000-4000-8000-000000000012' "${SEASON_NOW}")" "${ARGONAUTS}"
+same "exactly one link exists for that child" \
+  "$(scalar "${DB}" "select count(*) from public.player_spond_links where player_id='eeeeeeee-0000-4000-8000-000000000012'")" "1"
+same "and it is the one the direct insert made, not the confirmed one" \
+  "$(scalar "${DB}" "select spond_member_id from public.player_spond_links where player_id='eeeeeeee-0000-4000-8000-000000000012'")" \
+  "${RACE_MEMBER_C}"
+same "the member the RPC was confirming stayed free" \
+  "$(scalar "${DB}" "select count(*) from public.player_spond_links where spond_member_id='${RACE_MEMBER_B}'")" "0"
+
+# ---- C. and an uncontested confirm still links and moves, atomically ------
+psql_run -d "${DB}" -q <<SQL
+insert into public.players (id, club_id, display_name)
+  values ('eeeeeeee-0000-4000-8000-000000000013', '${CLUB}', 'Racer Four Synthetic');
+insert into public.player_registrations (club_id, player_id, season_id, team_id, status)
+  values ('${CLUB}', 'eeeeeeee-0000-4000-8000-000000000013', '${SEASON_NOW}', '${ARGONAUTS}', 'registered');
+SQL
+CLEAN_MEMBER=CCCC8888CCCC8888CCCC8888CCCC8888
+BATCH_C=f0000000-0000-4000-8000-00000000000c
+RES="$(manager_call "'eeeeeeee-0000-4000-8000-000000000013'::uuid, '${ARGONAUTS}'::uuid, '${SPARTANS}'::uuid, null, '${CLEAN_MEMBER}', '${BATCH_C}'::uuid")"
+same "an uncontested confirmation still moves" "$(outcome "${RES}")" "moved"
+same "and still creates the link" "$(field "${RES}" link_created)" "True"
+same "both halves in one batch" \
+  "$(scalar "${DB}" "select string_agg(action, ',' order by action) from public.audit_events where batch_id='${BATCH_C}'")" \
+  "player.spond_linked,player.team_changed"
+
+# ---- D. and the same pairing arriving by BOTH routes is not a refusal -----
+# A direct insert that makes exactly the link this call was going to make is
+# not a lost race: the identity is the confirmed one, so the move still runs.
+psql_run -d "${DB}" -q <<SQL
+insert into public.players (id, club_id, display_name)
+  values ('eeeeeeee-0000-4000-8000-000000000014', '${CLUB}', 'Racer Five Synthetic');
+insert into public.player_registrations (club_id, player_id, season_id, team_id, status)
+  values ('${CLUB}', 'eeeeeeee-0000-4000-8000-000000000014', '${SEASON_NOW}', '${ARGONAUTS}', 'registered');
+SQL
+SAME_MEMBER=DDDD9999DDDD9999DDDD9999DDDD9999
+( direct_insert_holds "${SAME_MEMBER}" 'eeeeeeee-0000-4000-8000-000000000014' "${WORK}/directD.out" ) &
+DD=$!
+sleep 0.6
+RES="$(manager_call "'eeeeeeee-0000-4000-8000-000000000014'::uuid, '${ARGONAUTS}'::uuid, '${GLADIATORS}'::uuid, null, '${SAME_MEMBER}', null" 2>&1 || echo PSQL_FAILED)"
+printf '%s\n' "${RES}" > "${WORK}/rpcD.out"
+wait "${DD}"
+no_raw_violation "same pairing race" "${WORK}/rpcD.out"
+same "the same pairing arriving by both routes still moves" "$(outcome "${RES}")" "moved"
+same "and this call did not claim to have created the link" "$(field "${RES}" link_created)" "False"
+same "exactly one link exists" \
+  "$(scalar "${DB}" "select count(*) from public.player_spond_links where player_id='eeeeeeee-0000-4000-8000-000000000014'")" "1"
+
+psql_run -d "${DB}" -qc "delete from public.player_spond_links where player_id in
+    ('eeeeeeee-0000-4000-8000-000000000010','eeeeeeee-0000-4000-8000-000000000011','eeeeeeee-0000-4000-8000-000000000012','eeeeeeee-0000-4000-8000-000000000013','eeeeeeee-0000-4000-8000-000000000014');
+  delete from public.player_registrations where player_id in
+    ('eeeeeeee-0000-4000-8000-000000000010','eeeeeeee-0000-4000-8000-000000000011','eeeeeeee-0000-4000-8000-000000000012','eeeeeeee-0000-4000-8000-000000000013','eeeeeeee-0000-4000-8000-000000000014');
+  delete from public.players where id in
+    ('eeeeeeee-0000-4000-8000-000000000010','eeeeeeee-0000-4000-8000-000000000011','eeeeeeee-0000-4000-8000-000000000012','eeeeeeee-0000-4000-8000-000000000013','eeeeeeee-0000-4000-8000-000000000014');" >/dev/null
+
+echo
 echo "== L. after everything above: history, the register and the identities are as they were"
 same "the archived season registration never moved" "$(scalar "${DB}" "${HISTORIC_SQL}")" "${HISTORIC_BEFORE}"
 same "the saved night never moved" "$(scalar "${DB}" "${REGISTER_SQL}")" "${REGISTER_BEFORE}"
@@ -921,6 +1055,78 @@ p.write_text(s)
 PYEOF
   check_injection "${INJECTIONS_LABEL[$i]}" "${INJECTIONS_SQL[$i]}" "" no "${WORK}/inject.sql"
 done
+
+echo
+echo "== N2. and the LOST RACE checks bite too, on the same terms"
+#
+# K4 proves the handler works. This proves the self-verification would
+# notice if somebody removed it, which is a different claim and the one the
+# \b defect taught us to make separately. Both mutations are applied to a
+# copy; the reviewed file goes back on below.
+
+# N2a: drop the handler entirely, back to the plain insert #190 shipped.
+python3 - "${MIGRATION}" "${WORK}/no_handler.sql" <<'PYEOF'
+import re, sys, pathlib
+
+def reconcile_body(text):
+    # Only the reconcile function's own body. The header prose above it names
+    # the same outcomes, so a mutation assertion read over the whole file
+    # would be satisfied by a comment.
+    start = text.index("create or replace function public.spond_reconcile_player_team")
+    opened = text.index("as $$", start) + len("as $$")
+    return text[opened:text.index("$$;", opened)]
+
+src = pathlib.Path(sys.argv[1]).read_text()
+# The guarded insert, from its `begin` to the `end;` that closes the handler.
+pattern = re.compile(
+    r"      begin\n"
+    r"        insert into public\.player_spond_links.*?\n"
+    r"      end;\n",
+    re.S,
+)
+found = pattern.findall(src)
+assert len(found) == 1, f"expected exactly one guarded insert, found {len(found)}"
+plain = (
+    "      insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)\n"
+    "        values (v_club, v_member, p_player_id, 'suggested');\n"
+    "      v_link_created := true;\n"
+)
+out = pattern.sub(lambda _m: plain, src, count=1)
+# The handler CLAUSE must be gone. The prose above the insert still discusses
+# unique_violation, and that is the point: the check under test reads for the
+# clause, so the mutation has to remove the clause and not merely the word.
+assert "exception when unique_violation then" not in reconcile_body(out), \
+    "the mutation left the handler behind"
+pathlib.Path(sys.argv[2]).write_text(out)
+PYEOF
+check_injection "removing the unique_violation handler" "" \
+  "must handle a lost unique race" yes "${WORK}/no_handler.sql"
+
+# N2b: keep the handler, but let it re-raise instead of re-reading. The
+# regex check above still passes; only the count notices, which is why the
+# count is counted on the RETURNED literal and not on the bare name.
+python3 - "${MIGRATION}" "${WORK}/blind_handler.sql" <<'PYEOF'
+import re, sys, pathlib
+
+def reconcile_body(text):
+    start = text.index("create or replace function public.spond_reconcile_player_team")
+    opened = text.index("as $$", start) + len("as $$")
+    return text[opened:text.index("$$;", opened)]
+
+src = pathlib.Path(sys.argv[1]).read_text()
+pattern = re.compile(
+    r"(      exception when unique_violation then\n).*?(?=\n      end;\n)",
+    re.S,
+)
+assert len(pattern.findall(src)) == 1, "expected exactly one handler body"
+out = pattern.sub(lambda m: m.group(1) + "        raise;", src, count=1)
+body = reconcile_body(out)
+assert "unique_violation" in body, "the mutation removed the handler it meant to blind"
+assert body.count("'outcome', 'member_linked_elsewhere'") == 1, "the mutation left both returns"
+pathlib.Path(sys.argv[2]).write_text(out)
+PYEOF
+check_injection "a handler that re-raises instead of re-reading" "" \
+  "must re-read and name which side lost" yes "${WORK}/blind_handler.sql"
 
 echo "  -- and the reviewed file goes back on, so the database ends clean"
 psql_run -d "${DB}" -q -f "${MIGRATION}"

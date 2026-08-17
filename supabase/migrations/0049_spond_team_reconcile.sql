@@ -48,6 +48,17 @@
 --      silently overwriting what the first decided, or seeing a raw
 --      constraint violation.
 --
+--      AND THE LOCKS ARE NOT THE WHOLE ANSWER, which a review made explicit.
+--      They serialise callers of THIS function; the ordinary linking screen
+--      still inserts into player_spond_links directly from Accept and from
+--      Choose, and takes no advisory lock. So the confirmation insert can
+--      still lose to a direct insert on either unique key. That is handled
+--      where the promise is made: the insert is wrapped in a unique_violation
+--      handler that re-reads ownership and returns member_linked_elsewhere or
+--      player_linked_elsewhere, never a raw 23505, and never a move. Fixing
+--      it here rather than by requiring every future direct insert to join a
+--      lock protocol keeps the contract local to the function that states it.
+--
 -- WHAT IT IS NOT, and these are the load bearing negatives:
 --
 --   * IT IS NOT A PRIVILEGE. It self gates on players.manage, exactly the
@@ -203,9 +214,11 @@ select
 --                            link no longer points at the member the target
 --                            was derived from. Reload from Spond and look again
 --   member_linked_elsewhere  that Spond member is already bound to a
---                            different child
+--                            different child. Returned both when the read
+--                            saw it and when a concurrent direct insert won
+--                            the key between the read and the write
 --   player_linked_elsewhere  this child is already bound to a different
---                            Spond member
+--                            Spond member, by the same two routes
 --
 -- Raised (the whole call fails and nothing is written): not signed in, no
 -- players.manage, a target team outside the caller's club, a malformed
@@ -448,9 +461,72 @@ begin
       -- server derived; created_by and created_at are stamped by
       -- player_spond_links_touch, not by this function and not by the
       -- caller.
-      insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)
-        values (v_club, v_member, p_player_id, 'suggested');
-      v_link_created := true;
+      --
+      -- THE INSERT CAN STILL LOSE A RACE, AND THAT IS HANDLED HERE RATHER
+      -- THAN ASSUMED AWAY. The two advisory locks above serialise callers of
+      -- THIS function. They cannot serialise anybody else, and the ordinary
+      -- linking screen still inserts into player_spond_links directly, from
+      -- Accept and from Choose, taking no advisory lock at all. So between
+      -- the ownership reads above and this insert, a direct insert can claim
+      -- either key: (club, member) through the primary key, or (player)
+      -- through player_spond_links_player_unique.
+      --
+      -- The database stays correct either way, because the constraints are
+      -- the enforcement. What would be wrong is the REPORT: this function
+      -- promises named outcomes a manager can act on, and a raw 23505 is not
+      -- one. Fixing it at this boundary rather than by requiring every future
+      -- direct insert to join a lock protocol keeps the promise local to the
+      -- thing that makes it.
+      --
+      -- On unique_violation the enclosing BEGIN block's subtransaction rolls
+      -- back, so the failed insert and the audit row its trigger would have
+      -- written are both gone. The audit batch GUC is set OUTSIDE this block,
+      -- so it survives for the move below; nothing else is left behind. The
+      -- re-read then sees the winner's committed row, because the conflicting
+      -- transaction must have committed for the error to be raised at all and
+      -- READ COMMITTED takes a fresh snapshot per statement.
+      begin
+        insert into public.player_spond_links (club_id, spond_member_id, player_id, matched_by)
+          values (v_club, v_member, p_player_id, 'suggested');
+        v_link_created := true;
+      exception when unique_violation then
+        select l.player_id into v_member_owner
+          from public.player_spond_links l
+          where l.club_id = v_club and l.spond_member_id = v_member;
+        select l.spond_member_id into v_player_member
+          from public.player_spond_links l
+          where l.club_id = v_club and l.player_id = p_player_id;
+
+        if v_member_owner is not null and v_member_owner <> p_player_id then
+          -- Somebody bound this member to a different child first. Refused,
+          -- and NOT moved: losing the identity race means the destination was
+          -- never ours to apply.
+          return jsonb_build_object(
+            'outcome', 'member_linked_elsewhere', 'player_id', p_player_id, 'season_id', v_season,
+            'from_team_id', v_reg.team_id, 'to_team_id', p_target_team_id,
+            'linked', false, 'link_created', false
+          );
+        end if;
+        if v_player_member is not null and v_player_member <> v_member then
+          -- Somebody bound this child to a different member first. Same
+          -- refusal, from the other side, and their link is left alone.
+          return jsonb_build_object(
+            'outcome', 'player_linked_elsewhere', 'player_id', p_player_id, 'season_id', v_season,
+            'from_team_id', v_reg.team_id, 'to_team_id', p_target_team_id,
+            'linked', false, 'link_created', false
+          );
+        end if;
+        if v_player_member is distinct from v_member then
+          -- A unique violation neither read explains. Something is true about
+          -- this pair that this function cannot describe, so it says nothing
+          -- rather than guessing, and the original error stands.
+          raise;
+        end if;
+        -- Somebody made EXACTLY the link this call wanted. The identity is
+        -- the one that was confirmed, so there is nothing to create and the
+        -- move below is still right; link_created stays false because this
+        -- call did not create it.
+      end;
     end if;
   end if;
 
@@ -594,6 +670,24 @@ begin
   -- repointed at a different member since the caller read Spond.
   if position('stale_link' in v_src) = 0 then
     raise exception 'spond_team_reconcile: the stale link refusal is missing from the function';
+  end if;
+  -- The confirmation insert must survive losing a race with a DIRECT insert
+  -- from the ordinary linking screen, which takes none of the locks above.
+  -- Without the handler that race surfaces as a raw 23505, which is not an
+  -- outcome a manager can act on.
+  if v_src !~* 'exception\s+when\s+unique_violation\s+then' then
+    raise exception 'spond_team_reconcile: the confirmation insert must handle a lost unique race';
+  end if;
+  -- And it must RE-READ rather than assume which side lost: both refusals are
+  -- RETURNED twice, once from the ordinary read and once from the handler.
+  -- Counted on the returned literal rather than on the bare name, because the
+  -- bare name also appears in the prose above it, and a count that a comment
+  -- can satisfy would survive deleting the handler it exists to pin.
+  if (length(v_src) - length(replace(v_src, '''outcome'', ''member_linked_elsewhere''', '')))
+       / length('''outcome'', ''member_linked_elsewhere''') < 2
+     or (length(v_src) - length(replace(v_src, '''outcome'', ''player_linked_elsewhere''', '')))
+       / length('''outcome'', ''player_linked_elsewhere''') < 2 then
+    raise exception 'spond_team_reconcile: the lost race must re-read and name which side lost';
   end if;
   if position('v_player_member <> v_member' in v_src) = 0 then
     raise exception 'spond_team_reconcile: the proved path must compare the link against the named member';

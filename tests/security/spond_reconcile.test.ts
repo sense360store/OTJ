@@ -33,7 +33,12 @@
 //                refused, and a row already on the destination is an
 //                idempotent no-op rather than a second event. The member key
 //                lock covers the case the row locks cannot, a member with no
-//                link row yet.
+//                link row yet. And because those locks bind only callers of
+//                THIS function, while the ordinary linking screen inserts
+//                into player_spond_links directly, the confirmation insert
+//                additionally handles unique_violation: it re-reads ownership
+//                and returns member_linked_elsewhere or
+//                player_linked_elsewhere, never a raw 23505 and never a move.
 //
 // Maps the reconciliation cells of docs/security/spond-data-boundary.md. The
 // atomicity and racing proofs that need two open transactions live in
@@ -430,6 +435,41 @@ describe('spond_reconcile_player_team: capability, identity, season, preservatio
     // And the member it refused to use stayed free.
     const { data: spare } = await svc.from('player_spond_links').select('player_id').eq('spond_member_id', M_SPARE)
     expect(spare).toHaveLength(0)
+  })
+
+  it('returns a named outcome when a direct link insert wins the member first', async () => {
+    // The RPC's contract is named outcomes, and the ordinary linking screen
+    // inserts directly without the advisory locks. This is the committed
+    // form of that race: the direct link already exists when the RPC runs, so
+    // the ordinary read catches it. The genuinely interleaved form, where the
+    // direct insert lands between the read and the write, needs two open
+    // transactions and lives in the PostgreSQL harness.
+    const taken = seedPlayer({ club: CLUB_A, season: currentA, display: name('taken'), teamId: TEST_TEAM }).playerId
+    const raced = seedPlayer({ club: CLUB_A, season: currentA, display: name('raced'), teamId: TEST_TEAM }).playerId
+    const contestedMember = 'FFFF5555FFFF5555FFFF5555FFFF5555'
+    // Written through the SAME path the linking screen uses, as that manager,
+    // so this is the real direct insert rather than a service role shortcut.
+    const direct = await manager.from('player_spond_links').insert({
+      club_id: CLUB_A,
+      spond_member_id: contestedMember,
+      player_id: taken,
+      matched_by: 'chosen',
+    })
+    expect(direct.error).toBeNull()
+
+    const { data, error } = await call(manager, {
+      player: raced,
+      expected: TEST_TEAM,
+      target: OTHER_TEAM,
+      confirmMember: contestedMember,
+    })
+    expect(error).toBeNull()
+    expect(row(data).outcome).toBe('member_linked_elsewhere')
+    expect((await reg(raced, currentA))!.team_id).toBe(TEST_TEAM)
+    expect(await linksFor(raced)).toHaveLength(0)
+    expect(await linksFor(taken)).toHaveLength(1)
+
+    await svc.from('player_spond_links').delete().in('player_id', [taken, raced])
   })
 
   // ---- what cannot be passed in at all --------------------------------------
