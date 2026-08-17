@@ -12,11 +12,12 @@ order where each one fails before the next can do damage.
 
 ## Applied through this workflow
 
-| Migration | Hosted version | Applied |
-|---|---|---|
-| `0046_drill_diagram` | `20260811210248` | 2026-08-11 |
-| `0047_register_group_inclusion` | `20260812064038` | 2026-08-12 |
-| `0048_spond_session_link_unique` | `20260812102912` | 2026-08-12 |
+| Migration | Hosted version | Ledger name | Applied |
+|---|---|---|---|
+| `0046_drill_diagram` | `20260811210248` | `drill_diagram` | 2026-08-11 |
+| `0047_register_group_inclusion` | `20260812064038` | `register_group_inclusion` | 2026-08-12 |
+| `0048_spond_session_link_unique` | `20260812102912` | `spond_session_link_unique` | 2026-08-12 |
+| `0049_spond_team_reconcile` | `20260817104226` | `spond_team_reconcile` | 2026-08-17 |
 
 `0047` stays in the dropdown and in `REVIEWED_MIGRATIONS` now that it has run.
 Entries are never removed once applied: the register is the closed list of what
@@ -110,11 +111,42 @@ the reviewed file. The post-apply gate confirmed it was the unique newest row
 with `20260810182333` / `spond_links` before it, and that the column, the check
 constraint and the three validation functions all exist.
 
-## Reviewed, registered, not yet applied
+`0049` was applied on 17 August 2026. The workflow ran to the end: the
+pre-apply gate passed, the apply committed, and the post-apply gate passed. The
+hosted ledger assigned it version `20260817104226` under the name
+`spond_team_reconcile`, and that is now the newest row.
 
-`0049_spond_team_reconcile`. Registered 16 August 2026 and **not applied**; the
-hosted ledger's newest row is still `20260812102912` /
-`spond_session_link_unique`, which is also its `expected_previous_version`.
+Its `expected_previous_version` stays `20260812102912` /
+`spond_session_link_unique` for the same reason `0047`'s and `0048`'s stay where
+they are: it records the state `0049` was REVIEWED against, checked 16 August
+2026, not the current head. That is a historical review fact and it does not
+move when the ledger does.
+
+The post-apply gate confirmed `spond_team_reconcile` was the unique newest
+ledger row, that the row before it was `20260812102912` /
+`spond_session_link_unique`, that the recorded `statements` array held exactly
+one entry hashing to the reviewed file, and that all three registered object
+probes were true: the function exists with the reviewed six argument signature,
+it is SECURITY DEFINER with an empty `search_path`, and `authenticated` may
+execute it while `anon` may not.
+
+Getting there took two runs, and the first one is the reason
+`.github/scripts/production-migration/test_probe_totality.sh` exists. The
+pre-apply gate stopped with `function
+"public.spond_reconcile_player_team(uuid, ...)" does not exist`, reported as a
+role or readability problem. Nothing was unreadable and nothing was wrong with
+the database: the function had not been created yet, which is the one state a
+pre gate exists to confirm. The probe asked the question through
+`has_function_privilege(role, 'public.f(uuid, ...)', 'EXECUTE')`, which resolves
+the textual signature first and raises when nothing matches, so it could never
+answer no. A second probe carried a matching defect at the other gate:
+`pg_get_function_identity_arguments()` renders the argument NAMES as well as
+the types, so its comparison was false with the function correctly in place and
+the POST gate would have failed after the apply had already run. Both were fixed
+before the successful run, and the database was untouched throughout the first
+one.
+
+## What `0049` does, kept for reference
 
 It adds ONE function, `public.spond_reconcile_player_team`, and nothing else:
 no table, no column, no index, no policy, no grant on any table, no capability
@@ -172,17 +204,20 @@ without reliably reproducing the interleaving.
 It needs a local PostgreSQL server and is therefore not part of CI; run it by
 hand when reviewing this migration.
 
-Ordering. Unlike `0048`, this one is safe to apply either side of the frontend:
-a client running against a database without it gets `PGRST202` from the RPC and
-says the database change has not been applied yet
+Ordering. Unlike `0048`, this one was safe to apply either side of the
+frontend: a client running against a database without it gets `PGRST202` from
+the RPC and says the database change has not been applied yet
 (`isMissingFunction`/`RECONCILE_UNAVAILABLE` in `src/lib/queries.ts`), and no
 other screen calls it. The `spond-link-members` deploy in the same pull request
-is a separate gated step and is likewise safe in either order: a deployment
+was a separate gated step and was likewise safe in either order: a deployment
 that does not return the member id yet lands as `''`, which the client reads as
 no identity, so the reconciliation offers nothing rather than misfiring.
 
-Applied entries are never removed from the register, so an empty version of
-this section means there is nothing pending, not that nothing is registered.
+## Reviewed, registered, not yet applied
+
+Nothing. Every entry in `REVIEWED_MIGRATIONS` has been applied. Applied entries
+are never removed from the register, so this section being empty means there is
+nothing pending, not that nothing is registered.
 
 ## What runs, in order
 
@@ -318,6 +353,65 @@ Until that lands, the content-sharing Edge Function deploy workflow fails
 closed on its own ledger gate. That is intended: it is far safer than a check
 that passes regardless.
 
+**Outstanding.** `EXPECTED_LAST_MIGRATION` is still `20260812102912`
+(`0048_spond_session_link_unique`), and the hosted head has been
+`20260817104226` (`spond_team_reconcile`) since 17 August 2026. The
+content-sharing deploy workflow is therefore failing closed right now, as
+designed, and stays that way until the reconciliation pull request above sets
+the pin to `20260817104226`. That is its own reviewed change and is deliberately
+not folded into anything else.
+
+## Writing an object probe
+
+Every register entry names the objects its migration creates, as boolean SQL
+expressions that must be FALSE before the apply and TRUE after it. A probe has
+to be TOTAL: false when the object is absent, true when it is present and
+correct, and never an error merely because the thing it was written to find is
+not there yet. The pre gate reads a database where, by definition, none of it
+exists.
+
+What breaks that is EAGER TEXTUAL OBJECT RESOLUTION. PostgreSQL's privilege
+inquiry functions resolve a textual object name before doing anything else and
+raise when nothing matches, so a probe written this way can never answer no:
+
+```sql
+has_function_privilege('authenticated', 'public.f(uuid)', 'EXECUTE')  -- raises
+has_table_privilege('authenticated', 'public.new_table', 'SELECT')    -- raises
+has_schema_privilege('authenticated', 'new_schema', 'USAGE')          -- raises
+has_sequence_privilege('authenticated', 'public.new_seq', 'USAGE')    -- raises
+```
+
+Resolve the name once through the absence-safe `to_reg*` family, which returns
+null, then read the privilege off the catalog row that resolution found:
+
+```sql
+(select count(*) > 0 from pg_class c
+  where c.oid = to_regclass('public.new_table')
+    and c.relkind = 'r'
+    and has_table_privilege('authenticated', c.oid, 'SELECT'))
+```
+
+An absent object makes `c.oid = null` match nothing, so the count is 0 and the
+probe is false. `to_regprocedure` for a function, `to_regclass` for a relation
+or a sequence, `to_regnamespace` for a schema, `to_regtype` for a type,
+`to_regrole` for a role. Where no `to_reg*` exists (a database, a tablespace, a
+language, a foreign data wrapper, a foreign server) a nullable catalog lookup
+yielding the oid is the same shape from another source.
+
+Two things that look safe and are not. A `::regclass` or `::regprocedure` cast
+raises exactly as the textual name does; it is the same resolution with
+different punctuation. And a `to_reg*` result handed STRAIGHT to a privilege
+function is null rather than false, because those functions are strict, and the
+gate refuses a non boolean rather than reading it as absent, so the run stops
+with the reviewed object correctly missing.
+
+`assert_probe_is_total` in `verify_hosted_state.py` refuses all three shapes
+before the run connects to anything, for every privilege inquiry function
+PostgreSQL 16 has and for the `regclass` argument family beside them. It is
+about the ARGUMENT POSITION rather than about the punctuation inside a string,
+so ordinary literals are untouched: `nspname = 'public'` and
+`relname = 'players'` are comparisons, not lookups.
+
 ## What the tests cover, and what they cannot
 
 `.github/scripts/production-migration/test_reviewed_migrations.py` and
@@ -325,12 +419,27 @@ that passes regardless.
 register, the gate assertions against sample hosted reads, the apply script's
 statement order, and the workflow's shape.
 
-They are tripwires, not proofs. They never connect to a database, so they
-cannot tell you the migration is correct, cannot tell you the production
-environment has a required reviewer, and cannot tell you the hosted project is
-in the state the register expects. The first is what the migration's own pull
-request is for; the second is the manual check above; the third is what the pre
-gate does at run time, against the real database.
+`test_probe_totality.sh` runs in CI too, against a throwaway PostgreSQL the
+job starts for it. It is the behavioural half: the offline tests pin the SHAPE
+of a probe, and only a server can tell a shape mistake apart from a true
+statement about the wrong string, which is what the second `0049` defect was.
+It surveys every privilege inquiry function the server has, runs the four
+protected object classes through the pre state, the post state and a wrong ACL,
+and mutates each safe probe back to the eager textual form to prove the guard
+refuses it before anything connects. CI runs it with `REQUIRE_POSTGRES=1`, which
+turns every skip inside it into a failure, because a skipped proof reported as
+a green check is worth less than no check at all. Run by hand it still skips
+where no server is installed.
+
+They are tripwires, not proofs. The Python tests never connect to a database,
+and the harness connects only to a throwaway local one, so none of them can
+tell you the migration is correct, tell you the production environment has a
+required reviewer, or tell you the hosted project is in the state the register
+expects. The first is what the migration's own pull request is for; the second
+is the manual check above; the third is what the pre gate does at run time,
+against the real database. The probe guard reads the register as text, so a
+name reaching an eager function through a variable or a view is invisible to
+it, and it says nothing about the role named in a probe's user argument.
 
 The apply mechanics were exercised end to end against a throwaway PostgreSQL 16
 before this shipped: a clean apply, a repeat apply refused by the unique

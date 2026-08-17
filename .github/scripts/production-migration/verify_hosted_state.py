@@ -86,20 +86,134 @@ _PROBE_FORBIDDEN = ('"', "\\", ";", "--", "/*")
 # written to find is not there yet. The pre gate reads a database where, by
 # definition, none of it exists.
 #
-# What breaks that is EAGER NAME RESOLUTION. Both
+# What breaks that is EAGER TEXTUAL OBJECT RESOLUTION. All three of
 #
 #   'public.f(uuid)'::regprocedure
 #   has_function_privilege('authenticated', 'public.f(uuid)', 'EXECUTE')
+#   has_table_privilege('authenticated', 'public.new_table', 'SELECT')
 #
-# resolve the text before doing anything else and raise 42883 when nothing
-# matches, so neither can ever answer false. The to_reg* family returns null
-# instead, which is why it is the only resolver allowed here and why every
-# privilege test is made against the oid it hands back rather than against a
-# signature. These two rules are checked before the run connects, so a probe
-# of the broken shape fails at composition rather than against production.
+# resolve the text before doing anything else and raise when nothing matches,
+# so none of them can ever answer false. The to_reg* family returns null
+# instead, which is why it is the only resolver allowed here.
+#
+# THE FIRST VERSION OF THIS GUARD WAS ABOUT THE WRONG THING. It refused a
+# quoted literal CARRYING AN ARGUMENT LIST, on the reading that a function
+# signature is the textual object reference and a bare name is not. That caught
+# the exact 0049 defect and nothing else: 'public.new_table' carries no
+# argument list, so has_table_privilege sailed through it while resolving its
+# argument every bit as eagerly, and the same held for schemas, sequences and
+# every other kind. The rule below is about the ARGUMENT POSITION rather than
+# about the punctuation inside the string, so a literal is judged by what it is
+# handed to.
+#
+# Three rules, all checked before the run connects, so a broken probe fails at
+# composition rather than against production:
+#
+#   1. No ::reg* cast anywhere. The cast raises; to_reg* returns null.
+#   2. No string literal in an OBJECT NAME argument of a function that resolves
+#      that argument eagerly. _EAGER_OBJECT_ARGS below names those functions and
+#      which of their arguments are object names.
+#   3. No to_reg* result handed straight to one of those functions either. They
+#      are STRICT, so a null oid makes the whole probe null, and object_errors
+#      refuses a non boolean rather than reading it as absent. That is a gate
+#      failure with the reviewed object correctly absent, which is the same
+#      outcome the 0049 defect had.
+#
+# The accepted shape resolves the name once and reads the privilege off the
+# catalog row that resolution found:
+#
+#   (select count(*) > 0 from pg_class c
+#     where c.oid = to_regclass('public.new_table')
+#       and has_table_privilege('authenticated', c.oid, 'SELECT'))
+#
+# An absent object makes `c.oid = null` match nothing, so the count is 0 and
+# the probe is false. Ordinary string literals are untouched by all of this:
+# nspname = 'public' and relname = 'players' are comparisons, not lookups.
 _PROBE_REG_CAST = re.compile(r"::\s*reg[a-z]+", re.I)
 _PROBE_QUOTED = re.compile(r"'([^']*)'")
 _PROBE_TO_REG_CALL = re.compile(r"to_reg[a-z]+\(\s*\Z", re.I)
+_TO_REG_ANYWHERE = re.compile(r"\bto_reg[a-z]+\s*\(", re.I)
+
+# The access privilege inquiry functions that RESOLVE A CATALOG OBJECT,
+# surveyed against the server version this repository tests on (PostgreSQL 16).
+# Each was run against an absent object of its own kind and each raised, which
+# is the behaviour this guard exists for; test_probe_totality.sh section G
+# repeats that survey on a real server and fails if this list and the server's
+# catalog ever disagree, so a future PostgreSQL adding another one cannot go
+# uncovered.
+#
+# The value is the position of each OBJECT NAME argument. A negative position
+# counts from the END of the call's actual argument list, which is what lets one
+# entry cover both the two argument form (object, privilege) and the three
+# argument form (user, object, privilege): the object is always second from
+# last. has_column_privilege names two, because an absent COLUMN of a present
+# table raises just as an absent table does.
+#
+# has_parameter_privilege is deliberately ABSENT. It is the one member of the
+# family that is already total: an unrecognised configuration parameter reads as
+# false rather than raising, because a parameter is not a catalog object. Adding
+# it would refuse a probe that is correct. Section G proves that too, rather
+# than taking this comment's word for it.
+_PRIVILEGE_INQUIRY_OBJECT_ARGS: dict[str, tuple[int, ...]] = {
+    "has_any_column_privilege": (-2,),
+    "has_column_privilege": (-3, -2),
+    "has_database_privilege": (-2,),
+    "has_foreign_data_wrapper_privilege": (-2,),
+    "has_function_privilege": (-2,),
+    "has_language_privilege": (-2,),
+    "has_schema_privilege": (-2,),
+    "has_sequence_privilege": (-2,),
+    "has_server_privilege": (-2,),
+    "has_table_privilege": (-2,),
+    "has_tablespace_privilege": (-2,),
+    "has_type_privilege": (-2,),
+    "pg_has_role": (-2,),
+    "row_security_active": (-1,),
+}
+
+# The same absent object behaviour, reached a different way. These take
+# regclass, and a bare literal in that position is coerced by the regclass input
+# function, which is the implicit form of the ::regclass cast rule 1 already
+# refuses. Their object is always the first argument; anything after it is an
+# option rather than a name.
+_REGCLASS_ARGUMENT_FUNCTIONS: dict[str, tuple[int, ...]] = {
+    "pg_get_serial_sequence": (0,),
+    "pg_get_viewdef": (0,),
+    "pg_indexes_size": (0,),
+    "pg_relation_filenode": (0,),
+    "pg_relation_filepath": (0,),
+    "pg_relation_size": (0,),
+    "pg_sequence_last_value": (0,),
+    "pg_table_size": (0,),
+    "pg_total_relation_size": (0,),
+}
+
+PRIVILEGE_INQUIRY_FUNCTIONS = frozenset(_PRIVILEGE_INQUIRY_OBJECT_ARGS)
+_EAGER_OBJECT_ARGS: dict[str, tuple[int, ...]] = {
+    **_PRIVILEGE_INQUIRY_OBJECT_ARGS,
+    **_REGCLASS_ARGUMENT_FUNCTIONS,
+}
+
+# What to resolve each kind of name through instead. Five object kinds have no
+# to_reg* at all, so the absence-safe form there is a nullable catalog lookup
+# that yields the oid, which is the same shape with a different source.
+_ABSENCE_SAFE_LOOKUP: dict[str, str] = {
+    "has_any_column_privilege": "to_regclass",
+    "has_column_privilege": "to_regclass, joining pg_attribute for the column",
+    "has_function_privilege": "to_regprocedure",
+    "has_schema_privilege": "to_regnamespace",
+    "has_sequence_privilege": "to_regclass",
+    "has_table_privilege": "to_regclass",
+    "has_type_privilege": "to_regtype",
+    "pg_has_role": "to_regrole",
+    "row_security_active": "to_regclass",
+    "has_database_privilege": "a nullable pg_database lookup",
+    "has_foreign_data_wrapper_privilege": "a nullable pg_foreign_data_wrapper lookup",
+    "has_language_privilege": "a nullable pg_language lookup",
+    "has_server_privilege": "a nullable pg_foreign_server lookup",
+    "has_tablespace_privilege": "a nullable pg_tablespace lookup",
+    **{name: "to_regclass" for name in _REGCLASS_ARGUMENT_FUNCTIONS},
+}
 
 
 def get_db_url() -> str:
@@ -161,12 +275,115 @@ def sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _skip_literal(text: str, index: int) -> int:
+    """The index just past the single-quoted literal starting at index."""
+    index += 1
+    end = len(text)
+    while index < end:
+        if text[index] == "'":
+            if index + 1 < end and text[index + 1] == "'":
+                index += 2      # a doubled quote is one character of the value
+                continue
+            return index + 1
+        index += 1
+    return end
+
+
+def _close_paren(text: str, index: int) -> int | None:
+    """The index just past the ')' matching the '(' at index, or None."""
+    depth = 0
+    end = len(text)
+    while index < end:
+        char = text[index]
+        if char == "'":
+            index = _skip_literal(text, index)
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _split_args(text: str) -> list[str]:
+    """One call's argument list, split on its top level commas."""
+    args: list[str] = []
+    depth = 0
+    start = 0
+    index = 0
+    end = len(text)
+    while index < end:
+        char = text[index]
+        if char == "'":
+            index = _skip_literal(text, index)
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            args.append(text[start:index].strip())
+            start = index + 1
+        index += 1
+    tail = text[start:].strip()
+    if tail or args:
+        args.append(tail)
+    return args
+
+
+def _calls(label: str, probe: str):
+    """Every function call in a probe, as (lowercased name, argument list).
+
+    Nested calls are yielded too: the scan resumes at the end of the NAME, not
+    at the end of the call, so it walks straight back into the argument text. A
+    string literal is skipped wherever it appears, so a name inside one is never
+    read as a call.
+    """
+    index = 0
+    end = len(probe)
+    while index < end:
+        char = probe[index]
+        if char == "'":
+            index = _skip_literal(probe, index)
+            continue
+        if char.isalpha() or char == "_":
+            name_end = index
+            while name_end < end and (probe[name_end].isalnum() or probe[name_end] == "_"):
+                name_end += 1
+            after = name_end
+            while after < end and probe[after].isspace():
+                after += 1
+            if after < end and probe[after] == "(":
+                close = _close_paren(probe, after)
+                if close is None:
+                    raise SystemExit(
+                        f"FAIL: object probe {label!r} has unbalanced parentheses at "
+                        f"{probe[index:name_end]}(; refusing to run it"
+                    )
+                yield probe[index:name_end].lower(), _split_args(probe[after + 1:close - 1])
+            index = name_end
+            continue
+        index += 1
+
+
 def assert_probe_is_total(label: str, probe: str) -> None:
     """Refuse a probe that would raise, rather than return false, when absent.
 
-    See _PROBE_REG_CAST above for why. Both rules are about the same mistake:
-    resolving an object name eagerly, in a gate whose whole job is to report
-    that the object is not there.
+    See _PROBE_REG_CAST above for the three rules and why they are all one
+    mistake: resolving an object name eagerly, in a gate whose whole job is to
+    report that the object is not there.
+
+    What this cannot catch, stated rather than implied. It reads the probe as
+    text, so a name reaching an eager function through a variable, a view or a
+    catalog column it does not own is invisible to it, and it says nothing about
+    the USER argument: has_table_privilege('nosuchrole', c.oid, 'SELECT') raises
+    on the role, and every probe here names 'authenticated' or 'anon', which a
+    Supabase project always has. It also cannot tell you the probe asks the
+    right question. test_probe_totality.sh is what runs the composed SQL against
+    a real server in both states.
     """
     cast = _PROBE_REG_CAST.search(probe)
     if cast:
@@ -175,10 +392,39 @@ def assert_probe_is_total(label: str, probe: str) -> None:
             "raises for an object that does not exist. Use to_regclass or "
             "to_regprocedure, which return null."
         )
+    for name, args in _calls(label, probe):
+        positions = _EAGER_OBJECT_ARGS.get(name)
+        if not positions:
+            continue
+        safe = _ABSENCE_SAFE_LOOKUP[name]
+        for position in positions:
+            index = position if position >= 0 else len(args) + position
+            if not 0 <= index < len(args):
+                continue        # an overload that has no such argument
+            argument = args[index]
+            if _TO_REG_ANYWHERE.search(argument):
+                raise SystemExit(
+                    f"FAIL: object probe {label!r} hands a nullable resolver result "
+                    f"straight to {name}(), which is STRICT. An absent object resolves "
+                    "to null, so the probe is null rather than false, and the gate "
+                    "refuses a non boolean rather than reading it as absent. Compare "
+                    f"the resolver against a catalog row instead (where c.oid = "
+                    f"{safe.split(',')[0]}(...)) and test the privilege against that "
+                    "row's oid."
+                )
+            if "'" in argument:
+                raise SystemExit(
+                    f"FAIL: object probe {label!r} passes the textual object name "
+                    f"{argument} to {name}(), which resolves it EAGERLY and raises "
+                    "when the object does not exist. The pre gate reads a database "
+                    f"where it does not. Resolve it with {safe}, which returns null, "
+                    "and test the privilege against the oid the catalog row yields."
+                )
     for match in _PROBE_QUOTED.finditer(probe):
-        # A textual OBJECT reference is the one that carries an argument list.
-        # 'public.drills' is a table name and resolves lazily wherever it sits;
-        # 'public.f(uuid)' is a function signature and does not.
+        # The original rule, kept as a backstop. It is narrower than the one
+        # above (a signature is the only textual object reference it can see)
+        # but it is not subsumed by it: it fires wherever a signature appears,
+        # including in a call this file has never heard of.
         if "(" not in match.group(1):
             continue
         if not _PROBE_TO_REG_CALL.search(probe[: match.start()]):
