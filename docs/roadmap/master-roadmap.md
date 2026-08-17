@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 16 August 2026 (SPOND-01/03 closed in #187; SPOND-08 opened as their follow-up; DRILL-02 is next)
+Last reviewed: 17 August 2026 (OPS-02 added from the post-#193 Codex review; SPOND-08 remains the active production follow-up)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -27,6 +27,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | SPOND-04 | Spond | Website-wide British-English sweep: remove user-visible “roster” | Done | P1 | Shipped in #186; audit found nothing to reword, the tripwire was widened |
 | SPOND-05 | Spond | Audit current Spond API/upstream library and safely usable event/member facts | Done | P1 | Shipped in #186; existing docs reconciled, nothing stored was broadened |
 | OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Done | P0 | Shipped in #183; docs/tests only, no production migration |
+| OPS-02 | Operations | Harden production migration probe-totality validation for non-function textual privilege lookups | Later | P2 | Follow-up to the late #193 Codex review: textual table, schema, sequence and similar privilege probes must either resolve through an absence-safe nullable `to_reg*` path or be rejected before production; mutation/real-Postgres proof should cover the rule |
 | REG-01 | Training Day | Fix stored guest removal oscillation so Saved settles correctly | Done | P1 | Shipped in #184; client register state only, no migration, Spond or Edge change |
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
