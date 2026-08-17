@@ -277,6 +277,128 @@ class ComposedQueryIsSafe(unittest.TestCase):
                 vh.assert_select_only(sql)
 
 
+class ProbesAreTotal(unittest.TestCase):
+    """The check that would have caught the 0049 privilege probe.
+
+    A probe answers a yes/no question about one object, and the pre gate asks
+    it of a database where the answer is no. A probe that RAISES instead of
+    answering no is not a probe, and the production run for 0049 stopped on
+    exactly that: has_function_privilege was handed the function's textual
+    signature, which PostgreSQL resolves eagerly and errors on when nothing
+    matches, so the pre gate could not report the absence it exists to
+    confirm.
+
+    Both rules here are about eager name resolution, and both are enforced in
+    state_select rather than only here, so the composition fails before the
+    run connects to anything.
+    """
+
+    @staticmethod
+    def _probe(probe: str) -> rm.ReviewedMigration:
+        return rm.ReviewedMigration(
+            path="x.sql", ledger_name="x", idempotency_key="k",
+            expected_previous_version="20260810182333",
+            expected_previous_name="spond_links", objects={"bad": probe},
+        )
+
+    def test_a_textual_function_signature_given_to_a_privilege_test_is_refused(self):
+        # Verbatim the shape that failed in production.
+        bad = (
+            "(select has_function_privilege('authenticated', "
+            "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', "
+            "'EXECUTE'))"
+        )
+        with self.assertRaises(SystemExit) as ctx:
+            vh.state_select(self._probe(bad), "0" * 32)
+        self.assertIn("to_regprocedure", str(ctx.exception.code))
+
+    def test_a_regprocedure_cast_is_refused(self):
+        for probe in (
+            "(select 'public.f(uuid)'::regprocedure is not null)",
+            "(select 'public.drills'::regclass is not null)",
+            "(select 'public.f(uuid)':: regprocedure is not null)",
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                vh.state_select(self._probe(probe), "0" * 32)
+            self.assertIn("return null", str(ctx.exception.code))
+
+    def test_the_to_regprocedure_form_is_accepted(self):
+        good = (
+            "(select count(*) > 0 from pg_proc p "
+            "where p.oid = to_regprocedure('public.f(uuid, text)') "
+            "and has_function_privilege('authenticated', p.oid, 'EXECUTE'))"
+        )
+        vh.state_select(self._probe(good), "0" * 32)   # raises if refused
+
+    def test_a_table_name_literal_is_still_allowed_outside_to_regclass(self):
+        # The rule targets signatures, which carry an argument list. A bare
+        # relation name resolves lazily wherever it appears, so comparing one
+        # as text is not the mistake this class is about, and forbidding it
+        # would fail probes that are already correct.
+        ok = "(select count(*) > 0 from pg_namespace where nspname = 'public')"
+        vh.state_select(self._probe(ok), "0" * 32)
+
+    def test_no_registered_probe_resolves_a_name_eagerly(self):
+        # The register as it actually stands, not a fixture of it.
+        for path, mig in rm.REVIEWED_MIGRATIONS.items():
+            for label, probe in mig.objects.items():
+                with self.subTest(path=path, label=label):
+                    vh.assert_probe_is_total(label, probe)
+
+    def test_every_0049_probe_resolves_through_to_regprocedure(self):
+        # 0049 is the unapplied one, so its probes have never run against a
+        # database in either phase. They are named individually because the
+        # generic rule above would still pass a probe that resolved nothing
+        # at all.
+        mig = rm.REVIEWED_MIGRATIONS["supabase/migrations/0049_spond_team_reconcile.sql"]
+        self.assertEqual(len(mig.objects), 3)
+        for label, probe in mig.objects.items():
+            with self.subTest(label=label):
+                self.assertIn("to_regprocedure(", probe)
+                self.assertIn(
+                    "'public.spond_reconcile_player_team"
+                    "(uuid, uuid, uuid, text, text, uuid)'",
+                    probe,
+                )
+
+    def test_the_privilege_probe_still_demands_authenticated_and_denies_anon(self):
+        # The fix must not have quietly dropped either half of the ACL rule.
+        mig = rm.REVIEWED_MIGRATIONS["supabase/migrations/0049_spond_team_reconcile.sql"]
+        probe = mig.objects["authenticated executes it and anon does not"]
+        self.assertIn("has_function_privilege('authenticated', p.oid, 'EXECUTE')", probe)
+        self.assertIn("not has_function_privilege('anon', p.oid, 'EXECUTE')", probe)
+
+    def test_identity_arguments_is_not_used_to_pin_a_signature(self):
+        # pg_get_function_identity_arguments renders the argument NAMES as
+        # well as the types, so comparing it against a bare type list is
+        # false with the function correctly in place. That is the half of
+        # this defect that would have failed the POST gate, after the apply.
+        for path, mig in rm.REVIEWED_MIGRATIONS.items():
+            for label, probe in mig.objects.items():
+                with self.subTest(path=path, label=label):
+                    self.assertNotIn("pg_get_function_identity_arguments", probe)
+
+
+class ErrorsAreClassifiedTruthfully(unittest.TestCase):
+    URL = "postgresql://postgres.abc:pw@aws.pooler.supabase.com:5432/postgres"
+
+    def test_a_missing_object_is_not_reported_as_only_a_permissions_problem(self):
+        # The production run reported "a queried schema or table is
+        # unreadable to this role" for a function that was simply not
+        # created yet, which sends a reader to look at grants.
+        message = vh.classify_error(
+            1,
+            'ERROR:  function "public.spond_reconcile_player_team(uuid)" does not exist',
+            self.URL,
+        )
+        self.assertIn("unreadable", message)
+        self.assertIn("missing", message)
+
+    def test_a_permission_denial_still_classifies(self):
+        message = vh.classify_error(1, "ERROR:  permission denied for schema x", self.URL)
+        self.assertIn("unreadable", message)
+
+
 class PreGate(unittest.TestCase):
     def test_a_clean_reviewed_database_passes(self):
         self.assertEqual(vh.assert_pre(sample_state(), entry()), [])
