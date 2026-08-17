@@ -649,7 +649,46 @@ for kind in ${KINDS}; do
 done
 
 echo
-echo "== M. nothing here touched any reviewed migration file"
+echo "== M. dollar quoting, which is the same defect one syntax along"
+#
+# Found by a review of section L's guard. Every rule it exercises looks for an
+# APOSTROPHE, and PostgreSQL has a second string literal syntax that carries
+# none: $$public.new_table$$ is the same textual object name, resolves just as
+# eagerly, and walked straight through composition. The objects are still
+# absent here, which is the state that matters.
+
+# Rendered from probe_shapes.py, from the same fields as the safe and unsafe
+# forms, so this is the reviewed name in a second syntax rather than a retyped
+# copy of it.
+python3 "${HERE}/probe_shapes.py" dollar >"${WORK}/dollar.json"
+DOLLAR='$'
+
+for kind in ${KINDS}; do
+  DOLLAR_PROBE="$(shape "${WORK}/dollar.json" "${kind}")"
+  case "${DOLLAR_PROBE}" in
+    *"${DOLLAR}${DOLLAR}"*) : ;;
+    *) fail "the ${kind} dollar form was not rendered: ${DOLLAR_PROBE}" ;;
+  esac
+  same "the dollar quoted ${kind} name THROWS on the server, object absent" \
+    "$(old_probe "${DOLLAR_PROBE}")" "THREW"
+  same "and the guard refuses it at composition" \
+    "$( unset SUPABASE_DB_URL; guard "${DOLLAR_PROBE}" )" "REFUSED"
+done
+
+# The tagged form too, which carries the argument list the ORIGINAL backstop
+# looks for and still slipped past it, because that rule reads apostrophes.
+TAGGED="(select has_function_privilege('authenticated', \$fn\$public.otj_probe_fn(uuid)\$fn\$, 'EXECUTE'))"
+same "a TAGGED dollar quoted signature THROWS on the server" "$(old_probe "${TAGGED}")" "THREW"
+same "and the guard refuses that too" "$( unset SUPABASE_DB_URL; guard "${TAGGED}" )" "REFUSED"
+
+# And the reason the character is refused rather than parsed: a dollar string
+# can CONTAIN an apostrophe, which desynchronises any literal scanner.
+CONFUSING="(select count(*) > 0 from pg_class c where c.relname = \$\$it's\$\$ and has_table_privilege('authenticated', c.oid, 'SELECT'))"
+same "a dollar string holding an apostrophe is refused rather than parsed" \
+  "$( unset SUPABASE_DB_URL; guard "${CONFUSING}" )" "REFUSED"
+
+echo
+echo "== N. nothing here touched any reviewed migration file"
 same "no migration file is modified" \
   "$(cd "${REPO}" && git status --porcelain -- supabase/migrations | wc -l | tr -d ' ')" "0"
 

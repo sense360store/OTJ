@@ -398,14 +398,18 @@ or a sequence, `to_regnamespace` for a schema, `to_regtype` for a type,
 language, a foreign data wrapper, a foreign server) a nullable catalog lookup
 yielding the oid is the same shape from another source.
 
-Two things that look safe and are not. A `::regclass` or `::regprocedure` cast
+Three things that look safe and are not. A `::regclass` or `::regprocedure` cast
 raises exactly as the textual name does; it is the same resolution with
-different punctuation. And a `to_reg*` result handed STRAIGHT to a privilege
+different punctuation. A `to_reg*` result handed STRAIGHT to a privilege
 function is null rather than false, because those functions are strict, and the
 gate refuses a non boolean rather than reading it as absent, so the run stops
-with the reviewed object correctly missing.
+with the reviewed object correctly missing. And a dollar quoted name is a
+textual name: `$$public.new_table$$` resolves exactly as `'public.new_table'`
+does, so `$` is refused outright in a probe, alongside `"` and `\`. Compose
+`chr(36)` if a literal dollar is ever genuinely needed, as the register already
+composes `chr(34)` for a double quote.
 
-`assert_probe_is_total` in `verify_hosted_state.py` refuses all three shapes
+`assert_probe_is_total` in `verify_hosted_state.py` refuses all of these shapes
 before the run connects to anything, for every privilege inquiry function
 PostgreSQL 16 has and for the `regclass` argument family beside them. It is
 about the ARGUMENT POSITION rather than about the punctuation inside a string,

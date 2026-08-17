@@ -74,6 +74,19 @@ class ProbeShape:
             f"('authenticated', '{self.name}', '{self.access}'))"
         )
 
+    @property
+    def dollar(self) -> str:
+        """The unsafe form written in PostgreSQL's OTHER string literal syntax.
+
+        Identical to `unsafe` in every way that matters to the server, and it
+        walked straight past the first version of the totality guard, which
+        looked for an apostrophe. A review of this repository caught it.
+        """
+        return (
+            f"(select {self.privilege}"
+            f"('authenticated', $${self.name}$$, '{self.access}'))"
+        )
+
 
 # One per protected class. The names are deliberately unlike anything in the
 # repository's schema: the harness creates and drops them on a throwaway server.
@@ -129,8 +142,8 @@ def main() -> int:
     import sys
 
     which = sys.argv[1] if len(sys.argv) > 1 else "safe"
-    if which not in ("safe", "unsafe"):
-        raise SystemExit("FAIL: ask for 'safe' or 'unsafe'")
+    if which not in ("safe", "unsafe", "dollar"):
+        raise SystemExit("FAIL: ask for 'safe', 'unsafe' or 'dollar'")
     json.dump(
         {shape.kind: getattr(shape, which) for shape in SHAPES},
         sys.stdout,

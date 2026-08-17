@@ -78,7 +78,17 @@ _MD5_RE = re.compile(r"\A[0-9a-f]{32}\Z")
 # The probes come from the register, not from a run input, but they are
 # interpolated into SQL, so the shape that makes that safe is asserted rather
 # than assumed: no quote of any kind and no statement separator.
-_PROBE_FORBIDDEN = ('"', "\\", ";", "--", "/*")
+#
+# '$' is here for the SECOND reason as well. PostgreSQL's other string literal
+# syntax is dollar quoting, and $$public.new_table$$ is the same textual object
+# name as 'public.new_table' with none of the punctuation the totality guard
+# below looks for. Refusing the character outright is the same trade this tuple
+# already makes for '"' and '\\': the register composes chr(36) if it ever needs
+# one, exactly as it already composes chr(34) for a double quote. Parsing dollar
+# quoting properly would be strictly more work for less: a dollar string can
+# also CONTAIN an apostrophe, which would desynchronise the literal scanner and
+# make the rest of the probe unparseable.
+_PROBE_FORBIDDEN = ('"', "\\", ";", "--", "/*", "$")
 
 # A PROBE MUST BE TOTAL, and a production run found out what it costs when one
 # is not. Total means: false when the reviewed object is absent, true when it
@@ -106,9 +116,12 @@ _PROBE_FORBIDDEN = ('"', "\\", ";", "--", "/*")
 # about the punctuation inside the string, so a literal is judged by what it is
 # handed to.
 #
-# Three rules, all checked before the run connects, so a broken probe fails at
+# Four rules, all checked before the run connects, so a broken probe fails at
 # composition rather than against production:
 #
+#   0. No '$' anywhere, so there is exactly ONE string literal syntax to reason
+#      about. See _PROBE_FORBIDDEN above; a review of this file caught that
+#      $$public.new_table$$ walked past every rule below.
 #   1. No ::reg* cast anywhere. The cast raises; to_reg* returns null.
 #   2. No string literal in an OBJECT NAME argument of a function that resolves
 #      that argument eagerly. _EAGER_OBJECT_ARGS below names those functions and
@@ -275,6 +288,18 @@ def sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def dollar_quoting_error(label: str) -> str:
+    """One message for the one character both guards refuse for one reason."""
+    return (
+        f"FAIL: object probe {label!r} contains '$'. Dollar quoting is a second "
+        "string literal syntax, so $$public.new_table$$ is a textual object name "
+        "carrying none of the punctuation the totality rules look for, and it "
+        "raises for an absent object exactly as the quoted form does. Compose "
+        "chr(36) if a literal dollar is ever genuinely needed, as the register "
+        "already composes chr(34) for a double quote."
+    )
+
+
 def _skip_literal(text: str, index: int) -> int:
     """The index just past the single-quoted literal starting at index."""
     index += 1
@@ -385,6 +410,12 @@ def assert_probe_is_total(label: str, probe: str) -> None:
     right question. test_probe_totality.sh is what runs the composed SQL against
     a real server in both states.
     """
+    # Dollar quoting is checked HERE as well as in _PROBE_FORBIDDEN, because
+    # this function is called directly by the tests and by the harness and has
+    # to be true on its own terms. $$public.new_table$$ is a textual object name
+    # carrying no apostrophe, so every rule below would look straight past it.
+    if "$" in probe:
+        raise SystemExit(dollar_quoting_error(label))
     cast = _PROBE_REG_CAST.search(probe)
     if cast:
         raise SystemExit(
@@ -442,6 +473,11 @@ def state_select(entry: ReviewedMigration, expected_md5: str) -> str:
     if not _MD5_RE.match(expected_md5):
         raise SystemExit(f"FAIL: expected md5 is malformed: {expected_md5!r}")
     for label, probe in entry.objects.items():
+        if "$" in probe:
+            # Named rather than lumped in with the generic sweep below: '$' is
+            # the only entry in _PROBE_FORBIDDEN that is refused for what it
+            # would let THROUGH rather than for what it could inject.
+            raise SystemExit(dollar_quoting_error(label))
         for bad in _PROBE_FORBIDDEN:
             if bad in probe:
                 raise SystemExit(

@@ -560,6 +560,81 @@ class ProbesAreTotal(unittest.TestCase):
             "0" * 32,
         )
 
+    # ------------------------------------------------------------------
+    # Dollar quoting. Found by a review of the widened guard, and it is the
+    # same defect one syntax along: every rule above looks for an apostrophe,
+    # PostgreSQL has a second string literal syntax that carries none, and
+    # $$public.new_table$$ raises for an absent object exactly as
+    # 'public.new_table' does. It went straight through.
+    # ------------------------------------------------------------------
+
+    def test_a_dollar_quoted_object_name_is_refused(self):
+        for probe in (
+            "(select has_table_privilege('authenticated', $$public.new_table$$, 'SELECT'))",
+            "(select has_schema_privilege('authenticated', $$new_schema$$, 'USAGE'))",
+            "(select has_sequence_privilege('authenticated', $$public.new_seq$$, 'USAGE'))",
+            "(select row_security_active($$public.new_table$$))",
+        ):
+            with self.subTest(probe=probe):
+                self.assertIn("Dollar quoting", self._refuse(probe))
+
+    def test_a_TAGGED_dollar_quoted_signature_is_refused(self):
+        """The tagged form carries the argument list the original backstop
+        looks for, and still slipped past it: that rule reads apostrophes."""
+        self.assertIn(
+            "Dollar quoting",
+            self._refuse(
+                "(select has_function_privilege('authenticated', "
+                "$fn$public.f(uuid)$fn$, 'EXECUTE'))"
+            ),
+        )
+
+    def test_a_dollar_sign_is_refused_wherever_it_sits(self):
+        """Not only in an object position. A dollar string can CONTAIN an
+        apostrophe, which desynchronises the literal scanner and makes the rest
+        of the probe unparseable, so the character is refused outright rather
+        than parsed."""
+        for probe in (
+            "(select count(*) > 0 from pg_class c where c.relname = $$players$$)",
+            "(select count(*) > 0 from pg_class c where c.relname = $$it's$$ "
+            "and has_table_privilege('authenticated', c.oid, 'SELECT'))",
+            "(select count(*) > 0 from pg_proc p where p.oid = "
+            "to_regprocedure($$public.f(uuid)$$))",
+        ):
+            with self.subTest(probe=probe):
+                self.assertIn("Dollar quoting", self._refuse(probe))
+
+    def test_the_guard_refuses_dollar_quoting_on_its_own_terms(self):
+        """assert_probe_is_total is called directly by the tests and by
+        test_probe_totality.sh, so it cannot rely on state_select's separate
+        _PROBE_FORBIDDEN sweep having run first."""
+        with self.assertRaises(SystemExit) as ctx:
+            vh.assert_probe_is_total(
+                "bad",
+                "(select has_table_privilege('authenticated', "
+                "$$public.new_table$$, 'SELECT'))",
+            )
+        self.assertIn("Dollar quoting", str(ctx.exception.code))
+        self.assertIn("$", vh._PROBE_FORBIDDEN)
+
+    def test_no_registered_probe_uses_a_dollar_sign(self):
+        for path, mig in rm.REVIEWED_MIGRATIONS.items():
+            for label, probe in mig.objects.items():
+                with self.subTest(path=path, label=label):
+                    self.assertNotIn("$", probe)
+
+    def test_chr_is_still_the_escape_hatch_for_a_refused_character(self):
+        """The register already composes chr(34) for a double quote. The same
+        door stays open for a dollar, so refusing the character costs nothing."""
+        vh.state_select(
+            self._probe(
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure('public.f(uuid)') "
+                "and p.proconfig @> array[concat(chr(36), chr(36))])"
+            ),
+            "0" * 32,
+        )
+
     def test_a_probe_with_unbalanced_parentheses_fails_closed(self):
         self.assertIn(
             "unbalanced",
