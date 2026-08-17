@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 17 August 2026 (OPS-02 added from the post-#193 Codex review; SPOND-08 remains the active production follow-up)
+Last reviewed: 17 August 2026 (SPOND-08 shipped, applied to production and verified live; OPS-02 added from the post-#193 Codex review; DRILL-02 is next)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -32,7 +32,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
-| SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | In progress | P0 | Follow-up to the closed SPOND-01/03 programme, not a reopening. Gated migration 0049 and a gated `spond-link-members` deploy, both reviewed and NOT applied |
+| SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | Done | P0 | Shipped in #190, completed in #192. Both gates have run: migration 0049 applied 17 August 2026 (hosted head `20260817104226`, `spond_team_reconcile`) and `spond-link-members` deployed at version 4. Verified by a live production smoke test |
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
@@ -56,7 +56,7 @@ When there is capacity, prefer this sequence unless production evidence changes 
 2. Pick up QUALITY-01, since re-auditing the old Product Excellence roadmap gates several later items.
 3. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
 
-REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have shipped too, so the Spond linking programme that ran from #178 to #187 is closed and stays closed. SPOND-08 is its follow-up rather than its continuation: those items scoped exposing a mismatch and delivered it, and acting on one is a separate piece of work because it writes to a child's registration. It outranks DRILL-02 while it is open, under roadmap rule 4.
+REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have shipped too, so the Spond linking programme that ran from #178 to #187 is closed and stays closed. SPOND-08 was its follow-up rather than its continuation: those items scoped exposing a mismatch and delivered it, and acting on one was a separate piece of work because it writes to a child's registration. It has now shipped, both of its gates have run in production and a live smoke test has confirmed the behaviour, so it no longer outranks DRILL-02 under roadmap rule 4. DRILL-02 is next.
 
 ## Acceptance criteria for scheduled items
 
@@ -194,7 +194,7 @@ records that nothing in their scope is outstanding. Production then showed the
 next thing, which is a different piece of work with a different risk profile
 because it WRITES: the diagnostics now say `OTJ Argonauts / Spond Gladiators`,
 `OTJ Argonauts / Spond Spartans` and `OTJ Argonauts / Spond no team`, and the
-only remedy on offer is a manager retyping Spond's answer into the players
+only remedy on offer was a manager retyping Spond's answer into the players
 page by hand.
 
 - Spond is where the club moves a child between teams, so Spond decides the
@@ -235,10 +235,34 @@ page by hand.
 - Audited by the existing triggers only (`player.team_changed`,
   `player.spond_linked`), sharing one batch id per press. No new audit source
   value.
-- Gated: migration `0049_spond_team_reconcile` is reviewed and registered but
-  **not applied**, and the `spond-link-members` deploy that adds the member id
-  to a diagnostic row is its own gated step. Both are safe in either order and
-  the client tolerates each being absent.
+- Gated: migration `0049_spond_team_reconcile` and the `spond-link-members`
+  deploy that adds the member id to a diagnostic row were two separate gated
+  steps, safe in either order because the client tolerates each being absent.
+  Both have since run; see the closeout below.
+
+**SPOND-08 — production closeout, 17 August 2026**
+
+Shipped in #190 and completed in #192. Both gates the row carried have run, and
+the behaviour was confirmed against production rather than against this file.
+
+- **Migration 0049 is applied.** `0049_spond_team_reconcile` went to the hosted
+  database through the reviewed production migration workflow on 17 August 2026.
+  The hosted ledger head after the apply is version `20260817104226`, name
+  `spond_team_reconcile`. The migration adds one function and nothing else, so
+  the applied state is the reviewed state.
+- **The gated `spond-link-members` deploy has run.** The live function is
+  version 4, `verify_jwt` true, status `ACTIVE`. That is the deploy carrying the
+  member id on a diagnostic row, which is what a proved reconciliation resolves
+  by; a name is still never consulted.
+- **A live production smoke test passed**, on a genuine OTJ ↔ Spond team
+  mismatch rather than a fixture. The mismatch was presented correctly, the
+  human confirmation and linking flow worked, and the child's current season OTJ
+  registration reconciled to the team Spond holds. No child is named here.
+- **Spond stayed read only throughout.** Nothing was created, modified,
+  cancelled or answered on Spond, which is roadmap rule 7 and the standing
+  policy in `CLAUDE.md`.
+- The row is Done. SPOND-08 was the follow-up to the closed SPOND-01/03
+  programme and it closes beside it; nothing in its scope is outstanding.
 
 **SPOND-06 — event location to venue**
 
@@ -308,5 +332,6 @@ These documents contain deeper design history and security decisions. They do no
 | SPOND-06 — deterministic Spond location to venue prefill | #186 | 15 Aug 2026 |
 | SPOND-01 — registered players reconciled against Spond members | #187 | 16 Aug 2026 |
 | SPOND-03 — member-to-player linking UX, duplicate-member case included | #187 | 16 Aug 2026 |
+| SPOND-08 — current-season team reconciled from a proved Spond link | #190, #192 | 16–17 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.
