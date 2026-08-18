@@ -23,6 +23,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, HERE)
 
 import check_db_url_project as cd  # noqa: E402
+import probe_shapes as ps  # noqa: E402
 import redact as rd  # noqa: E402
 import reviewed_migrations as rm  # noqa: E402
 import verify_hosted_state as vh  # noqa: E402
@@ -288,9 +289,18 @@ class ProbesAreTotal(unittest.TestCase):
     matches, so the pre gate could not report the absence it exists to
     confirm.
 
-    Both rules here are about eager name resolution, and both are enforced in
-    state_select rather than only here, so the composition fails before the
-    run connects to anything.
+    Every rule here is about eager name resolution, and all of them are
+    enforced in state_select rather than only here, so the composition fails
+    before the run connects to anything.
+
+    The guard was widened after a late review pointed out that the first
+    version asked the wrong question. It refused a quoted literal CARRYING AN
+    ARGUMENT LIST, which is true of a function signature and of nothing else,
+    so has_table_privilege('authenticated', 'public.new_table', 'SELECT')
+    passed while resolving its argument every bit as eagerly. The rule is now
+    about the ARGUMENT POSITION: a literal is judged by what it is handed to,
+    which covers relations, schemas, sequences, types, roles and the rest of
+    the privilege inquiry family in one statement.
     """
 
     @staticmethod
@@ -301,6 +311,12 @@ class ProbesAreTotal(unittest.TestCase):
             expected_previous_name="spond_links", objects={"bad": probe},
         )
 
+    def _refuse(self, probe: str) -> str:
+        """Compose the probe, expect a refusal, and hand back the message."""
+        with self.assertRaises(SystemExit) as ctx:
+            vh.state_select(self._probe(probe), "0" * 32)
+        return str(ctx.exception.code)
+
     def test_a_textual_function_signature_given_to_a_privilege_test_is_refused(self):
         # Verbatim the shape that failed in production.
         bad = (
@@ -308,9 +324,7 @@ class ProbesAreTotal(unittest.TestCase):
             "'public.spond_reconcile_player_team(uuid, uuid, uuid, text, text, uuid)', "
             "'EXECUTE'))"
         )
-        with self.assertRaises(SystemExit) as ctx:
-            vh.state_select(self._probe(bad), "0" * 32)
-        self.assertIn("to_regprocedure", str(ctx.exception.code))
+        self.assertIn("to_regprocedure", self._refuse(bad))
 
     def test_a_regprocedure_cast_is_refused(self):
         for probe in (
@@ -330,13 +344,302 @@ class ProbesAreTotal(unittest.TestCase):
         )
         vh.state_select(self._probe(good), "0" * 32)   # raises if refused
 
-    def test_a_table_name_literal_is_still_allowed_outside_to_regclass(self):
-        # The rule targets signatures, which carry an argument list. A bare
-        # relation name resolves lazily wherever it appears, so comparing one
-        # as text is not the mistake this class is about, and forbidding it
-        # would fail probes that are already correct.
+    def test_a_table_name_literal_is_still_allowed_outside_a_lookup(self):
+        # The rule targets an object name being HANDED to something that
+        # resolves it. A relation name compared as text resolves nothing, so
+        # forbidding it would fail probes that are already correct.
         ok = "(select count(*) > 0 from pg_namespace where nspname = 'public')"
         vh.state_select(self._probe(ok), "0" * 32)
+
+    # ------------------------------------------------------------------
+    # The rule the first version of this guard did not have. It refused a
+    # quoted literal CARRYING AN ARGUMENT LIST, which is a property of a
+    # function signature and of nothing else, so it caught the 0049 defect and
+    # stopped there. 'public.new_table' has no argument list and resolves every
+    # bit as eagerly, and so does a schema, a sequence and every other kind.
+    # ------------------------------------------------------------------
+
+    def test_a_textual_table_name_given_to_a_privilege_test_is_refused(self):
+        message = self._refuse(
+            "(select has_table_privilege('authenticated', 'public.new_table', 'SELECT'))"
+        )
+        self.assertIn("EAGERLY", message)
+        self.assertIn("to_regclass", message)
+
+    def test_a_textual_sequence_name_given_to_a_privilege_test_is_refused(self):
+        message = self._refuse(
+            "(select has_sequence_privilege('authenticated', "
+            "'public.new_sequence', 'USAGE'))"
+        )
+        self.assertIn("EAGERLY", message)
+        self.assertIn("to_regclass", message)
+
+    def test_a_textual_schema_name_given_to_a_privilege_test_is_refused(self):
+        message = self._refuse(
+            "(select has_schema_privilege('authenticated', 'new_schema', 'USAGE'))"
+        )
+        self.assertIn("EAGERLY", message)
+        self.assertIn("to_regnamespace", message)
+
+    def test_the_two_argument_form_is_refused_as_well_as_the_three(self):
+        """The object is second from last, so dropping the user argument moves
+        it from index 1 to index 0 and must still be found."""
+        self.assertIn(
+            "EAGERLY",
+            self._refuse("(select has_table_privilege('public.new_table', 'SELECT'))"),
+        )
+
+    def test_every_covered_privilege_inquiry_function_refuses_a_textual_name(self):
+        """Not only the four the roadmap names. Each is called in its own
+        three argument form, so the object sits second from last."""
+        calls = {
+            "has_any_column_privilege": "'public.new_table', 'SELECT'",
+            "has_column_privilege": "'public.new_table', 'new_col', 'SELECT'",
+            "has_database_privilege": "'new_db', 'CONNECT'",
+            "has_foreign_data_wrapper_privilege": "'new_fdw', 'USAGE'",
+            "has_function_privilege": "'public.f(uuid)', 'EXECUTE'",
+            "has_language_privilege": "'new_lang', 'USAGE'",
+            "has_schema_privilege": "'new_schema', 'USAGE'",
+            "has_sequence_privilege": "'public.new_sequence', 'USAGE'",
+            "has_server_privilege": "'new_server', 'USAGE'",
+            "has_table_privilege": "'public.new_table', 'SELECT'",
+            "has_tablespace_privilege": "'new_space', 'CREATE'",
+            "has_type_privilege": "'public.new_type', 'USAGE'",
+            "pg_has_role": "'new_role', 'MEMBER'",
+        }
+        self.assertEqual(sorted(calls) + ["row_security_active"],
+                         sorted(vh.PRIVILEGE_INQUIRY_FUNCTIONS))
+        for name, arguments in calls.items():
+            with self.subTest(function=name):
+                self.assertIn(
+                    "EAGERLY",
+                    self._refuse(f"(select {name}('authenticated', {arguments}))"),
+                )
+        # row_security_active takes the relation alone, so its object is the
+        # only argument rather than the second from last.
+        self.assertIn(
+            "EAGERLY", self._refuse("(select row_security_active('public.new_table'))")
+        )
+
+    def test_an_absent_column_of_a_present_table_is_refused_too(self):
+        """has_column_privilege names TWO object arguments. An absent column
+        raises exactly as an absent table does, and a new column is the normal
+        pre-apply state for a migration that adds one."""
+        self.assertIn(
+            "EAGERLY",
+            self._refuse(
+                "(select count(*) > 0 from pg_class c "
+                "where c.oid = to_regclass('public.drills') "
+                "and has_column_privilege('authenticated', c.oid, 'new_col', 'SELECT'))"
+            ),
+        )
+
+    def test_the_regclass_argument_family_is_refused_as_well(self):
+        """These take regclass, so a bare literal is coerced by the regclass
+        input function. That is the implicit form of the ::regclass cast."""
+        for probe in (
+            "(select pg_relation_size('public.new_table') > 0)",
+            "(select pg_total_relation_size('public.new_table') > 0)",
+            "(select pg_get_serial_sequence('public.new_table', 'id') is not null)",
+            "(select pg_sequence_last_value('public.new_sequence') is not null)",
+        ):
+            with self.subTest(probe=probe):
+                self.assertIn("EAGERLY", self._refuse(probe))
+
+    def test_a_nullable_resolver_handed_straight_to_a_privilege_test_is_refused(self):
+        """These functions are STRICT. to_regclass answering null makes the
+        whole probe null, and object_errors refuses a non boolean rather than
+        reading it as absent, so the pre gate fails with the object correctly
+        absent. That is the 0049 outcome by another route."""
+        for probe in (
+            "(select has_table_privilege('authenticated', "
+            "to_regclass('public.new_table'), 'SELECT'))",
+            "(select has_schema_privilege('authenticated', "
+            "to_regnamespace('new_schema'), 'USAGE'))",
+            "(select has_function_privilege('authenticated', "
+            "to_regprocedure('public.f(uuid)'), 'EXECUTE'))",
+            # coalescing the oid does not rescue it: has_table_privilege raises
+            # for oid 0 in the same way, so the guard refuses the shape.
+            "(select has_table_privilege('authenticated', "
+            "coalesce(to_regclass('public.new_table'), 0), 'SELECT'))",
+        ):
+            with self.subTest(probe=probe):
+                self.assertIn("STRICT", self._refuse(probe))
+
+    def test_the_reviewed_safe_shapes_are_accepted(self):
+        """One per object kind. Each resolves the name once, through a nullable
+        lookup, and reads the privilege off the catalog row that resolution
+        found, so an absent object matches nothing and the count is 0."""
+        for probe in (
+            # function
+            "(select count(*) > 0 from pg_proc p "
+            "where p.oid = to_regprocedure('public.f(uuid)') "
+            "and has_function_privilege('authenticated', p.oid, 'EXECUTE') "
+            "and not has_function_privilege('anon', p.oid, 'EXECUTE'))",
+            # table
+            "(select count(*) > 0 from pg_class c "
+            "where c.oid = to_regclass('public.new_table') and c.relkind = 'r' "
+            "and has_table_privilege('authenticated', c.oid, 'SELECT'))",
+            # sequence, which lives in pg_class too
+            "(select count(*) > 0 from pg_class c "
+            "where c.oid = to_regclass('public.new_sequence') and c.relkind = 'S' "
+            "and has_sequence_privilege('authenticated', c.oid, 'USAGE'))",
+            # schema
+            "(select count(*) > 0 from pg_namespace n "
+            "where n.oid = to_regnamespace('new_schema') "
+            "and has_schema_privilege('authenticated', n.oid, 'USAGE'))",
+            # column, through pg_attribute rather than a column name literal
+            "(select count(*) > 0 from pg_attribute a "
+            "where a.attrelid = to_regclass('public.new_table') "
+            "and a.attname = 'new_col' "
+            "and has_column_privilege('authenticated', a.attrelid, a.attnum, 'SELECT'))",
+            # an object kind with no to_reg* at all: a nullable catalog lookup
+            # yields the oid instead, which is the same shape from another
+            # source.
+            "(select count(*) > 0 from pg_database d where d.datname = 'postgres' "
+            "and has_database_privilege('authenticated', d.oid, 'CONNECT'))",
+        ):
+            with self.subTest(probe=probe):
+                vh.state_select(self._probe(probe), "0" * 32)   # raises if refused
+
+    def test_has_parameter_privilege_is_deliberately_not_covered(self):
+        """It is the one member of the family that is already total: an
+        unrecognised configuration parameter reads as false rather than
+        raising, because a parameter is not a catalog object. Covering it would
+        refuse a correct probe. test_probe_totality.sh proves the behaviour on a
+        real server rather than trusting this comment."""
+        self.assertNotIn("has_parameter_privilege", vh.PRIVILEGE_INQUIRY_FUNCTIONS)
+        vh.state_select(
+            self._probe(
+                "(select has_parameter_privilege('authenticated', 'work_mem', 'SET'))"
+            ),
+            "0" * 32,
+        )
+
+    def test_ordinary_string_literals_are_untouched(self):
+        """The guard is about an object name reaching a lookup, never about
+        SQL literals in general. Banning those would fail most of the register."""
+        for probe in (
+            "(select count(*) > 0 from pg_namespace where nspname = 'public')",
+            "(select count(*) > 0 from pg_class where relname = 'players')",
+            "(select count(*) > 0 from information_schema.columns "
+            "where table_schema = 'public' and table_name = 'drills' "
+            "and column_name = 'diagram')",
+            "(select count(*) = 1 from public.sessions "
+            "where spond_event_id = 'e3065302-c164-4b23-b52a-2ce813271dac')",
+        ):
+            with self.subTest(probe=probe):
+                vh.state_select(self._probe(probe), "0" * 32)
+
+    def test_the_scanner_reads_literals_as_values_not_as_syntax(self):
+        """A comma inside a literal must not split the argument list.
+
+        Without that, has_table_privilege('authenticated', c.oid, 'SELECT,
+        INSERT') reads as four arguments, the object position lands on the
+        first half of the privilege string, and a correct probe is refused for
+        carrying a quote. A doubled quote is one character of the value for the
+        same reason.
+        """
+        for probe in (
+            "(select count(*) > 0 from pg_class c "
+            "where c.oid = to_regclass('public.drills') "
+            "and has_table_privilege('authenticated', c.oid, 'SELECT, INSERT'))",
+            "(select count(*) > 0 from pg_class c "
+            "where c.relname = 'it''s fine' "
+            "and has_table_privilege('authenticated', c.oid, 'SELECT'))",
+        ):
+            with self.subTest(probe=probe):
+                vh.state_select(self._probe(probe), "0" * 32)
+
+    def test_a_bare_call_name_inside_a_literal_is_not_read_as_a_call(self):
+        vh.state_select(
+            self._probe(
+                "(select count(*) > 0 from pg_class "
+                "where relname = 'has_table_privilege')"
+            ),
+            "0" * 32,
+        )
+
+    # ------------------------------------------------------------------
+    # Dollar quoting. Found by a review of the widened guard, and it is the
+    # same defect one syntax along: every rule above looks for an apostrophe,
+    # PostgreSQL has a second string literal syntax that carries none, and
+    # $$public.new_table$$ raises for an absent object exactly as
+    # 'public.new_table' does. It went straight through.
+    # ------------------------------------------------------------------
+
+    def test_a_dollar_quoted_object_name_is_refused(self):
+        for probe in (
+            "(select has_table_privilege('authenticated', $$public.new_table$$, 'SELECT'))",
+            "(select has_schema_privilege('authenticated', $$new_schema$$, 'USAGE'))",
+            "(select has_sequence_privilege('authenticated', $$public.new_seq$$, 'USAGE'))",
+            "(select row_security_active($$public.new_table$$))",
+        ):
+            with self.subTest(probe=probe):
+                self.assertIn("Dollar quoting", self._refuse(probe))
+
+    def test_a_TAGGED_dollar_quoted_signature_is_refused(self):
+        """The tagged form carries the argument list the original backstop
+        looks for, and still slipped past it: that rule reads apostrophes."""
+        self.assertIn(
+            "Dollar quoting",
+            self._refuse(
+                "(select has_function_privilege('authenticated', "
+                "$fn$public.f(uuid)$fn$, 'EXECUTE'))"
+            ),
+        )
+
+    def test_a_dollar_sign_is_refused_wherever_it_sits(self):
+        """Not only in an object position. A dollar string can CONTAIN an
+        apostrophe, which desynchronises the literal scanner and makes the rest
+        of the probe unparseable, so the character is refused outright rather
+        than parsed."""
+        for probe in (
+            "(select count(*) > 0 from pg_class c where c.relname = $$players$$)",
+            "(select count(*) > 0 from pg_class c where c.relname = $$it's$$ "
+            "and has_table_privilege('authenticated', c.oid, 'SELECT'))",
+            "(select count(*) > 0 from pg_proc p where p.oid = "
+            "to_regprocedure($$public.f(uuid)$$))",
+        ):
+            with self.subTest(probe=probe):
+                self.assertIn("Dollar quoting", self._refuse(probe))
+
+    def test_the_guard_refuses_dollar_quoting_on_its_own_terms(self):
+        """assert_probe_is_total is called directly by the tests and by
+        test_probe_totality.sh, so it cannot rely on state_select's separate
+        _PROBE_FORBIDDEN sweep having run first."""
+        with self.assertRaises(SystemExit) as ctx:
+            vh.assert_probe_is_total(
+                "bad",
+                "(select has_table_privilege('authenticated', "
+                "$$public.new_table$$, 'SELECT'))",
+            )
+        self.assertIn("Dollar quoting", str(ctx.exception.code))
+        self.assertIn("$", vh._PROBE_FORBIDDEN)
+
+    def test_no_registered_probe_uses_a_dollar_sign(self):
+        for path, mig in rm.REVIEWED_MIGRATIONS.items():
+            for label, probe in mig.objects.items():
+                with self.subTest(path=path, label=label):
+                    self.assertNotIn("$", probe)
+
+    def test_chr_is_still_the_escape_hatch_for_a_refused_character(self):
+        """The register already composes chr(34) for a double quote. The same
+        door stays open for a dollar, so refusing the character costs nothing."""
+        vh.state_select(
+            self._probe(
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure('public.f(uuid)') "
+                "and p.proconfig @> array[concat(chr(36), chr(36))])"
+            ),
+            "0" * 32,
+        )
+
+    def test_a_probe_with_unbalanced_parentheses_fails_closed(self):
+        self.assertIn(
+            "unbalanced",
+            self._refuse("(select has_table_privilege('authenticated', 'public.t', 'SELECT'"),
+        )
 
     def test_no_registered_probe_resolves_a_name_eagerly(self):
         # The register as it actually stands, not a fixture of it.
@@ -377,6 +680,72 @@ class ProbesAreTotal(unittest.TestCase):
             for label, probe in mig.objects.items():
                 with self.subTest(path=path, label=label):
                     self.assertNotIn("pg_get_function_identity_arguments", probe)
+
+
+class MutatingASafeProbeBackIsCaught(unittest.TestCase):
+    """The four protected classes, mutated back and proved to be caught.
+
+    A test that only asserts the safe forms are accepted would pass just as
+    happily over a guard that had been deleted. These take the reviewed safe
+    probe for each object kind and the same probe with the resolution taken
+    out, and prove the composition accepts the first and refuses the second.
+    Both come from probe_shapes.py, rendered from one set of fields, so the
+    mutation is the safe shape minus its resolution rather than a separately
+    invented mistake, and section H of test_probe_totality.sh runs these exact
+    strings against a real PostgreSQL.
+
+    It also proves WHERE the refusal happens. state_select is pure: it reads no
+    environment and opens no connection, so the guard fires with no
+    SUPABASE_DB_URL set at all, which is what makes this a CI check rather than
+    something production finds out.
+    """
+
+    def _probe(self, probe: str) -> rm.ReviewedMigration:
+        return rm.ReviewedMigration(
+            path="x.sql", ledger_name="x", idempotency_key="k",
+            expected_previous_version="20260810182333",
+            expected_previous_name="spond_links", objects={"bad": probe},
+        )
+
+    def test_the_four_protected_classes_are_all_covered(self):
+        self.assertEqual(
+            sorted(ps.BY_KIND), ["function", "schema", "sequence", "table"]
+        )
+
+    def test_each_safe_probe_composes(self):
+        for shape in ps.SHAPES:
+            with self.subTest(kind=shape.kind):
+                self.assertIn(shape.resolver, shape.safe)
+                vh.state_select(self._probe(shape.safe), "0" * 32)
+
+    def test_each_mutation_is_refused_before_any_connection(self):
+        saved = os.environ.pop(vh.DB_URL_ENV, None)
+        try:
+            for shape in ps.SHAPES:
+                with self.subTest(kind=shape.kind):
+                    # The mutation is the eager textual form: the name is
+                    # handed to the privilege function and nothing resolves it.
+                    self.assertNotIn("to_reg", shape.unsafe)
+                    self.assertIn(f"'{shape.name}'", shape.unsafe)
+                    with self.assertRaises(SystemExit) as ctx:
+                        vh.state_select(self._probe(shape.unsafe), "0" * 32)
+                    message = str(ctx.exception.code)
+                    self.assertIn("EAGERLY", message)
+                    self.assertIn(shape.privilege, message)
+                    self.assertNotIn(vh.DB_URL_ENV, message)
+        finally:
+            if saved is not None:
+                os.environ[vh.DB_URL_ENV] = saved
+
+    def test_the_safe_and_unsafe_forms_ask_the_same_question(self):
+        """Otherwise the pair proves nothing: a mutation that also changed the
+        privilege, the role or the object would be a different probe rather
+        than the same probe with its resolution removed."""
+        for shape in ps.SHAPES:
+            with self.subTest(kind=shape.kind):
+                for part in (shape.privilege, shape.name, shape.access, "authenticated"):
+                    self.assertIn(part, shape.safe)
+                    self.assertIn(part, shape.unsafe)
 
 
 class ErrorsAreClassifiedTruthfully(unittest.TestCase):
