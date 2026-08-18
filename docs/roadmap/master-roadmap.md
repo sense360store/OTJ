@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 17 August 2026 (SPOND-08 shipped, applied to production and verified live; OPS-02 added from the post-#193 Codex review; DRILL-02 is next)
+Last reviewed: 17 August 2026 (SPOND-08 shipped, applied to production and verified live; OPS-02 added from the post-#193 Codex review; DRILL-02 in progress in #189, with print and public share held for DRILL-02b)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -33,7 +33,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
 | SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | Done | P0 | Shipped in #190, completed in #192. Both gates have run: migration 0049 applied 17 August 2026 (hosted head `20260817104226`, `spond_team_reconcile`) and `spond-link-members` deployed at version 4. Verified by a live production smoke test |
-| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
+| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
 | PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | Later | P2 | Destructive-change review; no silent history loss |
@@ -52,11 +52,11 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 
 When there is capacity, prefer this sequence unless production evidence changes the order:
 
-1. Continue Drill Maker with DRILL-02 before the larger venue composer DRILL-03.
+1. Finish Drill Maker DRILL-02: the authenticated surfaces are in #189, and the print and public share half needs the separate reviewed DRILL-02b change before the row closes.
 2. Pick up QUALITY-01, since re-auditing the old Product Excellence roadmap gates several later items.
 3. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
 
-REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have shipped too, so the Spond linking programme that ran from #178 to #187 is closed and stays closed. SPOND-08 was its follow-up rather than its continuation: those items scoped exposing a mismatch and delivered it, and acting on one was a separate piece of work because it writes to a child's registration. It has now shipped, both of its gates have run in production and a live smoke test has confirmed the behaviour, so it no longer outranks DRILL-02 under roadmap rule 4. DRILL-02 is next.
+REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have shipped too, so the Spond linking programme that ran from #178 to #187 is closed and stays closed. SPOND-08 was its follow-up rather than its continuation: those items scoped exposing a mismatch and delivered it, and acting on one was a separate piece of work because it writes to a child's registration. It has now shipped, both of its gates have run in production and a live smoke test has confirmed the behaviour, so it no longer outranks DRILL-02 under roadmap rule 4. DRILL-02 is the active step and is partly delivered: its authenticated surfaces are in #189 and its public half is held deliberately, so the row is not closed.
 
 ## Acceptance criteria for scheduled items
 
@@ -284,6 +284,49 @@ the behaviour was confirmed against production rather than against this file.
 - Explicit confirmation naming the number deleted; one transaction, so a partial failure deletes nobody.
 - Session history is never silently destroyed: removals that would orphan register entries are surfaced, and the chosen semantics are stated on screen.
 - Audit events per run; concurrency tests for overlapping selections; destructive change review gate.
+
+**DRILL-02 — drill diagrams across session delivery**
+
+- The authenticated surfaces are delivered in #189: the planner activity
+  panel, session day setup cards and both live stages (driver and watcher)
+  show the drill's saved Drill Maker diagram. One stored diagram, one parser
+  (`parseDrillDiagram`), one renderer (`DrillDiagramView`), one display rule
+  (`diagramForDisplay`) and one seam (`components/ActivityDiagram.tsx`). No
+  migration, no schema change, no Edge Function change.
+- The diagram needs its own read, and that is deliberate rather than an
+  oversight: `DRILL_COLS` omits the column so a diagram cannot ride a list
+  read or a snapshot builder, and an invariant test fails the build on
+  widening it. The read stays per drill and shares the drill page's cache key
+  rather than adding a batched second cache shape.
+- An England Football derived drill shows no hand drawn diagram on any of the
+  new surfaces, matching the drill page. The licence excludes a redrawn FA
+  diagram wherever it renders, not only where it was made; the FA's own image
+  keeps rendering through media.
+- **The row stays In progress**, because print and public share are named in
+  its scope and neither is delivered. `window.print()` exists in exactly one
+  place, `PublicShare.tsx`, and the print stylesheet targets only `.public-*`,
+  so there is no authenticated print path: print IS the public share page and
+  inherits its gate exactly.
+
+**DRILL-02b — publishing a diagram (separate, security reviewed)**
+
+- Blocked on a decision before it is blocked on code: whether a coach drawn
+  diagram may be published at all. A diagram carries free text a coach typed,
+  and a share is a frozen copy, so a key that reaches
+  `content_shares.snapshot` is served until the link is revoked and no later
+  fix to the projection takes it back. That reasoning is recorded in the Edge
+  Function's own deny list beside the `'diagram'` entry.
+- If agreed, the change is one reviewed PR touching: the Edge `DRILL_COLS`,
+  `projectDrillFields`, `TOP_ALLOWED`, `REF_DRILL_ALLOWED`, the removal from
+  `FORBIDDEN_ANYWHERE`, `PublicDrillSnapshot` / `PublicReferencedDrill` /
+  `PublicSessionSnapshot` with their mirrored client key sets, and a redeploy
+  of BOTH `read-content-share` and `manage-content-share`, which share
+  `_shared/share.ts`. Existing shares are frozen and would need reminting to
+  carry one.
+- Print then follows with no further work beyond a page break rule, since it
+  renders the snapshot DOM.
+- Gated by the review gates in CLAUDE.md, with the deploy verified by reading
+  the deployed source back byte for byte rather than by a version number.
 
 **DRILL-03 — venue/pitch composer**
 

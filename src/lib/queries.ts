@@ -1483,17 +1483,42 @@ export async function saveDrillDiagram(
   return { diagram: parseDrillDiagram(stored), matched: diagramSaveMatches(diagram, stored) }
 }
 
+// How long a read diagram counts as fresh. FIVE MINUTES, and the number matters
+// less than the fact that it is not zero.
+//
+// A diagram changes when a coach presses Save in Drill Maker, and that save
+// invalidates this key explicitly (useUpdateDrillDiagram below). Nothing else
+// changes it, so there is no reason for a screen that merely SHOWS one to go
+// back to the database every time it mounts. With no staleTime TanStack marks
+// the result stale the instant it arrives, and every remount is a mount of a
+// stale query, so it refetches: collapsing and reopening a planner panel
+// repeated the read, and leaving Session Day's Setup tab and coming back
+// remounted every card and repeated one read PER DRILL. A session of eight
+// drills paid eight requests for a tab change that showed the same pictures.
+//
+// This does NOT weaken the save. invalidateQueries marks the query invalidated
+// as well as stale, and an invalidated query refetches on mount and on the spot
+// for anything already watching it, whatever the staleTime says. So a coach who
+// saves a diagram and walks back into the session still sees the new drawing
+// immediately; what stops is the traffic that changed nothing.
+export const DRILL_DIAGRAM_STALE = 5 * 60 * 1000
+
 // The drill's diagram, read on its own. Separate from useDrill so the diagram
 // never rides a list read.
-export function useDrillDiagram(id: string | undefined) {
-  return useQuery({
-    queryKey: ['drill_diagram', id],
+//
+// The options are a named value rather than an object literal inline, so the
+// remount behaviour above can be proved against the REAL options a screen uses
+// rather than against a retyped copy of them (drillDiagramRemount.test.ts).
+export function drillDiagramQuery(id: string | undefined) {
+  return {
+    queryKey: ['drill_diagram', id] as const,
     enabled: !!id,
     // No retry. This read fires on EVERY drill page for every role, parents
     // included, and the one failure mode worth naming is the column not being
     // there yet (migration 0046 unapplied), which no number of retries will
     // fix. Four rejected requests per page view is noise nobody can act on.
-    retry: false,
+    retry: false as const,
+    staleTime: DRILL_DIAGRAM_STALE,
     queryFn: async (): Promise<DrillDiagram | null> => {
       const { data, error } = await supabase.from('drills').select(DRILL_DIAGRAM_COLS).eq('id', id!).maybeSingle()
       if (error) throw error
@@ -1502,7 +1527,11 @@ export function useDrillDiagram(id: string | undefined) {
       // crashing the drill page.
       return data ? parseDrillDiagram((data as { diagram: unknown }).diagram) : null
     },
-  })
+  }
+}
+
+export function useDrillDiagram(id: string | undefined) {
+  return useQuery(drillDiagramQuery(id))
 }
 
 export function useUpdateDrillDiagram() {

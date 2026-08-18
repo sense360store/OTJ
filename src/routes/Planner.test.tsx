@@ -15,6 +15,21 @@ import type { PlannerAction } from '../lib/sessionSubmit'
 import { SESSION_SHARE_ERROR } from '../lib/sessionSubmit'
 import { SHARE_ACCOUNT_NOTE, type ShareFeedback } from '../lib/share'
 import type { Activity, Drill, Session, Team } from '../lib/data'
+import { ActivityDiagramView } from '../components/ActivityDiagram'
+import { DRILL_DIAGRAM_VERSION, type DrillDiagram } from '../lib/drillDiagram'
+
+// A saved diagram with one of everything that matters here: a player (the
+// element a tactics board would put a name on and this one never does), a cone
+// and a passing arrow (whose meaning is a dash pattern, not a colour).
+const diagram: DrillDiagram = {
+  version: DRILL_DIAGRAM_VERSION,
+  surface: { kind: 'half_pitch', orientation: 'portrait' },
+  elements: [
+    { type: 'player', id: 'player-1', x: 0.4, y: 0.5, colour: 'blue', label: '9' },
+    { type: 'cone', id: 'cone-1', x: 0.6, y: 0.3, colour: 'orange' },
+    { type: 'arrow', id: 'arrow-1', x1: 0.2, y1: 0.2, x2: 0.8, y2: 0.8, arrow: 'pass' },
+  ],
+}
 
 // ActivityCardView is the planner's drill row pulled out as a presentational
 // component, so the static renderer covers expand and collapse and the row
@@ -54,7 +69,10 @@ const act: Activity = { phase: 'Skill', drillId: 'd1', duration: 15 }
 
 const noop = () => {}
 
-function render(expanded: boolean, opts: { readOnly?: boolean; busy?: boolean; drill?: Drill | null } = {}): string {
+function render(
+  expanded: boolean,
+  opts: { readOnly?: boolean; busy?: boolean; drill?: Drill | null; diagram?: DrillDiagram | null } = {},
+): string {
   const rowDrill = 'drill' in opts ? opts.drill! : drill
   return renderToStaticMarkup(
     <MemoryRouter>
@@ -65,6 +83,11 @@ function render(expanded: boolean, opts: { readOnly?: boolean; busy?: boolean; d
         drill={rowDrill}
         thumb={<span>thumb</span>}
         expandedMedia={<span>media-preview</span>}
+        // The real read only diagram node, not a stand-in, so the collapse and
+        // coexistence assertions below are about the actual rendered SVG.
+        // ActivityDiagramView is the hook free half, so no query client is
+        // needed here; the screen's ActivityRow supplies the mounted half.
+        expandedDiagram={<ActivityDiagramView diagram={opts.diagram ?? null} className="dd-in-panel" />}
         drillHref="/drill/d1"
         expanded={expanded}
         onToggle={noop}
@@ -118,6 +141,85 @@ describe('ActivityCardView', () => {
     expect(html).toContain('media-preview')
     expect(html).toContain('Open full drill')
     expect(html).toContain('href="/drill/d1"')
+  })
+
+  // ---- The saved Drill Maker diagram in the planner (DRILL-02) -----------
+
+  it('shows the drill diagram in the panel once the card is expanded', () => {
+    const html = render(true, { diagram })
+    // The canonical renderer's own markers, so this proves the real component
+    // drew it rather than something shaped like it.
+    expect(html).toContain('data-el="player"')
+    expect(html).toContain('data-el="cone"')
+    expect(html).toContain('data-el="arrow"')
+    expect(html).toContain('class="dd-surface dd-in-panel"')
+    // Described in words for anyone who cannot see it.
+    expect(html).toContain('role="img"')
+    expect(html).toContain('Drill diagram: 1 player, 1 cone, 1 arrow')
+  })
+
+  it('draws no diagram while the card is collapsed', () => {
+    // The read is lazy in the screen and the node is lazy here: a long session
+    // full of diagrams costs nothing until a coach opens a panel.
+    const html = render(false, { diagram })
+    expect(html).not.toContain('data-el=')
+    expect(html).not.toContain('dd-surface')
+  })
+
+  it('leaves a card with no diagram exactly as it was', () => {
+    // Most drills carry none. An empty frame or a "no diagram" caption on every
+    // card would be worse than silence.
+    const html = render(true, { diagram: null })
+    expect(html).not.toContain('dd-surface')
+    expect(html).not.toContain('data-el=')
+    // And the rest of the panel is untouched.
+    expect(html).toContain('Keep the ball away from the defender.')
+    expect(html).toContain('Open full drill')
+  })
+
+  it('shows the uploaded media and the drawn diagram together, neither replacing the other', () => {
+    const html = render(true, { diagram })
+    expect(html).toContain('media-preview')
+    expect(html).toContain('data-el="player"')
+  })
+
+  it('keeps the diagram read only and out of the tab order', () => {
+    const html = render(true, { diagram })
+    const panel = html.slice(html.indexOf('act-panel'))
+    const surface = panel.slice(panel.indexOf('dd-surface'), panel.indexOf('act-panel-summary'))
+    // No control of any kind inside the diagram: the planner preview identifies
+    // a drill, it does not edit one. Building a diagram stays in Drill Maker.
+    expect(surface).not.toContain('<button')
+    expect(surface).not.toContain('tabindex')
+    expect(surface).not.toContain('onclick')
+    expect(surface).not.toContain('contenteditable')
+  })
+
+  it('puts the diagram inside the panel and never inside the draggable card', () => {
+    // .act-card is the drag source and is already full at phone width. A
+    // diagram in there would both crowd the row and travel with the drag.
+    const html = render(true, { diagram })
+    const cardStart = html.indexOf('class="act-card"')
+    const panelStart = html.indexOf('class="act-panel"')
+    const surfaceAt = html.indexOf('dd-surface')
+    expect(cardStart).toBeGreaterThanOrEqual(0)
+    expect(panelStart).toBeGreaterThan(cardStart)
+    expect(surfaceAt).toBeGreaterThan(panelStart)
+  })
+
+  it('keeps the row draggable and its controls live with a diagram on screen', () => {
+    // Reordering and editing must survive the new block. The row stays
+    // draggable and every field control stays enabled.
+    const html = render(true, { diagram })
+    expect(html).toContain('draggable="true"')
+    for (const c of fieldControls(html)) expect(c.disabled).toBe(false)
+  })
+
+  it('keeps expanding a diagram live while a save is in flight', () => {
+    // Viewing is passive. The busy freeze is for edits, and a coach checking
+    // the shape of a drill mid-save is not editing anything.
+    const html = render(true, { busy: true, diagram })
+    expect(html).toContain('data-el="player"')
   })
 
   it('keeps the remove and phase controls present and wired in both states', () => {

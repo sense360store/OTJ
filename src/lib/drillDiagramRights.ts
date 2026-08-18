@@ -37,6 +37,7 @@
 // the two agree about what "England Football derived" means.
 
 import { deriveProvenance, type SourceFields } from './contentRights'
+import { diagramIsEmpty, type DrillDiagram } from './drillDiagram'
 
 export const FA_DIAGRAM_NOTE =
   'This drill came from England Football Learning. The club may use their diagrams as they are, and may not redraw them, so this drill keeps its England Football diagram rather than a hand drawn one.'
@@ -67,4 +68,34 @@ export function diagramEditDecision({
   if (deriveProvenance(source) === 'fa') return { canEdit: false, reason: FA_DIAGRAM_NOTE }
   if (!canManage) return { canEdit: false, reason: NOT_YOURS_NOTE }
   return { canEdit: true, reason: null }
+}
+
+// The read only twin of diagramEditDecision, and the ONE rule for whether a
+// saved diagram is SHOWN. diagramEditDecision answers "may this be drawn"; this
+// answers "may this be shown", which is a different question with the same
+// England Football answer.
+//
+// Every surface that shows a drill inside a session goes through this: the
+// planner panel, session day and both live stages. There is deliberately no
+// plannerDiagramFor…, sessionDayDiagramFor… or liveDiagramFor…, because four
+// implementations of one rule is four chances to disagree about an FA drill.
+//
+// Three things read as nothing to show, and a screen cannot tell them apart:
+//   - undefined, meaning the read has not answered yet. Rendering an empty
+//     frame first and a pitch a moment later is worse than rendering nothing.
+//   - null or empty, meaning the drill has no diagram. Most drills have none,
+//     and an empty pitch on every card would be noise.
+//   - an England Football derived drill, whatever it carries. A coach can draw
+//     a diagram and later record an FA source on the same drill, which strands
+//     one on the row (the drill page states that and offers to remove it). The
+//     licence excludes showing a redrawn FA diagram wherever it renders, not
+//     only on the page that made it, so a stranded one stays unshown here too.
+//     The FA's own image is unaffected and keeps rendering through media.
+export function diagramForDisplay(
+  diagram: DrillDiagram | null | undefined,
+  source: SourceFields,
+): DrillDiagram | null {
+  if (diagramIsEmpty(diagram)) return null
+  if (deriveProvenance(source) === 'fa') return null
+  return diagram ?? null
 }
