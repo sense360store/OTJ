@@ -133,41 +133,40 @@
    220px wide with 234px of grass either side, and identically on a phone and a
    laptop, so the larger screen would buy nothing but bars.
 
-   SO THE WIDTH IS BOUND FROM THE HEIGHT. --dd-ratio is the surface's own
-   width over height, emitted by the renderer from the same geometry the aspect
-   ratio comes from, so a cap of H allows a width of at most H times the ratio
-   and the box then measures exactly the drawing. The height caps still do their
-   job, the bars collapse to nothing, and margin: 0 auto centres what is left. A
-   diagram rendered without the property falls back to 1, which is harmless.
-   Nothing here is a second geometry: the ratio has one source. */
+   SO THE WIDTH IS BOUND FROM THE HEIGHT, AND NOT FROM HERE. A cap of H allows a
+   width of at most H times the surface ratio, and the box then measures exactly
+   the drawing. That multiplication used to live in this file, as
+
+     max-width: calc(var(--dd-cap) * var(--dd-ratio, 1))
+
+   and a review of #189 was right to refuse it. calc() multiplying two custom
+   properties is dropped whole on engines that will not do that arithmetic,
+   including iOS Safari 18.x and Chromium before 140, and a dropped width cap
+   leaves the height cap standing alone, which is exactly the letterboxed box
+   above. So the caps and the arithmetic both moved to src/lib/drillDiagramSize.ts,
+   the renderer emits max-height and max-width together as PLAIN LENGTHS, and
+   this stylesheet declares no cap for these two surfaces and does no arithmetic
+   anywhere. margin: 0 auto on .dd-surface still centres what is left. */
 
 /* The planner's activity panel. Matched to .act-panel-media (420px) so the
    diagram and the media thumbnail above it line up as one column rather than
    two widths. Deliberately not .dd-on-detail's 460px: this is a panel inside a
-   row, not a page. */
+   row, not a page. A WIDTH cap needs no arithmetic and no partner: the ratio
+   bounds the height from it, so this one stays here. */
 .dd-in-panel {
   max-width: 420px;
   margin-top: 12px;
 }
 
-/* Session day, preparing before the session. The card is the width of the
-   column, so the cap is height: a setup card should show the shape of the drill
-   without pushing the next activity off the screen. */
+/* Session day, preparing before the session. Its height cap is
+   DIAGRAM_HEIGHT_CAP.sessionDay; only the spacing is a stylesheet concern. */
 .dd-in-sd {
   margin-top: 12px;
-  --dd-cap: 340px;
-  max-height: var(--dd-cap);
-  max-width: calc(var(--dd-cap) * var(--dd-ratio, 1));
 }
 
-/* Live delivery. The tightest case, and the one that matters most: the timer,
-   the transport controls and Mark done & next stay the primary things on the
-   screen. Bounded in vh rather than px because the hazard is the phone's
-   viewport, not a fixed size. .live-foot sits outside .live-body's scroll
-   container, so the primary action is pinned however tall the stage grows; this
-   cap is what keeps the coaching points reachable without a long scroll. */
-.dd-in-live {
-  --dd-cap: 42vh;
-  max-height: var(--dd-cap);
-  max-width: calc(var(--dd-cap) * var(--dd-ratio, 1));
-}
+/* Live delivery has no rule here at all. Its height cap is
+   DIAGRAM_HEIGHT_CAP.live, emitted by the renderer with the width that cap
+   implies, and .dd-in-live carries nothing else: .live-foot sits outside
+   .live-body's scroll container, so the primary action stays pinned however
+   tall the stage grows. The class is left on the element as the surface marker
+   the screen tests read. */

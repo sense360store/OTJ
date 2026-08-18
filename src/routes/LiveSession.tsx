@@ -21,6 +21,7 @@ import {
 import { embedSrc, sessionMinutes } from '../lib/data'
 import { isFaVideo } from '../lib/fa'
 import { ActivityDiagram } from '../components/ActivityDiagram'
+import { DIAGRAM_HEIGHT_CAP } from '../lib/drillDiagramSize'
 import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
 import { isSessionLive, liveActivityNow } from '../lib/sessionLifecycle'
@@ -406,7 +407,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
               Below the timer and above the coaching points, so the controls
               stay the primary thing on the screen, and capped in height by
               .dd-in-live. Read only: it renders no control and writes nothing. */}
-          {drill && <ActivityDiagram drill={drill} className="dd-in-live" />}
+          {drill && <ActivityDiagram drill={drill} className="dd-in-live" heightCap={DIAGRAM_HEIGHT_CAP.live} />}
 
           {/* coaching points */}
           {drill && (
@@ -690,7 +691,7 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
               Below the timer and above the coaching points, so the controls
               stay the primary thing on the screen, and capped in height by
               .dd-in-live. Read only: it renders no control and writes nothing. */}
-          {drill && <ActivityDiagram drill={drill} className="dd-in-live" />}
+          {drill && <ActivityDiagram drill={drill} className="dd-in-live" heightCap={DIAGRAM_HEIGHT_CAP.live} />}
 
           {/* coaching points */}
           {drill && (

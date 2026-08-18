@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ActivityDiagramView } from './ActivityDiagram'
 import { DRILL_DIAGRAM_VERSION, emptyDiagram, type DrillDiagram } from '../lib/drillDiagram'
+import { DIAGRAM_HEIGHT_CAP } from '../lib/drillDiagramSize'
 
 const diagram: DrillDiagram = {
   version: DRILL_DIAGRAM_VERSION,
@@ -21,8 +22,13 @@ const diagram: DrillDiagram = {
   ],
 }
 
-const html = (d: DrillDiagram | null, className?: string) =>
-  renderToStaticMarkup(<ActivityDiagramView diagram={d} className={className} />)
+const html = (d: DrillDiagram | null, className?: string, heightCap?: string) =>
+  renderToStaticMarkup(<ActivityDiagramView diagram={d} className={className} heightCap={heightCap} />)
+
+// The inline style the renderer emits, which is where the caps now live.
+const styleOf = (out: string) => /style="([^"]*)"/.exec(out)?.[1] ?? ''
+
+const landscape: DrillDiagram = { ...diagram, surface: { kind: 'full_pitch', orientation: 'landscape' } }
 
 describe('the diagram a session shows', () => {
   it('draws through the canonical renderer', () => {
@@ -94,5 +100,66 @@ describe('the diagram a session shows', () => {
     expect(out).toContain('class="dd-surface"')
     expect(out).not.toContain('data-el=')
     expect(out).toContain('aria-label="Drill diagram, empty"')
+  })
+})
+
+// A review of #189 refused the stylesheet's `max-width: calc(var(--dd-cap) *
+// var(--dd-ratio, 1))`: calc() multiplying two custom properties is dropped
+// whole on iOS Safari 18.x and Chromium before 140, and a dropped width cap
+// leaves the height cap standing alone, which is the letterboxed wide-grass box
+// the cap existed to prevent. These render the real component and read what it
+// actually emits, so the fix is proved in markup rather than in a stylesheet
+// comment.
+describe('how a session surface is bounded', () => {
+  it('emits both caps as plain lengths, with no expression to evaluate', () => {
+    const out = html(diagram, 'dd-in-sd', DIAGRAM_HEIGHT_CAP.sessionDay)
+    const style = styleOf(out)
+    expect(style).toContain('max-height:340px')
+    // 680 by 1050 view units capped at 340 tall is 220.1905 wide, and the box
+    // then measures the drawing rather than the column.
+    expect(style).toContain('max-width:220.1905px')
+    // The point of the whole change: nothing here needs typed CSS arithmetic.
+    expect(style).not.toContain('calc')
+    expect(style).not.toContain('var(')
+    expect(style).not.toContain('--dd-')
+  })
+
+  it('keeps a viewport cap in viewport units on the live stage', () => {
+    const style = styleOf(html(diagram, 'dd-in-live', DIAGRAM_HEIGHT_CAP.live))
+    expect(style).toContain('max-height:42vh')
+    expect(style).toContain('max-width:27.2vh')
+    expect(style).not.toContain('calc')
+  })
+
+  it('sizes the width from the surface, not from a constant', () => {
+    // The same cap on a landscape pitch allows a wider box, because the width a
+    // cap implies is the cap times THAT surface's ratio. A hard coded width
+    // would letterbox one orientation or crop the other.
+    const portrait = styleOf(html(diagram, 'dd-in-sd', DIAGRAM_HEIGHT_CAP.sessionDay))
+    const wide = styleOf(html(landscape, 'dd-in-sd', DIAGRAM_HEIGHT_CAP.sessionDay))
+    expect(portrait).not.toEqual(wide)
+    expect(portrait).toContain('max-width:220.1905px')
+    // 1050 by 680 capped at 340 tall is exactly 525 wide, because 340 is half
+    // of 680. A round number here is arithmetic, not a hard coded width.
+    expect(wide).toContain('max-width:525px')
+  })
+
+  it('caps both dimensions or neither, never height alone', () => {
+    // A height cap without its width IS the defect. The renderer cannot emit
+    // one without the other, so a surface that asks for a cap it cannot compute
+    // gets an uncapped diagram rather than a letterboxed one.
+    const uncapped = styleOf(html(diagram, 'dd-in-panel'))
+    expect(uncapped).not.toContain('max-height')
+    expect(uncapped).not.toContain('max-width')
+    const unreadable = styleOf(html(diagram, 'dd-in-sd', 'auto'))
+    expect(unreadable).not.toContain('max-height')
+    expect(unreadable).not.toContain('max-width')
+    // And the aspect ratio survives in every case: it is what the SVG draws to.
+    expect(uncapped).toContain('aspect-ratio')
+    expect(unreadable).toContain('aspect-ratio')
+  })
+
+  it('still carries the surface ratio for the box to keep its shape', () => {
+    expect(styleOf(html(diagram))).toContain('aspect-ratio:680 / 1050')
   })
 })

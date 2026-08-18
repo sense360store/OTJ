@@ -353,41 +353,79 @@ describe('one renderer draws a diagram', () => {
   it('bounds the size of a diagram on every surface that is not the drill page', () => {
     // SOURCE TEXT, and the weakest check in this file, for the reason the
     // editor canvas check already gives: there is no DOM here to measure a box
-    // in, so this reads the declared CSS rather than a rendered one. It exists
-    // because the tall case is genuinely tall (a portrait full pitch is one and
-    // a half times as high as it is wide, so roughly 840px on a 560px live
-    // stage), and an unbounded diagram on a phone pushes the coaching points
-    // and the rest of the session off the screen.
+    // in. It exists because the tall case is genuinely tall (a portrait full
+    // pitch is one and a half times as high as it is wide, so roughly 840px on
+    // a 560px live stage), and an unbounded diagram on a phone pushes the
+    // coaching points and the rest of the session off the screen. What the box
+    // ACTUALLY comes out as is proved in ActivityDiagram.test.tsx, which
+    // renders the real component and reads the style it emits.
     const css = readFileSync(join(SRC, 'components/DrillDiagram.css'), 'utf8')
+    // Comments are not declarations. The stylesheet keeps the refused calc()
+    // quoted in prose so the next reader knows why it went, and stripping
+    // comments is what lets that stay without weakening the check below.
+    const declared = css.replace(/\/\*[\s\S]*?\*\//g, '')
     const block = (name: string) => {
-      const at = css.indexOf(`.${name} {`)
+      const at = declared.indexOf(`.${name} {`)
       expect(at, `.${name} is not declared`).toBeGreaterThan(-1)
-      return css.slice(at, css.indexOf('}', at))
+      return declared.slice(at, declared.indexOf('}', at))
     }
     // The planner panel matches the media cap above it in the same column. A
-    // width cap IS a height bound while the ratio holds, so it needs no second.
+    // width cap IS a height bound while the ratio holds, so it needs no second
+    // and no arithmetic, and it therefore stays in the stylesheet.
     expect(block('dd-in-panel')).toContain('max-width: 420px')
-    // The two surfaces whose hazard is height rather than width. EACH MUST CAP
-    // BOTH: width:100% plus an aspect ratio plus a max-height cannot all hold,
-    // and a height cap on its own leaves the box the whole column with the
-    // pitch drawn small in the middle of it. That is the defect the editor
-    // canvas fixed once already, so it is pinned rather than rediscovered.
-    for (const name of ['dd-in-sd', 'dd-in-live']) {
-      const b = block(name)
-      expect(b, `.${name} has no height cap`).toContain('max-height')
-      expect(b, `.${name} caps height without bounding width`).toContain('max-width')
-      expect(b, `.${name} should bound width from the surface ratio`).toContain('--dd-ratio')
-    }
-    // And the ratio has ONE source: the renderer emits it from the same
-    // geometry the aspect ratio comes from, so the stylesheet never hard codes
-    // a per surface number.
-    expect(read('components/DrillDiagramView.tsx')).toContain("'--dd-ratio'")
-    expect(css, 'a hard coded ratio in the stylesheet').not.toMatch(/--dd-ratio:\s*[\d.]/)
+
+    // NO TYPED CSS ARITHMETIC ANYWHERE IN THIS STYLESHEET. The height caps used
+    // to bound width with `calc(var(--dd-cap) * var(--dd-ratio, 1))`, and a
+    // review of #189 was right to refuse it: calc() multiplying two custom
+    // properties is dropped whole on engines that will not do that arithmetic,
+    // iOS Safari 18.x and Chromium before 140 among them. A dropped width cap
+    // leaves the height cap alone, which is the letterboxed wide-grass box the
+    // cap existed to prevent, so the failure mode was silent and looked like
+    // the original defect.
+    expect(declared, 'the stylesheet does arithmetic again').not.toContain('calc(')
+    expect(declared, 'a cap custom property is back in the stylesheet').not.toContain('--dd-cap')
+    expect(declared, 'the ratio is back in the stylesheet').not.toContain('--dd-ratio')
+
+    // The caps and the multiplication live in ONE place instead, and it is
+    // TypeScript, where multiplying a number by a number is just arithmetic.
+    const size = read('lib/drillDiagramSize.ts')
+    expect(size).toContain('sessionDay:')
+    expect(size).toContain('live:')
+    // Each session surface names its cap from that one source rather than
+    // repeating a number, so the two cannot drift apart.
+    expect(read('routes/SessionDay.tsx')).toContain('DIAGRAM_HEIGHT_CAP.sessionDay')
+    expect(read('routes/LiveSession.tsx')).toContain('DIAGRAM_HEIGHT_CAP.live')
+    expect(css, 'a hard coded cap is back in the stylesheet').not.toMatch(/max-height:\s*(340px|42vh)/)
+
+    // And the renderer emits the pair TOGETHER. Both or neither is the whole
+    // rule: a height cap that lost its width is worse than no cap at all, so
+    // they are written in one object that either exists or does not.
+    const view = read('components/DrillDiagramView.tsx')
+    expect(view).toContain('diagramWidthCap')
+    expect(view).toMatch(/widthCap\s*\?\s*\{\s*maxHeight: heightCap,\s*maxWidth: widthCap\s*\}/)
+
     // And the shared surface itself is unchanged: still full width, still
     // taking its ratio from the diagram rather than from a stylesheet.
     const surface = block('dd-surface')
     expect(surface).toContain('width: 100%')
     expect(surface).not.toContain('aspect-ratio')
+  })
+
+  it('reads a passive diagram once per sitting rather than once per mount', () => {
+    // SOURCE TEXT beside a behavioural proof: drillDiagramRemount.test.ts
+    // mounts, unmounts and remounts the REAL query options through
+    // QueryObserver and counts the reads. This pins the two things that test
+    // cannot see going missing quietly.
+    const q = read('lib/queries.ts')
+    // A stale window, named rather than a literal, so the reason lives with it.
+    expect(q).toContain('export const DRILL_DIAGRAM_STALE')
+    expect(q).toMatch(/staleTime: DRILL_DIAGRAM_STALE/)
+    // And the save still invalidates, which is what keeps the window honest: a
+    // coach who saves a diagram sees it immediately, not in five minutes.
+    expect(q).toMatch(/invalidateQueries\(\{ queryKey: \['drill_diagram', vars\.id\] \}\)/)
+    // Not bought by switching mount refetching off, which would ALSO ignore an
+    // invalidation that happened while the screen was away.
+    expect(q, 'refetchOnMount would break the save path').not.toContain('refetchOnMount')
   })
 
   it('paints nothing over the pitch from a theme token', () => {

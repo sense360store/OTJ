@@ -32,6 +32,7 @@ import type { Activity, Drill, MediaItem, Session } from '../lib/data'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, fmtDate, Loading, MediaThumb, PHASE_COLOR, SourceLink } from '../components/ui'
 import { ActivityDiagram } from '../components/ActivityDiagram'
+import { DIAGRAM_HEIGHT_CAP } from '../lib/drillDiagramSize'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { DiagramViewer } from '../components/DiagramViewer'
 import type { DiagramSlide } from '../components/DiagramViewer'
@@ -302,7 +303,9 @@ function SessionDayView({ session }: { session: Session }) {
                   carry both. It is deliberately not folded into the slides
                   carousel, which is the uploaded media viewer and is typed
                   around MediaItem. */}
-              {r.drill && <ActivityDiagram drill={r.drill} className="dd-in-sd" />}
+              {r.drill && (
+                <ActivityDiagram drill={r.drill} className="dd-in-sd" heightCap={DIAGRAM_HEIGHT_CAP.sessionDay} />
+              )}
             </div>
           ))}
         </div>

@@ -778,11 +778,13 @@ export function DrillDiagramEditor() {
   // states need the same frame: rendered bare they would sit on an unstyled
   // page with no way back, because there is no app shell behind them.
   // THESE GUARDS TEST FOR MISSING DATA, NEVER FOR A QUERY ERROR ON ITS OWN, and
-  // that distinction is a data loss bug rather than a nicety. Both reads keep
-  // refetching in the background (the query client sets no staleTime, so a
-  // window focus refetches), and both hold their last good data through a
-  // failed refetch. Returning an error screen on `isError` would therefore
-  // unmount EditorBody, whose reducer holds the entire unsaved drawing, the
+  // that distinction is a data loss bug rather than a nicety. Both reads can
+  // refetch in the background (useDrill takes the client's default staleTime of
+  // zero, so a window focus refetches it; the diagram read has its own window
+  // and refetches when that lapses or when a save invalidates it), and both
+  // hold their last good data through a failed refetch. Returning an error
+  // screen on `isError` would therefore unmount EditorBody, whose reducer holds
+  // the entire unsaved drawing, the
   // moment a coach pitch-side lost signal and came back to the app. The
   // diagram would be gone and the fresh editor would open clean, saying Saved.
   // So an error only shows while there is nothing to show instead.

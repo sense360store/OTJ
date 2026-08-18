@@ -34,6 +34,16 @@
 // actual children are not resolved onto a drill diagram, which is the tactics
 // board's job and stays there.
 //
+// IT IS FETCHED ONCE PER SITTING, NOT ONCE PER MOUNT. Every consumer here is a
+// PASSIVE reader: nobody on a session screen edits a diagram, so a remount is
+// never a reason to go back to the database. useDrillDiagram carries a
+// staleTime for exactly that (DRILL_DIAGRAM_STALE in queries.ts). Without it
+// TanStack marks the result stale the moment it arrives, so collapsing and
+// reopening a planner panel repeated the read, and leaving Session Day's Setup
+// tab and coming back repeated one read PER DRILL. The explicit invalidation
+// after a save is untouched by that window and still refetches immediately,
+// because an invalidated query refetches on mount whatever its staleTime says.
+//
 // IT WRITES NOTHING. There is no mutation in this file and the query it uses is
 // a read. Rendering a session, live or otherwise, stores nothing.
 import type { ReactElement } from 'react'
@@ -53,12 +63,14 @@ import { DrillDiagramView } from './DrillDiagramView'
 export function ActivityDiagramView({
   diagram,
   className,
+  heightCap,
 }: {
   diagram: DrillDiagram | null
   className?: string
+  heightCap?: string
 }): ReactElement | null {
   if (!diagram) return null
-  return <DrillDiagramView diagram={diagram} className={className} />
+  return <DrillDiagramView diagram={diagram} className={className} heightCap={heightCap} />
 }
 
 // The mounted half: reads this drill's diagram, applies the one display rule,
@@ -66,9 +78,11 @@ export function ActivityDiagramView({
 export function ActivityDiagram({
   drill,
   className,
+  heightCap,
 }: {
   drill: Drill
   className?: string
+  heightCap?: string
 }): ReactElement | null {
   // A failed read resolves to undefined, which diagramForDisplay reads as
   // nothing to show. A drill whose diagram will not parse resolves to null for
@@ -76,5 +90,7 @@ export function ActivityDiagram({
   // hand edited or future shaped row leaves the card exactly as it was instead
   // of taking the session screen down with it.
   const { data } = useDrillDiagram(drill.id)
-  return <ActivityDiagramView diagram={diagramForDisplay(data, drill)} className={className} />
+  return (
+    <ActivityDiagramView diagram={diagramForDisplay(data, drill)} className={className} heightCap={heightCap} />
+  )
 }
