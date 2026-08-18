@@ -42,6 +42,9 @@ deferred:**
   `player_registrations` or `teams`.
 - **No `rotations` or `minutes_per_rotation` field.** Rotations are the station
   count; the rotation length is the members' own duration.
+- **No new column for the starting-station assignment.** It is a field inside
+  M3's block shape, which is not yet written, so the correction that introduced it
+  adds no migration (section 4).
 - **No setup phase entity and no layout versioning.** A phase-specific setup view
   is the placements of one block's members, and the transition between them is an
   ordinary activity (`02-target-product-model.md` section 7, layer 3).
@@ -145,16 +148,55 @@ alter table public.templates add column blocks jsonb;
 Stored shape:
 
 ```json
-[{ "id": "b1", "kind": "carousel" },
- { "id": "b2", "kind": "games" }]
+[{ "id": "b1", "kind": "carousel",
+   "start": { "red": 1, "blue": 2, "green": 3, "yellow": 4 } },
+ { "id": "b2", "kind": "games",
+   "games": [{ "a": ["red", "blue"], "b": ["green"] }] }]
 ```
 
 And each member activity in `activities` gains `"block_id": "b1"`.
 
-**Two fields, and neither is a number.** Rotations are the count of members with
-that `block_id`. The rotation length is the members' own shared `duration`, which
-they already carry. Storing either would create a value that can disagree with
-the list it describes.
+**`id` and `kind` are the whole planning shape. Rotations are still not stored:**
+they are the count of members carrying that `block_id`, and the rotation length is
+the members' own shared `duration`. Storing either would create a value that can
+disagree with the list it describes.
+
+**`start` and `games` are operational, optional, and session only.** A
+`templates` row never carries either, because a week plan has no groups. Both are
+absent until the operational layer produces them.
+
+### `start`: the frozen starting-station assignment
+
+**Added by the starting-station correction. It introduces no new migration**,
+because it widens the shape of a column that has not been written yet.
+
+A map from bib colour to station ordinal within the block. It exists because a
+proof shows **no stateless rule can give every active group a unique starting
+station AND keep other groups still when one disappears**
+(`00-current-state-audit.md` section 22): nine legal bib colours cannot be mapped
+injectively into four stations, and ranking the active colours is the dense-index
+problem. The full lifecycle is `02-target-product-model.md` section 7c.
+
+Why this home rather than any other:
+
+- **It must be shared**, because the primary success scenario is that every coach
+  sees the same plan on their own phone. `localStorage` is per device by design
+  and already holds only per-device aids (kit check-offs, the live timer
+  position), so it is disqualified.
+- **It must survive a reload**, which a `sessions` column does.
+- **It must reach a second device.** `sessions` is already in the realtime
+  publication (`0006_live_state.sql:27`) and `useLiveSessionSync` invalidates
+  `['sessions']`, which refetches the full row, so **the existing transport
+  carries a new column with no change to the sync code**
+  (`00-current-state-audit.md` section 23).
+- **It is written by an explicit driver action**, riding the same press that
+  already writes `live_activity_index`, never by a render. That respects the
+  standing rule that a page rendering is not an instruction to change a record.
+
+It stores a **station ordinal, not an activity id**, because `Activity` has no id
+and a block may hold one drill twice. The accepted edge is that reordering the
+plan mid-carousel invalidates the ordinals; the recovery is to recompute, and it
+is not worth an activity id to prevent.
 
 `kind` exists because a carousel and a game phase behave differently at delivery
 time (groups rotate through members, or groups become sides and stay) while being
@@ -190,9 +232,11 @@ for an unconstrained plan column. The precedent that matters more is `0046` and
 `0028`: where a jsonb column has a fixed vocabulary, this repository states it as
 schema.
 
-**Recommendation: a light check constraint.** An array of objects with exactly
-`id` and `kind`, `kind` drawn from a closed two-value set, a small maximum number
-of blocks. It costs one immutable predicate function, it is now a much smaller
+**Recommendation: a light check constraint.** An array of objects with `id` and
+`kind` required, `kind` drawn from a closed two-value set, a small maximum number
+of blocks, and the two optional operational fields: `start` as a map from a colour
+in the `is_bib_colour` vocabulary to a positive integer, and `games` as described
+below. That keeps the closed colour vocabulary closed on both sides of the wire. It costs one immutable predicate function, it is now a much smaller
 predicate than the previous version would have needed, and it stops a future
 client writing a shape the reader cannot understand.
 

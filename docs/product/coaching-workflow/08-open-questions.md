@@ -263,27 +263,58 @@ decision the function already made, and it makes an override an informed choice.
 
 ## Q12. Should a re-bib during the carousel warn the coach?
 
-**New, and the only question this round opened.**
+**Narrowed. The two cases are now separated and only one of them is still a
+question.**
 
-**The situation.** A re-bib is the agreed way to move a child between game sides,
-and it is also possible mid-carousel. Mid-carousel it is correct behaviour (the
-coach moving a child intends them to move), but it silently changes which group
-that child rotates with for the remaining stations, and if the last member of a
-colour is re-bibbed, that group ceases to exist.
+**Case A, a re-bib after the carousel while preparing the games. Settled: no
+warning, and no behaviour at all.** The starting assignments are spent, nothing
+consults them, and the stored map is simply no longer read. There is nothing to
+warn about.
 
-**Why it is only a UI question.** The data model handles both cases identically
-and correctly. The starting-station derivation keys on the bib colour rather than
-an array index, so no *other* group is disturbed
-(`02-target-product-model.md` section 7b). What is left is whether the coach
-should be told what they just did.
+**Case B, a re-bib while the carousel is running. Still open, and only as a UI
+question.** The data model already handles it correctly: the assignment was
+frozen at carousel start, so the child's own group changes and **no other group
+moves** (`02-target-product-model.md` section 7c). What is undecided is whether
+the coach should be told what they just did.
 
-**Recommendation.** No modal, no confirmation. At most a quiet line on the groups
-screen while a carousel block is running: "moving a child now changes which
+**Recommendation.** No modal and no confirmation. At most a quiet line on the
+groups screen while a carousel is running: "moving a child now changes which
 station they rotate to next". A coach mid-session should never be interrupted by
 a dialogue about something they meant to do.
 
-**If unanswered.** Ship without it. The behaviour is correct either way, and this
-only affects whether it is explained.
+**What this question is explicitly not.** It is not a reason to add data, and it
+must not be allowed to add machinery to case A. The freeze already makes case B
+safe.
+
+**If unanswered.** Ship without a warning. The behaviour is correct either way.
+
+---
+
+## Q13. What should happen when a new bib colour appears mid-carousel?
+
+**New, and the one genuinely unobserved corner of the starting-station design.**
+
+**The situation.** After the freeze, a colour with no stored station can appear:
+a coach re-bibs a child into a colour nobody was wearing, or a late arrival is
+given one. The proposed rule is that it takes the lowest station ordinal not
+claimed by a currently active colour, which naturally reuses a slot freed by a
+group that has gone.
+
+**Why it is a question rather than a decision.** That rule is reasoned, not
+observed. No coach has yet introduced a colour mid-carousel in this product, and
+the alternative is defensible: offer **no** starting station, say so plainly, and
+let the coach put the child in an existing group instead. Inventing a fifth group
+halfway through a carousel may be something the product should decline to help
+with.
+
+**Recommendation.** Ship the lowest-free-ordinal rule, because it degrades
+gracefully and needs no coach decision. Revisit if a coach reports that a group
+appearing mid-carousel was a mistake they wanted stopped rather than accommodated.
+
+**If unanswered.** The recommendation is the default. Either way, no other group
+moves, which is the property that actually matters.
+
+---
 
 ---
 
@@ -301,7 +332,8 @@ only affects whether it is explained.
 | Q8 audible rotation cue | Nothing | LIVE-02 unchanged |
 | Q10 transition timing | Nothing | Optional activity, games view announces itself |
 | Q11 a "why" line on the suggestion | Nothing | Ship without, add on request |
-| Q12 warn on a mid-carousel re-bib | Nothing | Ship without a warning |
+| Q12 warn on a mid-carousel re-bib (case B only) | Nothing | Ship without a warning |
+| Q13 a new colour appearing mid-carousel | Nothing | Lowest free station ordinal |
 
 **Settled by the August coach discovery, and not to be reopened without evidence**
 
@@ -313,8 +345,10 @@ only affects whether it is explained.
 | Game phase | Sides are sets of bib groups, banded not averaged, count is a recommendation |
 | Session-only override | Already satisfied by `register_entries.bib_colour_override` |
 | Moving one child between game sides | A re-bib. No per-player exception mechanism, no phase-specific bib, no history table |
+| Starting stations | Derived once, frozen at carousel start. No stateless rule can be both unique and stable |
+| A re-bib while preparing the games | No behaviour at all. The assignment is spent |
 | Team ability order | One integer per team (M6), the only irreducible new fact |
 
 **Nothing blocks the critical path.** Q1 governs only the parked public
-projection. Q10 and Q11 are refinements with defaults. The programme can proceed
+projection. Q10, Q11, Q12 and Q13 are refinements with defaults. The programme can proceed
 today: review and merge PR #189, then start COACH-B1.

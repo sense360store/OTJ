@@ -331,6 +331,12 @@ time, and deliver a carousel as a carousel rather than a queue.
 3. **Phase-specific setup.** A block is also what makes "the ground is
    rearranged after the carousel" expressible, because a block is exactly the
    set of activities sharing the ground at one time.
+4. **A stable starting-station assignment.** The carousel is where "which station
+   is my group at now" is answered, so **this phase owns that invariant.** A
+   proof shows no stateless rule can give every active group a unique starting
+   station while keeping other groups still when one disappears
+   (`00-current-state-audit.md` section 22), so the assignment is derived once and
+   frozen (`02-target-product-model.md` section 7c).
 
 **Not on this list: duration.** It is correct as it stands.
 
@@ -340,6 +346,10 @@ time, and deliver a carousel as a carousel rather than a queue.
 - The shared authoring seam (B1) gains **Make these a station carousel** and
   **Mark as the game phase**.
 - Live: one timer per rotation, **Rotate** as the cue, all stations listed.
+- **The starting-station assignment and its freeze.** Derived from the active bib
+  colours in vocabulary order while preparing; written into the carousel block
+  entry as `start` by the same explicit driver press that already writes
+  `live_activity_index`; read verbatim once present and never recomputed.
 - A planning warning where members of one carousel carry unequal durations.
 
 **Non-goals.** **No duration model change.** No `rotations` field and no
@@ -356,7 +366,11 @@ already reads rather than inventing a second classification.
 
 **Database.** **M3**. Two nullable jsonb columns and a light shape constraint,
 plus `block_id` added to `toActivity` and `toActivityRow`, without which it is
-dropped on read and lost on save.
+dropped on read and lost on save. **The `start` assignment is a field inside that
+shape, so it adds no migration of its own**; it must be on `sessions` rather than
+in `localStorage` because two coaches must agree, and `sessions` is already
+realtime-published so the existing sync carries it unchanged
+(`00-current-state-audit.md` section 23).
 
 **Migration risk.** Low. Null blocks and no `block_id` is every existing session
 and template. **The lifecycle and calendar risk the previous revision warned
@@ -372,11 +386,34 @@ reads 60 and matches what it read before the blocks existed. Run it live with
 three groups and confirm four rotations, one empty station per rotation, and no
 drill dropped.
 
+**The starting-station invariant, which this phase owns.** Seven shapes, all from
+`02-target-product-model.md` section 7c:
+
+1. Four stations and red, blue, green, yellow all get **distinct** starting
+   stations.
+2. **Remove the last red child after the freeze**, and blue, green and yellow are
+   **unchanged**. Station 1 is simply unoccupied. This is the shape a
+   dense-index derivation gets wrong.
+3. An arbitrary non-contiguous colour set (red, orange, purple, pink) still gets
+   four **unique** stations. A fixed global map cannot pass this, and the test
+   exists to prove the implementation is not one.
+4. **Reload** and the assignment is identical.
+5. **A second device** shows the same assignment, over the existing realtime
+   channel.
+6. A **game-phase re-bib** leaves the carousel assignment untouched.
+7. Three groups and four stations give three distinct starting stations, one
+   empty station per rotation, and **four** rotations.
+
+Plus one guard on the freeze itself: **no write happens on a render.** The
+assignment appears only after the explicit driver action, exactly as
+`live_activity_index` does.
+
 **Rollback.** Drop the columns. Sessions lose their block structure and read as
 sequential again; no activity and no duration is lost.
 
 **PR boundary.** One migration PR (gated). One PR for the model and the authoring
-affordance. One for the live view.
+affordance. One for the starting-station assignment and its freeze. One for the
+live view.
 
 ---
 
@@ -456,12 +493,17 @@ and confirm the stronger pair play each other.
 4. **No duplicate player-membership list exists.** A source-text check, in the
    style of the existing invariant tests: nothing outside `register_entries`
    stores which player is in which group or on which side.
-5. **Station behaviour is not silently corrupted.** This is the sharp one. Take
-   four groups, re-bib the **last remaining child of one colour** so that colour's
-   group disappears, and assert that **every other group's starting station is
-   unchanged**. `tonightGroups` returns an array that is dense over the colours in
-   use, so a derivation reading the array index would silently renumber the
-   others. The derivation must key on the **bib colour**.
+5. **The carousel assignment is not disturbed by a game-phase re-bib.** Assert
+   that re-bibbing during game preparation leaves the carousel's stored `start`
+   map byte-for-byte unchanged.
+
+   This is **cross-phase integration coverage only.** The invariant itself, that
+   removing one group never moves another, is **owned by Phase F**, which
+   introduces the assignment, its freeze and the seven shapes that prove it. An
+   earlier revision put that proof here, which made the games phase the accidental
+   owner of carousel station identity. It is not: by the time the games start, the
+   carousel assignment is spent, and F2's only stake is that it does not
+   *interfere* with something already finished.
 
 **Attendance is unaffected**, and that should be asserted too: `present` and
 `included_in_groups` are separate columns and a bib change must not touch either.
@@ -484,8 +526,10 @@ four colours, everyone has a bib".
   **unique** bib colour.
 - **Readiness**, derived: an included child with no effective bib means not
   ready; two active groups sharing a colour means not ready. Both name the fix.
-- Group order determines starting station, derived from the bib vocabulary order
-  `tonightGroups` already applies.
+- Group order seeds the starting-station assignment, in the fixed bib vocabulary
+  order `tonightGroups` already applies. **Phase G supplies the groups; Phase F
+  owns the assignment, its freeze and its stability** (`02-target-product-model.md`
+  section 7c). G must not derive or store one.
 
 **Non-goals, each one a mistake this design is guarding against.**
 - **No per-player ability score, level or classification.** The context derives
@@ -873,7 +917,69 @@ and K's message half.
 
 ---
 
-## 15. Adversarial pass, fourth round
+## 15. Adversarial pass, fifth round
+
+Run on one question the fourth round answered too quickly: is "key the derivation
+on the bib colour, never on a positional index" actually an algorithm?
+
+**It is not, and the fourth round should have noticed.** It correctly identified
+that a dense index is unstable, and then stated the negation of the wrong answer
+as though it were the right one. Taken literally it means a fixed map from colour
+to station, which cannot give unique stations: nine legal bib colours, four to six
+stations. And it is not a tuning problem, because if the map ignores the active
+set then every pair of colours can appear together, so uniqueness forces
+injectivity from nine into four.
+
+**So the fourth round shipped a rule that was safe in one direction and
+unimplementable in the other.** It is corrected in
+`02-target-product-model.md` section 7c, with the proof in
+`00-current-state-audit.md` section 22.
+
+**Does the freeze introduce complexity the coach did not ask for?** No setting and
+no new concept reach the coach: they still express no preference and OTJ still
+chooses. What changed is *when* it chooses, once rather than continuously, which
+is invisible except that the answer stops moving underneath them.
+
+**Is the state genuinely required, or convenient?** Required, and by proof rather
+than by argument. What is *not* proved by the same reasoning is where it lives, so
+that was established separately: it must be shared (two coaches, one plan), which
+disqualifies `localStorage`; it must survive reload, which a column does; and it
+must reach a second device, which `sessions` already does because 0006 published
+it and `useLiveSessionSync` refetches the full row. Each of those was read in the
+implementation rather than assumed.
+
+**Does it add a migration?** No, and this was checked rather than hoped. M3's
+`sessions.blocks` is proposed and unwritten, so `start` widens a shape that does
+not exist yet. If M3 had already shipped this would have been a migration, and the
+documents would say so.
+
+**Was case A allowed to complicate case B?** Deliberately not, and the separation
+is now written down. A re-bib while preparing the games needs **no behaviour at
+all**: the assignment is spent and nothing consults it. Only a re-bib during a
+running carousel needs the freeze. Building case A machinery to serve case B was
+the available wrong turn.
+
+**Is the phase ownership right now?** It was not. The proof lived under Phase F2,
+which made the games phase the owner of carousel station identity. Phase F
+introduces the carousel, the rotation and the live delivery that consumes the
+assignment, so **F owns the invariant and its seven shapes**; F2 keeps one
+integration assertion that a game re-bib does not disturb it; G supplies the
+groups and explicitly does not derive or store an assignment.
+
+**What is still weak?** Two things, both stated in place. The stored value is a
+station **ordinal**, so reordering the plan mid-carousel points it at the wrong
+station; that is accepted because nobody re-plans mid-carousel and the recovery is
+to recompute. And the "a new colour takes the lowest free ordinal" rule is
+reasoned rather than observed: no coach has yet introduced a colour mid-carousel
+in this product, so it may turn out that the honest answer is to offer nothing at
+all and say so.
+
+**Wording.** "Harmless" was wrong about the lost carousel colour and is corrected
+to a trade-off accepted under current requirements, because the same section lists
+three future requirements that would make the history relevant. The append-only
+bib-change log stays recorded as a **future option**, not planned work.
+
+## 16. Adversarial pass, fourth round
 
 Run on one question: does representing a game-side move as a re-bib break
 anything, given that `register_entries` holds one bib per player per session?
@@ -902,9 +1008,12 @@ it returns is **dense over the colours actually in use**. Re-bib the last child
 of a colour and that group vanishes, the array shortens, and every later group
 moves down an index. A "group N starts at station N" rule reading the array index
 would therefore let one child's re-bib silently reassign *other* groups' starting
-stations. The derivation must key on the bib colour. This is now a decision in
-7b, a recorded fact in `00-current-state-audit.md` section 22, and proof 5 of
-Phase F2's acceptance tests.
+stations. The derivation must key on the bib colour. *(Fifth round: that sentence
+is the negation of the wrong answer, not an algorithm. A fixed map from colour to
+station cannot be unique for nine colours and four stations; the proof is now in
+`00-current-state-audit.md` section 22, the corrected rule is derive once and
+freeze in `02-target-product-model.md` section 7c, and the invariant moved from
+Phase F2 to Phase F, which owns carousel station identity.)*
 
 That is the more valuable finding, and it is the opposite shape from the one
 being looked for: not "we lost data we needed" but "a derivation over live data
@@ -931,7 +1040,7 @@ mid-carousel re-bib is a UI question and is now Q12.
 **Is anything being added to the schema by this round?** Nothing. This round
 removed a deferred trigger and added zero fields, which is the outcome to prefer.
 
-## 16. Adversarial pass, third round
+## 17. Adversarial pass, third round
 
 Run after the coach discovery that produced this revision, and checked
 specifically against the contradiction list that discovery supplied. Earlier
@@ -1025,7 +1134,7 @@ the order, every team reads as unordered and the suggestion silently declines to
 combine anything. That is the correct failure but it will look like a bug, so the
 screen should say the order is unset rather than quietly doing less.
 
-## 17. Adversarial pass, second round
+## 18. Adversarial pass, second round
 
 Run after the review that produced this revision. The first-round pass is kept
 below as section 16, because two of its conclusions were wrong and the record of
@@ -1106,7 +1215,7 @@ the same file it conflicts on. If both merge without care, the roadmap's DRILL-0
 row could end up saying two different things. Flagged in
 `07-roadmap-reconciliation.md`.
 
-## 18. Adversarial pass, first round
+## 19. Adversarial pass, first round
 
 Performed before the first publication. Two of its conclusions were wrong and are
 corrected above; the rest stand. Kept because the corrections are more useful

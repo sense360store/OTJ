@@ -146,6 +146,9 @@ children replied. More children means bigger groups, not an invented fifth group
 
 **The coach has no preference** about which group starts where or which way the
 carousel turns, so the product should choose and offer no setting for either.
+What the product owes them in return is that **its choice stops moving**: once the
+carousel is running, one child changing bib must not silently send a different
+group to a different station.
 
 ## 7. Sharing before training
 

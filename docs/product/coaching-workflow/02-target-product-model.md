@@ -611,7 +611,7 @@ What OTJ believes at T6:
 **Three of the four are right, and the fourth is genuinely gone.** That is stated
 rather than softened.
 
-### Why losing the earlier colour is harmless
+### Why losing the earlier colour is accepted under the current product requirements
 
 Each consumer of the effective bib was checked rather than assumed:
 
@@ -631,6 +631,13 @@ carousel?".** The bib answers "which group is this child in now", which is a
 question about the present tense on a pitch, and the present tense is the only
 tense a coach needs while they are standing on it.
 
+**This is a trade-off accepted under today's requirements, not a claim that the
+history is worthless.** An earlier revision called the loss "harmless", which
+overstated it: this same section lists three plausible future requirements that
+would make the earlier colour relevant. The honest statement is that **no agreed
+current feature consumes it**, so it is not persisted **today**. If one of those
+requirements arrives the decision is reversed rather than contradicted.
+
 So: **no phase-specific bib persistence, no per-player game-side row, no history
 table.** Adding persistence to preserve a fact nobody reads would be the
 speculative complexity principle 10 exists to refuse.
@@ -645,29 +652,133 @@ Recorded so the trade-off can be reversed knowingly rather than rediscovered:
 - A dispute about who was where, which is a safeguarding-shaped question rather
   than a coaching one.
 
-None is on the roadmap. If one arrives, the smallest answer is **not** phase-aware
-bib columns: it is an append-only record of bib changes for a session, which is
-one narrow table and does not touch the operational read path at all. That is
-recorded as a shape, not as work.
+None is on the roadmap and none is planned work. If one arrives, the smallest
+answer is **not** phase-aware bib columns: it is an **append-only record of bib
+changes for a session**, one narrow table that does not touch the operational
+read path at all. It is recorded here as a **future option**, deliberately not as
+a scheduled phase, so a future session neither rediscovers it nor builds it
+speculatively.
 
 ### The real hazard this analysis found, and it is not history
 
-Losing the earlier colour turned out to be safe. **A different consequence of the
-same overwrite is not, and it would have been easy to ship.**
+Losing the earlier colour is a trade-off. **A different consequence of the same
+overwrite is a correctness bug**, and the first attempt to fix it was incomplete.
+It has its own section below.
 
-`tonightGroups` returns groups sorted by the fixed bib vocabulary, which is
-stable. But the **array it returns is dense over the colours actually in use**.
-Re-bib the last red child to blue and the red group disappears, the array shortens
-by one, and every group after it moves down an index.
+## 7c. Starting stations: derive once, then freeze
 
-If "group N starts at station N" reads that **array index**, then one child moving
-silently reassigns *other* groups' starting stations, mid-session, with no
-indication. If it keys on the **bib colour**, only the child who moved moves.
+**Corrected. A previous revision said "key the derivation on the bib colour,
+never on a positional index". That rules out the wrong answer without giving a
+right one, and taken literally it is unimplementable.**
 
-**Decision: the group-to-starting-station derivation keys on the bib colour, never
-on a positional index into the active set.** Pinned as an acceptance test in Phase
-F2 rather than left as a note, because the wrong version is the more obvious one
-to write.
+### Why "key by colour" alone cannot work
+
+Two requirements, and no stateless rule satisfies both
+(`00-current-state-audit.md` section 22 carries the proof):
+
+1. **Unique.** Two groups sharing a starting station rotate together for the
+   whole carousel while another station stands empty.
+2. **Stable.** One group disappearing must not move any other group.
+
+A **fixed global map** of colour to station is stable and cannot be unique: the
+vocabulary is nine colours and a carousel has four to six stations, so at least
+three colours share a slot. It is not a tuning problem either. If the map ignores
+the active set then any two colours can appear together as an active set of two,
+so uniqueness forces the map to separate every pair, which makes it injective
+from nine into four. Impossible.
+
+**Ranking the active colours 1 to N** is unique and unstable: it is the dense
+array problem restated.
+
+**So the correct design carries state**, not because state is convenient but
+because a proof says no stateless rule exists.
+
+### The lifecycle
+
+**Derive freely while preparing. Freeze when the carousel starts. Never move an
+existing assignment afterwards.**
+
+| Phase | Behaviour |
+|---|---|
+| **Preparing** (no stored assignment) | Derived fresh on every read from the active colours, ranked in the fixed `BIB_COLOURS` vocabulary order. Churn is free and desirable: the coach is still arranging groups and nothing is running. |
+| **Freeze** (the driver starts the carousel) | The derived assignment is written as a map from bib colour to station ordinal, by the existing explicit driver action, never by a render. |
+| **Running** (a stored assignment exists) | The stored map is authoritative and is read verbatim. It is **never recomputed**. |
+| **A colour disappears** | Its entry is left in place and nobody moves. That station simply has no group at it. |
+| **A colour appears** | It takes the lowest station ordinal not claimed by a currently active colour, which naturally reuses a slot freed by a departed group. Existing entries are untouched. |
+| **No free ordinal** | It gets none, and readiness says the carousel has more groups than stations. The unique-colour rule already treats that as not ready. |
+
+**Presence of the stored map is itself the "has it started" test**, so no second
+flag is needed and the two cannot disagree.
+
+### Why the freeze rescues uniqueness that no map could give
+
+Because the assignment is computed **once, over the active set that actually
+exists**, rather than from a global rule that must work for every possible set.
+Four arbitrary colours from anywhere in the nine, say red, orange, purple and
+pink, are ranked among themselves and get stations 1, 2, 3 and 4. Unique. A fixed
+map could never have promised that.
+
+### What a station ordinal means, and the one honest edge
+
+The stored value is the station's **ordinal within the block**, 1 to N, not an
+activity id, because `Activity` has no id (`00-current-state-audit.md` section 4)
+and a block may hold the same drill twice.
+
+**The edge, stated rather than hidden:** editing the plan while the carousel is
+running, by reordering or removing a station, makes the stored ordinals point
+somewhere else. That is accepted because nobody re-plans mid-carousel, and the
+recovery is to recompute, which costs nothing since the assignment is operational
+rather than precious. It is not worth an activity id to prevent.
+
+### The seven shapes, checked
+
+| | Shape | Result |
+|---|---|---|
+| 1 | 4 stations, red/blue/green/yellow | 1, 2, 3, 4. Unique. |
+| 2 | Remove red after the freeze | blue 2, green 3, yellow 4, **unchanged**. Station 1 unoccupied. |
+| 3 | Arbitrary non-contiguous set, red/orange/purple/pink | 1, 2, 3, 4. Unique, because the freeze ranks the actual set. |
+| 4 | Reload | Stored on `sessions`, read back identically. |
+| 5 | Second coach or device | Same row. `sessions` is already realtime-published and the sync refetches the full row (`00-current-state-audit.md` section 23), so no new transport is needed. |
+| 6 | A game-phase re-bib | Writes `register_entries`, not `sessions.blocks`. The carousel assignment is untouched, and it is spent anyway. |
+| 7 | 3 groups, 4 stations | Three distinct starting stations, one station empty each rotation, **four** rotations, because rotations follow stations. |
+
+All seven hold.
+
+### Where it lives, and why this is not a new migration
+
+**Inside the carousel block entry** that M3 already proposes:
+
+```json
+[{ "id": "b1", "kind": "carousel",
+   "start": { "red": 1, "blue": 2, "green": 3, "yellow": 4 } }]
+```
+
+- `sessions.blocks` does not exist yet, so this widens a shape before it is
+  written rather than adding a column. **No new migration.**
+- It must be on `sessions` rather than in `localStorage`, because two coaches must
+  agree and localStorage is per device by design: the existing local persistence
+  (kit check-offs, the live timer position) is explicitly not shared data
+  (`00-current-state-audit.md` section 23).
+- `templates.blocks` never carries `start`, because a week plan has no groups. The
+  field is optional, and a template that grew one would be meaningless rather than
+  harmful.
+
+### Mid-carousel re-bib, and why it does not complicate the prepared case
+
+Two cases, kept apart deliberately:
+
+**Case A, a re-bib after the carousel while preparing the games.** The starting
+assignments are spent. Nothing recomputes, nothing is invalidated, and the stored
+map is simply no longer consulted. **This case needs no behaviour at all**, and no
+part of it may be complicated to serve case B.
+
+**Case B, a re-bib while the carousel is running.** The child's operational group
+changes, which is what the coach intends. The stored map means **no other group
+moves**, which is the whole point of freezing. If the child's new colour has no
+assignment yet it takes a free ordinal; if none is free, readiness says so.
+
+Whether case B should also **warn** the coach is a UI question and nothing more.
+It is `08-open-questions.md` Q12, and it is not a reason to add data.
 
 ## 8. Training-day delivery
 
@@ -777,7 +888,7 @@ Two hard constraints, from `00-current-state-audit.md` section 7:
 | Game side | **A set of bib groups**, never one colour and never a player list | Block metadata |
 | Moving one child between sides | **A re-bib**, confirmed by the coach. No per-player exception mechanism. | None |
 | Earlier carousel colour after a re-bib | **Not recoverable, accepted.** Nothing reads it. | None |
-| Starting station derivation | Keys on the **bib colour**, never an array index | None |
+| Starting station derivation | **Derive once, freeze at carousel start.** No stateless rule can be both unique and stable. | Inside M3's block shape |
 | Game count | An attendance-driven **recommendation**; never rewrites the plan | None |
 | Training-day view | Composed from existing reads and PR #189's seam | None |
 | Motion | Deferred. Additive, gated, reader-first. | Diagram schema widening |

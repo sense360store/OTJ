@@ -618,26 +618,74 @@ Whether that matters is `02-target-product-model.md` section 7b.
 a bib change does not touch them, so who attended and who the coach included
 survive a re-bib intact.
 
-## 22. Group order is keyed, but the array index is dense
+## 22. Starting stations: no stateless rule can be both unique and stable
 
-`tonightGroups` (`src/lib/tonight.ts:1103`) builds a map keyed on the effective
-bib and then sorts by the **fixed `BIB_COLOURS` vocabulary order**
-(`:1128`), with the bib-less group last. That ordering is stable: it does not
-depend on which colours happen to be present, and its own comment says why
-(insertion order "reshuffled every card on a screen a coach is reading to call
-groups out").
+**Corrected. A previous revision concluded "key the derivation on the bib colour,
+never on a positional index". That is directionally right and it is not an
+algorithm.** It rules out the unstable option without producing a correct one.
 
-**But the returned array is dense over the colours that are actually in use.**
-With red, blue, green and yellow active, the array is four long. Re-bib the last
-red child to blue and the array becomes three long, and every group after red
-moves down one index.
+### The two requirements
 
-**This matters for a rule that does not exist yet.** The plan derives each
-group's starting station from group order
-(`02-target-product-model.md` section 6.6). If that derivation reads the array
-index, a single re-bib silently reassigns other groups' starting stations. If it
-keys on the bib colour, nothing moves except the child who moved. The constraint
-is recorded in section 7b there and as an acceptance test in Phase F2.
+1. **Unique**: every active group starts at a different station, or two groups
+   rotate together for the whole carousel while another station stands empty.
+2. **Stable**: when one group disappears, no other group's starting station moves.
+
+### Neither obvious rule satisfies both
+
+**A fixed global map, colour to station.** Stable by construction, and it cannot
+be unique. The vocabulary is **nine** colours, in `BIB_COLOURS`
+(`src/lib/bibs.ts`) and in `public.is_bib_colour`, which is the database
+authority (`0044_training_day_core.sql:81`): red, blue, green, yellow, orange,
+purple, pink, white, black. A carousel has four to six stations. Any fixed map of
+nine colours into four slots puts at least three colours on one slot.
+
+**Proof that this is not a tuning problem.** Suppose `f` maps colour to station
+without consulting the active set, and gives unique stations for every active set
+of size at most the station count. Take any two distinct colours. The set holding
+just those two is a legal active set, so `f` must separate them. They were
+arbitrary, so `f` is injective on all nine colours into four stations, which is
+impossible. **No stateless rule can be both unique and stable.**
+
+**Ranking the active colours into slots 1 to N.** Unique by construction, and
+unstable: it is the dense-array problem restated. `tonightGroups`
+(`src/lib/tonight.ts:1103`) sorts by the fixed vocabulary order (`:1128`), which
+is stable, but the array it returns is **dense over the colours actually in
+use**. Remove the last red child and the array shortens, so every later group's
+rank moves down one.
+
+**Therefore the design must carry state.** That is a proof rather than a
+preference, and it is what section 7b of `02-target-product-model.md` builds on.
+
+## 23. Shared, reload-safe session state already exists
+
+Relevant because the starting-station assignment needs exactly this and should
+not invent a second mechanism.
+
+- `sessions.live_activity_index` and `sessions.live_activity_started_at`
+  (`0006_live_state.sql:23`), both null when not live.
+- **`sessions` is in the realtime publication** (`0006:27`).
+- `useSetLiveActivity` (`src/lib/queries.ts:2197`) writes them on an explicit
+  driver action, never on a render.
+- `useLiveSessionSync` (`:2221`) subscribes per session id, patches the small
+  live columns into the cache from the payload, and then calls
+  `invalidateQueries({ queryKey: ['sessions'] })`. That prefix also matches
+  `['sessions', sessionId]`, so **the full row is refetched through RLS**, and
+  its own comment says so: "which also covers any column the payload may omit".
+
+**Consequence: any new column on `sessions` propagates to other devices over the
+existing channel with no change to the sync code.**
+
+### localStorage is per device and cannot be used for this
+
+Two things already persist locally and are explicitly not shared data:
+
+- Kit check-offs (`src/routes/SessionDay.tsx:56`), described in its own header as
+  "per device, a pre-session aid, not shared data".
+- The live timer position, remaining time and coach notes
+  (`src/routes/LiveSession.tsx:218`, `:270`).
+
+The primary success scenario is that **every coach sees the same plan on their
+own phone**, so anything two coaches must agree about cannot live here.
 
 ## Notable current-state findings the overhaul must design around
 

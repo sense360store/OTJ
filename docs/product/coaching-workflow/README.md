@@ -5,8 +5,8 @@ programmes, sessions, drills, Drill Maker, the drill library, Spond attendance,
 groups and bibs, venue and pitch layout, training-day delivery and shareable
 outputs.
 
-**Status: direction approved as the working model. Revised three times after
-review, most recently by the final August coach answer. No application or database
+**Status: direction approved as the working model. Revised four times after
+review, most recently by the starting-station stability correction. No application or database
 behaviour has been implemented by this document set.**
 
 Captured 17 August 2026 against `main` at `2283350`.
@@ -22,7 +22,7 @@ be unique; the club's team order is the only new fact worth storing; and a
 session has two physical phases, so the venue setup is phase-specific rather than
 static.
 
-**Revision 4** (this one) records the last coach answer and the architecture check
+**Revision 4** recorded the last coach answer and the architecture check
 it forced. Moving one child between game sides is a **re-bib**, so no per-player
 exception mechanism is needed. Checking that against the implementation confirmed
 `register_entries.bib_colour_override` overwrites, so a child's earlier carousel
@@ -30,7 +30,17 @@ colour is unrecoverable; every consumer was checked and none reads it, so the
 simple model stands with no new persistence. The check did find a real hazard, and
 a different one: the group array is dense over the colours in use, so a
 starting-station rule reading its index would let one re-bib silently reassign
-other groups. That derivation must key on the bib colour.
+other groups.
+
+**Revision 5** (this one) corrects that fix, which was directionally right and not
+an algorithm. A proof shows **no stateless rule can give every active group a
+unique starting station while keeping the others still** when one disappears:
+nine legal bib colours cannot map injectively into four stations, and ranking the
+active colours is the dense-index problem again. So the assignment is **derived
+once and frozen at carousel start**, stored inside M3's block shape, which adds no
+migration because that column is not yet written. It also corrects "harmless" to
+an accepted trade-off, and moves the stability proof from Phase F2 to Phase F,
+which actually owns carousel station identity.
 
 ## The outcome this serves
 
@@ -50,9 +60,9 @@ other groups. That derivation must key on the bib colour.
 | 03 | [Target UX journeys](03-ux-journeys.md) | Eight journeys, the components each reuses, and the mobile interaction decision. |
 | 04 | [Data model proposal](04-data-model-proposal.md) | The six anticipated migrations, and the seven deliberate non-changes. |
 | 05 | [Security, privacy and share boundary](05-security-share-boundary.md) | Why the existing public contract cannot carry a group plan, and what to do instead. |
-| 06 | [Phased implementation plan](06-phased-plan.md) | Fourteen phases, each independently shippable, plus four adversarial passes. |
+| 06 | [Phased implementation plan](06-phased-plan.md) | Fourteen phases, each independently shippable, plus five adversarial passes. |
 | 07 | [Roadmap reconciliation](07-roadmap-reconciliation.md) | How this relates to DRILL-02, DRILL-03, TRAIN-02 and the rest. |
-| 08 | [Open questions](08-open-questions.md) | Nine open decisions and seven now settled. None blocks the critical path. |
+| 08 | [Open questions](08-open-questions.md) | Ten open decisions and nine now settled. None blocks the critical path. |
 
 ## The findings that shaped everything else
 
@@ -77,6 +87,11 @@ other groups. That derivation must key on the bib colour.
    forcing a redistribution to tidy that is unnecessary kit churn at the worst
    moment. Moving one child between sides is a re-bib, which the existing
    session-only override already carries.
+
+4b. **Starting stations cannot be derived statelessly.** Nine bib colours into
+   four stations means no fixed map is unique, and ranking the active colours is
+   unstable. The assignment is derived once and frozen at carousel start, inside
+   the block shape M3 already proposes.
 
 5. **Most of the grouping requirement is already in the schema.**
    `register_entries.bib_colour_override` is already a session-only assignment
