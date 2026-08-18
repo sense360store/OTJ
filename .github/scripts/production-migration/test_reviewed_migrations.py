@@ -649,10 +649,11 @@ class ProbesAreTotal(unittest.TestCase):
                     vh.assert_probe_is_total(label, probe)
 
     def test_every_0049_probe_resolves_through_to_regprocedure(self):
-        # 0049 is the unapplied one, so its probes have never run against a
-        # database in either phase. They are named individually because the
-        # generic rule above would still pass a probe that resolved nothing
-        # at all.
+        # 0049 has been applied, so both its phases have run against the
+        # hosted database; these probes stay pinned because a later edit to
+        # them would change what a re-read of that state reports. They are
+        # named individually because the generic rule above would still pass
+        # a probe that resolved nothing at all.
         mig = rm.REVIEWED_MIGRATIONS["supabase/migrations/0049_spond_team_reconcile.sql"]
         self.assertEqual(len(mig.objects), 3)
         for label, probe in mig.objects.items():
