@@ -4,10 +4,14 @@ Status: proposal, reconciled 18 August 2026 against `main` at `afe790d`.
 **Nothing in this plan has been implemented.** A settled design is not delivered
 work, and no slice below is Done.
 
-The order was re-derived from scratch after coach discovery rather than adjusted
-from the previous fourteen-phase plan. Thirteen slices, each a small
-independently reviewable pull request or a small pair of them, each leaving OTJ
-usable and deployable.
+The order was re-derived from scratch after coach discovery, then corrected once
+more when two of its own conclusions turned out to be wrong: structure was being
+inferred from the `Phase` vocabulary, and the venue layout had been scoped to a
+venue alone. Thirteen slices, each a small independently reviewable pull request
+or a small pair of them, each leaving OTJ usable and deployable.
+
+**Migration slices are sequenced by the hosted ledger, not by this list.** See
+section 5.
 
 ---
 
@@ -42,13 +46,16 @@ was a designed mechanism in the previous revision, and each is now out of scope.
 | The stateless-rule impossibility proof as a design driver | Justify freezing | The arithmetic is still true and is still recorded as a fact. The conclusion no longer applies. |
 | Mid-carousel free-ordinal reassignment | Place a bib colour that appears mid-session | A colour appearing mid-session is a physical event the coach handles on the grass. |
 | Live rotation delivery (one timer per rotation, a Rotate cue) | Drive the carousel from OTJ | Live administration. Previous and Next are browsing. |
-| Per-activity station placement (`activities[].place`) plus derived area membership | Let a coach place stations weekly | Layouts are venue level and admin owned. Weekly coaches place nothing. |
+| Per-activity station placement (`activities[].place`) plus derived area membership | Let a coach place stations weekly | Layouts are scoped, admin owned and load automatically. Weekly coaches place nothing. |
 | Game sides as sets of bib colours on a block | Express a side wearing two colours | Reversed by discovery: each game gets two distinguishable colours, and the game bib is its own stored fact. |
 | The generated WhatsApp message carrying children's first names | Tell a parent their child's group | Sharing is coach to coach through the protected link. Nothing leaves the app. |
 | `sessions.template_id` | Uniform provenance and a sibling link | No consumer in the settled model. |
+| `venues.layout` as one jsonb column | All four layouts on the venue row | It cannot express the venue plus season plus age group scope the product requires. Replaced by a small table, not by a weaker scope. |
+| Deriving stations from the `Skill` phase, and games from the `Game` phase | Station and game identity with no new key | `phaseFor` sets an activity's phase from the drill's four-corners classification, so the phase records what kind of drill was added, not what part it plays on the night. Replaced by one declared key. |
 
-**Net effect on the schema: six proposed structures became one column**, and the
-programme's migration count fell from six to four.
+**Net effect on the schema: six proposed structures became three columns and one
+small table**, plus two keys inside an existing unconstrained jsonb array that
+need no migration at all.
 
 **Net effect on the product: nothing OTJ does depends on OTJ being correct about
 a pitch that is currently moving.**
@@ -73,7 +80,7 @@ the existing alphabetical read rather than replacing it.
 **Non-goals.** No per-player ability score, level or classification, ever. No
 change to `sessionTeamsLabel`, which stays alphabetical. No consumer yet.
 
-**Database.** M1 (`04-data-model-proposal.md` section 2). One nullable column,
+**Database.** M1 (`04-data-model-proposal.md` section 5). One nullable column,
 one partial unique index, plus the audit allow-list decision.
 
 **Tests.** Two teams cannot claim one position. Null everywhere reads as
@@ -84,38 +91,57 @@ that the write still takes `teams.manage`.
 
 **PR boundary.** One gated migration PR. One small frontend PR.
 
-### COACH-2: the station list, derived
+### COACH-2: declare the stations and the games
 
-**Outcome.** Every screen agrees on which activities are the stations, what
-number each one is, and how many there are.
+**Outcome.** A plan says explicitly which activities are the carousel stations
+and which are the evening's small-sided games, and which stations are not being
+run tonight. Every screen then agrees, and nothing is inferred.
 
-**Scope.** One module deriving, from a plan: the ordered station list (the
-`Skill` phase activities), the station count, and the games (the `Game` phase
-activities). One line in the planner and the week plan editor stating what it
-derived. The four or five rule stated where a count is shown.
+**Scope.**
+- `slot: 'station' | 'game'` on an activity, added to `toActivity` and
+  `toActivityRow` (`src/lib/queries.ts:289`, `:296`).
+- `skipped: true` on an activity, session-local, written only as `true` and
+  removed on restore. Stripped by the two template write paths (`:1579`,
+  `:1826`) and ignored by the reader on a template.
+- One module deriving, from a plan: the ordered **active** station list, the
+  station count, and the games. Station N is the Nth active station in plan
+  order and is never stored.
+- Marking affordances in the shared authoring seam, and a Not running tonight
+  toggle on a dated session's station.
+- A line in the planner and the week plan editor stating what is declared, and
+  the four or five rule where a count is shown.
 
-**Non-goals.** **No schema.** No `blocks`, no `block_id`, no marker on an
-activity. No refusal: a coach who plans three stations is told, not blocked. No
-reordering behaviour change.
+**Non-goals.**
+- **No schema.** `sessions.activities` and `templates.activities` are
+  unconstrained jsonb (`00-current-state-audit.md` section 27).
+- **Nothing is inferred from `Phase`, ever, at read time.** A phase-shaped hint
+  may seed the marking press, which a person confirms and which is then stored.
+- No `blocks`, no `block_id`, no block entity.
+- No stored station number.
+- No refusal: a coach who declares three stations is told, not blocked.
+- **Nothing is deleted.** A stood-down station keeps its place, its duration and
+  its position in the plan.
 
-**Reuse.** `Phase` (`src/lib/data.ts:9`), `phaseFor` (`src/lib/drillPicker.ts`),
-`sessionMinutes` unchanged.
+**Reuse.** The existing `Activity` and `ActivityRow` types, `sessionMinutes`
+unchanged, `useStartFromTemplate`'s deep copy of the mapped activities, which
+carries `slot` into every dated session for free.
 
 **Database.** None.
 
-**Tests.** Station numbering follows plan order. Reordering renumbers. A plan
-with no Skill activities derives no stations rather than guessing. The derived
-count is stated, including when it is three or six.
+**Tests.** A key added to one mapper and not the other is lost, so both are
+asserted. `slot` round trips through a session and a week plan. `skipped` round
+trips through a session and is **absent** from a template written from it.
+Station numbering follows plan order and skips a stood-down station. Restoring
+removes the key rather than writing `false`. A plan carrying no `slot` declares
+no stations and says so rather than guessing. A physical drill marked as a
+station is a station despite its Warm-Up phase, and a social drill in the `Game`
+phase that nobody marked is not a game: both are direct tests of the defect this
+slice exists to fix.
 
-**Dependencies.** None. **Gates** COACH-3, COACH-6 and COACH-7.
+**Dependencies.** None. **Gates** COACH-3, COACH-6, COACH-7 and COACH-8.
 
-**The residual, carried openly.** A `Skill` activity that is not a station makes
-the derived count wrong. It is visible rather than silent because the count is
-stated. If it proves real in use, the fix is one optional key on the activity
-plus `toActivity` and `toActivityRow`, which is not a migration
-(`08-open-questions.md`, D4).
-
-**PR boundary.** One PR.
+**PR boundary.** One PR for the model, the mappers and the tests. One for the
+authoring affordances.
 
 ### COACH-3: the suggested setup
 
@@ -155,7 +181,8 @@ child writes nothing to `players`, `player_registrations` or `teams`, asserted
 directly because a well-meaning "also update their team" convenience is the most
 plausible regression in the programme.
 
-**Dependencies.** COACH-2. COACH-1 for banding, degrading honestly without it.
+**Dependencies.** COACH-2, for the declared station list. COACH-1 for banding,
+degrading honestly without it and saying the order is unset.
 
 **PR boundary.** One PR for the pure generator and its tests. One for the screen.
 
@@ -183,59 +210,75 @@ second save are idempotent. Reset is absent.
 
 **PR boundary.** One PR.
 
-### COACH-5: venue layouts
+### COACH-5: venue layouts, scoped to venue, season and age group
 
-**Outcome.** An admin describes each venue once: where four stations go, where
-five go, where one game goes, where two go. Every coach reuses it every week.
+**Outcome.** An admin describes each venue once per season and age group: where
+four stations go, where five go, where one game goes, where two go. Every coach
+reuses it every week and the positions stay familiar.
 
-**Scope.** M2 (`venues.layout`), `src/lib/venueLayout.ts` (parser, serialiser,
-signature, sharing `clampFraction` with the diagram and the board), an admin
-editor on `/admin/venues` with draggable and resizable numbered zones, and a
-read-only renderer.
+**Scope.** M2, the `venue_layouts` table keyed on
+`(club_id, venue_id, season_id, age_group, kind, slots)`. `src/lib/venueLayout.ts`
+(parser, serialiser, signature, sharing `clampFraction` with the diagram and the
+board), an admin editor with draggable and resizable numbered zones, a read-only
+renderer, and the season and age group resolution for a session.
+
+**The age group vocabulary is scope, not a follow-up.** `clubs.age_groups` exists
+and the planner ignores it, offering a hardcoded literal list
+(`00-current-state-audit.md` section 26). A scope key is only as good as its
+vocabulary, so this slice makes the layout admin screen and the session's age
+group control offer the **same** list. That is client work, not a migration.
 
 **Non-goals.** **No imagery, satellite or otherwise.** No coordinates, no
 address, no navigation. **No weekly placement of any kind**, and no per session
-composer. No layout versioning beyond the shape version.
+composer. **No `sessions.season_id`**: the season derives from the session's
+date. No layout versioning beyond the shape version.
 
 **Reuse.** The whole shape discipline of `0046` and `src/lib/drillDiagram.ts`,
-deliberately, so this is the third instance of a known pattern rather than a new
-one.
+and the "refuse to guess when zero or more than one matches" rule
+`matchVenueByLocation` already applies.
 
-**Database.** M2. One nullable jsonb column plus a check constraint stating the
-key allow-list.
+**Database.** M2 (`04-data-model-proposal.md` section 3). One table, RLS
+mirroring `venues` exactly, explicit grants, and a check constraint stating the
+zone key allow-list.
 
-**Audit, and do not miss this.** `audit_venues()` treats an update as a rename
-and `describeActivityEvent` renders `venue.updated` as "Venue renamed". That
-sentence becomes false. Either the allow list gains `layout` and the label
-becomes "Venue updated", or the label and its comment are corrected.
+**Audit.** A decision the migration makes: recommended, audit create, update and
+delete at venue granularity. **Because the layout is a table rather than a column
+on `venues`, `audit_venues()` and its "Venue renamed" label stay true**, and the
+label correction an earlier revision had to schedule disappears.
 
 **Tests.** Parser and serialiser round trip. An unknown version yields no layout.
 Out-of-range coordinates are clamped. A corrupt zone is dropped rather than
 taking the layout with it. The constraint refuses a key outside the allow-list,
 including a location-shaped one, and holds against service_role. A zone count
-that disagrees with `slots` is refused.
+that disagrees with `slots` is refused, as are 3 stations and 3 games. Two
+layouts of the same kind and slots in one scope are refused. Season resolution:
+one containing season wins; zero or two fall back to the current season; neither
+renders nothing and says so.
 
-**Manual smoke.** Configure Haggs Hill with four and five station layouts, then a
-venue that uses a third of a pitch. Confirm both render legibly at phone width.
+**Manual smoke.** Configure Haggs Hill for this season and one age group, four
+and five station layouts plus one and two game visuals. Confirm both render
+legibly at phone width. Confirm a second age group at the same venue gets its own
+layouts and does not see the first's.
 
-**Dependencies.** None. Can run in parallel with COACH-1 through COACH-4.
+**Dependencies.** None. Can run in parallel with everything except its own
+ledger sequencing (section 5).
 
-**Rollback.** Drop the constraint, then the column. **Dropping the column
-discards every saved layout**, so drop the constraint alone unless the feature is
-being withdrawn.
+**Rollback.** Drop the table, which **discards every saved layout**. Drop the
+check constraint alone if only the shape is being withdrawn.
 
 **PR boundary.** One gated migration PR. One PR for the model and its tests. One
-for the admin editor. One for the renderer, or folded into the editor.
+for the admin editor and the shared age group list. One for the renderer.
 
 ### COACH-6: the setup map
 
 **Outcome.** A coach opens the session on their phone and sees where everything
 goes, without being told.
 
-**Scope.** On session day, load the venue's layout for the session's derived
-station count and draw the zones. Each zone carries the **station number, the
-drill name and the group starting there**. A subtle clockwise cue. The same
-stations available as an ordinary list.
+**Scope.** On session day, resolve the session's scope (venue, season, age
+group) and its active station count, load the matching layout and draw the zones.
+Each zone carries the **station number, the drill name and the group starting
+there**. A subtle clockwise cue. The same stations available as an ordinary list.
+A station stood down tonight is not drawn and is named as not running.
 
 **Non-goals.** **No drill diagram inside a zone.** No pinch-dependent design. No
 progress, no current station, no rotation state. No editing of anything from
@@ -246,8 +289,10 @@ here.
 
 **Database.** None.
 
-**Tests.** A session whose venue has no layout for its count says so in one
-sentence and blocks nothing. A session with four stations loads the four station
+**Tests.** A session whose scope has no layout for its count says so in one
+sentence and blocks nothing. A session with four active stations loads the four
+station layout, and standing one of five down moves it to the four station
+layout. A session in a different age group at the same venue loads its own
 layout. Zone labels carry number and name, never colour alone. Screen-level tests
 at phone width.
 
@@ -296,15 +341,20 @@ without destroying the station groups.
 - M3, `register_entries.game_bib_colour_override`.
 - Game resolution in `src/lib/bibs.ts`: game override, else the effective station
   bib.
+- The games are the activities declared `slot: 'game'` (COACH-2), never the
+  `Game` phase.
 - A recommendation: one game at 12 or fewer confirmed, two at 13 or more, aiming
   at 5v5 or 6v6 and avoiding 7v7.
+- **Game and side derive from the game bib colour's position** in the planned
+  ordering of the first `2 x G` colours of the fixed vocabulary: index 0 is game
+  1 side A, index 1 is game 1 side B, and so on. The UI offers only those
+  colours, so each game shows two distinguishable colours and two games use four.
 - Suggested sides from the club team order: with two games the upper teams form
   the stronger game and the lower the development game, with the middle band
   split where the numbers need it; with one game the sides are balanced by
   ability with the stronger players distributed across both.
-- Where possible, two clearly distinguishable colours per game.
 - The game plan shows player names, side and game bib colour.
-- The games view on session day, using the venue's game layout.
+- The games view on session day, using the scope's game layout.
 
 **Non-goals.**
 - **The station bib plan is never written by this slice**, and a test asserts it.
@@ -312,23 +362,26 @@ without destroying the station groups.
   reasoning beside them, producing a sentence and never a change.
 - **The recommendation never rewrites the plan.** Two planned games stay two.
 - No per-player side column and no per-player game number.
+- **No session-level colour map.** Only implementation evidence that the
+  deterministic ordering cannot work would justify one.
 - No averaging two games into identical mixtures.
+- **Physical changes on the pitch are not persisted.**
 
 **Database.** M3. One nullable column with the closed colour vocabulary, copying
 nothing from the existing column in either direction, proven in the migration's
 self-verification in the manner of 0047.
 
-**Tests.** A game re-bib leaves `bib_colour_override` byte for byte unchanged, and
-leaves `present` and `included_in_groups` untouched. 12 recommends one game and
-13 recommends two. A child nobody re-bibbed plays in their station colour. Sides
-follow the club order and the middle band is the one that splits. A save sends
-only the columns that changed.
+**Tests.** A game re-bib leaves `bib_colour_override` byte for byte unchanged,
+and leaves `present` and `included_in_groups` untouched. 12 recommends one game
+and 13 recommends two. A child nobody re-bibbed plays in their station colour.
+Sides follow the club order and the middle band is the one that splits. A colour
+outside the planned ordering resolves to no game and shows as unassigned rather
+than being guessed into the nearest one. A social drill in the `Game` phase that
+nobody declared is not one of the games. A save sends only the columns that
+changed.
 
 **Dependencies.** COACH-3 for the groups, COACH-1 for the banding, COACH-5 for
 the games view.
-
-**Unresolved before this slice starts**, not during it: how a game bib colour
-resolves to a game and a side (`08-open-questions.md`, D3).
 
 **PR boundary.** One gated migration PR. One PR for the resolution and the
 suggestion. One for the screens.
@@ -434,7 +487,7 @@ action.
 
 **Non-goals.** No propagation of an edit from one delivery to the other. No new
 planning entity. **No `template_id`**: the journeys are copies and work without
-it (`04-data-model-proposal.md` section 7).
+it (`04-data-model-proposal.md` section 9).
 
 **Database.** None.
 
@@ -461,109 +514,183 @@ copy sweep test that no user-visible string says "template".
 ## 4. Dependency graph
 
 ```
-COACH-1 (team order, M1) ─┐
-                          ├─ COACH-3 (suggested setup) ─┬─ COACH-4 (attendance change)
-COACH-2 (station list) ───┤                             ├─ COACH-8 (games, M3)
-                          │                             │
-                          └─ COACH-6 (setup map) ─┬─ COACH-7 (station detail)
-COACH-5 (venue layouts, M2) ────────────────────┘   └─ COACH-9 (share check)
+COACH-2 (declare stations and games, no schema)
+   ├─ COACH-3 (suggested setup, no schema) ─┬─ COACH-4 (attendance change, no schema)
+   │        ↑ wants COACH-1                 └─ COACH-8 (game plan, M3)
+   ├─ COACH-6 (setup map) ── COACH-7 (station detail) ── COACH-9 (share check)
+   │        ↑ needs COACH-5
+   └─ COACH-8
+
+COACH-1 (team order, M1)     independent, wanted by COACH-3 and COACH-8
+COACH-5 (venue layouts, M2)  independent, needed by COACH-6 and COACH-8's games view
 
 COACH-10 (authoring seam) ─┬─ COACH-11 (new drill, draw it)
                            ├─ COACH-12 (adapt, M4)
                            └─ COACH-13 (week plans)
 ```
 
-Two independent tracks. The upper track delivers the primary success scenario.
-The lower track is authoring and can be scheduled by capacity, or run in parallel
-by a second pair of hands.
+**COACH-2 is the root of the operational track**, because nothing can name a
+station or a game until a plan declares one.
+
+Two independent tracks. The upper track delivers the primary success scenario;
+the lower is authoring and can run in parallel by a second pair of hands. COACH-2
+and COACH-10 both touch the authoring seam, so if both are in flight they are
+sequenced rather than merged blind.
 
 **Nothing in this graph depends on a sharing decision, a public projection, an
 Edge Function deploy or a Spond change.**
 
-## 5. Recommended first implementation slices
+## 5. Recommended sequence, and how the migrations are timed
 
-1. **COACH-1**, the team order. One gated migration on a five-row table plus a
-   reorder affordance. It is the only irreducible new fact in the programme and
-   it gates the useful half of everything operational.
-2. **COACH-2**, the station list. No schema at all, one module, and it removes
-   the last reason anyone would reach for a blocks column.
-3. **COACH-3**, the suggested setup. This is the slice a coach feels: it turns
-   "26 replies" into "5 stations, 5 groups, everyone has a colour" at the moment
-   they actually look, 24 to 48 hours out.
-4. **COACH-5** in parallel if there is capacity, since it depends on nothing and
-   its migration and its admin editor are independently reviewable.
+**The four migration slices are not sequenced by this list.** Open draft PR #191
+owns reviewed migration `0050`, this programme does not modify it, and a file
+number reserves nothing: the reviewed register pins every migration to the hosted
+ledger head it was written against, so an entry cannot even be written until that
+head is known (`04-data-model-proposal.md` section 8).
 
-Then COACH-4, COACH-6, COACH-7, COACH-8, COACH-9 in that order, with the
-authoring track scheduled beside them.
+**So the non-migration slices lead, and each migration is authored, numbered and
+registered when it is ready for its own application review, against the live
+ledger as it stands then.**
 
-**Gated migration reviews, in order of appearance:** COACH-1 (M1), COACH-5 (M2),
-COACH-8 (M3), COACH-12 (M4).
+### The migration-free run, which can start today
+
+1. **COACH-2**, declare the stations and the games. No schema, two mapper
+   entries, and it is the root of everything operational. It also removes the
+   last reason anyone would reach for a blocks column, and it fixes a defect
+   rather than adding a feature: today nothing in the data says what a station
+   is.
+2. **COACH-3**, the suggested setup. The slice a coach feels: "26 confirmed, 5
+   stations, 5 groups, everyone has a colour", 24 to 48 hours out. It wants
+   COACH-1 for banding and degrades honestly without it, saying the order is
+   unset.
+3. **COACH-4**, preserving the coach's setup when attendance changes.
+4. **COACH-10**, the authoring seam, whenever capacity allows. It is a pure
+   refactor provable against two existing suites.
+
+### The migration slices, in dependency order
+
+5. **COACH-1**, `teams.sort_order`. One nullable column on a five-row table, and
+   the smallest possible first migration for this programme. It upgrades COACH-3
+   from "keeps teams whole" to "combines adjacent bands".
+6. **COACH-5**, the `venue_layouts` table. The largest single review in the
+   programme: a new table, a new shape boundary, RLS mirroring `venues`, and the
+   season and age group resolution.
+7. **COACH-8**, `register_entries.game_bib_colour_override`, after COACH-3 and
+   ideally after COACH-5 so the games view has a layout to draw.
+8. **COACH-12**, `drills.variant_of`, on the authoring track after COACH-10.
+
+### The rest, by capacity
+
+**COACH-6** and **COACH-7** as soon as COACH-5 lands, since they are the primary
+success scenario. **COACH-9** any time. **COACH-11** and **COACH-13** after
+COACH-10.
+
+**Gated migration reviews:** COACH-1 (M1), COACH-5 (M2), COACH-8 (M3), COACH-12
+(M4). Each is registered separately, against the head it will actually run
+against.
 
 **Full security reviews: none.** `05-security-share-boundary.md` section 9
-carries the reasoning, which is a direct consequence of withdrawing the generated
-message and proposing no public projection.
+carries the reasoning.
 
-## 6. Adversarial pass on this reconciliation
+## 6. Adversarial pass, after the correction
 
-Run against the reconciled model, not against the model it replaces.
+Run against the corrected model, including against the two conclusions this pass
+overturned.
 
-**Is removing the frozen assignment a regression waiting to happen?** The old
-proof stands as arithmetic: nine colours cannot map injectively into four
-stations, and ranking the active colours shifts when one leaves. What changed is
-that nothing consumes stability any more. The failure it prevented was "a group's
-starting station moves while the carousel is running", and OTJ no longer claims
-to know that a carousel is running. Before training, a plan that restates itself
-after the coach changes the groups is correct behaviour. **The honest residual:
-if the club later asks OTJ to drive the carousel, this decision is reversed, and
-the proof and the mechanism are both still on the record.**
+**Why did the previous pass reach for `Phase` at all?** Because it was optimising
+for "no migration", found a field that correlated with the answer on the sessions
+it imagined, and stopped. The correlation is real and it is not identity:
+`phaseFor` (`src/lib/drillPicker.ts:17`) sets the phase from the drill's
+four-corners classification, so a physical drill lands in Warm-Up and a social
+drill lands in Game, whatever part either plays on the night. **The lesson
+generalises: a field that means one thing may not be read as though it meant
+another, however convenient the overlap.** The corrected answer still needs no
+migration, because the column it rides is unconstrained jsonb, so the saving was
+never the reason to guess.
 
-**Does deriving the station list from `Phase` smuggle in a hidden model?** It
-leans on a field every screen already reads and that the library add path already
-sets. The risk is a `Skill` activity that is not a station. It is contained by
-stating the derived count rather than hiding it, and the fallback needs no
-migration. What would make this wrong is a coach whose sessions routinely mix
-carousel and non-carousel skill work, and nobody has reported one.
+**Does declaring `slot` add a concept a coach has to learn?** One, and it is the
+one they already have: this drill is a station, that one is a game. It replaces
+nothing they understood before, because today the product cannot express it at
+all. The count and the numbering stay derived, so nothing new is remembered.
 
-**Is the second bib column the thing the previous revision correctly refused?**
-No, and the difference is worth stating precisely. It refused `carousel_bib` and
-`game_bib` as *phases of a general block mechanism* whose count was a planning
-decision. There is no general mechanism now: there are exactly two arrangements
-per night, and the settled decision requires both to exist at once. Refusing the
-column would mean either overwriting the station plan, which discovery forbids,
-or inventing a per-player side row, which duplicates membership that already
-lives once.
+**Is `skipped` the reversible thing it claims to be?** Yes, and the shape is what
+makes it so: the key is removed rather than set to `false`, the activity keeps
+its place and duration, the week plan never receives it, and the library drill is
+untouched. The failure mode to guard is a template that somehow carries one, and
+both ends handle it: the template write paths strip it and the reader ignores it
+on a template, failing towards running the drill.
 
-**Does anything else in the new model store what could be derived?** Checked one
-at a time. Station identity: derived. Station number: derived. Rotations:
-derived. Starting station: derived. Group identity: derived from the bib. Game
-side: derived from the game bib. Readiness: derived. Session lifecycle: already
-derived. The four stored things are the club's team order, the venue's geometry,
-a child's game bib and a drill's parent. **Each is a fact nothing else can
-produce.**
+**Was scoping the layout to a venue alone a reasonable simplification?** No, and
+it is worth saying why the argument was wrong rather than just reversing it. It
+rested on "a rectangle on the ground is a physical fact that does not change with
+the season", which is true of the grass and false of **the club's allocation of
+it**, which is what a layout actually records. Two age groups at one venue are
+allocated different areas, and a club's allocation is renegotiated between
+seasons. The settled decision said venue, season and age group, and a design
+document does not get to narrow a settled requirement because a column is easier
+than a table.
 
-**Is the venue layout column doing too much for one jsonb value?** It holds four
-layouts. The alternative was a table, and it was rejected because a column on
-`venues` inherits the club-wide read and the `club.manage` write with no new
-policy and no new grant, which is the argument this repository makes repeatedly.
-The residual risk is a bigger check constraint than a single-layout column would
-need, and it is bounded because both `kind` and `slots` are closed sets.
+**Does the table cost more review than it saves?** It costs the most of any
+single migration here: a new table, new policies, new grants, a new shape
+boundary and an audit decision. Against that it buys an enforceable season
+reference, a unique key that makes one layout per scope a database fact, a
+natural unit of editing, and no unbounded blob. It also **removes** a scheduled
+correction: with the layout off `venues`, `audit_venues()` and its "Venue
+renamed" label stay true.
 
-**Does anything in the plan require OTJ to be right about a moving pitch?**
-Checked per slice. COACH-1 through COACH-5 are all pre-session. COACH-6 and
-COACH-7 are read-only browsing. COACH-8 writes a plan a coach saves before
-training. COACH-9 shares a link. COACH-10 through COACH-13 are authoring. **No
-slice writes during delivery**, and the one thing that does today, the live
-driver's activity index, is untouched.
+**Is deriving the season from the date safe, given seasons may overlap?** It is
+safe because it refuses to guess: exactly one containing season wins, zero or two
+fall back to the current season, and neither renders nothing. The alternative,
+`sessions.season_id`, is a second fact that can disagree with the date. The
+residual is that a session dated inside two overlapping seasons quietly uses the
+current one, which is the honest answer and is stated on the screen.
 
-**What is genuinely weaker after this reconciliation?** Three things, all
-recorded rather than hidden. The grouping suggestion's quality is unprovable in
-advance and needs coach feedback after one real use rather than more design. The
-game colour to side derivation is reasoned rather than observed, which is why it
-must be settled before COACH-8 starts. And a station derived from `Phase` is a
-convention rather than a declaration, which is a trade accepted in exchange for
-deleting a migration.
+**Is the deterministic game colour rule actually deterministic?** It is a pure
+function of the fixed `BIB_COLOURS` order and the game count, both of which every
+reader already has, and the UI offers only the colours it produces. The residual
+is a stored colour outside that list, reachable only by a hand-written write, and
+it resolves to no game rather than to the nearest one. A session-level map would
+remove the residual and add a second fact that can disagree with the bib a child
+is wearing, so it stays unbuilt until implementation evidence demands it.
 
-**What could still go wrong that this plan does not cover?** A five drill plan
-delivered as four stations still has no agreed gesture, and the wrong answer
-would be destructive. It is carried as D2 and the plan explicitly refuses to
-invent a behaviour for it.
+**Is removing the frozen carousel assignment still right?** Yes, and the
+arithmetic behind it still stands: nine colours cannot map injectively into four
+or five stations, and ranking the active colours shifts when one leaves. What
+changed is that nothing consumes stability, because OTJ no longer claims to know
+that a carousel is running. **If the club ever asks OTJ to drive one, the proof
+and the mechanism are both still on the record** (`00-current-state-audit.md`
+section 22).
+
+**Is the second bib column the thing an earlier revision correctly refused?** No.
+It refused `carousel_bib` and `game_bib` as phases of a general block mechanism
+whose count was a planning decision. There is no general mechanism now: there are
+exactly two arrangements per night and the settled decision requires both at
+once. Refusing the column would mean overwriting the station plan, which
+discovery forbids, or inventing a per-player side row, which duplicates
+membership that already lives once.
+
+**Does anything else in the model store what could be derived?** Checked one at a
+time. Station number: derived. Rotations: derived. Starting station: derived.
+Group identity: derived from the bib. Game and side: derived from the game bib.
+The session's season: derived from its date. Readiness: derived. Lifecycle:
+already derived. **The stored things are the club's team order, the venue's
+geometry per scope, a child's two bibs, a drill's parent, and two words on an
+activity.** Each is a fact nothing else can produce.
+
+**Does anything require OTJ to be right about a moving pitch?** Checked per
+slice. COACH-1 through COACH-5 are pre-session. COACH-6 and COACH-7 are read-only
+browsing. COACH-8 writes a plan saved before training. COACH-9 shares a link.
+COACH-10 through COACH-13 are authoring. **No slice writes during delivery**, and
+the one thing that does today, the live driver's activity index, is untouched.
+
+**What is genuinely weaker after this correction?** Two things, both recorded.
+The grouping suggestion's quality is unprovable in advance and needs coach
+feedback after one real use. And the age group vocabulary is a hardcoded literal
+in the planner while `clubs.age_groups` sits unread, so the layout scope's third
+key is only as good as a list COACH-5 has to go and fix.
+
+**What could still go wrong that this plan does not cover?** A plan authored
+before COACH-2 declares no stations, so every existing session shows an empty
+setup map until someone marks it. That is correct and it will still read as a
+regression to a coach who does not know why, which is why the empty state has to
+say what to do rather than merely say nothing is there.

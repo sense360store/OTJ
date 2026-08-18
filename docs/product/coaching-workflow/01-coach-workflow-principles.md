@@ -13,8 +13,10 @@ each:
   `afe790d`. `00-current-state-audit.md` carries the evidence.
 - **Target** is approved product behaviour from coach discovery. None of it is
   built.
-- **Unresolved** is a question discovery did not answer. Every one is named in
-  `08-open-questions.md` and none is hidden inside a target statement.
+- **Unresolved** is something still to be decided. **No product or club question
+  is outstanding**; what remains is three decisions taken at a migration's own
+  review, named in `08-open-questions.md`, and none is hidden inside a target
+  statement.
 
 ---
 
@@ -96,8 +98,18 @@ a drill and nothing shortens the carousel.
 
 **A plan holding five drills delivered as four stations is the coach's choice,
 never OTJ's.** The recommendation names the count; which drill sits out is
-decided by a person. No planned drill is deleted to satisfy an arithmetic
-recommendation.
+decided by a person. **Nothing is deleted**: the drill stays in the dated
+session's plan, marked as not running tonight, and one press restores it if more
+children confirm. The week plan and the library drill are untouched either way.
+
+**Target. A plan says explicitly which activities are the stations and which are
+the games.** It is not inferred from the drill's coaching phase, because that
+records what kind of drill was added rather than what part it plays on the night.
+A physical drill filed under Warm-Up can be a station, and a social drill filed
+under Game is not automatically one of the evening's small-sided games.
+
+**Station numbers follow the plan order of the stations running tonight.**
+Nothing stores a number.
 
 ## 5. How drills actually get created
 
@@ -239,13 +251,19 @@ that OTJ knows where the carousel has got to.
 
 **Target. Venue setup is reusable and admin owned.**
 
-- Each venue has **two saved station layouts**: one for four stations and one for
-  five. OTJ loads the appropriate one for the session automatically, from the
-  session's station count.
-- Each venue also has a **simple saved reminder visual for one game and for two
-  games**. Different venues use different pitch sizes and positions, and the
-  operational information is one game or two, where they are, and which named
-  players and bibs are on each side. It is not a geometry editor.
+**The layout is scoped to a venue, a season and an age group.** It is not
+venue-global and it is not per team. The club's allocation of a venue differs
+between age groups and is renegotiated between seasons, and within one season it
+stays stable, which is exactly what makes the positions familiar week to week.
+
+Within one scope the admin saves four layouts:
+
+- **A four station layout and a five station layout.** OTJ loads the appropriate
+  one automatically, from the number of stations actually running that night.
+- **A one game and a two game reminder visual.** Different venues use different
+  pitch sizes and positions, and the operational information is one game or two,
+  where they are, and which named players and bibs are on each side. It is not a
+  geometry editor.
 - Each station is a **draggable and resizable rectangular zone** during admin
   setup. The rectangle means "this is the area normally allocated to Station N".
   It is not the exact footprint of that week's drill.
@@ -290,8 +308,8 @@ may hard code those names**. They are this season's contents of an ordered set.
 - **Sensible game size comes before preserving station bib groups.**
 - Some players are re-bibbed for the games, and that is expected rather than
   exceptional.
-- Where possible, each individual game has two clearly distinguishable bib
-  colours.
+- Where possible, each individual game has **two clearly distinguishable bib
+  colours**, so two games use **four** distinguishable colours between them.
 
 ### One game
 

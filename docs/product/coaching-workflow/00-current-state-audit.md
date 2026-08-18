@@ -527,7 +527,10 @@ are station work, in a field every screen reads, and it records their order.
 **That is enough to derive the station list, the station numbers and the station
 count without storing anything** (`02-target-product-model.md` section 4). What
 it does not record is where anything is set up, which the venue layout answers at
-the venue level rather than per session.
+the venue, season and age group level rather than per session. **It also does not
+record which activities are stations**: section 4 of
+`02-target-product-model.md` explains why the phase cannot be read as though it
+did, since `phaseFor` sets it from the drill's four corners.
 
 ## 18. Merged work: PR #189 (DRILL-02, authenticated half)
 
@@ -746,6 +749,102 @@ payload pinned by a test.
   earliest.
 - The live ledger is the authority, not the highest file on disk. Confirm the next
   free number against it before writing a migration (`CLAUDE.md`, Data model).
+
+**A migration is reviewed against one specific hosted head, and the workflow
+enforces that.** `.github/scripts/production-migration/reviewed_migrations.py`
+holds a closed register, and every entry carries `expected_previous_version` and
+`expected_previous_name`: the ledger row that must still be the unique newest one
+before the migration runs. `0049`'s entry, for example, expects
+`20260812102912 / spond_session_link_unique`.
+
+Three consequences for any new programme, and they are stronger than "pick the
+next number":
+
+1. **A file number is not a reservation.** Naming a file `0051` claims nothing.
+   What claims a position is a register entry pinned to a head.
+2. **A register entry cannot be written before the head it will run against is
+   known.** If `0050` is applied first, the next migration's
+   `expected_previous_version` is `0050`'s stamp, and that stamp does not exist
+   until `0050` has run.
+3. **Two unapplied migrations cannot both be authored against the current head**
+   without one of them becoming wrong the moment the other applies. The second
+   one's entry is rewritten, reviewed again, and only then applied.
+
+So a coaching workflow migration is authored, numbered and registered at the
+moment it is ready to be reviewed for application, against the ledger as it
+stands then. It is never authored as "the one after `0050`" while `0050` is
+unapplied.
+
+## 26. Season and age group, as they exist today
+
+Read because the venue layout scope is stated in terms of both.
+
+### Seasons are a real entity
+
+`public.seasons` (`0031_seasons.sql:148`): `id, club_id, name, starts_on,
+ends_on, is_current, archived_at, created_by, updated_by, created_at,
+updated_at`.
+
+- `name` is the label ("2026/27"), unique per club and bounded to 20 characters.
+- `starts_on` and `ends_on` are ordered by a check constraint, and **overlap
+  between seasons is deliberately unconstrained**.
+- `is_current` marks the one current season, upper-bounded for every writer
+  including the service role by the partial unique index
+  `seasons_one_current_per_club`.
+- `seasons_id_club_unique (id, club_id)` exists, so the club-scoped composite
+  foreign key pattern is already available to reference it.
+- Reads are club wide with no capability; writes take `seasons.manage`. There is
+  deliberately **no client delete policy and no delete grant**, and
+  `player_registrations` references seasons `on delete restrict`.
+
+Client model: `Season` (`src/lib/data.ts:70`) with `isCurrent`, mapped from
+`is_current` (`src/lib/queries.ts:4009`). `SEASON_COLS` is
+`id, name, starts_on, ends_on, is_current, archived_at`.
+
+**Nothing links a session to a season.** `sessions` carries no `season_id`, and
+the columns it does carry are listed in section 2.
+
+### Age group is a string on the session, and the club's own list is ignored
+
+- `public.clubs.age_groups text[] not null default '{}'` (`0001_init.sql:50`).
+  It is read into the auth profile context (`src/hooks/useAuth.tsx:20`, `:57`).
+- `public.sessions.age_group text` nullable (`0001_init.sql:113`), mapped as
+  `ageGroup` with `r.age_group ?? ''` (`src/lib/queries.ts:428`) and written back
+  at `:2022`.
+- **The planner's Age group control offers a hardcoded literal list**,
+  `['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s']`
+  (`src/routes/Planner.tsx:762`), and does not read `clubs.age_groups` at all.
+  `useStartFromTemplate` and `ApplyProgrammeModal` both default to the literal
+  `'U8s'`.
+- No other table carries an age group. `teams`, `players`,
+  `player_registrations` and `venues` have none.
+
+So the only age group fact a session has is a free text string, chosen from a
+list the code holds rather than the club does. That is a real gap and it is
+relevant to any feature keyed on age group.
+
+## 27. `sessions.activities` can carry a new key, and exactly five call sites decide it
+
+Read because the station marker rides this column.
+
+- `sessions.activities` and `templates.activities` are `jsonb` with **no check
+  constraint** (section 4), so the database imposes no shape.
+- `Activity` (`src/lib/data.ts:302`) is `{ phase, drillId?, title?, duration }`.
+  `ActivityRow` (`src/lib/queries.ts:149`) is
+  `{ phase, duration, drill_id?, title? }`.
+- `toActivity` and `toActivityRow` (`:289`, `:296`) rebuild field by field and
+  **omit a key entirely when the value is absent**, rather than writing null.
+- The complete set of call sites is five: reads at `:385` (templates) and `:432`
+  (sessions); writes at `:1579` (templates), `:1826` (copy a template to a week)
+  and `:2026` (sessions).
+- `useStartFromTemplate` copies `t.activities`, the **mapped** `Activity[]`,
+  through `JSON.parse(JSON.stringify(...))` (`src/hooks/useStartFromTemplate.ts:45`),
+  so any key the mapper knows about survives the plan-to-session copy for free,
+  and any key it does not know about never reaches the copy at all.
+
+**Consequence: a new activity key costs two functions and no migration**, and the
+template write path is the one place that can keep a session-local key out of a
+week plan.
 
 ## Notable current-state findings the overhaul must design around
 

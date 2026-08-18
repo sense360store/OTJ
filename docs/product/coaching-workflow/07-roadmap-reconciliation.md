@@ -39,16 +39,16 @@ approved. The namespace **COACH** is new and collides with nothing.
 | ID | Workstream | Item | Proposed status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
 | COACH-00 | Coaching workflow | End-to-end coaching workflow discovery, architecture and post-discovery reconciliation | Done (docs only) | P1 | This document set. No code, no migration. |
-| COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | Next | P1 | Migration M1, gated. The one irreducible new fact. |
-| COACH-2 | Coaching workflow | Derive the station list, number and count from the plan | Next | P1 | No schema. Gates COACH-3, COACH-6, COACH-7. |
-| COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | Next | P1 | No schema. Depends on COACH-2, wants COACH-1. |
-| COACH-4 | Coaching workflow | Preserve the coach's setup when attendance changes | Later | P1 | No schema. Depends on COACH-3. |
-| COACH-5 | Coaching workflow | Venue layouts: four and five station layouts, one and two game visuals, admin owned | Next | P1 | Migration M2, gated. Audit label correction. Independent. |
+| COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | Later | P1 | Migration M1, gated, and sequenced against the hosted ledger rather than by filename. The one irreducible new fact. |
+| COACH-2 | Coaching workflow | Declare stations and games on the activity, and mark a station as not running tonight | Next | P1 | **No migration.** Two keys in the existing activity jsonb. Gates COACH-3, COACH-6, COACH-7, COACH-8. |
+| COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | Next | P1 | No schema. Depends on COACH-2, wants COACH-1 and degrades honestly without it. |
+| COACH-4 | Coaching workflow | Preserve the coach's setup when attendance changes | Next | P1 | No schema. Depends on COACH-3. |
+| COACH-5 | Coaching workflow | Venue layouts scoped to venue, season and age group: four and five station layouts, one and two game visuals, admin owned | Later | P1 | Migration M2, gated, and the largest review here. New table, new shape boundary. Independent. |
 | COACH-6 | Coaching workflow | The setup map on session day | Later | P1 | Depends on COACH-2 and COACH-5. |
 | COACH-7 | Coaching workflow | The full screen station detail, browsing only | Later | P1 | Depends on COACH-6. Pull the phone half of QUALITY-02 in here. |
 | COACH-8 | Coaching workflow | The game plan and a separate game bib | Later | P2 | Migration M3, gated. Depends on COACH-3, wants COACH-1 and COACH-5. |
 | COACH-9 | Coaching workflow | Keep the protected session share reachable, and pin its payload | Later | P2 | No schema. Mostly a test. |
-| COACH-10 | Coaching workflow | One shared activity authoring seam | Later | P1 | Pure refactor, no user-visible change. Gates COACH-11 and COACH-12. |
+| COACH-10 | Coaching workflow | One shared activity authoring seam | Next | P1 | Pure refactor, no user-visible change, no migration. Gates COACH-11 and COACH-12. |
 | COACH-11 | Coaching workflow | Create and draw a drill from either planning surface | Later | P1 | No schema. Depends on COACH-10. |
 | COACH-12 | Coaching workflow | Adapt a drill for one session, unlisted, with Save as reusable | Later | P2 | Migration M4, gated. Depends on COACH-10. |
 | COACH-13 | Coaching workflow | Week plan naming, promotion and two deliveries of one plan | Later | P2 | No schema. |
@@ -90,14 +90,14 @@ authenticated print path, so print inherits the public share gate.
 criteria say the criteria are written when the Drill Maker and venue composer
 direction is confirmed. This set is that confirmation, and the direction changed:
 
-- The composer is **not weekly**. It is an **admin owned venue layout**
-  (COACH-5), loaded automatically by station count, and a session stores no
-  geometry.
-- It needs the **derived station list** (COACH-2), not a station block column.
+- The composer is **not weekly**. It is an **admin owned venue layout scoped to
+  venue, season and age group** (COACH-5), loaded automatically from the station
+  count, and a session stores no geometry.
+- It needs the **declared station list** (COACH-2), not a station block column.
 
-So DRILL-03's dependency line becomes: venue layouts (COACH-5); the derived
-station list (COACH-2). The previous revision proposed adding a station blocks
-dependency, and that proposal is withdrawn along with the blocks.
+So DRILL-03's dependency line becomes: venue layouts (COACH-5); declared stations
+(COACH-2). Two earlier proposals are withdrawn with it: a station blocks
+dependency, and a venue-only layout scope.
 
 ### TRAIN-02 (Later, P1) safe no-login Training Day share
 
@@ -182,22 +182,42 @@ totality checks apply to all four migrations proposed here.
 
 The current roadmap's order says finish DRILL-02, then pick up QUALITY-01, and
 treat destructive Registered Players changes and public Training Day sharing as
-separate reviewed programmes.
+separate reviewed programmes. **That order still holds and this programme fits
+after it rather than in front of it.**
 
-**That order still holds and this programme fits after it rather than in front of
-it.** Proposed sequence:
+### Migration sequencing, stated because it constrains the order
+
+**Open draft PR #191 owns reviewed migration `0050`. This programme does not
+modify it, does not depend on it, and must not assume it.**
+
+The reviewed register
+(`.github/scripts/production-migration/reviewed_migrations.py`) pins every
+migration to the hosted ledger head it was written against, through
+`expected_previous_version` and `expected_previous_name`. So a file number
+reserves nothing, a register entry cannot be written before its head is known,
+and no coaching migration is authored as "the one after 0050" while `0050` is
+unresolved. Each is numbered and registered at the moment it is ready for its own
+application review, against the live ledger as it stands then.
+
+**The non-migration slices are not sequenced by any of that** and proceed on
+their own dependencies.
+
+### Proposed sequence
 
 1. **DRILL-02b or a decision to leave it**, so the DRILL-02 row can close or be
    restated. Not this programme's work.
 2. **QUALITY-01**, unchanged, since it gates several later items and this audit
    has reduced its cost.
-3. **COACH-1**, the club's team order. One gated migration on a five-row table.
-4. **COACH-2**, the derived station list. No schema.
-5. **COACH-3**, the suggested setup. The slice a coach actually feels.
-6. **COACH-5** in parallel throughout, since it depends on nothing.
-7. Then COACH-4, COACH-6, COACH-7, COACH-8, COACH-9.
-8. The authoring track, COACH-10 through COACH-13, scheduled by capacity.
-9. COACH-P1 and COACH-P2 on capacity and on evidence respectively.
+3. **COACH-2**, declaring stations and games. No migration, and the root of the
+   operational track.
+4. **COACH-3**, the suggested setup, then **COACH-4**.
+5. **COACH-10**, the authoring seam, whenever capacity allows. No migration.
+6. **COACH-1** (M1), the first gated coaching migration, timed against the
+   ledger.
+7. **COACH-5** (M2), the venue layouts table, then **COACH-6** and **COACH-7**.
+8. **COACH-8** (M3), the game plan. **COACH-9** any time.
+9. **COACH-11**, **COACH-12** (M4) and **COACH-13** on the authoring track.
+10. COACH-P1 and COACH-P2 on capacity and on evidence respectively.
 
 **#191 and #196 proceed on their own merits and are not sequenced by this
 programme.**

@@ -127,10 +127,15 @@ published, is likewise held where #189 left it. Neither blocks anything here.
 With the generated message withdrawn, **no output of this programme contains a
 child's name outside the authenticated app at all**.
 
-## 6. What the new columns oblige
+## 6. What the new structure obliges
 
 Three of the four proposed migrations are ordinary columns that change no policy
-and no grant. Two carry an obligation anyway.
+and no grant. The fourth is a new table. Three carry an obligation.
+
+**The two activity keys carry none.** `slot` is one of two words and `skipped` is
+`true` or absent (`04-data-model-proposal.md` section 2). Neither can hold a
+person, a place or free text, which is why riding an unconstrained jsonb column
+is acceptable here and would not be for a diagram or a layout.
 
 **`register_entries.game_bib_colour_override`** names a child's bib for one
 session. It is the same class of field as `bib_colour_override`, which is already
@@ -139,12 +144,22 @@ not when it is first shared**, together with its camelCase form. A key added to
 `FORBIDDEN_ANYWHERE` in `_shared/share.ts` is added to `FORBIDDEN` in
 `src/lib/publicShare.ts` in the same change.
 
-**`venues.layout`** is a drawing of a place. It holds no person by allow-list,
-and it must also hold no location fix: no address, no postcode, no latitude or
-longitude, no map tile URL and no imagery reference, each made unrepresentable by
-the check constraint rather than forbidden by convention. `venue` and `venueId`
-are already refused by the browser's list; `layout` joins the deny lists when it
-lands, on the same rule.
+**`venue_layouts`** is a drawing of a place, and it is a new table rather than a
+column, so it brings its own policies and grants. They **mirror `venues`
+exactly**: club wide select with no capability, because a coach needs to see
+where the stations go and the row carries no child data; `club.manage` for
+everything else; explicit grants, which is the 0012 lesson.
+
+Its `zones` value holds no person by allow-list, and it must also hold **no
+location fix**: no address, no postcode, no latitude or longitude, no map tile
+URL and no imagery reference, each made unrepresentable by the check constraint
+rather than forbidden by convention. `venue` and `venueId` are already refused by
+the browser's deny list; `zones` and any layout-shaped key join it when they
+land, on the same rule.
+
+**Its scope keys are not child data.** `season_id` references `seasons`, which
+`0031` states holds no child data at all, and `age_group` is a club label. A
+layout row names a place, a season and an age group, and never a person.
 
 **`teams.sort_order`** is a club configuration value about teams, not about
 children. No obligation beyond the audit label decision.
@@ -188,7 +203,8 @@ A checklist for every future PR in this programme.
 5. **A drill diagram can hold no person**, enforced by the `0046` check
    constraint. Any widening for motion keeps that property and says so.
 6. **A venue layout can hold no person and no location fix**, enforced the same
-   way by its own allow-list.
+   way by its own allow-list, and its policies mirror `venues` rather than
+   inventing a looser rule.
 7. **The public snapshot deny lists stay in step on both sides**, and any new
    column that could name a place or a child joins both when it lands.
 8. **Public sharing keeps its reduced projection.** Convenience is never a reason
@@ -203,12 +219,17 @@ auto-merged:
 
 | Work | Gate | Why |
 |---|---|---|
+| A1 and A2, `slot` and `skipped` on an activity | **Ordinary PR review.** No migration. | Two closed-vocabulary keys that can hold no person, place or free text. |
 | M1 `teams.sort_order` | Migration review | Any `supabase/migrations/` change. |
-| M2 `venues.layout` | Migration review, plus shape-boundary review | A new jsonb shape boundary and a new check constraint. |
+| M2 `venue_layouts` | Migration review, plus shape-boundary review, plus a policy and grant review | A new table with new policies and grants, a new jsonb shape boundary, and a new check constraint. The largest review in the programme. |
 | M3 `register_entries.game_bib_colour_override` | Migration review, plus a deny-list update | It names a child's bib. Prove the migration copies nothing from the existing column, in the manner of 0047. |
 | M4 `drills.variant_of` | Migration review | Any `supabase/migrations/` change. |
 | M5 diagram widening, if motion is ever approved | Migration review, plus rollout review | Version rollout hazard. |
 | Everything else | Ordinary PR review | The setup generator, the setup map, the station screen, the game plan UI, the authoring seam and the adaptation journeys touch no security boundary. |
+
+**Each gated migration is registered against the hosted head it will actually run
+against**, and none of them assumes or modifies reviewed migration `0050`, which
+open draft PR #191 owns (`04-data-model-proposal.md` section 8).
 
 **No item in this programme needs a full security review**, which is a change
 from the previous revision and is a direct consequence of withdrawing the

@@ -34,16 +34,27 @@ schema, no new screen.
 1. Open the week plan, or start a session directly in the planner.
    *Reuses `src/routes/Planner.tsx`, `useStartFromTemplate`.*
 2. Warm-up first.
-3. **Add four or five station drills.** The planner states what it derived:
-   "5 stations, 10 minutes each". The stations are the Skill phase activities in
-   order, so the coach orders them and station numbers follow.
-4. **Add the games.** One or two Game phase activities.
+3. **Add four or five station drills, and mark them as stations.** The planner
+   states what the plan declares: "5 stations, 10 minutes each". Station numbers
+   follow plan order, so reordering renumbers.
+4. **Add the games, and mark them as the games.** One or two.
+
+**Marking is explicit, and that is the point.** The coaching phase of a drill
+says what kind of drill it is, not what part it plays on the night: a physical
+drill is filed under Warm-Up and can still be a station, and a social drill is
+filed under Game without being one of the evening's small-sided games. The
+planner may **suggest** which activities look like stations, and a person
+confirms it.
 5. The session total reads as it does today, computed by `sessionMinutes`
    unchanged.
 
-**Three or fewer stations is not offered as a recommendation.** A coach who plans
-three anyway is not blocked, and the screen says what it derived rather than
-refusing.
+**Three or fewer stations is not offered as a recommendation.** A coach who
+declares three anyway is not blocked, and the screen says what the plan declares
+rather than refusing.
+
+**A plan opened from before this existed declares nothing**, so it shows no
+stations and offers one press to mark them, seeded by a suggestion. Nothing is
+guessed on the coach's behalf.
 
 **The station structure belongs to the plan, not to the date.** A week plan
 carries its drills in order, so applying it to Tuesday and Saturday delivers the
@@ -132,6 +143,12 @@ a choice rather than a surprise.
 7. A readiness line appears: "26 in 5 groups. Everyone has a bib. Layout ready."
    Derived on every read, stored nowhere.
 
+**If attendance says four stations and the plan holds five**, the screen says so
+and the **coach** picks the one that is not running tonight. It is marked, not
+removed: it keeps its place and its duration in this session's plan, the week
+plan and the library drill are untouched, and one press puts it back if more
+children confirm. Station numbers for the night count only the ones running.
+
 **When attendance changes again before training**, the screen does not start
 over. Children who are no longer attending are removed, newly confirmed children
 are placed, **every assignment already saved is kept**, and rebalancing happens
@@ -168,7 +185,10 @@ coming".
      stronger teams distributed across both sides rather than kept as opposing
      blocs. Expected to be relatively rare.
 4. **Where possible each game gets two clearly distinguishable bib colours**, so
-   some children are re-bibbed for the games. That is expected, not exceptional.
+   two games use four between them and some children are re-bibbed. That is
+   expected, not exceptional. The colour picker offers only the colours in play
+   for those games, and a child's game and side follow from the colour they are
+   given.
 5. **The station bib plan is untouched by any of it.** The game bib is a separate
    stored fact (`04-data-model-proposal.md` section 4), so planning the games
    cannot destroy the carousel groups, and a coach can read both on one screen.
@@ -184,7 +204,8 @@ both the physical truth and the resolution rule.
 
 **Device: laptop. Who: an admin.**
 
-1. Admin, Venues, open Haggs Hill, **Set up the layouts**.
+1. Admin, Venues, open Haggs Hill, choose the **season** and the **age group**,
+   then **Set up the layouts**.
    *Reuses `src/routes/AdminVenues.tsx`.*
 2. Optionally state the real size of the area the club is allocated.
 3. Draw the **four station layout**: four numbered rectangular zones, dragged and
@@ -192,15 +213,22 @@ both the physical truth and the resolution rule.
    allocated to Station N", not the exact footprint of any week's drill.
 4. Draw the **five station layout** the same way.
 5. Draw the **one game** and **two game** reminder visuals: where the pitches go.
-6. Save. Every coach reuses them every week, and the positions stay familiar.
+6. Save. Every coach reuses them every week for the rest of that season, and the
+   positions stay familiar.
+
+**The scope is venue, season and age group**, never venue-global and never per
+team. A second age group at the same venue keeps its own four layouts, and next
+season's allocation is drawn without disturbing this season's record.
 
 **Weekly coaches do not drag or reposition anything in v1.** There is no per
 session composer, and a session stores no geometry.
 
 **A clean schematic, never a satellite photograph.**
 
-**A venue with no layout for a session's station count** says so in one sentence
-with a link an admin can follow. It is not an error and it blocks nothing.
+**A session whose scope has no layout for its station count** says so in one
+sentence with a link an admin can follow. It is not an error and it blocks
+nothing. A session finds its scope from its venue and age group, with the season
+read from its own date.
 
 ## Journey 8: arrive and deliver
 
@@ -210,9 +238,11 @@ with a link an admin can follow. It is not an error and it blocks nothing.
    *Reuses `pickNextEvent`, `eventFilter.ts`, `sessionLifecycle.ts`. Unchanged.*
 2. **Groups and bibs.** Five groups, each a colour, each with its children.
    *Reuses `tonightGroups` and TRAIN-01's one-glance overview.*
-3. **The setup map.** The venue's five station layout, each zone showing useful
-   overview information: the station number, the drill name, and the group
-   starting there. A subtle clockwise cue shows which way groups move.
+3. **The setup map.** The five station layout for this venue, season and age
+   group, each zone showing useful overview information: the station number, the
+   drill name, and the group starting there. A subtle clockwise cue shows which
+   way groups move. A station not running tonight is not drawn, and is named as
+   not running rather than silently missing.
 4. **Tap a station.** It fills the screen:
    - station number
    - drill name
@@ -249,7 +279,7 @@ drill name and the group starting there**, it is legible at phone width with no
 zoom, and the detail lives one tap away where it has the whole screen. Zoom then
 becomes what it should be: something a coach may do, not something they must do.
 
-**The venue-level layout is what makes this work.** The zones are large
+**The saved layout is what makes this work.** The zones are large
 rectangles an admin placed deliberately, so they are separated tap targets by
 construction rather than by luck.
 

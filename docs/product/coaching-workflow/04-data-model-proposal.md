@@ -1,240 +1,349 @@
 # Data model proposal
 
-Status: proposal, reconciled 18 August 2026. No migration in this document has
-been written, numbered or applied.
+Status: proposal, corrected 18 August 2026. No migration in this document has
+been written, numbered, registered or applied.
 
 Everything here follows the repository's existing migration discipline: gated,
-reviewed by a human, applied by hand after the live ledger is checked, never
-`supabase db push` from a session.
+reviewed by a human, applied by hand through the production migration workflow,
+never `supabase db push` from a session.
 
-**Numbering.** The highest migration on disk is `0049_spond_team_reconcile.sql`.
-`0050_bulk_delete_players.sql` is already claimed by open draft PR #191, so the
-first migration of this programme is `0051` at the earliest. **Confirm the next
-free number against the hosted ledger before writing one**, never against the
-highest file on disk (`CLAUDE.md`, Data model).
+**Read section 8 before assuming a migration number.** A file number is not a
+reservation, and the reviewed register pins each migration to the hosted ledger
+head it was written against.
 
 ---
 
-## 1. Summary of anticipated database change
+## 1. Summary of anticipated change
 
-**Four migrations, three of them a single nullable column.** One further
-widening exists only if motion is ever approved.
+**Two activity keys that need no migration, three single columns, and one small
+table.**
 
-| # | Change | Table | Slice | Risk |
-|---|---|---|---|---|
-| M1 | `sort_order integer null` + partial unique index | `teams` | COACH-1 | Low. Null everywhere is today's behaviour. |
-| M2 | `layout jsonb null` + shape check constraint | `venues` | COACH-3 | Medium. A new jsonb shape boundary. |
-| M3 | `game_bib_colour_override text null` + vocabulary check | `register_entries` | COACH-6 | Low. Copies nothing from the existing column. |
-| M4 | `variant_of uuid null` (+ `drills_id_club_unique`) | `drills` | COACH-8 | Low. |
-| M5 | diagram element allow-list widening | `drills` | Parked | Medium. Version rollout hazard. |
+| # | Change | Where | Slice | Migration | Risk |
+|---|---|---|---|---|---|
+| A1 | `slot: 'station' \| 'game'` on an activity | `sessions.activities`, `templates.activities` | COACH-2 | **No** | Low |
+| A2 | `skipped: true` on an activity | `sessions.activities` only | COACH-2 | **No** | Low |
+| M1 | `sort_order integer null` + partial unique index | `teams` | COACH-1 | Yes, gated | Low |
+| M2 | `venue_layouts` table | new | COACH-5 | Yes, gated | Medium |
+| M3 | `game_bib_colour_override text null` | `register_entries` | COACH-8 | Yes, gated | Low |
+| M4 | `variant_of uuid null` (+ `drills_id_club_unique`) | `drills` | COACH-12 | Yes, gated | Low |
+| M5 | diagram element allow-list widening | `drills` | Parked | Yes, gated | Medium |
 
-### What the previous revision proposed and this one deletes
+### What earlier revisions proposed and this one does not
 
 Recorded explicitly, because a deleted proposal that is merely absent tends to
 come back.
 
 | Withdrawn | Was | Why it is gone |
 |---|---|---|
-| `sessions.blocks`, `templates.blocks` | Station and game block metadata as jsonb | Station identity is derived from plan order and the existing `Phase` vocabulary. Nothing else the column carried survives. |
+| `sessions.blocks`, `templates.blocks` | Station and game block metadata as jsonb | Two activity keys carry it. No block entity. |
 | `activities[].block_id` | Which block an activity belongs to | Same. |
-| `activities[].place` | A fraction-coordinate position per station, plus derived area membership | Layouts are venue level and admin owned. Weekly coaches place nothing. |
-| `blocks[].start` | The frozen carousel starting-station map | OTJ tracks no live carousel, so there is nothing to freeze. |
-| `blocks[].games` | Game sides as sets of bib colours | Replaced by one bib column on the register, which is what a coach actually reads. |
-| `sessions.template_id` | Uniform provenance and a sibling link | No consumer in the settled model. Deferred, section 7. |
-
-Six proposed structures became one column, and that column is on a table that
-already exists for exactly this purpose.
+| `activities[].place` | A fraction-coordinate position per station | Layouts are scoped, admin owned and load automatically. Weekly coaches place nothing. |
+| `blocks[].start` | The frozen carousel starting-station map | OTJ tracks no running carousel. |
+| `blocks[].games` | Game sides as sets of bib colours | The game bib column carries it, and side derives from the colour. |
+| `sessions.template_id` | Uniform provenance and a sibling link | No consumer in the settled model. Section 9. |
+| `venues.layout` jsonb column | All four layouts on the venue row | It cannot express the venue plus season plus age group scope. Section 3. |
+| Deriving stations from the `Skill` phase | Station identity with no new key | `phaseFor` sets the phase from the drill's corner, so the phase is not structure. Section 2. |
+| Deriving games from the `Game` phase | Game identity with no new key | Same. A social drill lands in `Game` and that proves nothing. |
 
 ### The deliberate non-changes
 
 - **No group table and no `group_id`.** The bib colour is the station group's
-  identity, unique per session, enforced in the domain rather than in
-  persistence, because a group is emergent from per-player bib resolution and
-  there is no row a unique index could sit on.
-- **No per-player ability score, level or training classification.** A player's
-  ability context derives through their team's position in the club order. M1
-  stores that order once per team.
-- **No per-player game side or game number column.** The side derives from the
-  game bib colour (`02-target-product-model.md` section 7).
-- **No provenance flag on a register entry.** The setup regeneration rule
-  preserves every saved assignment rather than only the manual ones, so it never
-  needs to know which were which.
-- **No `rotations` or `minutes_per_rotation` field.** Rotations are the station
-  count and the rotation length is the members' own duration.
+  identity, unique per session, enforced in the domain because a group is
+  emergent from per-player bib resolution.
+- **No per-player ability score, level or classification.** Ability context
+  derives through the team's position in the club order (M1).
+- **No per-player game number and no per-player side column.** Both derive from
+  the game bib colour's position in the planned ordering (section 4).
+- **No session-level game colour map.** The ordering is a pure function of the
+  fixed vocabulary and the game count. Only implementation evidence that the
+  deterministic rule cannot work would justify one.
+- **No `sessions.season_id`.** The season derives from the session's date
+  (section 3).
+- **No stored station number.** It is the position among active stations.
+- **No provenance flag on a register entry.** The regeneration rule preserves
+  every saved assignment rather than only the manual ones.
 - **No session workflow state column.** Readiness is derived.
 - **No drill version table.** Adaptation is a copy.
-- **No bib history table.** Section 6 states what is lost and why it is
-  affordable now that the two bibs no longer overwrite each other.
-- **No new share structure.** Coach to coach sharing already ships
-  (`00-current-state-audit.md` section 24).
+- **No new share structure.** Coach to coach sharing already ships.
 
 ---
 
-## 2. M1: `teams.sort_order`
+## 2. A1 and A2: two keys on an activity, and no migration
 
-```sql
-alter table public.teams add column sort_order integer;
-create unique index teams_sort_order_unique
-  on public.teams (club_id, sort_order) where sort_order is not null;
+### Why this is not a migration
+
+`sessions.activities` and `templates.activities` are `jsonb` with **no check
+constraint** (`00-current-state-audit.md` sections 4 and 27), so the database
+imposes no shape and a new key needs no DDL.
+
+What it does need is both mappers, because they rebuild field by field from an
+allow-list and **drop any key they do not name**:
+
+```ts
+// src/lib/queries.ts:289, :296
+export function toActivity(a: ActivityRow): Activity
+export function toActivityRow(a: Activity): ActivityRow
 ```
 
-### Why nothing existing can carry it
+Adding a key to one and not the other loses it on the next save. There are
+exactly five call sites: reads at `:385` (templates) and `:432` (sessions);
+writes at `:1579` (templates), `:1826` (copy a template to a week) and `:2026`
+(sessions).
 
-Verified against the schema rather than assumed
-(`00-current-state-audit.md` section 19). `public.teams` carries
-`id, club_id, name, created_at, bib_colour` and nothing else. A grep for
-`sort_order`, `display_order`, `position`, `rank` and `ability` across `src` and
-`supabase/migrations` returns nothing relevant. Every team order in the product
-is alphabetical: `useTeams` reads `.order('name')` and `sessionTeamsLabel` sorts
-by name.
+### A1: `slot`
 
-Three alternatives were considered and rejected:
+```jsonc
+{ "phase": "Skill", "drill_id": "…", "duration": 10, "slot": "station" }
+{ "phase": "Game",  "drill_id": "…", "duration": 15, "slot": "game" }
+{ "phase": "Warm-Up", "title": "Arrival", "duration": 5 }   // no slot: neither
+```
 
-- **Alphabetical.** For this club that gives Argonauts, Gladiators, Spartans,
-  Titans, Trojans, which matches the stated ability order nowhere.
-- **`created_at`.** It records when a row was inserted during setup. Reading it
-  as a statement about football is the kind of confidently wrong answer this
-  codebase refuses elsewhere.
-- **An ordered array of team ids on `clubs`.** It would list teams in a second
-  place, drift when a team is added or deleted, and need its own repair story.
+- Closed vocabulary: `'station'`, `'game'`. Absent means neither, and absent is a
+  real answer rather than a defaulted one.
+- **The same key name on both sides.** `slot` is one lowercase word, so there is
+  no snake_case to camelCase mapping to get wrong, exactly as `phase` and
+  `duration` already are.
+- It belongs to the **plan**, so `templates.activities` carries it and
+  `useStartFromTemplate`'s deep copy of the mapped activities
+  (`src/hooks/useStartFromTemplate.ts:45`) carries it into every dated session
+  for free.
 
-### What it is, and what it is not
+**The name was chosen against repository conventions.** `role` is RBAC here
+(`profiles.role`, `roles`, `member_roles`). `kind` is already the discriminator
+for diagram elements and content shares, and sitting `kind` beside `phase` on one
+object invites the exact confusion this key exists to remove. `slot` is unused as
+a data key and names what it is.
 
-**The club's ordering of its own teams.** Five integers for this club, set by a
-`teams.manage` holder on the existing `AdminTeams` screen.
+### A2: `skipped`
 
-It is **not an ability score** and there is no per-player field of any kind. No
-literal team name appears in any rule: the current order is Titans, Trojans,
-Gladiators, Spartans, Argonauts, and that is this season's contents of an ordered
-set, not an algorithm.
+```jsonc
+{ "phase": "Skill", "drill_id": "…", "duration": 10, "slot": "station", "skipped": true }
+```
 
-### Nullable, and what null means
+- **Written only as `true`.** Restoring the drill removes the key. `false` is
+  never written, so each state has exactly one representation, which is how
+  `drill_id` and `title` already behave.
+- **Absence means running**, and that is what decides the sense of the key. Every
+  activity in every existing session carries nothing and every one of them runs,
+  so a positively-phrased key would read every existing plan as entirely stood
+  down.
+- **Session-local.** The two template write paths (`:1579`, `:1826`) strip it,
+  and the reader ignores it on a template. Both ends agree and neither depends on
+  the other, and ignoring it fails towards running the drill.
+- **Meaningful only on `slot: 'station'`** in v1. The reader ignores it
+  elsewhere, so a stray value can hide neither a game nor a warm-up.
 
-Null means unordered. A club that never sets it gets today's behaviour: the
-grouping suggestion keeps each team whole and does not claim to know which teams
-are adjacent. That is honest, and it fails towards doing less rather than
-guessing.
+### What is not guaranteed, stated plainly
 
-**It will look like a bug if the screen stays silent about it**, so the screen
-says the order is unset rather than quietly doing less.
+`sessions.activities` has no check constraint, so **these two keys earn none of
+the database guarantees `drills.diagram` and `boards.tokens` have**. The client
+allow-list is the only boundary, exactly as it already is for `phase`,
+`duration`, `title` and `drill_id`.
 
-The partial unique index prevents two teams claiming one position while allowing
-any number of unordered teams.
+That is acceptable for the same reason it is acceptable today: neither key can
+carry a person, a place or free text. `slot` is one of two words and `skipped` is
+`true` or absent. Nothing here needs a privacy constraint to protect.
 
-### RLS, audit and compatibility
+### No backfill, and nothing inferred at read time
 
-**No new policy.** An ordinary column on `teams`, whose write already takes
-`teams.manage` via `teams_manage` (`0012_rbac.sql:376`).
-
-**Audit.** `audit_teams()` (0044) has an allow list, and `describeActivityEvent`
-renders `team.updated` as the deliberately general "Team updated"
-(`src/lib/activityView.ts:432`), whose comment says it stays general because the
-list carries both the name and the bib colour. A third field does not falsify
-that sentence. Confirm whether `sort_order` joins the audited allow list; the
-default answer is yes, since re-banding the club's teams is worth a feed entry.
-
-**Backwards compatibility.** Null everywhere is every existing team.
-
-**Two orders coexist and must not be confused.** Labels stay alphabetical
-(`sessionTeamsLabel`, unchanged); grouping uses the club order. A future reviewer
-seeing two sorts should not unify them.
+A plan written before these keys existed carries neither, so it declares no
+stations, and the setup map says so with a one-press way to fix it. That press
+may be **seeded by a suggestion**, phase-shaped or otherwise, in the same spirit
+as `phaseFor` seeding a phase when a drill is added from the library. A
+suggestion confirmed by a person and then stored is a different thing from a
+heuristic applied at read time, and only the first is allowed.
 
 ---
 
-## 3. M2: `venues.layout`
+## 3. M2: the `venue_layouts` table
+
+**The scope decides the shape.** Layouts are scoped to **venue, season and age
+group**, they are not venue-global, and they are not per team
+(`02-target-product-model.md` section 8).
+
+### Why not a jsonb column on `venues`
+
+An earlier revision proposed `venues.layout`, arguing that an ordinary column
+inherits the table's club-wide read and `club.manage` write with no new policy.
+That argument is sound and the scope outranks it:
+
+- **A season is a row.** `seasons` (`0031_seasons.sql:148`) carries
+  `seasons_id_club_unique (id, club_id)`, so the club-scoped composite foreign
+  key pattern is available. A season id buried in a jsonb blob is unenforceable.
+- **A column grows without bound.** One row per venue holding every season's and
+  every age group's layouts only ever accumulates, is edited by
+  read-modify-write, and lets two admins editing two age groups on one evening
+  overwrite each other.
+- **A row is the natural unit** of editing, deletion, and of the unique key that
+  makes "one 5 station layout per scope" a database fact rather than a
+  convention.
+
+Four rows per venue per age group per season. Three venues and one age group is
+twelve rows a season.
+
+### The proposed DDL
 
 ```sql
-alter table public.venues add column layout jsonb;
+create table public.venue_layouts (
+  id         uuid primary key default gen_random_uuid(),
+  club_id    uuid not null references public.clubs (id) on delete cascade,
+  venue_id   uuid not null,
+  season_id  uuid not null,
+  age_group  text not null,
+  kind       text not null,
+  slots      integer not null,
+  zones      jsonb not null,
+  created_by uuid references public.profiles (id) on delete set null,
+  updated_by uuid references public.profiles (id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  -- Club scoped composite references. The column list on any future
+  -- set null would be load bearing for the reason 0044 states.
+  constraint venue_layouts_venue_fk
+    foreign key (venue_id, club_id) references public.venues (id, club_id)
+    on delete cascade,
+  -- restrict, mirroring how player_registrations references seasons: a
+  -- season that has layouts is not silently removable, and seasons has no
+  -- client delete policy or grant anyway (0031).
+  constraint venue_layouts_season_fk
+    foreign key (season_id, club_id) references public.seasons (id, club_id)
+    on delete restrict,
+
+  constraint venue_layouts_age_group_bounded
+    check (btrim(age_group, E' \t\r\n') <> '' and char_length(age_group) <= 20),
+  constraint venue_layouts_kind_valid
+    check (kind in ('stations', 'games')),
+  -- The closed v1 vocabulary: 4 or 5 stations, 1 or 2 games. Three
+  -- stations is not offered and is not storable.
+  constraint venue_layouts_slots_valid check (
+    (kind = 'stations' and slots in (4, 5))
+    or (kind = 'games' and slots in (1, 2))
+  ),
+  constraint venue_layouts_zones_shape check (public.venue_layout_is_valid(zones)),
+
+  constraint venue_layouts_scope_unique
+    unique (club_id, venue_id, season_id, age_group, kind, slots)
+);
+
+create index on public.venue_layouts (club_id, venue_id, season_id);
 ```
 
-Stored shape, version 1:
+`age_group` is bounded to 20 characters, matching `seasons.name`'s bound and the
+club's own labels. **A check constraint cannot verify membership of
+`clubs.age_groups`**, because that needs a subquery, so the vocabulary is
+enforced by the UI offering one list. Section 3's honest gap below.
+
+### `zones`, and the discipline it inherits
+
+An ordered list of named rectangles, versioned, in fraction coordinates:
 
 ```json
 {
   "version": 1,
   "size": { "metres_wide": 60, "metres_long": 40 },
-  "layouts": [
-    { "kind": "stations", "slots": 4,
-      "zones": [
-        { "n": 1, "name": "Top corner", "x": 0.02, "y": 0.02, "w": 0.45, "h": 0.45 },
-        { "n": 2, "x": 0.53, "y": 0.02, "w": 0.45, "h": 0.45 },
-        { "n": 3, "x": 0.02, "y": 0.53, "w": 0.45, "h": 0.45 },
-        { "n": 4, "x": 0.53, "y": 0.53, "w": 0.45, "h": 0.45 }
-      ] },
-    { "kind": "stations", "slots": 5, "zones": [] },
-    { "kind": "games", "slots": 1, "zones": [] },
-    { "kind": "games", "slots": 2, "zones": [] }
+  "zones": [
+    { "n": 1, "name": "Top corner", "x": 0.02, "y": 0.02, "w": 0.45, "h": 0.45 },
+    { "n": 2, "x": 0.53, "y": 0.02, "w": 0.45, "h": 0.45 },
+    { "n": 3, "x": 0.02, "y": 0.53, "w": 0.45, "h": 0.45 },
+    { "n": 4, "x": 0.53, "y": 0.53, "w": 0.45, "h": 0.45 }
   ]
 }
 ```
 
-### One column rather than a table, and why
-
-A `venue_layouts` table was considered. It would give each layout its own row and
-its own constraints, and it would carry scope columns naturally.
-
-**A column wins on the argument this repository makes repeatedly.** `layout` is
-an ordinary column on `venues`, whose select is club wide and whose write takes
-`club.manage`, so drawing a layout is already exactly as restricted as renaming
-the venue with **no new policy, no new grant and no new audit function**. That is
-the reasoning `0046` used for `diagram` and `0044` used for `bib_colour`. A new
-table would add four policies and a grant decision to a gated migration for four
-rows per venue that one admin edits occasionally.
-
-The set is closed and small: two station layouts and two game layouts per venue.
-Concurrent edits of two layouts at one venue are not a real hazard at this club.
-
-### The rules it inherits, deliberately
-
-This is the third fraction-coordinate jsonb column in the product, after
-`boards.tokens` (0028) and `drills.diagram` (0046). It inherits their discipline
-rather than inventing a third:
+This is the third fraction-coordinate jsonb value in the product, after
+`boards.tokens` (0028) and `drills.diagram` (0046), and it inherits their
+discipline rather than inventing a third:
 
 - **Fractions 0 to 1, never metres, for position.** The declared real-world size
-  is metadata for labelling and proportion, not the coordinate space. One stored
-  layout then renders at any width.
-- **Versioned**, with the same rule the diagram uses: an unrecognised version
-  yields no layout rather than a mis-drawn one.
-- **A check constraint stating the key allow-list**, so the shape holds against
-  service_role and any hand-written call, exactly as 0046 does. `kind` is closed
-  to `stations` and `games`; `slots` is closed to 4 and 5 for stations and 1 and
-  2 for games.
-- **A parser and a serialiser that rebuild field by field and never spread**, in
-  a new `src/lib/venueLayout.ts` sharing `clampFraction` with the others.
-- **Bounds**: at most one layout per `(kind, slots)`, a zone count matching
-  `slots`, a name length cap, and a minimum zone size so a zone cannot become an
-  ungrabbable sliver.
+  is metadata for labelling and proportion, never the coordinate space.
+- **Versioned**, with the diagram's rule: an unrecognised version yields no
+  layout rather than a mis-drawn one.
+- **A check constraint stating the key allow-list**, via an immutable predicate
+  function, so the shape holds against service_role and any hand-written
+  PostgREST call, exactly as 0046 does.
+- **A parser and serialiser that rebuild field by field and never spread**, in a
+  new `src/lib/venueLayout.ts` sharing `clampFraction` with the others.
+- **Bounds**: the zone count equals `slots`, a name length cap, and a minimum
+  zone size so a zone cannot become an ungrabbable sliver.
 
-### What it must never hold
+**It must hold no person, no address, no postcode, no latitude or longitude, no
+map tile URL and no imagery reference.** The allow-list makes each
+unrepresentable rather than discouraged.
 
-No person, no address, no postcode, no latitude or longitude, no map tile URL and
-no imagery reference. The allow-list makes each unrepresentable rather than
-forbidden by convention.
+### RLS, grants and audit
 
-Geolocation is excluded explicitly: it is not needed to say "Station 1 goes
-here", it introduces a third-party mapping dependency and a new privacy surface,
-and the settled decision says a clean schematic rather than aerial imagery.
+**Mirror `venues` exactly**, because a layout is the same class of club
+configuration as the venue it hangs off (`0044_training_day_core.sql:257`):
 
-### RLS and audit
+```sql
+alter table public.venue_layouts enable row level security;
 
-**No new policy**, as argued above.
+create policy "venue_layouts_select_club" on public.venue_layouts
+  for select using ( club_id = public.my_club() );
+create policy "venue_layouts_manage" on public.venue_layouts
+  for all using ( club_id = public.my_club() and public.has_perm('club.manage') )
+  with check ( club_id = public.my_club() and public.has_perm('club.manage') );
 
-**Audit, and do not miss this.** `audit_venues()` (0044) currently treats an
-update as a rename, and `describeActivityEvent` renders `venue.updated` as
-**"Venue renamed"** (`src/lib/activityView.ts:438`), reasoning that the allow
-list is the name alone. **That sentence becomes false once a layout can change.**
-Either the audit allow list gains `layout` and the label becomes "Venue updated",
-or the label and its comment are corrected. This is exactly the kind of quiet
-falsehood the repository's commentary style exists to catch.
+revoke all on public.venue_layouts from anon, authenticated;
+grant select, insert, update, delete on public.venue_layouts to authenticated;
+```
+
+Club wide read with no capability, because a coach needs to see where the
+stations go and the row carries no child data. `club.manage` write, because it is
+admin configuration. Grants are explicit, which is the 0012 lesson.
+
+**Audit.** This is a decision the migration must make rather than inherit.
+Recommended: audit create, update and delete at the same granularity as venues,
+under new source values. **One pleasant consequence of the table:** because
+`layout` is no longer a column on `venues`, `audit_venues()` and
+`describeActivityEvent`'s "Venue renamed" label (`src/lib/activityView.ts:438`)
+**stay true**, and the label correction the previous revision had to schedule
+disappears.
+
+### How a session resolves its scope
+
+| Part | Source |
+|---|---|
+| Venue | `sessions.venue_id` |
+| Age group | `sessions.age_group` |
+| Station count | active stations in the plan (section 2) |
+| Season | **derived**, below |
+
+**Season derivation.** From `sessions.date` against `seasons.starts_on` and
+`seasons.ends_on`: where exactly one season contains the date, that is the
+season; where zero or more than one does, fall back to `seasons.is_current`,
+which the database upper-bounds to one per club
+(`seasons_one_current_per_club`); where neither answers, there is no layout and
+the screen says so.
+
+Season overlap is deliberately unconstrained by `0031`, which is exactly why the
+rule falls back rather than picking one. "Refuse to guess when zero or more than
+one matches" is the rule `matchVenueByLocation` (`src/lib/venues.ts:96`) already
+applies, so this is a second instance of an existing convention.
+
+**`sessions` gains no `season_id`.** A stored season would be a second fact that
+can disagree with the date, and the derivation costs one comparison against rows
+the screen has already read.
+
+### The honest gap: the age group vocabulary
+
+`clubs.age_groups text[]` exists and **the planner ignores it**, offering a
+hardcoded `['U6s' … 'U12s']` literal instead
+(`00-current-state-audit.md` section 26). A scope key is only as good as the
+vocabulary behind it, so the layout admin screen and the session's age group
+control must offer the **same** list. Making that list the club's own is a small
+piece of work COACH-5 should carry rather than inherit, and it is not a
+migration.
 
 ### Backwards compatibility and rollback
 
-Null layout is every existing venue and reads as no layout, which every surface
-renders as nothing.
+An empty table is every club today, and every surface renders no layout as
+nothing.
 
-Rollback drops the constraint, then the column. **Dropping the column discards
-every saved layout**, so drop the constraint alone unless the feature is being
-withdrawn. This is the wording `0046` uses and the same reasoning applies.
+Rollback drops the table, which **discards every saved layout**. Drop the check
+constraint alone if only the shape is being withdrawn. This is the wording `0046`
+uses and the same reasoning applies.
 
 ---
 
@@ -250,42 +359,40 @@ alter table public.register_entries add column game_bib_colour_override text
 ### Why a second column is the honest answer
 
 **Today** the table holds one row per `(session_id, player_id)` with a single
-`bib_colour_override`, written through `upsert(..., { onConflict:
-'session_id,player_id' })`, so a second bib for the same player in the same
-session replaces the first (`00-current-state-audit.md` section 21).
+`bib_colour_override`, written through
+`upsert(..., { onConflict: 'session_id,player_id' })`, so a second bib for the
+same player in the same session replaces the first
+(`00-current-state-audit.md` section 21).
 
-The settled model needs both at once: the station bib plan must survive the games
+The settled model needs both at once: the station bib plan survives the games
 being planned with different bibs, some players are re-bibbed for the games, each
-game should ideally show two clearly distinguishable colours, and the game plan
-names each player's side and colour beside the station groups.
+game shows two distinguishable colours, and the game plan names each player's
+side and colour beside the station groups. One column cannot hold two independent
+values.
 
-One column cannot hold two independent values.
+**This is the same defect 0047 fixed once already, on this table.** `present`
+carried both attendance and inclusion, a coach who split fourteen of the eighteen
+who came had four children recorded absent, and the answer was a second column
+that copies nothing from the first. The migration shape follows 0047 exactly.
 
-**This is the same defect 0047 already fixed once**, and the precedent is
-directly on this table: `present` carried both attendance and inclusion, a coach
-who split fourteen of the eighteen who came had four children recorded absent,
-and the answer was a second column that copies nothing from the first. The
-migration shape follows 0047 exactly.
-
-**The previous revision rejected a phase-specific bib column**, on the grounds
-that it hard codes two phases into a schema whose point was that the number of
-blocks is a planning decision. That objection dies with the blocks. There are
-exactly two arrangements per night, and the game bib is a fact a coach reads off
-a screen rather than a phase of a general mechanism.
-
-### Resolution
+### Resolution, and what derives from it
 
 ```
 station bib = station override, else the team default, else none
 game bib    = game override,    else the effective station bib
 ```
 
-The second line is the physical truth: bibs are handed out only to the children
-who change. `src/lib/bibs.ts` owns both rules and no screen resolves a bib
-itself, which is the rule that already holds for the first line.
+`src/lib/bibs.ts` owns both rules and no screen resolves a bib itself.
 
-`'none'` keeps its existing meaning of a deliberate no bib, distinct from
-inheriting.
+**Game and side derive from the colour**, by its position in the planned ordering
+of the first `2 x G` colours of the fixed `BIB_COLOURS` vocabulary: index 0 is
+game 1 side A, index 1 is game 1 side B, index 2 is game 2 side A, and so on. A
+colour outside that list resolves to **no game** and shows as unassigned, never
+guessed into the nearest one.
+
+**So no per-player game number column, no per-player side column, and no
+session-level colour map**, and the UI offers only the colours in the list, which
+makes an out-of-list value unreachable through the product.
 
 ### What it copies, and what it must not
 
@@ -294,41 +401,82 @@ Like 0047 it must state that in its header and prove it in its self-verification
 fingerprint the existing `bib_colour_override` values before and after and show
 they are byte for byte unchanged.
 
-**Rows written before this column existed** carry a station bib and no game bib,
+Rows written before this column existed carry a station bib and no game bib,
 which resolves to "they play in what they are wearing". That is the correct
 reading of history and needs no backfill.
 
-### RLS, grants, audit
+### RLS, grants, audit, write path
 
 **No new policy and no new grant.** The four 0044 policies on `register_entries`
 name no column and the grants are table wide, which is what let 0047 add a column
-without touching a policy. The same self-verification should prove it.
+without touching a policy. The self-verification should prove it.
 
 **Unaudited, deliberately.** 0044's self-verification raises an exception if a
-per-tick audit trigger is ever attached to this table, and that decision stands:
-the row is the record and a bib change is a high frequency operational touch.
+per-tick audit trigger is ever attached to this table, and that decision stands.
 `register_entries_touch` continues to stamp `marked_by` and `marked_at`.
 
-### The write path
+`REGISTER_COLUMNS` and `useSaveTonight` gain the column, and **a save continues
+to send only the columns that changed**, so two coaches editing different facts
+about one child cannot overwrite each other.
 
-`REGISTER_COLUMNS` and `useSaveTonight` gain the column, and **a save continues to
-send only the columns that changed**, so two coaches editing different facts about
-one child cannot overwrite each other. That rule already exists for `present` and
-`included_in_groups` and it now covers three independent bib-adjacent facts
-rather than two.
-
-### Deny lists
-
-The column names a child's bib and must join both public-share forbidden-key
-lists **when it lands, not when it is first shared**
-(`05-security-share-boundary.md` section 6). `bib_colour_override` is already on
-both.
+**Deny lists.** The column names a child's bib and joins both public-share
+forbidden-key lists **when it lands, not when it is first shared**
+(`05-security-share-boundary.md` section 6).
 
 ---
 
-## 5. M4: `drills.variant_of`
+## 5. M1: `teams.sort_order`
 
 ```sql
+alter table public.teams add column sort_order integer;
+create unique index teams_sort_order_unique
+  on public.teams (club_id, sort_order) where sort_order is not null;
+```
+
+### Why nothing existing can carry it
+
+Verified against the schema (`00-current-state-audit.md` section 19).
+`public.teams` carries `id, club_id, name, created_at, bib_colour` and nothing
+else. A grep for `sort_order`, `display_order`, `position`, `rank` and `ability`
+across `src` and `supabase/migrations` returns nothing relevant. Every team order
+in the product is alphabetical.
+
+Three alternatives were considered and rejected: alphabetical (which for this
+club matches the ability order nowhere), `created_at` (which records when a row
+was inserted during setup), and an ordered array of team ids on `clubs` (which
+lists teams in a second place and drifts).
+
+### What it is, and what it is not
+
+**The club's ordering of its own teams.** Five integers, set by a `teams.manage`
+holder on the existing `AdminTeams` screen.
+
+It is **not an ability score** and there is no per-player field of any kind. No
+literal team name appears in any rule.
+
+Null means unordered, which is today's behaviour: the grouping suggestion keeps
+each team whole and does not claim to know which teams are adjacent. **The screen
+says the order is unset** rather than quietly doing less, because the correct
+failure will otherwise look like a bug.
+
+**No new policy.** An ordinary column on `teams`, whose write already takes
+`teams.manage` via `teams_manage` (`0012_rbac.sql:376`).
+
+**Audit.** `audit_teams()` has an allow list, and `describeActivityEvent` renders
+`team.updated` as the deliberately general "Team updated"
+(`src/lib/activityView.ts:432`), which a third field does not falsify. Confirm
+whether `sort_order` joins the audited allow list; the default answer is yes.
+
+**Two orders coexist and must not be confused.** Labels stay alphabetical
+(`sessionTeamsLabel`, unchanged); grouping uses the club order.
+
+---
+
+## 6. M4: `drills.variant_of`
+
+```sql
+alter table public.drills add constraint drills_id_club_unique unique (id, club_id);
+
 alter table public.drills add column variant_of uuid;
 alter table public.drills
   add constraint drills_variant_of_fk
@@ -338,141 +486,132 @@ create index on public.drills (variant_of);
 ```
 
 **The composite parent constraint does not exist yet and must be added first.**
-Checked against the migrations: `teams`, `players`, `sessions`, `venues`,
-`seasons` and `spond_events` all carry an `(id, club_id)` unique constraint;
-**`drills` does not**. So M4 opens with
-
-```sql
-alter table public.drills add constraint drills_id_club_unique unique (id, club_id);
-```
-
+`teams`, `players`, `sessions`, `venues`, `seasons` and `spond_events` all carry
+an `(id, club_id)` unique constraint; **`drills` does not**. The addition is
 guarded by the `if not exists` block 0044 used for `sessions_id_club_unique`
 (`0044_training_day_core.sql:69`), because a migration partly applied by hand
 must be re-runnable.
 
-**Why club-scoped composite at all.** The pattern 0044 established, and for the
-reason 0044 states: a bare `on delete set null` on a composite foreign key nulls
-every referencing column including `club_id`, which then fails its not-null
-constraint and makes the parent undeletable. The column list on `set null` is
-load bearing.
+**Why club-scoped composite at all.** The reason 0044 states: a bare
+`on delete set null` on a composite foreign key nulls every referencing column
+including `club_id`, which then fails its not-null constraint and makes the
+parent undeletable. The column list on `set null` is load bearing.
 
 **`on delete set null`, not cascade.** Deleting the original must never delete
 the adaptations, because an adaptation is what a session actually ran. It becomes
-an ordinary drill, which is also exactly what "Save as reusable drill" produces,
-so the two paths agree.
+an ordinary drill, which is also what "Save as reusable drill" produces, so the
+two paths agree.
 
-**The display rule, which is not schema.** A drill with `variant_of` set is not
-listed in the library. It is reachable from the session that owns it and from its
-parent's detail page. That keeps session-only adaptations out of the library
-without an access rule, so it needs no policy work.
+**The display rule is not schema.** A drill with `variant_of` set is not listed
+in the library; it is reachable from the session that owns it and from its
+parent. That keeps session-only adaptations out of the library without an access
+rule, so it needs no policy work.
 
-**RLS: no new policy.** An ordinary column on `drills`; the four live policies
-already cover every column, so writing a variant link is exactly as restricted as
-renaming the drill. This is the reasoning `0046` used for `diagram`.
-
-**Audit.** `audit_drills()` (0037) records an update only when corner, level or
-duration changed. Setting `variant_of` happens at insert, which already emits
-`drill.created`. No audit change.
-
-**Rollback.** Drop the constraint and the column. Adaptations survive as ordinary
-drills and become visible in the library, which should be stated in the PR.
+**No new policy.** An ordinary column on `drills`; the four live policies already
+cover every column. **Audit**: `audit_drills()` (0037) records an update only
+when corner, level or duration changed, and setting `variant_of` happens at
+insert, which already emits `drill.created`.
 
 ---
 
-## 6. What is not stored, and what that costs
+## 7. M5: motion, only if approved
 
-### A child's earlier bib within one session
+Not scoped beyond its two hazards, both repeated because they are easy to get
+wrong:
 
-The two bib columns mean the **station bib survives the games being planned**,
-which is the requirement. What is still not recoverable is a change **within**
-one of them: re-bib a child from red to blue for the carousel and the red is
-gone, because the column is a scalar, `register_entries_touch` overwrites
-`marked_by` and `marked_at`, and 0044 refuses a per-tick audit trigger outright.
-
-**That is accepted, and it costs less than it did.** The case that made it
-uncomfortable was the carousel colour being destroyed by a game re-bib, and the
-second column removes it entirely. What remains is a coach correcting their own
-station grouping before training, where the previous value is not a fact anyone
-asks for.
-
-**What would reverse the decision**, recorded so it is not rediscovered: a
-post-session record of what each child actually did, per-child development
-tracking across sessions, or a safeguarding-shaped dispute about who was where.
-None is on the roadmap. If one arrives, the smallest answer is an append-only
-record of bib changes for a session, one narrow table that does not touch the
-operational read path. It is a shape, not scheduled work.
-
-### Live rotation progress
-
-Not stored, because it is not tracked. There is nothing to lose.
-
-### Which drill sat out at a four station delivery
-
-If a coach removes the fifth activity from the dated session, the session records
-four activities and the week plan still records five, so the plan is intact and
-the session is honest. If instead a marker is used, the fifth activity stays with
-a marker on it. **Unresolved** which of the two is the right gesture
-(`08-open-questions.md`, D2); neither needs a migration.
+1. The element key allow-list is a **check constraint**. New keys are a gated
+   migration.
+2. The parser **discards an unknown version whole**. The reader that understands
+   the new version ships and reaches every client **before** any writer produces
+   it. Two releases, in that order.
 
 ---
 
-## 7. Deferred: `sessions.template_id`
+## 8. Migration sequencing, and why a file number reserves nothing
 
-Recorded so the reasoning is not rediscovered.
+**Open draft PR #191 owns reviewed migration `0050_bulk_delete_players.sql`. This
+programme does not modify it, does not depend on it, and must not assume it.**
 
-It would give a session uniform provenance (today only a programme-applied
-session records where it came from) and make two deliveries of one plan visible
-as siblings. **It is not proposed**, because the promote and multi-date journeys
-are copies that work without it, nothing in the settled model asks for a sibling
-display, and an unread column invites a wrong reading later.
+The production migration workflow applies one file per run, chosen from the
+closed register in
+`.github/scripts/production-migration/reviewed_migrations.py`. Every entry pins
+the hosted state it was reviewed against:
 
-**The trigger that would revive it**: a request to see "also delivered Saturday"
-on a session, or a request to apply one edit to both deliveries. Either makes the
-link a consumer-backed fact rather than a tidy idea.
+```python
+expected_previous_version="20260812102912",
+expected_previous_name="spond_session_link_unique",
+```
 
----
+That is "the ledger row that must still be the unique newest one before this
+runs". If the head has moved, the run stops before touching anything.
 
-## 8. What is not touched anywhere in this programme
+**Three consequences, and they are the whole of this section:**
 
-Stated so a future session does not go looking:
+1. **A file number is not a reservation.** Calling a file `0051` claims nothing.
+   What claims a position is a register entry pinned to a head.
+2. **A register entry cannot be written before its head is known.** If `0050` is
+   applied first, the next migration's `expected_previous_version` is `0050`'s
+   stamp, which does not exist until `0050` has run.
+3. **Two unapplied migrations cannot both be authored against today's head**
+   without one becoming wrong the moment the other applies. The second is
+   rewritten, reviewed again, and only then applied.
 
-- `players`, `player_registrations`, `seasons`: unchanged.
-- `player_spond_links`, `spond_event_responses`, `spond_events`, `spond_groups`:
-  unchanged, read only, and Spond stays read-only from OTJ.
-- `sessions` and `templates`: **unchanged.** No `blocks`, no `template_id`, and
-  no new key inside `activities` unless the derived station list proves
-  insufficient, which would be a client allow-list change and not a migration.
-- `register_entries`: one added column and nothing else. The three-facts model of
-  0044 plus 0047 is correct and is extended, not reinterpreted.
-- `teams.bib_colour`, `is_bib_colour`: unchanged. `teams` gains `sort_order` and
-  nothing else, and the game bib draws on the same closed vocabulary.
-- `boards`: unchanged. A tactics board seats a team; a drill diagram is an
-  exercise; a venue layout is a place. Three things, three columns, one shared
-  coordinate discipline.
-- `content_shares` and its RPCs: unchanged. This programme proposes no public
-  projection.
-- `src/lib/share.ts` and `ShareModal`: unchanged in behaviour. Coach to coach
-  sharing already works.
-- Every Edge Function: unchanged.
+**So no coaching migration is authored as "the one after 0050" while 0050 is
+unresolved.** Each is numbered and registered at the moment it is ready for its
+own application review, against the live ledger as it stands then, confirmed
+there and not against the highest file on disk (`CLAUDE.md`, Data model).
 
----
+**The non-migration slices are not sequenced by any of this.** A1 and A2, the
+suggested setup, the setup reconciliation, the share check and the whole
+authoring track touch no migration and proceed on their own dependencies.
 
-## 9. Ordering constraints between migrations
+### Ordering between the migrations themselves
 
-- M1, M2, M3 and M4 are independent of each other and of everything else.
-- M1 should precede the grouping suggestion, which needs the team order to
+- M1, M2, M3 and M4 are independent of each other.
+- M1 should precede the grouping suggestion, which wants the team order to
   combine adjacent bands. It is not a hard blocker: with `sort_order` null the
   suggestion keeps each team whole and says the order is unset.
-- M2 must precede the setup map, because there is no layout to load without it.
+- M2 must precede the setup map.
 - M3 must precede the game plan.
 - M4 must precede adaptation.
-- M5, if it ever happens, is last and depends on nothing.
+- M5, if it ever happens, is last.
 
 **Apply order relative to the frontend**, following the rule `0046` had to learn:
-each of these columns is new and null everywhere, so **the migration goes first
-and the frontend second**. A frontend reading a column the database lacks gets
-PostgREST 42703 and the read fails; a database with an unread new column changes
-nothing for anybody.
+each column is new and null everywhere and the table is new and empty, so **the
+migration goes first and the frontend second**. A frontend reading a column the
+database lacks gets PostgREST 42703 and the read fails.
 
-**None of these changes a policy, a grant or a public projection**, with the two
-audit-label decisions in M1 and M2 as the only adjacent work.
+---
+
+## 9. Deferred: `sessions.template_id`
+
+It would give a session uniform provenance and make two deliveries of one plan
+visible as siblings. **It is not proposed**, because both journeys are copies
+that work without it and nothing in the settled model asks for a sibling display.
+
+**The trigger that would revive it**: a request to see "also delivered Saturday"
+on a session, or to apply one edit to both deliveries.
+
+---
+
+## 10. What is not touched anywhere in this programme
+
+- `players`, `player_registrations`: unchanged.
+- `seasons`: **read only**. Referenced by `venue_layouts`, never written by this
+  programme, and its no-delete rule is respected by `on delete restrict`.
+- `clubs`: unchanged. `age_groups` is read, and should start being read by the
+  screens that offer an age group.
+- `player_spond_links`, `spond_event_responses`, `spond_events`, `spond_groups`:
+  unchanged, read only, and Spond stays read-only from OTJ.
+- `sessions` and `templates`: **no column change.** Two new keys inside the
+  existing `activities` jsonb, and nothing else.
+- `venues`: **unchanged**, which is what keeps `audit_venues()` and its "Venue
+  renamed" label true.
+- `register_entries`: one added column and nothing else.
+- `teams.bib_colour`, `is_bib_colour`: unchanged. `teams` gains `sort_order` and
+  nothing else, and the game bib draws on the same closed vocabulary.
+- `boards`: unchanged.
+- `content_shares` and its RPCs: unchanged. This programme proposes no public
+  projection.
+- `src/lib/share.ts` and `ShareModal`: unchanged in behaviour.
+- Every Edge Function: unchanged.
