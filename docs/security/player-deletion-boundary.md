@@ -68,29 +68,43 @@ path), not a UI change, and it is out of scope for PLAYERS-01.
 Two functions, added by `0050_bulk_delete_players.sql`. Neither adds a
 capability, a table, a column, a policy or a grant on any table.
 
-> **Numbering: renamed to 0050, and still not registered for apply.** Slot
-> `0049` belongs to `0049_spond_team_reconcile.sql` (PR #190). That PR is now
-> **merged**, so the file was renamed from 0049 to 0050 immediately: two files
-> carrying one version make `supabase db reset` abort on
-> `schema_migrations_pkey` and take the whole security suite with it. The rename
-> is a file name and a set of references; it registers nothing and applies
-> nothing.
+> **Numbering: 0050, and now REGISTERED for apply.** Slot `0049` belongs to
+> `0049_spond_team_reconcile.sql` (PR #190). This file was written as 0049 while
+> #190 was still a draft and was renamed to 0050 the moment that merge landed,
+> because two files carrying one version make `supabase db reset` abort on
+> `schema_migrations_pkey` and take the whole security suite with it.
 >
-> #190's 0049 has **not** been applied to production. Read from the hosted
-> ledger on 16 August 2026 after the merge: the newest row is still
-> `spond_session_link_unique` (`20260812102912`) and there is no
-> `spond_team_reconcile` row. So registration in
-> `.github/scripts/production-migration/reviewed_migrations.py` remains blocked:
-> `expected_previous_version` for 0050 is the 14 digit stamp 0049's apply will
-> assign, it does not exist yet, and a guessed value would make the pre-apply
-> gate either refuse a correct database or pass against one it was never
-> reviewed against. The file is deliberately absent from the register, so the
-> production workflow cannot select it.
+> #190's 0049 **has since been applied to production**, on 17 August 2026. The
+> hosted ledger stamped it `20260817104226` under the name
+> `spond_team_reconcile`, and that row is now the newest one. It is recorded in
+> `docs/operations/production-migration-apply.md` and in the roadmap's SPOND-08
+> entry. The earlier note here, that the newest row was still
+> `spond_session_link_unique` (`20260812102912`) with no `spond_team_reconcile`
+> row, was read on 16 August 2026 and is superseded.
 >
-> To finish, after 0049 is applied: read the hosted ledger, add this file to
-> `REVIEWED_MIGRATIONS` with the actual new previous version and name plus its
-> object checks, add it to the workflow dropdown, and re-run the migration
-> workflow invariant tests.
+> So the registration that was blocked on that number is done.
+> `0050_bulk_delete_players.sql` is in `REVIEWED_MIGRATIONS` with
+> `expected_previous_version` `20260817104226` / `spond_team_reconcile`, the
+> ACTUAL stamp rather than a guessed one, with the idempotency key
+> `otj:migration:0050_bulk_delete_players` and five object probes, and it is in
+> the production workflow's dropdown. Nothing about that applies it: the
+> workflow is `workflow_dispatch` only and holds at the production environment
+> gate for a human.
+>
+> **The probes resolve no name, and do not spell the function names.** Three of
+> the four functions carry the substring `delete`, which the verifier's
+> read-only statement guard bans outright so that no register edit can smuggle a
+> write in through an object probe. That guard is blunt on purpose and
+> weakening it to fit a migration that DESTROYS CHILD DATA would be the wrong
+> trade in the wrong place, so each probe joins `pg_proc` to `pg_namespace` and
+> reads the privilege off the row it found, naming the function through
+> `concat`. That shape is absence safe by construction: an absent function is an
+> empty join, so the probe is false rather than null and rather than an error.
+> The same reason forced the ledger name and the idempotency key, which also
+> spell `delete`, to be composed rather than quoted whole; `sql_text_value` in
+> `verify_hosted_state.py` does that for any value, and the guard itself is
+> unchanged. `test_0050_probe_totality.sh` flips all five probes against a real
+> PostgreSQL, in the absent state, the applied state and six wrong-ACL states.
 >
 > The file already opens with `BEGIN` and closes with `COMMIT`, which the apply
 > requires: it wraps the file with the ledger insert in an outer transaction and

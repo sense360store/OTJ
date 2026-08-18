@@ -10,41 +10,37 @@
 -- only once the live ledger is confirmed to have this slot free. Do not
 -- auto-merge. Nothing in this pull request applies it.
 --
--- NOT REGISTERED FOR APPLY. BLOCKED ON PRODUCTION 0049.
+-- REGISTERED FOR APPLY, AND NOT YET APPLIED.
 --
--- Slot 0049 belongs to 0049_spond_team_reconcile.sql (PR #190), which is now
--- MERGED to main but has NOT been applied to production. This file was written
--- as 0049 while #190 was still a draft and was renamed to 0050 the moment the
--- merge landed, because two files carrying one version make `supabase db reset`
--- abort on schema_migrations_pkey and take the whole security suite with it.
--- The rename is a file name and a set of references; it registers nothing and
--- applies nothing.
+-- Slot 0049 belongs to 0049_spond_team_reconcile.sql (PR #190). This file was
+-- written as 0049 while #190 was still a draft and was renamed to 0050 the
+-- moment that merge landed, because two files carrying one version make
+-- `supabase db reset` abort on schema_migrations_pkey and take the whole
+-- security suite with it.
 --
--- What is still blocked, and why. The production apply workflow selects a
--- migration from the closed register in
--- .github/scripts/production-migration/reviewed_migrations.py, and every entry
--- names the ledger row that must still be the newest one before it runs. For
--- this file that row is the one 0049's apply will stamp, and a hosted ledger
--- version is a 14 digit timestamp assigned AT APPLY TIME. It does not exist
--- yet. A guessed value would make the pre-apply gate either refuse a correct
--- database or, worse, pass against one it was never reviewed against, so none
--- has been invented. This file is deliberately ABSENT from the register, which
--- means the production workflow cannot select it at all: the correct state for
--- a migration whose base has not landed.
+-- 0049 HAS SINCE BEEN APPLIED to production, on 17 August 2026: the hosted
+-- ledger stamped it 20260817104226 under the name spond_team_reconcile, and
+-- that row is now the newest one. It is recorded in
+-- docs/operations/production-migration-apply.md and in the roadmap's SPOND-08
+-- entry. An earlier version of this header said 0049 was unapplied, read from
+-- the ledger on 2026-08-16; that reading is superseded.
 --
--- To finish, after 0049 is applied to production:
---   1. read the hosted ledger and take the new newest row (version and name);
---   2. add this file to REVIEWED_MIGRATIONS with that ACTUAL previous version,
---      its object checks and its idempotency key;
---   3. add it to the workflow's dropdown and re-run the migration workflow
---      invariant tests.
+-- So this file is now in the closed register at
+-- .github/scripts/production-migration/reviewed_migrations.py, with
+-- expected_previous_version 20260817104226 / spond_team_reconcile, the ACTUAL
+-- stamp rather than a guessed one, the idempotency key
+-- otj:migration:0050_bulk_delete_players, and five object probes covering the
+-- four functions below and who may execute them. It is also in the production
+-- workflow's dropdown.
 --
--- Numbering evidence, read from the hosted ledger on 2026-08-16 AFTER #190
--- merged: the newest row is still spond_session_link_unique (0048, version
--- 20260812102912); there is no spond_team_reconcile row, which is the direct
--- confirmation that 0049 has not been applied. 0033_players_legacy_columns.sql
--- remains MERGED BUT DEFERRED and unapplied, so its slot stays taken. Confirm
--- the free number against the live ledger again immediately before applying.
+-- REGISTERING IT APPLIES NOTHING. The workflow is workflow_dispatch only, it
+-- holds at the production environment gate for a human, and merging this pull
+-- request changes no database. The rollout order for this change is the
+-- opposite of the usual one and is stated in the pull request: apply 0050 from
+-- THIS branch commit first, confirm the post-apply gate, and only then merge,
+-- because main auto-deploys to Vercel and the frontend calls these functions.
+-- Confirm the free number and the newest ledger row against the live ledger
+-- again immediately before applying.
 --
 -- TRANSACTION SHAPE. The file opens with BEGIN and closes with COMMIT, which
 -- the production apply relies on: it wraps the file in an outer transaction

@@ -682,6 +682,145 @@ class ProbesAreTotal(unittest.TestCase):
                     self.assertNotIn("pg_get_function_identity_arguments", probe)
 
 
+class ADataValueMaySpellAForbiddenWord(unittest.TestCase):
+    """0050 is called bulk_delete_players, and it is entitled to be.
+
+    assert_select_only bans seventeen words as substrings of the whole
+    statement, bluntly, so no register edit can smuggle a write in through an
+    object probe. Nine of them are ordinary migration vocabulary, so a ledger
+    name was always going to spell one eventually. The guard is not relaxed;
+    the VALUE is composed instead, and the statement carries no banned
+    substring while comparing the identical text.
+    """
+
+    BULK = "supabase/migrations/0050_bulk_delete_players.sql"
+
+    def test_a_clean_value_is_still_an_ordinary_literal(self):
+        # The common case is untouched: no concat, no cleverness.
+        self.assertEqual(vh.sql_text_value("spond_team_reconcile"), "'spond_team_reconcile'")
+        self.assertEqual(vh.sql_text_value("20260817104226"), "'20260817104226'")
+
+    def test_a_value_that_spells_one_is_composed(self):
+        out = vh.sql_text_value("bulk_delete_players")
+        self.assertNotIn("delete", out.lower())
+        self.assertTrue(out.startswith("concat("))
+
+    def test_every_forbidden_token_can_be_expressed(self):
+        # Not only "delete". A future migration may be called anything.
+        for bad in vh._FORBIDDEN_TOKENS:
+            value = f"before_{bad.strip()}_after"
+            with self.subTest(token=bad):
+                out = vh.sql_text_value(value)
+                self.assertIsNone(vh._banned_token_in(out), out)
+
+    def test_the_composed_value_is_the_same_text(self):
+        # Composing must not change what the ledger is asked about, or the gate
+        # would compare against a name no row carries.
+        for value in ("bulk_delete_players", "otj:migration:0050_bulk_delete_players"):
+            with self.subTest(value=value):
+                pieces = re.findall(r"'([^']*)'", vh.sql_text_value(value))
+                self.assertEqual("".join(pieces), value)
+
+    def test_the_statement_guard_itself_is_unchanged(self):
+        # The point of the whole exercise: the guard is exactly as strict.
+        for sql in ("insert into t values (1)", "select 1; delete from t",
+                    "update t set a = 1", "select 1 from t; drop table t"):
+            with self.subTest(sql=sql):
+                with self.assertRaises(SystemExit):
+                    vh.assert_select_only(sql)
+
+    def test_the_bulk_delete_register_entry_composes_and_is_read_only(self):
+        entry = rm.REVIEWED_MIGRATIONS[self.BULK]
+        md5 = rm.md5_hex(rm.read_migration_sql(os.path.join(REPO, entry.path)))
+        script = vh.build_script(vh.state_select(entry, md5))
+        self.assertIn("set transaction read only", script)
+        self.assertTrue(script.rstrip().endswith("rollback;"))
+        # And the ledger question is still asked about the real name.
+        self.assertIn("concat('bulk_delet', 'e_players')", script)
+
+    def test_a_probe_cannot_reach_a_function_that_runs_text_as_sql(self):
+        """Composition is now a sanctioned technique, so the executors that
+        could turn a composed string into a statement are refused outright."""
+        for probe in (
+            "(select query_to_xml('select 1', false, true, ''))",
+            "(select count(*) from pg_proc where pg_read_file('/etc/passwd') is not null)",
+            "(select dblink('', 'select 1'))",
+        ):
+            with self.subTest(probe=probe):
+                with self.assertRaises(SystemExit) as ctx:
+                    vh.assert_probe_is_total("bad", probe)
+                self.assertIn("runs text as SQL", str(ctx.exception.code))
+
+
+class TheBulkDeleteRegistration(unittest.TestCase):
+    """0050 is DESTRUCTIVE, so what it is registered against is pinned."""
+
+    BULK = "supabase/migrations/0050_bulk_delete_players.sql"
+
+    def entry(self):
+        return rm.REVIEWED_MIGRATIONS[self.BULK]
+
+    def test_it_is_registered_against_the_applied_0049_row(self):
+        # The hosted row 0049's apply stamped on 17 August 2026. Recorded in
+        # docs/operations/production-migration-apply.md and in the roadmap's
+        # SPOND-08 entry; a wrong value here fails the pre gate closed, which
+        # is safe, but it would also stop a correct apply.
+        e = self.entry()
+        self.assertEqual(e.expected_previous_version, "20260817104226")
+        self.assertEqual(e.expected_previous_name, "spond_team_reconcile")
+
+    def test_the_repository_record_agrees_with_the_registration(self):
+        # The two are compared rather than both trusted: the register is the
+        # thing that runs, the document is the thing a human reads.
+        with open(os.path.join(REPO, "docs/operations/production-migration-apply.md"),
+                  "r", encoding="utf-8") as fh:
+            doc = fh.read()
+        self.assertIn("`20260817104226`", doc)
+        self.assertIn("`spond_team_reconcile`", doc)
+        e = self.entry()
+        self.assertIn(e.expected_previous_version, doc)
+
+    def test_it_names_the_file_and_carries_its_own_key(self):
+        e = self.entry()
+        self.assertEqual(e.ledger_name, "bulk_delete_players")
+        self.assertEqual(e.idempotency_key, "otj:migration:0050_bulk_delete_players")
+
+    def test_it_probes_all_four_functions_the_migration_creates(self):
+        # One probe per object, so a partial apply cannot read as a whole one.
+        self.assertEqual(len(self.entry().objects), 5)
+
+    def test_no_probe_resolves_a_name_eagerly_or_needs_a_resolver(self):
+        # Absence safe BY CONSTRUCTION rather than by using to_reg* carefully:
+        # every probe joins pg_proc to pg_namespace and reads the privilege off
+        # the row it found, so an absent function is an empty join and false.
+        for label, probe in self.entry().objects.items():
+            with self.subTest(label=label):
+                vh.assert_probe_is_total(label, probe)
+                self.assertIn("pg_proc", probe)
+                self.assertNotIn("to_regprocedure", probe)
+                self.assertNotIn("::", probe)
+
+    def test_the_boundary_probes_say_who_may_and_may_not_execute(self):
+        objects = self.entry().objects
+        acl = objects["authenticated may execute the bulk deletion entry point and anon may not"]
+        self.assertIn("has_function_privilege('authenticated', p.oid, 'EXECUTE')", acl)
+        self.assertIn("not has_function_privilege('anon', p.oid, 'EXECUTE')", acl)
+        # The counting helper is reachable by NOBODY: a grant there would hand
+        # every signed in user a club wide count of what deleting a child
+        # destroys.
+        counts = objects[
+            "public.player_deletion_counts(uuid, uuid[]) exists and no client role may execute it"
+        ]
+        self.assertIn("not has_function_privilege('authenticated', p.oid, 'EXECUTE')", counts)
+        self.assertIn("not has_function_privilege('anon', p.oid, 'EXECUTE')", counts)
+
+    def test_it_is_offered_by_the_workflow(self):
+        with open(os.path.join(REPO, ".github/workflows/apply-production-migration.yml"),
+                  "r", encoding="utf-8") as fh:
+            wf = fh.read()
+        self.assertIn(self.BULK, wf)
+
+
 class MutatingASafeProbeBackIsCaught(unittest.TestCase):
     """The four protected classes, mutated back and proved to be caught.
 

@@ -36,7 +36,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
-| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Draft PR open. Migration renamed to 0050 now #190 has merged; registering it for apply stays blocked until production 0049 is applied. Destructive-change review gate; boundary in `docs/security/player-deletion-boundary.md` |
+| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | PR #191 open and rebased on main. `0050_bulk_delete_players` is now REGISTERED for apply against `20260817104226` / `spond_team_reconcile` (the row 0049's apply stamped on 17 August 2026) and is in the workflow dropdown, but is NOT applied. Applying it comes BEFORE the merge, because main auto-deploys. Destructive-change review gate; boundary in `docs/security/player-deletion-boundary.md` |
 | SPOND-07 | Spond | Scheduled/automatic Spond refresh with visible freshness/failure state | Later | P2 | Rate behaviour and scheduling review |
 | LIVE-01 | Live session | Screen wake lock while delivering a session | Later | P2 | Browser capability/fallback |
 | LIVE-02 | Live session | Unmissable time-up cue and improved live connectivity/offline state | Later | P2 | Coordinate with accessibility |
@@ -300,16 +300,24 @@ the reversible action for a player genuinely leaving the club. No anonymised
 history redesign is in scope.
 
 The migration is written, self verifying and wrapped in its own explicit
-transaction, and is NOT applied to production by this PR.
+transaction, and is NOT applied to production by this PR. It is now REGISTERED
+for apply, which is a different thing: the workflow is dispatch only and holds
+at the production environment gate for a human.
 
-Numbering: slot 0049 belongs to SPOND-08's `0049_spond_team_reconcile.sql`.
-Now that #190 has merged, this file is `0050_bulk_delete_players.sql`; the
-rename was forced, because two files carrying one version make
-`supabase db reset` abort and take the security suite with it. Registering 0050
-for apply stays blocked: production has not applied 0049 (the hosted ledger's
-newest row is still `spond_session_link_unique`), so the previous version 0050
-must name does not exist yet and has not been guessed. The file is deliberately
-absent from the reviewed register, so the production workflow cannot select it.
+Numbering: slot 0049 belongs to SPOND-08's `0049_spond_team_reconcile.sql`, so
+this file is `0050_bulk_delete_players.sql`; the rename was forced, because two
+files carrying one version make `supabase db reset` abort and take the security
+suite with it. 0049 has since been applied to production, on 17 August 2026, at
+hosted version `20260817104226` / `spond_team_reconcile`, so the row 0050 must
+name exists and has been read rather than guessed. 0050 is in
+`REVIEWED_MIGRATIONS` against exactly that row, with five object probes and its
+own idempotency key, and in the workflow dropdown.
+
+Rollout order, which is the reverse of the usual one: apply 0050 from the
+reviewed #191 branch commit FIRST, confirm the pre-apply gate, the apply and
+the post-apply readback, and only then merge. Main auto-deploys to Vercel and
+the new screens call these functions, so merging first would ship a client
+calling an RPC the database does not have.
 See the file header and `docs/security/player-deletion-boundary.md`.
 
 **DRILL-02 — drill diagrams across session delivery**
