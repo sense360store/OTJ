@@ -205,6 +205,20 @@ Answered by the same discovery, and new since the last revision.
   together, using the club team order.
 - The setup views are derived from blocks, so the two-phase model needs no new
   entity.
+- **Moving one child to the other side is a re-bib.** Asked directly, the coach
+  said they would change the child's bib rather than move them and keep their
+  colour. So there is **no per-player game-side exception mechanism**, and the
+  trigger a previous revision recorded to revisit this is resolved rather than
+  left open.
+- A re-bib is **session only** and cannot reach the child's Spond team, their OTJ
+  team or next week's default. `register_entries` has no path to those tables.
+- **A side may still hold two or more bib colours.** The re-bib moves one child
+  between colours; it does not collapse a side into one, and nothing may assume
+  it does.
+- **The earlier carousel colour is overwritten and unrecoverable, and that is
+  accepted.** Every consumer of the effective bib was checked and none reads it;
+  attendance is a separate column and survives. The full working, and what would
+  reverse the decision, is `02-target-product-model.md` section 7b.
 
 ---
 
@@ -247,6 +261,30 @@ decision the function already made, and it makes an override an informed choice.
 
 ---
 
+## Q12. Should a re-bib during the carousel warn the coach?
+
+**New, and the only question this round opened.**
+
+**The situation.** A re-bib is the agreed way to move a child between game sides,
+and it is also possible mid-carousel. Mid-carousel it is correct behaviour (the
+coach moving a child intends them to move), but it silently changes which group
+that child rotates with for the remaining stations, and if the last member of a
+colour is re-bibbed, that group ceases to exist.
+
+**Why it is only a UI question.** The data model handles both cases identically
+and correctly. The starting-station derivation keys on the bib colour rather than
+an array index, so no *other* group is disturbed
+(`02-target-product-model.md` section 7b). What is left is whether the coach
+should be told what they just did.
+
+**Recommendation.** No modal, no confirmation. At most a quiet line on the groups
+screen while a carousel block is running: "moving a child now changes which
+station they rotate to next". A coach mid-session should never be interrupted by
+a dialogue about something they meant to do.
+
+**If unanswered.** Ship without it. The behaviour is correct either way, and this
+only affects whether it is explained.
+
 ---
 
 ## Summary: what actually blocks work
@@ -263,6 +301,7 @@ decision the function already made, and it makes an override an informed choice.
 | Q8 audible rotation cue | Nothing | LIVE-02 unchanged |
 | Q10 transition timing | Nothing | Optional activity, games view announces itself |
 | Q11 a "why" line on the suggestion | Nothing | Ship without, add on request |
+| Q12 warn on a mid-carousel re-bib | Nothing | Ship without a warning |
 
 **Settled by the August coach discovery, and not to be reopened without evidence**
 
@@ -273,6 +312,7 @@ decision the function already made, and it makes an override an informed choice.
 | Q9 group identity | Bib colour, unique per session, no Group entity, no ability field |
 | Game phase | Sides are sets of bib groups, banded not averaged, count is a recommendation |
 | Session-only override | Already satisfied by `register_entries.bib_colour_override` |
+| Moving one child between game sides | A re-bib. No per-player exception mechanism, no phase-specific bib, no history table |
 | Team ability order | One integer per team (M6), the only irreducible new fact |
 
 **Nothing blocks the critical path.** Q1 governs only the parked public

@@ -45,6 +45,11 @@ deferred:**
 - **No setup phase entity and no layout versioning.** A phase-specific setup view
   is the placements of one block's members, and the transition between them is an
   ordinary activity (`02-target-product-model.md` section 7, layer 3).
+- **No phase-specific bib column, no per-player game-side row and no bib history
+  table.** Moving a child between game sides is a re-bib, confirmed by the coach,
+  and `register_entries.bib_colour_override` already carries it. The earlier
+  colour is overwritten and nothing reads it
+  (`02-target-product-model.md` section 7b).
 - **No session workflow state column.** Readiness is derived (section 5 there).
 - **No drill version table.** Adaptation is a copy (section 3 there).
 
@@ -468,10 +473,39 @@ team order, but the coach adjusts it on the night and an adjustment lost to a
 page reload on a wet touchline is worse than a small field. It is stored beside
 the block whose delivery it describes.
 
-**Per-player exceptions are not modelled.** Moving one child between sides is a
-bib change, which is one tap and already session-only. If coaches later report
-wanting to move a player without re-bibbing, that is the stated trigger to
-revisit.
+**Per-player exceptions are not modelled, and the coach confirmed the behaviour
+that makes this correct.** Asked directly, they said they would **re-bib** a child
+moved to the other side rather than move them and keep their colour. So the case a
+per-player exception would have served does not arise, and the trigger the
+previous revision recorded has been resolved rather than left open.
+
+**Re-bibbing overwrites, and that is checked rather than assumed.**
+`register_entries` is one row per `(session_id, player_id)` with a single
+`bib_colour_override`, written through `upsert(..., { onConflict:
+'session_id,player_id' })`. The `register_entries_touch` trigger overwrites
+`marked_by` and `marked_at` too, and 0044's self-verification refuses a per-tick
+audit trigger outright. **So a child's earlier carousel colour is gone once they
+are re-bibbed, and no table can recover it.**
+
+That is accepted. Every consumer of the effective bib was checked and none asks
+what colour a child wore earlier in the same session; the full working, including
+what would reverse the decision, is `02-target-product-model.md` section 7b.
+`present` and `included_in_groups` are separate columns and survive a re-bib
+untouched, so the attendance record is unaffected.
+
+**Three alternatives were considered and rejected:**
+
+- **A second bib column per phase** (`carousel_bib`, `game_bib`). It hard-codes
+  two phases into a schema whose whole point is that the number of blocks is a
+  planning decision, and it doubles every read path for a value nobody reads.
+- **A row per player per block.** It duplicates tonight's membership, which
+  already lives once in `register_entries`, and creates a second place that can
+  disagree with the bib a child is actually wearing.
+- **An append-only bib change log.** It is the right shape *if* a requirement to
+  reconstruct history ever appears, and it is recorded in
+  `02-target-product-model.md` section 7b as a shape rather than as work. It is
+  not built now, because 0044 states that the row is the record and adding a
+  history table to serve nothing would reverse that decision for free.
 
 **The check constraint** on `blocks` therefore admits `games` as an optional
 array of two-key objects whose values are arrays of bib colour strings from the

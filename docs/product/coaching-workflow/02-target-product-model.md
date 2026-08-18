@@ -537,10 +537,20 @@ Reasons this is the right level:
   child.
 - It expresses the two-colours-per-side case directly, which is the requirement.
 
-**Per-player exceptions are deliberately not modelled.** If a coach wants one
-child on the other side, they change that child's bib, which is one tap and is
-already session-only. If evidence later shows coaches want to move a player
-without re-bibbing, that is a stated trigger to revisit, not a thing to build now.
+**Per-player exceptions are deliberately not modelled, and the coach has now
+confirmed why that is right.** Asked directly whether they would move a child to
+the other side without changing their bib, or re-bib them, the coach said they
+would **re-bib**. So the case a per-player exception would have served does not
+arise: the child is handed a bib belonging to their new side and their colour
+tells the truth about where they are.
+
+This is not the same as "one side, one colour", which stays false. A side of two
+colours remains a side of two colours; the re-bib moves one child from one of
+those colours into one belonging to the other side.
+
+Like every bib assignment it is **session only**. It cannot reach the child's
+Spond team, their OTJ team or next week's default, and the schema is what
+guarantees that rather than a rule anyone has to remember.
 
 ### How many games
 
@@ -566,6 +576,98 @@ each other. With one game, it means the sides are drawn so the match is sensible
 rather than deliberately lopsided.
 
 All of it is a suggestion the coach adjusts on the night.
+
+## 7b. What a re-bib costs, and why it is affordable
+
+**The question this section exists to answer.** `register_entries` holds one row
+per player per session with a single `bib_colour_override`, so a re-bib
+**overwrites**. If a child wears red through the carousel and blue in the games,
+does OTJ afterwards believe they were in the blue station group all along?
+
+**The answer is yes, and it is accepted deliberately.** The reasoning is below,
+including what would have made it unacceptable.
+
+### The timeline, answered explicitly
+
+| | Event |
+|---|---|
+| T0 | The child's normal Spond and OTJ team exists |
+| T1 | Assigned RED for tonight's carousel |
+| T2 | Rotates every planned station as RED |
+| T3 | Carousel ends |
+| T4 | Coach moves them to another game side and re-bibs them BLUE |
+| T5 | Page reload |
+| T6 | Coach opens the game setup and the live view |
+
+What OTJ believes at T6:
+
+| Fact | Value | Where it comes from |
+|---|---|---|
+| Permanent team | **Unchanged**, exactly as at T0 | `player_registrations.team_id`. A register write structurally cannot reach it. |
+| Current bib | **BLUE** | `register_entries.bib_colour_override`, read back after the reload. |
+| Game side | **The side BLUE belongs to** | The `'games'` block's side sets, which name colours. |
+| Earlier station group | **Not recoverable** | Overwritten. No prior value, no per-field timestamp, and `register_entries` is unaudited by decision and by a schema check that refuses an audit trigger (`00-current-state-audit.md` section 21). |
+
+**Three of the four are right, and the fourth is genuinely gone.** That is stated
+rather than softened.
+
+### Why losing the earlier colour is harmless
+
+Each consumer of the effective bib was checked rather than assumed:
+
+| Consumer | Needs history? |
+|---|---|
+| `tonightGroups`, the groups screen | No. It answers "how do I split these children up **now**". |
+| Starting station, "your group starts at station 2" | No. The statement is spent once the carousel has run. |
+| Live delivery | No. At T6 it is on a game activity and needs the current sides. |
+| Game side allocation | No. It names colours and reads the current ones. |
+| The generated WhatsApp message | No. It is sent **before** training, from then-current data, and re-generating after a re-bib correctly shows the new colour. |
+| Session day and the one-glance overview | No. Read-only views of current state. |
+| Attendance record | **Unaffected.** `present` is a separate column and a bib change does not touch it. |
+| Audit and history | No, and deliberately so. 0044 refuses a per-tick audit outright. |
+
+**Nothing in the product, built or agreed, asks "what colour were they during the
+carousel?".** The bib answers "which group is this child in now", which is a
+question about the present tense on a pitch, and the present tense is the only
+tense a coach needs while they are standing on it.
+
+So: **no phase-specific bib persistence, no per-player game-side row, no history
+table.** Adding persistence to preserve a fact nobody reads would be the
+speculative complexity principle 10 exists to refuse.
+
+### What would change this answer
+
+Recorded so the trade-off can be reversed knowingly rather than rediscovered:
+
+- A post-session record of what each child actually did ("Alfie did the passing
+  station with the reds"), for a coaching log or a parent report.
+- Any per-child development tracking across sessions.
+- A dispute about who was where, which is a safeguarding-shaped question rather
+  than a coaching one.
+
+None is on the roadmap. If one arrives, the smallest answer is **not** phase-aware
+bib columns: it is an append-only record of bib changes for a session, which is
+one narrow table and does not touch the operational read path at all. That is
+recorded as a shape, not as work.
+
+### The real hazard this analysis found, and it is not history
+
+Losing the earlier colour turned out to be safe. **A different consequence of the
+same overwrite is not, and it would have been easy to ship.**
+
+`tonightGroups` returns groups sorted by the fixed bib vocabulary, which is
+stable. But the **array it returns is dense over the colours actually in use**.
+Re-bib the last red child to blue and the red group disappears, the array shortens
+by one, and every group after it moves down an index.
+
+If "group N starts at station N" reads that **array index**, then one child moving
+silently reassigns *other* groups' starting stations, mid-session, with no
+indication. If it keys on the **bib colour**, only the child who moved moves.
+
+**Decision: the group-to-starting-station derivation keys on the bib colour, never
+on a positional index into the active set.** Pinned as an acceptance test in Phase
+F2 rather than left as a note, because the wrong version is the more obvious one
+to write.
 
 ## 8. Training-day delivery
 
@@ -673,6 +775,9 @@ Two hard constraints, from `00-current-state-audit.md` section 7:
 | Station placement | **A position** in the venue's fraction space; area derived | Activity key |
 | Phase-specific setup | **Derived from a block**, not a new entity. Transition is an ordinary activity. | None |
 | Game side | **A set of bib groups**, never one colour and never a player list | Block metadata |
+| Moving one child between sides | **A re-bib**, confirmed by the coach. No per-player exception mechanism. | None |
+| Earlier carousel colour after a re-bib | **Not recoverable, accepted.** Nothing reads it. | None |
+| Starting station derivation | Keys on the **bib colour**, never an array index | None |
 | Game count | An attendance-driven **recommendation**; never rewrites the plan | None |
 | Training-day view | Composed from existing reads and PR #189's seam | None |
 | Motion | Deferred. Additive, gated, reader-first. | Diagram schema widening |

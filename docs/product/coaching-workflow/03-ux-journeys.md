@@ -169,12 +169,19 @@ coming".
 4. **A side may wear two bib colours.** With four station groups and one game,
    "reds and blues against greens and yellows" is the expected shape. Nothing
    forces a bib change to make each side one colour.
-5. The coach adjusts the sides. Moving one child is a bib change, which is one tap
-   and already session-only.
+5. The coach adjusts the sides. **Moving one child is a bib change**, confirmed by
+   the coach: they hand the child a bib belonging to their new side rather than
+   moving them and leaving the old colour on. It is one tap, it is session only,
+   and it cannot touch the child's Spond team, OTJ team or next week's default.
+6. The child's earlier carousel colour is overwritten by that change and is not
+   recoverable. Nothing on this screen or any other asks for it
+   (`02-target-product-model.md` section 7b).
 
 **The distinction the screen must keep visible:** a station bib group and a game
 side are related and not the same. The sides are drawn as sets of groups, so a
-coach reads "red + blue" rather than a list of children.
+coach reads "red + blue" rather than a list of children. A re-bib moves one child
+between colours; it never collapses a side into a single colour, and the screen
+must not present it as though it had.
 
 ## Journey 6: lay out the venue
 

@@ -194,6 +194,20 @@ suggestion never rewrites a planned session.
 wearing two colours is the expected shape, and forcing a full bib redistribution
 to make each side one colour is unnecessary churn at the worst moment.
 
+**Moving one player between game sides means changing that player's bib.** Asked
+directly whether they would move a child without changing their bib or re-bib
+them, the coach said they would **re-bib**. So there is no need for a "moved but
+kept their colour" exception: the child is handed a bib belonging to their new
+side, and their colour tells the truth about where they are.
+
+That does **not** collapse into one side equalling one colour. A side of two
+colours stays a side of two colours; what the re-bib does is move one child from
+one of those colours into one of the other side's. The two facts sit together
+without contradiction.
+
+Like every bib assignment, it is a fact about tonight and nothing else: the
+child's Spond team, their OTJ team and next week's default are untouched.
+
 **Sides are banded, not averaged.** Stronger players play with and against
 appropriately strong players; weaker players stay in an appropriate band. Two
 games are not deliberately levelled into identical mixtures, and the strongest

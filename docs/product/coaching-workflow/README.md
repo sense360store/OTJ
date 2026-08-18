@@ -5,8 +5,8 @@ programmes, sessions, drills, Drill Maker, the drill library, Spond attendance,
 groups and bibs, venue and pitch layout, training-day delivery and shareable
 outputs.
 
-**Status: direction approved as the working model. Revised twice after review,
-most recently by the August coach discovery. No application or database
+**Status: direction approved as the working model. Revised three times after
+review, most recently by the final August coach answer. No application or database
 behaviour has been implemented by this document set.**
 
 Captured 17 August 2026 against `main` at `2283350`.
@@ -15,12 +15,22 @@ Captured 17 August 2026 against `main` at `2283350`.
 placement model with a position, reopened "a group is a bib colour", and
 corrected the station duration claim.
 
-**Revision 3** (this one) settles the grouping model from coach discovery:
+**Revision 3** settled the grouping model from coach discovery:
 rotations follow the station count and not the group count, so the duration model
 needs no change at all; the bib colour is the station group's identity and must
 be unique; the club's team order is the only new fact worth storing; and a
 session has two physical phases, so the venue setup is phase-specific rather than
 static.
+
+**Revision 4** (this one) records the last coach answer and the architecture check
+it forced. Moving one child between game sides is a **re-bib**, so no per-player
+exception mechanism is needed. Checking that against the implementation confirmed
+`register_entries.bib_colour_override` overwrites, so a child's earlier carousel
+colour is unrecoverable; every consumer was checked and none reads it, so the
+simple model stands with no new persistence. The check did find a real hazard, and
+a different one: the group array is dense over the colours in use, so a
+starting-station rule reading its index would let one re-bib silently reassign
+other groups. That derivation must key on the bib colour.
 
 ## The outcome this serves
 
@@ -40,9 +50,9 @@ static.
 | 03 | [Target UX journeys](03-ux-journeys.md) | Eight journeys, the components each reuses, and the mobile interaction decision. |
 | 04 | [Data model proposal](04-data-model-proposal.md) | The six anticipated migrations, and the seven deliberate non-changes. |
 | 05 | [Security, privacy and share boundary](05-security-share-boundary.md) | Why the existing public contract cannot carry a group plan, and what to do instead. |
-| 06 | [Phased implementation plan](06-phased-plan.md) | Fourteen phases, each independently shippable, plus three adversarial passes. |
+| 06 | [Phased implementation plan](06-phased-plan.md) | Fourteen phases, each independently shippable, plus four adversarial passes. |
 | 07 | [Roadmap reconciliation](07-roadmap-reconciliation.md) | How this relates to DRILL-02, DRILL-03, TRAIN-02 and the rest. |
-| 08 | [Open questions](08-open-questions.md) | Eight open decisions and six now settled. None blocks the critical path. |
+| 08 | [Open questions](08-open-questions.md) | Nine open decisions and seven now settled. None blocks the critical path. |
 
 ## The findings that shaped everything else
 
@@ -65,7 +75,8 @@ static.
 
 4. **A station bib group is not a game side.** One side may wear two colours, and
    forcing a redistribution to tidy that is unnecessary kit churn at the worst
-   moment.
+   moment. Moving one child between sides is a re-bib, which the existing
+   session-only override already carries.
 
 5. **Most of the grouping requirement is already in the schema.**
    `register_entries.bib_colour_override` is already a session-only assignment

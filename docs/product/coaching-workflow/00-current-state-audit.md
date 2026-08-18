@@ -576,6 +576,69 @@ Its own honest gap, worth carrying: the repository's tests render to static
 markup with no DOM, so no layout claim in it has been measured. A real device
 check on a phone is recommended before merge, particularly Live in portrait.
 
+## 21. The register holds one bib per player per session, and no history
+
+Checked directly, because the game phase raises the question of whether a
+mid-session re-bib loses the earlier carousel colour.
+
+**One row, one scalar, overwritten in place.**
+`register_entries` has primary key `(session_id, player_id)`
+(`0044_training_day_core.sql:187`), and `bib_colour_override` is a single
+nullable text column. `useSaveTonight` (`src/lib/queries.ts:5985`) writes through
+`upsert(..., { onConflict: 'session_id,player_id' })`, so a second bib for the
+same player in the same session replaces the first. `REGISTER_COLUMNS` is
+`session_id, player_id, present, included_in_groups, bib_colour_override, source`
+and carries no timestamp per field and no prior value.
+
+**The touch trigger records who and when, never what it was.**
+`register_entries_touch` (`0044:224`) sets `marked_by := auth.uid()` and
+`marked_at := now()` on every insert and update, so both are overwritten too. It
+also refuses to let a row change its session, player or club, which is why a
+re-bib cannot become a different child's row.
+
+**History is not merely absent, it is forbidden by the schema.**
+0044's own self-verification raises an exception if a per-tick audit trigger is
+ever attached:
+
+```
+raise exception 'training_day_core: register_entries must not be audited per tick';
+```
+
+(`0044:551`). The 0044 header states the reasoning: the row is the record, and a
+tick is a high frequency operational touch. `0045` repeats it for
+`spond_event_responses`. So the ordinary mechanism for reconstructing a previous
+value is deliberately unavailable, and adding one would be a reversal of a stated
+decision rather than an oversight.
+
+**Consequence, stated plainly:** once a coach re-bibs a child, **the colour they
+wore earlier in the same session is gone and cannot be recovered from any table.**
+Whether that matters is `02-target-product-model.md` section 7b.
+
+**What is NOT lost.** `present` and `included_in_groups` are separate columns and
+a bib change does not touch them, so who attended and who the coach included
+survive a re-bib intact.
+
+## 22. Group order is keyed, but the array index is dense
+
+`tonightGroups` (`src/lib/tonight.ts:1103`) builds a map keyed on the effective
+bib and then sorts by the **fixed `BIB_COLOURS` vocabulary order**
+(`:1128`), with the bib-less group last. That ordering is stable: it does not
+depend on which colours happen to be present, and its own comment says why
+(insertion order "reshuffled every card on a screen a coach is reading to call
+groups out").
+
+**But the returned array is dense over the colours that are actually in use.**
+With red, blue, green and yellow active, the array is four long. Re-bib the last
+red child to blue and the array becomes three long, and every group after red
+moves down one index.
+
+**This matters for a rule that does not exist yet.** The plan derives each
+group's starting station from group order
+(`02-target-product-model.md` section 6.6). If that derivation reads the array
+index, a single re-bib silently reassigns other groups' starting stations. If it
+keys on the bib colour, nothing moves except the child who moved. The constraint
+is recorded in section 7b there and as an acceptance test in Phase F2.
+
 ## Notable current-state findings the overhaul must design around
 
 1. **Station-based training has no representation, and this is not a duration

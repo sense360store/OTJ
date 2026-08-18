@@ -421,10 +421,50 @@ children, so it holds no child data even in memory.
 **Dependencies.** F (the block), G (the groups), M6 (the team order, for the
 suggestion only; without it the sides are suggested by group order alone).
 
-**Manual acceptance test.** Twenty-two children in four groups, one game
-planned. Confirm the suggestion puts two groups a side, that neither side is
-forced to one colour, and that changing it and reloading keeps the change.
-Repeat with two games and confirm the stronger pair play each other.
+### Moving one child between sides is a re-bib
+
+Confirmed by the coach: asked whether they would move a child without changing
+their bib or re-bib them, they said they would **re-bib**. So no per-player
+game-side exception mechanism is needed, and the trigger the previous revision
+recorded is resolved.
+
+A side may still hold **two or more bib colours**. The re-bib moves one child
+from a colour on one side into a colour on the other; it does not collapse a side
+into a single colour and nothing may assume it does.
+
+**Manual acceptance test.** Twenty-two children in four groups, one game planned.
+Confirm the suggestion puts two groups a side, that neither side is forced to one
+colour, and that changing it and reloading keeps the change. Repeat with two games
+and confirm the stronger pair play each other.
+
+**Five proofs the implementation must carry**, from the re-bib architecture check
+(`02-target-product-model.md` section 7b):
+
+1. **A re-bib does not change the permanent team.** Re-bib a child mid-session,
+   save, reload, then open that child on the Players screen and assert their team
+   and season registration are byte-for-byte unchanged. Structurally guaranteed by
+   `register_entries` having no path to `player_registrations`, and asserted
+   anyway because a well-meaning "also update their team" convenience is the most
+   plausible regression in the programme.
+2. **A reload preserves the current operational arrangement.** After the re-bib
+   and a save, the readback comparison already used by `useSaveTonight` must show
+   the new colour, and the groups screen and the game sides must both render from
+   it.
+3. **Game-side membership follows the bib-side allocation.** The child appears on
+   the side their new colour belongs to, with no separate membership list
+   consulted anywhere.
+4. **No duplicate player-membership list exists.** A source-text check, in the
+   style of the existing invariant tests: nothing outside `register_entries`
+   stores which player is in which group or on which side.
+5. **Station behaviour is not silently corrupted.** This is the sharp one. Take
+   four groups, re-bib the **last remaining child of one colour** so that colour's
+   group disappears, and assert that **every other group's starting station is
+   unchanged**. `tonightGroups` returns an array that is dense over the colours in
+   use, so a derivation reading the array index would silently renumber the
+   others. The derivation must key on the **bib colour**.
+
+**Attendance is unaffected**, and that should be asserted too: `present` and
+`included_in_groups` are separate columns and a bib change must not touch either.
 
 **Rollback.** Revert. Stored allocations become inert.
 
@@ -493,7 +533,8 @@ count without it. M6 is inside this phase rather than before it.
 session with 22 replies across five teams and confirm the suggestion keeps teams
 whole where it can, combines only adjacent bands, and gives four unique colours.
 Move one child into another bib group, save, then open that child on the Players
-screen and confirm **their team is unchanged**. Set two teams to the same default
+screen and confirm **their team is unchanged**. Confirm the same child's `present`
+flag did not move with the bib. Set two teams to the same default
 colour and confirm the screen says so rather than merging them. Remove a child's
 bib and confirm not ready, and that the session still opens and runs. Add a late
 arrival to a group and confirm readiness recalculates.
@@ -832,7 +873,65 @@ and K's message half.
 
 ---
 
-## 15. Adversarial pass, third round
+## 15. Adversarial pass, fourth round
+
+Run on one question: does representing a game-side move as a re-bib break
+anything, given that `register_entries` holds one bib per player per session?
+
+**Does the overwrite lose something the product needs?** The T0 to T6 timeline was
+walked explicitly (`02-target-product-model.md` section 7b). At T6 OTJ knows the
+permanent team (unchanged), the current bib (BLUE), and the game side (the one
+BLUE belongs to). It does **not** know the child wore RED during the carousel, and
+that is unrecoverable rather than merely unqueried. Every consumer was then listed
+and checked, and none asks the question: the groups screen, the starting station
+statement, live delivery, the game allocation, the generated message, the session
+day views and the one-glance overview all want the present tense. Attendance is a
+separate column and survives.
+
+**Was that conclusion reached honestly, or by wanting the simple answer?** The
+test applied was "name a screen that would render differently if the earlier
+colour were available". None exists in the built product or in any agreed phase.
+The three things that *would* need it are named in 7b (a post-session coaching
+log, per-child development tracking, a safeguarding-shaped dispute), none is on
+the roadmap, and the smallest answer for them is recorded as a shape so a future
+session does not reach for phase-aware bib columns.
+
+**Did the check find anything real?** Yes, and it is not the history question.
+`tonightGroups` sorts by the fixed bib vocabulary, which is stable, but the array
+it returns is **dense over the colours actually in use**. Re-bib the last child
+of a colour and that group vanishes, the array shortens, and every later group
+moves down an index. A "group N starts at station N" rule reading the array index
+would therefore let one child's re-bib silently reassign *other* groups' starting
+stations. The derivation must key on the bib colour. This is now a decision in
+7b, a recorded fact in `00-current-state-audit.md` section 22, and proof 5 of
+Phase F2's acceptance tests.
+
+That is the more valuable finding, and it is the opposite shape from the one
+being looked for: not "we lost data we needed" but "a derivation over live data
+is unstable under exactly the edit the coach just told us they make".
+
+**Does the coach's answer actually settle the per-player exception, or dodge it?**
+It settles it. The exception mechanism existed only to serve "move a child but
+keep their colour", and the coach says they do not do that. The previous revision
+recorded a trigger to revisit; the trigger has been resolved by asking, which is
+better than leaving it open.
+
+**Does this quietly reintroduce "one side, one colour"?** It could be read that
+way and must not be. Guarded in four places: the principles doc, 7a, 7b and Phase
+F2 all state that a side of two colours stays a side of two colours, and that the
+re-bib moves one child between colours rather than collapsing a side into one.
+The acceptance test asserts a side is not "tidied" into a single colour.
+
+**Could a re-bib during the carousel corrupt the rotation?** Yes, and it is
+correct behaviour rather than corruption: the coach who moves a child mid-carousel
+intends them to move. The unintended consequence is the index instability above,
+which the keyed derivation removes. Whether the product should *warn* on a
+mid-carousel re-bib is a UI question and is now Q12.
+
+**Is anything being added to the schema by this round?** Nothing. This round
+removed a deferred trigger and added zero fields, which is the outcome to prefer.
+
+## 16. Adversarial pass, third round
 
 Run after the coach discovery that produced this revision, and checked
 specifically against the contradiction list that discovery supplied. Earlier
@@ -926,7 +1025,7 @@ the order, every team reads as unordered and the suggestion silently declines to
 combine anything. That is the correct failure but it will look like a bug, so the
 screen should say the order is unset rather than quietly doing less.
 
-## 16. Adversarial pass, second round
+## 17. Adversarial pass, second round
 
 Run after the review that produced this revision. The first-round pass is kept
 below as section 16, because two of its conclusions were wrong and the record of
@@ -1007,7 +1106,7 @@ the same file it conflicts on. If both merge without care, the roadmap's DRILL-0
 row could end up saying two different things. Flagged in
 `07-roadmap-reconciliation.md`.
 
-## 17. Adversarial pass, first round
+## 18. Adversarial pass, first round
 
 Performed before the first publication. Two of its conclusions were wrong and are
 corrected above; the rest stand. Kept because the corrections are more useful
