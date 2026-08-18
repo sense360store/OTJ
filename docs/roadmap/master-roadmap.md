@@ -341,6 +341,7 @@ These documents contain deeper design history and security decisions. They do no
 - `docs/roadmaps/content-sharing-roadmap.md` — public content-sharing architecture and security model.
 - `docs/roadmaps/share-packs-roadmap.md` — later multi-item public sharing design.
 - `docs/roadmap/foundation-retrospective.md` — completed security/foundation programme history.
+- `docs/product/coaching-workflow/` — end-to-end coaching workflow discovery (17 August 2026): current-state audit, target product model, data-model proposal, share-boundary analysis and a twelve-phase plan. It contains a proposal to reconcile DRILL-02, DRILL-03 and TRAIN-02 under one umbrella programme; **no status in the table above has been changed by it**, and the table changes only when that proposal is approved. Start at `docs/product/coaching-workflow/README.md`.
 
 ## Roadmap rules
 
