@@ -1,71 +1,28 @@
-# Open questions and decisions requiring human input
+# Open questions, unresolved implementation details, and what discovery closed
 
-Status: awaiting answers. Each question names what is blocked by it, what happens
-if it is not answered, and a recommendation, so none of them stalls the
-programme.
+Status: reconciled 18 August 2026. **Three open questions and four unresolved
+implementation details.** The previous revision carried ten open questions; coach
+discovery answered or removed the requirement behind seven of them.
 
-Nothing here is an engineering question. Every one is a club or product decision.
+Nothing here blocks the recommended first slices.
 
----
+Two kinds of thing are kept apart deliberately:
 
-## Q1. May a public share carry the date, time and venue of a session?
-
-**Blocks:** COACH-K2 and roadmap item TRAIN-02 as currently worded. **Blocks
-nothing else in the programme.** Reaffirmed after review: widening login-free
-public sharing is deliberately not a prerequisite for the coaching workflow, and
-the parent-facing outcome is met without it.
-
-**The situation.** Today the public session snapshot carries no date, no time and
-no venue, on the server (the builder never reads those columns) and in the
-browser (all three are on the forbidden-key list). TRAIN-02's stated payload
-includes all three. That is a widening, not a projection.
-
-**What it means in plain terms.** A snapshot with those three fields says "a
-group of children will be at this place at this time", on a login-free URL that
-anyone who receives it can forward and that a search engine will index if it is
-ever posted somewhere public.
-
-**Recommendation.** Yes, with three conditions: opt in per share rather than
-inherited from the session's rights class; a short default expiry measured in
-days rather than the current ninety; and confirmation text that says plainly what
-is being published.
-
-**If unanswered.** COACH-K ships the generated message only. That already meets
-the discovery's stated outcome, so nothing is blocked, only narrowed.
+- **Q** is a product or club decision. A person answers it. Every one has a
+  recommendation and a stated default, so none stalls the programme.
+- **D** is an unresolved implementation detail. Engineering answers it, and it
+  must be settled **before** the slice that needs it starts rather than during
+  it. None needs a migration.
 
 ---
 
-## Q2. Should a signed-in parent be able to see their own child's group?
+## Q1. Should a delivered session freeze the drills it ran?
 
-**Blocks:** nothing in this programme. Recorded because it is the only design
-that shows a parent their child's group with no disclosure to anyone else, and it
-should not be rediscovered later as a surprise.
-
-**The situation.** The parent role exists, parents sign in, and
-`src/routes/ParentHome.tsx` is their dashboard. But `players` has **no link to an
-auth user** by deliberate design (`src/lib/data.ts:47`), so the product cannot
-tell which child belongs to which parent.
-
-**What it would take.** A new identity binding between `profiles` and `players`,
-a new way to establish it that a human verifies, new policies, and a new class of
-per-parent scoped read. That is a programme in its own right with its own
-security review, comparable in size to the Spond linking programme.
-
-**Recommendation.** Not now. Answer the discovery's requirement with the
-generated message (COACH-K), and revisit this only if the club wants a durable
-parent-facing view rather than a pre-training message.
-
-**If unanswered.** Nothing happens, which is the correct default.
-
----
-
-## Q3. Should a delivered session freeze the drills it ran?
-
-**Blocks:** nothing. It changes COACH-C's scope if the answer is yes.
+**Blocks:** nothing. It changes COACH-12's scope if the answer is yes.
 
 **The situation.** A session activity references a drill. Editing that drill in
-July changes what a session delivered in June displays. Copy-on-adapt solves the
-*adapt* direction (Phase C) but not this one.
+July changes what a session delivered in June displays. Adapting for one session
+(COACH-12) solves the *adapt* direction and not this one.
 
 **The trade.** Freezing gives a permanent record of what was actually delivered
 and costs a snapshot per session, a decision about when to take it, and a story
@@ -73,282 +30,251 @@ for every session that already exists. Not freezing keeps one drill row as the
 single truth and accepts that a past session shows the current version.
 
 **Recommendation.** Do not freeze. Nobody at the club audits what a June
-session's coaching points said, and the change is made non-silent by Phase C's
-usage line on the edit form. The mechanism to change our mind exists if we ever
-need it: the public share snapshot already demonstrates freezing.
+session's coaching points said, and COACH-12 makes the change non-silent with a
+usage line on the edit form. The mechanism to change our mind exists if it is
+ever needed: the public share snapshot already demonstrates freezing.
 
-**If unanswered.** The recommendation is the default and Phase C ships as
+**If unanswered.** The recommendation is the default and COACH-12 ships as
 scoped.
 
 ---
 
-## Q6. Should a venue layout be allowed a traced or aerial background image?
+## Q2. Is replacing the word "template" acceptable?
 
-**Blocks:** the scope of COACH-H. Not the phase.
+**Blocks:** the copy half of COACH-13, and nothing else.
 
-**The situation.** The plan draws named rectangles and no imagery. The discovery
-mentions that layouts might be derived from measurements, coordinates, Google
-Maps or aerial imagery, and says explicitly not to assume the final view should
-be a satellite photograph.
-
-**The case against, for the first version.** A photograph brings a third-party
-rights question (Google Maps imagery is licensed and its terms would need
-checking against the club's non-commercial use), a storage cost, and a
-legibility problem at phone width that a drawn rectangle does not have. It also
-sits awkwardly with the venue layout's allow-list, which currently makes an
-imagery reference unrepresentable rather than merely discouraged.
-
-**Recommendation.** No imagery in version 1. If the layouts turn out to be hard
-to draw accurately without a reference, revisit with a **traced** representation
-produced once by an admin from whatever reference they like, which is a drawing
-and carries no third-party rights question at all.
-
-**If unanswered.** The recommendation is the default.
-
----
-
-## Q7. Is the word "template" being replaced acceptable?
-
-**Blocks:** the copy half of COACH-E.
-
-**The situation.** `templates` is the table behind what the discovery calls "the
-planned session/week". The word came from the FA import model. A coach plans a
-week, not a template.
+**The situation.** `templates` is the table behind what a coach calls the planned
+week. The word came from the FA import model.
 
 **Recommendation.** Rename to **week plan** in everything a user reads, keep the
-table name, and keep "session plan" for a standalone one. Consistent with roadmap
-rule 6's existing precedent of removing "roster" from product copy while the code
-kept its own names.
+table name, and keep "session plan" for a standalone one. Consistent with the
+existing precedent of removing "roster" from product copy while the code kept its
+own names.
 
-**If unanswered.** COACH-E ships its behaviour with the current word and the
-rename becomes a separate copy sweep, exactly as SPOND-04 was.
-
----
-
-## Q8. Does the club want the rotation cue to be audible in the live view?
-
-**Blocks:** nothing. It informs LIVE-02's priority.
-
-**The situation.** COACH-F introduces rotations. A rotation that nobody notices
-does not happen, and a phone in a pocket at a windy venue is not a reliable
-visual cue. LIVE-02 ("unmissable time-up cue") is already on the roadmap as
-Later.
-
-**Recommendation.** Re-read LIVE-02's priority when COACH-F is scheduled, not
-now. Sound has its own considerations (a phone on silent, a coach who is deaf,
-whether it should be one coach's phone or everyone's) that deserve their own
-thought rather than being decided as a footnote here.
-
-**If unanswered.** Nothing is blocked.
+**If unanswered.** COACH-13 ships its behaviour with the current word and the
+rename becomes a separate copy sweep.
 
 ---
 
-## SETTLED. Q4, Q5 and Q9, answered by the August coach discovery
+## Q3. Should the suggested setup say why it grouped that way?
 
-Recorded here rather than deleted, so the reasoning is not rediscovered.
+**Blocks:** nothing. Worth deciding before COACH-3 rather than after.
 
-### Q9. Is an operational group the same thing as a bib colour? **Settled: yes.**
+**The situation.** The generator keeps teams whole, combines adjacent bands and
+prefers uneven groups. A coach looking at 6/5/5/4 cannot tell whether OTJ chose
+it deliberately or fell into it, and this club has already noticed that kind of
+ambiguity once, when two honest numbers wore one word.
 
-- **The station group's coach-facing identity is its bib colour.**
-- **Active station groups have unique bib colours within a session.** The coach
-  reports no use case for two intended groups sharing one, and the silent merge
-  that happens today is a defect.
-- **"No bibs" is not a valid group.** An included player with no effective bib
-  means Groups and bibs is **not ready**.
-- **Not ready is a soft state, never a blocker.** The session opens, edits and
-  runs regardless, and a late arrival added to a group recalculates it.
-- **Uniqueness is a domain and UI rule, not a database constraint**, because a
-  group is emergent from per-player bib resolution and there is no row a unique
-  index could sit on without inventing the entity this decision declines.
-- **No new Group entity**, unless implementation evidence later proves the
-  existing model cannot carry the behaviour.
-- **The normal team from Spond supplies the default grouping context**, and
-  **tonight's bib assignment is session-only** and already is, through
-  `register_entries.bib_colour_override`.
-- **No per-player ability score, level or permanent training classification.**
-  The context derives through the team's position in the club order.
-
-The one thing that must be stored is the club's ordering of its own teams, one
-integer per team, because nothing in the schema can express or derive it
-(`00-current-state-audit.md` section 19). That is M6.
-
-### Q4. How many groups should the split aim for? **Settled.**
-
-One group per station remains the starting point, but the rules that shape it are
-now explicit: keep normal teams whole where practical, combine only **adjacent**
-ability bands, and prefer slightly uneven groups (6/5/5/4) over splitting squads
-to reach even ones (5/5/5/5). Higher attendance makes existing groups bigger; it
-does not invent a group to fill a station that was never planned.
-
-### Q5. Should a coach choose which group starts at which station? **Settled: no.**
-
-The coach reports no preference about starting stations or rotation direction. So
-OTJ picks deterministically and **offers no configuration UI for either**. This
-was previously deferred with a recommendation; it is now an answer.
-
----
-
-## SETTLED. The game phase
-
-Answered by the same discovery, and new since the last revision.
-
-- A session has at least two physical phases: the station carousel, then
-  small-sided games, with the ground rearranged between them.
-- **A game side is not a bib group.** One side may contain two bib colours, and
-  nothing forces a redistribution to make each side one colour.
-- A side is modelled as **a set of bib groups**, never a player list and never
-  one colour.
-- **Game count is an attendance-driven recommendation**, roughly one game around
-  a dozen children and two above twenty, with those numbers adjustable and in one
-  named place. It never rewrites the planned session.
-- **Sides are banded, not averaged**: stronger groups together, weaker groups
-  together, using the club team order.
-- The setup views are derived from blocks, so the two-phase model needs no new
-  entity.
-- **Moving one child to the other side is a re-bib.** Asked directly, the coach
-  said they would change the child's bib rather than move them and keep their
-  colour. So there is **no per-player game-side exception mechanism**, and the
-  trigger a previous revision recorded to revisit this is resolved rather than
-  left open.
-- A re-bib is **session only** and cannot reach the child's Spond team, their OTJ
-  team or next week's default. `register_entries` has no path to those tables.
-- **A side may still hold two or more bib colours.** The re-bib moves one child
-  between colours; it does not collapse a side into one, and nothing may assume
-  it does.
-- **The earlier carousel colour is overwritten and unrecoverable, and that is
-  accepted.** Every consumer of the effective bib was checked and none reads it;
-  attendance is a separate column and survives. The full working, and what would
-  reverse the decision, is `02-target-product-model.md` section 7b.
-
----
-
-## Q10. How is the transition between the phases timed?
-
-**New, and genuinely open.**
-
-**The situation.** The plan models the transition as an ordinary activity
-("Reset, 5 min"), which needs no new structure and occupies real time in the
-total. But nobody has said whether coaches actually want it in the plan, or
-whether they treat it as slack inside the carousel's last rotation.
-
-**Why it matters slightly.** If it is a real activity, the session total is
-honest and the live view has something to show. If coaches never add one, the
-live view moves from the last station straight to the first game with no cue that
-the ground has to change, which is exactly the unexplained moment this programme
-exists to remove.
-
-**Recommendation.** Ship it as an optional ordinary activity, and have the games
-setup view announce itself ("Next: two games, pitches here") whether or not a
-Reset activity exists. That way the cue does not depend on the coach having
-planned for it.
-
-**If unanswered.** The recommendation is the default and nothing is blocked.
-
-## Q11. Does the grouping suggestion need a "why" line?
-
-**New, and worth deciding before Phase G rather than after.**
-
-**The situation.** The suggestion combines adjacent bands and prefers uneven
-groups. A coach looking at 6/5/5/4 cannot tell whether OTJ chose it deliberately
-or fell into it, and the previous experience with two honest numbers wearing one
-word (`CLAUDE.md`, Tonight) says this club notices that kind of ambiguity.
-
-**Recommendation.** One sentence under the suggestion: "Titans and Trojans
-combined to keep the numbers workable." It costs nothing, it is derived from the
-decision the function already made, and it makes an override an informed choice.
+**Recommendation.** One sentence under the suggestion, derived from the decision
+the function already made: "Two teams combined to keep the numbers workable." It
+costs nothing and it makes an override an informed choice rather than a guess.
 
 **If unanswered.** Ship without it and add it when a coach asks why.
 
 ---
 
-## Q12. Should a re-bib during the carousel warn the coach?
+## D1. Are venue layouts scoped by season or age group as well as by venue?
 
-**Narrowed. The two cases are now separated and only one of them is still a
-question.**
+**Settle before:** COACH-5. **Migration impact:** the shape, not the column.
 
-**Case A, a re-bib after the carousel while preparing the games. Settled: no
-warning, and no behaviour at all.** The starting assignments are spent, nothing
-consults them, and the stored map is simply no longer read. There is nothing to
-warn about.
+**The situation.** The settled decision says layouts are saved at the appropriate
+venue, season and age group level. The proposed shape
+(`04-data-model-proposal.md` section 3) keys them by `(kind, slots)` within one
+venue and carries no scope key.
 
-**Case B, a re-bib while the carousel is running. Still open, and only as a UI
-question.** The data model already handles it correctly: the assignment was
-frozen at carousel start, so the child's own group changes and **no other group
-moves** (`02-target-product-model.md` section 7c). What is undecided is whether
-the coach should be told what they just did.
+**The argument for venue scope only in v1.** A rectangle on the ground is a
+physical fact that does not change when a season turns over. The club trains one
+age group, and `sessions.age_group` is free text rather than a modelled entity.
+A scope key nobody varies is a key that gets set wrongly once and then confuses
+someone.
 
-**Recommendation.** No modal and no confirmation. At most a quiet line on the
-groups screen while a carousel is running: "moving a child now changes which
-station they rotate to next". A coach mid-session should never be interrupted by
-a dialogue about something they meant to do.
+**The argument against.** If a second age group starts using the same venue with
+a different allocation, every layout is suddenly wrong for one of them, and
+retrofitting a scope means a shape migration rather than a column.
 
-**What this question is explicitly not.** It is not a reason to add data, and it
-must not be allowed to add machinery to case A. The freeze already makes case B
-safe.
-
-**If unanswered.** Ship without a warning. The behaviour is correct either way.
+**Recommendation.** Venue scope only in v1, with the shape kept as a keyed list
+precisely so a scope key can be added without a rewrite, and with the decision
+written into the migration header so the next reader does not have to infer it.
 
 ---
 
-## Q13. What should happen when a new bib colour appears mid-carousel?
+## D2. What is the gesture for delivering a five drill plan as four stations?
 
-**New, and the one genuinely unobserved corner of the starting-station design.**
+**Settle before:** COACH-3 states a recommendation the coach acts on.
+**Migration impact:** none, either way.
 
-**The situation.** After the freeze, a colour with no stored station can appear:
-a coach re-bibs a child into a colour nobody was wearing, or a late arrival is
-given one. The proposed rule is that it takes the lowest station ordinal not
-claimed by a currently active colour, which naturally reuses a slot freed by a
-group that has gone.
+**The situation.** Attendance can recommend four stations for a plan holding
+five. **The coach chooses which drill sits out.** Nothing may delete a planned
+drill on their behalf.
 
-**Why it is a question rather than a decision.** That rule is reasoned, not
-observed. No coach has yet introduced a colour mid-carousel in this product, and
-the alternative is defensible: offer **no** starting station, say so plainly, and
-let the coach put the child in an existing group instead. Inventing a fifth group
-halfway through a carousel may be something the product should decline to help
-with.
+**The two candidates.**
 
-**Recommendation.** Ship the lowest-free-ordinal rule, because it degrades
-gracefully and needs no coach decision. Revisit if a coach reports that a group
-appearing mid-carousel was a mistake they wanted stopped rather than accommodated.
+1. **Remove the activity from the dated session.** This already works, and it is
+   already non-destructive towards everything that matters: a session is a copy,
+   so the week plan and the library drill are untouched. The cost is that
+   re-adding it later loses its duration and position.
+2. **Mark it as not running tonight.** The activity stays in the plan with a
+   marker. It reads better and it is reversible, and it costs one optional key on
+   the activity plus `toActivity` and `toActivityRow`. `sessions.activities` is
+   unconstrained jsonb, so it is **not a migration**.
 
-**If unanswered.** The recommendation is the default. Either way, no other group
-moves, which is the property that actually matters.
+**Recommendation.** Decide it with a coach rather than in a document. Both are
+cheap and only one of them is destructive-feeling. **Under no circumstances does
+OTJ pick the drill.**
 
 ---
+
+## D3. How does a game bib colour resolve to a game and a side?
+
+**Settle before:** COACH-8. **Migration impact:** none. This is client logic.
+
+**The situation.** The model stores one game bib per child
+(`04-data-model-proposal.md` section 4) and derives the game and the side from
+the colour, so that no second fact can disagree with the bib a child is actually
+wearing. That works while the colours in play are the deterministic ones the
+generator assigned, two per game.
+
+**What is not settled** is what happens when a coach hands a child a colour
+outside their game's pair.
+
+**The two candidates.**
+
+1. **Offer only the colours in play for that game.** The derivation holds by
+   construction, and a coach who wants a third colour is told why not.
+2. **Carry a small session-level map of game and side to colour**, held with the
+   plan and read by the derivation. More flexible, and it is a second fact, which
+   is the thing the model has been avoiding everywhere else.
+
+**Recommendation.** Candidate 1, because it keeps one fact per child and the
+constraint it imposes matches what a coach does with a bag of bibs. Revisit only
+if a coach reports being blocked.
+
+---
+
+## D4. Does the derived station list need an explicit marker?
+
+**Settle after:** COACH-2 has been used, not before it.
+**Migration impact:** none.
+
+**The situation.** The stations are the `Skill` phase activities in plan order
+(`02-target-product-model.md` section 4). A `Skill` activity that is not a
+station, for example a whole-group technical exercise, makes the derived count
+wrong.
+
+**Why it is deliberately not solved now.** Solving it costs an activity key and a
+concept a coach has to learn, and nobody has yet reported a session that mixes
+carousel and non-carousel skill work. The derived count is stated on screen, so a
+wrong answer is visible rather than silent.
+
+**The fix if it proves real.** One optional key on the activity, added to
+`toActivity` and `toActivityRow`. Not a migration.
+
+**Recommendation.** Ship COACH-2 as derived, watch, and only then decide.
+
+---
+
+## Closed by coach discovery
+
+Recorded rather than deleted, so the reasoning is not rediscovered and so a
+future session can see that a question was answered rather than forgotten.
+
+### The product philosophy
+
+**OTJ is a prepared training plan and a visual guide, not a live administrative
+system.** Once training starts, small operational changes are handled physically.
+This closed more questions than any other answer.
+
+### Stations and rotation
+
+| Was open | Answer |
+|---|---|
+| How many stations | **Exactly four or five. Never three.** 24 or more confirmed recommends five, fewer recommends four, and the coach may override. |
+| What drives the count | **Player attendance**, not coach availability. |
+| Fewer groups than stations | A station starts empty. Every active group still rotates through every planned station. |
+| Which group starts where | Active bib colours in the fixed vocabulary order, assigned sequentially to Station 1, Station 2 and so on. Derived on every read. |
+| Rotation direction | **Always clockwise**, not configurable, with a subtle cue on the overview. |
+| Does OTJ track rotation progress | **No.** Coaches keep track themselves. Previous and Next browse the drills. |
+| Should a re-bib during the carousel warn the coach | **Withdrawn with the mechanism.** There is no carousel state to disturb. |
+| What happens when a new bib colour appears mid-carousel | **Withdrawn with the mechanism.** It is a physical event on the grass. |
+| How the transition between stations and games is timed | **Handled physically.** The games have their own saved layout, so the change of ground is visible without being scheduled. |
+
+### Groups and bibs
+
+| Was open | Answer |
+|---|---|
+| Is a group the same thing as a bib colour | **Yes**, and active colours are unique within a session. No Group entity, no `group_id`. |
+| How many groups | One per station. Teams kept whole where practical, only adjacent bands combined, uneven preferred over splitting a squad. |
+| Where ability comes from | **The club's ordered teams.** Never a per-player score. |
+| Session-only assignment | Already satisfied by `register_entries.bib_colour_override`. |
+| Who generates the first setup | **OTJ, automatically, from confirmed attendance.** |
+| What happens when attendance changes | Preserve saved assignments, remove leavers, add joiners, rebalance minimally. A deliberate Reset is later work. |
+| What counts as attending | **Only Yes.** Unanswered is not attending and gets no bib, group or game. |
+
+### Games
+
+| Was open | Answer |
+|---|---|
+| How many games | **One at 12 or fewer confirmed, two at 13 or more.** A recommendation, never a rewrite. |
+| Target size | 5v5 or 6v6. Avoid 7v7 or larger. |
+| Are game bibs the same as station bibs | **No.** Two separate facts for one session, and planning the games never destroys the station plan. |
+| May a side wear two colours | **Reversed.** Where possible each game has two clearly distinguishable colours, and re-bibbing for the games is expected. |
+| How two games are banded | Upper teams form the stronger game, lower teams the development game, the middle band is the flexible bridge and may be split. Sensible game size beats preserving station groups. |
+| How one game is balanced | Distribute the stronger players across both sides. Do not keep the bands as opposing blocs. |
+| What the game plan shows | Player names, side, and game bib colour. |
+
+### Venue and delivery
+
+| Was open | Answer |
+|---|---|
+| Should a venue layout allow aerial or traced imagery | **No.** A clean schematic. |
+| Who lays out a venue | **An admin, once.** Weekly coaches do not drag or reposition anything in v1. |
+| How many layouts per venue | Four: stations for four, stations for five, one game, two games. Loaded automatically. |
+| What a station rectangle means | The area normally allocated to Station N, not this week's exact footprint. |
+| Where station numbers come from | Drill order in the session plan. |
+| What a station shows on the map | Useful overview information, never a shrunken drill diagram. |
+| What the station detail shows | Station number, drill name, large diagram, objective, two or three coaching points. **No equipment.** |
+
+### Drills and sharing
+
+| Was open | Answer |
+|---|---|
+| How a drill is adapted for one session | A copy owned by the session, independent of the library drill and of every other session. |
+| Are versions exposed | **Never.** No v1 and v2 anywhere. |
+| What Save as reusable does | Creates a **new** library drill. It never overwrites the original. |
+| Do session adaptations appear in the library | **No.** |
+| How coaches share a session | The platform Share action on the protected canonical link. Already shipped. |
+| Is a WhatsApp integration needed | **No.** |
+| Does the share carry player data | **No.** Names, bibs and groups never leave the authenticated app. |
+| Is public login-free sharing needed for this | **No.** It was never the requirement, and the programme proposes no public projection. |
+
+### Withdrawn because their requirement is gone
+
+- **May a public share carry date, time and venue?** It belongs to TRAIN-02, not
+  to this programme, and is recorded there rather than here
+  (`07-roadmap-reconciliation.md` section 3).
+- **Should a signed-in parent see their own child's group?** Recorded so it is
+  not rediscovered as a surprise: it would need a new identity binding between
+  `profiles` and `players`, which the product deliberately does not have, plus
+  new policies and a per-parent scoped read. It is a programme in its own right
+  and it has **no consumer in the settled model**, because parent-facing group
+  information is not part of it.
+- **Should the live view have an audible rotation cue?** OTJ does not cue
+  rotations. LIVE-02 is unaffected and stays as its own row.
 
 ---
 
 ## Summary: what actually blocks work
 
-**Open questions**
-
-| Question | Blocks | Default if unanswered |
+| | Blocks | Default if unanswered |
 |---|---|---|
-| Q1 date/time/venue public | COACH-K2 and TRAIN-02 only | Message only, no public page |
-| Q2 parent identity binding | Nothing | Not built |
-| Q3 freeze delivered sessions | Nothing | Not frozen |
-| Q6 venue background imagery | Nothing | No imagery |
-| Q7 rename template | COACH-E copy only | Ships with the current word |
-| Q8 audible rotation cue | Nothing | LIVE-02 unchanged |
-| Q10 transition timing | Nothing | Optional activity, games view announces itself |
-| Q11 a "why" line on the suggestion | Nothing | Ship without, add on request |
-| Q12 warn on a mid-carousel re-bib (case B only) | Nothing | Ship without a warning |
-| Q13 a new colour appearing mid-carousel | Nothing | Lowest free station ordinal |
+| Q1 freeze delivered sessions | Nothing | Not frozen |
+| Q2 rename template to week plan | COACH-13 copy only | Ships with the current word |
+| Q3 a "why" line on the suggestion | Nothing | Ship without, add on request |
+| D1 venue layout scope | COACH-5's shape | Venue scope only, shape kept extensible |
+| D2 choosing the four active drills | COACH-3's recommendation wording | Decide with a coach. OTJ never picks. |
+| D3 game colour to side | COACH-8 | Offer only the colours in play for that game |
+| D4 an explicit station marker | Nothing | Derived, watched, revisited on evidence |
 
-**Settled by the August coach discovery, and not to be reopened without evidence**
-
-| Was | Decision |
-|---|---|
-| Q4 group count | One per station, teams kept whole, adjacent bands combined, uneven preferred |
-| Q5 starting station and rotation direction | Derived, deterministic, no configuration UI |
-| Q9 group identity | Bib colour, unique per session, no Group entity, no ability field |
-| Game phase | Sides are sets of bib groups, banded not averaged, count is a recommendation |
-| Session-only override | Already satisfied by `register_entries.bib_colour_override` |
-| Moving one child between game sides | A re-bib. No per-player exception mechanism, no phase-specific bib, no history table |
-| Starting stations | Derived once, frozen at carousel start. No stateless rule can be both unique and stable |
-| A re-bib while preparing the games | No behaviour at all. The assignment is spent |
-| Team ability order | One integer per team (M6), the only irreducible new fact |
-
-**Nothing blocks the critical path.** Q1 governs only the parked public
-projection. Q10, Q11, Q12 and Q13 are refinements with defaults. The programme can proceed
-today: review and merge PR #189, then start COACH-B1.
+**Nothing blocks the recommended first slices.** COACH-1, COACH-2, COACH-3 and
+COACH-5 can start today, and only COACH-5 carries an open detail, which is a
+decision about its own migration header.

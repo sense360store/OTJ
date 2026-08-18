@@ -1,15 +1,18 @@
 # Target UX journeys
 
-Status: proposal, awaiting approval.
+Status: approved product model, reconciled 18 August 2026. Nothing here is built.
 
 Eight journeys, written as what the coach does rather than as screens. Each names
 the existing components it reuses, because the point of the audit was to find
-what already works. Each names its device, because principle 7 says authoring may
-optimise for a laptop and delivery must be excellent on a phone.
+what already works, and each names its device, because authoring may optimise for
+a laptop and delivery is judged on a phone.
+
+**The delivery journeys assume a phone by default.** Most delivery use is an
+iPhone or an Android phone, held in one hand, outdoors, often in poor weather.
 
 ---
 
-## Journey 1: plan a programme for the next six weeks
+## Journey 1: plan a programme for the next several weeks
 
 **Device: laptop. When: weeks or months ahead. Spond: absent.**
 
@@ -24,128 +27,121 @@ optimise for a laptop and delivery must be excellent on a phone.
 **What changes:** the word "template" becomes "week plan" in the interface. No
 schema, no new screen.
 
-**What does not change:** a programme still holds no drills. The drills live on
-the week plan.
-
 ## Journey 2: plan a week's session
 
 **Device: laptop. When: days to weeks ahead. Spond: absent.**
 
 1. Open the week plan, or start a session directly in the planner.
    *Reuses `src/routes/Planner.tsx`, `useStartFromTemplate`.*
-2. Warm-up first. Add from library, or create.
-3. **Add the stations.** Add four drills, then select them and press **Make
-   these a station carousel**. The block shows "4 stations, 10 min each, 4
-   rotations, 40 min". **The rotation count is the station count**, so it is
-   stated rather than asked for.
-4. **Add the games.** Add one or two game activities and mark them as the game
-   phase. Add a **Reset** activity between the two if the ground needs clearing,
-   which is an ordinary custom activity.
-5. The session total reads sixty minutes, computed exactly as it is today.
+2. Warm-up first.
+3. **Add four or five station drills.** The planner states what it derived:
+   "5 stations, 10 minutes each". The stations are the Skill phase activities in
+   order, so the coach orders them and station numbers follow.
+4. **Add the games.** One or two Game phase activities.
+5. The session total reads as it does today, computed by `sessionMinutes`
+   unchanged.
 
-**Key detail:** a session with no block is unchanged in every respect. The block
-is opt-in and additive.
+**Three or fewer stations is not offered as a recommendation.** A coach who plans
+three anyway is not blocked, and the screen says what it derived rather than
+refusing.
 
-**The block belongs to the plan, not to the date.** A week plan carries its
-station structure so that applying it to Tuesday and Saturday delivers the same
-carousel twice. That is why `templates` gains the block metadata alongside
-`sessions`, and why the block editor lives in the shared authoring seam rather
-than in the planner.
+**The station structure belongs to the plan, not to the date.** A week plan
+carries its drills in order, so applying it to Tuesday and Saturday delivers the
+same stations twice.
 
 ## Journey 3: create a drill without leaving the plan
 
-**Device: laptop. When: mid-planning. This is the journey the product does not
-have today, and it must work from BOTH planning surfaces.**
+**Device: laptop. When: mid-planning. It must work from BOTH planning surfaces.**
 
-**Revised after review.** An earlier draft described this from the dated planner
-only. Long range planning happens in the week plan editor, weeks or months before
-a dated session exists, and that editor already keeps its own separate copy of
-the activity list, add bar and row component
-(`00-current-state-audit.md` section 9). Building this in the planner alone would
-leave the long range surface last to receive it and turn a two-way divergence
-into a three-way one.
+Long range planning happens in the week plan editor, weeks before a dated session
+exists, and that editor already keeps its own copy of the activity list, add bar
+and row component (`00-current-state-audit.md` section 9). Building this in the
+planner alone would leave the long range surface last to receive it and turn a
+two-way divergence into a three-way one. So the journey is written once, against
+the shared authoring seam, and both hosts get it in the same change.
 
-**So the journey is written once, against the shared authoring seam, and both
-hosts get it in the same change.**
+From a week plan or from a dated session:
 
-From a week plan (Programmes, week 3) or from a dated session (the planner):
-
-1. In the add bar, **New drill** beside Add from library and Add custom.
-2. A small form: title, phase, duration, objective. Nothing else is required.
+1. In the add bar, **New drill**, beside Add from library and Add custom.
+2. A minimal form: title, phase, duration, objective. Nothing else required.
    *Reuses `DrillFormModal.tsx`.*
 3. Save. The drill exists in the library and the activity is already in the plan.
 4. **Draw it** opens the Drill Maker on the new drill and returns to where it was
    opened from, with the draft intact.
-   *Reuses `src/routes/DrillDiagramEditor.tsx` at `/drill/:id/diagram`, plus a
-   return path that knows its origin.*
+   *Reuses `src/routes/DrillDiagramEditor.tsx` at `/drill/:id/diagram`.*
 5. A **custom activity** (title only) gains **Turn into a drill**, which is the
    same journey starting from a title the coach already typed.
 
-**The rule that makes this safe, and it now has two cases:** both hosts hold an
+**The rule that makes this safe, and it has two cases.** Both hosts hold an
 unsaved draft, and leaving to draw must not lose either. The planner's draft
 lives in `sessionSubmit.ts` and `useGuardedSubmit`; the week plan editor's lives
-in `TemplateFormModal`'s own form state, inside a modal, which is the harder of
-the two because a modal unmounts. Deciding this once, in the seam, is the point.
+in `TemplateFormModal`'s own form state inside a modal, which unmounts. Deciding
+this once, in the seam, is the point of the seam.
 
-**England Football drills are excluded from step 4**, unchanged, and now on every
-surface: `diagramForDisplay` (added by PR #189) already withholds an FA drill's
-hand drawn diagram wherever a session shows it, and `diagramEditDecision`
-withholds the affordance to draw one. The two agree by construction and a test in
-#189 pins that they do.
+**England Football drills get no Draw it**, unchanged. `diagramEditDecision`
+withholds the affordance and `diagramForDisplay` withholds a stranded FA diagram
+wherever a session shows one. The two agree by construction and a merged test
+pins it.
 
-**What a coach sees of the diagram afterwards** is already built: PR #189 renders
-it in the planner's expanded panel, on session day and on both live stages
-(`00-current-state-audit.md` section 18).
-
-## Journey 4: reuse a drill, as-is or adapted
+## Journey 4: reuse a drill, as-is or adapted for one session
 
 **Device: laptop.**
 
 1. Add from library, exactly as today.
    *Reuses `AddDrillModal.tsx`, `drillPicker.ts`, `drillFilter.ts`, all of PLAN-01.*
-2. On the activity in the planner, **Copy and adapt**.
-3. The drill is duplicated, diagram included, and the activity now points at the
-   copy. The copy is named for its parent, for example "Passing square
-   (adapted)", and the coach renames it if they want.
-4. Everything is editable on the copy: diagram, rules, objectives, points,
-   difficulty, area, equipment. The original is untouched, and so is every other
-   session using it.
-5. In the library, the copy sits under its parent as one of its adaptations
-   rather than as a separate top-level drill.
+2. On the activity, **Adapt for this session**.
+3. The drill is duplicated, diagram included, and the activity points at the
+   copy. The copy belongs to this session.
+4. Everything is editable on the copy. **The original is untouched, and so is
+   every other session using it, including Tuesday's.**
+5. **The adaptation does not appear in the library.** It is reachable from this
+   session and from its parent drill's page.
+6. If the coach later wants it permanently, **Save as reusable drill** creates a
+   **new** library drill. It never overwrites the original.
+
+**No version numbers anywhere.** A coach is never asked which version they are
+looking at, and no screen says v1 or v2.
 
 **Editing a library drill directly** still works and still affects every session
-using it. The edit form gains one line: "Used in 6 sessions, 4 already
-delivered", with **Copy and adapt instead** beside it. The change becomes a
-choice rather than a surprise.
+referencing it. The edit form gains one line: "Used in 6 sessions, 4 already
+delivered", with **Adapt for one session instead** beside it. The change becomes
+a choice rather than a surprise.
 
 ## Journey 5: prepare the night once Spond replies arrive
 
-**Device: laptop or phone. When: one or two days before.**
+**Device: laptop or phone. When: about 24 to 48 hours before.**
 
-1. Open the session. Players & groups.
+1. Open the session. Players and groups.
    *Reuses `src/routes/SessionRegister.tsx`, `src/lib/tonight.ts`, entirely.*
 2. Refresh Spond, on the existing authenticated sync path.
-3. The Going filter is already the default. Select all on the visible set.
-4. **Suggest groups** proposes a split of the included children, and it works
-   from the normal teams the club already holds rather than from anything new.
-   *New: a pure function producing a draft. It writes nothing.*
-   - Keep each normal team whole where the numbers allow.
-   - Where teams must be combined, combine **adjacent** ability bands.
-   - Prefer slightly uneven groups over splitting a team: 6/5/5/4 beats 5/5/5/5
-     bought by breaking up two squads.
-   - Assign each group a **unique** bib colour.
-5. The coach edits it: move a child into another bib group, change a colour, add
-   a guest who turned up. **Moving a child tonight changes nothing durable**: not
-   their Spond team, not their OTJ team, not next week's default.
+3. **OTJ has already drafted the setup from the confirmed attendance.** Only Yes
+   counts. Unanswered and waiting are treated as not attending and receive no
+   bib, no group and no game.
+4. The draft states what it did, in a sentence a coach can argue with:
+   - "26 confirmed. 5 stations, 5 groups." (24 or more recommends five; fewer
+     recommends four; three is never recommended.)
+   - Groups keep normal teams whole where the numbers allow, combine only
+     **adjacent** ability bands, and prefer 6/5/5/4 over splitting two squads to
+     reach 5/5/5/5.
+   - Each group has a **unique** bib colour, taken in the fixed colour order, so
+     the first colour is group 1 and starts at station 1.
+5. The coach edits it: move a child, change a colour, add a guest who turned up.
+   **Moving a child tonight changes nothing durable**: not their Spond team, not
+   their OTJ team, not next week's default.
 6. **Save groups.** The readback is compared field by field, as today.
-7. A readiness line appears: "22 in 4 groups. Everyone has a bib. Stations
-   placed." Derived on every read, stored nowhere.
+7. A readiness line appears: "26 in 5 groups. Everyone has a bib. Layout ready."
+   Derived on every read, stored nowhere.
+
+**When attendance changes again before training**, the screen does not start
+over. Children who are no longer attending are removed, newly confirmed children
+are placed, **every assignment already saved is kept**, and rebalancing happens
+only where it is necessary. A deliberate Reset is the only thing that regenerates
+from scratch, and it is a later addition.
 
 **Readiness never blocks.** An included child with no effective bib means not
-ready, and the coach can still open, edit and run the session. A late arrival
-dropped into an existing bib group recalculates it on the next render.
+ready, and the coach can still open, edit and run the session.
 
-**Two states the screen now names rather than hides**
+**Two states the screen names rather than hides**
 (`00-current-state-audit.md` finding 2): two teams whose default colour is the
 same, which would otherwise merge two intended groups into one; and children with
 no bib at all, which is not a valid group. Both come with the fix beside them.
@@ -154,155 +150,131 @@ no bib at all, which is not a valid group. Both come with the fix beside them.
 complete surface. A Spond failure renders as no context, never as "nobody is
 coming".
 
-## Journey 5a: the move from stations into games
+## Journey 6: plan the games
 
-**Device: phone or laptop. When: one or two days before, and again on the night.**
+**Device: laptop or phone. When: with the groups, one or two days before.**
 
-1. On the session, the game phase shows how many games are planned and how many
-   the attendance suggests. Roughly a dozen children is one game and twenty plus
-   is two; the numbers are adjustable and live in one place.
-2. **The suggestion changes nothing.** A week plan authored with two games keeps
-   two games. The coach is told what the attendance implies and decides.
-3. OTJ proposes the sides from the same team order the grouping used: stronger
-   groups together, weaker groups together, never averaged into two identical
-   mixtures and never the strongest mixed with the weakest to even the numbers.
-4. **A side may wear two bib colours.** With four station groups and one game,
-   "reds and blues against greens and yellows" is the expected shape. Nothing
-   forces a bib change to make each side one colour.
-5. The coach adjusts the sides. **Moving one child is a bib change**, confirmed by
-   the coach: they hand the child a bib belonging to their new side rather than
-   moving them and leaving the old colour on. It is one tap, it is session only,
-   and it cannot touch the child's Spond team, OTJ team or next week's default.
-6. The child's earlier carousel colour is overwritten by that change and is not
-   recoverable. Nothing on this screen or any other asks for it
-   (`02-target-product-model.md` section 7b).
+1. On the same session, the games section states what it recommends: **one game
+   at 12 or fewer confirmed, two at 13 or more**, aiming at 5v5 or 6v6 and
+   avoiding 7v7. The coach may override.
+2. **The recommendation changes nothing.** A plan authored with two games keeps
+   two games; the coach is told what the attendance implies and decides.
+3. OTJ proposes the sides:
+   - **Two games**: the upper ordered teams form the stronger game, the lower
+     ordered teams the development game, and the middle band is the flexible
+     bridge whose players may be split between the two to make the numbers work.
+     **Sensible game size comes before preserving the station bib groups.**
+   - **One game**: the two sides are balanced by ability, with players from the
+     stronger teams distributed across both sides rather than kept as opposing
+     blocs. Expected to be relatively rare.
+4. **Where possible each game gets two clearly distinguishable bib colours**, so
+   some children are re-bibbed for the games. That is expected, not exceptional.
+5. **The station bib plan is untouched by any of it.** The game bib is a separate
+   stored fact (`04-data-model-proposal.md` section 4), so planning the games
+   cannot destroy the carousel groups, and a coach can read both on one screen.
+6. The game plan shows **actual player names, their side and their game bib
+   colour**.
 
-**The distinction the screen must keep visible:** a station bib group and a game
-side are related and not the same. The sides are drawn as sets of groups, so a
-coach reads "red + blue" rather than a list of children. A re-bib moves one child
-between colours; it never collapses a side into a single colour, and the screen
-must not present it as though it had.
+**A child nobody re-bibbed plays in what they are already wearing**, which is
+both the physical truth and the resolution rule.
 
-## Journey 6: lay out the venue
+**On the day the coach adapts physically without updating OTJ.**
 
-**Device: laptop for the layout, either for the placement.**
+## Journey 7: lay out a venue, once
 
-**Admin, once per venue:**
+**Device: laptop. Who: an admin.**
 
-1. Admin, Venues, open Flushdyke, **Set up the layout**.
+1. Admin, Venues, open Haggs Hill, **Set up the layouts**.
    *Reuses `src/routes/AdminVenues.tsx`.*
 2. Optionally state the real size of the area the club is allocated.
-3. Draw the sub-areas and name them: "Pitch 1", "Pitch 2".
-4. Save. The layout is now reused every week by every coach.
+3. Draw the **four station layout**: four numbered rectangular zones, dragged and
+   resized to where stations normally go. A zone means "this is the area normally
+   allocated to Station N", not the exact footprint of any week's drill.
+4. Draw the **five station layout** the same way.
+5. Draw the **one game** and **two game** reminder visuals: where the pitches go.
+6. Save. Every coach reuses them every week, and the positions stay familiar.
 
-**Coach, weekly:**
+**Weekly coaches do not drag or reposition anything in v1.** There is no per
+session composer, and a session stores no geometry.
 
-1. On the session, **Where the stations go**.
-2. The venue's areas render as named rectangles. Each station in the block is a
-   numbered marker, **dragged to the spot on the ground where it should be set
-   up**, not merely dropped onto a pitch.
-3. The marker's derived area is shown as a label beside it ("Station 3, Pitch
-   2"), read from where it landed rather than chosen separately, so the two can
-   never disagree.
-4. A station placed on the grass between two pitches reads as "not in a marked
-   area", which is a legitimate answer and not an error.
-5. A station **not yet placed** is listed as unplaced rather than hidden or drawn
-   at a default position, because an unplaced station is the thing a coach needs
-   to notice.
-6. Optionally, a station can be given a footprint rather than a spot, for the
-   case where the answer is "this drill uses the whole of Pitch 2".
+**A clean schematic, never a satellite photograph.**
 
-**Why the position and not just the pitch.** At Flushdyke, two pitches side by
-side and four stations means two per pitch. Told only "station 3 is on Pitch 2",
-a coach arriving still has to ask where on Pitch 2, and which of the two stations
-on it is theirs. That question is exactly the verbal briefing this programme
-exists to remove.
+**A venue with no layout for a session's station count** says so in one sentence
+with a link an admin can follow. It is not an error and it blocks nothing.
 
-**The setup changes during the session, so there are two composer views.**
-
-- **Stations**: the carousel block's members, placed as numbered markers.
-- **Games**: the game block's members, placed as pitches, which is where the
-  optional footprint earns its place.
-
-They are two views of the same venue, not two venues and not two layouts. The
-transition between them is an ordinary Reset activity in the plan.
-
-**A venue with no layout** offers no composer and says so in one sentence, with a
-link an admin can follow. It is not an error state.
-
-## Journey 7: arrive and deliver
+## Journey 8: arrive and deliver
 
 **Device: phone. This is the primary success scenario.**
 
-1. Open OTJ. The session for today is the first thing on Home.
+1. Open OTJ. Today's session is the first thing on Home.
    *Reuses `pickNextEvent`, `eventFilter.ts`, `sessionLifecycle.ts`. Unchanged.*
-2. **Groups and bibs.** Four groups, each a colour, each with its children.
-   *Reuses `tonightGroups`, `TRAIN-01`'s read-only overview.*
-3. **The setup, stations.** The venue area with four numbered stations at their
-   positions. One glance answers "where does everything go".
-4. Tap station 2. The drill fills the screen: the diagram large, the objective,
-   the coaching points, the setup notes, what equipment it needs.
-   *Reuses `ActivityDiagram` and `DrillDiagramView` exactly as PR #189 mounts
-   them on session day, so this is a layout around an existing seam rather than
-   a new rendering path.*
-5. Back to the overview. Swipe or tap moves between stations.
-6. "Your group starts here" is stated on the station a coach's group begins at,
-   derived from group order. No setting was involved: the coach expressed no
-   preference about which group starts where or which way the carousel turns, so
-   OTJ picks deterministically and offers no configuration for either.
-7. **The setup, games.** After the carousel, the second setup view: the game
-   pitches, and which groups make up each side. A side may read "red + blue".
-8. Optional: **Start** opens the live view, which runs one timer per rotation and
-   says **Rotate** rather than walking four stations in series. Four planned
-   stations means four rotations whether three groups turned up or four; with
-   three, one station stands empty each rotation and nothing is dropped.
-   *Reuses `src/routes/LiveSession.tsx`, `useSetLiveActivity`, `0006` live state.*
+2. **Groups and bibs.** Five groups, each a colour, each with its children.
+   *Reuses `tonightGroups` and TRAIN-01's one-glance overview.*
+3. **The setup map.** The venue's five station layout, each zone showing useful
+   overview information: the station number, the drill name, and the group
+   starting there. A subtle clockwise cue shows which way groups move.
+4. **Tap a station.** It fills the screen:
+   - station number
+   - drill name
+   - the drill diagram, large
+   - the objective
+   - two or three concise coaching points
+   *Reuses `ActivityDiagram` and `DrillDiagramView`, already merged.*
+5. **Previous station**, **Next station**, **Back to setup map**. All three are
+   browsing. Nothing on the screen says where the session has got to.
+6. **The games.** The venue's game layout, and which named players and bibs are
+   on each side.
+7. **Share** sends the protected session link to another coach through the phone's
+   own share sheet. They sign in and see the same plan.
+   *Reuses `src/lib/share.ts` and `ShareModal`'s internal arm, already built.*
 
 **What every coach sees is identical**, because it is one session read by
-everyone, not a briefing one person gives.
+everyone rather than a briefing one person gives.
+
+**Equipment is not on the station screen.** It belongs to setup, and it was dealt
+with before the children arrived.
 
 ---
 
 ## Mobile interaction: the decision, and why
 
-The discovery asks how to fit all the stations on a phone and lists pinch zoom,
-pan, swipe, tap to focus, zoom to station and return to overview.
-
-**Decision: overview with numbered markers at their real positions, tap to focus,
-back to overview. Swipe moves between stations. Pinch and pan are available and
+**Decision: a setup map of labelled zones, tap to open a station full screen,
+back to the map. Previous and Next browse. Pinch and pan are available and
 load-bearing for nothing.**
 
-The reason is what gets drawn. If the overview tries to render four drill
-diagrams inside four pitch areas at 390 pixels wide, nothing is legible and zoom
-becomes mandatory to use the product at all. If the overview draws **areas and
-numbered markers only**, it is legible at phone width with no zoom, and the
-detail lives one tap away where it has the whole screen. Zoom then becomes what
-it should be: something a coach may do, not something they must do.
+The reason is what gets drawn. If the map tries to render four or five drill
+diagrams inside their zones at 390 pixels wide, nothing is legible and zoom
+becomes mandatory to use the product at all. If a zone carries **a number, a
+drill name and the group starting there**, it is legible at phone width with no
+zoom, and the detail lives one tap away where it has the whole screen. Zoom then
+becomes what it should be: something a coach may do, not something they must do.
 
-**The placement model is what makes this work rather than a cost against it.**
-Four stations carrying positions are four separated tap targets. Four stations
-carrying only a pitch id would coincide in pairs at each pitch's centre, and no
-amount of zooming would separate them, because the information is not in the
-data. The lighter model is also the legible one.
+**The venue-level layout is what makes this work.** The zones are large
+rectangles an admin placed deliberately, so they are separated tap targets by
+construction rather than by luck.
 
 Accessibility consequences, which point the same way:
 
-- Tap targets are large numbered markers, comfortably over the 44 pixel minimum
-  the rest of the app uses.
+- Tap targets are whole zones, comfortably over the 44 pixel minimum the rest of
+  the app uses.
 - A pinch-only interface is unusable to anyone who cannot pinch. Tap and back
   work with a keyboard, with a screen reader, and with cold wet hands in
   February.
-- The station list must also exist as an ordinary list, so the layout is a view of
+- **The stations must also exist as an ordinary list**, so the map is a view of
   the plan and not the only way to reach it.
 - Station identity is carried by **number and name**, never by colour alone, the
   same rule the drill diagram already applies to arrow kinds.
+- The clockwise cue is a cue, not the only statement of direction: the station
+  detail says which station a group goes to next in words.
 
 ## Copy notes
 
 - "Template" becomes **week plan**. "Session plan" for a standalone one.
-- The operational surface stays **Players & groups**. Nothing user-visible says
-  Tonight or Register (`tonight.invariant.test.ts` enforces this).
-- The venue surface is **Setup** or **Where the stations go**, never "pitch map",
-  which promises a map.
+- The operational surface keeps its existing title, **Players & groups**
+  (`PLAYERS_GROUPS_TITLE`). Nothing user-visible says Tonight or Register, which
+  `tonight.invariant.test.ts` enforces.
+- The delivery surface is a **setup map**, never a "pitch map", which promises a
+  map of a place.
 - A station is a **station**, numbered from 1. Not "activity 3 of 7".
+- Nothing says "rotation 2 of 4" or "current station", because OTJ does not know.
 - British English throughout. No use of "roster" in anything a user reads.

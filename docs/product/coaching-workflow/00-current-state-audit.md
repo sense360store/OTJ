@@ -2,9 +2,12 @@
 
 Status: reference. Captured 17 August 2026 against `main` at `2283350`, by reading
 the code and the migration files rather than by trusting any earlier document.
-Revised 17 August 2026 after review: the station duration finding was overstated
-and has been corrected (section 17), and open PR #189 is now recorded as the
-in-flight implementation of DRILL-02 (section 18).
+**Re-verified 18 August 2026 against `main` at `afe790d`.** Only the facts that
+genuinely changed have been edited: PR #189 has merged, so the drill diagram now
+renders across session delivery (sections 7, 18); the internal club link share was
+missed by the first pass and is recorded in a new section 24; the migration ledger
+position has moved on (section 25); and section 22's conclusion has been withdrawn
+now that nothing consumes it, while its arithmetic stands.
 
 This is the factual half of the coaching workflow discovery. It answers the
 questions the overhaul depends on, with the repository path, table or function
@@ -160,15 +163,18 @@ Editor: `src/routes/DrillDiagramEditor.tsx` at `/drill/:id/diagram`, behind
 the drill, and **never** for an England Football derived drill, because the club's
 licence forbids redrawing FA content.
 
-Read-only rendering: `src/components/DrillDiagramView.tsx`, used by
-`src/routes/DrillDetail.tsx` **and nowhere else**. Grepping for
-`useDrillDiagram`, `DrillDiagramView` and `parseDrillDiagram` outside tests
-returns only `DrillDetail.tsx` and `DrillDiagramEditor.tsx`.
+Read-only rendering: `src/components/DrillDiagramView.tsx`, the canonical
+renderer. **Changed by #189, which has merged.** Grepping for `DrillDiagramView`
+and `ActivityDiagram` outside tests now returns `DrillDetail.tsx`,
+`DrillDiagramEditor.tsx`, `ActivityDiagram.tsx`, `Planner.tsx`, `SessionDay.tsx`
+and `LiveSession.tsx`.
 
-**This is exactly the gap the roadmap calls DRILL-02, and it is confirmed open.**
-`src/routes/Planner.tsx`, `src/routes/SessionDay.tsx` and
-`src/routes/LiveSession.tsx` all render `drill.mediaId` images through
-`MediaThumb` and `DiagramViewer` and never touch `drills.diagram`.
+**So the DRILL-02 gap this section previously recorded is closed for the
+authenticated surfaces.** `src/components/ActivityDiagram.tsx` owns the read and
+the display rule, `ActivityDiagramView` is its pure half, and every session
+surface mounts one of them rather than drawing its own. Section 18 records what
+merged and the constraints it leaves behind. What is still not published is the
+print and public share half, held as DRILL-02b.
 
 Note the naming collision to be careful of: `DiagramViewer`
 (`src/components/DiagramViewer.tsx`) is the full-screen viewer for **media
@@ -341,6 +347,10 @@ reads the columns involved, plus two independent allow-lists, plus a forbidden-k
 tripwire on both sides. Anything operational is a new, separately reviewed
 projection. That is what roadmap item TRAIN-02 already says.
 
+**This section covers PUBLIC sharing only.** Authenticated coach to coach link
+sharing is a separate, already shipped mechanism, and the first pass of this audit
+missed it entirely. Section 24.
+
 ## 14. Security boundaries protecting player and Spond data
 
 Documented authoritatively in `docs/security/registered-players-boundary.md`,
@@ -372,10 +382,11 @@ Existing objects a coaching-workflow overhaul is likely to reach:
 | Object | Why |
 |---|---|
 | `drills` (+ `diagram`) | Drill creation in flow, variants, motion. |
-| `sessions.activities` jsonb | Station blocks, area assignment. |
-| `sessions` | An explicit `template_id`. |
-| `templates` | Week plan reuse and promotion. |
-| `venues` | Venue layout. |
+| `sessions.activities` jsonb | Read for the derived station list. Not written by any proposed change. |
+| `sessions` | Nothing. `template_id` and `blocks` are both withdrawn. |
+| `templates` | Week plan reuse and promotion, in copy and journeys only. |
+| `venues` | Venue layout, one jsonb column. |
+| `teams` | The club's team order, one integer column. |
 | `session_teams`, `register_entries`, `teams.bib_colour` | Groups and bibs, already correct. |
 | `spond_events`, `spond_event_responses`, `player_spond_links` | Read only, unchanged. |
 | `content_shares`, `manage_content_share`, `read_public_share` | Any new public projection. |
@@ -389,21 +400,23 @@ Edge Functions in the repository: `fa-import`, `fa-import-programme`,
 
 ## 16. Which pieces can remain entirely client side
 
-- Rendering a saved drill diagram anywhere (DRILL-02). Done in PR #189, client
-  only, no migration (section 18).
+- Rendering a saved drill diagram anywhere (DRILL-02). **Merged in PR #189**,
+  client only, no migration (section 18).
 - Creating a drill while planning. `useInsertDrill` already exists; this is
   navigation, a modal and a shared authoring seam serving both the planner and
   the week plan editor (section 9).
 - The suggested split of attending children into groups. Groups are already
   derived from bib colour; a suggestion is a pure function over the draft.
 - The readiness readout for a session. Derivable from data already read.
-- The generated WhatsApp text. Composed in the browser from data the coach is
-  already authorised to see; nothing is stored and nothing is published.
-- Rotation arithmetic and the "your group starts at station N" statement, if
-  starting stations are derived rather than stored.
+- The station list, its numbering and its count, derived from the plan's own
+  `Phase` values (section 20).
+- Rotation arithmetic and the "your group starts at station N" statement, since
+  starting stations are derived rather than stored (section 22).
+- Sharing a session with another coach, which already ships and is client only
+  (section 24).
 
-Everything else on the list needs schema: venue layout, drill variants, an
-explicit template link, station block metadata, and any public projection.
+Only four things need schema: the club's team order, the venue layout, a second
+bib for the games, and the adaptation link between two drills.
 
 ---
 
@@ -451,21 +464,19 @@ the same length"), not a new duration rule.
 
 **Consequence for the plan: the duration model needs no change at all.**
 `sessionMinutes`, `plannedMinutes`, the derived lifecycle and `src/lib/ics.ts`
-are all correct as they stand and are not touched by station blocks. This
-removes the largest rollout risk previously attributed to that work.
+are all correct as they stand and are not touched by any of this work.
 
-**The structural gaps are entirely separate from the arithmetic and are the only
-reason for the work:**
+**The structural gaps are entirely separate from the arithmetic:**
 
-1. **There is no station identity.** Nothing in the data says which activities
-   are stations of one carousel. So "which station does my group start at", "put
-   station 3 on pitch 2" and "show me the four stations together" have no answer
-   to compute from. The venue composer cannot be built without this.
+1. **Nothing in the data explicitly says which activities are stations.** So
+   "which station does my group start at", "which zone does station 3 go in" and
+   "show me the five stations together" have nothing declared to read. Section 20
+   records the vocabulary they can be derived from instead.
 2. **Live delivery is sequential.** `LiveSession.tsx` walks `activities` one at a
-   time and shows the current one to everybody. During a carousel every group is
-   at a different station simultaneously, and the event that matters is
-   **rotate**, which the live view has no concept of. This is wrong today
-   independently of any total.
+   time and shows the current one to everybody, which does not describe a
+   carousel. **Recorded as a fact, not as work**: the settled product model
+   removes live carousel administration rather than building it, and the live
+   view is out of scope.
 3. **There is nothing that says the ground is rearranged mid-session.** A session
    is one flat list, so the fact that the cones come in and two game pitches go
    out after the carousel has no representation. See section 20.
@@ -512,69 +523,60 @@ drill to `Game` and everything else to `Skill` when a drill is added from the
 library.
 
 So a session already records which activities are small-sided games and which
-are station work, in a field every screen reads. What it does **not** record is
-that the ground is physically rearranged between them, or where anything is set
-up. That is the gap section 20's phase-specific setup work addresses, and it can
-lean on this vocabulary rather than inventing a second one.
+are station work, in a field every screen reads, and it records their order.
+**That is enough to derive the station list, the station numbers and the station
+count without storing anything** (`02-target-product-model.md` section 4). What
+it does not record is where anything is set up, which the venue layout answers at
+the venue level rather than per session.
 
-## 18. In-flight work: PR #189 (DRILL-02)
+## 18. Merged work: PR #189 (DRILL-02, authenticated half)
 
-Read directly at head `262ab0e` on 17 August 2026, not inferred.
+**Merged.** In `main` at `afe790d`, as the merge of
+`claude/drill-02-diagram-delivery-ljc0mb`. The previous revision of this document
+recorded it as open, CI green, `mergeable_state: dirty` and awaiting human review.
+That is history now; what follows is what it left in the codebase.
 
-**Open, CI green on all 10 checks, `mergeable_state: dirty`** (it branched from
-`e07a4cf` and `main` has since moved to `2283350`; the conflict is
-`docs/roadmap/master-roadmap.md`, which both changed). The only PR comment is the
-Vercel deployment bot, so it has had no human review yet.
+Client only: no migration, no SQL, no Edge Function change.
 
-Client only: 14 files, +1374/-9. No migration, no SQL, no Edge Function change.
-
-What it establishes, which later phases must build on rather than redo:
+What it established, which later work must build on rather than redo:
 
 - **`diagramForDisplay(diagram, source)`** in `src/lib/drillDiagramRights.ts`, the
   single rule for whether a saved diagram is *shown*, beside `diagramEditDecision`
   which answers whether it may be *drawn*. It returns null for three cases a
   screen cannot tell apart: the read has not answered, there is no diagram or it
   is empty, and the drill is England Football derived.
-- **`src/components/ActivityDiagram.tsx`**, new. `ActivityDiagram` owns the read
-  and the rule; `ActivityDiagramView` is the pure half that renders without a
-  query client. A component rather than a hook per screen for a structural
-  reason: `LiveWatcher` resolves its drill after three conditional returns, so a
-  top level hook there would break the rules of hooks.
-- **`DrillDiagramView` stays the canonical renderer.** The seam draws no SVG of
-  its own, and an invariant test fails the build if a screen does.
+- **`src/components/ActivityDiagram.tsx`**. `ActivityDiagram` owns the read and
+  the rule; `ActivityDiagramView` is the pure half that renders without a query
+  client. A component rather than a hook per screen for a structural reason:
+  `LiveWatcher` resolves its drill after three conditional returns, so a top level
+  hook there would break the rules of hooks.
+- **`DrillDiagramView` is the canonical renderer.** The seam draws no SVG of its
+  own, and an invariant test fails the build if a screen does.
 - **The two diagram systems stay apart.** A structured `drills.diagram` is never
-  rasterised, wrapped as a `MediaItem` or pushed through `DiagramViewer`.
-  `DiagramViewer`, the uploaded-media full-screen viewer, is untouched.
-  Coexistence rule: a drill carrying both an uploaded image and a drawn diagram
-  shows both, and neither suppresses the other.
-- **The per-drill cached read is preserved deliberately.** `useDrillDiagram(id)`
-  under cache key `['drill_diagram', id]`, sharing the drill page's entry so a
-  drill opened, planned and delivered is fetched once and TanStack dedupes
-  concurrent mounts. A batched `.in('id', ids)` read was considered and
-  **rejected**, because it would mint a second cache shape over rows already
-  cached under the first. `DRILL_COLS` is still never widened to carry the
-  column, and an invariant test enforces both.
-- **Surfaces:** Planner expanded panel (in `.act-panel`, never the draggable
+  rasterised, wrapped as a `MediaItem` or pushed through `DiagramViewer`, the
+  uploaded-media viewer, which is untouched. A drill carrying both an uploaded
+  image and a drawn diagram shows both, and neither suppresses the other.
+- **The per-drill cached read is deliberate.** `useDrillDiagram(id)` under cache
+  key `['drill_diagram', id]`, sharing the drill page's entry so a drill opened,
+  planned and delivered is fetched once and TanStack dedupes concurrent mounts. A
+  batched `.in('id', ids)` read was considered and **rejected**, because it would
+  mint a second cache shape over rows already cached under the first. `DRILL_COLS`
+  is still never widened to carry the column, and an invariant test enforces both.
+- **Surfaces:** the planner's expanded panel (in `.act-panel`, never the draggable
   `.act-card`, passed as a lazily built `ReactNode` so the read fires only on
-  expand), Session Day inline in the setup card beside the existing image button,
+  expand), session day inline in the setup card beside the existing image button,
   and Live in both the driver and the watcher stage between the media and the
   coaching points.
 - **No public share and no print.** Section 13's deny list is untouched and its
-  containment test is still green. The PR records a proposed **DRILL-02b** for
-  the snapshot contract change, and keeps DRILL-02 **In progress** rather than
-  Done.
+  containment test is still green. The remaining half is recorded as
+  **DRILL-02b**, and the roadmap row stays In progress rather than Done.
 - **Print, traced rather than assumed:** `window.print()` appears in exactly one
-  place in `src/`, `PublicShare.tsx:113`, and the `@media print` block targets
-  only `.public-*` classes. **There is no authenticated print path in this
-  product**, so print inherits the public share gate exactly.
-- Two defects were found and fixed by its own adversarial pass: a height cap that
-  shrank the drawing rather than the box (fixed by emitting `--dd-ratio` from the
-  renderer so a height cap also bounds width), and `.dd-chip-text` reading
-  `var(--ink)`, which vanished under the live view's forced `.theme-dark`.
+  place in `src/`, `PublicShare.tsx:113`, and the `@media print` block targets only
+  `.public-*` classes. **There is no authenticated print path in this product.**
 
-Its own honest gap, worth carrying: the repository's tests render to static
-markup with no DOM, so no layout claim in it has been measured. A real device
-check on a phone is recommended before merge, particularly Live in portrait.
+Its own honest gap, worth carrying: the repository's tests render to static markup
+with no DOM, so no layout claim in it was measured. A real device check on a phone
+is still worth doing, particularly Live in portrait.
 
 ## 21. The register holds one bib per player per session, and no history
 
@@ -612,54 +614,66 @@ decision rather than an oversight.
 
 **Consequence, stated plainly:** once a coach re-bibs a child, **the colour they
 wore earlier in the same session is gone and cannot be recovered from any table.**
-Whether that matters is `02-target-product-model.md` section 7b.
+
+This is the fact behind the proposal for a second bib column
+(`04-data-model-proposal.md` section 4). The settled model needs the station bib
+and the game bib to exist at once, and one scalar cannot hold two values. What
+remains unrecoverable after that change is a correction within one of the two,
+which nothing reads.
 
 **What is NOT lost.** `present` and `included_in_groups` are separate columns and
 a bib change does not touch them, so who attended and who the coach included
 survive a re-bib intact.
 
-## 22. Starting stations: no stateless rule can be both unique and stable
+## 22. Starting stations: the arithmetic, and why it no longer drives a design
 
-**Corrected. A previous revision concluded "key the derivation on the bib colour,
-never on a positional index". That is directionally right and it is not an
-algorithm.** It rules out the unstable option without producing a correct one.
+**The facts in this section are unchanged and still verified. The conclusion the
+previous revision drew from them has been withdrawn**, because nothing consumes
+it any more (`02-target-product-model.md` section 6.2).
 
-### The two requirements
+### The vocabulary is nine colours and a carousel has four or five stations
 
-1. **Unique**: every active group starts at a different station, or two groups
-   rotate together for the whole carousel while another station stands empty.
-2. **Stable**: when one group disappears, no other group's starting station moves.
+`BIB_COLOURS` (`src/lib/bibs.ts`) and `public.is_bib_colour`, which is the
+database authority (`0044_training_day_core.sql:81`), both hold exactly nine: red,
+blue, green, yellow, orange, purple, pink, white, black.
 
-### Neither obvious rule satisfies both
+**A fixed global map from colour to station cannot give unique stations.** Suppose
+a rule maps colour to station without consulting the active set, and gives unique
+stations for every active set no larger than the station count. Take any two
+distinct colours: the set holding just those two is a legal active set, so the
+rule must separate them. They were arbitrary, so the rule is injective from nine
+colours into four or five stations, which is impossible.
 
-**A fixed global map, colour to station.** Stable by construction, and it cannot
-be unique. The vocabulary is **nine** colours, in `BIB_COLOURS`
-(`src/lib/bibs.ts`) and in `public.is_bib_colour`, which is the database
-authority (`0044_training_day_core.sql:81`): red, blue, green, yellow, orange,
-purple, pink, white, black. A carousel has four to six stations. Any fixed map of
-nine colours into four slots puts at least three colours on one slot.
+**Ranking the active colours 1 to N is unique and moves when one leaves.**
+`tonightGroups` (`src/lib/tonight.ts:1103`) sorts by the fixed vocabulary order
+(`:1129`), which is stable, but the array it returns is **dense over the colours
+actually in use**. Remove the last red child and the array shortens, so every
+later group's position moves down one.
 
-**Proof that this is not a tuning problem.** Suppose `f` maps colour to station
-without consulting the active set, and gives unique stations for every active set
-of size at most the station count. Take any two distinct colours. The set holding
-just those two is a legal active set, so `f` must separate them. They were
-arbitrary, so `f` is injective on all nine colours into four stations, which is
-impossible. **No stateless rule can be both unique and stable.**
+### What the previous revision concluded, and why that is withdrawn
 
-**Ranking the active colours into slots 1 to N.** Unique by construction, and
-unstable: it is the dense-array problem restated. `tonightGroups`
-(`src/lib/tonight.ts:1103`) sorts by the fixed vocabulary order (`:1128`), which
-is stable, but the array it returns is **dense over the colours actually in
-use**. Remove the last red child and the array shortens, so every later group's
-rank moves down one.
+It concluded that no stateless rule can be both unique and stable, therefore the
+assignment must be derived once and **frozen** at carousel start, stored on the
+session and never recomputed.
 
-**Therefore the design must carry state.** That is a proof rather than a
-preference, and it is what section 7b of `02-target-product-model.md` builds on.
+Both halves of the arithmetic still hold. **The requirement they served does
+not.** Stability mattered only while a carousel was running under OTJ's
+observation, and the settled product philosophy is that OTJ tracks no running
+carousel: once training starts, changes are physical
+(`01-coach-workflow-principles.md` section 2).
+
+So the current design ranks the active colours in the fixed vocabulary order and
+assigns them sequentially, derived on every read, stored nowhere. Before training,
+a plan that restates itself after the coach changes the groups is correct
+behaviour rather than churn. **If OTJ is ever asked to drive a carousel, this
+section is where the reasoning and the mechanism are both still on the record.**
 
 ## 23. Shared, reload-safe session state already exists
 
-Relevant because the starting-station assignment needs exactly this and should
-not invent a second mechanism.
+Recorded as a plain fact about the codebase. The previous revision cited it to
+justify storing a frozen station assignment on `sessions`; that mechanism is
+withdrawn (section 22), and the fact stands on its own for any future work that
+genuinely needs two devices to agree.
 
 - `sessions.live_activity_index` and `sessions.live_activity_started_at`
   (`0006_live_state.sql:23`), both null when not live.
@@ -687,14 +701,60 @@ Two things already persist locally and are explicitly not shared data:
 The primary success scenario is that **every coach sees the same plan on their
 own phone**, so anything two coaches must agree about cannot live here.
 
+## 24. Authenticated coach to coach link sharing already exists
+
+**Missed by the first pass of this audit**, which read the public sharing
+substrate (section 13) and treated it as the whole of sharing. It is not, and the
+settled sharing requirement is met by this mechanism rather than by that one.
+
+`src/lib/share.ts` is the internal club link seam, shipped as PR 0 of the content
+sharing programme. Its own header states the contract: an internal club link is a
+normal protected app URL, the recipient signs in and must already have club
+access, the existing Row Level Security stays the only boundary, and there is **no
+token, no query-string secret, no temporary public URL and no anonymous route**.
+
+- `canonicalPath` mirrors the app's own router: `/session-day/:id`, `/drill/:id`,
+  `/programmes/:id`.
+- `canonicalUrl(kind, id, origin)` is `origin + path` with nothing appended.
+- `canNativeShare` feature-detects `navigator.share`; `shareLink` calls it and
+  falls back to `copyLink` when the sheet is absent or fails; a user dismissing
+  the sheet is `'cancelled'`, a neutral non-event.
+- `createShareRunner` allows one attempt at a time and reports nothing after its
+  surface unmounts.
+- `SHARE_ACCOUNT_NOTE` already tells the coach that the recipient needs an OTJ
+  account and club access.
+
+The internal arm of `ShareModal` (`src/components/ShareModal.tsx:606`) invokes it
+as `shareInternal({ url: canonicalUrl(kind, sourceId), title, text: title })`. On
+session day, `title` is `session.name` (`src/routes/SessionDay.tsx:207`), and the
+affordance is gated on `sessions.create`.
+
+**So the payload is a URL and a session name.** No player name, bib, group,
+attendance or Spond field is in it, and there is no path by which one could be.
+
+**Consequence for this programme:** the coach to coach sharing requirement needs
+no new mechanism, no new Edge Function, no new snapshot and no new permission.
+What it needs is to stay reachable from the delivery surface and to have its
+payload pinned by a test.
+
+## 25. Migration ledger position
+
+- The highest migration file on disk is `0049_spond_team_reconcile.sql`, applied
+  to production on 17 August 2026 (hosted head `20260817104226`).
+- **`0050_bulk_delete_players.sql` is already claimed by open draft PR #191**
+  (PLAYERS-01). So the first migration of any new programme is `0051` at the
+  earliest.
+- The live ledger is the authority, not the highest file on disk. Confirm the next
+  free number against it before writing a migration (`CLAUDE.md`, Data model).
+
 ## Notable current-state findings the overhaul must design around
 
-1. **Station-based training has no representation, and this is not a duration
+1. **Station-based training is not declared, and this is not a duration
    defect.** Section 17 corrects two earlier attempts to make it one. Rotations
    follow the station count, not the group count, so the existing total is
-   correct at every attendance level and the duration model needs no change. The
-   real absences are station identity, parallel delivery semantics, and any
-   record that the ground is rearranged mid-session.
+   correct at every attendance level and the duration model needs no change. What
+   is absent is a declaration of which activities are stations, and section 20
+   shows the plan already carries enough to derive it.
 
 2. **A group is a bib colour, and the derivation has a collision.**
    `tonightGroups` (`src/lib/tonight.ts:1103`) keys on `bib ?? ''`, so **two
@@ -704,7 +764,7 @@ own phone**, so anything two coaches must agree about cannot live here.
    surfaces it. Coach discovery has since settled that unique active bib colours
    are the rule and that "No bibs" is not a valid group, so both collisions are
    now readiness failures with a defined product answer rather than open
-   questions (`02-target-product-model.md` section 6).
+   questions (`02-target-product-model.md` section 6.1).
 
 2b. **A session-only bib override already exists and already behaves
    correctly.** `register_entries.bib_colour_override` (0044) is per session and
@@ -714,11 +774,12 @@ own phone**, so anything two coaches must agree about cannot live here.
    facts in the schema**, which is most of what the "session only override"
    requirement asks for.
 
-3. **Drill Maker is finished as a model, and its delivery half is in flight.**
+3. **Drill Maker is finished as a model, and its delivery half has merged.**
    The diagram schema, the identity boundary, the parser and the editor are all
-   sound. PR #189 puts the diagram on the planner, session day and both live
-   stages (section 18). What remains after it is authoring: a drill still cannot
-   be created without leaving the plan being written.
+   sound, and PR #189 put the diagram on the planner, session day and both live
+   stages (section 18). What remains is authoring: a drill still cannot be created
+   without leaving the plan being written, and there is still no way to adapt one
+   for a single session.
 
 4. **Authoring is already duplicated across two editors.** The planner and
    `TemplateFormModal` each maintain their own activity list, add bar, custom
@@ -727,12 +788,15 @@ own phone**, so anything two coaches must agree about cannot live here.
 
 5. **Venue is a word.** Every layout concept is new. `venues` carries a name and
    nothing else, so there is no coordinate space, no geometry and no imagery to
-   build on.
+   build on. Two fraction-coordinate jsonb columns already exist to copy the
+   discipline from, `boards.tokens` and `drills.diagram`.
 
-6. **Public sharing is deliberately incapable of carrying an operational plan.**
-   Any share of groups and bibs is a new decision, not a wider snapshot. PR #189
-   reached the same conclusion independently for the diagram alone and declined
-   to widen it.
+6. **Public sharing is deliberately incapable of carrying an operational plan,
+   and it is not the sharing coaches asked for.** Any share of groups and bibs
+   would be a new decision rather than a wider snapshot, and PR #189 reached the
+   same conclusion independently for the diagram alone. Meanwhile the protected
+   coach to coach link that the settled requirement actually describes has
+   shipped, and section 24 records it.
 
 7. **`sessions.activities` is an unconstrained jsonb array read through a strict
    client allow-list.** Adding a key is cheap in the database and requires
