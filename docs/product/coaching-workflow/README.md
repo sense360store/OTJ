@@ -141,8 +141,10 @@ Recorded because a design that is merely absent tends to be rebuilt.
 
 **Six proposed structures became five columns and one small table**, plus three
 keys inside an existing unconstrained jsonb array that need no migration at all.
-**No item needs a full RLS or auth review**; two need a focused content-sharing
-boundary review (COACH-2 for the Edge share module, COACH-8 for the deny lists).
+**No item needs a full RLS or auth review**: no role is added, no existing policy
+is altered, and the authentication boundary does not move. COACH-5 needs a policy
+and grant review because M2 creates a table, and COACH-2 and COACH-8 each need a
+focused content-sharing boundary review.
 
 **One existing rule changes**, and it reaches **four** implementations. The
 session's length is the sum of the activities **actually running**, so an activity
@@ -181,8 +183,9 @@ Then the gated migrations in dependency order: **COACH-1** (`teams.sort_order`),
 (`drills.variant_of`), each authored and registered against the ledger as it
 stands at its own review.
 
-**Full RLS or auth reviews: none. Focused content-sharing boundary reviews:
-two**, COACH-2 and COACH-8.
+**Full RLS or auth reviews: none.** One policy and grant review, COACH-5, whose
+policies mirror `venues`. **Focused content-sharing boundary reviews: two**,
+COACH-2 and COACH-8.
 
 ## House rules these documents follow
 

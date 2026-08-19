@@ -235,13 +235,30 @@ open draft PR #191 owns (`04-data-model-proposal.md` section 8).
 
 **No item in this programme needs a full RLS or auth review**, which is a change
 from the previous revision and is a direct consequence of withdrawing the
-generated message and the public projection. Nothing here adds a role, changes a
-policy shape, or moves the authentication boundary. The two parked items that
-would need a full review, a public operational projection and DRILL-02b, are
-outside it and block nothing.
+generated message and the public projection. **No role is added, no existing
+policy is altered, and the authentication boundary does not move.**
 
-**Two items do need a focused content-sharing boundary review**, and saying
-"none" would be untrue now that the survey behind it has been re-derived:
+**That is not the same as "no policy work", and the gate table above says so.**
+M2 creates a table, so it necessarily carries policies and grants of its own, and
+the table calls it the largest review in the programme. The two claims are both
+true because **M2 introduces no new policy SHAPE**: its policies mirror `venues`
+exactly, club wide select with no capability and `club.manage` for everything
+else, so the reviewer is checking an instantiation of a pattern already in the
+database rather than judging a new access rule. A new table whose policies did
+**not** mirror an existing one would be a full RLS review, and there is no such
+table here.
+
+The two parked items that would need a full review, a public operational
+projection and DRILL-02b, are outside this programme and block nothing.
+
+**Three reviews beyond the ordinary migration gate**, then, and saying "none"
+would be untrue now that the survey behind it has been re-derived:
+
+| Item | Review |
+|---|---|
+| **M2 / COACH-5** | Policy and grant review, against the `venues` pattern it mirrors, plus the jsonb shape boundary |
+
+and two on the content-sharing boundary:
 
 | Item | Why | Scope of the review |
 |---|---|---|

@@ -767,8 +767,13 @@ COACH-10.
 (M4). Each is registered separately, against the head it will actually run
 against.
 
-**Full RLS or auth reviews: none.** Nothing here adds a role, changes a policy
-shape or moves the authentication boundary.
+**Full RLS or auth reviews: none.** No role is added, no existing policy is
+altered, and the authentication boundary does not move.
+
+**A policy and grant review: one.** COACH-5, because M2 creates a table and a
+table carries policies. It is not a full RLS review because those policies mirror
+`venues` exactly, so the reviewer checks an instantiation of an existing pattern
+rather than a new access rule.
 
 **Focused content-sharing boundary reviews: two.** COACH-2, because it changes
 `_shared/share.ts` and needs an Edge deploy; and COACH-8, because it adds a
@@ -870,9 +875,11 @@ the one thing that does today, the live driver's activity index, is untouched.
 
 **What is genuinely weaker after this correction?** Two things, both recorded.
 The grouping suggestion's quality is unprovable in advance and needs coach
-feedback after one real use. And the age group vocabulary is a hardcoded literal
-in the planner while `clubs.age_groups` sits unread, so the layout scope's third
-key is only as good as a list COACH-5 has to go and fix.
+feedback after one real use. And the age group vocabulary is **two** hardcoded
+literals that disagree with each other, with **no club level list to read at
+all**: `clubs.age_groups` does not exist, and the column that does is on
+`profiles` and is per coach. So the layout scope's third key rests on a
+vocabulary COACH-5 has to create as a migration, not merely wire up.
 
 **What could still go wrong that this plan does not cover?** A plan authored
 before COACH-2 declares no stations, so every existing session shows an empty
