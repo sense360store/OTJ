@@ -22,8 +22,13 @@ import { describe, expect, it } from 'vitest'
 import { ACTIVITY_SLOTS, MAX_STATIONS, MIN_STATIONS } from './activityStructure'
 
 const SRC = join(import.meta.dirname, '..')
-const SHARE = join(SRC, '..', 'supabase', 'functions', '_shared', 'share.ts')
-const SHARE_TEST = join(SRC, '..', 'supabase', 'functions', '_shared', 'share_test.ts')
+const FUNCTIONS = join(SRC, '..', 'supabase', 'functions')
+const SHARE = join(FUNCTIONS, '_shared', 'share.ts')
+const SHARE_TEST = join(FUNCTIONS, '_shared', 'share_test.ts')
+
+// The Deno half of the seam. share.ts holds the duplicated rule on purpose;
+// nothing else under supabase/functions/ may hold a second copy of it.
+const DENO_SEAM = ['_shared/share.ts', '_shared/share_test.ts']
 
 // The one browser file allowed to know the rule, and its own tests.
 const SEAM = [
@@ -48,7 +53,7 @@ const SKIPPED_MEANS_SOMETHING_ELSE: Record<string, string> = {
   'lib/playersImportCommit.test.ts': 'the players import result count',
 }
 
-function sourceFiles(): string[] {
+function tsFiles(root: string): string[] {
   const out: string[] = []
   const walk = (dir: string, prefix: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -57,9 +62,14 @@ function sourceFiles(): string[] {
       else if (/\.tsx?$/.test(entry.name)) out.push(rel)
     }
   }
-  walk(SRC, '')
+  walk(root, '')
   return out
 }
+
+const sourceFiles = () => tsFiles(SRC)
+// Walked as well as src/, because a second Edge Function holding its own
+// answer is exactly the drift the browser only walk could not see.
+const denoFiles = () => tsFiles(FUNCTIONS).filter((f) => !DENO_SEAM.includes(f))
 
 // Comments explain the rule on both sides of it, and prose is not code.
 function stripComments(src: string): string {
@@ -67,6 +77,7 @@ function stripComments(src: string): string {
 }
 
 const read = (f: string) => stripComments(readFileSync(join(SRC, f), 'utf8'))
+const readDeno = (f: string) => stripComments(readFileSync(join(FUNCTIONS, f), 'utf8'))
 
 const isTest = (f: string) => /\.test\.tsx?$/.test(f)
 
@@ -100,6 +111,10 @@ describe('the structural rule lives in exactly one browser file', () => {
       if (SEAM.includes(f)) continue
       const hit = read(f).match(SLOT_COMPARISON)
       if (hit) offenders.push(`${f}: ${hit[0]}`)
+    }
+    for (const f of denoFiles()) {
+      const hit = readDeno(f).match(SLOT_COMPARISON)
+      if (hit) offenders.push(`supabase/functions/${f}: ${hit[0]}`)
     }
     expect(offenders).toEqual([])
   })
@@ -176,6 +191,41 @@ describe('the session duration sum has one browser implementation', () => {
     }
   })
 
+  it('no Edge Function sums a session of its own', () => {
+    // share.ts accumulates with `totalDuration +=` rather than with a reduce,
+    // so the browser shape would not catch a second Deno copy. This one does.
+    const DENO_DURATION_SUM = /\+=\s*[\w.]*[Dd]uration|[Dd]uration\w*\s*\+=/
+    const offenders: string[] = []
+    for (const f of denoFiles()) {
+      const hit = readDeno(f).match(DENO_DURATION_SUM)
+      if (hit) offenders.push(`supabase/functions/${f}: ${hit[0]}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('the FA import builds its template activities literally, so it carries nothing to strip', () => {
+    // THE FOURTH TEMPLATE WRITE PATH, AND IT IS IN DENO. `_shared/fa.ts`
+    // inserts straight into the templates table, which the browser boundary
+    // helper structurally cannot reach. It is safe because it CONSTRUCTS its
+    // activities from drill ids rather than copying a session's, so no
+    // session-local key can arrive there. That is a property of the literal,
+    // and this is what notices if the literal ever starts carrying one.
+    const literal = readDeno('_shared/fa.ts').match(/const activities = drillIds\.map\([^\n]*\)/)?.[0]
+    expect(literal).toBeTruthy()
+    expect(literal).toContain('phase:')
+    expect(literal).toContain('duration:')
+    expect(literal).not.toContain('slot')
+    expect(literal).not.toContain('skipped')
+  })
+
+  it('the shared sum is reached by the module every session surface inherits from', () => {
+    // sessionMinutes is implementation one of the four and the one six
+    // screens inherit. The negative reduce check above would catch it being
+    // re-inlined, and would not catch it being rewritten as a loop, which is
+    // the first shape this file admits it cannot see.
+    expect(readFileSync(join(SRC, 'lib/data.ts'), 'utf8')).toMatch(/from '\.\/activityStructure'/)
+  })
+
   it('the calendar export takes its length from the same seam', () => {
     expect(readFileSync(join(SRC, 'lib/ics.ts'), 'utf8')).toMatch(/from '\.\/sessionLifecycle'/)
   })
@@ -214,12 +264,18 @@ describe('the Deno half stays in step with the browser half', () => {
     // A template never carries the key, so buildProgrammeSnapshot summing week
     // activities is correct unchanged. Applying it there would be a change to
     // programme sharing this slice does not make.
+    //
+    // BOTH MARKERS ARE ASSERTED FOUND BEFORE ANYTHING IS SLICED. indexOf
+    // returns -1 when a name is gone, slice(-1) yields the last character, and
+    // a negative assertion passes on it, so renaming either builder would have
+    // turned this check green while saying nothing.
     const src = share()
-    const session = src.slice(src.indexOf('export function buildSessionSnapshot'))
-    const sessionBody = session.slice(0, session.indexOf('export function buildProgrammeSnapshot'))
-    const programme = src.slice(src.indexOf('export function buildProgrammeSnapshot'))
-    expect(sessionBody).toMatch(/isStoodDownActivity\(a\)/)
-    expect(programme).not.toMatch(/isStoodDownActivity/)
+    const sessionAt = src.indexOf('export function buildSessionSnapshot')
+    const programmeAt = src.indexOf('export function buildProgrammeSnapshot')
+    expect(sessionAt).toBeGreaterThan(-1)
+    expect(programmeAt).toBeGreaterThan(sessionAt)
+    expect(src.slice(sessionAt, programmeAt)).toMatch(/isStoodDownActivity\(a\)/)
+    expect(src.slice(programmeAt)).not.toMatch(/isStoodDownActivity/)
   })
 
   it('publishes neither key, in either runtime', () => {
@@ -227,7 +283,15 @@ describe('the Deno half stays in step with the browser half', () => {
     // ACTIVITY_KEYS in ./publicShare is the other end of the same contract.
     // Widening either is the one thing the content-sharing boundary review for
     // this slice exists to refuse.
+    //
+    // EVERY NEGATIVE HERE SITS BEHIND A POSITIVE. Two `not.toContain` calls
+    // over an extraction that degrades to the empty string report green when
+    // they read nothing at all, and the Deno interface is the half this whole
+    // check exists for: a nested type or an `extends` clause would stop the
+    // regex matching, and both forbidden keys could then be declared on the
+    // published interface with the suite still green.
     const publicActivity = share().match(/export interface PublicActivity \{[^}]*\}/)?.[0] ?? ''
+    expect(publicActivity).toContain('customTitle')
     expect(publicActivity).not.toContain('slot')
     expect(publicActivity).not.toContain('skipped')
     const keys = read('lib/publicShare.ts').match(/const ACTIVITY_KEYS[^\n]*\n/)?.[0] ?? ''
@@ -264,6 +328,25 @@ describe('the tripwire itself', () => {
     expect(SLOT_COMPARISON.test("filter.scope === 'station'")).toBe(false)
     expect(SKIPPED_READ.test('const skippedRows = plan.length')).toBe(false)
     expect(INLINE_DURATION_SUM.test('const mins = drills.reduce((a, d) => a + d.players, 0)')).toBe(false)
+  })
+
+  it('states which of its checks reach the Deno tree, and which do not', () => {
+    // A SCOPE LIMIT RATHER THAN A REGEX BLIND SPOT, and worth its own
+    // sentence because a reader takes a pass as covering both runtimes.
+    //
+    // Reaching supabase/functions/: the slot comparison, the Deno duration
+    // sum, and the FA import's activity literal.
+    //
+    // NOT reaching it: the stand-down key read. `skipped` is a count and a
+    // status across spond-sync, spond-roster-import, fa-import and
+    // fa-import-programme, so reading the word over that tree would be noise
+    // rather than a check, and the assertion below is what keeps that reason
+    // true rather than assumed. It is tolerable because an activity is stood
+    // down only when a valid slot is ALSO present, and the slot comparison IS
+    // checked there, so a second Deno implementation still trips this file on
+    // its other half.
+    expect(denoFiles().filter((f) => SKIPPED_READ.test(readDeno(f))).length).toBeGreaterThan(0)
+    for (const f of denoFiles()) expect(SLOT_COMPARISON.test(readDeno(f))).toBe(false)
   })
 
   it('states what it does not catch, so nobody mistakes it for a proof', () => {

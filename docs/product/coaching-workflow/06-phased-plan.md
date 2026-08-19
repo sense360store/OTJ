@@ -133,7 +133,7 @@ run tonight. Every screen then agrees, and nothing is inferred.
   `src/routes/Templates.tsx:30`, `src/components/TemplateFormModal.tsx:39`,
   `src/components/ProgrammeFormModal.tsx:160` and `:379`,
   `src/routes/ProgrammeDetail.tsx:76`, and `buildProgrammeSnapshot`
-  (`share.ts:1218-1228`).
+  (`share.ts`).
 - One module deriving, from a plan: the ordered **active** station list, the
   station count, and the one active games activity. Station N is the Nth active
   station in plan order and is never stored. **Nothing counts activities to learn

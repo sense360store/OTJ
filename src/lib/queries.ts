@@ -346,6 +346,14 @@ export const SESSION_LOCAL_ACTIVITY_KEYS = ['skipped'] as const
 // `slot` is NOT stripped. Declaring which activities are the stations and
 // which is the games phase belongs to the reusable plan, so a week plan
 // carries it and every dated session built from that template inherits it.
+//
+// THERE IS A FOURTH TEMPLATE WRITE AND IT IS NOT IN THIS FILE.
+// supabase/functions/_shared/fa.ts inserts an FA imported template straight
+// into the table from Deno, which this helper structurally cannot reach. It
+// is safe because it CONSTRUCTS its activities from drill ids rather than
+// copying a session's, so no session-local key can arrive there; that is a
+// property of the literal, and activityStructure.invariant.test.ts is what
+// notices if the literal ever starts carrying one.
 export function stripSessionLocalActivityKeys(row: ActivityRow): ActivityRow {
   // A jsonb element that is not an object carries no keys to strip, and is
   // handed back exactly as it arrived. Spreading it instead would turn null

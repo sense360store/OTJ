@@ -276,14 +276,13 @@ changes a function", was false**, and it was false because the survey behind it
 looked for session duration in the browser only.
 
 **The module.** `supabase/functions/_shared/share.ts`. `buildSessionSnapshot`
-(`:797-806`) accumulates `totalDuration` from the session's activities in its own
+(in that file) accumulates `totalDuration` from the session's activities in its own
 `for` loop, in Deno, and cannot import `src/lib/`. It is a fourth independent
 implementation of the session duration sum
 (`00-current-state-audit.md` section 17), so the stood-down rule reaches it.
 
 **What must change and what must not.** Only the duration accumulation, and only
-to skip an activity carrying a `slot` and `skipped: true`. `buildProgrammeSnapshot`
-(`:1218-1228`) is a second accumulator in the same file over **week** activities,
+to skip an activity carrying a `slot` and `skipped: true`. `buildProgrammeSnapshot` is a second accumulator in the same file over **week** activities,
 and it must not change: a template never carries `skipped`.
 
 **The tests that change with it.** `supabase/functions/_shared/share_test.ts`
@@ -309,7 +308,7 @@ The smallest consistent choice, and it falls out of the existing allow list
 rather than needing a new rule. `PublicActivity` is exactly `phase`, `duration`,
 `drillRef`, `customTitle`, enforced at both ends: the Deno builder copies only
 those, and the browser validator's `ACTIVITY_KEYS`
-(`src/lib/publicShare.ts:316`) refuses anything else. So `slot`, `skipped` and
+(`src/lib/publicShare.ts`) refuses anything else. So `slot`, `skipped` and
 `game_count` are **already** structurally excluded, and publishing `skipped`
 would mean widening two allow lists in two runtimes.
 

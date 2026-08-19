@@ -376,7 +376,7 @@ independent implementations sum **session** activities:
 | 1 | `sessionMinutes`, `src/lib/data.ts:539` | Six session surfaces inherit through it |
 | 2 | `plannedMinutes`, `src/lib/sessionLifecycle.ts:150` | The expected end and the calendar `DTEND` inherit through it |
 | 3 | `src/routes/Planner.tsx:733` | **Inline. Planner.tsx does not import `sessionMinutes`** |
-| 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts:797-806` | **Deno.** A different runtime, not a call site |
+| 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts` | **Deno.** A different runtime, not a call site |
 
 So the ordinary five-planned, four-running night must show the shorter total in
 the planner, move the derived expected finish earlier, shorten the calendar

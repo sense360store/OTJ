@@ -213,7 +213,7 @@ is the same.
 `sessionMinutes` (`src/lib/data.ts:539`), `plannedMinutes`
 (`src/lib/sessionLifecycle.ts:150`), an inline reduce in
 `src/routes/Planner.tsx:733` that does not import either, and
-`buildSessionSnapshot` in `supabase/functions/_shared/share.ts:797-806`, which is
+`buildSessionSnapshot` in `supabase/functions/_shared/share.ts`, which is
 Deno and cannot import from `src/lib/` at all. `src/lib/ics.ts` inherits from the
 first two. Each of the four must honour the rule, and the plan must not claim it
 lands in two functions.
