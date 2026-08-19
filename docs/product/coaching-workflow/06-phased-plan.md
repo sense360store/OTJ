@@ -109,9 +109,9 @@ run tonight. Every screen then agrees, and nothing is inferred.
   called by the template write paths (`:1579`, `:1826`) and by the template read
   (`:385`), because the shared mappers cannot do it.
 - **`sessionMinutes` and `plannedMinutes` skip a stood-down activity**, and
-  `src/lib/ics.ts` inherits it. This is the one existing function this programme
-  changes; it is inert until something is stood down, since no stored row carries
-  `skipped`.
+  `src/lib/ics.ts` inherits it. This is the one existing rule this programme
+  changes, landing in both places that implement it; it is inert until something
+  is stood down, since no stored row carries `skipped`.
 - One module deriving, from a plan: the ordered **active** station list, the
   station count, and the one active games activity. Station N is the Nth active
   station in plan order and is never stored. **Nothing counts activities to learn

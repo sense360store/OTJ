@@ -283,7 +283,13 @@ sum of durations = minutesPerRotation x active stations
 
 The same expression. `sessionMinutes` (`src/lib/data.ts:539`), `plannedMinutes`
 (`src/lib/sessionLifecycle.ts:150`), the derived lifecycle and `src/lib/ics.ts`
-are correct as they stand and are not touched by any phase of this programme.
+already compute it correctly, and neither the station count nor the group count
+disturbs them.
+
+**They do change in exactly one respect, stated in section 4a**: the sum runs
+over the activities that are actually running, so an activity stood down for the
+night is skipped. The expression is untouched. The set of members it runs over is
+not.
 
 The one residual is a planning matter rather than a model gap: stations in one
 carousel move together, so they share a rotation length. Unequal member durations
@@ -450,9 +456,11 @@ by picking the first. It blocks nothing: the rest of the session is unaffected.
 - **No per-player game number** and **no per-player side column**.
 - **No stored game colour map.** The ordering is a pure function of the fixed
   vocabulary and `gameCount`.
-- **No change to `sessionMinutes`, `plannedMinutes`, `src/lib/ics.ts`, the
-  derived lifecycle or Live's sequential semantics.** One games phase is one
-  activity with one duration, which is what all five already assume.
+- **No _further_ change to `sessionMinutes`, `plannedMinutes`, `src/lib/ics.ts`,
+  the derived lifecycle or Live's sequential semantics.** One games phase is one
+  activity with one duration, which is what all five already assume. The single
+  change this programme makes to them belongs to `skipped` (section 4a), and a
+  games phase stood down is skipped by that same rule.
 
 ## 4c. Session-local keys, and the mechanism that actually makes them so
 
@@ -1045,13 +1053,13 @@ Two hard constraints, from `00-current-state-audit.md` section 7:
 | Station identity | **Declared** on the activity: `slot: 'station'`. Never inferred from `Phase`. | Activity key, **no migration** |
 | Game identity | **Declared** on the activity: `slot: 'game'`, **one activity, the whole games phase**. Never inferred from `Phase`. | The same key |
 | How many pitches run | `gameCount: 1 \| 2` on that activity. **Never a second activity.** | Activity key, **no migration** |
-| The games phase duration | The one game activity's own duration. `sessionMinutes`, the lifecycle, the calendar and Live are untouched. | None |
+| The games phase duration | The one game activity's own duration. Two activities would double it in `sessionMinutes`, the lifecycle, the calendar and Live. | None |
 | Station number | **Derived**: position among active stations in plan order. Never stored. | None |
 | Station count | 4 or 5, never 3. 24+ recommends 5, below 24 recommends 4. | None |
 | Which drill sits out at 4 stations | **The coach chooses**, and the activity stays in the plan | `skipped: true` on the activity, **no migration** |
 | Restoring it | Remove the key. Reversible, session-local, never touches the week plan or the drill. | None |
 | Rotations | **Derived**: the station count | None |
-| Session duration | **Unchanged.** The existing sum is already correct. | None |
+| Session duration | The sum of the activities **actually running**. Same expression, fewer members once something is stood down. | `sessionMinutes` and `plannedMinutes` skip `skipped`. **No migration** |
 | Rotation direction | **Clockwise, fixed.** Subtle cue on the overview. | None |
 | Live rotation progress | **Not tracked.** Previous and Next are browsing. | None |
 | Session workflow state | **Derived**, never stored | None |

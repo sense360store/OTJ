@@ -142,7 +142,7 @@ a data key and names what it is.
   activity" mean anything. The reader ignores it on an activity with no `slot`,
   so a stray value can hide neither a warm-up nor a cool-down.
 - **A stood-down activity contributes nothing to the session's length.** See
-  "The one existing function this changes" below.
+  "The one existing rule this changes" below.
 
 ### A3: `game_count`
 
@@ -192,10 +192,12 @@ too, and omitting it loses the key from sessions.
 a future hand-rolled call, still behaves. **One helper for both keys**, so a
 third session-local key later joins a list rather than growing a code path.
 
-### The one existing function this changes
+### The one existing rule this changes
 
 Every other claim in this document is additive. This one is not, and review is
-what caught it.
+what caught it. It is one rule, "the session's length is the sum of its
+activities' durations", and this repository implements that same sum twice, so
+the change lands in both.
 
 **A stood-down activity must not count towards the session's length.** Rotations
 follow the active stations, so a five station plan delivered as four runs four
@@ -210,7 +212,7 @@ and `src/lib/ics.ts` inherits it from the same seam.
 **It is inert until something is stood down.** No existing row carries `skipped`,
 so every stored session's total is unchanged and the derived lifecycle places
 every existing session exactly where it does now. That is what keeps a change to
-a function this widely read low risk, and a test should assert it directly.
+code this widely read low risk, and a test should assert it directly.
 
 ### What is not guaranteed, stated plainly
 

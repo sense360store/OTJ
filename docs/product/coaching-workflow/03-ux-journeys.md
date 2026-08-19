@@ -47,8 +47,9 @@ drill is filed under Warm-Up and can still be a station, and a social drill is
 filed under Game without being one of the evening's small-sided games. The
 planner may **suggest** which activities look like stations, and a person
 confirms it.
-5. The session total reads as it does today, computed by `sessionMinutes`
-   unchanged.
+5. The session total reads as it does today, computed by `sessionMinutes`.
+   Nothing is stood down while authoring, so nothing is skipped and the total is
+   the whole plan.
 
 **Three or fewer stations is not offered as a recommendation.** A coach who
 declares three anyway is not blocked, and the screen says what the plan declares
@@ -149,9 +150,13 @@ a choice rather than a surprise.
 
 **If attendance says four stations and the plan holds five**, the screen says so
 and the **coach** picks the one that is not running tonight. It is marked, not
-removed: it keeps its place and its duration in this session's plan, the week
+removed: it keeps its place and its own duration in this session's plan, the week
 plan and the library drill are untouched, and one press puts it back if more
 children confirm. Station numbers for the night count only the ones running.
+
+**The night gets shorter, and the screen says so.** Four rotations are not five,
+so the session total drops by that station's duration and the expected finish
+moves with it. Putting the station back restores both.
 
 **When attendance changes again before training**, the screen does not start
 over. Children who are no longer attending are removed, newly confirmed children

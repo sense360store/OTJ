@@ -69,7 +69,8 @@ of the stations running tonight and are never stored.
 **The games phase is one activity**, whose duration is the whole phase. Whether
 one or two pitches run inside it is `gameCount` on that activity, not a second
 activity, so the session total, the derived lifecycle, the calendar export and
-Live's sequential model all stay correct untouched.
+Live's sequential model all stay correct. Two activities would double the games
+phase in every one of them.
 
 **Five planned, four tonight: the coach chooses and nothing is deleted.** The
 station is marked `skipped` for that session, keeps its place and duration, and
@@ -142,10 +143,12 @@ Recorded because a design that is merely absent tends to be rebuilt.
 keys inside an existing unconstrained jsonb array that need no migration at all.
 No item in the programme needs a full security review.
 
-**One existing function changes**, and only one: `sessionMinutes` and
-`plannedMinutes` skip an activity a coach has stood down, so a five station plan
-delivered as four does not overstate the night by a rotation. It is inert until
-something is stood down.
+**One existing rule changes**, and only one: the session's length is the sum of
+the activities **actually running**, so `sessionMinutes` and `plannedMinutes`,
+the two places that implement that sum, skip an activity a coach has stood down
+and `src/lib/ics.ts` inherits it. A five station plan delivered as four therefore
+does not overstate the night by a rotation. It is inert until something is stood
+down.
 
 ## Recommended first implementation slices
 

@@ -462,9 +462,16 @@ actually runs at whatever length the coach calls, and the sum of 40 describes no
 real session. The answer is a planning warning ("stations in a carousel run for
 the same length"), not a new duration rule.
 
-**Consequence for the plan: the duration model needs no change at all.**
+**Consequence for the plan: the arithmetic needs no change.** The expression
 `sessionMinutes`, `plannedMinutes`, the derived lifecycle and `src/lib/ics.ts`
-are all correct as they stand and are not touched by any of this work.
+compute is the right one, and neither the station count nor the group count
+disturbs it.
+
+**What the plan does change is which activities that expression sums**, and it
+arrives with standing a station down rather than with the carousel arithmetic.
+`02-target-product-model.md` section 4a states it: an activity a coach has stood
+down for one night must not count towards that night's length. Recorded here so
+this section is not read as clearing the whole duration seam.
 
 **The structural gaps are entirely separate from the arithmetic:**
 
@@ -883,9 +890,12 @@ week plan.
 1. **Station-based training is not declared, and this is not a duration
    defect.** Section 17 corrects two earlier attempts to make it one. Rotations
    follow the station count, not the group count, so the existing total is
-   correct at every attendance level and the duration model needs no change. What
-   is absent is a declaration of which activities are stations, and section 20
-   shows the plan already carries enough to derive it.
+   correct at every attendance level and the arithmetic needs no change. What is
+   absent is a **declaration** of which activities are stations, and section 20
+   shows the plan carries nothing that can supply it: the phase records what kind
+   of drill was added, not what part it plays on the night. The one duration
+   change the overhaul does make is a consequence of standing a station down, not
+   of the carousel maths (section 17).
 
 2. **A group is a bib colour, and the derivation has a collision.**
    `tonightGroups` (`src/lib/tonight.ts:1103`) keys on `bib ?? ''`, so **two
