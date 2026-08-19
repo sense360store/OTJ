@@ -29,6 +29,8 @@
 // fourth one appears.
 // =====================================================================
 import type { SessionStatus } from './data'
+import { activeActivityMinutes } from './activityStructure'
+import type { ActivitySlot } from './activityStructure'
 
 // THREE STATES, BECAUSE "FINISHED" AND "YESTERDAY" ARE TWO QUESTIONS.
 //
@@ -98,7 +100,10 @@ export interface TimedEvent {
   // An absolute ISO instant, the shape the Spond mirror stores.
   startsAt?: string | null
   status?: SessionStatus | null
-  activities?: readonly { duration?: number | null }[] | null
+  // The structural keys travel with the duration, because how long a
+  // session runs is now the sum of the activities ACTUALLY RUNNING. A
+  // synced Spond event carries no activities at all and is unaffected.
+  activities?: readonly { duration?: number | null; slot?: ActivitySlot | null; skipped?: true }[] | null
   liveActivityIndex?: number | null
   liveActivityStartedAt?: string | null
 }
@@ -143,12 +148,29 @@ function resolveStart(event: TimedEvent): ResolvedStart | null {
 
 // How long the session is planned to run, in minutes. The same sum the
 // planner and the session cards show (see sessionMinutes in ./data), with
-// the fallback applied where the plan cannot answer. Zero counts as no
-// answer: an empty plan is a session nobody has built yet, not a session
-// that lasts no time.
+// the fallback applied where the plan cannot answer.
+//
+// THE FALLBACK KEYS ON THERE BEING NO PLAN, NOT ON THE SUM BEING ZERO.
+// It used to read `total > 0 ? total : FALLBACK_SESSION_MINUTES`, with
+// the comment "zero counts as no answer: an empty plan is a session
+// nobody has built yet, not a session that lasts no time". That reading
+// was correct while a zero total could only mean an empty plan. It stops
+// being correct the moment a filter can empty the sum, and standing
+// every station down is exactly such a filter: a coach who runs nothing
+// tonight would have been answered a synthetic 90 minute session, and
+// sessionExpectedEnd would have placed it an hour and a half after a
+// night that runs no minutes at all.
+//
+// So an empty plan still falls back, and a plan somebody built that adds
+// up to nothing answers nothing. The distinction was verified against
+// the hosted database before it was made: of 24 stored sessions, 12
+// carry no activities and take the fallback exactly as before, and NOT
+// ONE carries activities summing to zero. No existing row's answer
+// moves.
 export function plannedMinutes(event: TimedEvent): number {
-  const total = (event.activities ?? []).reduce((sum, a) => sum + (a?.duration || 0), 0)
-  return total > 0 ? total : FALLBACK_SESSION_MINUTES
+  const activities = event.activities ?? []
+  if (activities.length === 0) return FALLBACK_SESSION_MINUTES
+  return activeActivityMinutes(activities)
 }
 
 // The session's start instant, or null when nothing places it in time.

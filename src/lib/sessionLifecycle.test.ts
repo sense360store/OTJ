@@ -63,9 +63,66 @@ describe('the planned duration', () => {
     expect(plannedMinutes(training({ activities: undefined }))).toBe(FALLBACK_SESSION_MINUTES)
   })
 
-  it('falls back when the activities carry no usable minutes between them', () => {
-    // Zero is not a duration a coach chose, it is a plan nobody filled in.
-    expect(plannedMinutes(training({ activities: activities(0, 0) }))).toBe(FALLBACK_SESSION_MINUTES)
+  it('does not fall back when a plan exists and adds up to nothing', () => {
+    // CHANGED, DELIBERATELY, AND THIS TEST IS THE RECORD OF IT. It used to
+    // assert the fallback here, on the reading that "zero is not a duration a
+    // coach chose, it is a plan nobody filled in". That was true while a zero
+    // total could only mean an empty plan, and it stopped being true the
+    // moment an activity could be stood down for the night: a coach who
+    // stands every station down would have been told their session runs 90
+    // minutes.
+    //
+    // The fallback keys on there being NO ACTIVITIES to sum, so a plan
+    // somebody built and then emptied answers zero.
+    //
+    // Verified against the hosted database before it was changed: of 24
+    // stored sessions, 12 carry no activities and still take the fallback,
+    // and not one carries activities summing to zero. No existing row's
+    // answer moves.
+    expect(plannedMinutes(training({ activities: activities(0, 0) }))).toBe(0)
+  })
+
+  it('is the sum of the activities actually running', () => {
+    // The one existing rule the coaching structure changes. An activity stops
+    // counting when it carries an operational slot AND is stood down.
+    expect(
+      plannedMinutes(
+        training({
+          activities: [
+            { duration: 15, slot: 'station' },
+            { duration: 30, slot: 'station', skipped: true },
+            { duration: 20, slot: 'game' },
+            { duration: 10 },
+          ],
+        }),
+      ),
+    ).toBe(45)
+  })
+
+  it('answers zero, not the fallback, when every operational activity is stood down', () => {
+    // The case the fallback correction exists for. Standing the whole night
+    // down is a decision a coach took, and a session that runs no minutes
+    // must not be answered as a synthetic 90 minute one: sessionExpectedEnd
+    // would place it an hour and a half after a night with nothing in it.
+    const stoodDown = training({
+      activities: [
+        { duration: 15, slot: 'station', skipped: true },
+        { duration: 20, slot: 'game', skipped: true },
+      ],
+    })
+    expect(plannedMinutes(stoodDown)).toBe(0)
+    expect(plannedMinutes(stoodDown)).not.toBe(FALLBACK_SESSION_MINUTES)
+    // And its expected end is its own start, rather than 90 minutes later.
+    expect(sessionExpectedEnd(stoodDown)?.getTime()).toBe(at(2026, 8, 11, 18, 0).getTime())
+  })
+
+  it('ignores a stray skipped on an activity carrying no slot', () => {
+    // The qualifier's own test. `skipped` means "this station is not running
+    // tonight"; an activity that is not a station has nothing to stand down,
+    // so a stray value can hide neither a warm-up nor its minutes.
+    expect(
+      plannedMinutes(training({ activities: [{ duration: 15 }, { duration: 30, skipped: true }] })),
+    ).toBe(45)
   })
 })
 

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   alreadyImportedFrom,
@@ -16,14 +18,18 @@ import {
   sessionWriteError,
   SPOND_LINK_UNIQUE_INDEX,
   SpondLinkTakenError,
+  SESSION_LOCAL_ACTIVITY_KEYS,
+  stripSessionLocalActivityKeys,
   toActivity,
   toActivityRow,
+  toTemplateActivityRows,
   toDrill,
   toProgramme,
   toProgrammeList,
   toSession,
   toSessionWriteRow,
   upsertSessionWrite,
+  type ActivityRow,
   type DrillRow,
   type ProgrammeRow,
   type SessionRow,
@@ -226,6 +232,141 @@ describe('activity mapping round-trips', () => {
     const activity = { phase: 'Cool-Down' as const, duration: 5, title: 'Stretch' }
     expect(toActivityRow(activity)).toEqual({ phase: 'Cool-Down', duration: 5, title: 'Stretch' })
     expect(toActivity(toActivityRow(activity))).toEqual(activity)
+  })
+
+  // BOTH MAPPERS OR THE KEY IS LOST. They rebuild field by field from an
+  // allow-list, so a key added to one and not the other survives one render
+  // and disappears on the next save. That is the failure these round trips
+  // exist to catch, and it is silent without them.
+  it('round-trips the declared slot in both directions', () => {
+    const station = { phase: 'Warm-Up' as const, duration: 10, drillId: 'd1', slot: 'station' as const }
+    expect(toActivityRow(station)).toEqual({ phase: 'Warm-Up', duration: 10, drill_id: 'd1', slot: 'station' })
+    expect(toActivity(toActivityRow(station))).toEqual(station)
+
+    const games = { phase: 'Game' as const, duration: 20, drillId: 'd6', slot: 'game' as const }
+    expect(toActivity(toActivityRow(games))).toEqual(games)
+
+    const row = { phase: 'Skill' as const, duration: 10, slot: 'station' as const }
+    expect(toActivityRow(toActivity(row))).toEqual(row)
+  })
+
+  it('round-trips a stood-down activity in both directions', () => {
+    const stoodDown = {
+      phase: 'Skill' as const,
+      duration: 10,
+      drillId: 'd5',
+      slot: 'station' as const,
+      skipped: true as const,
+    }
+    expect(toActivityRow(stoodDown)).toEqual({
+      phase: 'Skill',
+      duration: 10,
+      drill_id: 'd5',
+      slot: 'station',
+      skipped: true,
+    })
+    expect(toActivity(toActivityRow(stoodDown))).toEqual(stoodDown)
+  })
+
+  it('writes no key at all for a running activity, rather than false', () => {
+    // Each state has exactly one representation. Restoring a station removes
+    // the key, so no stored row ever says skipped: false.
+    const running = { phase: 'Skill' as const, duration: 10, slot: 'station' as const }
+    expect('skipped' in toActivityRow(running)).toBe(false)
+    expect('skipped' in toActivity(toActivityRow(running))).toBe(false)
+    const undeclared = { phase: 'Skill' as const, duration: 10 }
+    expect('slot' in toActivityRow(undeclared)).toBe(false)
+    expect('slot' in toActivity(toActivityRow(undeclared))).toBe(false)
+  })
+
+  it('validates rather than casts, because activities is unconstrained jsonb', () => {
+    // A malformed value declares nothing and stands nothing down, which is
+    // the direction that fails towards running the drill.
+    const dirty = { phase: 'Skill', duration: 10, slot: 'Station', skipped: 'yes' } as unknown as ActivityRow
+    const mapped = toActivity(dirty)
+    expect(mapped).toEqual({ phase: 'Skill', duration: 10 })
+    const falseSkipped = { phase: 'Skill', duration: 10, slot: 'station', skipped: false } as unknown as ActivityRow
+    expect(toActivity(falseSkipped)).toEqual({ phase: 'Skill', duration: 10, slot: 'station' })
+  })
+})
+
+describe('the template boundary', () => {
+  // `skipped` is a decision about ONE EVENING and a template is a reusable
+  // plan, so it is stripped on the way in and ignored on the way out. Both
+  // ends deliberately, and neither depends on the other: the write keeps it
+  // out of new rows, and the read makes a row that predates this helper, or
+  // one written by some future hand-rolled call, behave anyway.
+  const stationRow: ActivityRow = { phase: 'Skill', duration: 10, drill_id: 'd1', slot: 'station' }
+  const stoodDownRow: ActivityRow = { phase: 'Skill', duration: 10, drill_id: 'd2', slot: 'station', skipped: true }
+
+  it('strips the session-local keys and keeps everything else', () => {
+    expect(stripSessionLocalActivityKeys(stoodDownRow)).toEqual({
+      phase: 'Skill',
+      duration: 10,
+      drill_id: 'd2',
+      slot: 'station',
+    })
+    expect('skipped' in stripSessionLocalActivityKeys(stoodDownRow)).toBe(false)
+  })
+
+  it('keeps the slot, because declaring the stations belongs to the plan', () => {
+    // A week plan says which activities are the stations and which is the
+    // games phase, and every dated session built from it inherits that.
+    expect(stripSessionLocalActivityKeys(stationRow)).toEqual(stationRow)
+    expect(toTemplateActivityRows([stationRow])[0].slot).toBe('station')
+  })
+
+  it('leaves the caller its own array and rows', () => {
+    const rows = [stoodDownRow]
+    const out = toTemplateActivityRows(rows)
+    expect(rows[0].skipped).toBe(true)
+    expect(out[0]).not.toBe(rows[0])
+  })
+
+  it('reads a dirty template row as if it carried nothing session local', () => {
+    const stale = [{ phase: 'Skill', duration: 10, slot: 'station', skipped: true }] as ActivityRow[]
+    expect(toTemplateActivityRows(stale).map(toActivity)).toEqual([
+      { phase: 'Skill', duration: 10, slot: 'station' },
+    ])
+  })
+
+  it('reads an absent activities array as an empty plan', () => {
+    expect(toTemplateActivityRows(null)).toEqual([])
+    expect(toTemplateActivityRows(undefined)).toEqual([])
+  })
+
+  it('names every session-local key in one list, so the next one joins it', () => {
+    expect([...SESSION_LOCAL_ACTIVITY_KEYS]).toEqual(['skipped'])
+  })
+})
+
+describe('every template boundary in queries.ts goes through the one helper', () => {
+  // A source-text tripwire, because the failure is a THIRD write path being
+  // added without the boundary, which nothing else would notice: the review
+  // that produced this slice found the programme week copy was exactly that,
+  // an insert of its own rather than a call to toTemplateWriteRow.
+  //
+  // A tripwire, not a proof. It reads text, so it catches somebody typing the
+  // obvious thing; a call reaching the write through a variable walks past it.
+  const src = readFileSync(join(import.meta.dirname, 'queries.ts'), 'utf8')
+
+  it('has exactly one activities write into the templates table, plus the shared builder', () => {
+    // Every `activities:` written next to toActivityRow, split by whether the
+    // template boundary is on it.
+    const writes = [...src.matchAll(/activities: ([^\n]*toActivityRow[^\n]*)/g)].map((m) => m[1])
+    const throughBoundary = writes.filter((w) => w.includes('toTemplateActivityRows'))
+    const direct = writes.filter((w) => !w.includes('toTemplateActivityRows'))
+    // Two template writes: toTemplateWriteRow (which both the insert and the
+    // update call) and the programme week copy.
+    expect(throughBoundary).toHaveLength(2)
+    // One session write, which must NOT be sanitised: a session is exactly
+    // where `skipped` belongs.
+    expect(direct).toHaveLength(1)
+  })
+
+  it('reads a template through the boundary and a session straight through', () => {
+    expect(src).toMatch(/activities: toTemplateActivityRows\(r\.activities\)\.map\(toActivity\)/)
+    expect(src).toMatch(/activities: \(r\.activities \?\? \[\]\)\.map\(toActivity\)/)
   })
 })
 
