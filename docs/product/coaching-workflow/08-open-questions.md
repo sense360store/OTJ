@@ -92,8 +92,9 @@ row rather than a string and a per-venue blob cannot reference it.
 `04-data-model-proposal.md` section 3.
 
 A session resolves its scope from its venue, its age group and its active station
-count, with the season derived from its date: exactly one containing season wins,
-zero or two fall back to the current season, neither renders nothing and says so.
+count, with the season derived from its date: exactly one containing season wins;
+more than one resolves to the current season only if it is one of them; zero
+renders no layout. **No branch picks a season that does not contain the date.**
 
 ### The game colour mapping. Settled: deterministic, from the fixed order
 
@@ -102,11 +103,14 @@ index 0 is game 1 side A, index 1 is game 1 side B, index 2 is game 2 side A, an
 so on. So each game shows two distinguishable colours, two games use four, and a
 child's game and side derive from their game bib colour's position.
 
-The UI offers only those colours. A stored colour outside the list resolves to
-**no game** and shows as unassigned, never guessed into the nearest one. **No
-per-player game number, no per-player side column, and no session-level colour
-map**, and only implementation evidence that the deterministic rule cannot work
-would justify one. `02-target-product-model.md` section 7.
+The UI offers only those colours, and the suggestion **writes a game bib for
+every included player whose station colour is not one of them**, so five groups
+and two games leaves nobody without a game. A stored colour outside the list
+resolves to **no game** and shows as unassigned, never guessed into the nearest
+one. **No per-player game number, no per-player side column, and no
+session-level colour map**, and only implementation evidence that the
+deterministic rule cannot work would justify one.
+`02-target-product-model.md` section 7.
 
 ---
 

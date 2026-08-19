@@ -119,19 +119,26 @@ it ran, so "what did we actually do that night?" has one unambiguous answer.
 a season would otherwise put two hundred near-duplicate rows in a list a coach
 browses.
 
-**`drills.variant_of`, one nullable self-reference, and one display rule: a drill
-with `variant_of` set is an adaptation and is not listed in the library at all.**
-It is reachable from the session that owns it and from its parent's detail page,
-and nowhere else.
+**Two facts, two fields.** `drills.variant_of` records **where an adaptation came
+from**, and `drills.library_listed` records **whether a drill belongs in the
+library**. An adaptation is created unlisted; the library shows listed drills; an
+adaptation is reachable from the session that owns it and from its parent's
+detail page.
 
-**Save as reusable drill creates a new library drill.** Concretely, it copies the
-adaptation into a new row with `variant_of` null. That matches the settled
-wording exactly: a new reusable drill appears, and the original is never
-overwritten from a session adaptation.
+**They cannot be one field**, and the reason is the parent deletion. Deleting the
+original must not delete its adaptations, so the parent link is nulled. If the
+listing were derived from that link, every adaptation of a deleted drill would
+appear in the library at once, without any coach asking for it, which is exactly
+the clutter the settled decision forbids. Provenance is allowed to go null;
+listing is not allowed to change by itself.
 
-Both are display and journey rules over one nullable column. Neither needs a
-policy: `variant_of` is an ordinary column on `drills`, covered by the four live
-policies, which is the reasoning `0046` used for `diagram`.
+**Save as reusable drill creates a new library drill.** It copies the adaptation
+into a new listed row. The original is never overwritten from a session
+adaptation.
+
+Neither field needs a policy: both are ordinary columns on `drills`, covered by
+the four live policies, which is the reasoning `0046` used for `diagram`. The
+listing rule decides what a list shows and never what anyone may read.
 
 ### What copying does not solve, stated honestly
 
@@ -330,7 +337,7 @@ plan holds. Which drill sits out is a person's decision, every time.
 | Planned? | `activities.length > 0`, and four or five of them are marked as stations |
 | Attendance available? | `spond_event_id` set and responses known |
 | Groups prepared? | every included player resolves to a bib, and the active groups' colours are unique |
-| Games prepared? | the activities marked `slot: 'game'` match the recommended count, and each game reads as two distinguishable colours |
+| Games prepared? | the activities marked `slot: 'game'` match the recommended count, every included player resolves to a game, and each game reads as two distinguishable colours |
 | Setup available? | a layout exists for this session's venue, season, age group and active station count |
 | Delivered? | `sessionLifecycle.ts` already answers this, three states, derived |
 
@@ -530,9 +537,17 @@ that ordered list, and:
 - **the UI offers only the colours in that list**, so a colour outside it is not
   reachable through the product at all.
 
-A stored value outside the list, which only a hand-written write could produce,
-resolves to **no game** and is shown as unassigned. It is never guessed into the
-nearest game.
+**Every included player is given a colour that is in play.** The station colours
+run to the group count and the game colours stop at `2 x G`, so with five groups
+and two games, which is the ordinary shape at 24 or more confirmed, the fifth
+group's colour is not one of the four the games use. The suggested allocation
+therefore **writes a game bib for every player whose station colour is not a game
+colour**, which is also what happens physically: that child is handed one of the
+four. The fallback to the station bib then means only what it can honestly mean,
+that a player already wearing a game colour keeps it.
+
+A value outside the list resolves to **no game** and is shown as unassigned, and
+readiness names it. It is never guessed into the nearest game.
 
 **No session-level colour map is stored**, and none is proposed. The ordering is
 a pure function of the fixed vocabulary and the game count, both of which every
@@ -661,15 +676,20 @@ is derived.
 - **Age group**: `sessions.age_group`.
 - **Station count**: the number of active stations in the plan (section 4).
 - **Season**: derived from `sessions.date` against `seasons.starts_on` and
-  `seasons.ends_on`. **Where exactly one season contains the date, that is the
-  season. Where zero or more than one does, fall back to the current season**
-  (`seasons.is_current`, which the database upper-bounds to one per club). Where
-  neither answers, there is no layout and the screen says so.
+  `seasons.ends_on`. **Exactly one containing season is the season. More than one
+  resolves to the current season only if it is one of them. Zero resolves to no
+  layout**, said in one sentence.
 
-That "refuse to guess when zero or more than one matches, and never override an
-explicit answer" shape is the rule `matchVenueByLocation`
-(`src/lib/venues.ts:96`) already applies to venue matching, so this is the second
-instance of an existing convention rather than a new one.
+**No branch picks a season that does not contain the date.** Falling back to the
+current season whenever nothing matched would load this year's allocation onto a
+session from two years ago, which is a confident wrong answer about ground a
+coach never had. A session outside every season is a real state, not an error: a
+date before the club's first season, in a gap, or beyond the last one's end.
+
+That "refuse to guess when zero or more than one matches" shape is the rule
+`matchVenueByLocation` (`src/lib/venues.ts:96`) already applies to venue
+matching, so this is a second instance of an existing convention rather than a
+new one.
 
 **`sessions` gains no `season_id`.** A stored season would be a second fact that
 can disagree with the date, and the derivation costs one comparison against rows
@@ -678,8 +698,8 @@ the screen has already read.
 ### Two honest gaps, both named rather than hidden
 
 - **Season overlap is unconstrained** by design (`0031`), so a date can fall in
-  two seasons. That is exactly why the rule falls back to the current season
-  rather than picking one.
+  two seasons. That is why the rule needs a tie-break, and why the tie-break is
+  restricted to a season that actually contains the date.
 - **Age group is a free text string, and the club's own list is ignored today.**
   `clubs.age_groups text[]` exists, and the planner offers a hardcoded
   `['U6s' ... 'U12s']` literal instead (`00-current-state-audit.md` section 26).
@@ -807,7 +827,8 @@ Two hard constraints, from `00-current-state-audit.md` section 7:
 | Week plan (template) | Keep. Rename in copy. Add promote and multi-date apply. | None |
 | Session from week plan | Copy, as today | **None.** `template_id` dropped |
 | Session activity to drill | Reference, as today | None |
-| Adapting a drill | **Copy**, owned by the session, **not listed in the library** | `drills.variant_of` |
+| Adapting a drill | **Copy**, owned by the session, **not listed in the library** | `drills.variant_of` plus `drills.library_listed` |
+| Deleting an adaptation's parent | Nulls the provenance link and **leaves the listing alone**, so nothing is promoted | None |
 | Save as reusable drill | Creates a **new** library drill. Never overwrites the original. | None |
 | Version numbers shown to coaches | **Never** | None |
 | Drill diagram | Stays on the drill. Delivery surfaces already merged. | None |
@@ -833,10 +854,10 @@ Two hard constraints, from `00-current-state-audit.md` section 7:
 | Game count | 1 game at 12 or fewer, 2 at 13 or more. A recommendation. | None |
 | Game bib | **A separate fact from the station bib** | `register_entries` game bib column |
 | Game side and game number | **Derived** from the game bib colour's position in the planned colour ordering | None |
-| Game colours | Two distinguishable per game, four across two games, and the UI offers only those | None |
+| Game colours | Two distinguishable per game, four across two games, the UI offers only those, and every included player is given one that is in play | None |
 | Venue layout | **New**: fraction-coordinate zones, admin owned, 4/5 stations and 1/2 games | `venue_layouts` table |
 | Venue layout scope | **Venue, season and age group.** Never venue-global, never per team. | The table's unique key |
-| A session's season | **Derived** from its date, falling back to the current season | None |
+| A session's season | **Derived** from its date. No branch picks a season that does not contain it. | None |
 | Weekly station placement | **Removed.** Layouts are scoped, admin owned and load automatically. | None |
 | Station detail screen | Number, name, large diagram, objective, 2 to 3 coaching points. **No equipment.** | None |
 | Sharing | Protected canonical link through the platform share sheet | **None. Already built.** |

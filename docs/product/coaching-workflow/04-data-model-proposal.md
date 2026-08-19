@@ -25,7 +25,7 @@ table.**
 | M1 | `sort_order integer null` + partial unique index | `teams` | COACH-1 | Yes, gated | Low |
 | M2 | `venue_layouts` table | new | COACH-5 | Yes, gated | Medium |
 | M3 | `game_bib_colour_override text null` | `register_entries` | COACH-8 | Yes, gated | Low |
-| M4 | `variant_of uuid null` (+ `drills_id_club_unique`) | `drills` | COACH-12 | Yes, gated | Low |
+| M4 | `variant_of uuid null` and `library_listed boolean not null default true` (+ `drills_id_club_unique`) | `drills` | COACH-12 | Yes, gated | Low |
 | M5 | diagram element allow-list widening | `drills` | Parked | Yes, gated | Medium |
 
 ### What earlier revisions proposed and this one does not
@@ -220,7 +220,12 @@ create table public.venue_layouts (
     (kind = 'stations' and slots in (4, 5))
     or (kind = 'games' and slots in (1, 2))
   ),
-  constraint venue_layouts_zones_shape check (public.venue_layout_is_valid(zones)),
+  -- The predicate takes slots as well as zones, because the zone count is a
+  -- property of the PAIR: a four zone layout on a slots = 5 row is exactly the
+  -- corruption this constraint exists to refuse, and a predicate over zones
+  -- alone cannot see the row's slots to compare against.
+  constraint venue_layouts_zones_shape
+    check (public.venue_layout_is_valid(zones, slots)),
 
   constraint venue_layouts_scope_unique
     unique (club_id, venue_id, season_id, age_group, kind, slots)
@@ -264,8 +269,14 @@ discipline rather than inventing a third:
   PostgREST call, exactly as 0046 does.
 - **A parser and serialiser that rebuild field by field and never spread**, in a
   new `src/lib/venueLayout.ts` sharing `clampFraction` with the others.
-- **Bounds**: the zone count equals `slots`, a name length cap, and a minimum
-  zone size so a zone cannot become an ungrabbable sliver.
+- **Bounds**: a name length cap, and a minimum zone size so a zone cannot become
+  an ungrabbable sliver.
+- **The zone count equals `slots`, enforced against the row rather than in
+  prose.** `venue_layout_is_valid(zones jsonb, p_slots integer)` takes both, so
+  the count is compared with the column it must match. An earlier draft passed
+  `zones` alone and stated the equality as a bound, which the database could not
+  have enforced: a four zone value would have been storable on a `slots = 5` row
+  and the five station renderer would have received four zones.
 
 **It must hold no person, no address, no postcode, no latitude or longitude, no
 map tile URL and no imagery reference.** The allow-list makes each
@@ -311,16 +322,32 @@ disappears.
 | Season | **derived**, below |
 
 **Season derivation.** From `sessions.date` against `seasons.starts_on` and
-`seasons.ends_on`: where exactly one season contains the date, that is the
-season; where zero or more than one does, fall back to `seasons.is_current`,
-which the database upper-bounds to one per club
-(`seasons_one_current_per_club`); where neither answers, there is no layout and
-the screen says so.
+`seasons.ends_on`:
 
-Season overlap is deliberately unconstrained by `0031`, which is exactly why the
-rule falls back rather than picking one. "Refuse to guess when zero or more than
-one matches" is the rule `matchVenueByLocation` (`src/lib/venues.ts:96`) already
-applies, so this is a second instance of an existing convention.
+| Seasons containing the date | Result |
+|---|---|
+| Exactly one | That season. |
+| More than one | The current season **if it is one of them**, otherwise no layout. |
+| Zero | **No layout**, said in one sentence. |
+
+**Every branch is date-consistent, and none of them guesses.** An earlier draft
+fell back to `seasons.is_current` whenever zero or two seasons matched, and that
+was wrong in the zero case for the obvious reason: opening a 2025 session while
+2026/27 is current would have loaded the 2026/27 allocation and shown a coach
+ground that was never theirs on that night. A season that does not contain the
+date is not a fallback, it is a different season.
+
+Season overlap is deliberately unconstrained by `0031`, which is why the
+more-than-one branch needs a tie-break at all; restricting it to a season that
+actually contains the date keeps the tie-break honest. "Refuse to guess when
+zero or more than one matches" is the rule `matchVenueByLocation`
+(`src/lib/venues.ts:96`) already applies, and this is now a faithful second
+instance of it rather than a partial one.
+
+**A session outside every season is a real state**, not an error: a date before
+the club's first season, in a gap between two, or beyond the last one's
+`ends_on`. It renders as no layout with a link an admin can follow, exactly like
+a scope whose layouts were never drawn.
 
 **`sessions` gains no `season_id`.** A stored season would be a second fact that
 can disagree with the date, and the derivation costs one comparison against rows
@@ -383,6 +410,24 @@ game bib    = game override,    else the effective station bib
 ```
 
 `src/lib/bibs.ts` owns both rules and no screen resolves a bib itself.
+
+**The fallback is narrower than it looks, and the suggestion must close the
+gap.** The game colours are the first `2 x G` of the vocabulary, and the station
+colours are the first `N` where `N` is the group count. With five groups and two
+games, which is the ordinary shape at 24 or more confirmed, the fifth group's
+colour is **not** one of the four in play for the games. Falling back to it would
+resolve to no game for a whole group.
+
+So the suggested allocation **writes a game override for every included player
+whose station colour is not one of the game colours**, and the fallback then
+means only what it can honestly mean: *a player whose station colour is already
+in play for the games keeps it, and everyone else is handed a bib.* That is also
+what happens physically, because a child in the fifth colour has to be given one
+of the four the games are using.
+
+**Readiness follows.** "Games prepared" requires every included player to resolve
+to a game, so a player left on an out-of-list colour is a named gap on the
+screen, not a silent absence from both games.
 
 **Game and side derive from the colour**, by its position in the planned ordering
 of the first `2 x G` colours of the fixed `BIB_COLOURS` vocabulary: index 0 is
@@ -498,14 +543,49 @@ including `club_id`, which then fails its not-null constraint and makes the
 parent undeletable. The column list on `set null` is load bearing.
 
 **`on delete set null`, not cascade.** Deleting the original must never delete
-the adaptations, because an adaptation is what a session actually ran. It becomes
-an ordinary drill, which is also what "Save as reusable drill" produces, so the
-two paths agree.
+the adaptations, because an adaptation is what a session actually ran.
 
-**The display rule is not schema.** A drill with `variant_of` set is not listed
-in the library; it is reachable from the session that owns it and from its
-parent. That keeps session-only adaptations out of the library without an access
-rule, so it needs no policy work.
+### Provenance and listing are two facts, and one column cannot hold both
+
+An earlier draft derived the library listing from `variant_of`: a drill with a
+parent was an adaptation and was hidden. **That is broken by the `set null` it
+sits beside.** Deleting the original nulls `variant_of` on every adaptation, and
+under a `variant_of is null` listing rule all of them would appear in the library
+at once, without any coach pressing Save as reusable. A coach deleting one drill
+would find five near-duplicates arrive, which is precisely the clutter the
+settled decision forbids.
+
+So M4 is **two columns, not one**:
+
+```sql
+alter table public.drills add column variant_of uuid;          -- provenance
+alter table public.drills add column library_listed boolean not null default true;
+```
+
+| Fact | Column | May go null or change |
+|---|---|---|
+| Which drill this was adapted from | `variant_of` | Yes. Nulled when the parent is deleted, and that is harmless. |
+| Whether this drill belongs in the library | `library_listed` | Only by an explicit human action. |
+
+- An adaptation is created with `library_listed = false`.
+- **Save as reusable drill** creates a **new** row with `library_listed = true`
+  and `variant_of` pointing at the adaptation's parent. The original is still
+  never overwritten.
+- Deleting a parent nulls `variant_of` and **does not touch `library_listed`**,
+  so an adaptation stays out of the library and simply stops naming where it
+  came from.
+- `default true` means every existing drill is listed, which is today's
+  behaviour exactly, and no backfill is needed.
+
+This is the same shape as the two defects this programme has already had to fix:
+`present` carrying attendance and inclusion (0047), and one bib column carrying
+the station and game arrangements. **A column that answers two questions answers
+one of them wrongly the moment they diverge**, and a parent deletion is exactly
+that moment.
+
+**The listing rule is still not an access rule.** `library_listed` decides what a
+list shows; every policy on `drills` is unchanged, so an adaptation is as
+readable as any other drill to anyone who can reach the session that runs it.
 
 **No new policy.** An ordinary column on `drills`; the four live policies already
 cover every column. **Audit**: `audit_drills()` (0037) records an update only

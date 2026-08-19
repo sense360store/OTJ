@@ -85,24 +85,27 @@ no rotation state.** Previous and Next browse the drills.
 **Games.** A separate allocation with a **separate bib**. One game at 12 or fewer
 confirmed, two at 13 or more, aiming at 5v5 or 6v6. Two games band by the club's
 ordered teams with the middle band as the bridge. Each game gets two
-distinguishable colours and two games use four; a child's game and side derive
-from their game bib colour's position in that ordering, with no per-player game
-or side column and no stored colour map. Planning the games never destroys the
-station plan.
+distinguishable colours and two games use four, and every included player is
+given one that is in play; a child's game and side derive from their game bib
+colour's position in that ordering, with no per-player game or side column and no
+stored colour map. Planning the games never destroys the station plan.
 
 **Venues.** Layouts are scoped to **venue, season and age group**, never
 venue-global and never per team. Within one scope an admin saves four: stations
 for four, stations for five, one game, two games, as numbered rectangular zones
 on a clean schematic. OTJ loads the right one automatically, resolving the season
-from the session's own date. Weekly coaches place nothing.
+from the session's own date and never picking one that does not contain it.
+Weekly coaches place nothing.
 
 **Delivery.** A setup map of labelled zones on a phone. Tap a station for a full
 screen: number, drill name, large diagram, objective, two or three coaching
 points. **No equipment there.** Previous, Next and Back, all browsing.
 
 **Drills.** A session adaptation is an independent copy that stays out of the
-library. Save as reusable drill creates a **new** library drill and never
-overwrites the original. Coaches never see version numbers.
+library, and deleting the original does not put it there: provenance and listing
+are two fields, because only one of them may change by itself. Save as reusable
+drill creates a **new** library drill and never overwrites the original. Coaches
+never see version numbers.
 
 **Sharing.** The platform share sheet on the protected canonical session link,
 carrying no child data. The receiving coach signs in. **This already ships.**

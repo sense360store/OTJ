@@ -223,7 +223,7 @@ auto-merged:
 | M1 `teams.sort_order` | Migration review | Any `supabase/migrations/` change. |
 | M2 `venue_layouts` | Migration review, plus shape-boundary review, plus a policy and grant review | A new table with new policies and grants, a new jsonb shape boundary, and a new check constraint. The largest review in the programme. |
 | M3 `register_entries.game_bib_colour_override` | Migration review, plus a deny-list update | It names a child's bib. Prove the migration copies nothing from the existing column, in the manner of 0047. |
-| M4 `drills.variant_of` | Migration review | Any `supabase/migrations/` change. |
+| M4 `drills.variant_of` and `drills.library_listed` | Migration review | Any `supabase/migrations/` change. Both are ordinary columns on `drills`; the listing rule decides what a list shows, never what anyone may read. |
 | M5 diagram widening, if motion is ever approved | Migration review, plus rollout review | Version rollout hazard. |
 | Everything else | Ordinary PR review | The setup generator, the setup map, the station screen, the game plan UI, the authoring seam and the adaptation journeys touch no security boundary. |
 

@@ -106,7 +106,9 @@ pins it.
 4. Everything is editable on the copy. **The original is untouched, and so is
    every other session using it, including Tuesday's.**
 5. **The adaptation does not appear in the library.** It is reachable from this
-   session and from its parent drill's page.
+   session and from its parent drill's page, and **deleting the original does not
+   put it there**: losing its parent link costs it its provenance, not its
+   place.
 6. If the coach later wants it permanently, **Save as reusable drill** creates a
    **new** library drill. It never overwrites the original.
 
@@ -188,7 +190,9 @@ coming".
    two games use four between them and some children are re-bibbed. That is
    expected, not exceptional. The colour picker offers only the colours in play
    for those games, and a child's game and side follow from the colour they are
-   given.
+   given. **Every included child is given one that is in play**: with five groups
+   and two games the fifth group's colour is not one of the four, so those
+   children are handed a bib rather than left in neither game.
 5. **The station bib plan is untouched by any of it.** The game bib is a separate
    stored fact (`04-data-model-proposal.md` section 4), so planning the games
    cannot destroy the carousel groups, and a coach can read both on one screen.

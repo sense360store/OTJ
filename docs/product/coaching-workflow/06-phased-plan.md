@@ -251,9 +251,11 @@ Out-of-range coordinates are clamped. A corrupt zone is dropped rather than
 taking the layout with it. The constraint refuses a key outside the allow-list,
 including a location-shaped one, and holds against service_role. A zone count
 that disagrees with `slots` is refused, as are 3 stations and 3 games. Two
-layouts of the same kind and slots in one scope are refused. Season resolution:
-one containing season wins; zero or two fall back to the current season; neither
-renders nothing and says so.
+layouts of the same kind and slots in one scope are refused. **A four zone value
+is refused on a `slots = 5` row**, which is the case a predicate over `zones`
+alone could not catch. Season resolution: one containing season wins; more than
+one resolves to the current season only if it is one of them; **zero renders no
+layout rather than falling back to a season that does not contain the date**.
 
 **Manual smoke.** Configure Haggs Hill for this season and one age group, four
 and five station layouts plus one and two game visuals. Confirm both render
@@ -349,6 +351,10 @@ without destroying the station groups.
   ordering of the first `2 x G` colours of the fixed vocabulary: index 0 is game
   1 side A, index 1 is game 1 side B, and so on. The UI offers only those
   colours, so each game shows two distinguishable colours and two games use four.
+- **The suggestion writes a game bib for every included player whose station
+  colour is not one of the game colours.** With five groups and two games the
+  fifth group's colour is not in play, so leaving it to the fallback would put a
+  whole group in no game.
 - Suggested sides from the club team order: with two games the upper teams form
   the stronger game and the lower the development game, with the middle band
   split where the numbers need it; with one game the sides are balanced by
@@ -374,9 +380,11 @@ self-verification in the manner of 0047.
 **Tests.** A game re-bib leaves `bib_colour_override` byte for byte unchanged,
 and leaves `present` and `included_in_groups` untouched. 12 recommends one game
 and 13 recommends two. A child nobody re-bibbed plays in their station colour.
-Sides follow the club order and the middle band is the one that splits. A colour
-outside the planned ordering resolves to no game and shows as unassigned rather
-than being guessed into the nearest one. A social drill in the `Game` phase that
+Sides follow the club order and the middle band is the one that splits. **Five
+groups and two games leaves nobody without a game**, which is the case the
+station-colour fallback alone gets wrong. A colour outside the planned ordering
+resolves to no game and shows as unassigned rather than being guessed into the
+nearest one, and readiness names it. A social drill in the `Game` phase that
 nobody declared is not one of the games. A save sends only the columns that
 changed.
 
@@ -452,10 +460,12 @@ form state inside a modal, which unmounts. Decide it once in the seam.
 **Outcome.** A coach changes a drill for Saturday and nothing else changes, and
 the library does not fill up with copies.
 
-**Scope.** M4 (`drills.variant_of`). **Adapt for this session** duplicates the
-drill including the diagram and repoints the activity. **An adaptation is not
-listed in the library**; it is reachable from its session and from its parent.
-**Save as reusable drill** creates a new library drill. A usage line on the drill
+**Scope.** M4: `drills.variant_of` for provenance and `drills.library_listed` for
+whether a drill belongs in the library, because the parent link is nulled when
+the original is deleted and a listing must not change by itself. **Adapt for this
+session** duplicates the drill including the diagram, repoints the activity and
+creates it unlisted. It is reachable from its session and from its parent.
+**Save as reusable drill** creates a new listed drill. A usage line on the drill
 edit form: "Used in 6 sessions, 4 already delivered", with Adapt for one session
 beside it.
 
@@ -466,11 +476,12 @@ session adaptation never overwrites the original.**
 **Database.** M4, plus `drills_id_club_unique`, which does not exist yet.
 
 **Tests.** The copy is independent: editing it changes neither the original nor
-another session using the original. Deleting the original leaves adaptations
-alive as ordinary drills. The library lists no adaptation. Save as reusable
-produces a new row with `variant_of` null and leaves the parent untouched. An
-adaptation of an England Football derived drill inherits the source attribution
-and the redraw prohibition.
+another session using the original. **Deleting the original leaves its
+adaptations alive, still runnable from their sessions, and still absent from the
+library**, which is the case a listing derived from `variant_of` gets wrong. The
+library lists no adaptation. Save as reusable produces a new listed row and
+leaves the parent untouched. An adaptation of an England Football derived drill
+inherits the source attribution and the redraw prohibition.
 
 **Dependencies.** COACH-10.
 
