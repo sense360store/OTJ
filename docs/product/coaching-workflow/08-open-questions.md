@@ -167,7 +167,7 @@ This closed more questions than any other answer.
 
 | Was open | Answer |
 |---|---|
-| Which activities are the games | **The ones declared `slot: 'game'`.** Never the `Game` phase. |
+| Which activity is the games phase | **The one declared `slot: 'game'`.** One activity, never the `Game` phase, and never two. |
 | How many games | **One at 12 or fewer confirmed, two at 13 or more.** A recommendation the coach accepts or overrides, and an accepted count is never silently rewritten. |
 | How the count is represented | **`gameCount: 1 \| 2` on the one games activity.** Never a second activity: activities are sequential and summed, so two would double the games phase in the session total, the lifecycle and the calendar. |
 | What `slot: 'game'` marks | **The one games-phase activity**, whose duration is the whole phase. |

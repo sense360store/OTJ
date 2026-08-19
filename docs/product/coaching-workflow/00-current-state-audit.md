@@ -129,7 +129,7 @@ been delivered, silently and with no warning on the edit form
 (`src/components/DrillFormModal.tsx`).
 
 The only frozen copy in the product is the **public share snapshot**
-(`content_shares.snapshot`, section 12). A shared session keeps the drill text it
+(`content_shares.snapshot`, section 13). A shared session keeps the drill text it
 was shared with until someone refreshes the share.
 
 There is one existing rule protecting session history from drill deletion:
@@ -381,11 +381,12 @@ Existing objects a coaching-workflow overhaul is likely to reach:
 
 | Object | Why |
 |---|---|
-| `drills` (+ `diagram`) | Drill creation in flow, variants, motion. |
-| `sessions.activities` jsonb | Read for the derived station list. Not written by any proposed change. |
+| `drills` (+ `diagram`) | Drill creation in flow, adaptation copies, two new columns (`variant_of`, `library_listed`). |
+| `sessions.activities` jsonb | **Written.** Three declared keys land in it: `slot`, `skipped` and `game_count`. No migration, because the column is unconstrained (section 27). |
 | `sessions` | Nothing. `template_id` and `blocks` are both withdrawn. |
-| `templates` | Week plan reuse and promotion, in copy and journeys only. |
-| `venues` | Venue layout, one jsonb column. |
+| `templates` | Week plan reuse and promotion, **and `templates.activities` carries `slot`**, which belongs to the plan. `skipped` and `game_count` are stripped from it. |
+| `venues` | Referenced by the new `venue_layouts` table. **No column is added to `venues`**; the single `venues.layout` jsonb column is withdrawn. |
+| `clubs` | The canonical age group vocabulary, one `text[]` column. `clubs` carries none today (section 26). |
 | `teams` | The club's team order, one integer column. |
 | `session_teams`, `register_entries`, `teams.bib_colour` | Groups and bibs, already correct. |
 | `spond_events`, `spond_event_responses`, `player_spond_links` | Read only, unchanged. |
@@ -408,15 +409,19 @@ Edge Functions in the repository: `fa-import`, `fa-import-programme`,
 - The suggested split of attending children into groups. Groups are already
   derived from bib colour; a suggestion is a pure function over the draft.
 - The readiness readout for a session. Derivable from data already read.
-- The station list, its numbering and its count, derived from the plan's own
-  `Phase` values (section 20).
+- The station list, its numbering and its count, derived from the activities
+  that **declare** themselves stations. Section 20 proves the plan carries no
+  such declaration today and that `Phase` cannot supply one, so the declaration
+  is what the target model adds; only the **derivation from it** is free.
 - Rotation arithmetic and the "your group starts at station N" statement, since
   starting stations are derived rather than stored (section 22).
 - Sharing a session with another coach, which already ships and is client only
   (section 24).
 
-Only four things need schema: the club's team order, the venue layout, a second
-bib for the games, and the adaptation link between two drills.
+Five things need schema: the club's team order, the venue layout table, the
+club's age group vocabulary, a second bib for the games, and the **two** drill
+columns adaptation needs (provenance and listing are separate facts, so one link
+column cannot carry both).
 
 ---
 
@@ -434,9 +439,64 @@ three groups or four turn up; with three groups, one station stands empty each
 rotation. Low attendance does not drop a drill, shorten the carousel or rewrite
 the plan.
 
-`sessionMinutes` (`src/lib/data.ts:539`) is the sum of every activity's duration.
-`plannedMinutes` (`src/lib/sessionLifecycle.ts:150`) reimplements the same sum
-with the 90 minute fallback, and the expected end is derived from it.
+### The session duration sum has FOUR independent implementations
+
+**Re-derived from source on 19 August. An earlier revision of this section said
+the sum is implemented twice. That was wrong, and it was wrong in the direction
+that matters: the two it named are the two a reader finds by grepping for a
+function name, and the two it missed are an inline expression and a different
+runtime.**
+
+Searched with `grep -rn "duration" --include=*.ts --include=*.tsx src/
+supabase/functions/ | grep -i "reduce\|+=\|sum\|total"`, then every
+`sessionMinutes` and `plannedMinutes` call site enumerated. The complete set over
+**session** activities:
+
+| # | Where | Shape |
+|---|---|---|
+| 1 | `sessionMinutes`, `src/lib/data.ts:539` | `s.activities.reduce((a, x) => a + (x.duration \|\| 0), 0)` |
+| 2 | `plannedMinutes`, `src/lib/sessionLifecycle.ts:150` | The same reduce, **plus a zero fallback** |
+| 3 | `src/routes/Planner.tsx:733` | The same reduce, written inline. **Planner.tsx does not import `sessionMinutes`.** Rendered at `:735` as the big **"min total"** headline |
+| 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts:797-806` | `totalDuration += duration` in a `for` loop, **in Deno**, emitted into the public snapshot |
+
+**Consumers that inherit automatically**, because they call one of the first two:
+
+- via `sessionMinutes`: `src/lib/ics.ts:60` (the calendar description),
+  `src/routes/SessionDay.tsx:156`, `src/routes/Home.tsx:108`,
+  `src/routes/LiveSession.tsx:278` and `:584`, `src/routes/Sessions.tsx:75`
+- via `plannedMinutes`: `src/lib/ics.ts:51` (the calendar `DTEND`) and
+  `src/lib/sessionLifecycle.ts:188` (`expectedEnd`, which the three lifecycle
+  states are derived from)
+
+**Not affected, and the distinction is load bearing.** These sum **template or
+programme** activities, and a template never carries `skipped`
+(`02-target-product-model.md` section 4c), so they are correct unchanged:
+`src/routes/Home.tsx:288` (`TemplateMiniCard`), `src/routes/Templates.tsx:30`,
+`src/components/TemplateFormModal.tsx:39`,
+`src/components/ProgrammeFormModal.tsx:160` and `:379`,
+`src/routes/ProgrammeDetail.tsx:76`, and `buildProgrammeSnapshot`
+(`supabase/functions/_shared/share.ts:1218-1228`), which is a second accumulator
+in the same Deno file and belongs to weeks rather than to a dated session.
+
+**`plannedMinutes` is not the same expression as the other three.** Source:
+
+```
+const total = (event.activities ?? []).reduce((sum, a) => sum + (a?.duration || 0), 0)
+return total > 0 ? total : FALLBACK_SESSION_MINUTES
+```
+
+with the comment at `:146-149`, *"Zero counts as no answer: an empty plan is a
+session nobody has built yet, not a session that lasts no time."* That reading is
+correct today, because today a zero total can only mean an empty plan. It stops
+being correct the moment a filter can empty the sum, which is exactly what the
+target rule introduces.
+
+**The Deno implementation is a different runtime, not a second call site.**
+`share.ts` runs in Supabase Edge Functions and cannot import from `src/lib/`.
+Its `PublicActivity` allow list is `phase`, `duration`, `drillRef`,
+`customTitle` (`share.ts` and the browser validator
+`src/lib/publicShare.ts:316`), so a new activity key is structurally excluded
+from the public payload by both ends already.
 
 For a carousel of *n* stations each lasting *m* minutes:
 
@@ -478,7 +538,9 @@ this section is not read as clearing the whole duration seam.
 1. **Nothing in the data explicitly says which activities are stations.** So
    "which station does my group start at", "which zone does station 3 go in" and
    "show me the five stations together" have nothing declared to read. Section 20
-   records the vocabulary they can be derived from instead.
+   proves the plan carries **no** vocabulary they can be derived from: `Phase` is
+   set from the drill's four corners and records what kind of drill was added,
+   not what part it plays on the night. The declaration has to be added.
 2. **Live delivery is sequential.** `LiveSession.tsx` walks `activities` one at a
    time and shows the current one to everybody, which does not describe a
    carousel. **Recorded as a fact, not as work**: the settled product model
@@ -843,24 +905,36 @@ Client model: `Season` (`src/lib/data.ts:70`) with `isCurrent`, mapped from
 **Nothing links a session to a season.** `sessions` carries no `season_id`, and
 the columns it does carry are listed in section 2.
 
-### Age group is a string on the session, and the club's own list is ignored
+### Age group is free text on the session, and the club has NO canonical list
 
-- `public.clubs.age_groups text[] not null default '{}'` (`0001_init.sql:50`).
-  It is read into the auth profile context (`src/hooks/useAuth.tsx:20`, `:57`).
+**Corrected 19 August, from the migrations rather than from the TypeScript. An
+earlier revision of this section asserted `clubs.age_groups` exists. It does
+not.**
+
+- `public.clubs` carries **five columns and no age group**: `id`, `name`,
+  `crest_url`, `motto`, `created_at` (`0001_init.sql:35-41`).
+- The `age_groups text[] not null default '{}'` column at `0001_init.sql:50` is
+  on **`profiles`**, not `clubs`. It is one coach's own age groups, read into
+  the auth profile context (`src/hooks/useAuth.tsx:20`, `:57`). It is a personal
+  preference and **cannot define a club level scope key**: it is per user, any
+  member may write their own, and two coaches disagreeing would silently produce
+  two different vocabularies for one club.
 - `public.sessions.age_group text` nullable (`0001_init.sql:113`), mapped as
   `ageGroup` with `r.age_group ?? ''` (`src/lib/queries.ts:428`) and written back
-  at `:2022`.
-- **The planner's Age group control offers a hardcoded literal list**,
-  `['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s']`
-  (`src/routes/Planner.tsx:762`), and does not read `clubs.age_groups` at all.
-  `useStartFromTemplate` and `ApplyProgrammeModal` both default to the literal
-  `'U8s'`.
+  at `:2022`. Free text, no constraint, no reference.
+- **Two hardcoded literal lists exist and they disagree with each other.** The
+  planner's Age group control offers `['U6s', 'U7s', 'U8s', 'U9s', 'U10s',
+  'U11s', 'U12s']` (`src/routes/Planner.tsx:763`), while `AGES` in
+  `src/lib/data.ts:536` is `['U6', 'U7', 'U8', 'U9', 'U10', 'U11', 'U12']`,
+  without the trailing `s`. `useStartFromTemplate` and `ApplyProgrammeModal`
+  both default to the literal `'U8s'`.
 - No other table carries an age group. `teams`, `players`,
   `player_registrations` and `venues` have none.
 
-So the only age group fact a session has is a free text string, chosen from a
-list the code holds rather than the club does. That is a real gap and it is
-relevant to any feature keyed on age group.
+So the only age group fact a session has is a free text string, chosen from one
+of two disagreeing lists the code holds rather than the club does. **Anything
+keyed on age group needs a canonical club level vocabulary first**, and creating
+one is a migration, not client work.
 
 ## 27. `sessions.activities` can carry a new key, and exactly five call sites decide it
 
@@ -881,9 +955,15 @@ Read because the station marker rides this column.
   so any key the mapper knows about survives the plan-to-session copy for free,
   and any key it does not know about never reaches the copy at all.
 
-**Consequence: a new activity key costs two functions and no migration**, and the
-template write path is the one place that can keep a session-local key out of a
-week plan.
+**Consequence: a new activity key costs two functions and no migration.** But
+the mappers are shared and context free, so they cannot make a key session
+local: both template and session reads call `toActivity`, and all three writes
+call `toActivityRow`. Keeping a key out of a week plan takes a separate named
+helper at **both ends**, the template write paths and the template read
+(`02-target-product-model.md` section 4c). Note also that any **new** template
+write path, such as promoting a session to a week plan, is a further call site
+that helper has to cover; enumerating today's two by line number does not cover
+one that does not exist yet.
 
 ## Notable current-state findings the overhaul must design around
 

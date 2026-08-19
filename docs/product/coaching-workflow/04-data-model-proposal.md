@@ -15,7 +15,7 @@ head it was written against.
 
 ## 1. Summary of anticipated change
 
-**Three activity keys that need no migration, four columns, and one small
+**Three activity keys that need no migration, five columns, and one small
 table.** M4 is two columns, not one, which is why the column count is four rather
 than three.
 
@@ -25,7 +25,7 @@ than three.
 | A2 | `skipped: true` on an activity | `sessions.activities` only | COACH-2 | **No** | Low |
 | A3 | `game_count: 1 \| 2` on the games activity | `sessions.activities` only | COACH-8 | **No** | Low |
 | M1 | `sort_order integer null` + partial unique index | `teams` | COACH-1 | Yes, gated | Low |
-| M2 | `venue_layouts` table | new | COACH-5 | Yes, gated | Medium |
+| M2 | `venue_layouts` table, **plus `age_groups text[] not null default '{}'` on `clubs`** | new + `clubs` | COACH-5 | Yes, gated | Medium |
 | M3 | `game_bib_colour_override text null` | `register_entries` | COACH-8 | Yes, gated | Low |
 | M4 | `variant_of uuid null` and `library_listed boolean not null default true` (+ `drills_id_club_unique`) | `drills` | COACH-12 | Yes, gated | Low |
 | M5 | diagram element allow-list widening | `drills` | Parked | Yes, gated | Medium |
@@ -141,8 +141,10 @@ a data key and names what it is.
   they stand a station down, which is what makes "at most one **active** games
   activity" mean anything. The reader ignores it on an activity with no `slot`,
   so a stray value can hide neither a warm-up nor a cool-down.
-- **A stood-down activity contributes nothing to the session's length.** See
-  "The one existing rule this changes" below.
+- **A stood-down activity that carries a `slot` contributes nothing to the
+  session's length.** The `slot` qualifier is load bearing: a stray `skipped` on
+  an activity with no `slot` changes nothing, which is what makes the key inert
+  outside the operational plan. See "The one existing rule this changes" below.
 
 ### A3: `game_count`
 
@@ -196,7 +198,8 @@ third session-local key later joins a list rather than growing a code path.
 
 Every other claim in this document is additive. This one is not, and review is
 what caught it. It is one rule, "the session's length is the sum of its
-activities' durations", and this repository implements that same sum twice, so
+activities' durations", and this repository implements that same sum **four
+times**, so
 the change lands in both.
 
 **A stood-down activity must not count towards the session's length.** Rotations
@@ -205,9 +208,21 @@ rotations; counting the fifth would overstate the night by one rotation in the
 planner, in the expected end and in the calendar export. A stood-down games phase
 is the same.
 
-So `sessionMinutes` (`src/lib/data.ts:539`) and `plannedMinutes`
-(`src/lib/sessionLifecycle.ts:150`) skip an activity carrying `skipped: true`,
-and `src/lib/ics.ts` inherits it from the same seam.
+**Four independent implementations sum session activities, not two**, and
+`00-current-state-audit.md` section 17 carries the re-derived inventory:
+`sessionMinutes` (`src/lib/data.ts:539`), `plannedMinutes`
+(`src/lib/sessionLifecycle.ts:150`), an inline reduce in
+`src/routes/Planner.tsx:733` that does not import either, and
+`buildSessionSnapshot` in `supabase/functions/_shared/share.ts:797-806`, which is
+Deno and cannot import from `src/lib/` at all. `src/lib/ics.ts` inherits from the
+first two. Each of the four must honour the rule, and the plan must not claim it
+lands in two functions.
+
+**`plannedMinutes` additionally needs its zero branch corrected.** It reads
+`total > 0 ? total : FALLBACK_SESSION_MINUTES`, so a session with every
+operational activity stood down would sum to zero and be answered as a synthetic
+90 minute session. The fallback must key on there being no activities to sum
+rather than on the sum being zero.
 
 **It is inert until something is stood down.** No existing row carries `skipped`,
 so every stored session's total is unchanged and the derived lifecycle places
@@ -312,14 +327,66 @@ create table public.venue_layouts (
   constraint venue_layouts_scope_unique
     unique (club_id, venue_id, season_id, age_group, kind, slots)
 );
-
-create index on public.venue_layouts (club_id, venue_id, season_id);
 ```
 
+**No separate index.** An earlier draft added
+`(club_id, venue_id, season_id)`, which is a strict leading prefix of the unique
+constraint's own btree: Postgres already serves that lookup from the constraint's
+index, so the extra one costs writes and storage and answers nothing new. `0044`
+declines exactly this redundancy by name, and the same reasoning applies here.
+Should a query ever need a genuinely different leading column, that is the moment
+to add one, with the query named beside it.
+
 `age_group` is bounded to 20 characters, matching `seasons.name`'s bound and the
-club's own labels. **A check constraint cannot verify membership of
-`clubs.age_groups`**, because that needs a subquery, so the vocabulary is
-enforced by the UI offering one list. Section 3's honest gap below.
+club's own labels.
+
+### M2 also adds the club's age group vocabulary, and that is a correction
+
+**`clubs.age_groups` does not exist.** An earlier revision of this document and
+of the audit both asserted it did. Verified against the migrations rather than
+the TypeScript: `public.clubs` carries `id, name, crest_url, motto, created_at`
+and nothing else (`0001_init.sql:35-41`). The `age_groups text[]` column at
+`0001_init.sql:50` is on **`profiles`**.
+
+**`profiles.age_groups` is not the answer and must not be repurposed.** It is one
+coach's own age groups, per user and self-writable. A club level scope key taken
+from it would mean two coaches could silently define two different vocabularies
+for one club, and a member editing their own preferences would move a scope key
+that venue layouts are filed under.
+
+**So the venue layout scope needs a canonical club level list, and creating one
+is a migration.** Not client work, which is what an earlier draft of `06` called
+it:
+
+```sql
+alter table public.clubs add column age_groups text[] not null default '{}';
+```
+
+- **Admin managed**, under the existing `club.manage` capability that governs the
+  rest of club configuration. No new capability key.
+- **`default '{}'` means no backfill and no behaviour change on apply.** Every
+  existing club gets an empty list, which reads as "not configured yet" and is
+  one of the five no-layout states rather than an error.
+- **One list, two consumers.** The session age group selector and the venue
+  layout admin read the same column. Today there are **two** hardcoded literal
+  lists and they disagree with each other: `src/routes/Planner.tsx:763` offers
+  `'U6s'…'U12s'` and `AGES` in `src/lib/data.ts:536` is `'U6'…'U12'`, without the
+  trailing `s`. That divergence is precisely what a canonical list ends.
+- **Existing sessions are not touched.** `sessions.age_group` stays nullable free
+  text and **no historical value is rewritten, silently or otherwise**. A session
+  carrying a legacy label the club list does not contain still opens, still runs,
+  and still displays what it says; it simply resolves no layout, which is the
+  named "no age group" state widened to "no matching age group". Migrating those
+  labels is a separate, human decision and is not part of this.
+- **No `AgeGroup` table.** A text vocabulary is sufficient: nothing references an
+  age group by id, nothing carries attributes about one, and the repository has
+  no evidence that it needs to. A table would be a second identity to keep in
+  step with the free text column that already exists.
+
+**A check constraint still cannot verify membership of the list**, because that
+needs a subquery. The vocabulary is enforced by both surfaces offering one list,
+which is the same discipline `sessions.age_group` has today, now with a single
+source. Section 3's honest gap below.
 
 ### `zones`, and the discipline it inherits
 
@@ -496,11 +563,12 @@ the screen has already read.
 
 ### The honest gap: the age group vocabulary
 
-`clubs.age_groups text[]` exists and **the planner ignores it**, offering a
-hardcoded `['U6s' … 'U12s']` literal instead
-(`00-current-state-audit.md` section 26). A scope key is only as good as the
-vocabulary behind it, so the layout admin screen and the session's age group
-control must offer the **same** list. Making that list the club's own is a small
+**`clubs.age_groups` does not exist**, and the column that does is on `profiles`
+(`00-current-state-audit.md` section 26), so the gap is wider than an ignored
+list: there is nothing club level to ignore. Two disagreeing hardcoded literals
+stand in for it. The fix is the column this section proposes above, plus the
+layout admin screen and the session's age group control reading the **same**
+list. Making that list the club's own is a small
 piece of work COACH-5 should carry rather than inherit, and it is not a
 migration.
 
@@ -520,7 +588,6 @@ uses and the same reasoning applies.
 ```sql
 alter table public.register_entries add column game_bib_colour_override text
   check (game_bib_colour_override is null
-         or game_bib_colour_override = 'none'
          or public.is_bib_colour(game_bib_colour_override));
 ```
 
@@ -838,7 +905,7 @@ on a session, or to apply one edit to both deliveries.
 - `player_spond_links`, `spond_event_responses`, `spond_events`, `spond_groups`:
   unchanged, read only, and Spond stays read-only from OTJ.
 - `sessions` and `templates`: **no column change.** Three new keys inside the
-  existing `activities` jsonb, one of which (`game_count`) never reaches
+  existing `activities` jsonb, **two of which** (`skipped` and `game_count`) never reach
   `templates`, and nothing else. **No `sessions.season_id`.**
 - `venues`: **unchanged**, which is what keeps `audit_venues()` and its "Venue
   renamed" label true.
@@ -848,5 +915,9 @@ on a session, or to apply one edit to both deliveries.
 - `boards`: unchanged.
 - `content_shares` and its RPCs: unchanged. This programme proposes no public
   projection.
-- `src/lib/share.ts` and `ShareModal`: unchanged in behaviour.
-- Every Edge Function: unchanged.
+- `src/lib/share.ts` and `ShareModal`: unchanged in behaviour. Protected coach to
+  coach sharing already ships and is untouched by all of this.
+- **Edge Functions: one shared module changes when COACH-2 is implemented**, and
+  the previous "every Edge Function: unchanged" claim was false. See
+  `05-security-share-boundary.md` for the module, the tests and the deploy
+  discipline. No Edge Function is deployed by this documentation pull request.

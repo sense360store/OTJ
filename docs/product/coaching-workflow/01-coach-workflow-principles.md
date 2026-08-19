@@ -224,7 +224,9 @@ they save, which is the existing Players and groups rule.
 **Target. When attendance changes before training, the coach's work is
 preserved:**
 
-- keep the manual choices already saved, wherever practical
+- keep **every** choice already saved, whoever made it. The rule is not
+  "preserve the manual ones": a generator that only fills the gaps needs to know
+  nothing about who filled the rest, which is why no provenance column is needed
 - remove children who are no longer attending
 - add newly confirmed children sensibly
 - rebalance only where it is necessary

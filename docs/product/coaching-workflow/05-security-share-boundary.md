@@ -155,8 +155,9 @@ Its `zones` value holds no person by allow-list, and it must also hold **no
 location fix**: no address, no postcode, no latitude or longitude, no map tile
 URL and no imagery reference, each made unrepresentable by the check constraint
 rather than forbidden by convention. `venue` and `venueId` are already refused by
-the browser's deny list; `zones` and any layout-shaped key join it when they
-land, on the same rule.
+both deny lists; `zones` and any layout-shaped key join **both** when they land,
+on the same rule, because a key kept out of one end and not the other is not kept
+out at all.
 
 **Its scope keys are not child data.** `season_id` references `seasons`, which
 `0031` states holds no child data at all, and `age_group` is a club label. A
@@ -238,6 +239,53 @@ generated message and the public projection. The two parked items that would nee
 one, a public operational projection and DRILL-02b, are outside it and block
 nothing.
 
-**Edge Function deploys: none.** No phase changes a function. If that ever
-changes, deploy from files and read the deployed source back byte for byte, never
-paste inline (`CLAUDE.md`, Edge Function deploys).
+## Edge Function deploys: one, at COACH-2
+
+**Corrected 19 August. The previous claim, "Edge Function deploys: none. No phase
+changes a function", was false**, and it was false because the survey behind it
+looked for session duration in the browser only.
+
+**The module.** `supabase/functions/_shared/share.ts`. `buildSessionSnapshot`
+(`:797-806`) accumulates `totalDuration` from the session's activities in its own
+`for` loop, in Deno, and cannot import `src/lib/`. It is a fourth independent
+implementation of the session duration sum
+(`00-current-state-audit.md` section 17), so the stood-down rule reaches it.
+
+**What must change and what must not.** Only the duration accumulation, and only
+to skip an activity carrying a `slot` and `skipped: true`. `buildProgrammeSnapshot`
+(`:1218-1228`) is a second accumulator in the same file over **week** activities,
+and it must not change: a template never carries `skipped`.
+
+**The tests that change with it.** `supabase/functions/_shared/share_test.ts`
+(the Deno suite, which asserts `totalDuration`) and `src/lib/publicShare.test.ts`
+(the browser validator's suite). Both, because the payload contract has two ends.
+
+**The deploy discipline, from `CLAUDE.md`.** Deploy through Claude Code or the
+Supabase CLI **from the files on disk, never by pasting contents inline**: a
+deploy carrying a large shared module can be silently truncated or replaced with
+a placeholder while still reporting success. Every deploy is verified by reading
+the deployed source back **byte for byte** and checking its content, never by
+trusting a version number. `share.ts` is exactly the kind of large shared module
+that rule was written for.
+
+**Nothing is deployed by this pull request.** This is documentation only.
+
+### What the public snapshot does with a stood-down activity
+
+**Decision: the activity stays in the projected list and contributes zero
+duration. `skipped` itself is not published.**
+
+The smallest consistent choice, and it falls out of the existing allow list
+rather than needing a new rule. `PublicActivity` is exactly `phase`, `duration`,
+`drillRef`, `customTitle`, enforced at both ends: the Deno builder copies only
+those, and the browser validator's `ACTIVITY_KEYS`
+(`src/lib/publicShare.ts:316`) refuses anything else. So `slot`, `skipped` and
+`game_count` are **already** structurally excluded, and publishing `skipped`
+would mean widening two allow lists in two runtimes.
+
+There is no consumer for it. A public snapshot is a frozen plan someone was
+shown, not an operational surface: nobody reading one needs to know which station
+the coach stood down on the night, and `totalDuration` already tells them how
+long the session ran. Excluding the activity from the list entirely was the other
+option and is rejected, because it would make the public plan disagree with the
+plan the coach shared, for no gain.

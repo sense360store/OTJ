@@ -125,7 +125,9 @@ hosted ledger.
 
 ### PLAN-01 (Done, #179) and TRAIN-01 (Done, #185)
 
-Nothing to do. Add from Library is reused unchanged by COACH-11 and COACH-12. The
+Reused by COACH-11 unchanged. **COACH-12 changes what it reads**: the picker and
+the Library screen share one unfiltered `useDrills()`, so both move to the
+reusable-library read that excludes unlisted adaptations. The
 one-glance coach view is the foundation COACH-6 builds on, and its acceptance
 criteria carry forward unchanged as constraints on COACH-3 and COACH-6: one count
 builder, no aggregate figure on a per-player surface, works with nothing

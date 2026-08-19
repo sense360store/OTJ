@@ -55,7 +55,7 @@ was a designed mechanism in the previous revision, and each is now out of scope.
 | Two `slot: 'game'` activities for two pitches | How many games run at once | Activities are sequential and their durations are summed, so two would double the games phase in the session total, the derived lifecycle and the calendar export, and show two steps in Live. One activity, one `gameCount`. |
 | `created_by` and `updated_by` on `venue_layouts` | Accountability | `venues` deliberately carries neither and says why; the audit trail already records who. |
 
-**Net effect on the schema: six proposed structures became four columns and one
+**Net effect on the schema: six proposed structures became five columns and one
 small table**, plus three keys inside an existing unconstrained jsonb array that
 need no migration at all.
 
@@ -108,10 +108,32 @@ run tonight. Every screen then agrees, and nothing is inferred.
   only as `true` and removed on restore. Session local through one named helper
   called by the template write paths (`:1579`, `:1826`) and by the template read
   (`:385`), because the shared mappers cannot do it.
-- **`sessionMinutes` and `plannedMinutes` skip a stood-down activity**, and
-  `src/lib/ics.ts` inherits it. This is the one existing rule this programme
-  changes, landing in both places that implement it; it is inert until something
-  is stood down, since no stored row carries `skipped`.
+- **The active-duration rule, in every implementation that sums a session.** An
+  activity stops counting only when it carries a `slot` **and** `skipped: true`;
+  a stray `skipped` on an activity with no `slot` changes nothing. This is the
+  one existing rule this programme changes, and it is **inert** until something is
+  stood down, since no stored row carries `skipped`.
+
+  **The complete consumer inventory, re-derived from source
+  (`00-current-state-audit.md` section 17). All four are in scope for this slice:**
+
+  | # | Consumer | Work |
+  |---|---|---|
+  | 1 | `sessionMinutes`, `src/lib/data.ts:539` | Apply the rule. Six session surfaces inherit it |
+  | 2 | `plannedMinutes`, `src/lib/sessionLifecycle.ts:150` | Apply the rule, **and fix the zero branch**: the fallback must key on there being no activities to sum, not on the sum being zero, or an all-stood-down session becomes a synthetic 90 minutes |
+  | 3 | `src/routes/Planner.tsx:733` | An inline reduce that does **not** import `sessionMinutes`. It is the "min total" headline the coach reads while standing the station down |
+  | 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts:797-806` | **Deno.** Same rule, its own runtime; it cannot import `src/lib/` |
+
+  **Centralise the browser three behind one predicate where practical.** Do not
+  assume all four can share one helper: the Edge module is a different runtime
+  and that duplication is stated rather than papered over.
+
+  **Explicitly not in scope**, because they sum template or programme activities
+  and a template never carries `skipped`: `src/routes/Home.tsx:288`,
+  `src/routes/Templates.tsx:30`, `src/components/TemplateFormModal.tsx:39`,
+  `src/components/ProgrammeFormModal.tsx:160` and `:379`,
+  `src/routes/ProgrammeDetail.tsx:76`, and `buildProgrammeSnapshot`
+  (`share.ts:1218-1228`).
 - One module deriving, from a plan: the ordered **active** station list, the
   station count, and the one active games activity. Station N is the Nth active
   station in plan order and is never stored. **Nothing counts activities to learn
@@ -136,11 +158,19 @@ run tonight. Every screen then agrees, and nothing is inferred.
 - **Nothing is deleted.** A stood-down station keeps its place, its duration and
   its position in the plan.
 
-**Reuse.** The existing `Activity` and `ActivityRow` types, `sessionMinutes`
-unchanged, `useStartFromTemplate`'s deep copy of the mapped activities, which
-carries `slot` into every dated session for free.
+**Reuse.** The existing `Activity` and `ActivityRow` types, and
+`useStartFromTemplate`'s deep copy of the mapped activities, which carries `slot`
+into every dated session for free. **`sessionMinutes` is not reused unchanged**;
+it is one of the four consumers this slice changes.
 
 **Database.** None.
+
+**Edge Function deploy.** One, for `_shared/share.ts`, under the byte-for-byte
+readback discipline in `CLAUDE.md`. `supabase/functions/_shared/share_test.ts`
+and `src/lib/publicShare.test.ts` both change with it, because the payload
+contract has two ends. `05-security-share-boundary.md` states the module, the
+tests and the discipline in full. **Nothing is deployed by the documentation pull
+request that proposes this.**
 
 **Tests.** A key added to one mapper and not the other is lost, so both are
 asserted. `slot` round trips through a session and a week plan. `skipped` round
@@ -150,8 +180,12 @@ call, because the shared mappers cannot make a key session local by themselves.
 **A session's total is unchanged by declaring a `slot`**, and **falls by exactly
 one activity's duration when that activity is stood down**, which is the one
 existing behaviour this programme changes. **Every session that carries no
-`skipped` totals exactly what it totals today**, asserted directly, because that
-is what makes touching `sessionMinutes` low risk.
+`skipped` totals exactly what it totals today**, asserted directly **in all four
+consumers**, because that is what makes touching code this widely read low risk.
+**A stray `skipped` on an activity with no `slot` changes no total**, which is
+the qualifier's own test. **A session whose every operational activity is stood
+down totals zero and is not answered as 90 minutes.** The public snapshot's
+`totalDuration` matches the browser's, asserted in the Deno suite.
 Station numbering follows plan order and skips a stood-down station. Restoring
 removes the key rather than writing `false`. A plan carrying no `slot` declares
 no stations and says so rather than guessing. A physical drill marked as a
@@ -170,8 +204,23 @@ authoring affordances.
 already drafted: the station count, the groups, and a colour for each.
 
 **Scope.**
-- A recommendation from **confirmed attendance only**: 24 or more recommends 5
-  stations and 5 groups, fewer recommends 4, three is never recommended.
+- **One attendance-context resolver, used by every recommendation in the
+  product**, implementing the three-fact rule in `02-target-product-model.md`
+  section 6.4. It answers one question, "how many children are expected", from
+  one of two sources and says which it used:
+
+  | Context | Expected count |
+  |---|---|
+  | RSVP context available | Covered players whose RSVP state is accepted. Declined and unanswered do not count |
+  | **No RSVP context** | The coach's own included roster on this session |
+
+  **A missing, unconfigured or failed Spond integration must never yield a
+  zero-player recommendation.** Absence of RSVP context is not evidence that
+  nobody is coming, and a player with no Spond link is not a fourth RSVP answer:
+  there is simply no external fact about them.
+- A recommendation from that count: 24 or more recommends 5 stations and 5
+  groups, fewer recommends 4, three is never recommended. **The same rule runs on
+  both branches**; a club that has never configured Spond gets the whole surface.
 - Group generation: keep normal teams whole where practical, combine only
   **adjacent** bands, prefer 6/5/5/4 over splitting two squads, give each group a
   **unique** bib colour from the fixed vocabulary order.
@@ -243,11 +292,21 @@ reuses it every week and the positions stay familiar.
 board), an admin editor with draggable and resizable numbered zones, a read-only
 renderer, and the season and age group resolution for a session.
 
-**The age group vocabulary is scope, not a follow-up.** `clubs.age_groups` exists
-and the planner ignores it, offering a hardcoded literal list
-(`00-current-state-audit.md` section 26). A scope key is only as good as its
-vocabulary, so this slice makes the layout admin screen and the session's age
-group control offer the **same** list. That is client work, not a migration.
+**The age group vocabulary is scope, and it IS a migration.** An earlier draft
+of this slice called it client work on the belief that `clubs.age_groups` already
+existed. **It does not**: `public.clubs` carries `id, name, crest_url, motto,
+created_at` and nothing more, and the `age_groups text[]` column is on
+`profiles`, where it is one coach's personal preference and cannot define a club
+level scope key (`00-current-state-audit.md` section 26).
+
+So this slice also adds `clubs.age_groups text[] not null default '{}'`,
+admin managed under the existing `club.manage` capability, with no backfill and
+no behaviour change on apply. The layout admin screen and the session's age group
+control then read the **same** canonical list, replacing two hardcoded literals
+that disagree with each other today (`Planner.tsx:763` offers `'U6s'…'U12s'`;
+`AGES` in `data.ts:536` is `'U6'…'U12'`). **No historical `sessions.age_group`
+value is rewritten**: a legacy label simply resolves no layout, which is one of
+the five named no-layout states.
 
 **Non-goals.** **No imagery, satellite or otherwise.** No coordinates, no
 address, no navigation. **No weekly placement of any kind**, and no per session
@@ -377,14 +436,32 @@ without destroying the station groups.
 - A recommendation: `1` at 12 or fewer confirmed, `2` at 13 or more, aiming at
   5v5 or 6v6 and avoiding 7v7. The coach accepts or overrides it, and **an
   accepted count is never silently rewritten because attendance changed**.
-- **Game and side derive from the game bib colour's position** in the planned
-  ordering of the first `2 x gameCount` colours of the fixed vocabulary: index 0
-  is game 1 side A, index 1 is game 1 side B, and so on. The UI offers only those
-  colours, so each game shows two distinguishable colours and two games use four.
-- **The suggestion writes a game bib for every included player whose station
-  colour is not one of the game colours.** With five groups and `gameCount = 2`
-  the fifth group's colour is not in play, so leaving it to the fallback would
-  put a whole group in no game.
+- **Game and side are decided FIRST, from players; colour is chosen SECOND, from
+  that decision.** Never the reverse. The full contract is in
+  `02-target-product-model.md` section 7, and the settled priority is **sensible
+  game size, then ability banding, then minimising bib changes**. Station-group
+  preservation does not outrank banding.
+  1. Assign each included player to a game. With two games, the club's ordered
+     teams give the stronger and development populations, and the middle band is
+     split between them wherever that produces sensible numbers.
+  2. Split each game into two sides, balanced on count and ability within that
+     game's own population, without turning the bands into two opposing blocs.
+     With one game this is where the ability balance happens.
+  3. Map game and side to the deterministic colour: the first `2 x gameCount`
+     colours of the fixed vocabulary, index 0 game 1 side A, index 1 game 1 side
+     B, and so on. The UI offers only those colours.
+- **Then write the override wherever the target side colour differs from the
+  player's effective station bib**, and only then. A null override means "this
+  player's station bib already happens to be their side's colour", and never
+  "their station colour appears somewhere in the palette".
+- **`game_bib_colour_override` takes no `'none'`.** Null inherits the effective
+  station bib; any stored value is a real `BIB_COLOURS` member. An included
+  player taking part in the games resolves to a real colour, so the station
+  column's sentinel is not given a second meaning here.
+- **The deny lists.** `game_bib_colour_override` and its camelCase form join
+  `FORBIDDEN_ANYWHERE` in `supabase/functions/_shared/share.ts` and `FORBIDDEN`
+  in `src/lib/publicShare.ts` **in this slice**, not when a session is first
+  shared. It names a child's bib.
 - **The venue's games layout is loaded by `gameCount`**: 1 loads the one game
   layout, 2 loads the two game layout.
 - Suggested sides from the club team order: with two games the upper teams form
@@ -511,6 +588,17 @@ creates it unlisted. It is reachable from its session and from its parent.
 edit form: "Used in 6 sessions, 4 already delivered", with Adapt for one session
 beside it.
 
+**Every normal library selector excludes unlisted adaptations, and that is a data
+change, not a display filter.** `useDrills()` (`src/lib/queries.ts:503`) selects
+every row with no filter and is the single list read behind **both** the Library
+screen and the **Add from library** picker (`src/components/AddDrillModal.tsx`,
+over `src/lib/drillPicker.ts` and `src/lib/drillFilter.ts`). Left alone, every
+session adaptation appears in the picker every coach opens while planning, which
+is the two-hundred-near-duplicate outcome M4 exists to prevent. So this slice
+introduces an explicit reusable-library read and points **every** normal browsing
+surface at it. An unlisted adaptation stays reachable from the session that owns
+it and from its parent's detail page, and from nowhere else.
+
 **Non-goals.** No versioning and no version numbers shown anywhere. No
 snapshotting of delivered sessions. No merge or push-back to the original. **A
 session adaptation never overwrites the original.**
@@ -520,7 +608,10 @@ session adaptation never overwrites the original.**
 **Tests.** The copy is independent: editing it changes neither the original nor
 another session using the original. **Deleting the original leaves its
 adaptations alive, still runnable from their sessions, and still absent from the
-library**, which is the case a listing derived from `variant_of` gets wrong. The
+library**, which is the case a listing derived from `variant_of` gets wrong.
+**An unlisted adaptation is absent from BOTH library surfaces**, the Library
+screen and the Add from library picker, asserted separately, because they are two
+screens over one read and fixing one does not fix the other. The
 library lists no adaptation. Save as reusable produces a new listed row and
 leaves the parent untouched. An adaptation of an England Football derived drill
 inherits the source attribution and the redraw prohibition.
@@ -538,17 +629,42 @@ interface stops saying "template".
 this session as a week plan.** Apply a week plan to more than one date in one
 action.
 
+**A session adaptation is never shared across dated sessions.** A session-only
+adaptation belongs to the session that made it, and promotion must not quietly
+turn it into shared content. Promoting a session whose plan holds an adaptation
+would otherwise write that hidden drill's id into `templates.activities`, and
+applying that plan to two dates would give two sessions **one** drill row: editing
+it from either would change the other, which is exactly what this programme's
+copy-on-adapt decision exists to prevent, on a drill invisible in the library so
+nobody would notice.
+
+**So promotion requires an explicit choice, and offers the two safe ones:** use
+the adaptation's **original** reusable drill in the promoted plan, or **Save as
+reusable drill** first and use the new listed drill. Nothing is decided silently
+and nothing hidden is promoted. No template-owned hidden drill variant is
+introduced; there is no proven need for one.
+
+**Promotion is also a template WRITE path**, and therefore a third call site for
+the session-local helper: it must strip `skipped` and `gameCount` on the way into
+the week plan, while carrying `slot`. Enumerating today's two write paths by line
+number does not cover a path that does not exist yet.
+
 **Non-goals.** No propagation of an edit from one delivery to the other. No new
 planning entity. **No `template_id`**: the journeys are copies and work without
-it (`04-data-model-proposal.md` section 9).
+it (`04-data-model-proposal.md` section 9). **No silent reuse of a hidden
+adaptation, and no silent promotion of one to reusable.**
 
 **Database.** None.
 
-**Tests.** Promote produces a plan matching the session. Apply to two dates
-produces two independent sessions, and editing one leaves the other untouched. A
-copy sweep test that no user-visible string says "template".
+**Tests.** Promote produces a plan matching the session **except for the
+session-local keys**, which are stripped. Apply to two dates produces two
+independent sessions, and editing one leaves the other untouched. **Promoting a
+session that holds an adaptation does not put the adaptation's id in the week
+plan**, and offers the original or Save as reusable instead. A copy sweep test
+that no user-visible string says "template".
 
-**Dependencies.** COACH-10 loosely, for the editor.
+**Dependencies.** COACH-10 loosely, for the editor. **COACH-12**, because the
+adaptation rule above is only meaningful once adaptations exist.
 
 **PR boundary.** One copy PR, one journeys PR.
 

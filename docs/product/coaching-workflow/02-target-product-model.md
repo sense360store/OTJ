@@ -11,7 +11,7 @@ structure and what does not.
 **The headline is a subtraction.** An earlier revision proposed six migrations,
 station block metadata, a per-activity position in a venue coordinate space, a
 frozen carousel assignment map and a generated message carrying children's first
-names. All five are gone. What is left is **four columns and one small table**,
+names. All five are gone. What is left is **five columns and one small table**,
 plus three keys on an activity that need no migration at all.
 
 **Two things this revision puts back, because the first correction went too far.**
@@ -343,24 +343,75 @@ as not running tonight rather than hidden.
 
 ### A stood-down activity does not count towards the session's length
 
-**This is the one place the programme changes an existing shared function, and it
-was missed until review caught it.**
+**This is the one place the programme changes existing behaviour, and it reaches
+FOUR independent implementations, not two.**
 
 Rotations follow the **active** stations, so a five station plan delivered as
 four runs four rotations, not five. If the stood-down activity's duration still
 counted, the planner, the expected end and the calendar export would all overstate
 the night by one rotation. The same applies to a stood-down games phase.
 
-So the rule is: **the session's planned length is the sum of the activities that
-are actually running.** Concretely, `sessionMinutes` (`src/lib/data.ts:539`) and
-`plannedMinutes` (`src/lib/sessionLifecycle.ts:150`) skip an activity carrying
-`skipped: true`, and `src/lib/ics.ts` inherits it because it takes its length
-from the same seam.
+### The rule
+
+**An activity stops contributing to the session's length only when it is an
+operational activity that has been stood down.** Precisely:
+
+| Activity | Counts? |
+|---|---|
+| No `skipped` key | **Yes.** Current behaviour, bit for bit |
+| `slot` absent, stray `skipped: true` | **Yes.** A warm-up or cool-down is not operational and cannot be stood down |
+| `slot: 'station'` + `skipped: true` | No |
+| `slot: 'game'` + `skipped: true` | No |
+
+The `slot` qualifier is not optional wording. Without it a stray key removes a
+warm-up's minutes, which is exactly what the reader is promised cannot happen.
+
+### Every implementation that must honour it
+
+`00-current-state-audit.md` section 17 carries the re-derived inventory. Four
+independent implementations sum **session** activities:
+
+| # | Where | Note |
+|---|---|---|
+| 1 | `sessionMinutes`, `src/lib/data.ts:539` | Six session surfaces inherit through it |
+| 2 | `plannedMinutes`, `src/lib/sessionLifecycle.ts:150` | The expected end and the calendar `DTEND` inherit through it |
+| 3 | `src/routes/Planner.tsx:733` | **Inline. Planner.tsx does not import `sessionMinutes`** |
+| 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts:797-806` | **Deno.** A different runtime, not a call site |
+
+So the ordinary five-planned, four-running night must show the shorter total in
+the planner, move the derived expected finish earlier, shorten the calendar
+duration, and produce the matching duration in a public snapshot. Changing only
+the two named functions leaves the planner's own "min total" headline overstating
+the night on the very screen where the coach stands the station down.
+
+**Centralise where practical, but do not assume one helper reaches all four.**
+The browser three can share one predicate. `share.ts` runs in Supabase Edge
+Functions and cannot import from `src/lib/`, so it needs the same rule expressed
+in its own runtime, and that is a duplication to state openly rather than to
+paper over.
+
+### Zero is a real answer
+
+`plannedMinutes` is **not** the same expression as the other three:
+
+```
+return total > 0 ? total : FALLBACK_SESSION_MINUTES
+```
+
+Its comment says *"an empty plan is a session nobody has built yet, not a session
+that lasts no time"*, which is correct **today**, when a zero total can only mean
+an empty plan. Once a filter can empty the sum, that reading is wrong: a session
+whose every operational activity is stood down would become a synthetic 90 minute
+session, lengthening the night the rule exists to shorten.
+
+**The correction: the fallback applies when there are no activities to sum, not
+when the sum comes to zero.** A plan that holds activities and stands all the
+operational ones down is a real zero and renders as one.
 
 **It is inert until someone stands something down.** No existing session carries
 `skipped`, so every total in the database today is unchanged, and the derived
 lifecycle places every existing session exactly where it places it now. That is
-what keeps the risk of touching a function this widely read to a minimum.
+what keeps the risk of touching code this widely read to a minimum.
 
 **This does not reopen the parallel-station arithmetic**, which is still correct:
 active stations times the rotation length is still both the wall clock and the
@@ -504,10 +555,10 @@ direction.
 | Question | Derived from |
 |---|---|
 | Planned? | `activities.length > 0`. **If any station is declared**, four or five of them are active. A session that declares none is not a carousel night and is not asked to be. |
-| Attendance available? | `spond_event_id` set and responses known |
+| Attendance context available? | Whether an external RSVP fact exists at all: `spond_event_id` set and responses known. **No is a real answer and not a failure** — section 6.4 states what the recommendation runs from instead. |
 | Groups prepared? | every included player resolves to a bib, and the active groups' colours are unique |
-| Games prepared? | **Not applicable** when no games activity is declared, or its activity is stood down. Otherwise: an accepted `gameCount`, every included player resolving to a game, and each game reading as two distinguishable colours. |
-| Setup available? | a layout exists for this session's venue, season, age group and **active** station count. Section 8 states the three ways this can honestly answer no. |
+| Games prepared? | **Not applicable** when no games activity is declared, or its activity is stood down. Otherwise: an accepted `gameCount`, and every included player resolving to **a game, a side, and a valid game-side colour**. All three, because a player can hold a colour that names no side. |
+| Setup available? | a layout exists for this session's venue, season, age group and **active** slot count. Section 8 names the five no-layout states, and this row uses those names rather than counting them again. |
 | Delivered? | `sessionLifecycle.ts` already answers this, three states, derived |
 
 **Not applicable is a real answer, and it is not the same as not ready.** A
@@ -577,8 +628,41 @@ and the schema is what guarantees that rather than a rule anyone has to remember
 
 ### 6.4 Generating the setup, and keeping the coach's work
 
-**OTJ generates the first suggested setup automatically from the confirmed
-attendance**, about 24 to 48 hours out when Spond replies become useful.
+**OTJ generates the first suggested setup automatically from the expected
+attendance**, about 24 to 48 hours out.
+
+#### Three different facts, defined once
+
+Every recommendation in this product (4 or 5 stations, 1 or 2 games, the groups
+themselves) runs off **one** number: how many children are expected. That number
+is established by one rule, stated here and used nowhere else in a second form.
+
+| Fact | What it is |
+|---|---|
+| **RSVP state** | What a parent answered on Spond for one child on one event: accepted, declined, unanswered, waiting |
+| **RSVP context availability** | Whether an external RSVP fact exists **at all** for this session. A session with no `spond_event_id`, an unsettled read, or a failed sync all have none |
+| **OTJ operational inclusion** | Who the coach has put in tonight's groups, in `register_entries.included_in_groups`. The coach's own record, and the only one that drives the night |
+
+**A player with no Spond link is not a fourth RSVP answer.** It means there is no
+external RSVP fact for that player. They are not "unanswered", because nobody was
+asked.
+
+#### The one rule
+
+**With RSVP context**, the expected count is the covered players whose RSVP state
+is accepted. Declined and unanswered do not count, and that is the settled
+decision.
+
+**Without RSVP context**, the expected count is the coach's own included roster
+on this session. Absence of Spond data **never** means nobody is attending, and a
+failed or missing integration must never produce a zero-player recommendation. A
+club that has never configured Spond gets the whole surface: the roster the
+session covers, the coach's inclusion ticks, and the same 4/5 station and 1/2
+game recommendations running off that local roster.
+
+**Neither branch is a degraded mode.** They are the same recommendation over two
+ways of learning the same number, and the screen says which one it used so the
+coach can see why it said five.
 
 Priority when building groups:
 
@@ -718,14 +802,54 @@ that ordered list, and:
 With no accepted count there is no ordering, so there are no game colours to
 offer and readiness says the count is not settled.
 
-**Every included player is given a colour that is in play.** The station colours
-run to the group count and the game colours stop at `2 x gameCount`, so with five
-groups and `gameCount = 2`, which is the ordinary shape at 24 or more confirmed,
-the fifth group's colour is not one of the four the games use. The suggested allocation
-therefore **writes a game bib for every player whose station colour is not a game
-colour**, which is also what happens physically: that child is handed one of the
-four. The fallback to the station bib then means only what it can honestly mean,
-that a player already wearing a game colour keeps it.
+### The allocation order, which is the part that decides everything
+
+**Settled priority, in this order: sensible game size, then ability banding, then
+minimising bib changes. Station-group preservation does NOT outrank banding.**
+
+An earlier revision said the allocation *"writes a game bib for every player whose
+station colour is not a game colour"*. That is insufficient and it contradicts the
+banding rule beside it. With five groups and `gameCount = 2` it re-bibs only the
+fifth group, leaving games 1 and 2 as station groups 1+2 and 3+4 — the station
+groups preserved wholesale, which is the opposite of what banding requires. Four
+station colours can already sit in the games palette while those very players
+belong in different games or on different sides.
+
+**Game and side are decided FIRST, from players. Colour is chosen SECOND, from
+the decision.** Never the other way round.
+
+**Step 1, assign each included player to a game.** For `gameCount = 2`, start
+from the club's ordered teams: the upper bands form the stronger game's
+population, the lower bands the development game's, and the middle band is the
+flexible bridge, split between the two wherever that is what produces sensible
+numbers. **Sensible game size outranks keeping station groups intact.** For
+`gameCount = 1` there is one game and this step is trivial.
+
+**Step 2, split each game into two sides.** Balance player count and ability
+within that game's own population, and deliberately avoid turning the ordered
+bands into two opposing blocs. For `gameCount = 1` this is where the ability
+balance happens: distribute the stronger players across both sides rather than
+stacking one.
+
+**Step 3, and only now, choose colours.** The player's game and side select the
+deterministic game-side colour from the ordering below. Then compare it with the
+player's **effective station bib**:
+
+| Comparison | Write |
+|---|---|
+| Target game-side colour **equals** the effective station bib | Nothing. `game_bib_colour_override` stays null |
+| They **differ** | Write `game_bib_colour_override` to the target game-side colour |
+
+**So the fallback to the station bib means exactly one thing:** *this player's
+existing station bib already happens to be the colour of the side they were
+assigned to.* It must never be read as *any station colour that appears somewhere
+in the four-colour games palette is that player's game assignment.* Those are
+different statements and only the first is true.
+
+That also makes the minimise-bib-changes priority real rather than rhetorical: it
+is the tie-break inside steps 1 and 2, applied only where game size and banding
+leave a genuine choice, and it is never allowed to move a player into the wrong
+game or onto the wrong side.
 
 A value outside the list resolves to **no game** and is shown as unassigned, and
 readiness names it. It is never guessed into the nearest game.
@@ -896,13 +1020,16 @@ the screen has already read.
 - **Season overlap is unconstrained** by design (`0031`), so a date can fall in
   two seasons. That is a configuration problem with a person's answer, so the
   screen names it and loads nothing rather than picking one.
-- **Age group is a free text string, and the club's own list is ignored today.**
-  `clubs.age_groups text[]` exists, and the planner offers a hardcoded
-  `['U6s' ... 'U12s']` literal instead (`00-current-state-audit.md` section 26).
-  A scope key is only as good as the vocabulary behind it, so the layout admin
-  screen and the session's age group control must offer **the same list**, and
-  making that list the club's own is a small piece of work COACH-5 should carry
-  rather than inherit.
+- **Age group is a free text string, and the club has no canonical list at all.**
+  `clubs` carries no age group column; the `age_groups text[]` that exists is on
+  `profiles`, where it is one coach's personal preference and cannot define a club
+  level scope key (`00-current-state-audit.md` section 26). Two hardcoded literals
+  stand in for it today and they disagree: `['U6s' … 'U12s']` in the planner and
+  `['U6' … 'U12']` in `AGES`. A scope key is only as good as the vocabulary behind
+  it, so **COACH-5 adds `clubs.age_groups text[] not null default '{}'`**, admin
+  managed, and both the layout admin screen and the session's age group control
+  read it. That is a migration, not client work. No historical
+  `sessions.age_group` value is rewritten.
 
 ### What a layout is not
 
@@ -913,30 +1040,31 @@ the screen has already read.
   unrepresentable rather than discouraged.
 - **Not weekly.** Coaches do not drag or reposition anything in v1.
 
-**There are three ways a layout can honestly not be found, and the screen says
-which.** They are not the same problem and only one of them is an admin's to fix.
+### The five no-layout states, named once
 
-| | What it means | Fixable by |
+**A layout can honestly not be found in exactly five ways.** They are one closed
+vocabulary, used by every document and every screen that reports one, so nobody
+counts them again and arrives at a different number. Only two are an admin's to
+fix.
+
+| State | What it means | Fixable by |
 |---|---|---|
-| No layout drawn for this scope yet | The venue, season and age group resolved, and nobody has drawn this count | **An admin**, with a link |
-| The season is unresolved or ambiguous | The session's date falls in no season, or in more than one | **An admin**, by fixing the season configuration |
-| Fewer than four active stations | The night has dropped below the shape v1 supports | **Nobody.** `venue_layouts` stores only 4 and 5, so no layout exists to draw |
+| **No venue** | The session names no venue, so there is no ground to lay out | **The coach**, by choosing a venue |
+| **No age group** | `sessions.age_group` is nullable free text and can be empty, and the scope key cannot be assembled without it | **The coach**, by setting the age group |
+| **Season unresolved or ambiguous** | The date falls in no season, or in more than one | **An admin**, by fixing the season configuration |
+| **No layout drawn for this scope** | Venue, season and age group all resolved, and nobody has drawn this slot count | **An admin**, with a link |
+| **Slot count outside the stored set** | Fewer than four active stations, or more than five | **Nobody.** `venue_layouts` stores 4 and 5 stations and 1 and 2 games, so no layout exists to draw |
 
-**The third one matters because the obvious message is wrong.** A coach who
-stands two of five stations down has three active, and telling them to ask an
-admin to draw a three station layout points at something the check constraint
-refuses. The screen says the delivery has dropped below four instead.
+**The last one matters because the obvious message is wrong.** A coach who stands
+two of five stations down has three active, and telling them to ask an admin to
+draw a three station layout points at something the check constraint refuses. The
+screen says the delivery has dropped outside the shape v1 supports instead. It is
+stated as a slot count rather than as "fewer than four" so a six station plan
+lands on the same honest message rather than on the admin link.
 
-**An unset age group is the fourth way, and it is stated rather than
-discovered.** `sessions.age_group` is nullable free text and
-`venue_layouts.age_group` is not null and non blank
-(`00-current-state-audit.md` section 26), so a session with no age group can
-match no layout, ever. It reads as unresolved and says so. A value differing only
-in case or spacing from the one an admin drew against fails the same way
-silently, which is the second reason both screens must offer the same list rather
-than free text.
+**Every one of these is a sentence, never a blank panel**, and none of them
+blocks opening, editing or running the session.
 
-None of the four is an error and none blocks anything.
 
 ## 9. Training-day delivery
 

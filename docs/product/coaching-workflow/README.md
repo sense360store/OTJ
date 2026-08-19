@@ -49,7 +49,7 @@ combined, and the result is a significantly simpler target model.
 | 01 | [Coach workflow and product principles](01-coach-workflow-principles.md) | How training is actually planned and delivered, and the principles that follow. |
 | 02 | [Target product model](02-target-product-model.md) | What each concept is: reference, copy, derived fact or stored state, and why. |
 | 03 | [Target UX journeys](03-ux-journeys.md) | Eight journeys, the components each reuses, and the mobile interaction decision. |
-| 04 | [Data model proposal](04-data-model-proposal.md) | Three activity keys with no migration, four columns, one small table, and how the migrations are sequenced. |
+| 04 | [Data model proposal](04-data-model-proposal.md) | Three activity keys with no migration, five columns, one small table, and how the migrations are sequenced. |
 | 05 | [Security, privacy and share boundary](05-security-share-boundary.md) | Why coach to coach sharing is already safe, and what the new columns oblige. |
 | 06 | [Implementation plan](06-phased-plan.md) | Thirteen small slices, what was removed, and the recommended first four. |
 | 07 | [Roadmap reconciliation](07-roadmap-reconciliation.md) | Verified pull request state, and how this relates to DRILL-02, DRILL-03 and TRAIN-02. |
@@ -139,16 +139,25 @@ Recorded because a design that is merely absent tends to be rebuilt.
 | "20 or more means two games" | The threshold is 13, from a 6v6 target. |
 | "Four stations is the default shape" | Four or five, chosen by attendance. |
 
-**Six proposed structures became four columns and one small table**, plus three
+**Six proposed structures became five columns and one small table**, plus three
 keys inside an existing unconstrained jsonb array that need no migration at all.
 No item in the programme needs a full security review.
 
-**One existing rule changes**, and only one: the session's length is the sum of
-the activities **actually running**, so `sessionMinutes` and `plannedMinutes`,
-the two places that implement that sum, skip an activity a coach has stood down
-and `src/lib/ics.ts` inherits it. A five station plan delivered as four therefore
-does not overstate the night by a rotation. It is inert until something is stood
-down.
+**One existing rule changes**, and it reaches **four** implementations. The
+session's length is the sum of the activities **actually running**, so an activity
+carrying a `slot` and `skipped: true` stops counting. The four, re-derived from
+source and listed in `00-current-state-audit.md` section 17:
+
+| | |
+|---|---|
+| `sessionMinutes` | `src/lib/data.ts:539` |
+| `plannedMinutes` | `src/lib/sessionLifecycle.ts:150`, **and its zero branch needs correcting** so an all-stood-down session is not answered as 90 minutes |
+| The planner's own inline reduce | `src/routes/Planner.tsx:733`, which does not import `sessionMinutes` |
+| `buildSessionSnapshot` | `supabase/functions/_shared/share.ts:797-806`, **in Deno**, so one Edge Function deploy |
+
+`src/lib/ics.ts` inherits from the first two. A five station plan delivered as
+four therefore does not overstate the night by a rotation anywhere. It is inert
+until something is stood down.
 
 ## Recommended first implementation slices
 
