@@ -73,7 +73,7 @@ why rather than just deleting it:
   product could not control what happened next. The settled design puts a URL
   there instead, and the URL discloses nothing on its own.
 - **One fewer security-reviewed surface.** The composer was one of only two items
-  in the programme needing a full security review. It is gone.
+  in the programme needing a full review. It is gone.
 - **One fewer place that reads the register.** The composer would have been a
   second reader of tonight's names. There is now exactly one.
 
@@ -233,11 +233,24 @@ auto-merged:
 against**, and none of them assumes or modifies reviewed migration `0050`, which
 open draft PR #191 owns (`04-data-model-proposal.md` section 8).
 
-**No item in this programme needs a full security review**, which is a change
+**No item in this programme needs a full RLS or auth review**, which is a change
 from the previous revision and is a direct consequence of withdrawing the
-generated message and the public projection. The two parked items that would need
-one, a public operational projection and DRILL-02b, are outside it and block
-nothing.
+generated message and the public projection. Nothing here adds a role, changes a
+policy shape, or moves the authentication boundary. The two parked items that
+would need a full review, a public operational projection and DRILL-02b, are
+outside it and block nothing.
+
+**Two items do need a focused content-sharing boundary review**, and saying
+"none" would be untrue now that the survey behind it has been re-derived:
+
+| Item | Why | Scope of the review |
+|---|---|---|
+| **COACH-2** | Changes `_shared/share.ts`, the module that builds the public snapshot, and requires an Edge deploy under the byte-for-byte readback discipline | The duration change only: that it touches no allow list, publishes no new key, and leaves `buildProgrammeSnapshot` alone |
+| **COACH-8** | Adds a child-linked column and puts it on both public-share deny lists | That `game_bib_colour_override` and its camelCase form reach `FORBIDDEN_ANYWHERE` **and** `FORBIDDEN`, in the same change |
+
+Neither is an RLS redesign. Both are the narrow "does a child's data stay out of
+the public projection" question this document exists to answer, and both are
+cheap precisely because the boundary is already drawn.
 
 ## Edge Function deploys: one, at COACH-2
 

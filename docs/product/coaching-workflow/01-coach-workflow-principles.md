@@ -201,6 +201,14 @@ The generator seeds from Yes; it does not constrain.
 **A club with no Spond configuration still gets the whole surface**, with the
 coach ticking people in by hand. That rule is unchanged and is not negotiable.
 
+**A player with no Spond link is not a fourth reply state.** Yes, No, Unanswered
+and Waiting are answers to a question; an unlinked child was never asked. Reading
+them as Unanswered would take them out of the groups for a data gap, which is the
+opposite of what the coach means. Three facts stay separate and
+`02-target-product-model.md` section 6.4 defines them once: the **RSVP state**,
+whether **RSVP context exists at all** for this session, and the coach's own
+**operational inclusion**. Only the third decides who is in tonight's groups.
+
 ## 8. Groups, bibs and rotation
 
 **The bib colour is the group's name.** It is how a coach and a child identify a

@@ -223,7 +223,15 @@ already drafted: the station count, the groups, and a colour for each.
   both branches**; a club that has never configured Spond gets the whole surface.
 - Group generation: keep normal teams whole where practical, combine only
   **adjacent** bands, prefer 6/5/5/4 over splitting two squads, give each group a
-  **unique** bib colour from the fixed vocabulary order.
+  **unique** target bib colour taken in the fixed vocabulary order.
+- **The generator introduces no second station-bib concept.** The canonical
+  resolver is unchanged and remains the only one: **session override, else team
+  default, else none** (`src/lib/bibs.ts`). A target colour a group would not
+  otherwise resolve to is persisted through the existing
+  `register_entries.bib_colour_override`, on Save like every other Players and
+  groups edit. **Nothing writes to `teams`, `player_registrations` or any Spond
+  fact**: moving a child into a different group tonight cannot touch their team,
+  their default next week, or their Spond membership.
 - The statement that group 1 starts at station 1, derived on every read.
 - Readiness, derived: an included child with no effective bib, or two active
   groups sharing a colour, means not ready, with the fix named.
@@ -375,11 +383,12 @@ here.
 
 **Database.** None.
 
-**Tests.** The four honest "no layout" answers are distinguished: none drawn for
-this scope yet, an unresolved season, an ambiguous season, and **fewer than four
-active stations, which no admin can fix because the constraint refuses a three
-station layout**. An unset `sessions.age_group` reads as unresolved rather than
-matching nothing silently. Each says which, and none blocks anything. A session with four active stations loads the four
+**Tests.** The **five** no-layout states named in `02-target-product-model.md`
+section 8 are distinguished, using those names rather than a count of this
+slice's own: no venue, no age group, an unresolved season, an ambiguous season,
+none drawn for this scope yet, and a **slot count outside the stored set, which
+no admin can fix because the constraint refuses a three station layout**. An
+unset `sessions.age_group` says so rather than matching nothing silently. Each says which, and none blocks anything. A session with four active stations loads the four
 station layout, and standing one of five down moves it to the four station
 layout. A session in a different age group at the same venue loads its own
 layout. Zone labels carry number and name, never colour alone. Screen-level tests
@@ -758,8 +767,13 @@ COACH-10.
 (M4). Each is registered separately, against the head it will actually run
 against.
 
-**Full security reviews: none.** `05-security-share-boundary.md` section 9
-carries the reasoning.
+**Full RLS or auth reviews: none.** Nothing here adds a role, changes a policy
+shape or moves the authentication boundary.
+
+**Focused content-sharing boundary reviews: two.** COACH-2, because it changes
+`_shared/share.ts` and needs an Edge deploy; and COACH-8, because it adds a
+child-linked column that must reach both public-share deny lists.
+`05-security-share-boundary.md` section 9 carries the scope of each.
 
 ## 6. Adversarial pass, after the correction
 

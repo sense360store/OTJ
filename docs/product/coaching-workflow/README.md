@@ -141,7 +141,8 @@ Recorded because a design that is merely absent tends to be rebuilt.
 
 **Six proposed structures became five columns and one small table**, plus three
 keys inside an existing unconstrained jsonb array that need no migration at all.
-No item in the programme needs a full security review.
+**No item needs a full RLS or auth review**; two need a focused content-sharing
+boundary review (COACH-2 for the Edge share module, COACH-8 for the deny lists).
 
 **One existing rule changes**, and it reaches **four** implementations. The
 session's length is the sum of the activities **actually running**, so an activity
@@ -180,7 +181,8 @@ Then the gated migrations in dependency order: **COACH-1** (`teams.sort_order`),
 (`drills.variant_of`), each authored and registered against the ledger as it
 stands at its own review.
 
-**Full security reviews: none.**
+**Full RLS or auth reviews: none. Focused content-sharing boundary reviews:
+two**, COACH-2 and COACH-8.
 
 ## House rules these documents follow
 
