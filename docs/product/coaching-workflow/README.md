@@ -5,11 +5,30 @@ sessions, drills, Drill Maker, the drill library, Spond attendance, groups and
 bibs, venue layout, training-day delivery and sharing.
 
 **Status: reconciled 18 August 2026 after the completed coach discovery.** The
-product model below is settled. **No application or database behaviour has been
+product model below is settled. **No application or database behaviour was
 implemented by this document set**, and a settled design is not delivered work.
 
 Verified against `main` at `afe790d`, which now contains PR #189 (drill diagrams
 across session delivery) and PR #195 (migration probe totality).
+
+## Implementation status
+
+Recorded here so a reader is never left guessing which of this is code and which
+is still a document. One slice has been built; everything else in these
+documents remains design.
+
+| Slice | State |
+|---|---|
+| **COACH-2A**, the activity structure model and the active session duration | **Built.** `slot` and `skipped` on an activity, `src/lib/activityStructure.ts`, the template boundary, all four session duration implementations and the public snapshot total. No migration. |
+| **COACH-2B**, the authoring affordances | Not built. Marking a station or the games phase, the Not running tonight toggle, and the line stating what is declared. |
+| Everything else | Not built. |
+
+**COACH-2A leaves one operational follow-up.** It changes
+`supabase/functions/_shared/share.ts`, so the two content-sharing Edge Functions
+carry stale source until they are redeployed through
+`docs/operations/content-sharing-edge-function-deploy.md`. Until that deploy
+runs, a session shared publicly counts a stood-down activity towards its
+published total while every screen in the app does not.
 
 ## How to read these documents
 
@@ -18,7 +37,7 @@ Three labels are used throughout and each means exactly one thing:
 | Label | Meaning |
 |---|---|
 | **Today** | Current repository behaviour. `00-current-state-audit.md` carries the path, table or function behind every claim. |
-| **Target** | Approved product behaviour from coach discovery. None of it is built. |
+| **Target** | Approved product behaviour from coach discovery. Only COACH-2A is built; see Implementation status above. |
 | **Unresolved** | Something still to be decided. **No product or club question is outstanding**; what remains is three decisions taken at a migration's own review, listed in `08-open-questions.md`. |
 
 ## The outcome this serves
