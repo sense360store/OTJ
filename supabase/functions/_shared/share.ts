@@ -836,18 +836,27 @@ export function buildSessionSnapshot(
     //
     //   - Dropping the activity would make the public plan disagree with the
     //     plan the coach shared, for no gain.
-    //   - Zeroing its own duration would publish WHICH station was stood down,
-    //     which is operational detail a frozen public plan has no consumer for
-    //     and no business carrying.
+    //   - Zeroing its own duration would say the coach planned nothing for it,
+    //     which is a different and untrue statement about the plan.
     //   - Publishing `skipped` would mean widening two allow lists in two
     //     runtimes. PublicActivity is exactly phase, duration, drillRef and
     //     customTitle, enforced here and by ACTIVITY_KEYS in
     //     src/lib/publicShare.ts, so slot and skipped are already excluded.
     //
-    // The consequence is stated rather than hidden: on a session with
-    // something stood down, the published activity durations sum to MORE than
-    // totalDuration. totalDuration is the answer to how long the session ran,
-    // and it is the same number the browser shows.
+    // THE STOOD-DOWN ACTIVITY IS STILL DERIVABLE, AND THAT IS ACCEPTED RATHER
+    // THAN CLAIMED OTHERWISE. On a session with something stood down the
+    // published activity durations sum to MORE than totalDuration, and both
+    // numbers render on the same page (PublicSessionView prints a per activity
+    // minutes pill and a Duration meta row), so a reader who subtracts can
+    // usually name the activity. No projection short of dropping the activity
+    // or lying about its duration hides that, and both of those misrepresent
+    // the plan the coach shared. What the delta discloses is a fact about the
+    // coach's own plan: no child, no group, no bib, no attendance, nothing a
+    // person could be identified from. The key itself is still not published,
+    // which is what keeps the allow lists closed.
+    //
+    // totalDuration is the answer to how long the session ran, and it is the
+    // same number the browser shows.
     if (typeof duration === 'number' && !isStoodDownActivity(a)) totalDuration += duration
     if (shape.kind === 'drill') {
       activities.push({ phase, duration, drillRef: ensureDrillRef(shape.drillId), customTitle: null })

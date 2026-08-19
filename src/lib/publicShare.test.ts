@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildPublicShareUrl,
@@ -241,6 +243,11 @@ describe('validatePublicSessionSnapshot', () => {
     // nothing to totalDuration, so the two deliberately disagree. The
     // validator has never checked that arithmetic and must not start: doing so
     // would make the disagreement a rendering failure.
+    //
+    // The delta is therefore derivable by anyone holding the link, and that is
+    // accepted rather than claimed otherwise: it is a fact about the coach's
+    // own plan, carrying no child, group, bib or attendance. What the boundary
+    // turns on is the two tests above, that neither key is publishable.
     const standDown = sessionSnapshot({
       activities: [
         { phase: 'Warm-Up', duration: 15, drillRef: 'd1', customTitle: null },
@@ -249,6 +256,16 @@ describe('validatePublicSessionSnapshot', () => {
       totalDuration: 15,
     })
     expect(validatePublicSessionSnapshot(standDown)).toBe(true)
+  })
+
+  it('renders no Duration row at all for a session that runs no minutes', () => {
+    // A fully stood-down session publishes totalDuration 0, and the public
+    // view's meta row is gated on `> 0`, so the page simply does not claim a
+    // length. Pinned because a future change to that gate would start
+    // rendering "Duration 0 min" on a shared plan.
+    const src = readFileSync(join(import.meta.dirname, '..', 'components', 'PublicSessionView.tsx'), 'utf8')
+    expect(src).toMatch(/typeof snapshot\.totalDuration === 'number' && snapshot\.totalDuration > 0/)
+    expect(validatePublicSessionSnapshot(sessionSnapshot({ totalDuration: 0 }))).toBe(true)
   })
 })
 

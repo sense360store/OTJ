@@ -314,8 +314,20 @@ those, and the browser validator's `ACTIVITY_KEYS`
 would mean widening two allow lists in two runtimes.
 
 There is no consumer for it. A public snapshot is a frozen plan someone was
-shown, not an operational surface: nobody reading one needs to know which station
-the coach stood down on the night, and `totalDuration` already tells them how
+shown, not an operational surface, and `totalDuration` already tells them how
 long the session ran. Excluding the activity from the list entirely was the other
 option and is rejected, because it would make the public plan disagree with the
 plan the coach shared, for no gain.
+
+**Corrected at implementation: which activity was stood down remains derivable,
+and that is accepted rather than claimed otherwise.** An earlier revision of this
+section argued that nobody reading a public snapshot needs to know which station
+the coach stood down. True, and the chosen projection does not conceal it: the
+published activity durations sum to more than `totalDuration`, and the public
+page renders both numbers, so a reader who subtracts can usually name the
+activity. No projection short of dropping the activity or publishing a duration
+the coach did not plan hides that, and both misrepresent the plan that was
+shared. The delta is a fact about the coach's own plan and carries no child, no
+group, no bib and no attendance, so it is accepted. What the boundary actually
+turns on is unchanged: the key itself is not published and neither allow list is
+widened.
