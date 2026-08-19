@@ -41,7 +41,7 @@ was a designed mechanism in the previous revision, and each is now out of scope.
 
 | Removed | It existed to | Why it is gone |
 |---|---|---|
-| Station blocks (`sessions.blocks`, `templates.blocks`, `block_id`) | Say which activities are one carousel | Derived from plan order and the existing `Phase` vocabulary. |
+| Station blocks (`sessions.blocks`, `templates.blocks`, `block_id`) | Say which activities are one carousel | Declared on the activity by `slot`, with no migration. **Not** derived from the `Phase` vocabulary, which is coaching classification only. |
 | The frozen carousel start map (`blocks[].start`) | Stop a group's starting station moving while a carousel runs | OTJ tracks no running carousel. Nothing to protect. |
 | The stateless-rule impossibility proof as a design driver | Justify freezing | The arithmetic is still true and is still recorded as a fact. The conclusion no longer applies. |
 | Mid-carousel free-ordinal reassignment | Place a bib colour that appears mid-session | A colour appearing mid-session is a physical event the coach handles on the grass. |
@@ -52,6 +52,8 @@ was a designed mechanism in the previous revision, and each is now out of scope.
 | `sessions.template_id` | Uniform provenance and a sibling link | No consumer in the settled model. |
 | `venues.layout` as one jsonb column | All four layouts on the venue row | It cannot express the venue plus season plus age group scope the product requires. Replaced by a small table, not by a weaker scope. |
 | Deriving stations from the `Skill` phase, and games from the `Game` phase | Station and game identity with no new key | `phaseFor` sets an activity's phase from the drill's four-corners classification, so the phase records what kind of drill was added, not what part it plays on the night. Replaced by one declared key. |
+| Two `slot: 'game'` activities for two pitches | How many games run at once | Activities are sequential and their durations are summed, so two would double the games phase in the session total, the derived lifecycle and the calendar export, and show two steps in Live. One activity, one `gameCount`. |
+| `created_by` and `updated_by` on `venue_layouts` | Accountability | `venues` deliberately carries neither and says why; the audit trail already records who. |
 
 **Net effect on the schema: six proposed structures became three columns and one
 small table**, plus two keys inside an existing unconstrained jsonb array that
@@ -99,13 +101,16 @@ run tonight. Every screen then agrees, and nothing is inferred.
 
 **Scope.**
 - `slot: 'station' | 'game'` on an activity, added to `toActivity` and
-  `toActivityRow` (`src/lib/queries.ts:289`, `:296`).
+  `toActivityRow` (`src/lib/queries.ts:289`, `:296`). **`'station'` marks one of
+  several; `'game'` marks the ONE activity that is the whole games phase**, whose
+  duration is that phase's duration.
 - `skipped: true` on an activity, session-local, written only as `true` and
   removed on restore. Stripped by the two template write paths (`:1579`,
   `:1826`) and ignored by the reader on a template.
 - One module deriving, from a plan: the ordered **active** station list, the
-  station count, and the games. Station N is the Nth active station in plan
-  order and is never stored.
+  station count, and the one active games activity. Station N is the Nth active
+  station in plan order and is never stored. **Nothing counts activities to learn
+  how many games run**; that is `gameCount`, and it belongs to COACH-8.
 - Marking affordances in the shared authoring seam, and a Not running tonight
   toggle on a dated session's station.
 - A line in the planner and the week plan editor stating what is declared, and
@@ -114,8 +119,12 @@ run tonight. Every screen then agrees, and nothing is inferred.
 **Non-goals.**
 - **No schema.** `sessions.activities` and `templates.activities` are
   unconstrained jsonb (`00-current-state-audit.md` section 27).
-- **Nothing is inferred from `Phase`, ever, at read time.** A phase-shaped hint
-  may seed the marking press, which a person confirms and which is then stored.
+- **Nothing is inferred from `Phase`, ever, at read time.** `Phase` is coaching
+  classification and nothing else. A phase-shaped hint may seed the marking
+  press, which a person confirms and which is then stored.
+- **No second `slot: 'game'` activity to represent a second pitch.** v1 expects
+  at most one active games activity; a plan carrying two is named on screen, not
+  silently resolved.
 - No `blocks`, no `block_id`, no block entity.
 - No stored station number.
 - No refusal: a coach who declares three stations is told, not blocked.
@@ -130,7 +139,9 @@ carries `slot` into every dated session for free.
 
 **Tests.** A key added to one mapper and not the other is lost, so both are
 asserted. `slot` round trips through a session and a week plan. `skipped` round
-trips through a session and is **absent** from a template written from it.
+trips through a session and is **absent** from a template written from it. **A
+session's total is unchanged by declaring a `slot`**, since `sessionMinutes`
+reads durations and nothing else.
 Station numbering follows plan order and skips a stood-down station. Restoring
 removes the key rather than writing `false`. A plan carrying no `slot` declares
 no stations and says so rather than guessing. A physical drill marked as a
@@ -231,7 +242,9 @@ group control offer the **same** list. That is client work, not a migration.
 **Non-goals.** **No imagery, satellite or otherwise.** No coordinates, no
 address, no navigation. **No weekly placement of any kind**, and no per session
 composer. **No `sessions.season_id`**: the season derives from the session's
-date. No layout versioning beyond the shape version.
+date. No layout versioning beyond the shape version. **No `created_by`,
+`updated_by` or `updated_at`**: `venues` carries none of them and says why, and
+the audit trail is the record of who changed a layout.
 
 **Reuse.** The whole shape discipline of `0046` and `src/lib/drillDiagram.ts`,
 and the "refuse to guess when zero or more than one matches" rule
@@ -253,9 +266,11 @@ including a location-shaped one, and holds against service_role. A zone count
 that disagrees with `slots` is refused, as are 3 stations and 3 games. Two
 layouts of the same kind and slots in one scope are refused. **A four zone value
 is refused on a `slots = 5` row**, which is the case a predicate over `zones`
-alone could not catch. Season resolution: one containing season wins; more than
-one resolves to the current season only if it is one of them; **zero renders no
-layout rather than falling back to a season that does not contain the date**.
+alone could not catch. **Season resolution fails closed**: exactly one containing
+season wins; **zero renders no layout and says the date falls in no season; more
+than one renders no layout and says it falls in more than one**. Neither failing
+branch consults `seasons.is_current`, and a test asserts that a 2025 session does
+not load the current season's allocation.
 
 **Manual smoke.** Configure Haggs Hill for this season and one age group, four
 and five station layouts plus one and two game visuals. Confirm both render
@@ -343,18 +358,22 @@ without destroying the station groups.
 - M3, `register_entries.game_bib_colour_override`.
 - Game resolution in `src/lib/bibs.ts`: game override, else the effective station
   bib.
-- The games are the activities declared `slot: 'game'` (COACH-2), never the
-  `Game` phase.
-- A recommendation: one game at 12 or fewer confirmed, two at 13 or more, aiming
-  at 5v5 or 6v6 and avoiding 7v7.
+- **A3, `gameCount: 1 | 2`** on the one activity declared `slot: 'game'`
+  (COACH-2), added to both mappers, session local and stripped from templates.
+  **No migration**: it rides `sessions.activities`.
+- A recommendation: `1` at 12 or fewer confirmed, `2` at 13 or more, aiming at
+  5v5 or 6v6 and avoiding 7v7. The coach accepts or overrides it, and **an
+  accepted count is never silently rewritten because attendance changed**.
 - **Game and side derive from the game bib colour's position** in the planned
-  ordering of the first `2 x G` colours of the fixed vocabulary: index 0 is game
-  1 side A, index 1 is game 1 side B, and so on. The UI offers only those
+  ordering of the first `2 x gameCount` colours of the fixed vocabulary: index 0
+  is game 1 side A, index 1 is game 1 side B, and so on. The UI offers only those
   colours, so each game shows two distinguishable colours and two games use four.
 - **The suggestion writes a game bib for every included player whose station
-  colour is not one of the game colours.** With five groups and two games the
-  fifth group's colour is not in play, so leaving it to the fallback would put a
-  whole group in no game.
+  colour is not one of the game colours.** With five groups and `gameCount = 2`
+  the fifth group's colour is not in play, so leaving it to the fallback would
+  put a whole group in no game.
+- **The venue's games layout is loaded by `gameCount`**: 1 loads the one game
+  layout, 2 loads the two game layout.
 - Suggested sides from the club team order: with two games the upper teams form
   the stronger game and the lower the development game, with the middle band
   split where the numbers need it; with one game the sides are balanced by
@@ -364,6 +383,10 @@ without destroying the station groups.
 
 **Non-goals.**
 - **The station bib plan is never written by this slice**, and a test asserts it.
+- **No second game activity**, ever, to represent a second pitch. Activities are
+  sequential and summed; one games phase is one activity with one duration.
+- **No per-player game number and no per-player side column**, and no stored
+  colour map.
 - **The thresholds are not policy.** One named adjustable place, with the
   reasoning beside them, producing a sentence and never a change.
 - **The recommendation never rewrites the plan.** Two planned games stay two.
@@ -378,8 +401,14 @@ nothing from the existing column in either direction, proven in the migration's
 self-verification in the manner of 0047.
 
 **Tests.** A game re-bib leaves `bib_colour_override` byte for byte unchanged,
-and leaves `present` and `included_in_groups` untouched. 12 recommends one game
-and 13 recommends two. A child nobody re-bibbed plays in their station colour.
+and leaves `present` and `included_in_groups` untouched. 12 recommends
+`gameCount = 1` and 13 recommends `2`. **An accepted count survives an attendance
+change that would now recommend the other**, and the screen says so rather than
+rewriting it. **A session's total, expected end and calendar length are identical
+with `gameCount` 1 and 2**, which is the whole point of it being a field rather
+than a second activity. `gameCount` round trips through a session and is
+**absent** from a template written from it. With no accepted count there are no
+game colours to offer. A child nobody re-bibbed plays in their station colour.
 Sides follow the club order and the middle band is the one that splits. **Five
 groups and two games leaves nobody without a game**, which is the case the
 station-colour fallback alone gets wrong. A colour outside the planned ordering

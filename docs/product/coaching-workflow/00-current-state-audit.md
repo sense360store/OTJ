@@ -514,23 +514,55 @@ is a club-level fact about five rows, not a per-player one: a player's ability
 context is `player → registration → team → that team's position in the club
 order`, all of which except the last already exists.
 
-## 20. The activity phase vocabulary already distinguishes games
+## 20. The activity phase vocabulary is coaching classification, not structure
+
+**Corrected. An earlier revision of this section concluded that the phase was
+"enough to derive the station list, the station numbers and the station count
+without storing anything". That is false, and the code below is what disproves
+it.**
 
 `Phase` (`src/lib/data.ts:9`) is `'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'`,
 and `PHASES` (`:533`) is the ordered list the planner and the week plan editor
-both render. `phaseFor` (`src/lib/drillPicker.ts:17`) already routes a social
-drill to `Game` and everything else to `Skill` when a drill is added from the
-library.
+both render.
 
-So a session already records which activities are small-sided games and which
-are station work, in a field every screen reads, and it records their order.
-**That is enough to derive the station list, the station numbers and the station
-count without storing anything** (`02-target-product-model.md` section 4). What
-it does not record is where anything is set up, which the venue layout answers at
-the venue, season and age group level rather than per session. **It also does not
-record which activities are stations**: section 4 of
-`02-target-product-model.md` explains why the phase cannot be read as though it
-did, since `phaseFor` sets it from the drill's four corners.
+**`phaseFor` (`src/lib/drillPicker.ts:17`) sets it from the drill's four-corners
+classification** when a drill is added from the library:
+
+```
+physical  -> Warm-Up
+social    -> Game
+otherwise -> Skill
+```
+
+So the phase records **what kind of drill was added**, not what part it plays on
+the night:
+
+- A **physical** drill lands in `Warm-Up` and can perfectly well be one of the
+  carousel stations.
+- A **social** drill lands in `Game` and that says nothing about whether it is
+  the evening's games phase.
+- The coach may also change a phase for coaching reasons that have nothing to do
+  with structure.
+
+**What the plan does record structurally today: nothing.** There is no field
+saying which activities are the carousel, which one is the games phase, or how
+many pitches run inside it. `sessions.activities` carries `phase`, `duration`,
+`drill_id` and `title`, and that is the whole of it (section 4).
+
+**What it does record usefully is order**, which is what station numbering can be
+built on **once the stations are declared**. The declaration is
+`02-target-product-model.md` section 4; it costs two mapper entries and no
+migration (section 27).
+
+**One further fact the phase cannot carry, and it matters for the arithmetic:**
+activities are sequential and `sessionMinutes` (`src/lib/data.ts:539`) sums their
+durations, so two simultaneous game pitches cannot be two activities without
+doubling the games phase in the session total, in `plannedMinutes`, in
+`src/lib/ics.ts` and in Live. That is why the games phase is one activity with a
+separate count field (`02-target-product-model.md` section 4b).
+
+Where anything is physically set up is not recorded either, and the venue layout
+answers it at the venue, season and age group level rather than per session.
 
 ## 18. Merged work: PR #189 (DRILL-02, authenticated half)
 

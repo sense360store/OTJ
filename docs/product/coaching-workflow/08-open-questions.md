@@ -64,7 +64,9 @@ decided, and the reasoning sits in the document that owns each.
 
 ### The station marker. Settled: `slot`
 
-An activity declares `slot: 'station' | 'game'`, and absence means neither. It is
+An activity declares `slot: 'station' | 'game'`, and absence means neither.
+`'station'` marks one of several carousel stations; `'game'` marks the **one**
+activity that is the whole games phase. It is
 **never inferred from `Phase`**, because `phaseFor` sets the phase from the
 drill's four-corners classification, so a physical drill lands in Warm-Up and a
 social drill lands in Game whatever part either plays on the night. No migration:
@@ -92,15 +94,21 @@ row rather than a string and a per-venue blob cannot reference it.
 `04-data-model-proposal.md` section 3.
 
 A session resolves its scope from its venue, its age group and its active station
-count, with the season derived from its date: exactly one containing season wins;
-more than one resolves to the current season only if it is one of them; zero
-renders no layout. **No branch picks a season that does not contain the date.**
+count, with the season derived from its date and **failing closed**: exactly one
+containing season wins; zero renders no layout and says the date falls in no
+season; more than one renders no layout and says it falls in more than one.
+**Neither failing branch consults `seasons.is_current`**, which may still be a
+default when an admin starts drawing a layout but never resolves a dated session.
+
+The table carries no `created_by`, `updated_by` or `updated_at`: `venues` carries
+none of them and says why, and the audit trail is the record of who changed a
+layout.
 
 ### The game colour mapping. Settled: deterministic, from the fixed order
 
-For `G` games, take the first `2 x G` colours of the fixed `BIB_COLOURS` order:
-index 0 is game 1 side A, index 1 is game 1 side B, index 2 is game 2 side A, and
-so on. So each game shows two distinguishable colours, two games use four, and a
+For the accepted `gameCount`, take the first `2 x gameCount` colours of the fixed
+`BIB_COLOURS` order: index 0 is game 1 side A, index 1 is game 1 side B, index 2
+is game 2 side A, and index 3 is game 2 side B. So each game shows two distinguishable colours, two games use four, and a
 child's game and side derive from their game bib colour's position.
 
 The UI offers only those colours, and the suggestion **writes a game bib for
@@ -160,7 +168,9 @@ This closed more questions than any other answer.
 | Was open | Answer |
 |---|---|
 | Which activities are the games | **The ones declared `slot: 'game'`.** Never the `Game` phase. |
-| How many games | **One at 12 or fewer confirmed, two at 13 or more.** A recommendation, never a rewrite. |
+| How many games | **One at 12 or fewer confirmed, two at 13 or more.** A recommendation the coach accepts or overrides, and an accepted count is never silently rewritten. |
+| How the count is represented | **`gameCount: 1 \| 2` on the one games activity.** Never a second activity: activities are sequential and summed, so two would double the games phase in the session total, the lifecycle and the calendar. |
+| What `slot: 'game'` marks | **The one games-phase activity**, whose duration is the whole phase. |
 | Target size | 5v5 or 6v6. Avoid 7v7 or larger. |
 | Are game bibs the same as station bibs | **No.** Two separate stored facts for one session. |
 | May a side wear two colours | **Reversed.** Each game gets two clearly distinguishable colours where possible, four across two games, and re-bibbing for the games is expected. |

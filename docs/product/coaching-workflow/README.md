@@ -66,6 +66,11 @@ through every planned station.
 inferred from the drill's coaching phase. Station numbers follow the plan order
 of the stations running tonight and are never stored.
 
+**The games phase is one activity**, whose duration is the whole phase. Whether
+one or two pitches run inside it is `gameCount` on that activity, not a second
+activity, so the session total, the derived lifecycle, the calendar export and
+Live's sequential model all stay correct untouched.
+
 **Five planned, four tonight: the coach chooses and nothing is deleted.** The
 station is marked `skipped` for that session, keeps its place and duration, and
 one press restores it. The week plan and the library drill are untouched.
@@ -82,8 +87,9 @@ changes.
 **Rotation.** Always clockwise, not configurable, with a subtle cue. **OTJ tracks
 no rotation state.** Previous and Next browse the drills.
 
-**Games.** A separate allocation with a **separate bib**. One game at 12 or fewer
-confirmed, two at 13 or more, aiming at 5v5 or 6v6. Two games band by the club's
+**Games.** A separate allocation with a **separate bib**. `gameCount` of 1 at 12
+or fewer confirmed, 2 at 13 or more, aiming at 5v5 or 6v6, accepted by the coach
+and never silently rewritten. Two games band by the club's
 ordered teams with the middle band as the bridge. Each game gets two
 distinguishable colours and two games use four, and every included player is
 given one that is in play; a child's game and side derive from their game bib
@@ -94,8 +100,8 @@ stored colour map. Planning the games never destroys the station plan.
 venue-global and never per team. Within one scope an admin saves four: stations
 for four, stations for five, one game, two games, as numbered rectangular zones
 on a clean schematic. OTJ loads the right one automatically, resolving the season
-from the session's own date and never picking one that does not contain it.
-Weekly coaches place nothing.
+from the session's own date and **failing closed**: zero or more than one
+containing season loads no layout and says which. Weekly coaches place nothing.
 
 **Delivery.** A setup map of labelled zones on a phone. Tap a station for a full
 screen: number, drill name, large diagram, objective, two or three coaching
@@ -119,6 +125,9 @@ Recorded because a design that is merely absent tends to be rebuilt.
 | Station blocks on `sessions` and `templates`, and `block_id` on an activity | Two keys on the activity carry it, with no migration. |
 | Inferring stations from the `Skill` phase and games from the `Game` phase | `phaseFor` sets the phase from the drill's four corners, so it records what kind of drill was added, not what part it plays. Declared explicitly instead. |
 | A single `venues.layout` jsonb column | It cannot express the venue, season and age group scope the product requires. Replaced by a small table, not by a weaker scope. |
+| Two `slot: 'game'` activities for two pitches | Activities are sequential and summed, so two would double the games phase in the total, the lifecycle and the calendar. One activity, one `gameCount`. |
+| A current-season fallback when a session's date matches no season | It would load this year's allocation onto an old session. Resolution fails closed instead. |
+| `created_by` and `updated_by` on `venue_layouts` | `venues` deliberately carries neither and says why. The audit trail records who. |
 | The frozen carousel starting-station map | OTJ tracks no running carousel, so there is nothing to protect from moving. |
 | Mid-carousel free-ordinal reassignment, and the questions around it | A colour appearing mid-session is a physical event on the grass. |
 | Live rotation delivery, one timer per rotation and a Rotate cue | Live administration. The live view is out of scope and unchanged. |

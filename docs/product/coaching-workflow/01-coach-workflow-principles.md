@@ -102,11 +102,17 @@ decided by a person. **Nothing is deleted**: the drill stays in the dated
 session's plan, marked as not running tonight, and one press restores it if more
 children confirm. The week plan and the library drill are untouched either way.
 
-**Target. A plan says explicitly which activities are the stations and which are
-the games.** It is not inferred from the drill's coaching phase, because that
-records what kind of drill was added rather than what part it plays on the night.
-A physical drill filed under Warm-Up can be a station, and a social drill filed
-under Game is not automatically one of the evening's small-sided games.
+**Target. A plan says explicitly which activities are the stations and which
+activity is the games phase.** It is not inferred from the drill's coaching
+phase, because that records what kind of drill was added rather than what part it
+plays on the night. A physical drill filed under Warm-Up can be a station, and a
+social drill filed under Game is not automatically the games phase.
+
+**The games phase is one activity, however many pitches run.** Its duration is
+the duration of the whole phase, and one or two pitches run inside it. Two
+simultaneous games are not two activities: the product runs activities in
+sequence and adds their durations, so two would claim the club plays football for
+twice as long as it does.
 
 **Station numbers follow the plan order of the stations running tonight.**
 Nothing stores a number.
@@ -290,7 +296,8 @@ Planning the games must not overwrite or destroy the station bib plan.
 
 - **12 or fewer confirmed: recommend 1 game.**
 - **13 or more confirmed: recommend 2 games.**
-- The coach may override.
+- The coach accepts it or picks the other, and **an accepted count is never
+  silently rewritten because attendance changed**.
 
 The threshold follows from the target size: one game holds twelve at 6v6, so a
 thirteenth child means a second game rather than a 7v7.

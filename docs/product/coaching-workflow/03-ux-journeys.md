@@ -37,7 +37,9 @@ schema, no new screen.
 3. **Add four or five station drills, and mark them as stations.** The planner
    states what the plan declares: "5 stations, 10 minutes each". Station numbers
    follow plan order, so reordering renumbers.
-4. **Add the games, and mark them as the games.** One or two.
+4. **Add the games phase, and mark it as the games.** **One activity**, whose
+   duration is the whole games phase. Whether one or two pitches run inside it is
+   an operational decision made later, not a second activity.
 
 **Marking is explicit, and that is the point.** The coaching phase of a drill
 says what kind of drill it is, not what part it plays on the night: a physical
@@ -175,9 +177,11 @@ coming".
 
 1. On the same session, the games section states what it recommends: **one game
    at 12 or fewer confirmed, two at 13 or more**, aiming at 5v5 or 6v6 and
-   avoiding 7v7. The coach may override.
-2. **The recommendation changes nothing.** A plan authored with two games keeps
-   two games; the coach is told what the attendance implies and decides.
+   avoiding 7v7. The coach accepts it or picks the other.
+2. **The recommendation changes nothing until it is accepted**, and once accepted
+   it is **not** silently rewritten because more replies arrived. The screen says
+   what the new attendance would recommend and leaves the decision to the coach.
+   Until then the count is simply unaccepted, which the readiness line names.
 3. OTJ proposes the sides:
    - **Two games**: the upper ordered teams form the stronger game, the lower
      ordered teams the development game, and the middle band is the flexible
@@ -256,7 +260,8 @@ read from its own date.
    *Reuses `ActivityDiagram` and `DrillDiagramView`, already merged.*
 5. **Previous station**, **Next station**, **Back to setup map**. All three are
    browsing. Nothing on the screen says where the session has got to.
-6. **The games.** The venue's game layout, and which named players and bibs are
+6. **The games.** The venue's game layout for the accepted count, one pitch or
+   two, and which named players and bibs are
    on each side.
 7. **Share** sends the protected session link to another coach through the phone's
    own share sheet. They sign in and see the same plan.

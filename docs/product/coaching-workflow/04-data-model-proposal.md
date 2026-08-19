@@ -22,6 +22,7 @@ table.**
 |---|---|---|---|---|---|
 | A1 | `slot: 'station' \| 'game'` on an activity | `sessions.activities`, `templates.activities` | COACH-2 | **No** | Low |
 | A2 | `skipped: true` on an activity | `sessions.activities` only | COACH-2 | **No** | Low |
+| A3 | `game_count: 1 \| 2` on the games activity | `sessions.activities` only | COACH-8 | **No** | Low |
 | M1 | `sort_order integer null` + partial unique index | `teams` | COACH-1 | Yes, gated | Low |
 | M2 | `venue_layouts` table | new | COACH-5 | Yes, gated | Medium |
 | M3 | `game_bib_colour_override text null` | `register_entries` | COACH-8 | Yes, gated | Low |
@@ -44,6 +45,8 @@ come back.
 | `venues.layout` jsonb column | All four layouts on the venue row | It cannot express the venue plus season plus age group scope. Section 3. |
 | Deriving stations from the `Skill` phase | Station identity with no new key | `phaseFor` sets the phase from the drill's corner, so the phase is not structure. Section 2. |
 | Deriving games from the `Game` phase | Game identity with no new key | Same. A social drill lands in `Game` and that proves nothing. |
+| Two `slot: 'game'` activities for two pitches | How many games run at once | Activities are sequential and their durations are summed, so two would double the games phase in the session total, the derived lifecycle and the calendar, and show two steps in Live. One activity, one `game_count`. Section 2. |
+| `created_by` and `updated_by` on `venue_layouts` | Accountability | `venues` deliberately has neither and says so; the audit trail already records who. Section 3. |
 
 ### The deliberate non-changes
 
@@ -54,6 +57,8 @@ come back.
   derives through the team's position in the club order (M1).
 - **No per-player game number and no per-player side column.** Both derive from
   the game bib colour's position in the planned ordering (section 4).
+- **No second game activity for a second pitch.** One games phase is one
+  activity; `game_count` says how many pitches run inside it (section 2).
 - **No session-level game colour map.** The ordering is a pure function of the
   fixed vocabulary and the game count. Only implementation evidence that the
   deterministic rule cannot work would justify one.
@@ -133,16 +138,45 @@ a data key and names what it is.
 - **Meaningful only on `slot: 'station'`** in v1. The reader ignores it
   elsewhere, so a stray value can hide neither a game nor a warm-up.
 
+### A3: `game_count`
+
+```jsonc
+{ "phase": "Game", "drill_id": "…", "duration": 20, "slot": "game", "game_count": 2 }
+```
+
+- **One activity is the whole games phase**, and its `duration` is that phase's
+  duration. `game_count` says how many pitches run **inside** it.
+- Closed vocabulary: `1` or `2`. **Absent means the operational count has not
+  been accepted yet**, which is a real state and not a default.
+- **Meaningful only on `slot: 'game'`**, and v1 expects at most one active such
+  activity per session.
+- **Session local**, exactly like `skipped`: the two template write paths
+  (`:1579`, `:1826`) strip it and the reader ignores it on a template, so a week
+  plan authored in June carries no commitment about September's attendance.
+- **The case mapping is real here**, unlike `slot` and `skipped`: `gameCount` in
+  `Activity`, `game_count` in `ActivityRow`, which is the ordinary
+  `drillId`/`drill_id` convention. Both mappers name it or it is lost.
+
+**Why this is a field and not a second activity.** Activities are sequential and
+`sessionMinutes` (`src/lib/data.ts:539`) sums their durations, `plannedMinutes`
+(`src/lib/sessionLifecycle.ts:150`) reimplements that sum behind the derived
+lifecycle, `src/lib/ics.ts` takes the calendar length from the same seam, and
+`LiveSession.tsx` walks the list one at a time. Two pitches running at the same
+time modelled as two activities would double the games phase in all four. **One
+activity with one duration is what every one of them already assumes, so this
+correction leaves all four untouched.**
+
 ### What is not guaranteed, stated plainly
 
-`sessions.activities` has no check constraint, so **these two keys earn none of
+`sessions.activities` has no check constraint, so **these three keys earn none of
 the database guarantees `drills.diagram` and `boards.tokens` have**. The client
 allow-list is the only boundary, exactly as it already is for `phase`,
 `duration`, `title` and `drill_id`.
 
-That is acceptable for the same reason it is acceptable today: neither key can
-carry a person, a place or free text. `slot` is one of two words and `skipped` is
-`true` or absent. Nothing here needs a privacy constraint to protect.
+That is acceptable for the same reason it is acceptable today: none of them can
+carry a person, a place or free text. `slot` is one of two words, `skipped` is
+`true` or absent, and `game_count` is `1` or `2`. Nothing here needs a privacy
+constraint to protect.
 
 ### No backfill, and nothing inferred at read time
 
@@ -193,10 +227,10 @@ create table public.venue_layouts (
   kind       text not null,
   slots      integer not null,
   zones      jsonb not null,
-  created_by uuid references public.profiles (id) on delete set null,
-  updated_by uuid references public.profiles (id) on delete set null,
+  -- No created_by, no updated_by and no updated_at. See "The columns that
+  -- are NOT here" below: venues deliberately carries none of them either,
+  -- and audit_venue_layouts records who changed what.
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
 
   -- Club scoped composite references. The column list on any future
   -- set null would be load bearing for the reason 0044 states.
@@ -271,16 +305,69 @@ discipline rather than inventing a third:
   new `src/lib/venueLayout.ts` sharing `clampFraction` with the others.
 - **Bounds**: a name length cap, and a minimum zone size so a zone cannot become
   an ungrabbable sliver.
-- **The zone count equals `slots`, enforced against the row rather than in
-  prose.** `venue_layout_is_valid(zones jsonb, p_slots integer)` takes both, so
-  the count is compared with the column it must match. An earlier draft passed
-  `zones` alone and stated the equality as a bound, which the database could not
-  have enforced: a four zone value would have been storable on a `slots = 5` row
-  and the five station renderer would have received four zones.
+
+### What the database boundary must actually be able to enforce
+
+Stated as a checklist, because an earlier draft claimed an enforcement the
+proposed signature could not deliver: it passed `zones` alone while the prose
+said the zone count equals `slots`, so a four zone value was storable on a
+`slots = 5` row and the five station renderer would have received four zones.
+
+| Must refuse | Where |
+|---|---|
+| An unrecognised `version` | `venue_layout_is_valid` |
+| A key outside the allow-list, at any depth | `venue_layout_is_valid`, in the manner of `0046` |
+| A coordinate outside 0 to 1, or a zone smaller than the minimum | `venue_layout_is_valid` |
+| A zone count that is not `slots` | **`venue_layout_is_valid(zones, slots)`**, which is why it takes the pair |
+| `kind = 'stations'` with `slots` not in (4, 5) | `venue_layouts_slots_valid` |
+| `kind = 'games'` with `slots` not in (1, 2) | `venue_layouts_slots_valid` |
+
+**Two functions, or one taking the pair?** One taking the pair, because the zone
+count is a property of the pair and splitting it would put half a rule in a
+second place. The alternative considered was a shape-only validator plus a
+separate `check (jsonb_array_length(zones->'zones') = slots)`; it was rejected
+because that expression errors when `zones->'zones'` is not an array, which the
+shape half has to establish first, so the two checks would have an ordering
+dependency the database does not promise. `is_bib_colour` and the `0046`
+predicates are the precedent for an immutable helper doing the whole job.
+
+**The migration is not written here**, and its self-verification proves each row
+of that table by attempting a refused value.
 
 **It must hold no person, no address, no postcode, no latitude or longitude, no
 map tile URL and no imagery reference.** The allow-list makes each
 unrepresentable rather than discouraged.
+
+### The columns that are NOT here, and why
+
+The first draft of this table carried `created_by`, `updated_by`, `created_at`
+and `updated_at`, while claiming to mirror `venues`. **It did not mirror
+`venues`, and `venues` is right.** `0044` gives `venues` exactly
+`id, club_id, name, created_at` and states the reason in its own comment:
+
+> No `created_by` column either. Venues are `club.manage` configuration with no
+> ownership concept, and `audit_venues` already records who created each one.
+
+A layout is the same class of thing, so the same reasoning applies without
+modification:
+
+| Column | Kept? | Why |
+|---|---|---|
+| `created_by` | **No** | No ownership concept. Every write takes `club.manage`, and the audit trail records who. |
+| `updated_by` | **No** | Same, and it is the field most likely to be read as ownership by a future screen that then invents an owner-edits rule this table does not have. |
+| `updated_at` | **No** | No consumer. "When was this layout last redrawn" is an audit-feed question, and the feed answers it with **who** as well. |
+| `created_at` | **Yes** | Mirrors `venues` exactly. |
+
+**No client-writable accountability field remains, so there is nothing to
+forge.** That is the point of removing them rather than defending them: `venues`
+avoids the forgery question entirely by not having the fields, and copying that
+is cheaper than copying `seasons`' pattern of pinning `created_by = auth.uid()`
+in an insert policy.
+
+If an admin screen later genuinely needs "last redrawn", the honest options are
+the audit feed, which already carries it, or a column added then with the
+consumer visible. **A provenance-looking field is not kept because it looks
+useful.**
 
 ### RLS, grants and audit
 
@@ -304,9 +391,11 @@ Club wide read with no capability, because a coach needs to see where the
 stations go and the row carries no child data. `club.manage` write, because it is
 admin configuration. Grants are explicit, which is the 0012 lesson.
 
-**Audit.** This is a decision the migration must make rather than inherit.
-Recommended: audit create, update and delete at the same granularity as venues,
-under new source values. **One pleasant consequence of the table:** because
+**Audit, and it now carries more weight.** With `created_by` and `updated_by`
+removed, the audit trail is the **only** record of who changed a layout, exactly
+as it is for venues. So auditing create, update and delete is not optional
+polish; it is what makes the smaller table honest. The migration decides the
+source values. **One pleasant consequence of the table:** because
 `layout` is no longer a column on `venues`, `audit_venues()` and
 `describeActivityEvent`'s "Venue renamed" label (`src/lib/activityView.ts:438`)
 **stay true**, and the label correction the previous revision had to schedule
@@ -321,33 +410,37 @@ disappears.
 | Station count | active stations in the plan (section 2) |
 | Season | **derived**, below |
 
-**Season derivation.** From `sessions.date` against `seasons.starts_on` and
-`seasons.ends_on`:
+**Season derivation fails closed.** From `sessions.date` against
+`seasons.starts_on` and `seasons.ends_on`:
 
 | Seasons containing the date | Result |
 |---|---|
 | Exactly one | That season. |
-| More than one | The current season **if it is one of them**, otherwise no layout. |
-| Zero | **No layout**, said in one sentence. |
+| Zero | **Unresolved.** No layout. The screen says the session's date falls in no season. |
+| More than one | **Ambiguous.** No layout. The screen says the date falls in more than one. |
 
-**Every branch is date-consistent, and none of them guesses.** An earlier draft
-fell back to `seasons.is_current` whenever zero or two seasons matched, and that
-was wrong in the zero case for the obvious reason: opening a 2025 session while
-2026/27 is current would have loaded the 2026/27 allocation and shown a coach
-ground that was never theirs on that night. A season that does not contain the
-date is not a fallback, it is a different season.
+**There is no fallback to `seasons.is_current` in either failing branch.** Two
+earlier drafts had one: the first fell back whenever zero or more than one
+matched, the second kept a narrower tie-break for the more-than-one case. Both
+are removed. A season that does not contain the date is a different season, and
+choosing one to fill a gap would load the 2026/27 allocation onto a 2025 session
+and show a coach ground that was never theirs.
 
-Season overlap is deliberately unconstrained by `0031`, which is why the
-more-than-one branch needs a tie-break at all; restricting it to a season that
-actually contains the date keeps the tie-break honest. "Refuse to guess when
-zero or more than one matches" is the rule `matchVenueByLocation`
-(`src/lib/venues.ts:96`) already applies, and this is now a faithful second
-instance of it rather than a partial one.
+**`is_current` may still be a default when an admin begins creating
+configuration**, because that is a person choosing a scope with the answer in
+front of them and able to change it. **It must never override the date when
+resolving an existing dated session.**
 
-**A session outside every season is a real state**, not an error: a date before
-the club's first season, in a gap between two, or beyond the last one's
-`ends_on`. It renders as no layout with a link an admin can follow, exactly like
-a scope whose layouts were never drawn.
+Season overlap is deliberately unconstrained by `0031`, so more than one match is
+a configuration problem with a human answer. Naming it is more useful than
+picking one, and it is the same shape as `matchVenueByLocation`
+(`src/lib/venues.ts:96`), which refuses to guess when zero or more than one venue
+matches.
+
+**Both failing branches are real states, not errors**, and both render exactly
+like a scope whose layouts were never drawn: a date before the club's first
+season, in a gap between two, beyond the last one's `ends_on`, or inside two that
+overlap. A link an admin can follow sits beside the sentence.
 
 **`sessions` gains no `season_id`.** A stored season would be a second fact that
 can disagree with the date, and the derivation costs one comparison against rows
@@ -412,11 +505,11 @@ game bib    = game override,    else the effective station bib
 `src/lib/bibs.ts` owns both rules and no screen resolves a bib itself.
 
 **The fallback is narrower than it looks, and the suggestion must close the
-gap.** The game colours are the first `2 x G` of the vocabulary, and the station
-colours are the first `N` where `N` is the group count. With five groups and two
-games, which is the ordinary shape at 24 or more confirmed, the fifth group's
-colour is **not** one of the four in play for the games. Falling back to it would
-resolve to no game for a whole group.
+gap.** The game colours are the first `2 x game_count` of the vocabulary, and the
+station colours are the first `N` where `N` is the group count. With five groups
+and `game_count = 2`, which is the ordinary shape at 24 or more confirmed, the
+fifth group's colour is **not** one of the four in play for the games. Falling
+back to it would resolve to no game for a whole group.
 
 So the suggested allocation **writes a game override for every included player
 whose station colour is not one of the game colours**, and the fallback then
@@ -430,14 +523,17 @@ to a game, so a player left on an out-of-list colour is a named gap on the
 screen, not a silent absence from both games.
 
 **Game and side derive from the colour**, by its position in the planned ordering
-of the first `2 x G` colours of the fixed `BIB_COLOURS` vocabulary: index 0 is
-game 1 side A, index 1 is game 1 side B, index 2 is game 2 side A, and so on. A
-colour outside that list resolves to **no game** and shows as unassigned, never
-guessed into the nearest one.
+of the first `2 x game_count` colours of the fixed `BIB_COLOURS` vocabulary:
+index 0 is game 1 side A, index 1 is game 1 side B, index 2 is game 2 side A, and
+so on. **`game_count` (A3) is the only input besides the fixed vocabulary**, so
+with no accepted count there is no ordering and no colours to offer. A colour
+outside the list resolves to **no game** and shows as unassigned, never guessed
+into the nearest one.
 
-**So no per-player game number column, no per-player side column, and no
-session-level colour map**, and the UI offers only the colours in the list, which
-makes an out-of-list value unreachable through the product.
+**So no per-player game number column, no per-player side column, no
+session-level colour map and no second game activity**, and the UI offers only
+the colours in the list, which makes an out-of-list value unreachable through the
+product.
 
 ### What it copies, and what it must not
 
@@ -652,7 +748,8 @@ authoring track touch no migration and proceed on their own dependencies.
   combine adjacent bands. It is not a hard blocker: with `sort_order` null the
   suggestion keeps each team whole and says the order is unset.
 - M2 must precede the setup map.
-- M3 must precede the game plan.
+- M3 must precede the game plan. A3 rides `sessions.activities` and needs no
+  migration, so it can land with or before it.
 - M4 must precede adaptation.
 - M5, if it ever happens, is last.
 
@@ -683,8 +780,9 @@ on a session, or to apply one edit to both deliveries.
   screens that offer an age group.
 - `player_spond_links`, `spond_event_responses`, `spond_events`, `spond_groups`:
   unchanged, read only, and Spond stays read-only from OTJ.
-- `sessions` and `templates`: **no column change.** Two new keys inside the
-  existing `activities` jsonb, and nothing else.
+- `sessions` and `templates`: **no column change.** Three new keys inside the
+  existing `activities` jsonb, one of which (`game_count`) never reaches
+  `templates`, and nothing else. **No `sessions.season_id`.**
 - `venues`: **unchanged**, which is what keeps `audit_venues()` and its "Venue
   renamed" label true.
 - `register_entries`: one added column and nothing else.
