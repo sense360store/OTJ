@@ -491,6 +491,13 @@ correct today, because today a zero total can only mean an empty plan. It stops
 being correct the moment a filter can empty the sum, which is exactly what the
 target rule introduces.
 
+**Superseded by COACH-2A.** This section is a snapshot captured before that
+slice, and the quoted body above is no longer what the file contains. All four
+implementations now defer to `src/lib/activityStructure.ts`, and
+`plannedMinutes` tells the two zeros apart rather than falling back on either.
+`04-data-model-proposal.md` section 2 carries the corrected rule and why the
+mechanism first proposed for it was rejected.
+
 **The Deno implementation is a different runtime, not a second call site.**
 `share.ts` runs in Supabase Edge Functions and cannot import from `src/lib/`.
 Its `PublicActivity` allow list is `phase`, `duration`, `drillRef`,

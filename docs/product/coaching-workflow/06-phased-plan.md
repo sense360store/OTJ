@@ -119,10 +119,10 @@ run tonight. Every screen then agrees, and nothing is inferred.
 
   | # | Consumer | Work |
   |---|---|---|
-  | 1 | `sessionMinutes`, `src/lib/data.ts:539` | Apply the rule. Six session surfaces inherit it |
-  | 2 | `plannedMinutes`, `src/lib/sessionLifecycle.ts:150` | Apply the rule, **and fix the zero branch**: the fallback must key on there being no activities to sum, not on the sum being zero, or an all-stood-down session becomes a synthetic 90 minutes |
-  | 3 | `src/routes/Planner.tsx:733` | An inline reduce that does **not** import `sessionMinutes`. It is the "min total" headline the coach reads while standing the station down |
-  | 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts:797-806` | **Deno.** Same rule, its own runtime; it cannot import `src/lib/` |
+  | 1 | `sessionMinutes`, `src/lib/data.ts` | Apply the rule. Six session surfaces inherit it |
+  | 2 | `plannedMinutes`, `src/lib/sessionLifecycle.ts` | Apply the rule, **and fix the zero branch**, so an all-stood-down session is not answered as a synthetic 90 minutes. Key it on WHY the sum is zero, never on `activities.length`: see the correction in `04-data-model-proposal.md` section 2, which records why the mechanism first proposed there was rejected at implementation |
+  | 3 | `src/routes/Planner.tsx` | An inline reduce that does **not** import `sessionMinutes`. It is the "min total" headline the coach reads while standing the station down |
+  | 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts` | **Deno.** Same rule, its own runtime; it cannot import `src/lib/` |
 
   **Centralise the browser three behind one predicate where practical.** Do not
   assume all four can share one helper: the Edge module is a different runtime

@@ -404,9 +404,15 @@ an empty plan. Once a filter can empty the sum, that reading is wrong: a session
 whose every operational activity is stood down would become a synthetic 90 minute
 session, lengthening the night the rule exists to shorten.
 
-**The correction: the fallback applies when there are no activities to sum, not
-when the sum comes to zero.** A plan that holds activities and stands all the
-operational ones down is a real zero and renders as one.
+**The correction: a plan that holds activities and stands all the operational
+ones down is a real zero and renders as one.** This section first said the
+fallback should apply when there are no activities to sum. That mechanism was
+rejected at implementation, because it also swallows a plan whose durations are
+zero, absent, null or NaN, and such a session would end at its own start
+instant. Zero reaches the function two ways and they are opposite facts, so the
+shipped rule keys on which one happened: something stood down is a real zero,
+nothing stood down is the plan nobody filled in that the fallback has always
+covered. `04-data-model-proposal.md` section 2 carries the reasoning.
 
 **It is inert until someone stands something down.** No existing session carries
 `skipped`, so every total in the database today is unchanged, and the derived

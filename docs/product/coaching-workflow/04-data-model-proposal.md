@@ -218,11 +218,31 @@ Deno and cannot import from `src/lib/` at all. `src/lib/ics.ts` inherits from th
 first two. Each of the four must honour the rule, and the plan must not claim it
 lands in two functions.
 
-**`plannedMinutes` additionally needs its zero branch corrected.** It reads
+**`plannedMinutes` additionally needs its zero branch corrected.** It read
 `total > 0 ? total : FALLBACK_SESSION_MINUTES`, so a session with every
 operational activity stood down would sum to zero and be answered as a synthetic
-90 minute session. The fallback must key on there being no activities to sum
-rather than on the sum being zero.
+90 minute session.
+
+**Corrected at implementation, and the mechanism this document proposed was
+rejected there.** It said the fallback must key on there being no activities to
+sum rather than on the sum being zero. That is one line and it is wrong in the
+direction the lifecycle exists to protect: it also swallows a plan whose
+durations are zero, absent, null or NaN, and every one of those is reachable
+without a coach doing anything unusual, because the planner stores a cleared
+minutes box as `parseInt(...) || 0` and a drill saved with a blank duration
+reads back as `0` and is copied straight onto the activity by `drillPicker`.
+Such a session would end at its own start instant and leave every operational
+surface while the coach was standing on the pitch.
+
+**Zero reaches the function two ways and they are opposite facts**, so the
+shipped rule keys on which one happened. Something stood down means the coach
+emptied a plan they built, and zero is the answer. Nothing stood down means the
+plan carries no usable minutes, which is the case the fallback has always
+covered, unchanged. The result is floored at zero as well, because `total > 0`
+was also the only thing stopping a negative sum putting the expected end before
+the start. `src/lib/sessionLifecycle.ts` carries the rule and the reasoning, and
+`src/lib/sessionLifecycle.test.ts` enumerates every shape whose answer must not
+move.
 
 **It is inert until something is stood down.** No existing row carries `skipped`,
 so every stored session's total is unchanged and the derived lifecycle places

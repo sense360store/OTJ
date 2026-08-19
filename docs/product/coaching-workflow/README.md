@@ -172,10 +172,10 @@ source and listed in `00-current-state-audit.md` section 17:
 
 | | |
 |---|---|
-| `sessionMinutes` | `src/lib/data.ts:539` |
-| `plannedMinutes` | `src/lib/sessionLifecycle.ts:150`, **and its zero branch needs correcting** so an all-stood-down session is not answered as 90 minutes |
-| The planner's own inline reduce | `src/routes/Planner.tsx:733`, which does not import `sessionMinutes` |
-| `buildSessionSnapshot` | `supabase/functions/_shared/share.ts:797-806`, **in Deno**, so one Edge Function deploy |
+| `sessionMinutes` | `src/lib/data.ts` |
+| `plannedMinutes` | `src/lib/sessionLifecycle.ts`, **and its zero branch needed correcting** so an all-stood-down session is not answered as 90 minutes. Keyed on WHY the sum is zero, never on `activities.length`: `04-data-model-proposal.md` section 2 records why |
+| The planner's own inline reduce | `src/routes/Planner.tsx`, which did not import `sessionMinutes` and now does |
+| `buildSessionSnapshot` | `supabase/functions/_shared/share.ts`, **in Deno**, so one Edge Function deploy |
 
 `src/lib/ics.ts` inherits from the first two. A five station plan delivered as
 four therefore does not overstate the night by a rotation anywhere. It is inert
