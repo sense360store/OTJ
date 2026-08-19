@@ -55,8 +55,8 @@ was a designed mechanism in the previous revision, and each is now out of scope.
 | Two `slot: 'game'` activities for two pitches | How many games run at once | Activities are sequential and their durations are summed, so two would double the games phase in the session total, the derived lifecycle and the calendar export, and show two steps in Live. One activity, one `gameCount`. |
 | `created_by` and `updated_by` on `venue_layouts` | Accountability | `venues` deliberately carries neither and says why; the audit trail already records who. |
 
-**Net effect on the schema: six proposed structures became three columns and one
-small table**, plus two keys inside an existing unconstrained jsonb array that
+**Net effect on the schema: six proposed structures became four columns and one
+small table**, plus three keys inside an existing unconstrained jsonb array that
 need no migration at all.
 
 **Net effect on the product: nothing OTJ does depends on OTJ being correct about
@@ -104,9 +104,14 @@ run tonight. Every screen then agrees, and nothing is inferred.
   `toActivityRow` (`src/lib/queries.ts:289`, `:296`). **`'station'` marks one of
   several; `'game'` marks the ONE activity that is the whole games phase**, whose
   duration is that phase's duration.
-- `skipped: true` on an activity, session-local, written only as `true` and
-  removed on restore. Stripped by the two template write paths (`:1579`,
-  `:1826`) and ignored by the reader on a template.
+- `skipped: true` on an activity, **on any activity carrying a `slot`**, written
+  only as `true` and removed on restore. Session local through one named helper
+  called by the template write paths (`:1579`, `:1826`) and by the template read
+  (`:385`), because the shared mappers cannot do it.
+- **`sessionMinutes` and `plannedMinutes` skip a stood-down activity**, and
+  `src/lib/ics.ts` inherits it. This is the one existing function this programme
+  changes; it is inert until something is stood down, since no stored row carries
+  `skipped`.
 - One module deriving, from a plan: the ordered **active** station list, the
   station count, and the one active games activity. Station N is the Nth active
   station in plan order and is never stored. **Nothing counts activities to learn
@@ -139,9 +144,14 @@ carries `slot` into every dated session for free.
 
 **Tests.** A key added to one mapper and not the other is lost, so both are
 asserted. `slot` round trips through a session and a week plan. `skipped` round
-trips through a session and is **absent** from a template written from it. **A
-session's total is unchanged by declaring a `slot`**, since `sessionMinutes`
-reads durations and nothing else.
+trips through a session and is **absent** from a template written from it,
+through the one named helper both template write paths and the template read
+call, because the shared mappers cannot make a key session local by themselves.
+**A session's total is unchanged by declaring a `slot`**, and **falls by exactly
+one activity's duration when that activity is stood down**, which is the one
+existing behaviour this programme changes. **Every session that carries no
+`skipped` totals exactly what it totals today**, asserted directly, because that
+is what makes touching `sessionMinutes` low risk.
 Station numbering follows plan order and skips a stood-down station. Restoring
 removes the key rather than writing `false`. A plan carrying no `slot` declares
 no stations and says so rather than guessing. A physical drill marked as a
@@ -306,8 +316,11 @@ here.
 
 **Database.** None.
 
-**Tests.** A session whose scope has no layout for its count says so in one
-sentence and blocks nothing. A session with four active stations loads the four
+**Tests.** The four honest "no layout" answers are distinguished: none drawn for
+this scope yet, an unresolved season, an ambiguous season, and **fewer than four
+active stations, which no admin can fix because the constraint refuses a three
+station layout**. An unset `sessions.age_group` reads as unresolved rather than
+matching nothing silently. Each says which, and none blocks anything. A session with four active stations loads the four
 station layout, and standing one of five down moves it to the four station
 layout. A session in a different age group at the same venue loads its own
 layout. Zone labels carry number and name, never colour alone. Screen-level tests
@@ -678,12 +691,14 @@ natural unit of editing, and no unbounded blob. It also **removes** a scheduled
 correction: with the layout off `venues`, `audit_venues()` and its "Venue
 renamed" label stay true.
 
-**Is deriving the season from the date safe, given seasons may overlap?** It is
-safe because it refuses to guess: exactly one containing season wins, zero or two
-fall back to the current season, and neither renders nothing. The alternative,
-`sessions.season_id`, is a second fact that can disagree with the date. The
-residual is that a session dated inside two overlapping seasons quietly uses the
-current one, which is the honest answer and is stated on the screen.
+**Is deriving the season from the date safe, given seasons may overlap?** It is,
+now that it **fails closed in both directions**: exactly one containing season
+wins, and zero or more than one loads no layout and says which. An earlier draft
+of this very paragraph still described falling back to the current season and
+called the residual "quietly uses the current one", which was the wrong answer
+written down twice; review caught it surviving here after the model had been
+corrected. There is no fallback. The alternative, `sessions.season_id`, is a
+second fact that can disagree with the date, and it stays rejected.
 
 **Is the deterministic game colour rule actually deterministic?** It is a pure
 function of the fixed `BIB_COLOURS` order and the game count, both of which every

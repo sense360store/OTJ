@@ -132,10 +132,11 @@ child's name outside the authenticated app at all**.
 Three of the four proposed migrations are ordinary columns that change no policy
 and no grant. The fourth is a new table. Three carry an obligation.
 
-**The two activity keys carry none.** `slot` is one of two words and `skipped` is
-`true` or absent (`04-data-model-proposal.md` section 2). Neither can hold a
-person, a place or free text, which is why riding an unconstrained jsonb column
-is acceptable here and would not be for a diagram or a layout.
+**The three activity keys carry none.** `slot` is one of two words, `skipped` is
+`true` or absent, and `game_count` is `1` or `2`
+(`04-data-model-proposal.md` section 2). None can hold a person, a place or free
+text, which is why riding an unconstrained jsonb column is acceptable here and
+would not be for a diagram or a layout.
 
 **`register_entries.game_bib_colour_override`** names a child's bib for one
 session. It is the same class of field as `bib_colour_override`, which is already
@@ -219,7 +220,7 @@ auto-merged:
 
 | Work | Gate | Why |
 |---|---|---|
-| A1 and A2, `slot` and `skipped` on an activity | **Ordinary PR review.** No migration. | Two closed-vocabulary keys that can hold no person, place or free text. |
+| A1, A2 and A3: `slot`, `skipped` and `game_count` on an activity | **Ordinary PR review.** No migration. | Three closed-vocabulary keys that can hold no person, place or free text. |
 | M1 `teams.sort_order` | Migration review | Any `supabase/migrations/` change. |
 | M2 `venue_layouts` | Migration review, plus shape-boundary review, plus a policy and grant review | A new table with new policies and grants, a new jsonb shape boundary, and a new check constraint. The largest review in the programme. |
 | M3 `register_entries.game_bib_colour_override` | Migration review, plus a deny-list update | It names a child's bib. Prove the migration copies nothing from the existing column, in the manner of 0047. |

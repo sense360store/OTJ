@@ -15,8 +15,9 @@ head it was written against.
 
 ## 1. Summary of anticipated change
 
-**Two activity keys that need no migration, three single columns, and one small
-table.**
+**Three activity keys that need no migration, four columns, and one small
+table.** M4 is two columns, not one, which is why the column count is four rather
+than three.
 
 | # | Change | Where | Slice | Migration | Risk |
 |---|---|---|---|---|---|
@@ -73,7 +74,7 @@ come back.
 
 ---
 
-## 2. A1 and A2: two keys on an activity, and no migration
+## 2. A1, A2 and A3: three keys on an activity, and no migration
 
 ### Why this is not a migration
 
@@ -135,8 +136,13 @@ a data key and names what it is.
 - **Session-local.** The two template write paths (`:1579`, `:1826`) strip it,
   and the reader ignores it on a template. Both ends agree and neither depends on
   the other, and ignoring it fails towards running the drill.
-- **Meaningful only on `slot: 'station'`** in v1. The reader ignores it
-  elsewhere, so a stray value can hide neither a game nor a warm-up.
+- **Meaningful on any activity carrying a `slot`**, station or games. A coach who
+  decides there are no games tonight stands the games activity down the same way
+  they stand a station down, which is what makes "at most one **active** games
+  activity" mean anything. The reader ignores it on an activity with no `slot`,
+  so a stray value can hide neither a warm-up nor a cool-down.
+- **A stood-down activity contributes nothing to the session's length.** See
+  "The one existing function this changes" below.
 
 ### A3: `game_count`
 
@@ -150,9 +156,9 @@ a data key and names what it is.
   been accepted yet**, which is a real state and not a default.
 - **Meaningful only on `slot: 'game'`**, and v1 expects at most one active such
   activity per session.
-- **Session local**, exactly like `skipped`: the two template write paths
-  (`:1579`, `:1826`) strip it and the reader ignores it on a template, so a week
-  plan authored in June carries no commitment about September's attendance.
+- **Session local**, exactly like `skipped`, and delivered by the contract below
+  rather than by the mappers, so a week plan authored in June carries no
+  commitment about September's attendance.
 - **The case mapping is real here**, unlike `slot` and `skipped`: `gameCount` in
   `Activity`, `game_count` in `ActivityRow`, which is the ordinary
   `drillId`/`drill_id` convention. Both mappers name it or it is lost.
@@ -165,6 +171,46 @@ lifecycle, `src/lib/ics.ts` takes the calendar length from the same seam, and
 time modelled as two activities would double the games phase in all four. **One
 activity with one duration is what every one of them already assumes, so this
 correction leaves all four untouched.**
+
+### The session-local contract, because the mappers cannot deliver it alone
+
+**Corrected after review.** `skipped` and `game_count` are session local; `slot`
+is not. The natural reading of "the template write paths strip it" was that
+`toActivityRow` does the stripping, and **it cannot**: both template and session
+reads call the same `toActivity`, and all three writes call the same
+`toActivityRow` (`00-current-state-audit.md` section 27). A shared mapper cannot
+tell which side it is on, so adding a key to it preserves that key for templates
+too, and omitting it loses the key from sessions.
+
+| Part | Who |
+|---|---|
+| Carry all three keys faithfully | `toActivity` and `toActivityRow`, shared and context free |
+| Strip the session-local keys on the way into a template | **One named helper**, called by the template write paths (`:1579`, `:1826`) |
+| Ignore the session-local keys on the way out of a template | The same helper, applied to the template read (`:385`) |
+
+**Both ends deliberately**, so a row that predates the helper, or one written by
+a future hand-rolled call, still behaves. **One helper for both keys**, so a
+third session-local key later joins a list rather than growing a code path.
+
+### The one existing function this changes
+
+Every other claim in this document is additive. This one is not, and review is
+what caught it.
+
+**A stood-down activity must not count towards the session's length.** Rotations
+follow the active stations, so a five station plan delivered as four runs four
+rotations; counting the fifth would overstate the night by one rotation in the
+planner, in the expected end and in the calendar export. A stood-down games phase
+is the same.
+
+So `sessionMinutes` (`src/lib/data.ts:539`) and `plannedMinutes`
+(`src/lib/sessionLifecycle.ts:150`) skip an activity carrying `skipped: true`,
+and `src/lib/ics.ts` inherits it from the same seam.
+
+**It is inert until something is stood down.** No existing row carries `skipped`,
+so every stored session's total is unchanged and the derived lifecycle places
+every existing session exactly where it does now. That is what keeps a change to
+a function this widely read low risk, and a test should assert it directly.
 
 ### What is not guaranteed, stated plainly
 
@@ -683,10 +729,19 @@ that moment.
 list shows; every policy on `drills` is unchanged, so an adaptation is as
 readable as any other drill to anyone who can reach the session that runs it.
 
-**No new policy.** An ordinary column on `drills`; the four live policies already
+**No new policy.** Ordinary columns on `drills`; the four live policies already
 cover every column. **Audit**: `audit_drills()` (0037) records an update only
-when corner, level or duration changed, and setting `variant_of` happens at
+when corner, level or duration changed, and setting either column happens at
 insert, which already emits `drill.created`.
+
+**Rollback, and the two columns are not equally safe to drop.** Dropping
+`variant_of` loses only provenance: adaptations stay unlisted and every session
+still points at the row it ran. **Dropping `library_listed` publishes every
+adaptation into the library at once**, which is the exact defect the column
+exists to prevent, so it is dropped only if the whole adaptation feature is being
+withdrawn and someone has decided what should happen to the copies already made.
+This is the same "drop the constraint, not the column" shape `0046` uses and M2
+repeats.
 
 ---
 

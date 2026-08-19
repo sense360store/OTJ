@@ -49,7 +49,7 @@ combined, and the result is a significantly simpler target model.
 | 01 | [Coach workflow and product principles](01-coach-workflow-principles.md) | How training is actually planned and delivered, and the principles that follow. |
 | 02 | [Target product model](02-target-product-model.md) | What each concept is: reference, copy, derived fact or stored state, and why. |
 | 03 | [Target UX journeys](03-ux-journeys.md) | Eight journeys, the components each reuses, and the mobile interaction decision. |
-| 04 | [Data model proposal](04-data-model-proposal.md) | Two activity keys with no migration, three columns, one small table, and how the migrations are sequenced. |
+| 04 | [Data model proposal](04-data-model-proposal.md) | Three activity keys with no migration, four columns, one small table, and how the migrations are sequenced. |
 | 05 | [Security, privacy and share boundary](05-security-share-boundary.md) | Why coach to coach sharing is already safe, and what the new columns oblige. |
 | 06 | [Implementation plan](06-phased-plan.md) | Thirteen small slices, what was removed, and the recommended first four. |
 | 07 | [Roadmap reconciliation](07-roadmap-reconciliation.md) | Verified pull request state, and how this relates to DRILL-02, DRILL-03 and TRAIN-02. |
@@ -138,9 +138,14 @@ Recorded because a design that is merely absent tends to be rebuilt.
 | "20 or more means two games" | The threshold is 13, from a 6v6 target. |
 | "Four stations is the default shape" | Four or five, chosen by attendance. |
 
-**Six proposed structures became three columns and one small table**, plus two
+**Six proposed structures became four columns and one small table**, plus three
 keys inside an existing unconstrained jsonb array that need no migration at all.
 No item in the programme needs a full security review.
+
+**One existing function changes**, and only one: `sessionMinutes` and
+`plannedMinutes` skip an activity a coach has stood down, so a five station plan
+delivered as four does not overstate the night by a rotation. It is inert until
+something is stood down.
 
 ## Recommended first implementation slices
 

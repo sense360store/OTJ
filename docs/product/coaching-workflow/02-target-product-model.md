@@ -11,8 +11,8 @@ structure and what does not.
 **The headline is a subtraction.** An earlier revision proposed six migrations,
 station block metadata, a per-activity position in a venue coordinate space, a
 frozen carousel assignment map and a generated message carrying children's first
-names. All five are gone. What is left is **three single columns and one small
-table**, plus two keys on an activity that need no migration at all.
+names. All five are gone. What is left is **four columns and one small table**,
+plus three keys on an activity that need no migration at all.
 
 **Two things this revision puts back, because the first correction went too far.**
 Structure was being derived from the `Phase` vocabulary, which records what kind
@@ -313,10 +313,9 @@ one representation of each state.
 
 - The activity **stays in the dated session's plan**, in its place and with its
   duration. Nothing is removed.
-- **The week plan is unchanged.** A template never carries `skipped`: the two
-  template write paths (`src/lib/queries.ts:1579` and `:1826`) strip it, and the
-  reader ignores it on a template, so both ends agree and neither depends on the
-  other. Ignoring it fails towards running the drill, which is the safe
+- **The week plan is unchanged.** A template never carries `skipped`, and
+  section 4c says by what mechanism, because the mappers alone cannot deliver it.
+  Ignoring it on a template fails towards running the drill, which is the safe
   direction.
 - **The library drill is unchanged.** `skipped` is a fact about one activity on
   one night.
@@ -335,6 +334,32 @@ are read.
 **Station numbering for the night uses only the active stations**, in plan order.
 A stood-down station keeps its place in the plan, takes no number, and is shown
 as not running tonight rather than hidden.
+
+### A stood-down activity does not count towards the session's length
+
+**This is the one place the programme changes an existing shared function, and it
+was missed until review caught it.**
+
+Rotations follow the **active** stations, so a five station plan delivered as
+four runs four rotations, not five. If the stood-down activity's duration still
+counted, the planner, the expected end and the calendar export would all overstate
+the night by one rotation. The same applies to a stood-down games phase.
+
+So the rule is: **the session's planned length is the sum of the activities that
+are actually running.** Concretely, `sessionMinutes` (`src/lib/data.ts:539`) and
+`plannedMinutes` (`src/lib/sessionLifecycle.ts:150`) skip an activity carrying
+`skipped: true`, and `src/lib/ics.ts` inherits it because it takes its length
+from the same seam.
+
+**It is inert until someone stands something down.** No existing session carries
+`skipped`, so every total in the database today is unchanged, and the derived
+lifecycle places every existing session exactly where it places it now. That is
+what keeps the risk of touching a function this widely read to a minimum.
+
+**This does not reopen the parallel-station arithmetic**, which is still correct:
+active stations times the rotation length is still both the wall clock and the
+sum of the active members' durations. What changes is only which members are
+summed.
 
 **OTJ never chooses.** The recommendation names a count and says which count the
 plan holds. Which drill sits out is a person's decision, every time.
@@ -429,18 +454,57 @@ by picking the first. It blocks nothing: the rest of the session is unaffected.
   derived lifecycle or Live's sequential semantics.** One games phase is one
   activity with one duration, which is what all five already assume.
 
+## 4c. Session-local keys, and the mechanism that actually makes them so
+
+**Added after review pointed out that the mappers alone cannot deliver this.**
+
+Two of the three activity keys are session local: **`skipped`** and
+**`gameCount`**. `slot` is not, because it belongs to the plan.
+
+The obvious reading of "the template write paths strip it" was that
+`toActivityRow` does the stripping. **It cannot.** Both template and session
+reads call the same `toActivity`, and all three write paths call the same
+`toActivityRow` (`00-current-state-audit.md` section 27). A shared mapper has no
+idea which side of the fence it is on, so adding a key to it preserves that key
+for templates too, and omitting it loses the key from sessions.
+
+**So the contract has three parts, and the mappers are only one of them:**
+
+| Part | Who does it |
+|---|---|
+| Carry all three keys faithfully | `toActivity` and `toActivityRow`, shared and context free |
+| Remove the session-local keys on the way into a template | **One named helper**, called by the two template write paths (`src/lib/queries.ts:1579`, `:1826`) |
+| Ignore the session-local keys on the way out of a template | The same helper, applied to the template read (`:385`) |
+
+**Both ends, deliberately.** Stripping on write is what keeps templates clean
+going forward; ignoring on read is what makes a row that predates the helper, or
+one written by some future hand-rolled call, behave correctly anyway. Neither end
+depends on the other being right, which is the same belt-and-braces shape
+`0048`'s constraint and its client-side recognition already use.
+
+**One helper for both keys**, not one per key, so a fourth session-local key
+later joins a list rather than growing a third code path.
+
+**A template that somehow carries one is read as if it did not**, which fails
+towards running the drill and towards an unaccepted game count. Both are the safe
+direction.
+
 ## 5. Session lifecycle: derive, do not store
 
 **Decision: add no stored workflow states. Derive readiness.**
 
 | Question | Derived from |
 |---|---|
-| Planned? | `activities.length > 0`, and four or five of them are marked as stations |
+| Planned? | `activities.length > 0`. **If any station is declared**, four or five of them are active. A session that declares none is not a carousel night and is not asked to be. |
 | Attendance available? | `spond_event_id` set and responses known |
 | Groups prepared? | every included player resolves to a bib, and the active groups' colours are unique |
-| Games prepared? | one active `slot: 'game'` activity, its `gameCount` accepted, every included player resolving to a game, and each game reading as two distinguishable colours |
-| Setup available? | a layout exists for this session's venue, season, age group and active station count |
+| Games prepared? | **Not applicable** when no games activity is declared, or its activity is stood down. Otherwise: an accepted `gameCount`, every included player resolving to a game, and each game reading as two distinguishable colours. |
+| Setup available? | a layout exists for this session's venue, season, age group and **active** station count. Section 8 states the three ways this can honestly answer no. |
 | Delivered? | `sessionLifecycle.ts` already answers this, three states, derived |
+
+**Not applicable is a real answer, and it is not the same as not ready.** A
+session with no games declared is not an unfinished session, and saying so is the
+same discipline as absence being a real answer everywhere else in this model.
 
 **Not ready is never blocked.** None of these gates opening, editing or running a
 session. `sessionLifecycle.ts` exists precisely because a stored flag
@@ -759,7 +823,7 @@ venue_layouts
   kind        text not null            check in ('stations', 'games')
   slots       integer not null         check: stations in (4,5), games in (1,2)
   zones       jsonb not null           versioned, allow-listed, fraction coordinates
-  created_by, updated_by, created_at, updated_at
+  created_at  timestamptz not null
   unique (club_id, venue_id, season_id, age_group, kind, slots)
 ```
 
@@ -773,6 +837,12 @@ where that game is played. One shape serves both kinds.
 seasons: a season that has layouts is not silently deletable, and `seasons` has
 no client delete path anyway. `on delete cascade` on the venue is right, because
 a deleted venue's ground is not a thing any more.
+
+**There is no `created_by`, `updated_by` or `updated_at`**, because `venues` has
+none of them and states why: club configuration with no ownership concept, and
+the audit trail already records who. `04-data-model-proposal.md` section 3 gives
+the full reasoning. No client-writable accountability field remains, so there is
+nothing to forge.
 
 Exact SQL, constraints, RLS and audit are in `04-data-model-proposal.md`
 section 3.
@@ -835,9 +905,30 @@ the screen has already read.
   unrepresentable rather than discouraged.
 - **Not weekly.** Coaches do not drag or reposition anything in v1.
 
-**A session whose scope has no layout for its station count** says so in one
-sentence with a link an admin can follow. It is not an error and it blocks
-nothing.
+**There are three ways a layout can honestly not be found, and the screen says
+which.** They are not the same problem and only one of them is an admin's to fix.
+
+| | What it means | Fixable by |
+|---|---|---|
+| No layout drawn for this scope yet | The venue, season and age group resolved, and nobody has drawn this count | **An admin**, with a link |
+| The season is unresolved or ambiguous | The session's date falls in no season, or in more than one | **An admin**, by fixing the season configuration |
+| Fewer than four active stations | The night has dropped below the shape v1 supports | **Nobody.** `venue_layouts` stores only 4 and 5, so no layout exists to draw |
+
+**The third one matters because the obvious message is wrong.** A coach who
+stands two of five stations down has three active, and telling them to ask an
+admin to draw a three station layout points at something the check constraint
+refuses. The screen says the delivery has dropped below four instead.
+
+**An unset age group is the fourth way, and it is stated rather than
+discovered.** `sessions.age_group` is nullable free text and
+`venue_layouts.age_group` is not null and non blank
+(`00-current-state-audit.md` section 26), so a session with no age group can
+match no layout, ever. It reads as unresolved and says so. A value differing only
+in case or spacing from the one an admin drew against fails the same way
+silently, which is the second reason both screens must offer the same list rather
+than free text.
+
+None of the four is an error and none blocks anything.
 
 ## 9. Training-day delivery
 
