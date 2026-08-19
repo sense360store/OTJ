@@ -339,7 +339,10 @@ describe('the template boundary', () => {
     // Stripping keys is all this does. Spreading a non-object would turn null
     // into {} and a string into an index map, which would change what
     // toActivity does with a row nobody wrote through the app.
-    for (const bad of [null, undefined, 'activity', 7]) {
+    // The array is the case worth naming: `typeof [] === 'object'`, so it is
+    // the one non-object jsonb shape a bare typeof guard lets through into a
+    // spread, and it comes back as an index map rather than as itself.
+    for (const bad of [null, undefined, 'activity', 7, [], [1, 2]]) {
       expect(stripSessionLocalActivityKeys(bad as unknown as ActivityRow)).toBe(bad)
     }
   })

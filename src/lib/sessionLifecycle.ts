@@ -161,13 +161,20 @@ function resolveStart(event: TimedEvent): ResolvedStart | null {
 // session, and sessionExpectedEnd would place the end an hour and a half
 // after a night that runs no minutes at all.
 //
-// So the two are told apart by WHY the sum is zero:
+// So the two are told apart by whether anything is LEFT RUNNING:
 //
-//   something was stood down   the coach emptied a plan they built, and
-//                              zero minutes is the honest answer
-//   nothing was stood down     the plan carries no usable minutes, which
-//                              is the case the fallback has always
-//                              covered, unchanged
+//   nothing still runs      the coach stood the whole night down, and
+//                           zero minutes is the honest answer
+//   something still runs    the plan carries no usable minutes between
+//                           the activities that ARE running, which is the
+//                           case the fallback has always covered,
+//                           unchanged
+//
+// "Was anything stood down" is the wrong question and was the first
+// answer here. Both facts can hold at once: one station stood down AND
+// the remaining running activities carrying nothing usable. That is a
+// plan nobody filled in with one station also turned off, and it takes
+// the fallback.
 //
 // Keying on `activities.length` instead was the obvious one line fix and
 // it is wrong in the direction this file exists to prevent: it would
@@ -181,16 +188,18 @@ function resolveStart(event: TimedEvent): ResolvedStart | null {
 // exist to stop.
 //
 // A ROW CARRYING NO `skipped` THEREFORE ANSWERS EXACTLY WHAT IT ALWAYS
-// DID, negative sums included: the old expression floored those to the
-// fallback and this one still does.
+// DID, negative sums included: with nothing stood down the `every` test
+// is false, so every such row takes the branch it always took.
 export function plannedMinutes(event: TimedEvent): number {
   const activities = event.activities ?? []
   const total = activeActivityMinutes(activities)
   if (total > 0) return total
-  // Math.max because a stood-down plan whose remaining durations are
-  // negative must not put the expected end before the start, which would
-  // export a calendar entry finishing before it begins.
-  return activities.some(isStoodDown) ? Math.max(0, total) : FALLBACK_SESSION_MINUTES
+  // An empty plan is not a plan somebody stood down, so the length guard
+  // is load bearing: `[].every()` is true. And a plan with nothing left
+  // running sums to exactly zero rather than to a negative, because
+  // every activity was excluded from the sum, so nothing here can put
+  // the expected end before the start.
+  return activities.length > 0 && activities.every(isStoodDown) ? 0 : FALLBACK_SESSION_MINUTES
 }
 
 // The session's start instant, or null when nothing places it in time.

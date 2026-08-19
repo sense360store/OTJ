@@ -113,19 +113,51 @@ describe('the planned duration', () => {
     ).toBe(45)
   })
 
+  it('keeps the fallback while anything is still running, however little it adds up to', () => {
+    // THE DISCRIMINATOR IS WHETHER ANYTHING STILL RUNS, NOT WHETHER
+    // ANYTHING WAS STOOD DOWN. Both facts hold here at once: one station is
+    // stood down AND the two that are still running carry nothing usable.
+    // That is a plan nobody filled in with one station also turned off, and
+    // answering zero would end it at its own start instant while two
+    // stations are still scheduled.
+    const mixed = training({
+      activities: [
+        { duration: 0, slot: 'station', skipped: true },
+        { duration: 0, slot: 'station' },
+        { duration: 0, slot: 'station' },
+      ],
+    })
+    expect(plannedMinutes(mixed)).toBe(FALLBACK_SESSION_MINUTES)
+    // The same plan with the key removed answers the same, which is the
+    // whole point: standing one station down did not move the answer.
+    expect(
+      plannedMinutes(training({ activities: [{ duration: 0 }, { duration: 0 }, { duration: 0 }] })),
+    ).toBe(FALLBACK_SESSION_MINUTES)
+  })
+
   it('never puts the expected end before the start, however the durations were typed', () => {
-    // A stood-down plan whose remaining activity carries a negative duration
-    // answers zero rather than a negative, so sessionExpectedEnd cannot land
-    // before sessionStart and src/lib/ics.ts cannot write DTEND before
-    // DTSTART.
+    // A negative duration on an activity that is still running takes the
+    // fallback, exactly as it did before this slice, so sessionExpectedEnd
+    // cannot land before sessionStart and src/lib/ics.ts cannot write DTEND
+    // before DTSTART.
     const odd = training({
       activities: [
         { duration: 15, slot: 'station', skipped: true },
         { duration: -30 },
       ],
     })
-    expect(plannedMinutes(odd)).toBe(0)
-    expect(sessionExpectedEnd(odd)?.getTime()).toBe(at(2026, 8, 11, 18, 0).getTime())
+    expect(plannedMinutes(odd)).toBe(FALLBACK_SESSION_MINUTES)
+    expect(sessionExpectedEnd(odd)?.getTime()).toBe(at(2026, 8, 11, 19, 30).getTime())
+    // And a plan with nothing left running sums to exactly zero, because
+    // every activity was excluded from the sum rather than added to it.
+    const allOff = training({
+      activities: [
+        { duration: -30, slot: 'station', skipped: true },
+        { duration: 15, slot: 'game', skipped: true },
+      ],
+    })
+    expect(plannedMinutes(allOff)).toBe(0)
+    expect(sessionExpectedEnd(allOff)?.getTime()).toBe(at(2026, 8, 11, 18, 0).getTime())
   })
 
   it('answers zero, not the fallback, when every operational activity is stood down', () => {

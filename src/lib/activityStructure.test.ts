@@ -154,10 +154,28 @@ describe('station numbering follows the plan order of the stations running', () 
   it('numbers the active stations 1..n in plan order', () => {
     const stations = activeStations(plan())
     expect(stations.map((s) => s.station)).toEqual([1, 2, 3, 4, 5])
-    // The plan index is the position in the whole plan, never the number.
-    expect(stations.map((s) => s.index)).toEqual([1, 2, 3, 4, 5])
     expect(stations.map((s) => s.activity.drillId)).toEqual(['d1', 'd2', 'd3', 'd4', 'd5'])
     expect(activeStationCount(plan())).toBe(5)
+  })
+
+  it('carries the position in the whole plan, which is not the station number', () => {
+    // A fixture whose two values differ, because in plan() the stations
+    // happen to sit at indices 1 to 5 and carry numbers 1 to 5, so asserting
+    // on both there separates nothing. Interleaving a non-station pulls them
+    // apart, which is what makes an implementation that stored the number in
+    // `index` fail.
+    const interleaved: Activity[] = [
+      { phase: 'Skill', drillId: 'd1', duration: 10, slot: 'station' },
+      { phase: 'Warm-Up', title: 'Water', duration: 2 },
+      { phase: 'Skill', drillId: 'd2', duration: 10, slot: 'station' },
+      { phase: 'Warm-Up', title: 'Water', duration: 2 },
+      { phase: 'Skill', drillId: 'd3', duration: 10, slot: 'station' },
+    ]
+    const stations = activeStations(interleaved)
+    expect(stations.map((s) => s.station)).toEqual([1, 2, 3])
+    expect(stations.map((s) => s.index)).toEqual([0, 2, 4])
+    expect(stationNumberAt(interleaved, 4)).toBe(3)
+    expect(stationNumberAt(interleaved, 1)).toBeNull()
   })
 
   it('omits a stood-down station and renumbers the rest', () => {
@@ -226,6 +244,20 @@ describe('nothing is inferred from the coaching phase', () => {
     expect(structure.stationCount).toBe(0)
     expect(structure.gamesActivity).toBeNull()
     expect(structure.warnings).toEqual(['no-stations-declared'])
+  })
+
+  it('reads a plan that declares only the games phase as declared', () => {
+    // `declared` is the field the screens read as "not set up yet" rather
+    // than as "zero stations", so the true case matters as much as the false
+    // one, and a plan carrying only the games phase HAS declared structure.
+    const gamesOnly = deriveActivityStructure([{ phase: 'Game', drillId: 'd6', duration: 20, slot: 'game' }])
+    expect(gamesOnly.declared).toBe(true)
+    expect(gamesOnly.stationCount).toBe(0)
+    expect(gamesOnly.warnings).toEqual(['no-stations-declared'])
+    // And a plan with stations, whether they run or not.
+    expect(deriveActivityStructure(plan()).declared).toBe(true)
+    const allOff = plan().map((a) => (a.slot ? { ...a, skipped: true as const } : a))
+    expect(deriveActivityStructure(allOff).declared).toBe(true)
   })
 
   it('reads an empty or absent plan the same way', () => {
