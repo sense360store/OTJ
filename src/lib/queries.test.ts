@@ -335,6 +335,15 @@ describe('the template boundary', () => {
     expect(toTemplateActivityRows(undefined)).toEqual([])
   })
 
+  it('hands back a malformed jsonb element exactly as it arrived', () => {
+    // Stripping keys is all this does. Spreading a non-object would turn null
+    // into {} and a string into an index map, which would change what
+    // toActivity does with a row nobody wrote through the app.
+    for (const bad of [null, undefined, 'activity', 7]) {
+      expect(stripSessionLocalActivityKeys(bad as unknown as ActivityRow)).toBe(bad)
+    }
+  })
+
   it('names every session-local key in one list, so the next one joins it', () => {
     expect([...SESSION_LOCAL_ACTIVITY_KEYS]).toEqual(['skipped'])
   })

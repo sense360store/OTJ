@@ -63,23 +63,37 @@ describe('the planned duration', () => {
     expect(plannedMinutes(training({ activities: undefined }))).toBe(FALLBACK_SESSION_MINUTES)
   })
 
-  it('does not fall back when a plan exists and adds up to nothing', () => {
-    // CHANGED, DELIBERATELY, AND THIS TEST IS THE RECORD OF IT. It used to
-    // assert the fallback here, on the reading that "zero is not a duration a
-    // coach chose, it is a plan nobody filled in". That was true while a zero
-    // total could only mean an empty plan, and it stopped being true the
-    // moment an activity could be stood down for the night: a coach who
-    // stands every station down would have been told their session runs 90
-    // minutes.
-    //
-    // The fallback keys on there being NO ACTIVITIES to sum, so a plan
-    // somebody built and then emptied answers zero.
-    //
-    // Verified against the hosted database before it was changed: of 24
-    // stored sessions, 12 carry no activities and still take the fallback,
-    // and not one carries activities summing to zero. No existing row's
-    // answer moves.
-    expect(plannedMinutes(training({ activities: activities(0, 0) }))).toBe(0)
+  it('still falls back when the activities carry no usable minutes between them', () => {
+    // UNCHANGED, and deliberately so. Zero reaches plannedMinutes two ways
+    // and they are opposite facts. Nothing was stood down here, so this is a
+    // plan nobody filled in, and it takes the fallback exactly as it always
+    // has. Keying the fallback on `activities.length` instead would have
+    // ended this session at its own start instant, which is the regression
+    // FALLBACK_SESSION_MINUTES exists to stop.
+    expect(plannedMinutes(training({ activities: activities(0, 0) }))).toBe(FALLBACK_SESSION_MINUTES)
+  })
+
+  it('answers exactly what it always did for every shape carrying no stood-down activity', () => {
+    // The compatibility claim, enumerated rather than asserted. Each of these
+    // is reachable without a coach doing anything unusual: the planner stores
+    // a cleared minutes box as 0, and a drill saved with a blank duration
+    // reads back as 0 and is copied onto the activity by drillPicker.
+    expect(plannedMinutes(training({ activities: [] }))).toBe(FALLBACK_SESSION_MINUTES)
+    expect(plannedMinutes(training({ activities: [{ duration: 0 }] }))).toBe(FALLBACK_SESSION_MINUTES)
+    expect(plannedMinutes(training({ activities: [{}] }))).toBe(FALLBACK_SESSION_MINUTES)
+    expect(plannedMinutes(training({ activities: [{ duration: null }] }))).toBe(FALLBACK_SESSION_MINUTES)
+    expect(plannedMinutes(training({ activities: [{ duration: Number.NaN }] }))).toBe(FALLBACK_SESSION_MINUTES)
+    // Durations that cancel, and a negative sum. The old expression floored
+    // both to the fallback and this one still does, so no calendar entry can
+    // finish before it begins.
+    expect(plannedMinutes(training({ activities: [{ duration: 10 }, { duration: -10 }] }))).toBe(
+      FALLBACK_SESSION_MINUTES,
+    )
+    expect(plannedMinutes(training({ activities: [{ duration: -30 }] }))).toBe(FALLBACK_SESSION_MINUTES)
+    // And a declared plan with nothing stood down is the plain sum.
+    expect(
+      plannedMinutes(training({ activities: [{ duration: 10, slot: 'station' }, { duration: 20, slot: 'game' }] })),
+    ).toBe(30)
   })
 
   it('is the sum of the activities actually running', () => {
@@ -97,6 +111,21 @@ describe('the planned duration', () => {
         }),
       ),
     ).toBe(45)
+  })
+
+  it('never puts the expected end before the start, however the durations were typed', () => {
+    // A stood-down plan whose remaining activity carries a negative duration
+    // answers zero rather than a negative, so sessionExpectedEnd cannot land
+    // before sessionStart and src/lib/ics.ts cannot write DTEND before
+    // DTSTART.
+    const odd = training({
+      activities: [
+        { duration: 15, slot: 'station', skipped: true },
+        { duration: -30 },
+      ],
+    })
+    expect(plannedMinutes(odd)).toBe(0)
+    expect(sessionExpectedEnd(odd)?.getTime()).toBe(at(2026, 8, 11, 18, 0).getTime())
   })
 
   it('answers zero, not the fallback, when every operational activity is stood down', () => {

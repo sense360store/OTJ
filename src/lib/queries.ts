@@ -347,6 +347,12 @@ export const SESSION_LOCAL_ACTIVITY_KEYS = ['skipped'] as const
 // which is the games phase belongs to the reusable plan, so a week plan
 // carries it and every dated session built from that template inherits it.
 export function stripSessionLocalActivityKeys(row: ActivityRow): ActivityRow {
+  // A jsonb element that is not an object carries no keys to strip, and is
+  // handed back exactly as it arrived. Spreading it instead would turn null
+  // into {} and a string into an index map, which would quietly change what
+  // toActivity does with a malformed stored row. This helper strips keys; it
+  // is not the place a shape problem is discovered or repaired.
+  if (!row || typeof row !== 'object') return row
   const out: ActivityRow = { ...row }
   for (const key of SESSION_LOCAL_ACTIVITY_KEYS) delete out[key]
   return out

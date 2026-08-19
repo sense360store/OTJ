@@ -29,7 +29,7 @@
 // fourth one appears.
 // =====================================================================
 import type { SessionStatus } from './data'
-import { activeActivityMinutes } from './activityStructure'
+import { activeActivityMinutes, isStoodDown } from './activityStructure'
 import type { ActivitySlot } from './activityStructure'
 
 // THREE STATES, BECAUSE "FINISHED" AND "YESTERDAY" ARE TWO QUESTIONS.
@@ -150,27 +150,47 @@ function resolveStart(event: TimedEvent): ResolvedStart | null {
 // planner and the session cards show (see sessionMinutes in ./data), with
 // the fallback applied where the plan cannot answer.
 //
-// THE FALLBACK KEYS ON THERE BEING NO PLAN, NOT ON THE SUM BEING ZERO.
+// ZERO REACHES THIS FUNCTION TWO WAYS, AND THEY ARE OPPOSITE FACTS.
 // It used to read `total > 0 ? total : FALLBACK_SESSION_MINUTES`, with
 // the comment "zero counts as no answer: an empty plan is a session
 // nobody has built yet, not a session that lasts no time". That reading
-// was correct while a zero total could only mean an empty plan. It stops
-// being correct the moment a filter can empty the sum, and standing
-// every station down is exactly such a filter: a coach who runs nothing
-// tonight would have been answered a synthetic 90 minute session, and
-// sessionExpectedEnd would have placed it an hour and a half after a
-// night that runs no minutes at all.
+// was correct while a zero total could only mean a plan with nothing
+// usable in it. It stops being complete the moment a filter can empty
+// the sum, and standing every station down is exactly such a filter: a
+// coach who runs nothing tonight would be answered a synthetic 90 minute
+// session, and sessionExpectedEnd would place the end an hour and a half
+// after a night that runs no minutes at all.
 //
-// So an empty plan still falls back, and a plan somebody built that adds
-// up to nothing answers nothing. The distinction was verified against
-// the hosted database before it was made: of 24 stored sessions, 12
-// carry no activities and take the fallback exactly as before, and NOT
-// ONE carries activities summing to zero. No existing row's answer
-// moves.
+// So the two are told apart by WHY the sum is zero:
+//
+//   something was stood down   the coach emptied a plan they built, and
+//                              zero minutes is the honest answer
+//   nothing was stood down     the plan carries no usable minutes, which
+//                              is the case the fallback has always
+//                              covered, unchanged
+//
+// Keying on `activities.length` instead was the obvious one line fix and
+// it is wrong in the direction this file exists to prevent: it would
+// also swallow a plan of activities whose durations are zero, absent,
+// null or NaN, and every one of those is reachable without a coach doing
+// anything unusual (a drill saved with a blank duration reads back as 0
+// and drillPicker copies that straight onto the activity). Such a
+// session would end at its own start instant and leave every operational
+// surface while the coach was standing on the pitch, which is the
+// regression FALLBACK_SESSION_MINUTES and the third lifecycle state both
+// exist to stop.
+//
+// A ROW CARRYING NO `skipped` THEREFORE ANSWERS EXACTLY WHAT IT ALWAYS
+// DID, negative sums included: the old expression floored those to the
+// fallback and this one still does.
 export function plannedMinutes(event: TimedEvent): number {
   const activities = event.activities ?? []
-  if (activities.length === 0) return FALLBACK_SESSION_MINUTES
-  return activeActivityMinutes(activities)
+  const total = activeActivityMinutes(activities)
+  if (total > 0) return total
+  // Math.max because a stood-down plan whose remaining durations are
+  // negative must not put the expected end before the start, which would
+  // export a calendar entry finishing before it begins.
+  return activities.some(isStoodDown) ? Math.max(0, total) : FALLBACK_SESSION_MINUTES
 }
 
 // The session's start instant, or null when nothing places it in time.
