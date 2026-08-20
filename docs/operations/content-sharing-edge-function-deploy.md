@@ -259,8 +259,10 @@ same ground and an auditor who assumes they do will trust more than was checked.
 back again for this reconciliation:**
 
 - the row is the unique newest one, recorded at the newest version;
-- the row before it is `20260812102912` / `spond_session_link_unique`,
-  unchanged;
+- the **version** of the row before it is `20260812102912`. Only the version:
+  `assert_post` compares `second_version` against `expected_previous_version`
+  and never compares `second_name`, which it reads but uses only in the failure
+  message and the report table;
 - `statements` holds exactly one entry whose MD5 is
   `d9d2199dcaabbc2da9248489754dc28a`, the reviewed file with its trailing
   newline stripped.
@@ -274,7 +276,10 @@ back again for this reconciliation:**
 - `idempotency_key` is `otj:migration:0049_spond_team_reconcile`, and that
   column is UNIQUE, so the same migration cannot be applied a second time. The
   gate checks that key only **before** the apply, to prove the migration had
-  not already run.
+  not already run;
+- the **name** of the preceding row is `spond_session_link_unique`. A row that
+  kept version `20260812102912` under a different name would still satisfy the
+  gate, so this half of that row's identity rests on the readback.
 
 **The structural readback:**
 

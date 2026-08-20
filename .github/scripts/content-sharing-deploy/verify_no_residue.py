@@ -94,7 +94,10 @@ import urllib.parse
 #   ASSERTED BY THE POST-APPLY GATE (verify_hosted_state.assert_post), and
 #   read back again here:
 #     - the row is the unique newest one, recorded at the newest version;
-#     - the row before it is 20260812102912 / spond_session_link_unique;
+#     - the VERSION of the row before it is 20260812102912. Only the version:
+#       assert_post compares second_version against expected_previous_version
+#       and never compares second_name, which it reads but uses only in the
+#       failure message and the report table. The NAME below is readback;
 #     - statements holds exactly one entry, and md5(statements[1]) is
 #       d9d2199dcaabbc2da9248489754dc28a, the reviewed file with its trailing
 #       newline stripped.
@@ -107,7 +110,10 @@ import urllib.parse
 #     - idempotency_key is otj:migration:0049_spond_team_reconcile against a
 #       UNIQUE column, so the same migration cannot be applied twice. The gate
 #       checks that key only BEFORE the apply, to prove the migration had not
-#       already run; assert_post does not re-read it.
+#       already run; assert_post does not re-read it;
+#     - the NAME of the preceding row is spond_session_link_unique. A row that
+#       kept version 20260812102912 under a different name would satisfy the
+#       gate, so this half of that row's identity rests on the readback.
 #
 # The structural readback proves the reviewed object was actually created,
 # rather than a ledger row merely carrying a matching name:
