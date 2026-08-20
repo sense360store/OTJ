@@ -100,7 +100,13 @@ import urllib.parse
 #       failure message and the report table. The NAME below is readback;
 #     - statements holds exactly one entry, and md5(statements[1]) is
 #       d9d2199dcaabbc2da9248489754dc28a, the reviewed file with its trailing
-#       newline stripped.
+#       newline stripped;
+#     - and, through the three registered object probes in
+#       reviewed_migrations.py, that public.spond_reconcile_player_team
+#       resolves at EXACTLY the reviewed type signature
+#       (uuid, uuid, uuid, text, text, uuid), that it is SECURITY DEFINER with
+#       an empty search_path, and that authenticated may EXECUTE it while anon
+#       may not.
 #
 #   READ BACK HERE ONLY, and NOT asserted by that gate:
 #     - created_by is
@@ -115,25 +121,23 @@ import urllib.parse
 #       kept version 20260812102912 under a different name would satisfy the
 #       gate, so this half of that row's identity rests on the readback.
 #
-# The structural readback proves the reviewed object was actually created,
-# rather than a ledger row merely carrying a matching name:
-# public.spond_reconcile_player_team exists, is SECURITY DEFINER, and takes
-# p_player_id uuid, p_expected_team_id uuid, p_target_team_id uuid,
-# p_expected_member_id text, p_confirm_member_id text, p_batch_id uuid. That
-# was read with pg_get_function_identity_arguments, which carries the parameter
-# NAMES as well as their types, and pg_proc.proargnames holds all six.
+# Those probes are why the object's existence and its security posture belong
+# above and not here: they are asserted by the gate on every run, not merely
+# read back once. What the readback adds, and the ONLY thing it adds, is the
+# six parameter NAMES: p_player_id, p_expected_team_id, p_target_team_id,
+# p_expected_member_id, p_confirm_member_id, p_batch_id. It read them with
+# pg_get_function_identity_arguments, and pg_proc.proargnames holds all six.
 #
-# The registered object probe checks LESS than that, and the difference is
-# worth knowing before relying on either: it resolves the function through
-# to_regprocedure on the TYPE signature and asserts prosecdef and an empty
-# search_path in proconfig, never proargnames. A function with the same types
-# and renamed parameters would satisfy that probe, so the names above rest on
-# the readback recorded here and not on the probe.
+# No probe reads proargnames, so a function with the same TYPES and renamed
+# parameters would satisfy all three of them. That gap is the reason the names
+# are recorded here at all, and it is a real one: a PostgREST call using named
+# arguments would break on it while the gate stayed green.
 #
-# What that readback does NOT establish is the other half of "0049 adds one
-# function and NOTHING else": no table, column, index, policy, grant or trigger
-# was probed here, so nothing in it could tell a 0049 that added only the
-# function from one that added the function and something more.
+# What NONE of that establishes is the other half of "0049 adds one function
+# and NOTHING else". The probes look at one function and its privileges, and
+# the readback at that same function; neither inventories tables, columns,
+# indexes, policies or triggers, so nothing in either could tell a 0049 that
+# added only the function from one that added the function and something more.
 #
 # Nor does 0049's own in-migration self-verification establish it, and an
 # earlier draft of this block wrongly said it did. That block does compare a

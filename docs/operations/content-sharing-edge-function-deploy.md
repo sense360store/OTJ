@@ -265,7 +265,12 @@ back again for this reconciliation:**
   message and the report table;
 - `statements` holds exactly one entry whose MD5 is
   `d9d2199dcaabbc2da9248489754dc28a`, the reviewed file with its trailing
-  newline stripped.
+  newline stripped;
+- and, through the three registered object probes in `reviewed_migrations.py`,
+  that `public.spond_reconcile_player_team` resolves at **exactly** the
+  reviewed type signature `(uuid, uuid, uuid, text, text, uuid)`, that it is
+  `SECURITY DEFINER` with an empty `search_path`, and that `authenticated` may
+  `EXECUTE` it while `anon` may not.
 
 **Read back for this reconciliation only, and NOT asserted by that gate:**
 
@@ -281,20 +286,24 @@ back again for this reconciliation:**
   kept version `20260812102912` under a different name would still satisfy the
   gate, so this half of that row's identity rests on the readback.
 
-**The structural readback:**
+Those probes are why the function's existence and its security posture sit in
+the gate list rather than under the readback: they are asserted on every run,
+not merely read back once. What the readback **adds**, and the only thing it
+adds, is the six parameter **names**: `p_player_id`, `p_expected_team_id`,
+`p_target_team_id`, `p_expected_member_id`, `p_confirm_member_id`,
+`p_batch_id`. It read them with `pg_get_function_identity_arguments`, and
+`pg_proc.proargnames` holds all six.
 
-- `public.spond_reconcile_player_team` exists, is `SECURITY DEFINER`, and takes
-  `p_player_id uuid`, `p_expected_team_id uuid`, `p_target_team_id uuid`,
-  `p_expected_member_id text`, `p_confirm_member_id text`, `p_batch_id uuid`.
-  Read with `pg_get_function_identity_arguments`, which carries the parameter
-  names as well as their types, and `pg_proc.proargnames` holds all six. That
-  is the shape the migration creates rather than merely a matching name.
+No probe reads `proargnames`, so a function with the same **types** and renamed
+parameters would satisfy all three of them. That gap is why the names are
+recorded at all, and it is a real one: a PostgREST call using named arguments
+would break on it while the gate stayed green.
 
-  The registered object probe checks less than that: it resolves the function
-  through `to_regprocedure` on the **type** signature and asserts `prosecdef`
-  and an empty `search_path` in `proconfig`, never `proargnames`. A function
-  with the same types and renamed parameters would satisfy the probe, so the
-  names above rest on this readback and not on it.
+**What none of that establishes** is the other half of "0049 adds one function
+and nothing else". The probes look at one function and its privileges, and the
+readback at that same function. Neither inventories tables, columns, indexes,
+policies or triggers. That property comes from review of the migration SQL,
+which is what the gated production process exists to provide.
 
 The previous value, `20260812102912` / `spond_session_link_unique` (0048), is
 now a superseded value and is REJECTED by the gate. That is asserted directly,
