@@ -29,6 +29,8 @@
 // fourth one appears.
 // =====================================================================
 import type { SessionStatus } from './data'
+import { activeActivityMinutes, isStoodDown } from './activityStructure'
+import type { ActivitySlot } from './activityStructure'
 
 // THREE STATES, BECAUSE "FINISHED" AND "YESTERDAY" ARE TWO QUESTIONS.
 //
@@ -98,7 +100,10 @@ export interface TimedEvent {
   // An absolute ISO instant, the shape the Spond mirror stores.
   startsAt?: string | null
   status?: SessionStatus | null
-  activities?: readonly { duration?: number | null }[] | null
+  // The structural keys travel with the duration, because how long a
+  // session runs is now the sum of the activities ACTUALLY RUNNING. A
+  // synced Spond event carries no activities at all and is unaffected.
+  activities?: readonly { duration?: number | null; slot?: ActivitySlot | null; skipped?: true }[] | null
   liveActivityIndex?: number | null
   liveActivityStartedAt?: string | null
 }
@@ -143,12 +148,58 @@ function resolveStart(event: TimedEvent): ResolvedStart | null {
 
 // How long the session is planned to run, in minutes. The same sum the
 // planner and the session cards show (see sessionMinutes in ./data), with
-// the fallback applied where the plan cannot answer. Zero counts as no
-// answer: an empty plan is a session nobody has built yet, not a session
-// that lasts no time.
+// the fallback applied where the plan cannot answer.
+//
+// ZERO REACHES THIS FUNCTION TWO WAYS, AND THEY ARE OPPOSITE FACTS.
+// It used to read `total > 0 ? total : FALLBACK_SESSION_MINUTES`, with
+// the comment "zero counts as no answer: an empty plan is a session
+// nobody has built yet, not a session that lasts no time". That reading
+// was correct while a zero total could only mean a plan with nothing
+// usable in it. It stops being complete the moment a filter can empty
+// the sum, and standing every station down is exactly such a filter: a
+// coach who runs nothing tonight would be answered a synthetic 90 minute
+// session, and sessionExpectedEnd would place the end an hour and a half
+// after a night that runs no minutes at all.
+//
+// So the two are told apart by whether anything is LEFT RUNNING:
+//
+//   nothing still runs      the coach stood the whole night down, and
+//                           zero minutes is the honest answer
+//   something still runs    the plan carries no usable minutes between
+//                           the activities that ARE running, which is the
+//                           case the fallback has always covered,
+//                           unchanged
+//
+// "Was anything stood down" is the wrong question and was the first
+// answer here. Both facts can hold at once: one station stood down AND
+// the remaining running activities carrying nothing usable. That is a
+// plan nobody filled in with one station also turned off, and it takes
+// the fallback.
+//
+// Keying on `activities.length` instead was the obvious one line fix and
+// it is wrong in the direction this file exists to prevent: it would
+// also swallow a plan of activities whose durations are zero, absent,
+// null or NaN, and every one of those is reachable without a coach doing
+// anything unusual (a drill saved with a blank duration reads back as 0
+// and drillPicker copies that straight onto the activity). Such a
+// session would end at its own start instant and leave every operational
+// surface while the coach was standing on the pitch, which is the
+// regression FALLBACK_SESSION_MINUTES and the third lifecycle state both
+// exist to stop.
+//
+// A ROW CARRYING NO `skipped` THEREFORE ANSWERS EXACTLY WHAT IT ALWAYS
+// DID, negative sums included: with nothing stood down the `every` test
+// is false, so every such row takes the branch it always took.
 export function plannedMinutes(event: TimedEvent): number {
-  const total = (event.activities ?? []).reduce((sum, a) => sum + (a?.duration || 0), 0)
-  return total > 0 ? total : FALLBACK_SESSION_MINUTES
+  const activities = event.activities ?? []
+  const total = activeActivityMinutes(activities)
+  if (total > 0) return total
+  // An empty plan is not a plan somebody stood down, so the length guard
+  // is load bearing: `[].every()` is true. And a plan with nothing left
+  // running sums to exactly zero rather than to a negative, because
+  // every activity was excluded from the sum, so nothing here can put
+  // the expected end before the start.
+  return activities.length > 0 && activities.every(isStoodDown) ? 0 : FALLBACK_SESSION_MINUTES
 }
 
 // The session's start instant, or null when nothing places it in time.

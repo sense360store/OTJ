@@ -276,14 +276,13 @@ changes a function", was false**, and it was false because the survey behind it
 looked for session duration in the browser only.
 
 **The module.** `supabase/functions/_shared/share.ts`. `buildSessionSnapshot`
-(`:797-806`) accumulates `totalDuration` from the session's activities in its own
+(in that file) accumulates `totalDuration` from the session's activities in its own
 `for` loop, in Deno, and cannot import `src/lib/`. It is a fourth independent
 implementation of the session duration sum
 (`00-current-state-audit.md` section 17), so the stood-down rule reaches it.
 
 **What must change and what must not.** Only the duration accumulation, and only
-to skip an activity carrying a `slot` and `skipped: true`. `buildProgrammeSnapshot`
-(`:1218-1228`) is a second accumulator in the same file over **week** activities,
+to skip an activity carrying a `slot` and `skipped: true`. `buildProgrammeSnapshot` is a second accumulator in the same file over **week** activities,
 and it must not change: a template never carries `skipped`.
 
 **The tests that change with it.** `supabase/functions/_shared/share_test.ts`
@@ -309,13 +308,25 @@ The smallest consistent choice, and it falls out of the existing allow list
 rather than needing a new rule. `PublicActivity` is exactly `phase`, `duration`,
 `drillRef`, `customTitle`, enforced at both ends: the Deno builder copies only
 those, and the browser validator's `ACTIVITY_KEYS`
-(`src/lib/publicShare.ts:316`) refuses anything else. So `slot`, `skipped` and
+(`src/lib/publicShare.ts`) refuses anything else. So `slot`, `skipped` and
 `game_count` are **already** structurally excluded, and publishing `skipped`
 would mean widening two allow lists in two runtimes.
 
 There is no consumer for it. A public snapshot is a frozen plan someone was
-shown, not an operational surface: nobody reading one needs to know which station
-the coach stood down on the night, and `totalDuration` already tells them how
+shown, not an operational surface, and `totalDuration` already tells them how
 long the session ran. Excluding the activity from the list entirely was the other
 option and is rejected, because it would make the public plan disagree with the
 plan the coach shared, for no gain.
+
+**Corrected at implementation: which activity was stood down remains derivable,
+and that is accepted rather than claimed otherwise.** An earlier revision of this
+section argued that nobody reading a public snapshot needs to know which station
+the coach stood down. True, and the chosen projection does not conceal it: the
+published activity durations sum to more than `totalDuration`, and the public
+page renders both numbers, so a reader who subtracts can usually name the
+activity. No projection short of dropping the activity or publishing a duration
+the coach did not plan hides that, and both misrepresent the plan that was
+shared. The delta is a fact about the coach's own plan and carries no child, no
+group, no bib and no attendance, so it is accepted. What the boundary actually
+turns on is unchanged: the key itself is not published and neither allow list is
+widened.

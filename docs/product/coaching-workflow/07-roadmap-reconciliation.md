@@ -34,13 +34,16 @@ conflict was resolved on the way in.
 Added to the current roadmap table. Statuses are proposals; nothing is set until
 approved. The namespace **COACH** is new and collides with nothing.
 
-**None of these is Done.** A settled design is not delivered work.
+**Only COACH-2A is Done.** A settled design is not delivered work, and the one
+slice that has been built is named as built rather than left to be inferred from
+the table below.
 
 | ID | Workstream | Item | Proposed status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
 | COACH-00 | Coaching workflow | End-to-end coaching workflow discovery, architecture and post-discovery reconciliation | Done (docs only) | P1 | This document set. No code, no migration. |
 | COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | Later | P1 | Migration M1, gated, and sequenced against the hosted ledger rather than by filename. The one irreducible new fact. |
-| COACH-2 | Coaching workflow | Declare stations and games on the activity, and mark a station as not running tonight | Next | P1 | **No migration.** Two keys in the existing activity jsonb. Gates COACH-3, COACH-6, COACH-7, COACH-8. |
+| COACH-2A | Coaching workflow | The activity structure model: `slot`, `skipped`, the derivation module and the active session duration in all four implementations | **Done** | P1 | **No migration.** Two keys in the existing activity jsonb. Leaves one content-sharing Edge Function deploy outstanding. |
+| COACH-2B | Coaching workflow | The authoring affordances: mark a station or the games phase, and a Not running tonight toggle on a dated session | Next | P1 | No migration. Depends on COACH-2A. Gates COACH-3, COACH-6, COACH-7, COACH-8. |
 | COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | Next | P1 | No schema. Depends on COACH-2, wants COACH-1 and degrades honestly without it. |
 | COACH-4 | Coaching workflow | Preserve the coach's setup when attendance changes | Next | P1 | No schema. Depends on COACH-3. |
 | COACH-5 | Coaching workflow | Venue layouts scoped to venue, season and age group: four and five station layouts, one and two game visuals, admin owned | Later | P1 | Migration M2, gated, and the largest review here. New table, new shape boundary. Independent. |

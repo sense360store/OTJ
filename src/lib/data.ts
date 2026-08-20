@@ -4,6 +4,8 @@
 // from src/lib/queries.ts, which reads Supabase and maps the snake_case rows
 // into these types. Taxonomy constants and sessionMinutes stay here because
 // they are static and shared, not server data.
+import { activeActivityMinutes } from './activityStructure'
+import type { ActivitySlot, StructuredActivity } from './activityStructure'
 
 export type CornerKey = 'technical' | 'physical' | 'social' | 'psychological'
 export type Phase = 'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'
@@ -299,11 +301,28 @@ export interface Drill {
   createdAt: string
 }
 
-export interface Activity {
+// One entry in a session's or a template's plan.
+//
+// `phase` is COACHING CLASSIFICATION and never structure: phaseFor sets it
+// from the drill's four corners when a drill is added from the library, so a
+// physical drill lands in Warm-Up and a social drill lands in Game whatever
+// part either plays on the night. What the activity IS structurally is
+// declared explicitly, in `slot`. See ./activityStructure.
+export interface Activity extends StructuredActivity {
   phase: Phase
   drillId?: string
   title?: string
   duration: number
+  // Declared structure: one of the carousel stations, or the one activity
+  // that is the whole games phase. Absent means neither. It belongs to the
+  // PLAN, so a template carries it and a session built from a template
+  // inherits it.
+  slot?: ActivitySlot
+  // Not running tonight. SESSION LOCAL: the template write paths strip it and
+  // the template read ignores it, so a week plan never carries a decision
+  // taken about one evening. Written only as literal true; restoring removes
+  // the key. Meaningful only on an activity carrying a `slot`.
+  skipped?: true
 }
 
 export interface Template {
@@ -536,8 +555,16 @@ export const PHASES: Phase[] = ['Warm-Up', 'Skill', 'Game', 'Cool-Down']
 export const AGES: string[] = ['U6', 'U7', 'U8', 'U9', 'U10', 'U11', 'U12']
 export const LEVELS: Level[] = ['Foundation', 'Developing', 'Advanced']
 
+// How many minutes of the plan actually run.
+//
+// One of FOUR independent implementations of this sum (the others are
+// plannedMinutes in ./sessionLifecycle, the planner's own headline, which now
+// calls this one, and buildSessionSnapshot in the Deno share module). All of
+// them defer to the same predicate, so an activity stood down for tonight
+// stops counting everywhere at once. A plan carrying no `skipped` totals
+// exactly what it has always totalled.
 export function sessionMinutes(s: { activities: Activity[] }): number {
-  return s.activities.reduce((a, x) => a + (x.duration || 0), 0)
+  return activeActivityMinutes(s.activities)
 }
 
 // A new session belongs to the signed-in coach and defaults to their team

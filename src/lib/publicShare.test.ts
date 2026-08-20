@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildPublicShareUrl,
@@ -205,6 +207,65 @@ describe('validatePublicSessionSnapshot', () => {
     expect(validatePublicSessionSnapshot(null)).toBe(false)
     expect(validatePublicSessionSnapshot('session')).toBe(false)
     expect(validatePublicSessionSnapshot([sessionSnapshot()])).toBe(false)
+  })
+
+  // ---- The coaching structure keys stay out of the public payload --------
+  //
+  // The internal model now carries `slot` (which activities are the carousel
+  // stations and which is the games phase) and `skipped` (which of them are
+  // not running tonight). The public snapshot's totalDuration honours the
+  // second of those, and NEITHER KEY IS PUBLISHED: PublicActivity is exactly
+  // phase, duration, drillRef and customTitle, enforced by the Deno builder at
+  // one end and by ACTIVITY_KEYS here at the other. This half of the contract
+  // is the one that catches a widened allow-list.
+
+  it('refuses an activity carrying the structural declaration', () => {
+    // A share built by a future version that published `slot` would fail here
+    // rather than render, which is what "no allow-list broadening" means in
+    // practice.
+    expect(validatePublicSessionSnapshot(sessionSnapshot({
+      activities: [{ phase: 'Skill', duration: 10, drillRef: null, customTitle: null, slot: 'station' } as never],
+    }))).toBe(false)
+  })
+
+  it('refuses an activity carrying the session-local stand-down', () => {
+    // Which station a coach stood down on the night is operational detail a
+    // frozen public plan has no consumer for.
+    expect(validatePublicSessionSnapshot(sessionSnapshot({
+      activities: [{ phase: 'Skill', duration: 10, drillRef: null, customTitle: null, skipped: true } as never],
+    }))).toBe(false)
+  })
+
+  it('accepts a total that is lower than the activity durations add up to', () => {
+    // The visible consequence of the boundary decision, asserted rather than
+    // left to be discovered. A stood-down activity STAYS in the projected
+    // list carrying the duration the coach planned for it, and contributes
+    // nothing to totalDuration, so the two deliberately disagree. The
+    // validator has never checked that arithmetic and must not start: doing so
+    // would make the disagreement a rendering failure.
+    //
+    // The delta is therefore derivable by anyone holding the link, and that is
+    // accepted rather than claimed otherwise: it is a fact about the coach's
+    // own plan, carrying no child, group, bib or attendance. What the boundary
+    // turns on is the two tests above, that neither key is publishable.
+    const standDown = sessionSnapshot({
+      activities: [
+        { phase: 'Warm-Up', duration: 15, drillRef: 'd1', customTitle: null },
+        { phase: 'Skill', duration: 10, drillRef: null, customTitle: 'Free play' },
+      ],
+      totalDuration: 15,
+    })
+    expect(validatePublicSessionSnapshot(standDown)).toBe(true)
+  })
+
+  it('renders no Duration row at all for a session that runs no minutes', () => {
+    // A fully stood-down session publishes totalDuration 0, and the public
+    // view's meta row is gated on `> 0`, so the page simply does not claim a
+    // length. Pinned because a future change to that gate would start
+    // rendering "Duration 0 min" on a shared plan.
+    const src = readFileSync(join(import.meta.dirname, '..', 'components', 'PublicSessionView.tsx'), 'utf8')
+    expect(src).toMatch(/typeof snapshot\.totalDuration === 'number' && snapshot\.totalDuration > 0/)
+    expect(validatePublicSessionSnapshot(sessionSnapshot({ totalDuration: 0 }))).toBe(true)
   })
 })
 

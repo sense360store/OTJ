@@ -14,6 +14,7 @@ import type { Venue } from '../lib/venues'
 import type { PlannerAction } from '../lib/sessionSubmit'
 import { SESSION_SHARE_ERROR } from '../lib/sessionSubmit'
 import { SHARE_ACCOUNT_NOTE, type ShareFeedback } from '../lib/share'
+import { sessionMinutes } from '../lib/data'
 import type { Activity, Drill, Session, Team } from '../lib/data'
 import { ActivityDiagramView } from '../components/ActivityDiagram'
 import { DRILL_DIAGRAM_VERSION, type DrillDiagram } from '../lib/drillDiagram'
@@ -747,5 +748,95 @@ describe('PlannerWorkspace', () => {
     // The editor clears the pending flag before mounting the alert, so the
     // region is not aria-busy when the alert appears.
     expect(renderWorkspace(false)).toContain('aria-busy="false"')
+  })
+})
+
+// The "min total" headline the coach reads while standing a station down. It
+// was an inline reduce of its own until this slice, which made it a fourth
+// answer to how long a session runs and the one most likely to disagree,
+// because it is the number changing under the coach's finger. It reads the
+// shared seam now, and these render the real card to prove it.
+describe('the planner total', () => {
+  const headline = (html: string): number => Number(html.match(/<span class="big">(\d+)<\/span>/)?.[1])
+
+  it('shows the plain sum of a plan with nothing stood down', () => {
+    const html = renderFields({
+      session: sessionFixture({
+        activities: [
+          { phase: 'Warm-Up', duration: 10 },
+          { phase: 'Skill', drillId: 'd1', duration: 20 },
+          { phase: 'Game', drillId: 'd2', duration: 15 },
+        ],
+      }),
+    })
+    expect(headline(html)).toBe(45)
+    expect(html).toContain('min total')
+  })
+
+  it('is unchanged by declaring the stations and the games phase', () => {
+    const html = renderFields({
+      session: sessionFixture({
+        activities: [
+          { phase: 'Warm-Up', duration: 10, slot: 'station' },
+          { phase: 'Skill', drillId: 'd1', duration: 20, slot: 'station' },
+          { phase: 'Game', drillId: 'd2', duration: 15, slot: 'game' },
+        ],
+      }),
+    })
+    expect(headline(html)).toBe(45)
+  })
+
+  it('falls by exactly the stood-down station, and the row stays in the plan', () => {
+    const activities: Activity[] = [
+      { phase: 'Warm-Up', duration: 10, slot: 'station' },
+      { phase: 'Skill', drillId: 'd1', duration: 20, slot: 'station', skipped: true },
+      { phase: 'Game', drillId: 'd2', duration: 15, slot: 'game' },
+    ]
+    const html = renderFields({ session: sessionFixture({ activities }) })
+    expect(headline(html)).toBe(25)
+    // Nothing is deleted: the card still counts three activities.
+    expect(html).toContain('3 activities')
+  })
+
+  it('keeps a stray skipped on an activity carrying no slot', () => {
+    const html = renderFields({
+      session: sessionFixture({
+        activities: [
+          { phase: 'Warm-Up', duration: 10, skipped: true },
+          { phase: 'Game', drillId: 'd2', duration: 15, slot: 'game' },
+        ],
+      }),
+    })
+    expect(headline(html)).toBe(25)
+  })
+
+  it('shows zero, not a fallback, when every operational activity is stood down', () => {
+    const html = renderFields({
+      session: sessionFixture({
+        activities: [
+          { phase: 'Skill', drillId: 'd1', duration: 20, slot: 'station', skipped: true },
+          { phase: 'Game', drillId: 'd2', duration: 15, slot: 'game', skipped: true },
+        ],
+      }),
+    })
+    expect(headline(html)).toBe(0)
+  })
+
+  it('agrees with the shared seam on every one of those plans', () => {
+    // The point of the change: the headline is not its own arithmetic.
+    const plans: Activity[][] = [
+      [{ phase: 'Skill', duration: 20 }],
+      [{ phase: 'Skill', duration: 20, slot: 'station' }],
+      [
+        { phase: 'Skill', duration: 20, slot: 'station', skipped: true },
+        { phase: 'Game', duration: 15, slot: 'game' },
+      ],
+      [{ phase: 'Warm-Up', duration: 10, skipped: true }],
+      [],
+    ]
+    for (const activities of plans) {
+      const html = renderFields({ session: sessionFixture({ activities }) })
+      expect(headline(html)).toBe(sessionMinutes({ activities }))
+    }
   })
 })

@@ -457,7 +457,7 @@ supabase/functions/ | grep -i "reduce\|+=\|sum\|total"`, then every
 | 1 | `sessionMinutes`, `src/lib/data.ts:539` | `s.activities.reduce((a, x) => a + (x.duration \|\| 0), 0)` |
 | 2 | `plannedMinutes`, `src/lib/sessionLifecycle.ts:150` | The same reduce, **plus a zero fallback** |
 | 3 | `src/routes/Planner.tsx:733` | The same reduce, written inline. **Planner.tsx does not import `sessionMinutes`.** Rendered at `:735` as the big **"min total"** headline |
-| 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts:797-806` | `totalDuration += duration` in a `for` loop, **in Deno**, emitted into the public snapshot |
+| 4 | `buildSessionSnapshot`, `supabase/functions/_shared/share.ts` | `totalDuration += duration` in a `for` loop, **in Deno**, emitted into the public snapshot |
 
 **Consumers that inherit automatically**, because they call one of the first two:
 
@@ -475,7 +475,7 @@ programme** activities, and a template never carries `skipped`
 `src/components/TemplateFormModal.tsx:39`,
 `src/components/ProgrammeFormModal.tsx:160` and `:379`,
 `src/routes/ProgrammeDetail.tsx:76`, and `buildProgrammeSnapshot`
-(`supabase/functions/_shared/share.ts:1218-1228`), which is a second accumulator
+(`supabase/functions/_shared/share.ts`), which is a second accumulator
 in the same Deno file and belongs to weeks rather than to a dated session.
 
 **`plannedMinutes` is not the same expression as the other three.** Source:
@@ -490,6 +490,13 @@ session nobody has built yet, not a session that lasts no time."* That reading i
 correct today, because today a zero total can only mean an empty plan. It stops
 being correct the moment a filter can empty the sum, which is exactly what the
 target rule introduces.
+
+**Superseded by COACH-2A.** This section is a snapshot captured before that
+slice, and the quoted body above is no longer what the file contains. All four
+implementations now defer to `src/lib/activityStructure.ts`, and
+`plannedMinutes` tells the two zeros apart rather than falling back on either.
+`04-data-model-proposal.md` section 2 carries the corrected rule and why the
+mechanism first proposed for it was rejected.
 
 **The Deno implementation is a different runtime, not a second call site.**
 `share.ts` runs in Supabase Edge Functions and cannot import from `src/lib/`.
@@ -939,6 +946,17 @@ one is a migration, not client work.
 ## 27. `sessions.activities` can carry a new key, and exactly five call sites decide it
 
 Read because the station marker rides this column.
+
+**Superseded by COACH-2A, which is the slice this section was written for.**
+Everything below describes the shapes and the call sites as they stood before
+it. `Activity` and `ActivityRow` now carry `slot` and `skipped` as well; the
+template read is no longer a bare `toActivity` map but goes through
+`toTemplateActivityRows`; and there is a sixth write this section did not
+count, `_shared/fa.ts` inserting a template straight from Deno, which is safe
+because it CONSTRUCTS its activities from drill ids rather than copying a
+session's. The reasoning below still holds and is what the slice was built on.
+Every line number in it has moved; read `src/lib/queries.ts` and
+`src/lib/activityStructure.ts` for the current shape.
 
 - `sessions.activities` and `templates.activities` are `jsonb` with **no check
   constraint** (section 4), so the database imposes no shape.

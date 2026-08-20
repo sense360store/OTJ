@@ -65,6 +65,8 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
+import { isActivitySlot } from './activityStructure'
+import type { ActivitySlot } from './activityStructure'
 import { SESSION_SPOND_LINK_TAKEN_ERROR } from './sessionSubmit'
 import { type EventKindContext, spondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
@@ -146,11 +148,19 @@ interface MediaRow {
 }
 
 // The activities jsonb element. drill_id on the wire maps to drillId in the UI.
+//
+// `slot` and `skipped` are the same lowercase word on both sides, so there is
+// no snake_case mapping to get wrong, exactly as `phase` and `duration`
+// already are. Neither is constrained by the database: activities is
+// unconstrained jsonb, so both mappers validate rather than cast, and a
+// malformed value declares nothing.
 export interface ActivityRow {
   phase: Phase
   duration: number
   drill_id?: string | null
   title?: string | null
+  slot?: ActivitySlot
+  skipped?: true
 }
 
 interface TemplateRow {
@@ -286,10 +296,23 @@ const CLUB_COLS = 'id, name, motto, crest_url'
 
 // ---- Mappers -----------------------------------------------------------
 
+// Both mappers rebuild field by field from an allow-list and DROP any key they
+// do not name, so a key added to one and not the other is lost on the next
+// save. They are shared and context free: the template read and the session
+// read both call toActivity, and all three writes call toActivityRow, so a
+// mapper cannot tell which side it is on and cannot make a key session local
+// by itself. stripSessionLocalActivityKeys below is what does that.
+//
+// `slot` and `skipped` are VALIDATED rather than copied. activities is
+// unconstrained jsonb, so a row can carry slot: 'Station', slot: 3 or
+// skipped: 'yes'. Every one of those declares nothing and stands nothing
+// down, which is the direction that fails towards running the drill.
 export function toActivity(a: ActivityRow): Activity {
   const out: Activity = { phase: a.phase, duration: a.duration }
   if (a.drill_id != null) out.drillId = a.drill_id
   if (a.title != null) out.title = a.title
+  if (isActivitySlot(a.slot)) out.slot = a.slot
+  if (a.skipped === true) out.skipped = true
   return out
 }
 
@@ -297,7 +320,60 @@ export function toActivityRow(a: Activity): ActivityRow {
   const out: ActivityRow = { phase: a.phase, duration: a.duration }
   if (a.drillId != null) out.drill_id = a.drillId
   if (a.title != null) out.title = a.title
+  if (isActivitySlot(a.slot)) out.slot = a.slot
+  // Only literal true is ever written. Restoring a station removes the key,
+  // so each state has exactly one representation and no stored row says
+  // skipped: false.
+  if (a.skipped === true) out.skipped = true
   return out
+}
+
+// The activity keys that belong to ONE EVENING and never to a reusable plan.
+// A list rather than a line of code, so the next session-local key joins it
+// instead of growing a second code path.
+export const SESSION_LOCAL_ACTIVITY_KEYS = ['skipped'] as const
+
+// THE TEMPLATE BOUNDARY. One helper, applied at every point an activity
+// crosses into or out of a template, because the shared mappers cannot tell
+// which side they are on.
+//
+// It is applied at BOTH ends deliberately, and neither end depends on the
+// other: the write paths strip the key so a template never stores it, and the
+// read ignores it so a row that predates this helper, or one written by some
+// future hand-rolled call, still behaves. A template somehow carrying
+// `skipped` is read exactly as if it did not.
+//
+// `slot` is NOT stripped. Declaring which activities are the stations and
+// which is the games phase belongs to the reusable plan, so a week plan
+// carries it and every dated session built from that template inherits it.
+//
+// THERE IS A FOURTH TEMPLATE WRITE AND IT IS NOT IN THIS FILE.
+// supabase/functions/_shared/fa.ts inserts an FA imported template straight
+// into the table from Deno, which this helper structurally cannot reach. It
+// is safe because it CONSTRUCTS its activities from drill ids rather than
+// copying a session's, so no session-local key can arrive there; that is a
+// property of the literal, and activityStructure.invariant.test.ts is what
+// notices if the literal ever starts carrying one.
+export function stripSessionLocalActivityKeys(row: ActivityRow): ActivityRow {
+  // A jsonb element that is not an object carries no keys to strip, and is
+  // handed back exactly as it arrived. Spreading it instead would turn null
+  // into {}, and a string OR AN ARRAY into an index map, which would quietly
+  // change what toActivity does with a malformed stored row. `typeof [] ===
+  // 'object'`, so the array clause is the one this guard needs spelling out,
+  // the same clause activityShape uses over the same jsonb in the Deno share
+  // module. This helper strips keys; it is not the place a shape problem is
+  // discovered or repaired.
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return row
+  const out: ActivityRow = { ...row }
+  for (const key of SESSION_LOCAL_ACTIVITY_KEYS) delete out[key]
+  return out
+}
+
+// The template's activities, in either direction: rows on the way in from the
+// database, rows on the way out to it. Named so a call site reads as what it
+// is rather than as a map of a map.
+export function toTemplateActivityRows(activities: readonly ActivityRow[] | null | undefined): ActivityRow[] {
+  return (activities ?? []).map(stripSessionLocalActivityKeys)
 }
 
 // Of the imported drills tied to a programme or template being deleted, which
@@ -382,7 +458,9 @@ function toTemplate(r: TemplateRow): Template {
     author: r.author ?? '',
     focus: r.focus ?? '',
     createdBy: r.created_by ?? undefined,
-    activities: (r.activities ?? []).map(toActivity),
+    // Through the template boundary on the way out too, so a row that somehow
+    // carries a session-local key is read as if it did not.
+    activities: toTemplateActivityRows(r.activities).map(toActivity),
     intentions: r.intentions ?? [],
     programme: r.programme ?? '',
     week: r.week,
@@ -1576,7 +1654,10 @@ function toTemplateWriteRow(input: TemplateInput) {
     name: input.name,
     focus: input.focus || null,
     intentions: input.intentions,
-    activities: input.activities.map(toActivityRow),
+    // Both the insert and the update go through here, so the template
+    // boundary is crossed once for the two of them. `slot` survives; the
+    // session-local keys do not.
+    activities: toTemplateActivityRows(input.activities.map(toActivityRow)),
     ...toSourceFields(input.sourceUrl),
   }
 }
@@ -1823,7 +1904,10 @@ export function useCopyTemplateToWeek() {
         name: template.name,
         focus: template.focus || null,
         author: template.author || null,
-        activities: template.activities.map(toActivityRow),
+        // The third template write path, and the one a reader misses: a
+        // programme week copy is an insert of its own rather than a call to
+        // toTemplateWriteRow, so it crosses the boundary explicitly.
+        activities: toTemplateActivityRows(template.activities.map(toActivityRow)),
         intentions: template.intentions,
         programme_id: programmeId,
         programme_week: week,

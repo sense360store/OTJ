@@ -15,7 +15,7 @@ import {
   useTeams,
   useVenues,
 } from '../lib/queries'
-import { blankSession, embedSrc, isSampleMedia, PHASES } from '../lib/data'
+import { blankSession, embedSrc, isSampleMedia, PHASES, sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
 import { soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
@@ -730,7 +730,12 @@ export function SessionFieldsView({
   onOpenBoardPicker: () => void
 }) {
   const frozen = readOnly || busy
-  const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
+  // The "min total" headline the coach reads while standing a station down.
+  // It used to be an inline reduce of its own, which made it a fourth answer
+  // to how long a session runs and the one most likely to disagree, because
+  // it is the number changing under the coach's finger. It reads the shared
+  // seam now, so the active duration rule reaches it by construction.
+  const mins = sessionMinutes(session)
   return (
     <div className="card side-card">
       <div className="total-time" style={{ marginBottom: 4 }}>
