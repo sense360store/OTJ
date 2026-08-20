@@ -87,21 +87,42 @@ import urllib.parse
 # entry before it.
 #
 # The row carries the evidence the gated workflow
-# (.github/workflows/apply-production-migration.yml) records: created_by names
-# the workflow and the commit it ran from,
-# 694e1922e69552ff8f98310ae79d0cdcd99f76fd; idempotency_key holds
-# otj:migration:0049_spond_team_reconcile against a UNIQUE column, so the same
-# migration cannot be applied twice; and md5(statements[1]) is
-# d9d2199dcaabbc2da9248489754dc28a, the reviewed file with its trailing newline
-# stripped. The workflow's own post-apply gate asserted all of that, and it was
-# confirmed again independently before this constant moved.
+# (.github/workflows/apply-production-migration.yml) records. Each fact below
+# names WHAT ESTABLISHED IT, because the mechanisms do not cover the same
+# ground and an auditor who assumes they do will trust more than was checked:
 #
-# The structural readback proves the reviewed object was actually created:
-# public.spond_reconcile_player_team exists, is SECURITY DEFINER, and takes the
-# six arguments 0049 declares (p_player_id, p_expected_team_id,
-# p_target_team_id, p_expected_member_id, p_confirm_member_id, p_batch_id).
-# That is the SHAPE the migration declares rather than merely a matching name,
-# which matters because a name alone would be satisfied by an unrelated object.
+#   ASSERTED BY THE POST-APPLY GATE (verify_hosted_state.assert_post), and
+#   read back again here:
+#     - the row is the unique newest one, recorded at the newest version;
+#     - the row before it is 20260812102912 / spond_session_link_unique;
+#     - statements holds exactly one entry, and md5(statements[1]) is
+#       d9d2199dcaabbc2da9248489754dc28a, the reviewed file with its trailing
+#       newline stripped.
+#
+#   READ BACK HERE ONLY, and NOT asserted by that gate:
+#     - created_by is
+#       github-actions:apply-production-migration@694e1922e69552ff8f98310ae79d0cdcd99f76fd,
+#       naming the workflow and the commit it ran from. The gate never selects
+#       this column at all;
+#     - idempotency_key is otj:migration:0049_spond_team_reconcile against a
+#       UNIQUE column, so the same migration cannot be applied twice. The gate
+#       checks that key only BEFORE the apply, to prove the migration had not
+#       already run; assert_post does not re-read it.
+#
+# The structural readback proves the reviewed object was actually created,
+# rather than a ledger row merely carrying a matching name:
+# public.spond_reconcile_player_team exists, is SECURITY DEFINER, and takes
+# p_player_id uuid, p_expected_team_id uuid, p_target_team_id uuid,
+# p_expected_member_id text, p_confirm_member_id text, p_batch_id uuid. That
+# was read with pg_get_function_identity_arguments, which carries the parameter
+# NAMES as well as their types, and pg_proc.proargnames holds all six.
+#
+# The registered object probe checks LESS than that, and the difference is
+# worth knowing before relying on either: it resolves the function through
+# to_regprocedure on the TYPE signature and asserts prosecdef and an empty
+# search_path in proconfig, never proargnames. A function with the same types
+# and renamed parameters would satisfy that probe, so the names above rest on
+# the readback recorded here and not on the probe.
 #
 # What that readback does NOT establish is the other half of "0049 adds one
 # function and NOTHING else": no table, column, index, policy, grant or trigger

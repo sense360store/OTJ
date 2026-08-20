@@ -252,21 +252,44 @@ it appears exactly once and no row is newer.
 carries that workflow's evidence, all of it confirmed independently before this
 constant moved:
 
-- `created_by` is
-  `github-actions:apply-production-migration@694e1922e69552ff8f98310ae79d0cdcd99f76fd`,
-  naming the workflow and the commit it ran from;
-- `idempotency_key` is `otj:migration:0049_spond_team_reconcile`, and that
-  column is UNIQUE, so the same migration cannot be applied a second time;
-- `statements` holds one entry whose MD5 is
-  `d9d2199dcaabbc2da9248489754dc28a`, the reviewed file with its trailing
-  newline stripped;
+Each fact names what established it, because the mechanisms do not cover the
+same ground and an auditor who assumes they do will trust more than was checked.
+
+**Asserted by the post-apply gate (`verify_hosted_state.assert_post`), and read
+back again for this reconciliation:**
+
+- the row is the unique newest one, recorded at the newest version;
 - the row before it is `20260812102912` / `spond_session_link_unique`,
   unchanged;
+- `statements` holds exactly one entry whose MD5 is
+  `d9d2199dcaabbc2da9248489754dc28a`, the reviewed file with its trailing
+  newline stripped.
+
+**Read back for this reconciliation only, and NOT asserted by that gate:**
+
+- `created_by` is
+  `github-actions:apply-production-migration@694e1922e69552ff8f98310ae79d0cdcd99f76fd`,
+  naming the workflow and the commit it ran from. The gate never selects this
+  column;
+- `idempotency_key` is `otj:migration:0049_spond_team_reconcile`, and that
+  column is UNIQUE, so the same migration cannot be applied a second time. The
+  gate checks that key only **before** the apply, to prove the migration had
+  not already run.
+
+**The structural readback:**
+
 - `public.spond_reconcile_player_team` exists, is `SECURITY DEFINER`, and takes
-  the six arguments the migration declares (`p_player_id`, `p_expected_team_id`,
-  `p_target_team_id`, `p_expected_member_id`, `p_confirm_member_id`,
-  `p_batch_id`), which is the shape the migration creates rather than merely a
-  matching name.
+  `p_player_id uuid`, `p_expected_team_id uuid`, `p_target_team_id uuid`,
+  `p_expected_member_id text`, `p_confirm_member_id text`, `p_batch_id uuid`.
+  Read with `pg_get_function_identity_arguments`, which carries the parameter
+  names as well as their types, and `pg_proc.proargnames` holds all six. That
+  is the shape the migration creates rather than merely a matching name.
+
+  The registered object probe checks less than that: it resolves the function
+  through `to_regprocedure` on the **type** signature and asserts `prosecdef`
+  and an empty `search_path` in `proconfig`, never `proargnames`. A function
+  with the same types and renamed parameters would satisfy the probe, so the
+  names above rest on this readback and not on it.
 
 The previous value, `20260812102912` / `spond_session_link_unique` (0048), is
 now a superseded value and is REJECTED by the gate. That is asserted directly,
