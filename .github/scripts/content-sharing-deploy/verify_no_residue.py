@@ -78,31 +78,31 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0048_spond_session_link_unique was deliberately applied
-# to the hosted project through the gated production process, and hosted
-# assigned it this exact version. It was read back from
+# below is RECONCILED: 0049_spond_team_reconcile was deliberately applied to
+# the hosted project through the gated production process, and hosted assigned
+# it this exact version, 20260817104226. It was read back from
 # supabase_migrations.schema_migrations after the apply and confirmed to be the
-# unique newest ledger entry, with the previously pinned 20260812064038 /
-# register_group_inclusion now the entry before it.
+# unique newest ledger entry, appearing exactly once with no row newer, and
+# with the previously pinned 20260812102912 / spond_session_link_unique now the
+# entry before it.
 #
 # The row carries the evidence the gated workflow
 # (.github/workflows/apply-production-migration.yml) records: created_by names
 # the workflow and the commit it ran from,
-# 74621ef8a04c45cb61ff4963e700a5fad968c2ca; idempotency_key holds
-# otj:migration:0048_spond_session_link_unique against a UNIQUE column; and
-# md5(statements[1]) is a559695830bfa6713dc741f9fd27b2e2, the reviewed file
-# with its trailing newline stripped. The workflow's own post-apply gate
-# asserted all of that, and it was confirmed again independently before this
-# constant moved.
+# 694e1922e69552ff8f98310ae79d0cdcd99f76fd; idempotency_key holds
+# otj:migration:0049_spond_team_reconcile against a UNIQUE column, so the same
+# migration cannot be applied twice; and md5(statements[1]) is
+# d9d2199dcaabbc2da9248489754dc28a, the reviewed file with its trailing newline
+# stripped. The workflow's own post-apply gate asserted all of that, and it was
+# confirmed again independently before this constant moved.
 #
-# 0048 repairs ONE bad Spond link and adds sessions_spond_event_id_unique, the
-# partial unique index over sessions.spond_event_id that makes one session per
-# mirrored event a database fact. It deletes no session, rewrites no status,
-# clears no live_activity_index and changes no policy, grant or trigger. The
-# hosted state was read back after the apply: the index exists and is both
-# unique and partial, and across the 10 sessions carrying a Spond link there
-# are now zero duplicated links, which is what the repair plus the index must
-# read.
+# 0049 adds ONE function and nothing else, and the structural readback is what
+# proves that rather than a ledger row merely carrying a matching name:
+# public.spond_reconcile_player_team exists, is SECURITY DEFINER, and takes the
+# six arguments 0049 declares (p_player_id, p_expected_team_id,
+# p_target_team_id, p_expected_member_id, p_confirm_member_id, p_batch_id). A
+# name alone would be satisfied by an unrelated object; the security posture
+# and the full argument list together are what the migration actually creates.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters
