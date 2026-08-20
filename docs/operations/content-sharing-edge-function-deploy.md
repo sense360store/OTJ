@@ -240,40 +240,96 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260812102912` (`0048_spond_session_link_unique`, applied
-2026-08-12 under its own production approval).
+Current value: `20260817104226` (`0049_spond_team_reconcile`, applied
+2026-08-17 under its own production approval).
 
-Hosted ledger newest migration: **`20260812102912` / `spond_session_link_unique`**.
+Hosted ledger newest migration: **`20260817104226` / `spond_team_reconcile`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
-apply, not predicted before it, and was confirmed to be the unique newest row.
+apply, not predicted before it, and was confirmed to be the unique newest row:
+it appears exactly once and no row is newer.
 
-0048 was applied by the gated production migration workflow, so its ledger row
+0049 was applied by the gated production migration workflow, so its ledger row
 carries that workflow's evidence, all of it confirmed independently before this
 constant moved:
 
-- `created_by` is
-  `github-actions:apply-production-migration@74621ef8a04c45cb61ff4963e700a5fad968c2ca`,
-  naming the workflow and the commit it ran from;
-- `idempotency_key` is `otj:migration:0048_spond_session_link_unique`, and that
-  column is UNIQUE, so the same migration cannot be applied a second time;
-- `statements` holds one entry whose MD5 is
-  `a559695830bfa6713dc741f9fd27b2e2`, the reviewed file with its trailing
+Each fact names what established it, because the mechanisms do not cover the
+same ground and an auditor who assumes they do will trust more than was checked.
+
+**Asserted by the post-apply gate (`verify_hosted_state.assert_post`), and read
+back again for this reconciliation:**
+
+- the row is the unique newest one, recorded at the newest version;
+- the **version** of the row before it is `20260812102912`. Only the version:
+  `assert_post` compares `second_version` against `expected_previous_version`
+  and never compares `second_name`, which it reads but uses only in the failure
+  message and the report table;
+- `statements` holds exactly one entry whose MD5 is
+  `d9d2199dcaabbc2da9248489754dc28a`, the reviewed file with its trailing
   newline stripped;
-- the row before it is `20260812064038` / `register_group_inclusion`, unchanged;
-- `sessions_spond_event_id_unique` exists on `public.sessions` and is both
-  unique and partial, which is the shape the migration creates rather than
-  merely a matching name.
+- and, through the three registered object probes in `reviewed_migrations.py`,
+  that `public.spond_reconcile_player_team` resolves at **exactly** the
+  reviewed type signature `(uuid, uuid, uuid, text, text, uuid)`, that it is
+  `SECURITY DEFINER` with an empty `search_path`, and that `authenticated` may
+  `EXECUTE` it while `anon` may not.
 
-0048 repairs one bad Spond link and adds that index, and the read afterwards
-proves the outcome: across the 10 sessions carrying a `spond_event_id` there
-are now zero duplicated links, which is what the repair plus the index must
-read. It deletes no session, rewrites no status, clears no
-`live_activity_index` and changes no policy, grant or trigger.
+**Read back for this reconciliation only, and NOT asserted by that gate:**
 
-The superseded value, `20260812064038` (`0047_register_group_inclusion`, applied
-2026-08-12 as the register group inclusion column), is now rejected by the gate;
-a test pins that it is, alongside the earlier `20260811210248`,
-`20260810182333`, `20260809184949` and `20260809081118`.
+- `created_by` is
+  `github-actions:apply-production-migration@694e1922e69552ff8f98310ae79d0cdcd99f76fd`,
+  naming the workflow and the commit it ran from. The gate never selects this
+  column;
+- `idempotency_key` is `otj:migration:0049_spond_team_reconcile`, and that
+  column is UNIQUE, so the same migration cannot be applied a second time. The
+  gate checks that key only **before** the apply, to prove the migration had
+  not already run;
+- the **name** of the preceding row is `spond_session_link_unique`. A row that
+  kept version `20260812102912` under a different name would still satisfy the
+  gate, so this half of that row's identity rests on the readback.
+
+Those probes are why the function's existence and its security posture sit in
+the gate list rather than under the readback: they are asserted on every run,
+not merely read back once. What the readback **adds**, and the only thing it
+adds, is the six parameter **names**: `p_player_id`, `p_expected_team_id`,
+`p_target_team_id`, `p_expected_member_id`, `p_confirm_member_id`,
+`p_batch_id`. It read them with `pg_get_function_identity_arguments`, and
+`pg_proc.proargnames` holds all six.
+
+No probe reads `proargnames`, so a function with the same **types** and renamed
+parameters would satisfy all three of them. That gap is why the names are
+recorded at all, and it is a real one: a PostgREST call using named arguments
+would break on it while the gate stayed green.
+
+**What none of that establishes** is the other half of "0049 adds one function
+and nothing else". The probes look at one function and its privileges, and the
+readback at that same function. Neither inventories tables, columns, indexes,
+policies or triggers. That property comes from review of the migration SQL,
+which is what the gated production process exists to provide.
+
+The previous value, `20260812102912` / `spond_session_link_unique` (0048), is
+now a superseded value and is REJECTED by the gate. That is asserted directly,
+because a reconciliation that widened the constant rather than moving it would
+otherwise look identical to one that moved it. It remains the row immediately
+before the current head, which is why it still appears in the evidence above:
+there as the preceding row, here as a value the gate must refuse.
+
+**Everything below this line is history about superseded values, not evidence
+for the current pin.** It is kept because a rejected value is easier to trust as
+rejected when what it once described is on the record, and it is separated
+because evidence that does not validate the value above would be worse than no
+evidence at all.
+
+0048 repaired one bad Spond link and added `sessions_spond_event_id_unique`, the
+partial unique index over `sessions.spond_event_id`. The read taken after that
+apply, in its own reconciliation, showed zero duplicated links across the 10
+sessions carrying a `spond_event_id`, which is what the repair plus the index
+had to read. That figure was established for 0048 and has not been re-taken for
+0049, so it evidences that apply and nothing since.
+
+The earlier superseded values are rejected by the same equality: `20260812064038`
+(`0047_register_group_inclusion`, applied 2026-08-12 as the register group
+inclusion column), and before it `20260811210248`, `20260810182333`,
+`20260809184949` and `20260809081118`. A test pins every one of them, 0048's
+value included.
 
 Moving this constant is a **reconciliation**, never a deployment: it records an
 already applied, already reviewed hosted state so the fail closed verifier
@@ -390,7 +446,7 @@ on the hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260812102912` (0048, the Spond session link unique index);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260817104226` (0049, the Spond team reconcile function);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 

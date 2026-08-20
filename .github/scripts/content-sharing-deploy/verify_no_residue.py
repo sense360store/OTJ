@@ -13,7 +13,7 @@ one and no share machinery has been left behind:
   - every drill is internal_only;
   - every media row is internal_only;
   - the migration ledger's newest version is exactly EXPECTED_LAST_MIGRATION,
-    currently 20260812102912 (0048, spond_session_link_unique);
+    currently 20260817104226 (0049, spond_team_reconcile);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
 Runs TWICE in the deploy workflow, with identical assertions:
@@ -78,31 +78,81 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0048_spond_session_link_unique was deliberately applied
-# to the hosted project through the gated production process, and hosted
-# assigned it this exact version. It was read back from
+# below is RECONCILED: 0049_spond_team_reconcile was deliberately applied to
+# the hosted project through the gated production process, and hosted assigned
+# it this exact version, 20260817104226. It was read back from
 # supabase_migrations.schema_migrations after the apply and confirmed to be the
-# unique newest ledger entry, with the previously pinned 20260812064038 /
-# register_group_inclusion now the entry before it.
+# unique newest ledger entry, appearing exactly once with no row newer, and
+# with the previously pinned 20260812102912 / spond_session_link_unique now the
+# entry before it.
 #
 # The row carries the evidence the gated workflow
-# (.github/workflows/apply-production-migration.yml) records: created_by names
-# the workflow and the commit it ran from,
-# 74621ef8a04c45cb61ff4963e700a5fad968c2ca; idempotency_key holds
-# otj:migration:0048_spond_session_link_unique against a UNIQUE column; and
-# md5(statements[1]) is a559695830bfa6713dc741f9fd27b2e2, the reviewed file
-# with its trailing newline stripped. The workflow's own post-apply gate
-# asserted all of that, and it was confirmed again independently before this
-# constant moved.
+# (.github/workflows/apply-production-migration.yml) records. Each fact below
+# names WHAT ESTABLISHED IT, because the mechanisms do not cover the same
+# ground and an auditor who assumes they do will trust more than was checked:
 #
-# 0048 repairs ONE bad Spond link and adds sessions_spond_event_id_unique, the
-# partial unique index over sessions.spond_event_id that makes one session per
-# mirrored event a database fact. It deletes no session, rewrites no status,
-# clears no live_activity_index and changes no policy, grant or trigger. The
-# hosted state was read back after the apply: the index exists and is both
-# unique and partial, and across the 10 sessions carrying a Spond link there
-# are now zero duplicated links, which is what the repair plus the index must
-# read.
+#   ASSERTED BY THE POST-APPLY GATE (verify_hosted_state.assert_post), and
+#   read back again here:
+#     - the row is the unique newest one, recorded at the newest version;
+#     - the VERSION of the row before it is 20260812102912. Only the version:
+#       assert_post compares second_version against expected_previous_version
+#       and never compares second_name, which it reads but uses only in the
+#       failure message and the report table. The NAME below is readback;
+#     - statements holds exactly one entry, and md5(statements[1]) is
+#       d9d2199dcaabbc2da9248489754dc28a, the reviewed file with its trailing
+#       newline stripped;
+#     - and, through the three registered object probes in
+#       reviewed_migrations.py, that public.spond_reconcile_player_team
+#       resolves at EXACTLY the reviewed type signature
+#       (uuid, uuid, uuid, text, text, uuid), that it is SECURITY DEFINER with
+#       an empty search_path, and that authenticated may EXECUTE it while anon
+#       may not.
+#
+#   READ BACK HERE ONLY, and NOT asserted by that gate:
+#     - created_by is
+#       github-actions:apply-production-migration@694e1922e69552ff8f98310ae79d0cdcd99f76fd,
+#       naming the workflow and the commit it ran from. The gate never selects
+#       this column at all;
+#     - idempotency_key is otj:migration:0049_spond_team_reconcile against a
+#       UNIQUE column, so the same migration cannot be applied twice. The gate
+#       checks that key only BEFORE the apply, to prove the migration had not
+#       already run; assert_post does not re-read it;
+#     - the NAME of the preceding row is spond_session_link_unique. A row that
+#       kept version 20260812102912 under a different name would satisfy the
+#       gate, so this half of that row's identity rests on the readback.
+#
+# Those probes are why the object's existence and its security posture belong
+# above and not here: they are asserted by the gate on every run, not merely
+# read back once. What the readback adds, and the ONLY thing it adds, is the
+# six parameter NAMES: p_player_id, p_expected_team_id, p_target_team_id,
+# p_expected_member_id, p_confirm_member_id, p_batch_id. It read them with
+# pg_get_function_identity_arguments, and pg_proc.proargnames holds all six.
+#
+# No probe reads proargnames, so a function with the same TYPES and renamed
+# parameters would satisfy all three of them. That gap is the reason the names
+# are recorded here at all, and it is a real one: a PostgREST call using named
+# arguments would break on it while the gate stayed green.
+#
+# What NONE of that establishes is the other half of "0049 adds one function
+# and NOTHING else". The probes look at one function and its privileges, and
+# the readback at that same function; neither inventories tables, columns,
+# indexes, policies or triggers, so nothing in either could tell a 0049 that
+# added only the function from one that added the function and something more.
+#
+# Nor does 0049's own in-migration self-verification establish it, and an
+# earlier draft of this block wrongly said it did. That block does compare a
+# fingerprint taken BEFORE the DDL against the same reads after, which is a
+# real comparison rather than a value compared with itself, but it is an
+# ENUMERATED comparison and not a schema wide one: row counts on
+# player_registrations, player_spond_links, register_entries,
+# spond_event_responses and audit_events, plus the policy count, the grant
+# string and the trigger names over a named handful of tables. An added table,
+# column or index, or a policy on a table outside that list, would leave every
+# one of those assertions passing.
+#
+# "One function and nothing else" therefore rests on REVIEW OF THE MIGRATION
+# SQL, which is what the gated production process exists to provide, and this
+# block claims no more than that.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters
@@ -113,7 +163,7 @@ import urllib.parse
 # so it cannot be known before the apply happens. The order is always: apply ->
 # read back the recorded version -> set this constant to exactly that value in
 # a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260812102912"  # 0048_spond_session_link_unique
+EXPECTED_LAST_MIGRATION = "20260817104226"  # 0049_spond_team_reconcile
 
 # The EXACT set of club ids permitted to have public_sharing_enabled true.
 # This is a deployment review pin in the same sense as
