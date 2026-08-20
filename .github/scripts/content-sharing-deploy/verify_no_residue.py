@@ -13,7 +13,7 @@ one and no share machinery has been left behind:
   - every drill is internal_only;
   - every media row is internal_only;
   - the migration ledger's newest version is exactly EXPECTED_LAST_MIGRATION,
-    currently 20260812102912 (0048, spond_session_link_unique);
+    currently 20260817104226 (0049, spond_team_reconcile);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
 Runs TWICE in the deploy workflow, with identical assertions:
@@ -113,7 +113,7 @@ import urllib.parse
 # so it cannot be known before the apply happens. The order is always: apply ->
 # read back the recorded version -> set this constant to exactly that value in
 # a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260812102912"  # 0048_spond_session_link_unique
+EXPECTED_LAST_MIGRATION = "20260817104226"  # 0049_spond_team_reconcile
 
 # The EXACT set of club ids permitted to have public_sharing_enabled true.
 # This is a deployment review pin in the same sense as

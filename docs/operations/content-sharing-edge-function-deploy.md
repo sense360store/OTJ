@@ -240,29 +240,38 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260812102912` (`0048_spond_session_link_unique`, applied
-2026-08-12 under its own production approval).
+Current value: `20260817104226` (`0049_spond_team_reconcile`, applied
+2026-08-17 under its own production approval).
 
-Hosted ledger newest migration: **`20260812102912` / `spond_session_link_unique`**.
+Hosted ledger newest migration: **`20260817104226` / `spond_team_reconcile`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
-apply, not predicted before it, and was confirmed to be the unique newest row.
+apply, not predicted before it, and was confirmed to be the unique newest row:
+it appears exactly once and no row is newer.
 
-0048 was applied by the gated production migration workflow, so its ledger row
+0049 was applied by the gated production migration workflow, so its ledger row
 carries that workflow's evidence, all of it confirmed independently before this
 constant moved:
 
 - `created_by` is
-  `github-actions:apply-production-migration@74621ef8a04c45cb61ff4963e700a5fad968c2ca`,
+  `github-actions:apply-production-migration@694e1922e69552ff8f98310ae79d0cdcd99f76fd`,
   naming the workflow and the commit it ran from;
-- `idempotency_key` is `otj:migration:0048_spond_session_link_unique`, and that
+- `idempotency_key` is `otj:migration:0049_spond_team_reconcile`, and that
   column is UNIQUE, so the same migration cannot be applied a second time;
 - `statements` holds one entry whose MD5 is
-  `a559695830bfa6713dc741f9fd27b2e2`, the reviewed file with its trailing
+  `d9d2199dcaabbc2da9248489754dc28a`, the reviewed file with its trailing
   newline stripped;
-- the row before it is `20260812064038` / `register_group_inclusion`, unchanged;
-- `sessions_spond_event_id_unique` exists on `public.sessions` and is both
-  unique and partial, which is the shape the migration creates rather than
-  merely a matching name.
+- the row before it is `20260812102912` / `spond_session_link_unique`,
+  unchanged;
+- `public.spond_reconcile_player_team` exists, is `SECURITY DEFINER`, and takes
+  the six arguments the migration declares (`p_player_id`, `p_expected_team_id`,
+  `p_target_team_id`, `p_expected_member_id`, `p_confirm_member_id`,
+  `p_batch_id`), which is the shape the migration creates rather than merely a
+  matching name.
+
+The previous value, `20260812102912` / `spond_session_link_unique` (0048), is
+now a superseded value and is REJECTED by the gate. That is asserted directly,
+because a reconciliation that widened the constant rather than moving it would
+otherwise look identical to one that moved it.
 
 0048 repairs one bad Spond link and adds that index, and the read afterwards
 proves the outcome: across the 10 sessions carrying a `spond_event_id` there
@@ -390,7 +399,7 @@ on the hosted project:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260812102912` (0048, the Spond session link unique index);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260817104226` (0049, the Spond team reconcile function);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 

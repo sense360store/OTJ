@@ -353,13 +353,12 @@ Until that lands, the content-sharing Edge Function deploy workflow fails
 closed on its own ledger gate. That is intended: it is far safer than a check
 that passes regardless.
 
-**Outstanding.** `EXPECTED_LAST_MIGRATION` is still `20260812102912`
-(`0048_spond_session_link_unique`), and the hosted head has been
-`20260817104226` (`spond_team_reconcile`) since 17 August 2026. The
-content-sharing deploy workflow is therefore failing closed right now, as
-designed, and stays that way until the reconciliation pull request above sets
-the pin to `20260817104226`. That is its own reviewed change and is deliberately
-not folded into anything else.
+**Reconciled.** `EXPECTED_LAST_MIGRATION` is `20260817104226`
+(`0049_spond_team_reconcile`), matching the hosted head applied on 17 August
+2026. The gate stopped failing closed when that reconciliation landed, and it
+was its own reviewed change rather than being folded into anything else. The
+apply evidence behind the move is recorded in
+`docs/operations/content-sharing-edge-function-deploy.md`.
 
 ## Writing an object probe
 
