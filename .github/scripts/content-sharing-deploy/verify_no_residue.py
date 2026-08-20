@@ -96,13 +96,20 @@ import urllib.parse
 # stripped. The workflow's own post-apply gate asserted all of that, and it was
 # confirmed again independently before this constant moved.
 #
-# 0049 adds ONE function and nothing else, and the structural readback is what
-# proves that rather than a ledger row merely carrying a matching name:
+# The structural readback proves the reviewed object was actually created:
 # public.spond_reconcile_player_team exists, is SECURITY DEFINER, and takes the
 # six arguments 0049 declares (p_player_id, p_expected_team_id,
-# p_target_team_id, p_expected_member_id, p_confirm_member_id, p_batch_id). A
-# name alone would be satisfied by an unrelated object; the security posture
-# and the full argument list together are what the migration actually creates.
+# p_target_team_id, p_expected_member_id, p_confirm_member_id, p_batch_id).
+# That is the SHAPE the migration declares rather than merely a matching name,
+# which matters because a name alone would be satisfied by an unrelated object.
+#
+# What that readback does NOT establish is the other half of "0049 adds one
+# function and NOTHING else": no table, column, index, policy, grant or trigger
+# was probed here, so nothing in it could tell a 0049 that added only the
+# function from one that added the function and something more. That property
+# is proved by 0049's own in-migration self-verification, which fingerprints
+# the schema before and after inside the apply. It is a different mechanism and
+# this block does not claim it.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters

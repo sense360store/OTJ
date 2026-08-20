@@ -271,18 +271,28 @@ constant moved:
 The previous value, `20260812102912` / `spond_session_link_unique` (0048), is
 now a superseded value and is REJECTED by the gate. That is asserted directly,
 because a reconciliation that widened the constant rather than moving it would
-otherwise look identical to one that moved it.
+otherwise look identical to one that moved it. It remains the row immediately
+before the current head, which is why it still appears in the evidence above:
+there as the preceding row, here as a value the gate must refuse.
 
-0048 repairs one bad Spond link and adds that index, and the read afterwards
-proves the outcome: across the 10 sessions carrying a `spond_event_id` there
-are now zero duplicated links, which is what the repair plus the index must
-read. It deletes no session, rewrites no status, clears no
-`live_activity_index` and changes no policy, grant or trigger.
+**Everything below this line is history about superseded values, not evidence
+for the current pin.** It is kept because a rejected value is easier to trust as
+rejected when what it once described is on the record, and it is separated
+because evidence that does not validate the value above would be worse than no
+evidence at all.
 
-The superseded value, `20260812064038` (`0047_register_group_inclusion`, applied
-2026-08-12 as the register group inclusion column), is now rejected by the gate;
-a test pins that it is, alongside the earlier `20260811210248`,
-`20260810182333`, `20260809184949` and `20260809081118`.
+0048 repaired one bad Spond link and added `sessions_spond_event_id_unique`, the
+partial unique index over `sessions.spond_event_id`. The read taken after that
+apply, in its own reconciliation, showed zero duplicated links across the 10
+sessions carrying a `spond_event_id`, which is what the repair plus the index
+had to read. That figure was established for 0048 and has not been re-taken for
+0049, so it evidences that apply and nothing since.
+
+The earlier superseded values are rejected by the same equality: `20260812064038`
+(`0047_register_group_inclusion`, applied 2026-08-12 as the register group
+inclusion column), and before it `20260811210248`, `20260810182333`,
+`20260809184949` and `20260809081118`. A test pins every one of them, 0048's
+value included.
 
 Moving this constant is a **reconciliation**, never a deployment: it records an
 already applied, already reviewed hosted state so the fail closed verifier
