@@ -106,10 +106,22 @@ import urllib.parse
 # What that readback does NOT establish is the other half of "0049 adds one
 # function and NOTHING else": no table, column, index, policy, grant or trigger
 # was probed here, so nothing in it could tell a 0049 that added only the
-# function from one that added the function and something more. That property
-# is proved by 0049's own in-migration self-verification, which fingerprints
-# the schema before and after inside the apply. It is a different mechanism and
-# this block does not claim it.
+# function from one that added the function and something more.
+#
+# Nor does 0049's own in-migration self-verification establish it, and an
+# earlier draft of this block wrongly said it did. That block does compare a
+# fingerprint taken BEFORE the DDL against the same reads after, which is a
+# real comparison rather than a value compared with itself, but it is an
+# ENUMERATED comparison and not a schema wide one: row counts on
+# player_registrations, player_spond_links, register_entries,
+# spond_event_responses and audit_events, plus the policy count, the grant
+# string and the trigger names over a named handful of tables. An added table,
+# column or index, or a policy on a table outside that list, would leave every
+# one of those assertions passing.
+#
+# "One function and nothing else" therefore rests on REVIEW OF THE MIGRATION
+# SQL, which is what the gated production process exists to provide, and this
+# block claims no more than that.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters
