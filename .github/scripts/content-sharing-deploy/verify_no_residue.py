@@ -250,9 +250,11 @@ SUBPROCESS_TIMEOUT_SECONDS = 60
 # gate somebody switches off, so this is a correctness requirement rather than
 # tidiness.
 #
-# Two of these were MEASURED against this project's database, not assumed:
+# Each value below was checked against this project's database with
+# pg_settings, not assumed from the PostgreSQL defaults, and THREE of the six
+# are load bearing rather than prophylactic:
 #
-#   TimeZone, for timestamptz (content_shares.created_at and five more):
+#   TimeZone, for timestamptz (six columns across these three tables):
 #     UTC              {"c": "2026-08-10T17:14:53.087233+00:00"}
 #                      md5 ac1dd26dbe9da00843070d826a17f311
 #     America/New_York {"c": "2026-08-10T13:14:53.087233-04:00"}
@@ -264,14 +266,42 @@ SUBPROCESS_TIMEOUT_SECONDS = 60
 #     escape           {"b": "\\336\\255\\276\\357\\001"}
 #                      md5 5e46159b11924b75616ee4f7598e836f
 #
-# The other three are prophylactic, and deliberately so. to_jsonb(t) covers the
-# whole row precisely SO THAT a column added by a future migration is
-# fingerprinted without this file being edited, which means the class of
-# session-dependent rendering is open even though no interval, float or bare
-# date column exists in these three tables today. Closing the class costs three
-# lines; discovering it later costs a deploy that fails on an unchanged
-# database. Each is pinned to the value that is already the default, so nothing
-# about today's rendering changes.
+#   extra_float_digits is pinned to 3, and this one is NOT the value the
+#   session already carries. pg_settings on hosted reports setting 0 (boot_val
+#   1, reset_val 0), and at 0 a float8 is rounded on the way out, which makes
+#   the fingerprint MISS A REAL CHANGE rather than merely report a false one:
+#
+#     0.3::float8 = 0.30000000000000004::float8   -> false, two distinct values
+#     at extra_float_digits = 0, BOTH render {"f": 0.3}
+#                                and BOTH hash 7e759e089897d8f60a69bb1f3a7bcd90
+#
+#   3 is the shortest-exact rendering, so two values that differ at all render
+#   differently. A change detection fingerprint that cannot distinguish two
+#   different stored values is worse than a noisy one, so this pin deliberately
+#   overrides the session and changes float rendering from what hosted would
+#   otherwise produce. No float column exists in these three tables today; this
+#   is what makes the pin correct if one is ever added.
+#
+# DateStyle, IntervalStyle and lc_monetary are prophylactic, and deliberately
+# so. to_jsonb(t) covers the whole row precisely SO THAT a column added by a
+# future migration is fingerprinted without this file being edited, which means
+# the class of session-dependent rendering is open even though no bare date,
+# interval or money column exists in these tables today. lc_monetary is a real
+# member of that class rather than a theoretical one: pg_settings reports it as
+# a USERSET setting currently en_US.UTF-8 against a boot value of C, and the
+# money output function formats the currency symbol and separators from it.
+#
+# Three settings are deliberately NOT pinned, because they are not in this
+# class, and they are named so a later reader does not have to re-derive it:
+#
+#   lc_numeric   PostgreSQL's numeric and float output functions always emit a
+#                '.' radix. lc_numeric reaches to_char(), which nothing here
+#                calls.
+#   lc_time      likewise reaches to_char() only; date and timestamp output use
+#                DateStyle, which IS pinned.
+#   client_encoding  md5() runs SERVER side over server-encoded text, so the
+#                digest is fixed before any client encoding applies. Only the
+#                32 hex digits cross the wire.
 #
 # SET LOCAL is transaction-scoped and is not a write; a read-only transaction
 # permits it.
@@ -284,6 +314,7 @@ READ_ONLY_PREAMBLE = (
     "set local datestyle = 'ISO, MDY';\n"
     "set local intervalstyle = 'postgres';\n"
     "set local extra_float_digits = 3;\n"
+    "set local lc_monetary = 'C';\n"
 )
 READ_ONLY_EPILOGUE = "rollback;\n"
 

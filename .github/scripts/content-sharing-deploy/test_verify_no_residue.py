@@ -75,6 +75,27 @@ CLEAN_PAYLOAD = sample_payload()
 
 
 @contextlib.contextmanager
+def github_sha_env(value):
+    """Set GITHUB_SHA to `value` (None unsets it) and restore it afterwards.
+
+    Actions always sets GITHUB_SHA and a developer's shell usually does not, so
+    any test whose result depends on it must state which it means.
+    """
+    prior = os.environ.get("GITHUB_SHA")
+    if value is None:
+        os.environ.pop("GITHUB_SHA", None)
+    else:
+        os.environ["GITHUB_SHA"] = value
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop("GITHUB_SHA", None)
+        else:
+            os.environ["GITHUB_SHA"] = prior
+
+
+@contextlib.contextmanager
 def baseline_path(name="content-sharing-state-baseline.json"):
     """Yield a path inside a fresh temp dir where no baseline exists yet."""
     with tempfile.TemporaryDirectory() as d:
@@ -794,20 +815,27 @@ class TestEnabledClubAllowlist(unittest.TestCase):
 class TestPreDeployBaseline(unittest.TestCase):
     """PRE captures the live sharing state; it never requires it to be empty."""
 
-    def _capture(self, state):
-        """Run the pre phase over `state` and return (rc, log, baseline, mode)."""
+    def _capture(self, state, github_sha=None):
+        """Run the pre phase over `state` and return (rc, log, baseline, mode).
+
+        GITHUB_SHA is set explicitly rather than inherited. It was inherited
+        once, and the difference between a developer's shell (unset) and an
+        Actions runner (always set) made the baseline shape test pass locally
+        and fail in CI, which is the one place it mattered.
+        """
         doc = sample_payload(state=state)
         buf = io.StringIO()
-        with sample_file(doc) as path:
-            with baseline_path() as out_path:
-                with contextlib.redirect_stdout(buf):
-                    rc = vr.main(["verify_no_residue.py", "--sample", path,
-                                  "--phase", "pre", "--baseline-out", out_path])
-                captured, mode = None, None
-                if os.path.exists(out_path):
-                    with open(out_path, "r", encoding="utf-8") as fh:
-                        captured = json.load(fh)
-                    mode = stat.S_IMODE(os.stat(out_path).st_mode)
+        with github_sha_env(github_sha):
+            with sample_file(doc) as path:
+                with baseline_path() as out_path:
+                    with contextlib.redirect_stdout(buf):
+                        rc = vr.main(["verify_no_residue.py", "--sample", path,
+                                      "--phase", "pre", "--baseline-out", out_path])
+                    captured, mode = None, None
+                    if os.path.exists(out_path):
+                        with open(out_path, "r", encoding="utf-8") as fh:
+                            captured = json.load(fh)
+                        mode = stat.S_IMODE(os.stat(out_path).st_mode)
         return rc, buf.getvalue(), captured, mode
 
     def test_an_empty_sharing_state_passes(self):
@@ -839,12 +867,24 @@ class TestPreDeployBaseline(unittest.TestCase):
         self.assertEqual(doc["datasets"]["content_share_audit_events"]["count"], 250)
 
     def test_the_baseline_holds_counts_and_fingerprints_and_nothing_else(self):
-        rc, out, doc, _mode = self._capture(CLEAN_STATE)
-        self.assertEqual(rc, 0, out)
-        self.assertEqual(set(doc), {"format", "datasets"})
-        self.assertEqual(set(doc["datasets"]), set(vr.MUTABLE_DATASETS))
-        for name in vr.MUTABLE_DATASETS:
-            self.assertEqual(set(doc["datasets"][name]), {"count", "fingerprint"})
+        """Both shapes, named: outside Actions, and on a runner.
+
+        The commit binding is the ONLY optional key, and it is present exactly
+        when GITHUB_SHA is. Asserting whichever shape the ambient environment
+        happened to produce is what made this pass locally and fail in CI.
+        """
+        for sha, expected in ((None, {"format", "datasets"}),
+                              ("a" * 40, {"format", "datasets", "github_sha"})):
+            with self.subTest(github_sha=sha):
+                rc, out, doc, _mode = self._capture(CLEAN_STATE, github_sha=sha)
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(set(doc), expected)
+                self.assertEqual(set(doc["datasets"]), set(vr.MUTABLE_DATASETS))
+                for name in vr.MUTABLE_DATASETS:
+                    self.assertEqual(set(doc["datasets"][name]),
+                                     {"count", "fingerprint"})
+                if sha:
+                    self.assertEqual(doc["github_sha"], sha)
 
     def test_no_row_body_or_sensitive_value_can_reach_the_baseline(self):
         """Extra keys on the server read are dropped, not carried through.
@@ -1264,19 +1304,23 @@ class TestStateQuery(unittest.TestCase):
     def test_every_output_formatting_guc_is_pinned(self):
         """to_jsonb renders several types according to a SESSION setting.
 
-        Two were measured against the hosted project: one unchanged timestamptz
-        hashed to ac1dd26dbe9da00843070d826a17f311 under UTC and to
-        1010c8de772c30ce2fcd8fc225914fed under America/New_York, and one
-        unchanged bytea (the shape of content_shares.token_hash) hashed to
+        Three were measured against the hosted project. One unchanged
+        timestamptz hashed to ac1dd26dbe9da00843070d826a17f311 under UTC and to
+        1010c8de772c30ce2fcd8fc225914fed under America/New_York. One unchanged
+        bytea (the shape of content_shares.token_hash) hashed to
         249af7b5e5582f80b1f4434c6150d254 under hex and to
-        5e46159b11924b75616ee4f7598e836f under escape. The rest close the same
-        class for column types a future migration could add, since to_jsonb(t)
-        fingerprints the whole row by design.
+        5e46159b11924b75616ee4f7598e836f under escape. And at hosted's own
+        extra_float_digits of 0, the two DISTINCT float8 values 0.3 and
+        0.30000000000000004 both render {"f": 0.3} and hash identically, so
+        that pin is what stops the fingerprint MISSING a change.
+
+        The rest close the same class for column types a future migration could
+        add, since to_jsonb(t) fingerprints the whole row by design.
         """
         script = vr.build_script(vr.STATE_SELECT).lower()
         for guc in ("timezone = 'utc'", "bytea_output = 'hex'",
                     "datestyle = 'iso, mdy'", "intervalstyle = 'postgres'",
-                    "extra_float_digits = 3"):
+                    "extra_float_digits = 3", "lc_monetary = 'c'"):
             self.assertIn(f"set local {guc};", vr.READ_ONLY_PREAMBLE.lower(),
                           f"{guc} is not pinned in the preamble")
             self.assertIn(f"set local {guc};", script,
