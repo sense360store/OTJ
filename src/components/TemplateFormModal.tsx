@@ -14,6 +14,8 @@ import { AddDrillModal } from './AddDrillModal'
 import { RightsControl, RightsNewNote } from './RightsControl'
 import { useActivityTitle, useDrillMap, useInsertTemplate, useUpdateTemplate } from '../lib/queries'
 import type { TemplateInput } from '../lib/queries'
+import { ActivityRoleRow, ActivityStructureSummary } from './ActivityRoleControls'
+import { type ActivityRole, applyRole } from '../lib/activityRole'
 import { PHASES, sessionMinutes } from '../lib/data'
 import type { Activity, Phase, Template } from '../lib/data'
 
@@ -39,6 +41,21 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
   const mins = sessionMinutes({ activities: form.activities })
 
   const set = <K extends keyof TemplateInput>(k: K, v: TemplateInput[K]) => setForm((f) => ({ ...f, [k]: v }))
+  // COACH-2B. A role press REPLACES the activity rather than patching it,
+  // because applyRole removes `slot`, and setAct's spread can only add keys.
+  // A week plan may declare a role; it never carries a stand-down, so no
+  // stand-down control is offered here and `skipped` has nothing to strip.
+  //
+  // Not frozen while a save is in flight, deliberately: neither is the phase
+  // select, the duration, the reorder or the remove beside it, and a control
+  // that froze alone would read as a bug. Freezing this modal's whole
+  // activity list is the authoring seam's job (COACH-10), not this slice's.
+  const setRole = (i: number, role: ActivityRole) =>
+    setForm((f) => {
+      const a = [...f.activities]
+      a[i] = applyRole(a[i], role)
+      return { ...f, activities: a }
+    })
   const setAct = (i: number, patch: Partial<Activity>) =>
     setForm((f) => {
       const a = [...f.activities]
@@ -116,6 +133,12 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
             {mins} min
           </span>
         </div>
+        {/* COACH-2B. The same sentence the dated-session planner shows, from
+            the same pure composer, so a week plan and the session started from
+            it cannot describe their structure differently. */}
+        <div style={{ marginBottom: 8 }}>
+          <ActivityStructureSummary activities={form.activities} />
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {form.activities.map((a, i) => {
             const drill = a.drillId ? drillById[a.drillId] : null
@@ -129,6 +152,8 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
                 count={form.activities.length}
                 onPhase={(phase) => setAct(i, { phase })}
                 onDuration={(duration) => setAct(i, { duration })}
+                activities={form.activities}
+                onRole={(role) => setRole(i, role)}
                 onMove={(dir) => move(i, dir)}
                 onRemove={() => removeAct(i)}
               />
@@ -213,6 +238,8 @@ export function TemplateActivityRow({
   onDuration,
   onMove,
   onRemove,
+  activities,
+  onRole,
 }: {
   activity: Activity
   title: string
@@ -223,9 +250,14 @@ export function TemplateActivityRow({
   onDuration: (duration: number) => void
   onMove: (dir: -1 | 1) => void
   onRemove: () => void
+  // COACH-2B. The whole list, because a station's NUMBER is its position
+  // among the stations running, which one activity cannot know.
+  activities: readonly Activity[]
+  onRole: (role: ActivityRole) => void
 }) {
   return (
-    <div className="act-card act-edit" style={{ marginBottom: 0 }}>
+    <div className="act-item" style={{ marginBottom: 0 }}>
+      <div className="act-card act-edit" style={{ marginBottom: 0 }}>
       <span className="tag-dot" style={{ background: PHASE_COLOR[activity.phase], width: 10, height: 10 }}></span>
       <div className="ac-body">
         <h4>{title}</h4>
@@ -295,6 +327,12 @@ export function TemplateActivityRow({
       <button className="act-x" aria-label="Remove activity" onClick={onRemove}>
         <Icon.trash />
       </button>
+      </div>
+      {/* COACH-2B. A week plan may declare a station or the games phase, and
+          that declaration is copied into every dated session started from it.
+          No stand-down here: "Not running tonight" is session local, and this
+          is reusable content. */}
+      <ActivityRoleRow activities={activities} index={index} label={title} dated={false} onRole={onRole} />
     </div>
   )
 }
