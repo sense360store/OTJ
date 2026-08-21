@@ -872,7 +872,7 @@ describe('what the plan derives and what it would store', () => {
 describe('readiness names the fix', () => {
   it('is ready when every selected child has a colour and the groups are distinct', () => {
     const rows = [...squad(4, 't1', 'One', 'red'), ...squad(4, 't2', 'Two', 'blue')]
-    expect(setupReadiness(rows, includeAll(rows), 2)).toEqual({ ready: true, issues: [] })
+    expect(setupReadiness(rows, includeAll(rows), 2)).toEqual({ started: true, ready: true, issues: [] })
   })
 
   it('is not ready when a selected child has no effective bib', () => {
@@ -937,15 +937,30 @@ describe('readiness names the fix', () => {
     expect(setupReadiness(rows, includeAll(rows), 5).issues).not.toContain('groups-share-colour')
   })
 
-  it('says nothing at all before the coach has selected anybody', () => {
+  it('reports an untouched night as not started, and never as ready', () => {
+    // Twenty children on the roster and nobody selected is not a night
+    // that is ready to run. It raises no issue, because a warning over
+    // nobody would appear on every session the moment it opened, but a
+    // consumer reading `ready` must not be told an untouched setup is done.
     const rows = squad(20, 't1', 'One', null)
-    expect(setupReadiness(rows, emptyDraft(), 4)).toEqual({ ready: true, issues: [] })
+    expect(setupReadiness(rows, emptyDraft(), 4)).toEqual({
+      started: false,
+      ready: false,
+      issues: [],
+    })
+  })
+
+  it('reports a started night as started, whatever its issues', () => {
+    const bad = [...squad(2, 't1', 'One', 'red'), ...squad(2, 't2', 'Two', null)]
+    expect(setupReadiness(bad, includeAll(bad), 2).started).toBe(true)
+    const good = [...squad(2, 't1', 'One', 'red'), ...squad(2, 't2', 'Two', 'blue')]
+    expect(setupReadiness(good, includeAll(good), 2).started).toBe(true)
   })
 
   it('ignores a child the coach has not selected', () => {
     const rows = [...squad(4, 't1', 'One', 'red'), ...squad(4, 't2', 'Two', null)]
     const draft = includeAll(rows.slice(0, 4))
-    expect(setupReadiness(rows, draft, 1)).toEqual({ ready: true, issues: [] })
+    expect(setupReadiness(rows, draft, 1)).toEqual({ started: true, ready: true, issues: [] })
   })
 
   it('names a fix for every issue it can raise', () => {
@@ -1259,6 +1274,10 @@ describe('accepting the suggestion', () => {
     const rows = rows4()
     const plan = planSetup(rows, emptyDraft(), null)
     const next = applySetup(emptyDraft(), plan)
-    expect(setupReadiness(rows, next, plan.groups.length)).toEqual({ ready: true, issues: [] })
+    expect(setupReadiness(rows, next, plan.groups.length)).toEqual({
+      started: true,
+      ready: true,
+      issues: [],
+    })
   })
 })

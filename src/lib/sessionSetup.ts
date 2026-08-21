@@ -822,6 +822,15 @@ export const SETUP_ISSUE_FIXES: Record<SetupIssue, string> = {
 }
 
 export interface SetupReadiness {
+  // Has the coach arranged anything yet?
+  //
+  // A night with nobody selected is NOT READY AND NOT UNREADY: it is
+  // untouched, and those are two different sentences. `ready` alone had to
+  // answer both and answered the wrong one, reporting a full roster with
+  // nobody in a group as ready to run. Suppressing warnings over an empty
+  // selection is right; asserting readiness over it is not, and the two do
+  // not have to travel together.
+  started: boolean
   ready: boolean
   issues: SetupIssue[]
 }
@@ -842,16 +851,19 @@ export interface SetupReadiness {
 //   symptom is that the selected children resolve to fewer distinct
 //   colours than there are groups to fill, which is what this measures.
 //
-// An empty selection is not "not ready", it is not started, and it has its
-// own sentence elsewhere. Reporting an issue over nobody would put a
-// warning on every session the moment it was opened.
+// An empty selection is not "not ready", it is not started. It raises no
+// issue, because a warning over nobody would appear on every session the
+// moment it opened, and it claims no readiness either: `started` carries
+// that distinction so `ready` never has to stand for both.
 export function setupReadiness(
   rows: readonly TonightRow[],
   draft: TonightDraft,
   intendedGroups: number,
 ): SetupReadiness {
   const selected = uniqueByPlayer(rows).filter((r) => draftIncluded(draft, r.playerId))
-  if (selected.length === 0) return { ready: true, issues: [] }
+  // Not started: no issues to raise over nobody, and no readiness to claim
+  // over nobody either.
+  if (selected.length === 0) return { started: false, ready: false, issues: [] }
 
   const issues: SetupIssue[] = []
   const colours = new Set<string>()
@@ -882,5 +894,5 @@ export function setupReadiness(
   if (bibbed >= intendedGroups && colours.size < intendedGroups) {
     issues.push('groups-share-colour')
   }
-  return { ready: issues.length === 0, issues }
+  return { started: true, ready: issues.length === 0, issues }
 }
