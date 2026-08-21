@@ -282,14 +282,48 @@ SUBPROCESS_TIMEOUT_SECONDS = 60
 #   otherwise produce. No float column exists in these three tables today; this
 #   is what makes the pin correct if one is ever added.
 #
-# DateStyle, IntervalStyle and lc_monetary are prophylactic, and deliberately
-# so. to_jsonb(t) covers the whole row precisely SO THAT a column added by a
-# future migration is fingerprinted without this file being edited, which means
-# the class of session-dependent rendering is open even though no bare date,
-# interval or money column exists in these tables today. lc_monetary is a real
-# member of that class rather than a theoretical one: pg_settings reports it as
-# a USERSET setting currently en_US.UTF-8 against a boot value of C, and the
-# money output function formats the currency symbol and separators from it.
+# DateStyle, IntervalStyle, lc_monetary and search_path are prophylactic, and
+# deliberately so. to_jsonb(t) covers the whole row precisely SO THAT a column
+# added by a future migration is fingerprinted without this file being edited,
+# which means the class of session-dependent rendering is open even though no
+# bare date, interval, money or OID-alias column exists in these tables today.
+# Two of the four were measured to be real members of the class rather than
+# theoretical ones:
+#
+#   lc_monetary is USERSET and pg_settings reports it currently en_US.UTF-8
+#   against a boot value of C, so two connections genuinely can disagree; the
+#   money output function formats the currency symbol and separators from it.
+#
+#   search_path decides whether an OID alias (regclass, regtype, regproc,
+#   regprocedure, regoper, regoperator, regnamespace, regrole, regconfig,
+#   regdictionary) renders schema qualified:
+#     search_path='public'  {"c": "content_shares"}
+#                           md5 0a01d9da95493739615688552330ee82
+#     search_path=''        {"c": "public.content_shares"}
+#                           md5 527e7c64099b759b9c5fb7d25a582096
+#   Pinned to '' rather than to a schema list, which renders every such value
+#   fully qualified and unambiguous, and which matches the SET search_path = ''
+#   posture the SECURITY DEFINER migrations already use. Safe because every
+#   relation in all three shipped statements is schema qualified and every
+#   function they call lives in pg_catalog, which is always searched implicitly.
+#
+# THE ENUMERATION IS THE RESIDUAL, and it is worth stating rather than implying
+# completeness. This list is knowledge, not something the code derives: a type
+# whose output function reads a setting not pinned here would slip through. The
+# sweep behind the current list is timestamptz and timetz (TimeZone), bytea
+# (bytea_output), float4 and float8 (extra_float_digits), date and timestamp
+# (DateStyle), interval (IntervalStyle), money (lc_monetary) and the OID
+# aliases (search_path); arrays and domains inherit their element's dependency
+# and so are covered by the same pins, and jsonb, json, uuid, text, the integer
+# family, boolean and enums have no session dependency at all.
+#
+# The failure DIRECTION of a miss is worth knowing too, because it is not
+# uniform. An unpinned rendering setting normally produces a FALSE ALARM: an
+# unchanged row hashes differently, the post phase fails, and a human looks.
+# That is the safe direction and it is why the residual above is tolerable.
+# extra_float_digits is the exception and is the reason it is pinned to 3
+# rather than left alone: at 0 it loses information, so it fails the other way,
+# by hashing two DIFFERENT values the same.
 #
 # Three settings are deliberately NOT pinned, because they are not in this
 # class, and they are named so a later reader does not have to re-derive it:
@@ -315,6 +349,7 @@ READ_ONLY_PREAMBLE = (
     "set local intervalstyle = 'postgres';\n"
     "set local extra_float_digits = 3;\n"
     "set local lc_monetary = 'C';\n"
+    "set local search_path = '';\n"
 )
 READ_ONLY_EPILOGUE = "rollback;\n"
 

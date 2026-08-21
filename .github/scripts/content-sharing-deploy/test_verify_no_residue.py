@@ -1288,6 +1288,26 @@ class TestStateQuery(unittest.TestCase):
         self.assertEqual(vr.STATE_SELECT.count("md5(to_jsonb(t)::text)"), 3)
         self.assertEqual(vr.STATE_SELECT.count("coalesce(string_agg("), 3)
 
+    def test_an_empty_search_path_cannot_break_the_shipped_statements(self):
+        """search_path is pinned to '', so nothing may rely on it resolving.
+
+        Every relation must be schema qualified. The functions these queries
+        call (md5, to_jsonb, string_agg, coalesce, count, json_build_object,
+        to_regclass) all live in pg_catalog, which is searched implicitly even
+        with an empty search_path, so only relations are at risk.
+        """
+        import re
+        for name, sql in (("RESIDUE_SELECT", vr.RESIDUE_SELECT),
+                          ("STATE_SELECT", vr.STATE_SELECT),
+                          ("CRON_JOBS_SELECT", vr.CRON_JOBS_SELECT)):
+            refs = re.findall(r"\bfrom\s+([A-Za-z_][\w.]*)", sql, re.I)
+            refs += re.findall(r"to_regclass\('([^']+)'\)", sql)
+            self.assertTrue(refs, f"{name}: found no relation to check")
+            for ref in refs:
+                self.assertIn(".", ref,
+                              f"{name} references {ref!r} unqualified, which an "
+                              "empty search_path would fail to resolve")
+
     def test_the_three_datasets_are_exactly_the_documented_ones(self):
         self.assertEqual(
             vr.MUTABLE_DATASETS,
@@ -1320,7 +1340,8 @@ class TestStateQuery(unittest.TestCase):
         script = vr.build_script(vr.STATE_SELECT).lower()
         for guc in ("timezone = 'utc'", "bytea_output = 'hex'",
                     "datestyle = 'iso, mdy'", "intervalstyle = 'postgres'",
-                    "extra_float_digits = 3", "lc_monetary = 'c'"):
+                    "extra_float_digits = 3", "lc_monetary = 'c'",
+                    "search_path = ''"):
             self.assertIn(f"set local {guc};", vr.READ_ONLY_PREAMBLE.lower(),
                           f"{guc} is not pinned in the preamble")
             self.assertIn(f"set local {guc};", script,
