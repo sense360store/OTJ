@@ -15,8 +15,8 @@ import io
 import json
 import os
 import pathlib
-import re
 import tempfile
+import tomllib
 import unittest
 import urllib.error
 
@@ -44,6 +44,28 @@ ELEVEN_VALID = [
     {"slug": "manage-content-share", "verify_jwt": True, "version": 1, "updated_at": "2026-07-22T00:00:00Z", "ezbr_sha256": "33"},
     {"slug": "read-content-share", "verify_jwt": False, "version": 2, "updated_at": "2026-07-22T00:00:00Z", "ezbr_sha256": "44"},
 ]
+
+
+def declared_jwt_postures(config_text: str) -> dict[str, bool]:
+    """Every [functions.<slug>] block that declares verify_jwt, from TOML.
+
+    Parsed with tomllib rather than matched with a regex. A regex anchored to
+    the line after the header silently drops any block with an entrypoint,
+    another setting or a comment first, which makes a check over the result
+    quietly narrower than it reads. A block that declares no verify_jwt is
+    omitted rather than defaulted: the deployer's default is true, but this
+    function reports what the file SAYS, and inventing a value here would be
+    the same mistake one level down.
+    """
+    data = tomllib.loads(config_text)
+    functions = data.get("functions")
+    if not isinstance(functions, dict):
+        return {}
+    out: dict[str, bool] = {}
+    for slug, table in functions.items():
+        if isinstance(table, dict) and isinstance(table.get("verify_jwt"), bool):
+            out[slug] = table["verify_jwt"]
+    return out
 
 
 def write_json(payload) -> str:
@@ -327,6 +349,41 @@ class TestInventoryPinIsReconciled(unittest.TestCase):
             "content sharing and has its own gated deploy workflow.",
         )
 
+    def test_the_config_parser_sees_every_block_whatever_its_shape(self):
+        """The parser must not silently narrow what it is checking.
+
+        This existed first as a regex requiring verify_jwt to be the line
+        immediately after the [functions.<slug>] header. Any block with an
+        entrypoint, another setting or a comment in between was dropped
+        entirely, so the comparison below skipped it and passed while checking
+        less than it claimed: exactly the vacuous-check shape these tripwires
+        are meant to prevent. Parsed as TOML now, and pinned here over the
+        shapes that defeated the regex.
+        """
+        awkward = (
+            "[functions.manage-content-share]\n"
+            "verify_jwt = true\n"
+            "\n"
+            "[functions.read-content-share]\n"
+            'entrypoint = "./functions/read-content-share/index.ts"\n'
+            "verify_jwt = false\n"
+            "\n"
+            "[functions.spond-sync]\n"
+            "# a comment about posture\n"
+            "verify_jwt = true\n"
+        )
+        self.assertEqual(
+            declared_jwt_postures(awkward),
+            {
+                "manage-content-share": True,
+                "read-content-share": False,
+                "spond-sync": True,
+            },
+        )
+        # A block with no verify_jwt key is absent rather than guessed at.
+        self.assertEqual(declared_jwt_postures("[functions.x]\nentrypoint = \"y\"\n"), {})
+        self.assertEqual(declared_jwt_postures(""), {})
+
     def test_every_pinned_function_declares_its_jwt_posture_in_config(self):
         """config.toml and the pin must not disagree about the anonymous one.
 
@@ -334,22 +391,30 @@ class TestInventoryPinIsReconciled(unittest.TestCase):
         the deployer's default is verify_jwt = true and the pin agrees with
         that default for the rest. A block saying false for anything but
         read-content-share, or true for read-content-share, fails here.
+
+        The count assertion is what keeps this honest: every negative below
+        sits behind a positive, so a parser that started returning nothing
+        would fail here rather than vacuously agreeing with the pin.
         """
         root = pathlib.Path(vi.__file__).resolve().parents[3]
         config = (root / "supabase" / "config.toml").read_text(encoding="utf-8")
-        declared = dict(
-            re.findall(
-                r"\[functions\.([\w-]+)\]\s*\n\s*verify_jwt\s*=\s*(true|false)",
-                config,
-            )
+        declared = declared_jwt_postures(config)
+
+        self.assertEqual(
+            sorted(declared),
+            ["manage-content-share", "read-content-share", "spond-link-members",
+             "spond-roster-import", "spond-sync"],
+            "the set of functions declaring an explicit verify_jwt in "
+            "config.toml changed; reconcile this test with the pin",
         )
-        self.assertIn("read-content-share", declared,
-                      "config.toml no longer declares read-content-share's posture")
+        self.assertIs(declared["read-content-share"], False,
+                      "config.toml no longer declares read-content-share anonymous")
+
         for slug, value in declared.items():
-            if slug not in vi.EXPECTED:
-                continue
+            self.assertIn(slug, vi.EXPECTED,
+                          f"config.toml declares {slug}, which is not in the pin")
             self.assertIs(
-                value == "true", vi.EXPECTED[slug],
+                value, vi.EXPECTED[slug],
                 f"{slug}: config.toml says verify_jwt = {value}, the pin says "
                 f"{vi.EXPECTED[slug]}",
             )
