@@ -737,9 +737,12 @@ def canonical_state(value: object) -> dict | None:
 def build_baseline(state: dict, github_sha: str | None) -> dict:
     """The baseline document. Counts and fingerprints only, by construction.
 
-    There is no code path that can put a row body, an id, a token hash, a
-    snapshot, an actor or a connection string in here: canonical_state returns
-    two scalars per dataset and this function copies those two.
+    Names the two keys it copies rather than copying the dataset dict, so this
+    function strips on its own account and does not rely on having been handed
+    an already-canonical state. Both layers matter and both are pinned: a test
+    that only goes end to end passes as soon as EITHER strips, so it cannot say
+    which is doing the work. Replacing this dict literal with dict(state[name])
+    left such a test green.
     """
     doc: dict = {
         "format": BASELINE_FORMAT_VERSION,
@@ -757,12 +760,19 @@ def build_baseline(state: dict, github_sha: str | None) -> dict:
 
 
 def write_baseline(path: str, doc: dict) -> None:
-    """Write the baseline runner-locally, 0600, atomically, never overwriting.
+    """Write the baseline runner-locally, 0600, never overwriting.
 
     Refusing an existing file is the point rather than tidiness: a baseline
     already at this path was written by something this run does not know about,
     and silently replacing it would let a POST phase compare against a state
     that was never this deploy's starting point.
+
+    The write goes through a .partial file and os.replace, so a reader never
+    sees a half-written baseline. That is not a defence against a racing
+    writer: the existence check and the replace are two operations, and a file
+    appearing between them would be overwritten. It does not need to be. This
+    runs once per job, in that job's own RUNNER_TEMP, under a concurrency group
+    that admits one production deploy at a time.
     """
     if os.path.exists(path):
         raise SystemExit(
