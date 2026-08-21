@@ -97,12 +97,24 @@ export interface ExpectedAttendance {
   // different population from the one it reported. `count` is this
   // array's length by construction rather than by a test remembering.
   children: TonightRow[]
-  // How the count splits when both halves contributed. On a pure branch one
-  // of these is the whole count and the other is zero. Carried rather than
-  // recomputed, because the sentence has to name the same two numbers the
-  // count was made of.
+  // HOW THE COUNT SPLITS, and every figure named for the population it
+  // actually counts. `count === goingInSpond + countedLocally`, always.
+  //
+  // The three are kept apart because two of them are routinely different
+  // numbers and collapsing them is this product's signature defect: a
+  // figure that is correct wearing a label that is about something else.
+  // Four accepted beside three selected out of ten unlinked children is
+  // "3", "10" and "7", and only one sentence can be built from all three.
   goingInSpond: number
-  withoutSpondFact: number
+  // Children with no Spond answer for THIS session: no link, or a guest
+  // whose reply is a fact about their own team's event. Deliberately NOT
+  // called "not linked", because a guest may well be linked and this
+  // module cannot tell.
+  withoutSpondAnswer: number
+  // How many of those the count actually used.
+  countedLocally: number
+  // Which local rule produced that number.
+  localSource: 'included' | 'squad'
 }
 
 // The one resolver.
@@ -159,7 +171,9 @@ export function expectedAttendance(
       children: local.children,
       count: local.children.length,
       goingInSpond: 0,
-      withoutSpondFact: local.children.length,
+      withoutSpondAnswer: withoutFact.length,
+      countedLocally: local.children.length,
+      localSource: local.source,
     }
   }
 
@@ -173,7 +187,9 @@ export function expectedAttendance(
     children,
     count: children.length,
     goingInSpond: going.length,
-    withoutSpondFact: local.children.length,
+    withoutSpondAnswer: withoutFact.length,
+    countedLocally: local.children.length,
+    localSource: local.source,
   }
 }
 
@@ -210,9 +226,24 @@ export function expectedAttendanceNote(expected: ExpectedAttendance): string {
   const child = n === 1 ? 'player' : 'players'
   if (expected.source === 'rsvp') return `${n} ${child} going in Spond`
   if (expected.source === 'rsvp-partial') {
-    // Both halves named, because the count is made of both. A bare figure
-    // here would be the same confident falsehood as a bare aggregate.
-    return `${n} ${child} expected: ${expected.goingInSpond} going in Spond and ${expected.withoutSpondFact} not linked`
+    // BOTH HALVES NAMED, AND NEITHER NAMED FOR SOMETHING IT IS NOT.
+    //
+    // This sentence said "and 3 not linked" while ten children were
+    // unlinked and three of them were selected: a selection figure wearing
+    // a link-coverage label, which is the exact shape of the defect that
+    // made "19 vs 11" look like a contradiction when both numbers were
+    // right. It also called a quick added guest "not linked", which this
+    // module has no way to know and which is usually false.
+    //
+    // So the population is "no Spond answer" rather than "not linked", and
+    // when the coach has started selecting, the counted figure and the
+    // population it came out of are both stated rather than one standing
+    // in for the other.
+    const half =
+      expected.localSource === 'included'
+        ? `${expected.countedLocally} selected from ${expected.withoutSpondAnswer} with no Spond answer`
+        : `${expected.countedLocally} with no Spond answer`
+    return `${n} ${child} expected: ${expected.goingInSpond} going in Spond and ${half}`
   }
   if (expected.source === 'included') return `${n} ${child} selected`
   return `${n} ${child} in the squad`

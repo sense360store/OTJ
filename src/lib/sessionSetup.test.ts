@@ -25,6 +25,7 @@ import {
   FIVE_STATION_THRESHOLD,
   SETUP_ISSUE_FIXES,
   SETUP_NOTES,
+  type ExpectedAttendance,
   type TeamOrder,
   expectedAttendance,
   expectedAttendanceNote,
@@ -124,7 +125,8 @@ describe('the expected count has one rule and says which source it used', () => 
     expect(e.source).toBe('rsvp-partial')
     expect(e.count).toBe(25)
     expect(e.goingInSpond).toBe(5)
-    expect(e.withoutSpondFact).toBe(20)
+    expect(e.withoutSpondAnswer).toBe(20)
+    expect(e.countedLocally).toBe(20)
   })
 
   it('never lets one reply turn twenty unasked children into a zero', () => {
@@ -156,7 +158,7 @@ describe('the expected count has one rule and says which source it used', () => 
     const rows = [...replied(squad(5, 't1', 'One'), 'accepted'), ...replied(squad(5, 't1', 'One'), 'declined')]
     const e = expectedAttendance(rows, emptyDraft())
     expect(e.source).toBe('rsvp')
-    expect(e.withoutSpondFact).toBe(0)
+    expect(e.withoutSpondAnswer).toBe(0)
   })
 
   it('prefers the coach s selection among the unlinked once they have started', () => {
@@ -164,7 +166,8 @@ describe('the expected count has one rule and says which source it used', () => 
     const unlinked = squad(10, 't1', 'One')
     const e = expectedAttendance([...linked, ...unlinked], includeAll(unlinked.slice(0, 3)))
     expect(e.count).toBe(7)
-    expect(e.withoutSpondFact).toBe(3)
+    expect(e.countedLocally).toBe(3)
+    expect(e.withoutSpondAnswer).toBe(10)
   })
 
   it('counts the coach s selection when there is no RSVP context at all', () => {
@@ -173,6 +176,19 @@ describe('the expected count has one rule and says which source it used', () => 
     const e = expectedAttendance(rows, includeAll(chosen))
     expect(e.source).toBe('included')
     expect(e.count).toBe(18)
+  })
+
+  it('reports the population and the counted subset apart on the pure local branch too', () => {
+    // No RSVP context anywhere and five of twenty selected. The population
+    // with no Spond answer is twenty; the count is five. Collapsing the two
+    // is the same defect as on the mixed branch and is just as invisible,
+    // so it is pinned on both.
+    const rows = squad(20, 't1', 'One')
+    const e = expectedAttendance(rows, includeAll(rows.slice(0, 5)))
+    expect(e.source).toBe('included')
+    expect(e.count).toBe(5)
+    expect(e.countedLocally).toBe(5)
+    expect(e.withoutSpondAnswer).toBe(20)
   })
 
   it('counts the covered squad before the coach has selected anybody', () => {
@@ -231,7 +247,7 @@ describe('the expected count has one rule and says which source it used', () => 
   it('names the population in the sentence, differently for each source', () => {
     const notes = new Set(
       (['rsvp', 'rsvp-partial', 'included', 'squad'] as const).map((source) =>
-        expectedAttendanceNote({ source, count: 4, children: [], goingInSpond: 1, withoutSpondFact: 3 }),
+        expectedAttendanceNote({ source, count: 4, children: [], goingInSpond: 1, withoutSpondAnswer: 3, countedLocally: 3, localSource: 'squad' }),
       ),
     )
     expect(notes.size).toBe(4)
@@ -243,18 +259,77 @@ describe('the expected count has one rule and says which source it used', () => 
       count: 33,
       children: [],
       goingInSpond: 20,
-      withoutSpondFact: 13,
+      withoutSpondAnswer: 13,
+      countedLocally: 13,
+      localSource: 'squad',
     })
     expect(mixed).toContain('20')
     expect(mixed).toContain('13')
     expect(mixed).toContain('33')
-    expect(expectedAttendanceNote({ source: 'rsvp', count: 1, children: [], goingInSpond: 0, withoutSpondFact: 1 })).toContain('1 player ')
+    expect(expectedAttendanceNote({ source: 'rsvp', count: 1, children: [], goingInSpond: 0, withoutSpondAnswer: 1, countedLocally: 1, localSource: 'squad' })).toContain('1 player ')
+  })
+
+  it('never labels a counted subset as though it were the whole population', () => {
+    // Four accepted, ten with no Spond answer, three of them selected. The
+    // count is 7, and the sentence must not say "3 not linked" while ten
+    // are unlinked: that is a selection figure wearing a link-coverage
+    // label, which is exactly how "19 vs 11" came to look like a
+    // contradiction when both numbers were right.
+    const note = expectedAttendanceNote({
+      source: 'rsvp-partial',
+      count: 7,
+      children: [],
+      goingInSpond: 4,
+      withoutSpondAnswer: 10,
+      countedLocally: 3,
+      localSource: 'included',
+    })
+    expect(note).toContain('3 selected from 10')
+    expect(note).not.toMatch(/\bnot linked\b/)
+  })
+
+  it('never claims anything about linking, because a guest may well be linked', () => {
+    // A quick added guest has no Spond answer for THIS session, which is a
+    // fact about the event rather than about whether they have a link.
+    // Calling them "not linked" is a claim this module cannot make.
+    for (const localSource of ['included', 'squad'] as const) {
+      const note = expectedAttendanceNote({
+        source: 'rsvp-partial',
+        count: 5,
+        children: [],
+        goingInSpond: 4,
+        withoutSpondAnswer: 1,
+        countedLocally: 1,
+        localSource,
+      })
+      expect(note, localSource).not.toMatch(/\blinked\b/)
+      expect(note, localSource).toContain('no Spond answer')
+    }
+  })
+
+  it('always splits the count into exactly its two halves', () => {
+    // count === goingInSpond + countedLocally, and the locally counted set
+    // can never exceed the population it came out of. Those two hold for
+    // any mix of rows, which is what stops a figure drifting from its label.
+    const cases: TonightRow[][] = [
+      [...replied(squad(4, 't1', 'One'), 'accepted'), ...squad(10, 't1', 'One')],
+      [...replied(squad(4, 't1', 'One'), 'accepted'), ...replied(squad(3, 't1', 'One'), 'declined')],
+      squad(9, 't1', 'One'),
+      [...replied(squad(2, 't1', 'One'), 'waiting'), ...squad(5, 't1', 'One')],
+    ]
+    for (const rows of cases) {
+      for (const draft of [emptyDraft(), includeAll(rows.slice(0, 2))]) {
+        const e = expectedAttendance(rows, draft)
+        expect(e.goingInSpond + e.countedLocally).toBe(e.count)
+        expect(e.countedLocally).toBeLessThanOrEqual(e.withoutSpondAnswer)
+      }
+    }
   })
 })
 
 describe('the recommendation', () => {
   const at = (count: number) =>
-    recommendSetup({ source: 'squad', count, children: [], goingInSpond: 0, withoutSpondFact: count })
+    recommendSetup({ source: 'squad', count, children: [], goingInSpond: 0, withoutSpondAnswer: count, countedLocally: count, localSource: 'squad' })
 
   it('recommends four at 23 and five at 24', () => {
     expect(at(23).stations).toBe(4)
@@ -278,7 +353,15 @@ describe('the recommendation', () => {
   it('runs the same rule on both branches', () => {
     // No club gets a different threshold for having configured Spond.
     for (const source of ['rsvp', 'rsvp-partial', 'included', 'squad'] as const) {
-      const e = (count: number) => ({ source, count, children: [], goingInSpond: 0, withoutSpondFact: count })
+      const e = (count: number): ExpectedAttendance => ({
+        source,
+        count,
+        children: [],
+        goingInSpond: 0,
+        withoutSpondAnswer: count,
+        countedLocally: count,
+        localSource: 'squad',
+      })
       expect(recommendSetup(e(24)).stations).toBe(5)
       expect(recommendSetup(e(23)).stations).toBe(4)
     }
@@ -781,7 +864,7 @@ describe('what the plan says about the coach s own session plan', () => {
   const stations = (n: number, over: Partial<StructuredActivity> = {}) =>
     Array.from({ length: n }, () => act({ slot: 'station', ...over }))
   const rec = (count: number) =>
-    recommendSetup({ source: 'squad', count, children: [], goingInSpond: 0, withoutSpondFact: count })
+    recommendSetup({ source: 'squad', count, children: [], goingInSpond: 0, withoutSpondAnswer: count, countedLocally: count, localSource: 'squad' })
 
   it('says nothing when the plan already matches', () => {
     const fit = stationAdvice(rec(24), stations(5))
