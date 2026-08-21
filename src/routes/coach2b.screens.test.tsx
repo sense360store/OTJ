@@ -349,12 +349,42 @@ describe('the new controls freeze with every other write control', () => {
     for (const chip of chips) expect(chip).not.toContain('disabled')
   })
 
-  it('shows a read-only viewer no role control at all', () => {
-    // A viewer edits nothing, so they get no control they cannot use. The
-    // phase select and duration are already disabled for them; the role
-    // row is absent for the same reason Remove is.
+  it('withholds every role control from a read-only viewer', () => {
+    // A viewer edits nothing, so they get no control they cannot use:
+    // no chip group, no chips and no stand-down checkbox.
     const html = datedCard([act({ slot: 'station' })], 0, { readOnly: true })
     expect(html).not.toContain('Session role')
-    expect(html).not.toContain(NOT_RUNNING_LABEL)
+    expect(html).not.toContain('type="checkbox"')
+    expect(html).not.toMatch(/<button class="chip/)
+  })
+
+  it('still tells a read-only viewer which row this is', () => {
+    // Withholding the controls is not withholding the structure. The
+    // summary a viewer reads on the side card says "4 stations, 1 not
+    // running"; without the badge there is no way to tell WHICH row, and
+    // the sentence names something the screen never shows. So the derived
+    // badge survives read-only, the way the phase select and duration do
+    // by rendering disabled rather than vanishing.
+    const html = datedCard([act({ slot: 'station' }), act({ slot: 'station' })], 1, {
+      readOnly: true,
+    })
+    expect(html).toMatch(/<span class="role-badge"[^>]*>Station 2</)
+  })
+
+  it('shows a read-only viewer a stood-down station as stood down', () => {
+    const html = datedCard([act({ slot: 'station', skipped: true })], 0, { readOnly: true })
+    // The fact reaches them, and it reaches them as a badge rather than
+    // as a control they cannot press.
+    expect(html).toMatch(
+      new RegExp(`<span class="role-badge"[^>]*>[^<]*${NOT_RUNNING_LABEL}</`),
+    )
+    expect(html).not.toContain('type="checkbox"')
+  })
+
+  it('renders no role row at all for an undeclared activity a viewer cannot edit', () => {
+    // Nothing derived to read and nothing to press, so an empty strip
+    // under every standard row would be noise.
+    const html = datedCard([act()], 0, { readOnly: true })
+    expect(html).not.toContain('act-role-row')
   })
 })

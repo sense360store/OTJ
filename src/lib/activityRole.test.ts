@@ -74,10 +74,33 @@ describe('applyRole', () => {
     }
   })
 
-  it('keeps a stand-down when the role is unchanged', () => {
-    const next = applyRole(act({ slot: 'station', skipped: true }), 'station')
-    expect(next.skipped).toBe(true)
-    expect(next.slot).toBe('station')
+  it('keeps a stand-down when the role is unchanged, whatever that role is', () => {
+    // Pressing the chip a row already carries is a no-op, and it has to be
+    // one for EVERY role rather than only for a station. The model permits
+    // skipped on a games phase (0047's column and this jsonb both do), so
+    // narrowing this to 'station' meant a stood-down games activity lost its
+    // stand-down to a press that changed nothing, silently restoring its
+    // minutes with no toggle on the row to put it back.
+    for (const role of ['station', 'game'] as const) {
+      const next = applyRole(act({ slot: role, skipped: true }), role)
+      expect(next.skipped).toBe(true)
+      expect(next.slot).toBe(role)
+    }
+  })
+
+  it('leaves an unchanged role byte for byte, whatever the row carries', () => {
+    // The general statement of the rule above: applying the role a row
+    // already has changes nothing at all, so no press that reads as a no-op
+    // to a coach can quietly rewrite what is stored.
+    for (const start of [
+      act({ slot: 'station' }),
+      act({ slot: 'station', skipped: true }),
+      act({ slot: 'game' }),
+      act({ slot: 'game', skipped: true }),
+      act(),
+    ]) {
+      expect(applyRole(start, roleOf(start))).toEqual(start)
+    }
   })
 
   it('never carries a stand-down INTO a station from another role', () => {

@@ -321,20 +321,23 @@ export function ActivityCardView({
       </div>
 
       {/* COACH-2B. What this activity DOES on the night, said explicitly and
-          never inferred from its phase. Editable rows only: a read-only viewer
-          has nothing to press, and freezes with every other write control
-          while a save is in flight. */}
-      {!readOnly && (
-        <ActivityRoleRow
-          activities={activities}
-          index={idx}
-          label={title}
-          dated
-          disabled={frozen}
-          onRole={(role) => onRole(idx, role)}
-          onStandDown={(on) => onStandDown(idx, on)}
-        />
-      )}
+          never inferred from its phase. Freezes with every other write control
+          while a save is in flight.
+          A read-only viewer keeps the derived badge and loses only the
+          controls, which is how the phase select and duration already treat
+          them: they render disabled rather than vanishing. Removing the whole
+          row left a viewer reading "4 stations · 1 not running" on the side
+          card with no way to tell WHICH row that was. */}
+      <ActivityRoleRow
+        activities={activities}
+        index={idx}
+        label={title}
+        dated
+        readOnly={readOnly}
+        disabled={frozen}
+        onRole={(role) => onRole(idx, role)}
+        onStandDown={(on) => onStandDown(idx, on)}
+      />
 
       {expanded && drill && (
         <div className="act-panel" id={panelId} role="region" aria-label={`${drill.title} details`}>

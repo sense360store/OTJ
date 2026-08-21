@@ -87,14 +87,22 @@ function withoutStructuralKeys<T extends StructuredActivity>(activity: T): T {
 //   station   set `slot: 'station'`
 //   game      set `slot: 'game'`, and never carry a stand-down into it
 //
-// `skipped` survives ONLY when the role is unchanged and already
-// 'station', so a stood-down station stays stood down while the coach
-// edits around it. EVERY role CHANGE clears it. That covers the rule
-// COACH-2B states explicitly (changing a stood-down station away from
-// Station removes `skipped`, so stale session-local state cannot
-// unexpectedly stand down a later Games assignment) and closes the
-// mirror case it does not state, a stood-down row becoming a station
-// again by another route.
+// `skipped` survives ONLY when the role is UNCHANGED, and every role
+// CHANGE clears it. Those two halves are the whole rule.
+//
+// The change half covers what COACH-2B states explicitly: changing a
+// stood-down station away from Station removes `skipped`, so stale
+// session-local state cannot unexpectedly stand down a later Games
+// assignment. It also closes the mirror case the brief does not state, a
+// stood-down row becoming a station again by another route.
+//
+// The unchanged half is simply that a press which selects the role an
+// activity already has must change nothing. This condition was once
+// narrowed to 'station', which was wrong for a reason that only became
+// visible once the badge started naming a stood-down games activity:
+// pressing the already-selected Games phase chip silently restored its
+// minutes, and this slice ships no games stand-down toggle to undo that.
+// A no-op press is a no-op.
 //
 // The keys are DELETED by rest-destructuring, never set to undefined,
 // null or false. Each state has exactly one representation, which is
@@ -102,7 +110,7 @@ function withoutStructuralKeys<T extends StructuredActivity>(activity: T): T {
 export function applyRole<T extends StructuredActivity>(activity: T, role: ActivityRole): T {
   const bare = withoutStructuralKeys(activity)
   if (role === 'standard') return bare
-  const keepStandDown = role === 'station' && roleOf(activity) === 'station' && isStoodDown(activity)
+  const keepStandDown = roleOf(activity) === role && isStoodDown(activity)
   const next = { ...bare, slot: role } as T
   return keepStandDown ? ({ ...next, skipped: true } as T) : next
 }

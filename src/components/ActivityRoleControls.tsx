@@ -109,6 +109,7 @@ export function ActivityRoleRow({
   onRole,
   onStandDown,
   disabled = false,
+  readOnly = false,
   // A dated session only. A week plan never offers the stand-down,
   // because `skipped` is session local.
   dated,
@@ -119,6 +120,10 @@ export function ActivityRoleRow({
   onRole: (role: ActivityRole) => void
   onStandDown?: (on: boolean) => void
   disabled?: boolean
+  // A viewer who cannot edit still needs to READ the structure: which rows
+  // are stations, which is the games phase, and which is not running. The
+  // derived badge stays; only the authoring controls are withheld.
+  readOnly?: boolean
   dated: boolean
   // The activity's title, so each row's controls are distinguishable to
   // a screen reader when the list is long.
@@ -131,15 +136,20 @@ export function ActivityRoleRow({
   const role = roleOf(activity)
   const badge = activityRoleBadge(activities, index)
   const standDown = canStandDown(activity, { dated }) && onStandDown !== undefined
+  // Nothing to show and nothing to press: render no row rather than an
+  // empty bordered strip under every undeclared activity.
+  if (readOnly && !badge) return null
   return (
     <div className="act-role-row">
-      <ActivityRoleControl role={role} onRole={onRole} disabled={disabled} idPrefix={label} />
+      {!readOnly && (
+        <ActivityRoleControl role={role} onRole={onRole} disabled={disabled} idPrefix={label} />
+      )}
       {badge && (
         <span className="role-badge" style={{ fontSize: 11.5 }}>
           {badge}
         </span>
       )}
-      {standDown && (
+      {!readOnly && standDown && (
         <ActivityStandDownToggle
           standingDown={isStoodDown(activity)}
           onStandDown={onStandDown}
