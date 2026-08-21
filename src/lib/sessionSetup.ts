@@ -867,31 +867,34 @@ export function setupReadiness(
 
   const issues: SetupIssue[] = []
   const colours = new Set<string>()
-  let bibbed = 0
   let withoutBib = false
   for (const r of selected) {
     const bib = effectiveBib(draftBib(draft, r.playerId), r.teamBib)
     if (bib === null) withoutBib = true
-    else {
-      bibbed++
-      colours.add(bib)
-    }
+    else colours.add(bib)
   }
   if (withoutBib) issues.push('child-without-bib')
-  // MEASURED OVER THE CHILDREN WHO ACTUALLY HAVE A BIB, which is the whole
-  // difference between naming the right fix and the wrong one.
+  // MEASURED AGAINST THE GROUPS THE SELECTION ACTUALLY FORMS, which is the
+  // only way to tell a reused colour from a missing one.
   //
-  // Counting every selected child made a shortage of BIBS look like a
-  // shortage of COLOURS: four children in red, blue, green and yellow plus
-  // one with no bib, against five groups, raised both issues and told the
-  // coach to change a bib that was not duplicated. Two groups share a
-  // colour only if the bibbed children are numerous enough to fill the
-  // groups and still resolve to fewer colours than there are groups.
+  // The register groups by effective bib, so the selected children form one
+  // group per distinct colour PLUS one bibless group when anybody has no
+  // bib. A clash is that total falling short of the groups wanted, while
+  // there are enough children to have filled them.
   //
-  // This also subsumes the too-few-players guard it replaces: a coach who
-  // has selected three children for five groups can never have three or
-  // more bibbed ones and so can never reach this.
-  if (bibbed >= intendedGroups && colours.size < intendedGroups) {
+  // Counting distinct colours alone gets this wrong in both directions, and
+  // both were shipped. Counting every selected child made a shortage of
+  // BIBS look like a shortage of COLOURS. Counting only the bibbed children
+  // fixed that case and not its sibling: three teams in red, blue and green
+  // beside a fourth with no bib, against four groups, still reported a
+  // clash, because three colours is fewer than four groups even though the
+  // bibless children are the fourth group and no colour is reused.
+  //
+  // The too-few-players guard stays: a coach who has selected three
+  // children for five groups has too few PLAYERS, and saying "two groups
+  // share a colour" would name the wrong fix.
+  const formedGroups = colours.size + (withoutBib ? 1 : 0)
+  if (selected.length >= intendedGroups && formedGroups < intendedGroups) {
     issues.push('groups-share-colour')
   }
   return { started: true, ready: issues.length === 0, issues }

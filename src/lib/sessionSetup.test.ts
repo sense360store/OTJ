@@ -918,6 +918,20 @@ describe('readiness names the fix', () => {
     expect(r.issues).toEqual(['child-without-bib'])
   })
 
+  it('does not blame the colours when a bibless team is simply the last group', () => {
+    // Three teams in red, blue and green beside a fourth with no bib, and
+    // four groups. Three colours is fewer than four groups, but the bibless
+    // children ARE the fourth group and no colour is reused. Counting only
+    // the bibbed children fixed the sibling of this case and not this one.
+    const rows = [
+      ...squad(5, 'a', 'A', 'red'),
+      ...squad(5, 'b', 'B', 'blue'),
+      ...squad(5, 'c', 'C', 'green'),
+      ...squad(5, 'd', 'D', null),
+    ]
+    expect(setupReadiness(rows, includeAll(rows), 4).issues).toEqual(['child-without-bib'])
+  })
+
   it('still reports a real clash when enough bibbed children share colours', () => {
     const rows = [
       ...squad(2, 'a', 'A', 'red'),

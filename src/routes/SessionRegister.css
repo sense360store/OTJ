@@ -523,3 +523,99 @@
     bottom: calc(56px + env(safe-area-inset-bottom));
   }
 }
+
+/* ---- COACH-3, the suggested setup ---------------------------------- */
+
+/* A card rather than a strip: it holds a figure, a sentence, a list of
+   groups and a readiness line, and at phone width those have to stack
+   without any of them reading as a caption on the one above. */
+.setup-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-base);
+  background: var(--surface);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.setup-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+}
+.setup-lead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+/* The recommendation is the thing a coach came for, so it is the one
+   piece of type that carries weight. The population sentence sits beside
+   it in muted text, because it explains the figure rather than competing
+   with it. */
+.setup-figure {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.setup-expected {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.setup-note {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.setup-note-plan {
+  color: var(--ink);
+}
+.setup-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.setup-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+/* A ring rather than a bare fill, so white and black bibs are both
+   visible against either theme's surface. Colour is never the only
+   carrier: the group's name says the colour in words beside it. */
+.setup-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  flex: none;
+}
+.setup-group-name {
+  font-size: 13px;
+  font-weight: 800;
+}
+.setup-group-meta,
+.setup-group-teams {
+  font-size: 12px;
+  font-weight: 600;
+}
+.setup-readiness {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.setup-issue {
+  color: var(--c-social);
+  line-height: 1.45;
+}
