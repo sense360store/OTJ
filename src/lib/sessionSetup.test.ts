@@ -29,7 +29,8 @@ import {
   expectedAttendance,
   expectedAttendanceNote,
   groupStartStation,
-  planBibOverrides,
+  planBibChanges,
+  planBibTargets,
   planSetup,
   recommendSetup,
   setupReadiness,
@@ -46,6 +47,7 @@ import {
   draftDelta,
   draftFromEntries,
   draftIsDirty,
+  tonightGroups,
 } from './tonight'
 import type { StructuredActivity } from './activityStructure'
 import type { RsvpStatus } from './spondRsvp'
@@ -112,16 +114,57 @@ describe('the expected count has one rule and says which source it used', () => 
     }
   })
 
-  it('does not read a child with no Spond link as a fourth reply state', () => {
-    // No link means nobody asked them. They are not "unanswered", so they
-    // are not counted as having declined to attend either: with any real
-    // reply on the session the RSVP branch runs, and an unlinked child
-    // simply is not in it.
+  it('answers locally for a child with no Spond link, rather than reading them as absent', () => {
+    // No link means nobody asked them, so the RSVP source has nothing to
+    // say about them and the LOCAL rule answers instead. Deciding the
+    // branch once for the whole session read partial link coverage as
+    // complete context and silently dropped every unlinked child.
     const rows = [...replied(squad(5, 't1', 'One'), 'accepted'), ...squad(20, 't1', 'One')]
     const e = expectedAttendance(rows, emptyDraft())
+    expect(e.source).toBe('rsvp-partial')
+    expect(e.count).toBe(25)
+    expect(e.goingInSpond).toBe(5)
+    expect(e.withoutSpondFact).toBe(20)
+  })
+
+  it('never lets one reply turn twenty unasked children into a zero', () => {
+    // The reported case, reproduced before it was fixed: one linked child
+    // who declined beside twenty nobody asked produced an authoritative
+    // "0 expected", which is the data-gap-as-zero this resolver exists to
+    // prevent, one level below where it was being prevented.
+    const rows = [...replied(squad(1, 't1', 'One'), 'declined'), ...squad(20, 't1', 'One')]
+    const e = expectedAttendance(rows, emptyDraft())
+    expect(e.count).toBe(20)
+    expect(e.source).toBe('rsvp-partial')
+  })
+
+  it('counts this club s real link coverage honestly', () => {
+    // 40 covered, 27 linked, 20 accepted, 13 with no link at all. Counting
+    // only the accepted recommends four stations for a night 33 children
+    // may well attend.
+    const rows = [
+      ...replied(squad(20, 't1', 'One'), 'accepted'),
+      ...replied(squad(7, 't1', 'One'), 'declined'),
+      ...squad(13, 't1', 'One'),
+    ]
+    const e = expectedAttendance(rows, emptyDraft())
+    expect(e.count).toBe(33)
+    expect(recommendSetup(e).stations).toBe(5)
+  })
+
+  it('says rsvp, not partial, when every covered child is linked', () => {
+    const rows = [...replied(squad(5, 't1', 'One'), 'accepted'), ...replied(squad(5, 't1', 'One'), 'declined')]
+    const e = expectedAttendance(rows, emptyDraft())
     expect(e.source).toBe('rsvp')
-    expect(e.count).toBe(5)
-    expect(e.children.every((c) => c.response === 'accepted')).toBe(true)
+    expect(e.withoutSpondFact).toBe(0)
+  })
+
+  it('prefers the coach s selection among the unlinked once they have started', () => {
+    const linked = replied(squad(4, 't1', 'One'), 'accepted')
+    const unlinked = squad(10, 't1', 'One')
+    const e = expectedAttendance([...linked, ...unlinked], includeAll(unlinked.slice(0, 3)))
+    expect(e.count).toBe(7)
+    expect(e.withoutSpondFact).toBe(3)
   })
 
   it('counts the coach s selection when there is no RSVP context at all', () => {
@@ -152,9 +195,10 @@ describe('the expected count has one rule and says which source it used', () => 
     expect(recommendSetup(e).stations).toBe(5)
   })
 
-  it('still reports a true zero when Spond says everybody declined', () => {
-    // Different from a broken integration, and the source is what tells
-    // them apart.
+  it('still reports a true zero when every covered child was asked and declined', () => {
+    // A real zero, and the only shape that can produce one on the RSVP
+    // side: every covered child is linked, so nobody is unaccounted for.
+    // Different from a broken integration, and `source` tells them apart.
     const rows = replied(squad(12, 't1', 'One'), 'declined')
     const e = expectedAttendance(rows, emptyDraft())
     expect(e.source).toBe('rsvp')
@@ -164,7 +208,9 @@ describe('the expected count has one rule and says which source it used', () => 
   it('leaves a guest out of the RSVP count and in the local one', () => {
     const covered = replied(squad(4, 't1', 'One'), 'accepted')
     const guest = { ...row({ teamId: 't9', teamName: 'Nine', manual: true }), response: 'accepted' as RsvpStatus }
-    expect(expectedAttendance([...covered, guest], emptyDraft()).count).toBe(4)
+    // The guest has no external fact for THIS session, so they are counted
+    // locally beside the four who accepted rather than dropped.
+    expect(expectedAttendance([...covered, guest], emptyDraft()).count).toBe(5)
     // With no covered reply there is no context, and the child standing in
     // front of the coach is expected whatever the mirror knows.
     expect(expectedAttendance([{ ...guest }], emptyDraft()).source).toBe('squad')
@@ -184,19 +230,31 @@ describe('the expected count has one rule and says which source it used', () => 
 
   it('names the population in the sentence, differently for each source', () => {
     const notes = new Set(
-      [
-        expectedAttendanceNote({ source: 'rsvp', count: 4, children: [] }),
-        expectedAttendanceNote({ source: 'included', count: 4, children: [] }),
-        expectedAttendanceNote({ source: 'squad', count: 4, children: [] }),
-      ],
+      (['rsvp', 'rsvp-partial', 'included', 'squad'] as const).map((source) =>
+        expectedAttendanceNote({ source, count: 4, children: [], goingInSpond: 1, withoutSpondFact: 3 }),
+      ),
     )
-    expect(notes.size).toBe(3)
-    expect(expectedAttendanceNote({ source: 'rsvp', count: 1, children: [] })).toContain('1 player ')
+    expect(notes.size).toBe(4)
+    // The mixed sentence names BOTH halves, because the count is made of
+    // both and a bare figure would be the same confident falsehood as a
+    // bare aggregate.
+    const mixed = expectedAttendanceNote({
+      source: 'rsvp-partial',
+      count: 33,
+      children: [],
+      goingInSpond: 20,
+      withoutSpondFact: 13,
+    })
+    expect(mixed).toContain('20')
+    expect(mixed).toContain('13')
+    expect(mixed).toContain('33')
+    expect(expectedAttendanceNote({ source: 'rsvp', count: 1, children: [], goingInSpond: 0, withoutSpondFact: 1 })).toContain('1 player ')
   })
 })
 
 describe('the recommendation', () => {
-  const at = (count: number) => recommendSetup({ source: 'squad', count, children: [] })
+  const at = (count: number) =>
+    recommendSetup({ source: 'squad', count, children: [], goingInSpond: 0, withoutSpondFact: count })
 
   it('recommends four at 23 and five at 24', () => {
     expect(at(23).stations).toBe(4)
@@ -219,9 +277,10 @@ describe('the recommendation', () => {
 
   it('runs the same rule on both branches', () => {
     // No club gets a different threshold for having configured Spond.
-    for (const source of ['rsvp', 'included', 'squad'] as const) {
-      expect(recommendSetup({ source, count: 24, children: [] }).stations).toBe(5)
-      expect(recommendSetup({ source, count: 23, children: [] }).stations).toBe(4)
+    for (const source of ['rsvp', 'rsvp-partial', 'included', 'squad'] as const) {
+      const e = (count: number) => ({ source, count, children: [], goingInSpond: 0, withoutSpondFact: count })
+      expect(recommendSetup(e(24)).stations).toBe(5)
+      expect(recommendSetup(e(23)).stations).toBe(4)
     }
   })
 
@@ -483,6 +542,40 @@ describe('the colours', () => {
     for (const g of plan.groups) expect(vocabulary.has(g.colour)).toBe(true)
   })
 
+  it('numbers the groups in bib vocabulary order, the way the screen sorts them', () => {
+    // tonightGroups sorts the saved groups by BIB_COLOURS. Numbering in
+    // team order instead made the plan read green, purple, red, blue while
+    // the screen read red, blue, green, purple, so "group 1 starts at
+    // station 1" answered differently on two surfaces about one night.
+    const rows = [
+      ...squad(4, 't1', 'One', 'green'),
+      ...squad(4, 't2', 'Two', 'purple'),
+      ...squad(4, 't3', 'Three', null),
+      ...squad(4, 't4', 'Four', null),
+    ]
+    const plan = planSetup(rows, includeAll(rows), null)
+    expect(plan.groups.map((g) => g.colour)).toEqual(['red', 'blue', 'green', 'purple'])
+    expect(plan.groups.map((g) => g.index)).toEqual([1, 2, 3, 4])
+  })
+
+  it('numbers them the same way the register would group them', () => {
+    // The two orderings compared directly, over a plan where team order and
+    // colour order genuinely disagree.
+    const rows = [
+      ...squad(4, 't1', 'One', 'black'),
+      ...squad(4, 't2', 'Two', 'white'),
+      ...squad(4, 't3', 'Three', null),
+      ...squad(4, 't4', 'Four', null),
+    ]
+    const draft = includeAll(rows)
+    const plan = planSetup(rows, draft, null)
+    const applied = applySetup(draft, plan)
+    const onScreen = tonightGroups(rows, applied)
+    expect(onScreen.map((g) => g.bib)).toEqual(plan.groups.map((g) => g.colour))
+    // And therefore the derived starting station agrees on both surfaces.
+    plan.groups.forEach((g, i) => expect(groupStartStation(g)).toBe(i + 1))
+  })
+
   it('labels the group the way the grass does', () => {
     const rows = squad(8, 't1', 'One')
     const plan = planSetup(rows, includeAll(rows), null)
@@ -500,11 +593,11 @@ describe('what the plan derives and what it would store', () => {
     })
   })
 
-  it('writes an override only where the canonical rule does not already answer', () => {
-    // A child whose team default already IS the group colour needs no
-    // override, and giving them one would pin them to a colour their team
-    // later moves away from. Four teams of four is four whole groups, so
-    // every team keeps its own colour and nothing is stored at all.
+  it('targets inherit, not a colour, where the team default already answers', () => {
+    // A child whose team default already IS the group colour is targeted at
+    // null: the row stores nothing, so they go on following their team and
+    // a later change of team default still moves them. Storing a colour
+    // here would pin them to one their team has left.
     const rows = [
       ...squad(4, 't1', 'One', 'red'),
       ...squad(4, 't2', 'Two', 'blue'),
@@ -514,12 +607,15 @@ describe('what the plan derives and what it would store', () => {
     const draft = includeAll(rows)
     const plan = planSetup(rows, draft, null)
     expect(plan.groups.map((g) => g.colour)).toEqual(['red', 'blue', 'green', 'yellow'])
-    expect(planBibOverrides(plan, draft)).toEqual({})
+    const targets = planBibTargets(plan)
+    expect(Object.keys(targets)).toHaveLength(16)
+    expect(Object.values(targets).every((v) => v === null)).toBe(true)
+    // And nothing actually changes, so the screen promises no edits.
+    expect(planBibChanges(plan, draft)).toEqual({})
   })
 
-  it('writes an override for a child the group colour moves', () => {
-    // Two teams share red, so one keeps it and the other is moved. Exactly
-    // one squad is written for, and every child in it gets one colour.
+  it('targets a colour for a child the group colour moves', () => {
+    // Two teams share red, so one keeps it and the other is moved.
     const rows = [
       ...squad(4, 't1', 'One', 'red'),
       ...squad(4, 't2', 'Two', 'red'),
@@ -528,15 +624,28 @@ describe('what the plan derives and what it would store', () => {
     ]
     const draft = includeAll(rows)
     const plan = planSetup(rows, draft, null)
-    const overrides = planBibOverrides(plan, draft)
-    expect(Object.keys(overrides)).toHaveLength(4)
-    expect(new Set(Object.values(overrides)).size).toBe(1)
+    const changes = planBibChanges(plan, draft)
+    expect(Object.keys(changes)).toHaveLength(4)
+    expect(new Set(Object.values(changes)).size).toBe(1)
     // The moved squad is the SECOND to claim red, never the first.
-    const moved = new Set(Object.keys(overrides))
+    const moved = new Set(Object.keys(changes))
     expect(rows.slice(4, 8).every((r) => moved.has(r.playerId))).toBe(true)
   })
 
-  it('produces nothing but bib colours keyed by player', () => {
+  it('targets every placed child, so the gesture is recorded for all of them', () => {
+    // NOT ONLY the ones whose value differs from this draft. The draft is
+    // frozen while the stored rows keep refetching, so a child the plan
+    // "leaves alone" is a child whose bib another coach may have changed
+    // since; without a stamp the save carries THEIR value and the plan's
+    // colour silently never lands.
+    const rows = [...squad(4, 't1', 'One', 'red'), ...squad(4, 't2', 'Two', 'red')]
+    const draft = includeAll(rows)
+    const plan = planSetup(rows, draft, null)
+    const placed = plan.groups.flatMap((g) => g.children).map((c) => c.playerId)
+    expect(Object.keys(planBibTargets(plan)).sort()).toEqual([...placed].sort())
+  })
+
+  it('produces nothing but a bib colour or inherit, keyed by player', () => {
     // ASSERTED DIRECTLY, because a well-meaning "also update their team"
     // convenience is the most plausible regression in this programme.
     // Moving a child into a different group for one session must say
@@ -545,29 +654,35 @@ describe('what the plan derives and what it would store', () => {
     const rows = [...squad(5, 't1', 'One', 'blue'), ...squad(5, 't2', 'Two', 'blue')]
     const draft = includeAll(rows)
     const plan = planSetup(rows, draft, null)
-    const overrides = planBibOverrides(plan, draft)
     const ids = new Set(rows.map((r) => r.playerId))
     const vocabulary = new Set(BIB_COLOURS.map((b) => b.value))
-    for (const [key, value] of Object.entries(overrides)) {
+    for (const [key, value] of Object.entries(planBibTargets(plan))) {
       expect(ids.has(key)).toBe(true)
-      expect(vocabulary.has(value)).toBe(true)
+      expect(value === null || vocabulary.has(value)).toBe(true)
     }
-    // Nothing in the plan itself carries a team id destined for a write:
-    // the groups hold rows, and a row is a read of the register.
-    expect(Object.values(overrides).every((v) => typeof v === 'string')).toBe(true)
   })
 
-  it('respects an override the coach has already set', () => {
+  it('never targets the no-bib sentinel', () => {
+    // Inherit is null. `none` is a coach's positive choice to wear nothing,
+    // and a generator that produced it would be taking a bib off a child
+    // nobody asked it to.
+    const rows = [...squad(4, 't1', 'One', 'red'), ...squad(4, 't2', 'Two', null)]
+    const plan = planSetup(rows, includeAll(rows), null)
+    expect(Object.values(planBibTargets(plan))).not.toContain(BIB_NONE)
+  })
+
+  it('moves a child back who the coach had set to something else', () => {
     const rows = squad(4, 't1', 'One', 'red')
     const draft = draftWith({
       included: Object.fromEntries(rows.map((r) => [r.playerId, true])),
       bibs: { [rows[0].playerId]: 'black' },
     })
     const plan = planSetup(rows, draft, null)
-    const overrides = planBibOverrides(plan, draft)
-    // The group is red and this child is black, so the plan proposes
-    // moving them back rather than silently reading them as already right.
-    expect(overrides[rows[0].playerId]).toBe(plan.groups[0].colour)
+    // The group is red and the team default is red, so the target is
+    // inherit: clearing the override puts them back in the group's colour
+    // without pinning them to it.
+    expect(planBibTargets(plan)[rows[0].playerId]).toBeNull()
+    expect(rows[0].playerId in planBibChanges(plan, draft)).toBe(true)
   })
 })
 
@@ -636,7 +751,9 @@ describe('nothing here persists', () => {
     const draft = includeAll(rows)
     const before = JSON.stringify(draft)
     const plan = planSetup(rows, draft, null)
-    planBibOverrides(plan, draft)
+    planBibTargets(plan)
+    planBibChanges(plan, draft)
+    applySetup(draft, plan)
     setupReadiness(rows, draft, plan.recommendation.groups)
     expect(JSON.stringify(draft)).toBe(before)
   })
@@ -663,7 +780,8 @@ describe('what the plan says about the coach s own session plan', () => {
     ({ duration: 10, ...over }) as StructuredActivity
   const stations = (n: number, over: Partial<StructuredActivity> = {}) =>
     Array.from({ length: n }, () => act({ slot: 'station', ...over }))
-  const rec = (count: number) => recommendSetup({ source: 'squad', count, children: [] })
+  const rec = (count: number) =>
+    recommendSetup({ source: 'squad', count, children: [], goingInSpond: 0, withoutSpondFact: count })
 
   it('says nothing when the plan already matches', () => {
     const fit = stationAdvice(rec(24), stations(5))
@@ -774,7 +892,7 @@ describe('accepting the suggestion', () => {
       // one cannot be overwritten by accepting a suggestion.
       expect(change?.presentChanged, c.playerId).toBe(false)
     }
-    for (const playerId of Object.keys(planBibOverrides(plan, open))) {
+    for (const playerId of Object.keys(planBibChanges(plan, open))) {
       expect(byPlayer.get(playerId)?.bibChanged, playerId).toBe(true)
     }
     expect(draftIsDirty(next, stored)).toBe(true)
@@ -807,12 +925,63 @@ describe('accepting the suggestion', () => {
     expect(applySetup(emptyDraft(), plan).added).toEqual({})
   })
 
-  it('writes a bib only where the group colour moves the child', () => {
+  it('stamps a bib gesture for every placed child, and stores a colour for only the moved ones', () => {
     const rows = rows4()
     const plan = planSetup(rows, emptyDraft(), null)
     const next = applySetup(emptyDraft(), plan)
-    // Three teams keep their own colour; one shares red and is moved.
-    expect(Object.keys(next.bibs)).toHaveLength(4)
+    const placed = plan.groups.flatMap((g) => g.children).map((c) => c.playerId)
+    // Every placed child carries a gesture, so a concurrent change cannot
+    // quietly win the field.
+    expect(Object.keys(next.bibs).sort()).toEqual([...placed].sort())
+    // But only the moved squad carries an actual colour; the other three
+    // teams are targeted at inherit and store nothing.
+    const colours = Object.values(next.bibs).filter((v) => v !== null)
+    expect(colours).toHaveLength(4)
+  })
+
+  it('sends nothing for a child whose stored bib already matches the gesture', () => {
+    // Stamping everybody must not turn a no-op into a write. draftDelta
+    // marks the bib changed only when there is actually something to move.
+    const rows = rows4()
+    const stored = rows.map((r) => ({
+      sessionId: 'session-1',
+      playerId: r.playerId,
+      present: false,
+      includedInGroups: true,
+      bibColourOverride: null,
+      source: 'roster' as const,
+    }))
+    const open = draftFromEntries(stored)
+    const plan = planSetup(rows, open, null)
+    const next = applySetup(open, plan)
+    const changes = draftDelta(next, stored, 'session-1')
+    // Only the squad the plan actually recolours is written for.
+    expect(changes.filter((c) => c.bibChanged)).toHaveLength(4)
+  })
+
+  it('reasserts the plan colour over a change another coach made since the draft opened', () => {
+    // The reported defect. The frozen draft agreed with the plan, so no
+    // gesture was stamped, and draftDelta carried the other coach's stored
+    // value forward: the child came out black on a red station and nothing
+    // said so.
+    const rows = squad(8, 't1', 'One', 'red')
+    const stored = rows.map((r) => ({
+      sessionId: 'session-1',
+      playerId: r.playerId,
+      present: false,
+      includedInGroups: false,
+      bibColourOverride: null,
+      source: 'roster' as const,
+    }))
+    const open = draftFromEntries(stored)
+    const plan = planSetup(rows, open, null)
+    const next = applySetup(open, plan)
+    const refetched = stored.map((e) =>
+      e.playerId === rows[0].playerId ? { ...e, bibColourOverride: 'black' } : e,
+    )
+    const change = draftDelta(next, refetched, 'session-1').find((c) => c.playerId === rows[0].playerId)
+    expect(change?.bibChanged).toBe(true)
+    expect(change?.bibColourOverride).toBeNull()
   })
 
   it('does not mutate the draft it was given', () => {

@@ -88,7 +88,7 @@ import {
 // it is their selection. Collapsing those into one label would leave a
 // coach reading "22 expected" unable to tell whether the app had counted
 // their work or the roster behind it.
-export type ExpectedSource = 'rsvp' | 'included' | 'squad'
+export type ExpectedSource = 'rsvp' | 'rsvp-partial' | 'included' | 'squad'
 
 export interface ExpectedAttendance {
   count: number
@@ -97,6 +97,12 @@ export interface ExpectedAttendance {
   // different population from the one it reported. `count` is this
   // array's length by construction rather than by a test remembering.
   children: TonightRow[]
+  // How the count splits when both halves contributed. On a pure branch one
+  // of these is the whole count and the other is zero. Carried rather than
+  // recomputed, because the sentence has to name the same two numbers the
+  // count was made of.
+  goingInSpond: number
+  withoutSpondFact: number
 }
 
 // The one resolver.
@@ -124,22 +130,66 @@ export function expectedAttendance(
   draft: TonightDraft,
 ): ExpectedAttendance {
   const unique = uniqueByPlayer(rows)
-  // hasResponseContext and matchesResponse, never a comparison written
-  // here. Those two already answer "is there any RSVP fact" and "is this
-  // child going", and they answer them for the chips a coach is looking at
-  // on the same screen. A second copy of either would be a second
-  // definition of Going, and the one that drifted would be this one.
-  if (hasResponseContext([...unique])) {
-    const going = unique.filter((r) => matchesResponse(r, 'going'))
-    return { source: 'rsvp', children: going, count: going.length }
+  // THE BRANCH IS PER CHILD, NOT PER SESSION, and that distinction is the
+  // whole finding this function was rewritten for.
+  //
+  // Deciding it once for the whole session reads partial link coverage as
+  // complete context: one linked child who declined, beside twenty children
+  // nobody asked, produced an authoritative "0 expected". That is exactly
+  // the data-gap-as-zero this resolver exists to prevent, one level down
+  // from where it was being prevented. It is not hypothetical either: this
+  // club has 27 of 40 children linked, so thirteen of them would never have
+  // been counted as expected on any night.
+  //
+  // "A player with no Spond link is not a fourth RSVP answer" is the rule
+  // that settles it. For a child with no external fact the RSVP source has
+  // nothing to say, so the local rule answers for them, exactly as it
+  // answers for a whole session with no context at all.
+  //
+  // hasResponseContext decides "is there something external to read", per
+  // row here rather than per session, so there is still ONE definition of
+  // it and no comparison is written in this file.
+  const withFact = unique.filter((r) => hasResponseContext([r]))
+  const withoutFact = unique.filter((r) => !hasResponseContext([r]))
+  const local = localRoster(withoutFact, draft)
+
+  if (withFact.length === 0) {
+    return {
+      source: local.source,
+      children: local.children,
+      count: local.children.length,
+      goingInSpond: 0,
+      withoutSpondFact: local.children.length,
+    }
   }
-  const included = unique.filter((r) => draftIncluded(draft, r.playerId))
-  // The coach's selection once they have started, the covered squad
-  // before they have. A generator that answers "nobody" until the coach
-  // has already done the work it exists to save them is worse than no
-  // generator, and 24 hours out the selection is empty by definition.
-  if (included.length > 0) return { source: 'included', children: included, count: included.length }
-  return { source: 'squad', children: unique, count: unique.length }
+
+  const going = withFact.filter((r) => matchesResponse(r, 'going'))
+  const children = [...going, ...local.children]
+  return {
+    // Named apart, because "10 going in Spond" and "10 going plus 13 nobody
+    // asked" are different claims and a coach acting on five stations
+    // deserves to know which one it was.
+    source: withoutFact.length === 0 ? 'rsvp' : 'rsvp-partial',
+    children,
+    count: children.length,
+    goingInSpond: going.length,
+    withoutSpondFact: local.children.length,
+  }
+}
+
+// The local rule, for a set of children no external fact covers.
+//
+// The coach's selection once they have started, the whole set before they
+// have. A generator that answers "nobody" until the coach has already done
+// the work it exists to save them is worse than no generator, and 24 hours
+// out the selection is empty by definition.
+function localRoster(
+  rows: readonly TonightRow[],
+  draft: TonightDraft,
+): { source: 'included' | 'squad'; children: TonightRow[] } {
+  const included = rows.filter((r) => draftIncluded(draft, r.playerId))
+  if (included.length > 0) return { source: 'included', children: included }
+  return { source: 'squad', children: [...rows] }
 }
 
 // A row appearing twice cannot count twice. `tonightCounts` takes the same
@@ -159,6 +209,11 @@ export function expectedAttendanceNote(expected: ExpectedAttendance): string {
   const n = expected.count
   const child = n === 1 ? 'player' : 'players'
   if (expected.source === 'rsvp') return `${n} ${child} going in Spond`
+  if (expected.source === 'rsvp-partial') {
+    // Both halves named, because the count is made of both. A bare figure
+    // here would be the same confident falsehood as a bare aggregate.
+    return `${n} ${child} expected: ${expected.goingInSpond} going in Spond and ${expected.withoutSpondFact} not linked`
+  }
   if (expected.source === 'included') return `${n} ${child} selected`
   return `${n} ${child} in the squad`
 }
@@ -468,22 +523,37 @@ function colourGroups(units: TeamBucket[][]): SetupGroup[] {
     taken.add(free.value)
   })
 
-  const out: SetupGroup[] = []
-  units.forEach((unit, i) => {
-    const colour = colours[i]
-    if (colour === null) return
-    const children = unit.flatMap((b) => b.children)
+  // NUMBERED IN BIB VOCABULARY ORDER, which is what tonightGroups sorts the
+  // saved groups by. Numbering in unit order instead put the plan's group 1
+  // and the screen's group 1 on different colours the moment a team kept a
+  // default that sits late in the vocabulary: a plan reading green, purple,
+  // red, blue against a screen reading red, blue, green, purple. Since
+  // `groupStartStation` is `index`, that is two different answers to which
+  // group starts at station 1, about one night.
+  const ordered = units
+    .map((unit, i) => ({ unit, colour: colours[i] }))
+    .filter((u): u is { unit: TeamBucket[]; colour: string } => u.colour !== null)
+    .sort((a, b) => colourRank(a.colour) - colourRank(b.colour))
+
+  return ordered.map(({ unit, colour }, i) => {
     const teamNames: string[] = []
     for (const b of unit) if (b.teamName && !teamNames.includes(b.teamName)) teamNames.push(b.teamName)
-    out.push({
-      index: out.length + 1,
+    return {
+      index: i + 1,
       colour,
       label: `${bibLabel(colour) ?? colour} bibs`,
-      children,
+      children: unit.flatMap((b) => b.children),
       teamNames,
-    })
+    }
   })
-  return out
+}
+
+// A colour's position in the club vocabulary. The same ordering
+// tonightGroups applies to the saved groups, so the plan and the screen
+// number one night the same way.
+function colourRank(colour: string): number {
+  const i = BIB_COLOURS.findIndex((b) => b.value === colour)
+  return i === -1 ? BIB_COLOURS.length : i
 }
 
 // ---- 4. What the plan says, and what it would store ------------------
@@ -512,16 +582,33 @@ export function groupStartStation(group: SetupGroup): number {
 // and writing one would pin a child to a colour their team later moves
 // away from. That is the whole reason this returns a sparse map rather
 // than a colour per child.
-export function planBibOverrides(
-  plan: SetupPlan,
-  draft: TonightDraft,
-): Record<string, string> {
-  const out: Record<string, string> = {}
+export function planBibTargets(plan: SetupPlan): Record<string, string | null> {
+  const out: Record<string, string | null> = {}
   for (const group of plan.groups) {
     for (const child of group.children) {
-      const current = effectiveBib(draftBib(draft, child.playerId), child.teamBib)
-      if (current !== group.colour) out[child.playerId] = group.colour
+      // Null means INHERIT: the team default already resolves to this
+      // group's colour, so the row stores nothing and a later change of
+      // team default still moves the child. `effectiveBib` decides that,
+      // never a comparison written here.
+      out[child.playerId] = effectiveBib(null, child.teamBib) === group.colour ? null : group.colour
     }
+  }
+  return out
+}
+
+// Which of those targets differ from what the draft currently resolves to,
+// so a screen can say how many children the suggestion actually moves.
+//
+// DERIVED FROM THE TARGETS, never computed beside them. This is a display
+// question; `planBibTargets` is the gesture, and a second rule producing a
+// slightly different set is how a screen comes to promise one thing and
+// save another.
+export function planBibChanges(plan: SetupPlan, draft: TonightDraft): Record<string, string | null> {
+  const out: Record<string, string | null> = {}
+  for (const [playerId, target] of Object.entries(planBibTargets(plan))) {
+    const child = plan.groups.flatMap((g) => g.children).find((c) => c.playerId === playerId)
+    const current = effectiveBib(draftBib(draft, playerId), child?.teamBib ?? null)
+    if (current !== effectiveBib(target, child?.teamBib ?? null)) out[playerId] = target
   }
   return out
 }
@@ -617,13 +704,24 @@ export function stationFitNote(fit: StationFit): string {
 // facts 0047 separated, and a suggestion made a day early knows nothing
 // about the second.
 export function applySetup(draft: TonightDraft, plan: SetupPlan): TonightDraft {
-  // Computed from the ORIGINAL draft. selectAll touches no bib, so the two
-  // orders agree either way, and taking the original makes that a property
-  // of this function rather than a coincidence of the one below it.
-  const overrides = planBibOverrides(plan, draft)
   const children = plan.groups.flatMap((g) => g.children)
   let next = selectAll(draft, [...children])
-  for (const [playerId, colour] of Object.entries(overrides)) {
+  // EVERY PLACED CHILD, not only the ones whose value differs from this
+  // draft, and that is a correctness rule rather than a tidiness one.
+  //
+  // The draft is frozen when the screen opens while the stored rows keep
+  // refetching, and `draftDelta` deliberately carries the STORED value
+  // forward for any field this coach did not touch. So a child the plan
+  // leaves alone because the frozen draft already agrees is a child whose
+  // bib another coach may have changed since: the save then writes their
+  // value, the plan's colour never lands, and nothing says so. Stamping the
+  // gesture for every child makes accepting the plan mean what it says.
+  //
+  // It costs nothing to store. A target of null is the inherit gesture, and
+  // draftDelta only marks the field changed when there is actually an
+  // override to clear, so a whole team following its default still writes
+  // no row.
+  for (const [playerId, colour] of Object.entries(planBibTargets(plan))) {
     next = setDraftBib(next, playerId, colour)
   }
   return next
