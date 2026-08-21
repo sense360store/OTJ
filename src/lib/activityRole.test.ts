@@ -206,6 +206,16 @@ describe('activityRoleBadge', () => {
   it('names the games phase', () => {
     expect(activityRoleBadge([act({ slot: 'game' })], 0)).toBe('Games phase')
   })
+
+  it('names a stood-down games activity rather than presenting it as running', () => {
+    // COACH-2B offers no control that creates this state, deliberately. The
+    // model permits it and every reader honours it, so a plan carrying one
+    // must not read as a running games phase while its minutes are absent
+    // from the total.
+    expect(activityRoleBadge([act({ slot: 'game', skipped: true })], 0)).toBe(
+      `Games phase · ${NOT_RUNNING_LABEL}`,
+    )
+  })
 })
 
 describe('structureSummary', () => {
@@ -228,6 +238,15 @@ describe('structureSummary', () => {
     const six = structureSummary(stations(6))
     expect(six.warnings).toContain('too-many-stations')
     expect(six.notes).toContain('A carousel runs four or five stations.')
+  })
+
+  it('tells a marked-but-stood-down games phase apart from an unmarked one', () => {
+    // Reading the first as the second would tell a coach to mark a games
+    // phase they already have.
+    expect(structureSummary([...stations(4)]).headline).toContain('Games phase not set')
+    expect(
+      structureSummary([...stations(4), act({ slot: 'game', skipped: true })]).headline,
+    ).toContain('Games phase not running')
   })
 
   it('says none are declared rather than guessing', () => {

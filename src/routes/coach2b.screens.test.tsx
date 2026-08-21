@@ -217,6 +217,14 @@ describe('derived labels on the row', () => {
     expect(datedCard([act()])).toContain('>Games phase<')
   })
 
+  it('names a stood-down games activity in the badge, though no control creates it', () => {
+    const html = datedCard([act({ slot: 'game', skipped: true })])
+    expect(html).toMatch(/<span class="role-badge"[^>]*>Games phase · Not running tonight</)
+    // And still offers no stand-down control for it: the state is readable,
+    // not authorable, which is COACH-2B's settled scope.
+    expect(html).not.toMatch(/type="checkbox"/)
+  })
+
   it('does not infer a station from a Warm-Up phase, nor games from a Game phase', () => {
     // The defect the programme exists to remove, on the screen.
     expect(datedCard([act({ phase: 'Warm-Up', slot: 'station' })])).toContain('Station 1')

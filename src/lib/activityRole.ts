@@ -121,12 +121,32 @@ export function setNotRunning<T extends StructuredActivity>(activity: T, on: boo
 
 // May this activity be stood down on this surface?
 //
-// Stations only, and dated sessions only. A week plan is reusable
-// content and `skipped` is session local, so the affordance is absent
-// there rather than present and stripped later. The games phase is not
-// offered either: standing down the whole games phase is not a thing
-// COACH-2B settled, and the model permitting it is not a reason to
-// offer it.
+// Stations only, and dated sessions only.
+//
+// A week plan is reusable content and `skipped` is session local, so the
+// affordance is absent there rather than present and stripped later.
+//
+// THE GAMES PHASE IS A DELIBERATE SCOPE DECISION, NOT AN OVERSIGHT, and
+// it is worth recording because the model and the design document both
+// go further than this control does.
+// 02-target-product-model.md is explicit: "It applies to any activity
+// carrying a `slot`. A station stood down is the ordinary case; a coach
+// who decides there are no games tonight stands the games activity down
+// the same way." COACH-2A implemented exactly that: isStoodDown accepts
+// any operational activity, deriveActivityStructure drops a stood-down
+// games activity from `games`, and activeActivityMinutes takes its
+// minutes off the night. All of that works today.
+// What COACH-2B settled is narrower: the authoring affordance is
+// specifically standing down a STATION. So the state remains
+// representable and every reader honours it; this slice simply does not
+// ship the press that creates it. Widening the control is a product
+// decision, not a bug fix, and it needs nothing from the model when it
+// is taken.
+//
+// A stood-down games activity is therefore NOT hidden if one reaches a
+// plan by another route: activityRoleBadge names it and the structure
+// summary says the games phase is not running. Unreachable to author is
+// not the same as invisible to read.
 export function canStandDown(
   activity: StructuredActivity | null | undefined,
   options: { dated: boolean },
@@ -149,7 +169,16 @@ export function activityRoleBadge(
   const activity = list[index]
   const role = roleOf(activity)
   if (role === 'standard') return null
-  if (role === 'game') return ACTIVITY_ROLE_LABELS.game
+  // A games activity that is stood down says so. This slice offers no
+  // control that creates that state, but the model permits it and every
+  // reader already honours it, so a plan carrying one must not present as
+  // a games phase that is running while its minutes are missing from the
+  // total.
+  if (role === 'game') {
+    return isStoodDown(activity)
+      ? `${ACTIVITY_ROLE_LABELS.game} · ${NOT_RUNNING_LABEL}`
+      : ACTIVITY_ROLE_LABELS.game
+  }
   const number = stationNumberAt(list, index)
   return number === null ? `${ACTIVITY_ROLE_LABELS.station} · ${NOT_RUNNING_LABEL}` : `Station ${number}`
 }
@@ -197,12 +226,13 @@ export function structureSummary(
   // so the coach resolves it deliberately; nothing here unmarks an
   // earlier games activity when another is marked.
   const gamesCount = structure.games.length
-  const games =
-    gamesCount === 1
-      ? 'Games phase set'
-      : gamesCount === 0
-        ? 'Games phase not set'
-        : `Games phase marked ${gamesCount} times`
+  let games: string
+  if (gamesCount === 1) games = 'Games phase set'
+  else if (gamesCount > 1) games = `Games phase marked ${gamesCount} times`
+  // Marked and stood down is a different answer from never marked, and
+  // reading the first as the second would tell a coach to mark a games
+  // phase they already have.
+  else games = structure.declaredGames.length > 0 ? 'Games phase not running' : 'Games phase not set'
 
   return {
     headline: `${stations} · ${games}`,
