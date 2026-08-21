@@ -93,6 +93,9 @@ function render(
         expanded={expanded}
         onToggle={noop}
         onRemove={noop}
+        onRole={noop}
+        onStandDown={noop}
+        activities={[act]}
         onDur={noop}
         onPhase={noop}
         dragHandlers={{ onDragStart: noop, onDragEnter: noop, onDragEnd: noop, onDragOver: noop }}

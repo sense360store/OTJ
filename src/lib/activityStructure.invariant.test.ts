@@ -42,6 +42,22 @@ const SEAM = [
 // Activity becomes a stored row.
 const WIRE = ['lib/queries.ts', 'lib/queries.test.ts']
 
+// The AUTHORING boundary, COACH-2B. activityRole.ts is the one module that
+// decides what a coach's press WRITES and REMOVES, so it necessarily names
+// `skipped` to delete it, and its tests necessarily read it to prove the
+// write happened.
+//
+// This widens the check, so it is paid for: 'reads the stand-down through
+// the seam' below asserts that the authoring module never re-implements the
+// READ rule it is excused from. It may remove the key; it may not decide
+// what the key MEANS. That decision stays in activityStructure.ts, where
+// both halves of isStoodDown are load bearing.
+const AUTHORING = [
+  'lib/activityRole.ts',
+  'lib/activityRole.test.ts',
+  'lib/coach2bPersistence.test.ts',
+]
+
 // `skipped` is an overloaded word in this repository and these say it about
 // something else entirely: how many rows a players import passed over. Named
 // with the reason rather than excluded by a looser pattern, so a future file
@@ -122,11 +138,37 @@ describe('the structural rule lives in exactly one browser file', () => {
   it('is the only place the stand-down key is read, outside the wire boundary', () => {
     const offenders: string[] = []
     for (const f of sourceFiles()) {
-      if (SEAM.includes(f) || WIRE.includes(f) || f in SKIPPED_MEANS_SOMETHING_ELSE) continue
+      if (SEAM.includes(f) || WIRE.includes(f) || AUTHORING.includes(f) || f in SKIPPED_MEANS_SOMETHING_ELSE)
+        continue
       const hit = read(f).match(SKIPPED_READ)
       if (hit) offenders.push(`${f}: ${hit[0]}`)
     }
     expect(offenders).toEqual([])
+  })
+
+  it('reads the stand-down through the seam, in the authoring module excused above', () => {
+    // The authoring module may REMOVE the key. It may not decide what the key
+    // MEANS: both halves of isStoodDown (an operational slot AND skipped) are
+    // load bearing, and a second answer to "is this stood down" is exactly
+    // what the exclusion above would otherwise permit.
+    const src = read('lib/activityRole.ts')
+    expect(src).toContain("from './activityStructure'")
+    expect(src).toContain('isStoodDown(')
+    // No hand-rolled comparison, in either shape.
+    expect(/\bskipped\s*(===|!==|==|!=)/.test(src)).toBe(false)
+    expect(/\.skipped\s*(===|!==|==|!=)/.test(src)).toBe(false)
+    // And EVERY occurrence of the key by name is a deletion, checked at its
+    // own site rather than by finding the same token deleted somewhere else
+    // in the file. That weaker form passed while a hand-rolled truthiness
+    // read sat beside an existing `delete next.skipped`, because both
+    // occurrences matched the same token: the check validated the token, not
+    // the operation, which is the exact read it exists to forbid.
+    const sites = [...src.matchAll(/(.{0,24})\.skipped\b/g)]
+    expect(sites.length).toBeGreaterThan(0)
+    const notDeletions = sites
+      .filter((m) => !/\bdelete\s+[A-Za-z_$][\w$]*$/.test(m[1]))
+      .map((m) => `${m[1]}.skipped`.trim())
+    expect(notDeletions).toEqual([])
   })
 
   it('names the files that say skipped about something else, and what they mean', () => {

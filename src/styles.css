@@ -191,6 +191,19 @@ h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; c
 .spread { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 /* chips / pills / tags */
+/* COACH-2B. The activity card's secondary row: session role, the derived
+   station number or games label, and the dated-session stand-down. A row of
+   its own rather than a fourth control squeezed into .act-card, which is
+   already tight at phone width; it wraps rather than shrinking its controls. */
+.act-role-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px 10px; border-top: 1px solid var(--line); }
+.act-role-row .chip { height: 28px; padding: 0 11px; font-size: 12px; }
+.act-structure { display: flex; flex-direction: column; gap: 3px; padding: 9px 11px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-2); }
+@media (max-width: 900px) {
+  .act-role-row { gap: 8px; padding: 8px 10px 10px; }
+}
+
 .chip { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 13px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--card); color: var(--ink-2); font-size: 13px; font-weight: 600; transition: .12s; white-space: nowrap; }
 .chip:hover { border-color: var(--slate-2); }

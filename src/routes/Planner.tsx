@@ -15,6 +15,8 @@ import {
   useTeams,
   useVenues,
 } from '../lib/queries'
+import { ActivityRoleRow, ActivityStructureSummary } from '../components/ActivityRoleControls'
+import { type ActivityRole, applyRole, setNotRunning } from '../lib/activityRole'
 import { blankSession, embedSrc, isSampleMedia, PHASES, sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
@@ -170,6 +172,9 @@ export function ActivityCardView({
   onRemove,
   onDur,
   onPhase,
+  onRole,
+  onStandDown,
+  activities,
   dragHandlers,
   dragging,
   readOnly,
@@ -192,6 +197,12 @@ export function ActivityCardView({
   onRemove: (i: number) => void
   onDur: (i: number, v: number) => void
   onPhase: (i: number, v: Phase) => void
+  // COACH-2B. The session role and the dated-session stand-down. The
+  // whole plan is passed because a station's NUMBER is its position
+  // among the stations running tonight, which one activity cannot know.
+  onRole: (i: number, role: ActivityRole) => void
+  onStandDown: (i: number, on: boolean) => void
+  activities: readonly Activity[]
   dragHandlers: DragHandlers
   dragging: boolean
   readOnly: boolean
@@ -309,6 +320,25 @@ export function ActivityCardView({
         )}
       </div>
 
+      {/* COACH-2B. What this activity DOES on the night, said explicitly and
+          never inferred from its phase. Freezes with every other write control
+          while a save is in flight.
+          A read-only viewer keeps the derived badge and loses only the
+          controls, which is how the phase select and duration already treat
+          them: they render disabled rather than vanishing. Removing the whole
+          row left a viewer reading "4 stations · 1 not running" on the side
+          card with no way to tell WHICH row that was. */}
+      <ActivityRoleRow
+        activities={activities}
+        index={idx}
+        label={title}
+        dated
+        readOnly={readOnly}
+        disabled={frozen}
+        onRole={(role) => onRole(idx, role)}
+        onStandDown={(on) => onStandDown(idx, on)}
+      />
+
       {expanded && drill && (
         <div className="act-panel" id={panelId} role="region" aria-label={`${drill.title} details`}>
           {expandedMedia}
@@ -376,6 +406,9 @@ function ActivityRow({
   onRemove,
   onDur,
   onPhase,
+  onRole,
+  onStandDown,
+  activities,
   dragHandlers,
   dragging,
   readOnly,
@@ -388,6 +421,9 @@ function ActivityRow({
   onRemove: (i: number) => void
   onDur: (i: number, v: number) => void
   onPhase: (i: number, v: Phase) => void
+  onRole: (i: number, role: ActivityRole) => void
+  onStandDown: (i: number, on: boolean) => void
+  activities: readonly Activity[]
   dragHandlers: DragHandlers
   dragging: boolean
   readOnly: boolean
@@ -421,6 +457,9 @@ function ActivityRow({
       onRemove={onRemove}
       onDur={onDur}
       onPhase={onPhase}
+      onRole={onRole}
+      onStandDown={onStandDown}
+      activities={activities}
       dragHandlers={dragHandlers}
       dragging={dragging}
       readOnly={readOnly}
@@ -744,8 +783,14 @@ export function SessionFieldsView({
           min total
         </span>
       </div>
-      <div className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+      <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
         {session.activities.length} activities
+      </div>
+      {/* COACH-2B. What this plan declares, beside the number it produces.
+          Warnings are stated and never block: a coach who declares three
+          stations is told, and Save stays available. */}
+      <div style={{ marginBottom: 14 }}>
+        <ActivityStructureSummary activities={session.activities} />
       </div>
       <div className="field">
         <label>Session name</label>
@@ -1006,6 +1051,23 @@ function PlannerEditor({
       a[i] = { ...a[i], phase: v }
       return { ...s, activities: a }
     })
+  // COACH-2B. Both go through the pure rules in ../lib/activityRole, which own
+  // exactly what each press writes and removes: a role change never touches
+  // `phase`, and it clears any stand-down so stale session-local state cannot
+  // follow an activity into another role. Draft edits like every other control
+  // here; nothing autosaves.
+  const setRole = (i: number, role: ActivityRole) =>
+    setSession((s) => {
+      const a = [...s.activities]
+      a[i] = applyRole(a[i], role)
+      return { ...s, activities: a }
+    })
+  const setStandDown = (i: number, on: boolean) =>
+    setSession((s) => {
+      const a = [...s.activities]
+      a[i] = setNotRunning(a[i], on)
+      return { ...s, activities: a }
+    })
   const addActivities = (items: Activity[]) => setSession((s) => ({ ...s, activities: [...s.activities, ...items] }))
 
   const reorder = (to: number) => {
@@ -1186,6 +1248,9 @@ function PlannerEditor({
                   onRemove={removeAct}
                   onDur={setDur}
                   onPhase={setPhase}
+                  onRole={setRole}
+                  onStandDown={setStandDown}
+                  activities={session.activities}
                   dragging={dragIdx === i}
                   readOnly={readOnly}
                   busy={busy}
