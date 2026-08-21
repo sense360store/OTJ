@@ -324,6 +324,7 @@ export interface SetupGroup {
 
 export type SetupNote =
   | 'team-order-unset'
+  | 'team-order-incomplete'
   | 'teams-combined'
   | 'team-split'
   | 'fewer-groups-than-recommended'
@@ -332,6 +333,8 @@ export type SetupNote =
 export const SETUP_NOTES: Record<SetupNote, string> = {
   'team-order-unset':
     'The club has not stated its team order, so teams are kept whole and not combined by ability.',
+  'team-order-incomplete':
+    'Some teams in this session have no stated club position, so teams are kept whole and not combined by ability.',
   'teams-combined': 'Some groups combine two teams.',
   'team-split': 'Some teams are split across groups.',
   'fewer-groups-than-recommended':
@@ -379,9 +382,35 @@ export function planSetup(
   order?: TeamOrder | null,
 ): SetupPlan {
   const recommendation = recommendSetup(expectedAttendance(rows, draft))
-  const bandingKnown = (order?.positionByTeam.size ?? 0) > 0
+  // BANDING IS KNOWN ONLY WHEN THE ORDER COVERS EVERY TEAM THIS SESSION
+  // HOLDS, not merely when an order exists.
+  //
+  // A partial order is the dangerous shape: `bucketByTeam` places the teams
+  // it does not mention by ARRIVAL order behind the ones it does, and
+  // `fitToTarget` then combines "adjacent" pairs out of that mixture. With
+  // `bandingKnown` true and the note suppressed, the plan claimed an
+  // ability adjacency it could not know for the teams that were missing.
+  // Reading a partial answer as a complete one is the same mistake as
+  // reading absence as zero, one field along.
+  //
+  // A child with no team is not counted against this: the club's ordering
+  // of its teams cannot be expected to place somebody who is on none of
+  // them.
+  const positions = order?.positionByTeam
+  const teamIds = new Set(
+    recommendation.expected.children
+      .map((c) => c.teamId)
+      .filter((id): id is string => id !== null),
+  )
+  const positioned = positions !== undefined && positions.size > 0
+  const complete = positioned && [...teamIds].every((id) => positions.has(id))
+  const bandingKnown = complete
   const notes: SetupNote[] = []
-  if (!bandingKnown) notes.push('team-order-unset')
+  // Two different facts, and the sentence says which: the club has stated
+  // nothing at all, or it has stated something that does not reach every
+  // team on the pitch tonight.
+  if (!positioned) notes.push('team-order-unset')
+  else if (!complete) notes.push('team-order-incomplete')
 
   const buckets = bucketByTeam(recommendation.expected.children, order)
   if (buckets.length === 0) {
@@ -805,18 +834,31 @@ export function setupReadiness(
 
   const issues: SetupIssue[] = []
   const colours = new Set<string>()
+  let bibbed = 0
   let withoutBib = false
   for (const r of selected) {
     const bib = effectiveBib(draftBib(draft, r.playerId), r.teamBib)
     if (bib === null) withoutBib = true
-    else colours.add(bib)
+    else {
+      bibbed++
+      colours.add(bib)
+    }
   }
   if (withoutBib) issues.push('child-without-bib')
-  // Only when there are enough children to fill the groups. A coach who
-  // has selected six children for five groups has too few players, not too
-  // few colours, and saying "two groups share a colour" would name the
-  // wrong fix.
-  if (selected.length >= intendedGroups && colours.size > 0 && colours.size < intendedGroups) {
+  // MEASURED OVER THE CHILDREN WHO ACTUALLY HAVE A BIB, which is the whole
+  // difference between naming the right fix and the wrong one.
+  //
+  // Counting every selected child made a shortage of BIBS look like a
+  // shortage of COLOURS: four children in red, blue, green and yellow plus
+  // one with no bib, against five groups, raised both issues and told the
+  // coach to change a bib that was not duplicated. Two groups share a
+  // colour only if the bibbed children are numerous enough to fill the
+  // groups and still resolve to fewer colours than there are groups.
+  //
+  // This also subsumes the too-few-players guard it replaces: a coach who
+  // has selected three children for five groups can never have three or
+  // more bibbed ones and so can never reach this.
+  if (bibbed >= intendedGroups && colours.size < intendedGroups) {
     issues.push('groups-share-colour')
   }
   return { ready: issues.length === 0, issues }

@@ -513,6 +513,43 @@ describe('the groups', () => {
     for (const g of plan.groups) expect(g.teamNames).toHaveLength(1)
   })
 
+  it('treats a partial club order as unknown, and says which kind of unknown', () => {
+    // The dangerous shape. bucketByTeam places the teams an order does not
+    // mention by ARRIVAL order behind the ones it does, and fitToTarget then
+    // combines "adjacent" pairs out of that mixture. Claiming the banding
+    // was known suppressed the only sentence saying otherwise.
+    const rows = [
+      ...squad(4, 't1', 'One'),
+      ...squad(4, 't2', 'Two'),
+      ...squad(4, 't3', 'Three'),
+      ...squad(4, 't4', 'Four'),
+      ...squad(4, 't5', 'Five'),
+    ]
+    const plan = planSetup(rows, includeAll(rows), order(['t1', 't2']))
+    expect(plan.bandingKnown).toBe(false)
+    expect(plan.notes).toContain('team-order-incomplete')
+    // And it is a DIFFERENT sentence from having stated nothing at all,
+    // because those are different facts about the club.
+    expect(plan.notes).not.toContain('team-order-unset')
+    expect(SETUP_NOTES['team-order-incomplete']).not.toBe(SETUP_NOTES['team-order-unset'])
+  })
+
+  it('says the order is unset, not incomplete, when the club has stated nothing', () => {
+    const rows = [...squad(4, 't1', 'One'), ...squad(4, 't2', 'Two')]
+    const plan = planSetup(rows, includeAll(rows), null)
+    expect(plan.notes).toContain('team-order-unset')
+    expect(plan.notes).not.toContain('team-order-incomplete')
+  })
+
+  it('does not hold a child with no team against the club s order', () => {
+    // The club's ordering of its teams cannot be expected to place somebody
+    // who is on none of them.
+    const rows = [...squad(4, 't1', 'One'), ...squad(4, 't2', 'Two'), row({ teamId: null, teamName: null })]
+    const plan = planSetup(rows, includeAll(rows), order(['t1', 't2']))
+    expect(plan.bandingKnown).toBe(true)
+    expect(plan.notes).not.toContain('team-order-incomplete')
+  })
+
   it('reports banding as known once the club has stated an order', () => {
     const rows = squad(8, 't1', 'One')
     expect(planSetup(rows, includeAll(rows), order(['t1'])).bandingKnown).toBe(true)
@@ -800,6 +837,34 @@ describe('readiness names the fix', () => {
     expect(r.ready).toBe(false)
     expect(r.issues).toContain('groups-share-colour')
     expect(SETUP_ISSUE_FIXES['groups-share-colour']).toMatch(/different bib/i)
+  })
+
+  it('does not blame the colours when the only problem is a bibless child', () => {
+    // Four children in four distinct colours plus one with no bib, against
+    // five groups. No colour is duplicated, so telling the coach to change
+    // a bib names a fix that does not apply and sends them looking for a
+    // clash that is not there.
+    const rows = [
+      ...squad(1, 'a', 'A', 'red'),
+      ...squad(1, 'b', 'B', 'blue'),
+      ...squad(1, 'c', 'C', 'green'),
+      ...squad(1, 'd', 'D', 'yellow'),
+      ...squad(1, 'e', 'E', null),
+    ]
+    const r = setupReadiness(rows, includeAll(rows), 5)
+    expect(r.issues).toEqual(['child-without-bib'])
+  })
+
+  it('still reports a real clash when enough bibbed children share colours', () => {
+    const rows = [
+      ...squad(2, 'a', 'A', 'red'),
+      ...squad(1, 'b', 'B', 'blue'),
+      ...squad(1, 'c', 'C', 'green'),
+      ...squad(1, 'd', 'D', 'yellow'),
+    ]
+    const r = setupReadiness(rows, includeAll(rows), 5)
+    expect(r.issues).toContain('groups-share-colour')
+    expect(r.issues).not.toContain('child-without-bib')
   })
 
   it('does not blame the colours when the problem is too few players', () => {
