@@ -38,7 +38,6 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const pending = insert.isPending || update.isPending
-  const mins = sessionMinutes({ activities: form.activities })
 
   const set = <K extends keyof TemplateInput>(k: K, v: TemplateInput[K]) => setForm((f) => ({ ...f, [k]: v }))
   // COACH-2B. A role press REPLACES the activity rather than patching it,
@@ -124,21 +123,7 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
 
       <div className="field">
         <label>Activities</label>
-        <div className="row" style={{ gap: 8, marginBottom: 8 }}>
-          <span className="role-badge" style={{ fontSize: 12 }}>
-            {form.activities.length} activities
-          </span>
-          <span className="pill">
-            <Icon.clock />
-            {mins} min
-          </span>
-        </div>
-        {/* COACH-2B. The same sentence the dated-session planner shows, from
-            the same pure composer, so a week plan and the session started from
-            it cannot describe their structure differently. */}
-        <div style={{ marginBottom: 8 }}>
-          <ActivityStructureSummary activities={form.activities} />
-        </div>
+        <TemplateActivitiesHeader activities={form.activities} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {form.activities.map((a, i) => {
             const drill = a.drillId ? drillById[a.drillId] : null
@@ -219,6 +204,34 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
         />
       )}
     </Modal>
+  )
+}
+
+// The week-plan editor's activities header: how many, how long, and the
+// COACH-2B structure sentence. Pulled out as a presentational view, no hooks,
+// for the same reason TemplateActivityRow was: so the static suite can render
+// the REAL editor surface rather than the summary component on its own. A test
+// that renders ActivityStructureSummary directly proves the component works
+// and says nothing about whether this editor uses it.
+export function TemplateActivitiesHeader({ activities }: { activities: readonly Activity[] }) {
+  return (
+    <>
+      <div className="row" style={{ gap: 8, marginBottom: 8 }}>
+        <span className="role-badge" style={{ fontSize: 12 }}>
+          {activities.length} activities
+        </span>
+        <span className="pill">
+          <Icon.clock />
+          {sessionMinutes({ activities: [...activities] })} min
+        </span>
+      </div>
+      {/* The same sentence the dated-session planner shows, from the same pure
+          composer, so a week plan and the session started from it cannot
+          describe their structure differently. */}
+      <div style={{ marginBottom: 8 }}>
+        <ActivityStructureSummary activities={activities} />
+      </div>
+    </>
   )
 }
 

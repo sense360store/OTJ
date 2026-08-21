@@ -157,10 +157,18 @@ describe('the structural rule lives in exactly one browser file', () => {
     // No hand-rolled comparison, in either shape.
     expect(/\bskipped\s*(===|!==|==|!=)/.test(src)).toBe(false)
     expect(/\.skipped\s*(===|!==|==|!=)/.test(src)).toBe(false)
-    // And the only thing it does to the key by name is delete it.
-    const byName = src.match(/[^\s]*\.skipped\b/g) ?? []
-    expect(byName.length).toBeGreaterThan(0)
-    for (const hit of byName) expect(src).toContain(`delete ${hit}`)
+    // And EVERY occurrence of the key by name is a deletion, checked at its
+    // own site rather than by finding the same token deleted somewhere else
+    // in the file. That weaker form passed while a hand-rolled truthiness
+    // read sat beside an existing `delete next.skipped`, because both
+    // occurrences matched the same token: the check validated the token, not
+    // the operation, which is the exact read it exists to forbid.
+    const sites = [...src.matchAll(/(.{0,24})\.skipped\b/g)]
+    expect(sites.length).toBeGreaterThan(0)
+    const notDeletions = sites
+      .filter((m) => !/\bdelete\s+[A-Za-z_$][\w$]*$/.test(m[1]))
+      .map((m) => `${m[1]}.skipped`.trim())
+    expect(notDeletions).toEqual([])
   })
 
   it('names the files that say skipped about something else, and what they mean', () => {

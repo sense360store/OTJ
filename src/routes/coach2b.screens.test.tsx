@@ -25,7 +25,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { ActivityCardView, SessionFieldsView } from './Planner'
-import { TemplateActivityRow } from '../components/TemplateFormModal'
+import { TemplateActivitiesHeader, TemplateActivityRow } from '../components/TemplateFormModal'
 import { ActivityStructureSummary } from '../components/ActivityRoleControls'
 import { NOT_RUNNING_LABEL } from '../lib/activityRole'
 import { blankSession, type Activity, type Session } from '../lib/data'
@@ -192,8 +192,10 @@ describe('Not running tonight is a dated-session station affordance only', () =>
 describe('derived labels on the row', () => {
   it('numbers active stations in plan order across the real cards', () => {
     const plan = [act(), act({ slot: 'station' }), act({ slot: 'station' })]
-    expect(datedCard(plan, 1)).toContain('Station 1')
-    expect(datedCard(plan, 2)).toContain('Station 2')
+    expect(datedCard(plan, 1)).toMatch(/<span class="role-badge"[^>]*>Station 1</)
+    expect(datedCard(plan, 2)).toMatch(/<span class="role-badge"[^>]*>Station 2</)
+    // An undeclared activity gets no badge, though its chips are identical.
+    expect(datedCard(plan, 0)).not.toMatch(/<span class="role-badge"/)
   })
 
   it('names a stood-down station and renumbers the rest', () => {
@@ -202,9 +204,17 @@ describe('derived labels on the row', () => {
     expect(datedCard(plan, 1)).toContain('Station 1')
   })
 
-  it('labels the games phase on both surfaces', () => {
-    expect(datedCard([act({ slot: 'game' })])).toContain('Games phase')
-    expect(weekPlanRow([act({ slot: 'game' })])).toContain('Games phase')
+  it('labels the games phase on both surfaces, in the BADGE', () => {
+    // Targeted at the badge markup, not the text: every role row renders a
+    // "Games phase" CHIP whatever the activity's role, so toContain alone
+    // passed even with the derived badge removed.
+    const badge = /<span class="role-badge"[^>]*>Games phase</
+    expect(datedCard([act({ slot: 'game' })])).toMatch(badge)
+    expect(weekPlanRow([act({ slot: 'game' })])).toMatch(badge)
+    // And the badge is absent when the activity is not the games phase, even
+    // though the chip offering it is still there.
+    expect(datedCard([act()])).not.toMatch(badge)
+    expect(datedCard([act()])).toContain('>Games phase<')
   })
 
   it('does not infer a station from a Warm-Up phase, nor games from a Game phase', () => {
@@ -260,9 +270,20 @@ describe('the structure summary', () => {
   })
 
   it('reaches the week-plan editor', () => {
-    // Rendered from the same composer the planner uses, so the two
-    // surfaces cannot describe one plan differently.
-    expect(summary([...stations(3)])).toContain('3 stations')
+    // The REAL editor surface, not ActivityStructureSummary on its own.
+    // Rendering the component directly proves the component works and says
+    // nothing about whether this editor uses it, so removing it from the
+    // week-plan editor left the previous version of this test green.
+    const html = renderToStaticMarkup(<TemplateActivitiesHeader activities={[...stations(3)]} />)
+    expect(html).toContain('3 stations')
+    expect(html).toContain('A carousel runs four or five stations.')
+  })
+
+  it('reaches the week-plan editor with the games phase too', () => {
+    const html = renderToStaticMarkup(
+      <TemplateActivitiesHeader activities={[...stations(4), act({ slot: 'game' })]} />,
+    )
+    expect(html).toContain('4 stations · Games phase set')
   })
 
   it('says nothing at all for an empty plan', () => {
