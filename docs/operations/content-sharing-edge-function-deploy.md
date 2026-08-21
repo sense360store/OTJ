@@ -20,9 +20,54 @@ Helper scripts: `.github/scripts/content-sharing-deploy/`
 | `manage-content-share` | `true` | Authenticated management (preview, create, refresh, rotate, revoke, status). |
 | `read-content-share` | `false` | The only anonymous function: resolves an opaque public drill, session or programme share to its stored, sanitised snapshot. |
 
-The eight pre-existing functions are untouched and stay `verify_jwt = true`.
-After a run the project has exactly ten functions, and `read-content-share` is
+The nine other functions are untouched and stay `verify_jwt = true`. After a
+run the project has exactly **eleven** functions, and `read-content-share` is
 the only one reachable without a JWT.
+
+### The inventory pin, and when it must be reconciled
+
+`EXPECTED` in `.github/scripts/content-sharing-deploy/verify_inventory.py` is
+the explicit reviewed list of the whole project's Edge Functions, as
+slug to required `verify_jwt`. It is asserted as **set equality**: a missing
+function fails, an unexpected function fails, and the count must match. It is
+deliberately an explicit allowlist rather than discovery from the hosted list
+or the repository, because the point is to compare hosted against something a
+human approved.
+
+**It is a statement about the whole project, not about the two sharing
+functions, so it must be reconciled whenever a reviewed Edge Function is
+added** — including one that has nothing to do with content sharing and ships
+through its own gated deploy workflow.
+
+That is not hypothetical. `spond-link-members` was added and deployed on
+17 August 2026 through `.github/workflows/deploy-spond-link-members.yml`, its
+own production-gated deploy. This pin was not reconciled with it, so the next
+content-sharing deploy, [run 32480333370](https://github.com/sense360store/OTJ/actions/runs/32480333370),
+failed at the inventory step:
+
+```
+FAIL: unexpected function(s) deployed: ['spond-link-members']
+FAIL: expected 10 functions, found 11
+```
+
+The pre-deploy gates and baseline capture had passed and **both sharing
+functions had already deployed successfully**; the deployed-source readback,
+the smoke tests, the post-deploy state comparison and Deploy complete were all
+skipped. The gate behaved exactly as designed, over a stale list.
+
+`spond-link-members` is legitimate repository state, not residue: the function
+lives at `supabase/functions/spond-link-members/index.ts`, `supabase/config.toml`
+declares `[functions.spond-link-members] verify_jwt = true`, and it has its own
+reviewed production deploy workflow.
+
+Two tests now fail the build on this drift rather than leaving it for a
+production run. One compares `EXPECTED` against the directories under
+`supabase/functions/`, so adding a function without reconciling the pin is
+caught at review. The other compares `EXPECTED` against the explicit
+`[functions.*]` blocks in `config.toml`, so the pin and the declared JWT
+posture cannot disagree. Neither can see a function that exists on hosted but
+not in this repository; that remains what the inventory gate itself catches at
+deploy time.
 
 The JWT posture is declared explicitly in `supabase/config.toml`:
 
