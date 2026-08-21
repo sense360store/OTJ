@@ -197,7 +197,7 @@ describe('the expected count has one rule and says which source it used', () => 
     // the only day it matters.
     const rows = squad(26, 't1', 'One')
     const e = expectedAttendance(rows, emptyDraft())
-    expect(e.source).toBe('squad')
+    expect(e.source).toBe('listed')
     expect(e.count).toBe(26)
   })
 
@@ -229,8 +229,27 @@ describe('the expected count has one rule and says which source it used', () => 
     expect(expectedAttendance([...covered, guest], emptyDraft()).count).toBe(5)
     // With no covered reply there is no context, and the child standing in
     // front of the coach is expected whatever the mirror knows.
-    expect(expectedAttendance([{ ...guest }], emptyDraft()).source).toBe('squad')
+    expect(expectedAttendance([{ ...guest }], emptyDraft()).source).toBe('listed')
     expect(expectedAttendance([{ ...guest }], emptyDraft()).count).toBe(1)
+  })
+
+  it('never calls a guest a member of the squad', () => {
+    // `manual: true` says in as many words that this child is outside the
+    // covered squad, so a sentence claiming squad membership is
+    // contradicted by the row it counted.
+    const guest = row({ manual: true, teamId: 't9', teamName: 'Nine' })
+    const note = expectedAttendanceNote(expectedAttendance([guest], emptyDraft()))
+    expect(note).not.toMatch(/\bsquad\b/)
+  })
+
+  it('never claims squad membership on the local branch at all', () => {
+    // The set is every child the session lists, guests included, so no arm
+    // of the sentence may name it as the squad.
+    for (const rows of [squad(9, 't1', 'One'), [row({ manual: true }), ...squad(3, 't1', 'One')]]) {
+      for (const draft of [emptyDraft(), includeAll(rows.slice(0, 2))]) {
+        expect(expectedAttendanceNote(expectedAttendance(rows, draft))).not.toMatch(/\bsquad\b/)
+      }
+    }
   })
 
   it('counts a duplicated row once', () => {
@@ -246,8 +265,8 @@ describe('the expected count has one rule and says which source it used', () => 
 
   it('names the population in the sentence, differently for each source', () => {
     const notes = new Set(
-      (['rsvp', 'rsvp-partial', 'included', 'squad'] as const).map((source) =>
-        expectedAttendanceNote({ source, count: 4, children: [], goingInSpond: 1, withoutSpondAnswer: 3, countedLocally: 3, localSource: 'squad' }),
+      (['rsvp', 'rsvp-partial', 'included', 'listed'] as const).map((source) =>
+        expectedAttendanceNote({ source, count: 4, children: [], goingInSpond: 1, withoutSpondAnswer: 3, countedLocally: 3, localSource: 'listed' }),
       ),
     )
     expect(notes.size).toBe(4)
@@ -261,12 +280,12 @@ describe('the expected count has one rule and says which source it used', () => 
       goingInSpond: 20,
       withoutSpondAnswer: 13,
       countedLocally: 13,
-      localSource: 'squad',
+      localSource: 'listed',
     })
     expect(mixed).toContain('20')
     expect(mixed).toContain('13')
     expect(mixed).toContain('33')
-    expect(expectedAttendanceNote({ source: 'rsvp', count: 1, children: [], goingInSpond: 0, withoutSpondAnswer: 1, countedLocally: 1, localSource: 'squad' })).toContain('1 player ')
+    expect(expectedAttendanceNote({ source: 'rsvp', count: 1, children: [], goingInSpond: 0, withoutSpondAnswer: 1, countedLocally: 1, localSource: 'listed' })).toContain('1 player ')
   })
 
   it('never labels a counted subset as though it were the whole population', () => {
@@ -292,7 +311,7 @@ describe('the expected count has one rule and says which source it used', () => 
     // A quick added guest has no Spond answer for THIS session, which is a
     // fact about the event rather than about whether they have a link.
     // Calling them "not linked" is a claim this module cannot make.
-    for (const localSource of ['included', 'squad'] as const) {
+    for (const localSource of ['included', 'listed'] as const) {
       const note = expectedAttendanceNote({
         source: 'rsvp-partial',
         count: 5,
@@ -329,7 +348,7 @@ describe('the expected count has one rule and says which source it used', () => 
 
 describe('the recommendation', () => {
   const at = (count: number) =>
-    recommendSetup({ source: 'squad', count, children: [], goingInSpond: 0, withoutSpondAnswer: count, countedLocally: count, localSource: 'squad' })
+    recommendSetup({ source: 'listed', count, children: [], goingInSpond: 0, withoutSpondAnswer: count, countedLocally: count, localSource: 'listed' })
 
   it('recommends four at 23 and five at 24', () => {
     expect(at(23).stations).toBe(4)
@@ -352,7 +371,7 @@ describe('the recommendation', () => {
 
   it('runs the same rule on both branches', () => {
     // No club gets a different threshold for having configured Spond.
-    for (const source of ['rsvp', 'rsvp-partial', 'included', 'squad'] as const) {
+    for (const source of ['rsvp', 'rsvp-partial', 'included', 'listed'] as const) {
       const e = (count: number): ExpectedAttendance => ({
         source,
         count,
@@ -360,7 +379,7 @@ describe('the recommendation', () => {
         goingInSpond: 0,
         withoutSpondAnswer: count,
         countedLocally: count,
-        localSource: 'squad',
+        localSource: 'listed',
       })
       expect(recommendSetup(e(24)).stations).toBe(5)
       expect(recommendSetup(e(23)).stations).toBe(4)
@@ -567,6 +586,50 @@ describe('the groups', () => {
       if (seen[seen.length - 1] !== name) seen.push(name)
     }
     expect(seen).toEqual(['One', 'Two', 'Three'])
+  })
+
+  it('does not say teams were combined when no group holds two teams', () => {
+    // Five children with no team are five buckets, so reaching four groups
+    // merges twice while no group holds a second team. Merging buckets and
+    // combining squads are different facts, and the note names the second.
+    const rows = Array.from({ length: 5 }, () => row({ teamId: null, teamName: null }))
+    const plan = planSetup(rows, includeAll(rows), null)
+    expect(plan.groups.every((g) => g.teamNames.length <= 1)).toBe(true)
+    expect(plan.notes).not.toContain('teams-combined')
+  })
+
+  it('says teams were combined exactly when a group holds two of them', () => {
+    const rows = [
+      ...squad(4, 't1', 'One'),
+      ...squad(4, 't2', 'Two'),
+      ...squad(4, 't3', 'Three'),
+      ...squad(4, 't4', 'Four'),
+      ...squad(4, 't5', 'Five'),
+    ]
+    const plan = planSetup(rows.slice(0, 20), includeAll(rows.slice(0, 20)), order(['t1', 't2', 't3', 't4', 't5']))
+    const combined = plan.groups.some((g) => g.teamNames.length > 1)
+    expect(plan.notes.includes('teams-combined')).toBe(combined)
+  })
+
+  it('says a team was split exactly when one appears in two groups', () => {
+    const rows = squad(12, 't1', 'One')
+    const plan = planSetup(rows, includeAll(rows), null)
+    const counts = new Map<string, number>()
+    for (const g of plan.groups) for (const t of g.teamNames) counts.set(t, (counts.get(t) ?? 0) + 1)
+    const split = [...counts.values()].some((n) => n > 1)
+    expect(plan.notes.includes('team-split')).toBe(split)
+  })
+
+  it('does not call merged teamless children a split team', () => {
+    const rows = Array.from({ length: 7 }, () => row({ teamId: null, teamName: null }))
+    const plan = planSetup(rows, includeAll(rows), null)
+    expect(plan.notes).not.toContain('team-split')
+  })
+
+  it('states each note at most once', () => {
+    const rows = [...squad(6, 't1', 'One'), ...squad(6, 't2', 'Two'), ...squad(6, 't3', 'Three')]
+    const plan = planSetup(rows, includeAll(rows), null)
+    expect(new Set(plan.notes).size).toBe(plan.notes.length)
   })
 
   it('places every expected child exactly once', () => {
@@ -929,7 +992,7 @@ describe('what the plan says about the coach s own session plan', () => {
   const stations = (n: number, over: Partial<StructuredActivity> = {}) =>
     Array.from({ length: n }, () => act({ slot: 'station', ...over }))
   const rec = (count: number) =>
-    recommendSetup({ source: 'squad', count, children: [], goingInSpond: 0, withoutSpondAnswer: count, countedLocally: count, localSource: 'squad' })
+    recommendSetup({ source: 'listed', count, children: [], goingInSpond: 0, withoutSpondAnswer: count, countedLocally: count, localSource: 'listed' })
 
   it('says nothing when the plan already matches', () => {
     const fit = stationAdvice(rec(24), stations(5))
@@ -939,12 +1002,12 @@ describe('what the plan says about the coach s own session plan', () => {
 
   it('names both numbers when they disagree', () => {
     const fewer = stationAdvice(rec(24), stations(4))
-    expect(fewer.kind).toBe('plan-declares-fewer')
+    expect(fewer.kind).toBe('plan-runs-fewer')
     expect(stationFitNote(fewer)).toContain('4')
     expect(stationFitNote(fewer)).toContain('5')
 
     const more = stationAdvice(rec(10), stations(5))
-    expect(more.kind).toBe('plan-declares-more')
+    expect(more.kind).toBe('plan-runs-more')
   })
 
   it('tells an undeclared plan apart from one stood all the way down', () => {
@@ -955,6 +1018,7 @@ describe('what the plan says about the coach s own session plan', () => {
     const down = stationAdvice(rec(24), stations(4, { skipped: true }))
     expect(down.kind).toBe('all-stations-stood-down')
     expect(down.declared).toBe(4)
+    expect(down.running).toBe(0)
   })
 
   it('borrows the planner s own wording for the two zero cases', () => {
@@ -970,7 +1034,47 @@ describe('what the plan says about the coach s own session plan', () => {
 
   it('counts only the stations that are running', () => {
     const mixed = [...stations(3), ...stations(2, { skipped: true })]
-    expect(stationAdvice(rec(24), mixed).declared).toBe(3)
+    const fit = stationAdvice(rec(24), mixed)
+    // Two different numbers, and neither stands in for the other: three
+    // run, five are declared.
+    expect(fit.running).toBe(3)
+    expect(fit.declared).toBe(5)
+  })
+
+  it('never reports the running count as the declared one', () => {
+    // A plan declaring five with one stood down runs four. Naming the
+    // running figure `declared` made it assert something about the coach's
+    // plan that the plan contradicts, and `matches` compounded it.
+    const acts = [...stations(4), ...stations(1, { skipped: true })]
+    const fit = stationAdvice(rec(10), acts)
+    expect(fit.running).toBe(4)
+    expect(fit.declared).toBe(5)
+    expect(fit.kind).toBe('matches')
+  })
+
+  it('names the RUNNING count in the sentence, not the declared one', () => {
+    // Five declared, one stood down, five recommended. The sentence must
+    // say four: naming the declared figure here would read "runs 5 and the
+    // numbers suggest 5" while telling the coach they disagree.
+    const acts = [...stations(4), ...stations(1, { skipped: true })]
+    const fit = stationAdvice(rec(24), acts)
+    expect(fit.kind).toBe('plan-runs-fewer')
+    expect(stationFitNote(fit)).toBe('This plan runs 4 stations and the numbers suggest 5.')
+  })
+
+  it('keeps running and declared apart on every arm', () => {
+    const cases: StructuredActivity[][] = [
+      [],
+      stations(4),
+      [...stations(3), ...stations(2, { skipped: true })],
+      stations(5, { skipped: true }),
+      stations(6),
+    ]
+    for (const acts of cases) {
+      const fit = stationAdvice(rec(24), acts)
+      // Running can never exceed declared, and a stood-down plan proves it.
+      expect(fit.running).toBeLessThanOrEqual(fit.declared)
+    }
   })
 
   it('is advice: it never edits the plan', () => {

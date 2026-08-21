@@ -88,7 +88,7 @@ import {
 // it is their selection. Collapsing those into one label would leave a
 // coach reading "22 expected" unable to tell whether the app had counted
 // their work or the roster behind it.
-export type ExpectedSource = 'rsvp' | 'rsvp-partial' | 'included' | 'squad'
+export type ExpectedSource = 'rsvp' | 'rsvp-partial' | 'included' | 'listed'
 
 export interface ExpectedAttendance {
   count: number
@@ -114,7 +114,7 @@ export interface ExpectedAttendance {
   // How many of those the count actually used.
   countedLocally: number
   // Which local rule produced that number.
-  localSource: 'included' | 'squad'
+  localSource: 'included' | 'listed'
 }
 
 // The one resolver.
@@ -202,10 +202,14 @@ export function expectedAttendance(
 function localRoster(
   rows: readonly TonightRow[],
   draft: TonightDraft,
-): { source: 'included' | 'squad'; children: TonightRow[] } {
+): { source: 'included' | 'listed'; children: TonightRow[] } {
   const included = rows.filter((r) => draftIncluded(draft, r.playerId))
   if (included.length > 0) return { source: 'included', children: included }
-  return { source: 'squad', children: [...rows] }
+  // NOT "the squad". This set holds every child the session lists,
+  // which includes a quick added guest, and `manual` says in as many words
+  // that a guest is outside the covered squad. Calling them a squad member
+  // is a claim the row itself contradicts.
+  return { source: 'listed', children: [...rows] }
 }
 
 // A row appearing twice cannot count twice. `tonightCounts` takes the same
@@ -246,7 +250,7 @@ export function expectedAttendanceNote(expected: ExpectedAttendance): string {
     return `${n} ${child} expected: ${expected.goingInSpond} going in Spond and ${half}`
   }
   if (expected.source === 'included') return `${n} ${child} selected`
-  return `${n} ${child} in the squad`
+  return `${n} ${child} on the list`
 }
 
 // ---- 2. What that recommends -----------------------------------------
@@ -418,10 +422,22 @@ export function planSetup(
     return { recommendation, groups: [], bandingKnown, notes }
   }
 
-  const units = fitToTarget(buckets, recommendation.groups, notes)
+  const units = fitToTarget(buckets, recommendation.groups)
   const groups = colourGroups(units)
+  // DERIVED FROM THE GROUPS THEMSELVES, never from what the fit did on the
+  // way there. Merging two buckets is not the same fact as a group holding
+  // two teams: five children with no team are five buckets, so reaching
+  // four groups merges twice while no group holds a second team, and the
+  // note told the coach their squads had been combined when none had. The
+  // same applies to splitting. Reading the output cannot make that mistake.
+  const seen = new Map<string, number>()
+  for (const g of groups) {
+    if (g.teamNames.length > 1) notes.push('teams-combined')
+    for (const name of g.teamNames) seen.set(name, (seen.get(name) ?? 0) + 1)
+  }
+  if ([...seen.values()].some((n) => n > 1)) notes.push('team-split')
   if (groups.length < recommendation.groups) notes.push('fewer-groups-than-recommended')
-  return { recommendation, groups, bandingKnown, notes }
+  return { recommendation, groups, bandingKnown, notes: [...new Set(notes)] }
 }
 
 // Children grouped by team, in CLUB ORDER when the club has stated one.
@@ -483,7 +499,7 @@ function bucketByTeam(children: readonly TonightRow[], order?: TeamOrder | null)
 // breaking up a squad. The brief prefers 6/5/5/4, so combining is tried
 // first and splitting happens only when there are not enough buckets to
 // reach the target at all.
-function fitToTarget(buckets: TeamBucket[], target: number, notes: SetupNote[]): TeamBucket[][] {
+function fitToTarget(buckets: TeamBucket[], target: number): TeamBucket[][] {
   let units: TeamBucket[][] = buckets.map((b) => [b])
 
   while (units.length > target) {
@@ -501,7 +517,6 @@ function fitToTarget(buckets: TeamBucket[], target: number, notes: SetupNote[]):
       [...units[best], ...units[best + 1]],
       ...units.slice(best + 2),
     ]
-    if (!notes.includes('teams-combined')) notes.push('teams-combined')
   }
 
   while (units.length < target) {
@@ -521,7 +536,6 @@ function fitToTarget(buckets: TeamBucket[], target: number, notes: SetupNote[]):
     const head = rebuild(flat.slice(0, half))
     const tail = rebuild(flat.slice(half))
     units = [...units.slice(0, best), head, tail, ...units.slice(best + 1)]
-    if (!notes.includes('team-split')) notes.push('team-split')
   }
 
   return units.filter((u) => unitSize(u) > 0)
@@ -682,12 +696,21 @@ export function planBibChanges(plan: SetupPlan, draft: TonightDraft): Record<str
 // one nobody has marked up yet; a plan whose every declared station is
 // stood down is a coach's decision. Reading the second as the first would
 // tell a coach to declare stations they have already declared.
+// `running` and `declared` are DIFFERENT NUMBERS and both are carried.
+//
+// The comparison is against the stations that actually run, which is the
+// only figure attendance can be weighed against. But the field holding it
+// was called `declared`, so a plan declaring five with one stood down
+// reported `declared: 4` and `matches` against a recommendation of four:
+// a false structural claim about the coach's own plan, made by the field
+// name rather than by the arithmetic. The arms are named for running too,
+// for the same reason.
 export type StationFit =
-  | { kind: 'matches'; declared: number; recommended: number }
-  | { kind: 'plan-declares-more'; declared: number; recommended: number }
-  | { kind: 'plan-declares-fewer'; declared: number; recommended: number }
-  | { kind: 'no-stations-declared'; declared: 0; recommended: number }
-  | { kind: 'all-stations-stood-down'; declared: number; recommended: number }
+  | { kind: 'matches'; running: number; declared: number; recommended: number }
+  | { kind: 'plan-runs-more'; running: number; declared: number; recommended: number }
+  | { kind: 'plan-runs-fewer'; running: number; declared: number; recommended: number }
+  | { kind: 'no-stations-declared'; running: 0; declared: 0; recommended: number }
+  | { kind: 'all-stations-stood-down'; running: 0; declared: number; recommended: number }
 
 // The COACH-2 seam, CONSUMED AND NEVER RE-DERIVED.
 //
@@ -706,20 +729,18 @@ export function stationAdvice(
 ): StationFit {
   const structure = deriveActivityStructure(activities ?? [])
   const recommended = recommendation.stations
-  if (structure.declaredStations.length === 0) {
-    return { kind: 'no-stations-declared', declared: 0, recommended }
+  const declared = structure.declaredStations.length
+  if (declared === 0) {
+    return { kind: 'no-stations-declared', running: 0, declared: 0, recommended }
   }
-  if (structure.stationCount === 0) {
-    return {
-      kind: 'all-stations-stood-down',
-      declared: structure.declaredStations.length,
-      recommended,
-    }
+  const running = structure.stationCount
+  if (running === 0) {
+    return { kind: 'all-stations-stood-down', running: 0, declared, recommended }
   }
-  const declared = structure.stationCount
-  if (declared === recommended) return { kind: 'matches', declared, recommended }
+  if (running === recommended) return { kind: 'matches', running, declared, recommended }
   return {
-    kind: declared > recommended ? 'plan-declares-more' : 'plan-declares-fewer',
+    kind: running > recommended ? 'plan-runs-more' : 'plan-runs-fewer',
+    running,
     declared,
     recommended,
   }
@@ -736,7 +757,7 @@ export function stationFitNote(fit: StationFit): string {
   if (fit.kind === 'all-stations-stood-down') {
     return ACTIVITY_STRUCTURE_WARNINGS['all-stations-stood-down']
   }
-  return `This plan runs ${fit.declared} stations and the numbers suggest ${fit.recommended}.`
+  return `This plan runs ${fit.running} stations and the numbers suggest ${fit.recommended}.`
 }
 
 // ---- 6. Accepting the suggestion --------------------------------------
