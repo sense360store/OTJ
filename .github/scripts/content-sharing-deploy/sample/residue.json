@@ -4,15 +4,26 @@
     "enabled_club_ids": [
       "11111111-1111-1111-1111-111111111111"
     ],
-    "shares": 0,
-    "deps": 0,
-    "share_audit": 0,
     "non_internal_drills": 0,
     "non_internal_media": 0,
-    "total_drills": 103,
+    "total_drills": 104,
     "total_media": 111,
     "last_migration": "20260817104226"
   },
   "has_cron": false,
-  "cron_jobs": 0
+  "cron_jobs": 0,
+  "state": {
+    "content_shares": {
+      "count": 1,
+      "fingerprint": "00000000000000000000000000000001"
+    },
+    "content_share_dependencies": {
+      "count": 0,
+      "fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    "content_share_audit_events": {
+      "count": 1,
+      "fingerprint": "00000000000000000000000000000002"
+    }
+  }
 }

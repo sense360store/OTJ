@@ -131,7 +131,8 @@ production content-sharing deployments from overlapping.
    assertion; the negative CORS check always runs.
 6. Approve the run when prompted (production environment gate).
 7. Read the job summary for the source hashes, deployed inventory, readback
-   level and the post-deploy residue check.
+   level, the pre-deploy gate with its live sharing baseline counts, and the
+   post-deploy comparison against that baseline.
 
 ## How authentication is validated
 
@@ -186,33 +187,192 @@ The job summary records:
   verified and the anonymous-versus-authenticated boundary is confirmed by the
   endpoint smoke tests instead, which the summary states plainly;
 - the deployed-source readback level (see below);
-- the PRE-deploy ledger and inert-state gate (see below), which runs while both
-  functions are still untouched;
-- the post-deploy residue check (the same assertions again, proving the deploy
-  itself left no residue).
+- the PRE-deploy hosted gate (see below), which runs while both functions are
+  still untouched and which also captures the live sharing baseline;
+- the post-deploy check: the same absolute invariants again, plus proof that
+  the live sharing state is unchanged from that baseline.
 
-### The ledger and inert-state gate, run twice
+### The hosted gate, run twice
 
-`verify_no_residue.py` runs at two points in the workflow, with **identical**
-assertions and only the wording differing:
+`verify_no_residue.py` runs at two points in the workflow. It makes two kinds
+of check, and the difference between them is the whole design.
 
 | Phase | Step | Purpose |
 |---|---|---|
-| `--phase pre` | before either function is deployed | stops the run against a schema this commit was not reviewed against, or a hosted project that is no longer inert, while nothing has been changed |
-| `--phase post` | after the deploy | proves the deploy itself left no residue |
+| `--phase pre --baseline-out PATH` | before either function is deployed | stops the run against a schema this commit was not reviewed against, while nothing has been changed; then captures a baseline of the live sharing state |
+| `--phase post --baseline-in PATH` | after the deploy | asserts the same absolute invariants again, then proves the live sharing state is unchanged from that baseline |
 
-Both assert: the set of clubs with `public_sharing_enabled` true is **exactly**
-the reviewed allowlist `EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS`;
-`content_shares` and
-`content_share_dependencies` are empty; there is no `content_share` audit event;
-every drill and every media row is `internal_only`; there is no `content_share`
-pg_cron job; and the migration ledger's newest version is **exactly**
-`EXPECTED_LAST_MIGRATION`.
+**Absolute invariants**, asserted identically in both phases against fixed
+reviewed values:
+
+- the set of clubs with `public_sharing_enabled` true is **exactly** the
+  reviewed allowlist `EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS`;
+- every drill and every media row is `internal_only`;
+- there is no `content_share` pg_cron job;
+- the migration ledger's newest version is **exactly**
+  `EXPECTED_LAST_MIGRATION`.
 
 The ledger assertion is an exact equality and must stay one. It is never
 relaxed to a `>=`, a prefix match or an "exists somewhere" check, because the
 point is to prove the hosted schema is precisely the reviewed one. A test pins
 this (`test_expected_last_migration_is_an_exact_equality`).
+
+**Live sharing state**, captured before the deploy and required to be
+unchanged after it:
+
+- `public.content_shares`
+- `public.content_share_dependencies`
+- `public.audit_events` where `entity_type = 'content_share'`
+
+### Why the live sharing state is preserved rather than pinned
+
+This is a change of invariant, and the history matters because the old one was
+correct when it was written.
+
+**During the dark rollout, zero shares and zero sharing audit history was a
+valid inert-state invariant.** Public sharing shipped with its machinery in
+place and switched off for every club. Nothing could legitimately create a
+share, so "these tables are empty" was a true statement about a correct
+production system, and asserting it proved something worth proving: that the
+deploy changed nothing observable.
+
+**Once public sharing was used legitimately, that stopped being a valid
+production invariant.** Ossett Town Juniors was deliberately enabled, and on
+10 August 2026 a coach created a session share through `manage-content-share`.
+From that moment the gate was asserting a state the product is built to leave
+behind. It failed every deploy: GitHub Actions run **32426729784**, on merged
+`main` at `6081932`, stopped at the pre-deploy gate with
+
+```
+FAIL: shares expected 0, got 1
+FAIL: share_audit expected 0, got 1
+```
+
+with both function deploys skipped. Nothing was wrong with the hosted state.
+The gate was asserting the wrong thing.
+
+**What replaced it is a preservation gate, not a looser count check.** The
+question a deploy verifier exists to answer is "did this deployment change
+anything it must not change", and that question is now asked directly: the
+sharing state immediately after the deploy must be byte-identical to the
+sharing state immediately before it. A share created, refreshed, rotated,
+revoked or deleted inside the deploy window fails the run. So does a
+dependency row appearing or changing, and so does any new or altered
+`content_share` audit event.
+
+That is strictly stronger than the old rule in one respect and weaker in none
+that matters. The old rule could only ever see the tables as empty or
+non-empty; it could not have detected a share being **modified** during a
+deploy, because a modified share leaves the count at zero-or-whatever it was.
+The fingerprint does detect exactly that.
+
+`content_share_dependencies` is deliberately NOT kept pinned at zero even
+though it happens to be empty on hosted today. It is a legitimate reverse
+dependency table and valid future shares will populate it; pinning today's
+value would rebuild the same defect one table along.
+
+### Fingerprints
+
+Per dataset, computed **server side**, in one statement so the count and the
+fingerprint describe the same snapshot:
+
+```sql
+md5( coalesce( string_agg( md5(to_jsonb(t)::text), '' order by t.id ), '' ) )
+```
+
+| Element | Why |
+|---|---|
+| `to_jsonb(t)` | the whole row, so a column added by a future migration is covered without editing the query, and no column has to be named |
+| `::text` | jsonb renders keys in a canonical order, so physical column order cannot change the hash |
+| inner `md5` | a fixed-length 32 character hash per row, so concatenation is unambiguous |
+| `order by t.id` | explicit and total. All three tables have a uuid primary key named `id`. Ordered by the uuid itself, not `id::text`, because text ordering is collation dependent |
+| `coalesce(..., '')` | `string_agg` over zero rows is NULL; an empty dataset fingerprints as `md5('')`, not as SQL NULL, which would compare unequal to itself |
+| outer `md5` | one aggregate value |
+
+**Only a count and 32 hex digits leave Postgres.** Row bodies, token hashes,
+share snapshots, audit metadata and actor identities are hashed inside the
+server and never reach Python, the runner's disk, the log, the job summary or
+an artifact. The counts are printed; the fingerprints are not.
+
+This is a **change detection** fingerprint, not an authentication primitive. It
+answers "is this byte-identical to what I saw a few minutes ago". The control
+over who may write these rows is the database's own RLS and grants, unchanged
+by any of this.
+
+**The output-formatting GUCs are pinned** in the read-only preamble, because
+several PostgreSQL types render according to a session setting, so the same
+unchanged row hashes two ways in two sessions. Two of these were measured
+against this project's database rather than assumed:
+
+| Setting | Value | Rendered | Row hash |
+|---|---|---|---|
+| `TimeZone` | `UTC` | `2026-08-10T17:14:53.087233+00:00` | `ac1dd26dbe9da00843070d826a17f311` |
+| `TimeZone` | `America/New_York` | `2026-08-10T13:14:53.087233-04:00` | `1010c8de772c30ce2fcd8fc225914fed` |
+| `bytea_output` | `hex` | `\xdeadbeef01` | `249af7b5e5582f80b1f4434c6150d254` |
+| `bytea_output` | `escape` | `\336\255\276\357\001` | `5e46159b11924b75616ee4f7598e836f` |
+
+`timestamptz` appears six times across these tables and `bytea` is
+`content_shares.token_hash`, so both are live today. `DateStyle`,
+`IntervalStyle` and `extra_float_digits` are pinned too, prophylactically:
+`to_jsonb(t)` covers the whole row precisely so that a column added by a future
+migration is fingerprinted without editing the query, which leaves the class of
+session-dependent rendering open even though no interval, float or bare date
+column exists in these three tables today. Each is pinned to the value that is
+already the default, so nothing about today's rendering changes.
+
+Without the pins, a pooler handing the post-deploy connection different
+defaults from the pre-deploy one would report unchanged rows as changed, and a
+fail-closed gate that cries wolf is a gate somebody switches off. `SET LOCAL`
+is transaction-scoped and is not a write; a read-only transaction permits it.
+
+### The baseline file
+
+Written by the pre phase to `${RUNNER_TEMP}/content-sharing-state-baseline.json`
+and read by the post phase from the same path. The workflow invariant tests
+assert the two paths are identical, that the path is under `RUNNER_TEMP`, and
+that the deploy uploads no artifact.
+
+It contains a format version, optionally the checked-out `GITHUB_SHA`, and for
+each of the three datasets a count and a fingerprint. Nothing else: no ids, no
+token hashes, no snapshots, no actor ids or names, no metadata, no source ids,
+no row bodies, no connection string. `build_baseline` copies two scalars per
+dataset, and the tests pin that at both the canonicalisation layer and the
+build layer.
+
+Handling: runner-local, mode `0600`, written atomically through a `.partial`
+file, and it **refuses to overwrite an existing baseline** rather than
+replacing one written by something this run does not know about. `RUNNER_TEMP`
+is discarded with the runner.
+
+The post phase fails closed when the baseline is missing, unreadable, not JSON,
+not an object, of the wrong format version, missing a dataset, carrying an
+unknown dataset, carrying a malformed count or fingerprint, or bound to a
+different commit from the one the post phase is running on. `--phase post`
+without `--baseline-in` is refused outright, so the phase can never report PASS
+having skipped its own comparison.
+
+### Concurrency: what a post-deploy failure actually means
+
+If a coach legitimately creates, refreshes, rotates or revokes a share while
+the deploy is in progress, the post phase fails.
+
+That is accepted, and it is the honest outcome. The verifier compares two
+snapshots; it cannot tell whether the difference between them came from the
+deployment or from a coach using the product, and it must not guess. Fail
+closed is the only safe reading of an ambiguous difference.
+
+What is deliberately NOT done about it:
+
+- no production lock is taken;
+- sharing is not disabled during a deploy;
+- no coach is blocked;
+- no attempt is made to attribute the change to a writer after the fact.
+
+A deploy is a couple of minutes and a share is created in seconds, so the
+collision is rare. When it happens: the functions are already deployed and the
+run has told you the sharing state moved. Inspect the state, confirm the change
+was ordinary product use, and rerun the deploy when the club is quiet. A rerun
+is safe; the deploy is idempotent.
 
 ### Reconciling EXPECTED_LAST_MIGRATION after applying a migration
 
@@ -431,18 +591,17 @@ mismatch. The repository source hashes recorded before deploy, together with
 the deployed function version and eszip bundle fingerprint, remain the
 authoritative deployment record unless byte equality is actually proven.
 
-## Post-deploy no-residue verification (direct Postgres, read-only)
+## Post-deploy verification (direct Postgres, read-only)
 
 The final step runs
-`.github/scripts/content-sharing-deploy/verify_no_residue.py`, a read-only
-proof that the deploy changed nothing it was not reviewed to change. It checks,
-on the hosted project:
+`.github/scripts/content-sharing-deploy/verify_no_residue.py --phase post`, a
+read-only proof that the deploy changed nothing it was not reviewed to change.
+It checks, on the hosted project:
+
+Absolute invariants, the same ones the pre-deploy phase asserted:
 
 - the set of clubs with `public_sharing_enabled` true is exactly the reviewed
   allowlist (see "The reviewed enabled club set" above);
-- `content_shares` has zero rows;
-- `content_share_dependencies` has zero rows;
-- no `content_share` audit event exists;
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
@@ -450,14 +609,26 @@ on the hosted project:
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
+Live sharing state, compared against the baseline the pre-deploy phase captured
+(see "Why the live sharing state is preserved rather than pinned" above):
+
+- `content_shares`, `content_share_dependencies` and the `content_share` audit
+  events must each match the baseline on BOTH count and fingerprint;
+- any difference fails the step, naming which dataset moved and, for a count
+  change, the two counts. No row is ever printed, because the verifier holds
+  none.
+
+None of the three is required to be empty. Existing shares are legitimate
+product data.
+
 ### Connection and credential
 
 The verifier connects to Postgres directly with `psql`, using the full
 connection string in `SUPABASE_DB_URL` (see "The `SUPABASE_DB_URL` secret"
 above). It never uses the Supabase Management API, never reads
 `SUPABASE_ACCESS_TOKEN`, and never reads `SUPABASE_DATABASE_READ_TOKEN`. The CLI
-deploy and list operations continue to use `SUPABASE_ACCESS_TOKEN`; the residue
-check uses `SUPABASE_DB_URL` and nothing else. The DB URL is exposed only to
+deploy and list operations continue to use `SUPABASE_ACCESS_TOKEN`; the hosted
+gate uses `SUPABASE_DB_URL` and nothing else. The DB URL is exposed only to
 this one workflow step, never in the job-wide env, and never printed; error
 output is redacted so neither the URL nor the database password can leak.
 
