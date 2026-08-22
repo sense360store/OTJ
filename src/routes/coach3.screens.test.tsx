@@ -34,6 +34,7 @@ import {
   stationAdvice,
   stationFitNote,
 } from '../lib/sessionSetup'
+import { reconcileSetup } from '../lib/setupReconcile'
 import {
   type SaveState,
   type TonightDraft,
@@ -88,8 +89,10 @@ function card(
       plan={plan}
       fit={stationAdvice(plan.recommendation, opts.activities ?? [])}
       readiness={setupReadiness(rows, draft, plan.recommendation.groups)}
+      reconcile={reconcileSetup(rows, draft)}
       canEdit={opts.canEdit ?? true}
       onApply={opts.onApply ?? noop}
+      onReconcile={noop}
     />,
   )
 }
@@ -108,6 +111,7 @@ function screen(
         plan,
         fit: stationAdvice(plan.recommendation, []),
         readiness: setupReadiness(rows, draft, plan.recommendation.groups),
+        reconcile: reconcileSetup(rows, draft),
       }
   return renderToStaticMarkup(
     <TonightScreenView
@@ -320,14 +324,20 @@ describe('readiness is shown, and never as a blocker', () => {
 })
 
 describe('applying is offered only to somebody who may edit', () => {
-  it('offers Apply to a coach', () => {
+  it('offers Apply to a coach on an unarranged night', () => {
+    // COACH-4 moved the boundary: the full plan is a gesture only while
+    // nobody is included. An arranged night gets the reconciliation's
+    // control instead, which ./coach4.screens.test.tsx pins.
     const rows = squad(12, 't1', 'One', 'red')
-    expect(card(rows, includeAll(rows), { canEdit: true })).toMatch(/<button[^>]*>Apply</)
+    expect(card(rows, draftFromEntries([]), { canEdit: true })).toMatch(/<button[^>]*>Apply</)
   })
 
   it('offers no Apply to a read-only viewer', () => {
+    // Unarranged, so what hides the button here is canEdit and nothing
+    // else: an arranged night hides it for everybody, which would let this
+    // assertion pass for the wrong reason.
     const rows = squad(12, 't1', 'One', 'red')
-    expect(card(rows, includeAll(rows), { canEdit: false })).not.toMatch(/<button[^>]*>Apply</)
+    expect(card(rows, draftFromEntries([]), { canEdit: false })).not.toMatch(/<button[^>]*>Apply</)
   })
 
   it('still shows a viewer the suggestion itself', () => {

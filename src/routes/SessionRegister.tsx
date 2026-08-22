@@ -104,6 +104,7 @@ import {
   setupReadiness,
   stationAdvice,
 } from '../lib/sessionSetup'
+import { type SetupReconciliation, reconcileSetup } from '../lib/setupReconcile'
 import { SESSION_ID_PARAM } from '../lib/routes'
 import type { Player, Session, Team } from '../lib/data'
 import { LinkSpondEventModal } from '../components/SpondAttendance'
@@ -336,6 +337,7 @@ export function TonightScreenView({
   unset,
   setup,
   onApplySetup,
+  onReconcileSetup,
 }: {
   rows: TonightRow[]
   // Every number on this screen, built once in ../lib/tonight. The screen
@@ -390,14 +392,23 @@ export function TonightScreenView({
   onLinkEvent?: () => void
   onUnlinkEvent?: () => void
   unset: boolean
-  // COACH-3's suggestion, already decided by ../lib/sessionSetup. Handed in
-  // whole rather than computed here: this screen renders the answer and
-  // never works one out, so the card and the generator cannot describe the
-  // same night differently.
-  setup: { plan: SetupPlan; fit: StationFit; readiness: SetupReadiness } | null
+  // COACH-3's suggestion and COACH-4's reconciliation, already decided by
+  // ../lib/sessionSetup and ../lib/setupReconcile. Handed in whole rather
+  // than computed here: this screen renders the answer and never works one
+  // out, so the card and the modules cannot describe the same night
+  // differently.
+  setup: {
+    plan: SetupPlan
+    fit: StationFit
+    readiness: SetupReadiness
+    reconcile: SetupReconciliation
+  } | null
   // Applying is a DRAFT EDIT, like every other gesture on this screen.
   // Nothing persists until Save groups.
   onApplySetup?: () => void
+  // Updating the groups from fresh replies is a draft edit too, and the
+  // same rule holds: Save groups is still the only thing that writes.
+  onReconcileSetup?: () => void
 }) {
   // The filter the screen can actually use. A club with no Spond has no
   // accepted child, so the Going default would hide the whole squad.
@@ -420,8 +431,10 @@ export function TonightScreenView({
           plan={setup.plan}
           fit={setup.fit}
           readiness={setup.readiness}
+          reconcile={setup.reconcile}
           canEdit={canEdit}
           onApply={onApplySetup}
+          onReconcile={onReconcileSetup}
         />
       )}
 
@@ -643,6 +656,13 @@ export function TonightScreen({ session }: { session: Session }) {
   // says so in its own words above; inventing a recommendation over a squad
   // it cannot establish would be the guess this whole slice refuses.
   const plan = planSetup(rows, live, null)
+  // COACH-4: what fresh replies mean for an arranged night. Derived on
+  // every read from the same rows and the same live draft the plan reads,
+  // and it changes nothing by existing: the margin it names reaches the
+  // draft only through the Update groups press below, and the database
+  // only through Save groups. An unarranged night reconciles to nothing,
+  // which is the module's own boundary with the suggestion.
+  const reconcile = reconcileSetup(rows, live)
   const setup = unset
     ? null
     : {
@@ -650,6 +670,7 @@ export function TonightScreen({ session }: { session: Session }) {
         // Advice about the coach's own plan, never an edit to it.
         fit: stationAdvice(plan.recommendation, session.activities),
         readiness: setupReadiness(rows, live, plan.recommendation.groups),
+        reconcile,
       }
 
   // Only a claim the read can actually back up. A club with no Spond, a
@@ -721,6 +742,10 @@ export function TonightScreen({ session }: { session: Session }) {
         // A draft edit and nothing else: applySetup returns a new draft and
         // Save groups is still the only thing that writes.
         onApplySetup={canEdit ? () => setDraft(applySetup(live, plan)) : undefined}
+        // The same rule for COACH-4: the reconciled draft was built by the
+        // gesture helpers and lands in local state, and when nothing
+        // changed it is the same object, so pressing cannot even re-render.
+        onReconcileSetup={canEdit ? () => setDraft(reconcile.draft) : undefined}
         onFilter={setFilter}
         onToggle={(playerId) => setDraft(toggleIncluded(live, playerId))}
         onPresent={(playerId) => setDraft(toggleAttendance(live, playerId))}
