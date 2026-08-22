@@ -9,15 +9,22 @@
 // placeholder and stays editable, so the template survives the gap.
 import { useState } from 'react'
 import { Icon } from './icons'
-import { ListInput, Modal, PHASE_COLOR } from './ui'
+import { ListInput, Modal } from './ui'
 import { AddDrillModal } from './AddDrillModal'
 import { RightsControl, RightsNewNote } from './RightsControl'
 import { useActivityTitle, useDrillMap, useInsertTemplate, useUpdateTemplate } from '../lib/queries'
 import type { TemplateInput } from '../lib/queries'
-import { ActivityRoleRow, ActivityStructureSummary } from './ActivityRoleControls'
+import { ActivityStructureSummary } from './ActivityRoleControls'
 import { type ActivityRole, applyRole } from '../lib/activityRole'
-import { PHASES, sessionMinutes } from '../lib/data'
-import type { Activity, Phase, Template } from '../lib/data'
+import { ActivityListEditor } from './ActivityListEditor'
+
+// COACH-10: the activity row, the add bar and the list itself live in the
+// shared authoring seam now, mounted below and by the dated-session planner
+// alike. Re-exported so existing imports (and the suites that pin the row's
+// behaviour) keep their one path.
+export { TemplateActivityRow } from './ActivityListEditor'
+import { sessionMinutes } from '../lib/data'
+import type { Activity, Template } from '../lib/data'
 
 function fromTemplate(template?: Template): TemplateInput {
   return {
@@ -124,41 +131,29 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
       <div className="field">
         <label>Activities</label>
         <TemplateActivitiesHeader activities={form.activities} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {form.activities.map((a, i) => {
-            const drill = a.drillId ? drillById[a.drillId] : null
-            return (
-              <TemplateActivityRow
-                key={i}
-                activity={a}
-                title={actTitle(a)}
-                skill={drill?.skill ?? null}
-                index={i}
-                count={form.activities.length}
-                onPhase={(phase) => setAct(i, { phase })}
-                onDuration={(duration) => setAct(i, { duration })}
-                activities={form.activities}
-                onRole={(role) => setRole(i, role)}
-                onMove={(dir) => move(i, dir)}
-                onRemove={() => removeAct(i)}
-              />
-            )
-          })}
-        </div>
-        <div className="row" style={{ gap: 10, marginTop: 8 }}>
-          <button className="add-slot" style={{ marginBottom: 0 }} onClick={() => setAdding(true)}>
-            <Icon.plus />
-            Add from library
-          </button>
-          <button
-            className="add-slot"
-            style={{ marginBottom: 0 }}
-            onClick={() => set('activities', [...form.activities, { phase: 'Skill', title: 'Custom activity', duration: 10 }])}
-          >
-            <Icon.edit />
-            Add custom
-          </button>
-        </div>
+        {/* COACH-10: the one shared activity-list editor, mounted here and
+            by the dated-session planner. This host supplies what only it
+            owns: the resolved title and skill, the Move up and Move down
+            reorder, and its own form state behind every callback. No
+            stand-down exists on this surface, which the variant makes
+            structurally true rather than merely omitted. */}
+        <ActivityListEditor
+          activities={form.activities}
+          variant={{
+            kind: 'plan',
+            meta: (a) => {
+              const drill = a.drillId ? drillById[a.drillId] : null
+              return { title: actTitle(a), skill: drill?.skill ?? null }
+            },
+            onMove: move,
+          }}
+          onPhase={(i, phase) => setAct(i, { phase })}
+          onDuration={(i, duration) => setAct(i, { duration })}
+          onRole={setRole}
+          onRemove={removeAct}
+          onAddLibrary={() => setAdding(true)}
+          onAddCustom={() => set('activities', [...form.activities, { phase: 'Skill', title: 'Custom activity', duration: 10 }])}
+        />
       </div>
 
       <div className="field">
@@ -232,120 +227,5 @@ export function TemplateActivitiesHeader({ activities }: { activities: readonly 
         <ActivityStructureSummary activities={activities} />
       </div>
     </>
-  )
-}
-
-// One activity row in the editor. The title takes the available row width while
-// the phase, duration and controls size to their content (the act-edit layout),
-// which keeps a long FA drill title legible instead of collapsing to a sliver
-// that wraps a letter per line. Pulled out as a presentational row, no hooks,
-// so the static suite can pin the layout; the screen resolves the drill and
-// passes its title and skill in.
-export function TemplateActivityRow({
-  activity,
-  title,
-  skill,
-  index,
-  count,
-  onPhase,
-  onDuration,
-  onMove,
-  onRemove,
-  activities,
-  onRole,
-}: {
-  activity: Activity
-  title: string
-  skill?: string | null
-  index: number
-  count: number
-  onPhase: (phase: Phase) => void
-  onDuration: (duration: number) => void
-  onMove: (dir: -1 | 1) => void
-  onRemove: () => void
-  // COACH-2B. The whole list, because a station's NUMBER is its position
-  // among the stations running, which one activity cannot know.
-  activities: readonly Activity[]
-  onRole: (role: ActivityRole) => void
-}) {
-  return (
-    <div className="act-item" style={{ marginBottom: 0 }}>
-      <div className="act-card act-edit" style={{ marginBottom: 0 }}>
-      <span className="tag-dot" style={{ background: PHASE_COLOR[activity.phase], width: 10, height: 10 }}></span>
-      <div className="ac-body">
-        <h4>{title}</h4>
-        <div className="ac-sub">{skill && <span>{skill}</span>}</div>
-      </div>
-      <select
-        value={activity.phase}
-        onChange={(e) => onPhase(e.target.value as Phase)}
-        style={{
-          height: 34,
-          borderRadius: 8,
-          border: '1px solid var(--line)',
-          background: 'var(--bg)',
-          fontSize: 12.5,
-          fontWeight: 700,
-          color: 'var(--ink)',
-          padding: '0 6px',
-        }}
-      >
-        {PHASES.map((p) => (
-          <option key={p} value={p}>
-            {p}
-          </option>
-        ))}
-      </select>
-      <div className="row" style={{ gap: 4 }}>
-        <input
-          type="number"
-          value={activity.duration}
-          min="1"
-          max="90"
-          onChange={(e) => onDuration(parseInt(e.target.value) || 0)}
-          style={{
-            width: 52,
-            height: 34,
-            borderRadius: 8,
-            border: '1px solid var(--line)',
-            background: 'var(--bg)',
-            textAlign: 'center',
-            fontWeight: 800,
-            fontSize: 13,
-            color: 'var(--ink)',
-          }}
-        />
-        <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
-          min
-        </span>
-      </div>
-      <button
-        className="icon-btn"
-        style={{ width: 34, height: 34 }}
-        aria-label="Move up"
-        disabled={index === 0}
-        onClick={() => onMove(-1)}
-      >
-        <Icon.chevDown style={{ width: 15, height: 15, transform: 'rotate(180deg)' }} />
-      </button>
-      <button
-        className="icon-btn"
-        style={{ width: 34, height: 34 }}
-        aria-label="Move down"
-        disabled={index === count - 1}
-        onClick={() => onMove(1)}
-      >
-        <Icon.chevDown style={{ width: 15, height: 15 }} />
-      </button>
-      <button className="act-x" aria-label="Remove activity" onClick={onRemove}>
-        <Icon.trash />
-      </button>
-      </div>
-      {/* COACH-2B. A week plan may declare a station or the games phase, and
-          that declaration is copied into every dated session started from it.
-          No stand-down here: "Not running tonight" is session local, and this
-          is reusable content. */}
-      <ActivityRoleRow activities={activities} index={index} label={title} dated={false} onRole={onRole} />
-    </div>
   )
 }
