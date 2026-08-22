@@ -77,7 +77,7 @@ export function ActivityItem({ event, ctx }: { event: ActivityEvent; ctx: Activi
           {/* The per row batch link, when the event belongs to an import or
               renewal batch and is not itself the batch summary (whose entity
               reference is already the batch link). */}
-          {event.batchId && event.entityType !== 'import_batch' && (
+          {event.batchId && event.entityType !== 'import_batch' && event.entityType !== 'delete_batch' && (
             <Link className="activity-chip activity-batch" to={activityBatchHref(event.batchId)}>
               <Icon.layers style={{ width: 12, height: 12 }} />
               Batch
@@ -123,7 +123,7 @@ function EntityRefView({ refr }: { refr: EntityRef }) {
       return (
         <Link className="activity-entity activity-batch" to={activityBatchHref(refr.batchId)}>
           <Icon.layers style={{ width: 12, height: 12 }} />
-          Import batch
+          {refr.label}
         </Link>
       )
     case 'export':
@@ -433,7 +433,7 @@ export function Activity() {
 
       {active && urlBatch && (
         <p className="muted activity-filter-note" style={{ fontSize: 13.5, marginBottom: 12 }}>
-          Filtered to one import batch.
+          Filtered to one batch.
         </p>
       )}
 

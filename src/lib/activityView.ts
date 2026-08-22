@@ -37,6 +37,10 @@ export type AuditEntityType =
   | 'programme'
   | 'session'
   | 'venue'
+  // The bulk permanent deletion run (0050_bulk_delete_players.sql). Its
+  // entity_id is the run's batch id, so the reference opens the run and lists
+  // the identities that went with it, the way an import batch does.
+  | 'delete_batch'
 
 // The source (provenance) vocabulary, exactly the audit_events.source CHECK.
 export type AuditSource =
@@ -268,6 +272,7 @@ export const ENTITY_OPTIONS: { value: AuditEntityType; label: string }[] = [
   { value: 'player', label: 'Player' },
   { value: 'season', label: 'Season' },
   { value: 'import_batch', label: 'Import' },
+  { value: 'delete_batch', label: 'Deletion run' },
   { value: 'export', label: 'Export' },
   // PR 8 wider rollout entities.
   { value: 'user', label: 'Member' },
@@ -311,6 +316,10 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'players.import_failed', label: 'Import failed' },
   { value: 'players.exported', label: 'Players exported' },
   { value: 'players.spond_imported', label: 'Spond import' },
+  // The bulk permanent deletion run (0050_bulk_delete_players.sql). The per
+  // identity player.deleted events above are written alongside it and share its
+  // batch id; this is the run itself.
+  { value: 'players.bulk_deleted', label: 'Players deleted in bulk' },
   { value: 'season.created', label: 'Season created' },
   { value: 'season.updated', label: 'Season updated' },
   { value: 'season.activated', label: 'Season activated' },
@@ -402,6 +411,10 @@ export function describeActivityEvent(
       return 'Players exported'
     case 'players.spond_imported':
       return 'Players imported from Spond'
+    case 'players.bulk_deleted':
+      // The run, not a child: the per identity player.deleted events beside it
+      // carry who, and neither renders a name.
+      return 'Players deleted permanently'
     // ---- PR 8 wider rollout (0037_audit_rollout.sql) ----------------------
     // Every action gets a fixed, human readable string, so no raw action key is
     // ever shown for a PR 8 action. None interpolates a value: the role and
@@ -494,7 +507,10 @@ export type EntityRef =
   // and no deletion claim (fail closed; never a leak, never a false "deleted").
   | { kind: 'player-anon' }
   | { kind: 'season'; label: string }
-  | { kind: 'batch'; batchId: string }
+  // A batch reference carries its own label: an import run and a bulk deletion
+  // run are both a batch of rows, and calling both of them "Import batch" would
+  // make the most destructive event in the feed read as an upload.
+  | { kind: 'batch'; batchId: string; label: string }
   | { kind: 'export' }
   // A team reference, resolved to the team name or "Deleted team" (safe, not
   // child data), the same treatment season references already get.
@@ -525,7 +541,9 @@ export function entityRef(
       return { kind: 'season', label: name ?? 'Season' }
     }
     case 'import_batch':
-      return e.entityId ? { kind: 'batch', batchId: e.entityId } : { kind: 'none' }
+      return e.entityId ? { kind: 'batch', batchId: e.entityId, label: 'Import batch' } : { kind: 'none' }
+    case 'delete_batch':
+      return e.entityId ? { kind: 'batch', batchId: e.entityId, label: 'Deletion run' } : { kind: 'none' }
     case 'export':
       return { kind: 'export' }
     // ---- PR 8 wider rollout entities -------------------------------------

@@ -215,9 +215,45 @@ no identity, so the reconciliation offers nothing rather than misfiring.
 
 ## Reviewed, registered, not yet applied
 
-Nothing. Every entry in `REVIEWED_MIGRATIONS` has been applied. Applied entries
-are never removed from the register, so this section being empty means there is
-nothing pending, not that nothing is registered.
+`0050_bulk_delete_players`, on the PLAYERS-01 branch (PR #191). **DESTRUCTIVE**,
+and the one entry in this document that deletes child data. Registered against
+`20260817104226` / `spond_team_reconcile`, the row `0049`'s apply stamped, with
+the idempotency key `otj:migration:0050_bulk_delete_players`.
+
+It adds four functions and nothing else: no table, no column, no index, no
+policy, no grant on any table, no capability key and no trigger. It creates no
+permission. `players.delete` is admin only by default (0030) and the
+`players_delete_admin` policy from 0032 is untouched, so nobody gains the
+ability to delete a child who could not already delete one; what it adds is a
+way to spend that same permission on many identities in one transaction, with a
+preview, an expected count and an audit row. A deleted player takes their
+register entries with them by cascade, exactly as the single row Delete
+permanently has done since 0044. The full boundary is
+`docs/security/player-deletion-boundary.md`.
+
+**Its probes are shaped unlike every other entry here, for two reasons.** They
+resolve no name at all: each joins `pg_proc` to `pg_namespace` and reads the
+privilege off the row it found, so an absent function is an empty join and the
+probe is false rather than null and rather than an error. And they do not spell
+the function names, because three of the four carry the substring `delete`,
+which the read-only statement guard bans outright. So does the ledger name.
+Rather than weaken a guard that exists to stop a register edit smuggling a write
+through a probe, the names are composed: `sql_text_value` renders any value that
+spells a banned word as a `concat` of pieces, and the statement compares the
+identical text without carrying the word.
+`test_0050_probe_totality.sh` flips all five probes against a real PostgreSQL
+in the absent state, the applied state and six wrong-ACL states, and runs in CI.
+
+**The rollout order for this one is the reverse of the usual.** `0048` was
+applied before its frontend merged and this document explains why that is
+normally right. Here it is not merely right, it is required: the repository
+auto-deploys `main` to Vercel and the new Registered players screens call these
+RPCs, so merging first would ship a client calling functions the database does
+not have. Run this workflow against the reviewed **#191 branch commit**, confirm
+the post-apply gate, and only then merge.
+
+Applied entries are never removed from the register, so this section being empty
+means there is nothing pending, not that nothing is registered.
 
 ## What runs, in order
 

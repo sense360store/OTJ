@@ -31,6 +31,7 @@ import {
 } from './activityView'
 import { useAuth } from '../hooks/useAuth'
 import type { ExportFilterPayload, ExportPlayerRow } from './playersExport'
+import { parseDeletePreview, type DeletePreview } from './playersBulk'
 import type { ImportPayload, ImportServerResult } from './playersImportCommit'
 import type {
   Activity,
@@ -4352,6 +4353,85 @@ export function useDeletePlayer() {
     // (['registrations']), plus the current-season roster and any board name
     // map, so an add, edit or delete refreshes every reader consistently.
     onSettled: () => invalidatePlayerReads(qc),
+  })
+}
+
+// ---------------------------------------------------------------------
+// Bulk permanent deletion (roadmap PLAYERS-01, 0050_bulk_delete_players.sql)
+// ---------------------------------------------------------------------
+
+// The dependency preview a bulk deletion opens with. A QUERY rather than a
+// mutation: it writes nothing and audits nothing, so it may be re-asked freely,
+// and the modal gets loading, error and retry from the query layer instead of
+// hand rolling three states around a destructive dialog. The key carries the
+// player ids, which are opaque uuids and never names; the search term and the
+// names themselves stay out of it, as they stay out of the URL.
+//
+// staleTime 0 and gcTime 0: a preview of a destructive operation must never be
+// served from cache. Between opening the dialog twice another admin may have
+// deleted somebody, and a cached count is exactly the stale confirmation the
+// server refuses.
+export function useDeletePlayersPreview(playerIds: string[], enabled: boolean) {
+  const key = playerIds.slice().sort()
+  return useQuery({
+    queryKey: ['player-delete-preview', key],
+    enabled: enabled && key.length > 0,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    queryFn: async (): Promise<DeletePreview> => {
+      const { data, error } = await supabase.rpc('preview_delete_players', { p_player_ids: key })
+      if (error) throw error
+      return parseDeletePreview(data)
+    },
+  })
+}
+
+// The server refused because the selection is no longer what was previewed:
+// another admin deleted one of these children, or an id is not this club's.
+// Recognised by the message the RPC raises (0050) so the dialog can say
+// something a person can act on ("review the preview again") rather than a
+// generic failure. Pure, so it is unit tested directly.
+export function isStaleBulkSelection(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  return /out of date|selection changed/i.test(message)
+}
+
+// The transactional bulk permanent deletion. One RPC call, one database
+// transaction: a failure anywhere deletes nobody, so there is deliberately no
+// per player loop, no partial result and nothing to reconcile on retry.
+//
+// expectedCount is the number the admin's typed confirmation named. The server
+// revalidates it inside the transaction against the live set and refuses on a
+// mismatch, so a preview that went stale while the dialog was open cannot
+// become a deletion of a different number of children.
+export function useBulkDeletePlayers() {
+  const qc = useQueryClient()
+  return useMutation<DeletePreview, Error, { playerIds: string[]; expectedCount: number }>({
+    mutationFn: async ({ playerIds, expectedCount }) => {
+      const { data, error } = await supabase.rpc('delete_players', {
+        p_player_ids: playerIds,
+        p_expected_count: expectedCount,
+      })
+      if (error) throw error
+      const result = parseDeletePreview(data)
+      // The RPC returns what it actually deleted. A reply that does not account
+      // for the confirmed number is surfaced as a failure rather than reported
+      // as a success, the same rule deletedExactlyOne applies to the single row
+      // path.
+      if (result.players !== expectedCount) {
+        throw new Error('The players were not deleted. Reload and try again.')
+      }
+      return result
+    },
+    // The register, the current-season list and every board name map refresh,
+    // exactly as they do after a single deletion. The activity feed is
+    // invalidated too, because a run writes one event per identity plus its
+    // own, and an admin who deletes from one tab expects to see it in another.
+    onSettled: () => {
+      invalidatePlayerReads(qc)
+      qc.invalidateQueries({ queryKey: ['activity'] })
+    },
   })
 }
 

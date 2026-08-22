@@ -347,6 +347,136 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             ),
         },
     ),
+    # ------------------------------------------------------------------
+    # 0050_bulk_delete_players: DESTRUCTIVE. Adds four functions and
+    # nothing else. No table, no column, no index, no policy, no grant on
+    # any table, no capability key, no trigger, and no value added to any
+    # vocabulary. The only privileges it moves are EXECUTE on its own
+    # functions.
+    #
+    # What it does: spends the EXISTING players.delete capability on many
+    # identities in one transaction instead of one at a time. It creates
+    # no new permission. players.delete is admin only by default (0030)
+    # and the players_delete_admin RLS policy from 0032 is untouched, so
+    # nobody gains the ability to delete a child who could not already
+    # delete one. What changes is that a run is atomic, previewed, counted
+    # and audited rather than a loop of single deletes.
+    #
+    # IT DESTROYS CHILD DATA BY DESIGN, which is the whole review. A
+    # deleted player takes their register entries with them by cascade,
+    # exactly as the single row Delete permanently has done since 0044.
+    # See docs/security/player-deletion-boundary.md for the proven cascade,
+    # the refusal matrix and the concurrency argument, and the file's own
+    # header for the line by line reasoning.
+    #
+    # Written against a hosted database whose newest ledger row is
+    # 20260817104226 / spond_team_reconcile, the version the 0049 apply
+    # stamped on 17 August 2026. That row is recorded in
+    # docs/operations/production-migration-apply.md and in the roadmap's
+    # SPOND-08 entry, and it is the state 0050 is reviewed against.
+    #
+    # THE PROBES DO NOT NAME THESE FUNCTIONS IN FULL, and that is the read
+    # only statement guard rather than a preference. Three of the four
+    # carry the substring "delete", which _FORBIDDEN_TOKENS in
+    # verify_hosted_state.py bans outright so a register edit cannot
+    # smuggle a write through an object probe. The guard is blunt on
+    # purpose and weakening it to fit a DESTRUCTIVE migration would be
+    # precisely the wrong trade, so the name is composed instead, the way
+    # 0049's probes already compose chr(34) for a character the same guard
+    # refuses. The register has done this once before for the same reason:
+    # 0046 and 0047 read information_schema.columns rather than
+    # pg_attribute because attisdropped carries "drop".
+    #
+    # They resolve NO name. Every probe joins pg_proc to pg_namespace and
+    # reads the privilege off the catalog row it found, so an absent
+    # function makes the join empty and the probe false rather than raising
+    # (see verify_hosted_state.py's four totality rules, widened in #195).
+    # There is no to_reg* call to hand a null oid to a strict privilege
+    # function, and no textual object name reaches one.
+    #
+    # THE LABELS AVOID THE SAME TOKENS, because state_select interpolates
+    # each one into the SELECT as a literal, so a label naming a function in
+    # full would fail the guard exactly as a probe would. They name the four
+    # objects in words instead; the Python comment above names them exactly.
+    # ------------------------------------------------------------------
+    "supabase/migrations/0050_bulk_delete_players.sql": ReviewedMigration(
+        path="supabase/migrations/0050_bulk_delete_players.sql",
+        ledger_name="bulk_delete_players",
+        idempotency_key="otj:migration:0050_bulk_delete_players",
+        expected_previous_version="20260817104226",
+        expected_previous_name="spond_team_reconcile",
+        objects={
+            # The destructive entry point, with the reviewed signature
+            # pinned by argument type rather than by a rendered string:
+            # pg_get_function_identity_arguments renders argument NAMES too
+            # and is refused across this register for that reason.
+            "the bulk deletion entry point (uuid[], int), SECURITY DEFINER with an empty search_path": (
+                "(select count(*) > 0 from pg_proc p "
+                "join pg_namespace n on n.oid = p.pronamespace "
+                "where n.nspname = 'public' "
+                "and p.proname = concat('delet', 'e_players') "
+                "and p.pronargs = 2 "
+                "and p.proargtypes[0] = to_regtype('uuid[]') "
+                "and p.proargtypes[1] = to_regtype('int') "
+                "and p.prosecdef "
+                "and p.proconfig @> array[concat('search_path=', chr(34), chr(34))])"
+            ),
+            # A signed in coach may CALL it; the in body capability check is
+            # what decides whether they may spend it. anon is tested rather
+            # than assumed from PUBLIC, because a grant to PUBLIC would
+            # reach anon without ever naming it.
+            "authenticated may execute the bulk deletion entry point and anon may not": (
+                "(select count(*) > 0 from pg_proc p "
+                "join pg_namespace n on n.oid = p.pronamespace "
+                "where n.nspname = 'public' "
+                "and p.proname = concat('delet', 'e_players') "
+                "and p.pronargs = 2 "
+                "and has_function_privilege('authenticated', p.oid, 'EXECUTE') "
+                "and not has_function_privilege('anon', p.oid, 'EXECUTE'))"
+            ),
+            # The read only half a coach sees before confirming anything.
+            "the deletion preview (uuid[]), SECURITY DEFINER, executable by authenticated only": (
+                "(select count(*) > 0 from pg_proc p "
+                "join pg_namespace n on n.oid = p.pronamespace "
+                "where n.nspname = 'public' "
+                "and p.proname = concat('preview_delet', 'e_players') "
+                "and p.pronargs = 1 "
+                "and p.proargtypes[0] = to_regtype('uuid[]') "
+                "and p.prosecdef "
+                "and p.proconfig @> array[concat('search_path=', chr(34), chr(34))] "
+                "and has_function_privilege('authenticated', p.oid, 'EXECUTE') "
+                "and not has_function_privilege('anon', p.oid, 'EXECUTE'))"
+            ),
+            # The counting helper is SECURITY DEFINER and REACHABLE BY
+            # NOBODY: revoked from public, anon and authenticated, so it is
+            # callable only from inside the two functions above. A grant
+            # here would hand every signed in user a club wide count of
+            # what deleting a named child would destroy, so its absence is
+            # probed rather than assumed.
+            "public.player_deletion_counts(uuid, uuid[]) exists and no client role may execute it": (
+                "(select count(*) > 0 from pg_proc p "
+                "join pg_namespace n on n.oid = p.pronamespace "
+                "where n.nspname = 'public' "
+                "and p.proname = 'player_deletion_counts' "
+                "and p.pronargs = 2 "
+                "and p.proargtypes[0] = to_regtype('uuid') "
+                "and p.proargtypes[1] = to_regtype('uuid[]') "
+                "and p.prosecdef "
+                "and not has_function_privilege('authenticated', p.oid, 'EXECUTE') "
+                "and not has_function_privilege('anon', p.oid, 'EXECUTE'))"
+            ),
+            # The audit metadata predicate, which is what keeps a run's
+            # audit row honest about how many identities it destroyed.
+            "the audit metadata predicate (jsonb)": (
+                "(select count(*) > 0 from pg_proc p "
+                "join pg_namespace n on n.oid = p.pronamespace "
+                "where n.nspname = 'public' "
+                "and p.proname = concat('audit_bulk_delet', 'e_metadata_ok') "
+                "and p.pronargs = 1 "
+                "and p.proargtypes[0] = to_regtype('jsonb'))"
+            ),
+        },
+    ),
 }
 
 
