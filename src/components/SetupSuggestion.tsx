@@ -24,6 +24,7 @@ import {
   groupStartStation,
   stationFitNote,
 } from '../lib/sessionSetup'
+import { type SetupReconciliation, reconciliationNote } from '../lib/setupReconcile'
 import { bibSwatch } from '../lib/bibs'
 
 // The name a coach reads. "Suggested" rather than "Generated", because
@@ -36,6 +37,12 @@ export const SETUP_SUGGESTION_TITLE = 'Suggested setup'
 // one, and an untouched session must not read as a failed one.
 export const SETUP_NOT_STARTED = 'Nobody is in a group yet.'
 export const SETUP_READY = 'Every selected player has a bib and every group has its own colour.'
+
+// COACH-4's control. "Update groups" rather than anything resembling
+// Reset, Rebuild or Regenerate, because it applies only the margin the
+// reconciliation names: departures out, newcomers in, everybody else
+// exactly where the coach put them.
+export const SETUP_UPDATE_GROUPS = 'Update groups'
 
 function GroupLine({ group }: { group: SetupPlan['groups'][number] }) {
   const swatch = bibSwatch(group.colour)
@@ -65,8 +72,10 @@ export function SetupSuggestionView({
   plan,
   fit,
   readiness,
+  reconcile,
   canEdit,
   onApply,
+  onReconcile,
 }: {
   // Every figure and every group, already decided by ../lib/sessionSetup.
   plan: SetupPlan
@@ -74,8 +83,13 @@ export function SetupSuggestionView({
   // never edits an activity and never stands a station down.
   fit: StationFit
   readiness: SetupReadiness
+  // COACH-4's answer for an arranged night, already decided by
+  // ../lib/setupReconcile. The card renders its sentence and offers its
+  // one control; it derives nothing about who left or arrived.
+  reconcile?: SetupReconciliation | null
   canEdit: boolean
   onApply?: () => void
+  onReconcile?: () => void
 }) {
   const { recommendation, groups, notes } = plan
   // The sentence naming which population the count came from, so a coach
@@ -84,12 +98,19 @@ export function SetupSuggestionView({
   // to the words that name them.
   const expected = expectedAttendanceNote(recommendation.expected)
   const fitNote = stationFitNote(fit)
+  // THE COACH-3 / COACH-4 BOUNDARY, read from the module rather than
+  // decided here: an unarranged night is the suggestion's, and Apply may
+  // regenerate freely over nobody. The moment anybody is included the
+  // arrangement is the coach's work, the full plan is never offered as a
+  // gesture again, and the only control is the reconciliation's margin.
+  const arranged = readiness.started
+  const changeNote = reconcile ? reconciliationNote(reconcile) : ''
 
   return (
     <section className="setup-card" aria-label={SETUP_SUGGESTION_TITLE}>
       <div className="setup-head">
         <h3 className="setup-title">{SETUP_SUGGESTION_TITLE}</h3>
-        {canEdit && onApply && (
+        {!arranged && canEdit && onApply && (
           <button
             className="btn"
             onClick={onApply}
@@ -97,6 +118,11 @@ export function SetupSuggestionView({
             title={groups.length === 0 ? 'There is nobody to put in a group yet.' : undefined}
           >
             Apply
+          </button>
+        )}
+        {arranged && canEdit && onReconcile && reconcile?.changed === true && (
+          <button className="btn" onClick={onReconcile}>
+            {SETUP_UPDATE_GROUPS}
           </button>
         )}
       </div>
@@ -123,6 +149,12 @@ export function SetupSuggestionView({
           ))}
         </div>
       )}
+
+      {/* What fresh replies mean for an arranged night, in the one
+          sentence the one formatter builds. Empty renders nothing: an
+          unarranged night belongs to the suggestion above, and a session
+          with no reply context has nothing for attendance to update. */}
+      {arranged && changeNote && <div className="setup-note setup-reconcile">{changeNote}</div>}
 
       {/* Readiness, in the coach's own words and never as a blocker. Save
           stays available whatever this says: the brief's rule is that a

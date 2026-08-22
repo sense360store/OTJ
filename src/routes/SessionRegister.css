@@ -608,6 +608,11 @@
   font-size: 12px;
   font-weight: 600;
 }
+/* The attendance change sentence. Ordinary ink rather than a warning
+   colour: it states a fact about the night, not a problem with it. */
+.setup-reconcile {
+  color: var(--ink);
+}
 .setup-readiness {
   display: flex;
   flex-direction: column;
