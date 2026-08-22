@@ -195,8 +195,22 @@ describe('comparing a diagram with its readback', () => {
   })
 
   it('does not match a different surface', () => {
-    const other: DrillDiagram = { ...withCone(), surface: { kind: 'blank', orientation: 'portrait' } }
-    expect(diagramSaveMatches(withCone(), serializeDrillDiagram(other))).toBe(false)
+    // Named against the base's own surface rather than written as a literal:
+    // this once said `blank` while the base happened to be a full pitch, and it
+    // would have passed for the wrong reason the moment the two agreed.
+    const base = withCone()
+    const other: DrillDiagram = {
+      ...base,
+      surface: { kind: base.surface.kind === 'half_pitch' ? 'full_pitch' : 'half_pitch', orientation: 'portrait' },
+    }
+    expect(other.surface.kind).not.toBe(base.surface.kind)
+    expect(diagramSaveMatches(base, serializeDrillDiagram(other))).toBe(false)
+  })
+
+  it('does not match a different orientation on the same surface', () => {
+    const base = withCone()
+    const turned: DrillDiagram = { ...base, surface: { ...base.surface, orientation: 'landscape' } }
+    expect(diagramSaveMatches(base, serializeDrillDiagram(turned))).toBe(false)
   })
 
   it('does not match null, undefined or rubbish', () => {

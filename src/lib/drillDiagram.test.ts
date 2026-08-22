@@ -42,11 +42,15 @@ const text = (id = 'text-1'): TextElement => ({ type: 'text', id, x: 0.5, y: 0.9
 const ALL_SEVEN: DiagramElement[] = [player(), cone(), ball(), goal(), arrow(), zone(), text()]
 
 describe('the empty diagram', () => {
-  it('is version 1 on a full pitch with no elements', () => {
+  it('is version 1 on a blank area with no elements', () => {
+    // A new diagram opens on a blank area: most drills are a grid, a channel
+    // or a box rather than a game on a full pitch, and a pitch is one tap away
+    // from the surface selector.
     const d = emptyDiagram()
     expect(d.version).toBe(1)
     expect(DRILL_DIAGRAM_VERSION).toBe(1)
-    expect(d.surface.kind).toBe('full_pitch')
+    expect(d.surface.kind).toBe('blank')
+    expect(d.surface.orientation).toBe('portrait')
     expect(d.elements).toEqual([])
   })
 
@@ -109,10 +113,26 @@ describe('parsing a stored diagram', () => {
   })
 
   it('falls back to a full pitch when the surface is missing or unknown', () => {
+    // Deliberately NOT emptyDiagram's default. That one answers "what does a
+    // coach start on"; this one answers "how was this row drawn", and a stored
+    // diagram has to come back the way it was saved whatever the other moves
+    // to. The two are asserted apart on purpose, so changing the new diagram
+    // default can never quietly redraw work already in the column.
     const missing = parseDrillDiagram({ version: 1, elements: [] })
     expect(missing?.surface.kind).toBe('full_pitch')
     const unknown = parseDrillDiagram({ version: 1, surface: { kind: 'moon' }, elements: [] })
     expect(unknown?.surface.kind).toBe('full_pitch')
+    expect(emptyDiagram().surface.kind).not.toBe('full_pitch')
+  })
+
+  it('reads a stored diagram back on the surface it was saved on', () => {
+    // The acceptance rule for the change of default, stated as behaviour: a
+    // diagram saved on a full pitch is still a full pitch after a read, and
+    // nothing about it is rewritten on the way through.
+    const stored = { version: 1, surface: { kind: 'full_pitch', orientation: 'landscape' }, elements: [cone()] }
+    const parsed = parseDrillDiagram(stored)
+    expect(parsed?.surface).toEqual({ kind: 'full_pitch', orientation: 'landscape' })
+    expect(serializeDrillDiagram(parsed!)).toEqual(stored)
   })
 
   it('keeps each of the three surfaces and both orientations', () => {
