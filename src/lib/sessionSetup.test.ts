@@ -918,6 +918,69 @@ describe('readiness names the fix', () => {
     expect(r.issues).toEqual(['child-without-bib'])
   })
 
+  it('counts each bibless child as a group that could still exist', () => {
+    // ONE RED TEAM AND THREE CHILDREN WITH NO BIB, against four groups.
+    // Four groups are reachable by handing out three bibs, so no colour is
+    // duplicated and no clash is reported. Collapsing the bibless children
+    // into one shared slot read this as two groups and claimed one.
+    const rows = [
+      ...squad(1, 'a', 'A', 'red'),
+      ...squad(3, 'b', 'B', null),
+    ]
+    expect(setupReadiness(rows, includeAll(rows), 4).issues).toEqual(['child-without-bib'])
+  })
+
+  it('reports no clash when the colours plus the bibless children reach the target', () => {
+    const rows = [
+      ...squad(1, 'a', 'A', 'red'),
+      ...squad(1, 'b', 'B', 'blue'),
+      ...squad(1, 'c', 'C', 'green'),
+      ...squad(1, 'd', 'D', 'yellow'),
+      ...squad(1, 'e', 'E', null),
+    ]
+    expect(setupReadiness(rows, includeAll(rows), 5).issues).toEqual(['child-without-bib'])
+  })
+
+  it('reports a clash when a duplicate colour consumes a slot the bibless cannot fill', () => {
+    // Two children in red, one in blue, one with no bib, against four
+    // groups. Two distinct colours plus one reachable bibless group is
+    // three, so the duplicate red is genuinely costing a group. Both issues
+    // are true at once and both are said.
+    const rows = [
+      ...squad(1, 'a', 'A', 'red'),
+      ...squad(1, 'b', 'B', 'red'),
+      ...squad(1, 'c', 'C', 'blue'),
+      ...squad(1, 'd', 'D', null),
+    ]
+    const issues = setupReadiness(rows, includeAll(rows), 4).issues
+    expect(issues).toContain('child-without-bib')
+    expect(issues).toContain('groups-share-colour')
+  })
+
+  it('reports a clash with no bib complaint when every child has one', () => {
+    const rows = [
+      ...squad(1, 'a', 'A', 'red'),
+      ...squad(1, 'b', 'B', 'red'),
+      ...squad(1, 'c', 'C', 'blue'),
+      ...squad(1, 'd', 'D', 'green'),
+    ]
+    expect(setupReadiness(rows, includeAll(rows), 4).issues).toEqual(['groups-share-colour'])
+  })
+
+  it('does not blame the colours when a bibless team is simply the last group', () => {
+    // Three teams in red, blue and green beside a fourth with no bib, and
+    // four groups. Three colours is fewer than four groups, but the bibless
+    // children ARE the fourth group and no colour is reused. Counting only
+    // the bibbed children fixed the sibling of this case and not this one.
+    const rows = [
+      ...squad(5, 'a', 'A', 'red'),
+      ...squad(5, 'b', 'B', 'blue'),
+      ...squad(5, 'c', 'C', 'green'),
+      ...squad(5, 'd', 'D', null),
+    ]
+    expect(setupReadiness(rows, includeAll(rows), 4).issues).toEqual(['child-without-bib'])
+  })
+
   it('still reports a real clash when enough bibbed children share colours', () => {
     const rows = [
       ...squad(2, 'a', 'A', 'red'),

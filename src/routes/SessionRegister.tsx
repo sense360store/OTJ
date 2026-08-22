@@ -95,9 +95,19 @@ import {
 import { BIB_COLOURS, BIB_NONE, bibInheritLabel, bibLabel, bibSwatch, effectiveBib } from '../lib/bibs'
 import { coveredTeamIds, coverageOf, coversWholeClub, soleCoveredTeamId } from '../lib/sessionTeams'
 import { spondAudienceNote } from '../lib/spond'
+import {
+  type SetupPlan,
+  type SetupReadiness,
+  type StationFit,
+  applySetup,
+  planSetup,
+  setupReadiness,
+  stationAdvice,
+} from '../lib/sessionSetup'
 import { SESSION_ID_PARAM } from '../lib/routes'
 import type { Player, Session, Team } from '../lib/data'
 import { LinkSpondEventModal } from '../components/SpondAttendance'
+import { SetupSuggestionView } from '../components/SetupSuggestion'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, Loading, Modal, fmtDate } from '../components/ui'
 import './SessionDay.css'
@@ -324,6 +334,8 @@ export function TonightScreenView({
   onLinkEvent,
   onUnlinkEvent,
   unset,
+  setup,
+  onApplySetup,
 }: {
   rows: TonightRow[]
   // Every number on this screen, built once in ../lib/tonight. The screen
@@ -378,6 +390,14 @@ export function TonightScreenView({
   onLinkEvent?: () => void
   onUnlinkEvent?: () => void
   unset: boolean
+  // COACH-3's suggestion, already decided by ../lib/sessionSetup. Handed in
+  // whole rather than computed here: this screen renders the answer and
+  // never works one out, so the card and the generator cannot describe the
+  // same night differently.
+  setup: { plan: SetupPlan; fit: StationFit; readiness: SetupReadiness } | null
+  // Applying is a DRAFT EDIT, like every other gesture on this screen.
+  // Nothing persists until Save groups.
+  onApplySetup?: () => void
 }) {
   // The filter the screen can actually use. A club with no Spond has no
   // accepted child, so the Going default would hide the whole squad.
@@ -392,6 +412,19 @@ export function TonightScreenView({
 
   return (
     <div className="reg">
+      {/* The suggested setup, first, because a coach opening this a day or
+          two out is here to see the night already drafted. Absent only
+          when there is no coverage to work from at all. */}
+      {setup && (
+        <SetupSuggestionView
+          plan={setup.plan}
+          fit={setup.fit}
+          readiness={setup.readiness}
+          canEdit={canEdit}
+          onApply={onApplySetup}
+        />
+      )}
+
       {/* Spond responses, as filters that do something. The counts are
           Hub players on THIS session, never the raw event aggregate: the
           chip filters this list, so its number is the number of rows. */}
@@ -593,8 +626,31 @@ export function TonightScreen({ session }: { session: Session }) {
   // draft is not offered a second time.
   const pool = quickAddPool(players, covered, viewEntries, wholeClub)
 
+  const unset = coverageOf(session).kind === 'unset'
   const dirty = draftIsDirty(live, entries)
   const status = saveState(dirty, save.isPending, save.isError)
+
+  // COACH-3's suggestion, derived from the rows and the live draft on every
+  // read. Nothing about it is stored and nothing about it writes.
+  //
+  // The club's team order is null because COACH-1 has not shipped: `teams`
+  // carries id, name and bib_colour and nothing else. The plan reports that
+  // honestly rather than treating alphabetical as ability, and this call
+  // site is the one line that changes when the order arrives.
+  //
+  // A session with no covered teams gets no suggestion at all. Coverage was
+  // never set, so there is no roster to work from, and the screen already
+  // says so in its own words above; inventing a recommendation over a squad
+  // it cannot establish would be the guess this whole slice refuses.
+  const plan = planSetup(rows, live, null)
+  const setup = unset
+    ? null
+    : {
+        plan,
+        // Advice about the coach's own plan, never an edit to it.
+        fit: stationAdvice(plan.recommendation, session.activities),
+        readiness: setupReadiness(rows, live, plan.recommendation.groups),
+      }
 
   // Only a claim the read can actually back up. A club with no Spond, a
   // read still in flight, a failed read, one that never dispatched and a
@@ -660,7 +716,11 @@ export function TonightScreen({ session }: { session: Session }) {
         audienceNote={audienceNote}
         refreshing={sync.isPending}
         refreshFailed={sync.isError || sync.data?.ok === false}
-        unset={coverageOf(session).kind === 'unset'}
+        unset={unset}
+        setup={setup}
+        // A draft edit and nothing else: applySetup returns a new draft and
+        // Save groups is still the only thing that writes.
+        onApplySetup={canEdit ? () => setDraft(applySetup(live, plan)) : undefined}
         onFilter={setFilter}
         onToggle={(playerId) => setDraft(toggleIncluded(live, playerId))}
         onPresent={(playerId) => setDraft(toggleAttendance(live, playerId))}
