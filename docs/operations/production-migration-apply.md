@@ -171,16 +171,21 @@ for the same reason `0047`'s, `0048`'s and `0049`'s stay where they are: it
 records the state `0050` was REVIEWED against, not the current head.
 
 The post-apply gate confirmed `bulk_delete_players` was the unique newest
-ledger row, that the row before it was `20260817104226` /
-`spond_team_reconcile`, that the recorded `statements` array held exactly one
-entry hashing to the reviewed file (MD5 `a34ad8932597a467795d47867254fe62`; the
-file's own SHA-256 is
-`caeadd53de608ae7ae83e789ea5b4733328b59f2f38bfad048115159cdf16a08`), and that
-all five registered object probes were true: the bulk deletion entry point
-`(uuid[], int)` and the deletion preview `(uuid[])` exist as SECURITY DEFINER
-with an empty `search_path` and are executable by `authenticated` and not by
-`anon`, the counting helper `(uuid, uuid[])` exists and no client role may
-execute it, and the audit metadata predicate `(jsonb)` exists.
+ledger row, that the VERSION of the row before it was `20260817104226` (the
+gate compares only the version; the name `spond_team_reconcile` was asserted
+by the pre-apply gate as the newest row before the apply, and confirmed again
+by the reconciliation's own readback), that the recorded `statements` array
+held exactly one entry hashing to the reviewed file, MD5
+`a34ad8932597a467795d47867254fe62`, and that all five registered object probes
+were true: the bulk deletion entry point `(uuid[], int)` and the deletion
+preview `(uuid[])` exist as SECURITY DEFINER with an empty `search_path` and
+are executable by `authenticated` and not by `anon`, the counting helper
+`(uuid, uuid[])` exists and no client role may execute it, and the audit
+metadata predicate `(jsonb)` exists. No gate reads a SHA-256: the plan step
+recorded the file's SHA-256,
+`caeadd53de608ae7ae83e789ea5b4733328b59f2f38bfad048115159cdf16a08`, computed
+like the recorded statement over the file with its trailing newline stripped,
+which is the shape the ledger stores.
 
 ## What `0049` does, kept for reference
 

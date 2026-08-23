@@ -547,17 +547,18 @@ back again for this reconciliation:**
   newline stripped;
 - and, through the five registered object probes in `reviewed_migrations.py`:
   that `public.delete_players` resolves with exactly two arguments of the
-  reviewed types `(uuid[], int)`, is `SECURITY DEFINER` with an empty
-  `search_path`, and `authenticated` may `EXECUTE` it while `anon` may not;
-  that `public.preview_delete_players(uuid[])` holds the same definer posture
-  and the same authenticated-only `EXECUTE`; that
-  `public.player_deletion_counts(uuid, uuid[])` exists, is `SECURITY DEFINER`,
-  and **no** client role may execute it; and that
+  reviewed types `(uuid[], int)` and is `SECURITY DEFINER` with an empty
+  `search_path`; that `authenticated` may `EXECUTE` the entry point while
+  `anon` may not, a probe that pins the name and the two argument arity but
+  **not** the argument types; that `public.preview_delete_players(uuid[])`
+  holds the same definer posture and the same authenticated-only `EXECUTE` in
+  one probe; that `public.player_deletion_counts(uuid, uuid[])` exists, is
+  `SECURITY DEFINER`, and **no** client role may execute it; and that
   `public.audit_bulk_delete_metadata_ok(jsonb)` exists. Those probes resolve
-  no name textually: each joins `pg_proc` to `pg_namespace` and matches
-  `proname`, `pronargs` and `proargtypes` off the catalog row, composing the
-  names through `concat()` because three of the four spell a token the
-  read-only statement guard refuses.
+  no name textually: each joins `pg_proc` to `pg_namespace` and matches the
+  catalog row by `proname` and `pronargs`, four of the five pinning
+  `proargtypes` as well, composing the names through `concat()` because three
+  of the four spell a token the read-only statement guard refuses.
 
 **Read back for this reconciliation only, and NOT asserted by that gate:**
 
