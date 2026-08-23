@@ -515,17 +515,21 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260817104226` (`0049_spond_team_reconcile`, applied
-2026-08-17 under its own production approval).
+Current value: `20260823065041` (`0050_bulk_delete_players`, applied
+2026-08-23 under its own production approval).
 
-Hosted ledger newest migration: **`20260817104226` / `spond_team_reconcile`**.
+Hosted ledger newest migration: **`20260823065041` / `bulk_delete_players`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
 apply, not predicted before it, and was confirmed to be the unique newest row:
 it appears exactly once and no row is newer.
 
-0049 was applied by the gated production migration workflow, so its ledger row
-carries that workflow's evidence, all of it confirmed independently before this
-constant moved:
+0050 was applied by the gated production migration workflow, run 32623941411,
+from the reviewed commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f` on the
+PLAYERS-01 branch, before that branch merged, which is the reverse rollout
+order its own register entry documents. The migration is destructive by design
+when its entry point is called; applying it destroyed nothing. It creates four
+functions and deletes no row. Its ledger row carries the workflow's evidence,
+all of it confirmed independently before this constant moved:
 
 Each fact names what established it, because the mechanisms do not cover the
 same ground and an auditor who assumes they do will trust more than was checked.
@@ -534,53 +538,66 @@ same ground and an auditor who assumes they do will trust more than was checked.
 back again for this reconciliation:**
 
 - the row is the unique newest one, recorded at the newest version;
-- the **version** of the row before it is `20260812102912`. Only the version:
+- the **version** of the row before it is `20260817104226`. Only the version:
   `assert_post` compares `second_version` against `expected_previous_version`
   and never compares `second_name`, which it reads but uses only in the failure
   message and the report table;
 - `statements` holds exactly one entry whose MD5 is
-  `d9d2199dcaabbc2da9248489754dc28a`, the reviewed file with its trailing
+  `a34ad8932597a467795d47867254fe62`, the reviewed file with its trailing
   newline stripped;
-- and, through the three registered object probes in `reviewed_migrations.py`,
-  that `public.spond_reconcile_player_team` resolves at **exactly** the
-  reviewed type signature `(uuid, uuid, uuid, text, text, uuid)`, that it is
-  `SECURITY DEFINER` with an empty `search_path`, and that `authenticated` may
-  `EXECUTE` it while `anon` may not.
+- and, through the five registered object probes in `reviewed_migrations.py`:
+  that `public.delete_players` resolves with exactly two arguments of the
+  reviewed types `(uuid[], int)` and is `SECURITY DEFINER` with an empty
+  `search_path`; that `authenticated` may `EXECUTE` the entry point while
+  `anon` may not, a probe that pins the name and the two argument arity but
+  **not** the argument types; that `public.preview_delete_players(uuid[])`
+  holds the same definer posture and the same authenticated-only `EXECUTE` in
+  one probe; that `public.player_deletion_counts(uuid, uuid[])` exists, is
+  `SECURITY DEFINER`, and **no** client role may execute it; and that
+  `public.audit_bulk_delete_metadata_ok(jsonb)` exists. Those probes resolve
+  no name textually: each joins `pg_proc` to `pg_namespace` and matches the
+  catalog row by `proname` and `pronargs`, four of the five pinning
+  `proargtypes` as well, composing the names through `concat()` because three
+  of the four spell a token the read-only statement guard refuses.
 
 **Read back for this reconciliation only, and NOT asserted by that gate:**
 
 - `created_by` is
-  `github-actions:apply-production-migration@694e1922e69552ff8f98310ae79d0cdcd99f76fd`,
+  `github-actions:apply-production-migration@2d1de99827064f6856374bfc3c094cf50ae1cc3f`,
   naming the workflow and the commit it ran from. The gate never selects this
   column;
-- `idempotency_key` is `otj:migration:0049_spond_team_reconcile`, and that
+- `idempotency_key` is `otj:migration:0050_bulk_delete_players`, and that
   column is UNIQUE, so the same migration cannot be applied a second time. The
   gate checks that key only **before** the apply, to prove the migration had
   not already run;
-- the **name** of the preceding row is `spond_session_link_unique`. A row that
-  kept version `20260812102912` under a different name would still satisfy the
+- the **name** of the preceding row is `spond_team_reconcile`. A row that
+  kept version `20260817104226` under a different name would still satisfy the
   gate, so this half of that row's identity rests on the readback.
 
-Those probes are why the function's existence and its security posture sit in
+Those probes are why the functions' existence and their security posture sit in
 the gate list rather than under the readback: they are asserted on every run,
 not merely read back once. What the readback **adds**, and the only thing it
-adds, is the six parameter **names**: `p_player_id`, `p_expected_team_id`,
-`p_target_team_id`, `p_expected_member_id`, `p_confirm_member_id`,
-`p_batch_id`. It read them with `pg_get_function_identity_arguments`, and
-`pg_proc.proargnames` holds all six.
+adds, is the parameter **names**: `delete_players(p_player_ids,
+p_expected_count)`, `preview_delete_players(p_player_ids)`,
+`player_deletion_counts(p_club, p_ids)` and
+`audit_bulk_delete_metadata_ok(p_metadata)`. It read them with
+`pg_get_function_identity_arguments`, and `pg_proc.proargnames` holds every
+one.
 
-No probe reads `proargnames`, so a function with the same **types** and renamed
-parameters would satisfy all three of them. That gap is why the names are
-recorded at all, and it is a real one: a PostgREST call using named arguments
-would break on it while the gate stayed green.
+No probe reads `proargnames`, so functions with the same **types** and renamed
+parameters would satisfy all five of them. That gap is why the names are
+recorded at all, and it is a real one: the client calls the entry point and the
+preview through PostgREST `rpc()` with named arguments, which would break on a
+rename while the gate stayed green.
 
-**What none of that establishes** is the other half of "0049 adds one function
-and nothing else". The probes look at one function and its privileges, and the
-readback at that same function. Neither inventories tables, columns, indexes,
-policies or triggers. That property comes from review of the migration SQL,
-which is what the gated production process exists to provide.
+**What none of that establishes** is the other half of "0050 adds four
+functions and nothing else". The probes look at four functions and their
+privileges, and the readback at those same functions. Neither inventories
+tables, columns, indexes, policies or triggers. That property comes from review
+of the migration SQL, which is what the gated production process exists to
+provide, and for this entry that review was a destructive-change review.
 
-The previous value, `20260812102912` / `spond_session_link_unique` (0048), is
+The previous value, `20260817104226` / `spond_team_reconcile` (0049), is
 now a superseded value and is REJECTED by the gate. That is asserted directly,
 because a reconciliation that widened the constant rather than moving it would
 otherwise look identical to one that moved it. It remains the row immediately
@@ -593,17 +610,30 @@ rejected when what it once described is on the record, and it is separated
 because evidence that does not validate the value above would be worse than no
 evidence at all.
 
+0049 added one function, `public.spond_reconcile_player_team`, at the reviewed
+six argument signature `(uuid, uuid, uuid, text, text, uuid)`, `SECURITY
+DEFINER` with an empty `search_path`, executable by `authenticated` and not by
+`anon`. Its apply evidence was established for its own reconciliation: one
+`statements` entry hashing to `d9d2199dcaabbc2da9248489754dc28a`, `created_by`
+naming the workflow at commit `694e1922e69552ff8f98310ae79d0cdcd99f76fd`, the
+idempotency key `otj:migration:0049_spond_team_reconcile`, and the six
+parameter names read back with `pg_get_function_identity_arguments`. All of it
+evidences that apply and nothing since; its row remains the one immediately
+before the current head.
+
 0048 repaired one bad Spond link and added `sessions_spond_event_id_unique`, the
 partial unique index over `sessions.spond_event_id`. The read taken after that
 apply, in its own reconciliation, showed zero duplicated links across the 10
 sessions carrying a `spond_event_id`, which is what the repair plus the index
-had to read. That figure was established for 0048 and has not been re-taken for
-0049, so it evidences that apply and nothing since.
+had to read. That figure was established for 0048 and has not been re-taken
+since, so it evidences that apply and nothing later.
 
-The earlier superseded values are rejected by the same equality: `20260812064038`
+The earlier superseded values are rejected by the same equality: `20260812102912`
+(`0048_spond_session_link_unique`, applied 2026-08-12 as the Spond link repair
+and its partial unique index), `20260812064038`
 (`0047_register_group_inclusion`, applied 2026-08-12 as the register group
 inclusion column), and before it `20260811210248`, `20260810182333`,
-`20260809184949` and `20260809081118`. A test pins every one of them, 0048's
+`20260809184949` and `20260809081118`. A test pins every one of them, 0049's
 value included.
 
 Moving this constant is a **reconciliation**, never a deployment: it records an
@@ -720,7 +750,7 @@ Absolute invariants, the same ones the pre-deploy phase asserted:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260817104226` (0049, the Spond team reconcile function);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260823065041` (0050, the bulk player deletion functions);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 

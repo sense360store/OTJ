@@ -13,7 +13,7 @@ reviewed values. A breach stops the deploy outright:
   - every drill is internal_only;
   - every media row is internal_only;
   - the migration ledger's newest version is exactly EXPECTED_LAST_MIGRATION,
-    currently 20260817104226 (0049, spond_team_reconcile);
+    currently 20260823065041 (0050, bulk_delete_players);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
 LIVE SHARING STATE, which is legitimate mutable product data and is therefore
@@ -115,13 +115,18 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0049_spond_team_reconcile was deliberately applied to
-# the hosted project through the gated production process, and hosted assigned
-# it this exact version, 20260817104226. It was read back from
-# supabase_migrations.schema_migrations after the apply and confirmed to be the
-# unique newest ledger entry, appearing exactly once with no row newer, and
-# with the previously pinned 20260812102912 / spond_session_link_unique now the
-# entry before it.
+# below is RECONCILED: 0050_bulk_delete_players was deliberately applied to
+# the hosted project through the gated production process (workflow run
+# 32623941411, from the reviewed commit
+# 2d1de99827064f6856374bfc3c094cf50ae1cc3f on the PLAYERS-01 branch, applied
+# BEFORE that branch merged, which is the reverse rollout order its register
+# entry documents), and hosted assigned it this exact version, 20260823065041.
+# It was read back from supabase_migrations.schema_migrations after the apply
+# and confirmed to be the unique newest ledger entry, appearing exactly once
+# with no row newer, and with the previously pinned 20260817104226 /
+# spond_team_reconcile now the entry before it. The migration is DESTRUCTIVE
+# by design when its entry point is called; APPLYING it destroyed nothing. It
+# creates four functions and deletes no row.
 #
 # The row carries the evidence the gated workflow
 # (.github/workflows/apply-production-migration.yml) records. Each fact below
@@ -131,65 +136,65 @@ import urllib.parse
 #   ASSERTED BY THE POST-APPLY GATE (verify_hosted_state.assert_post), and
 #   read back again here:
 #     - the row is the unique newest one, recorded at the newest version;
-#     - the VERSION of the row before it is 20260812102912. Only the version:
+#     - the VERSION of the row before it is 20260817104226. Only the version:
 #       assert_post compares second_version against expected_previous_version
 #       and never compares second_name, which it reads but uses only in the
 #       failure message and the report table. The NAME below is readback;
 #     - statements holds exactly one entry, and md5(statements[1]) is
-#       d9d2199dcaabbc2da9248489754dc28a, the reviewed file with its trailing
+#       a34ad8932597a467795d47867254fe62, the reviewed file with its trailing
 #       newline stripped;
-#     - and, through the three registered object probes in
-#       reviewed_migrations.py, that public.spond_reconcile_player_team
-#       resolves at EXACTLY the reviewed type signature
-#       (uuid, uuid, uuid, text, text, uuid), that it is SECURITY DEFINER with
-#       an empty search_path, and that authenticated may EXECUTE it while anon
-#       may not.
+#     - and, through the five registered object probes in
+#       reviewed_migrations.py: that public.delete_players resolves with
+#       exactly two arguments of the reviewed types (uuid[], int) and is
+#       SECURITY DEFINER with an empty search_path; that authenticated may
+#       EXECUTE the entry point while anon may not, a probe that pins the
+#       name and the two argument arity but NOT the argument types; that
+#       public.preview_delete_players(uuid[]) holds the same definer
+#       posture and the same authenticated-only EXECUTE in one probe; that
+#       public.player_deletion_counts(uuid, uuid[]) exists, is SECURITY
+#       DEFINER, and NO client role may execute it; and that
+#       public.audit_bulk_delete_metadata_ok(jsonb) exists. Those probes
+#       resolve no name textually: each joins pg_proc to pg_namespace and
+#       matches the catalog row by proname and pronargs, four of the five
+#       pinning proargtypes as well, composing the names through concat()
+#       because three of the four spell a token the read-only statement
+#       guard refuses.
 #
 #   READ BACK HERE ONLY, and NOT asserted by that gate:
 #     - created_by is
-#       github-actions:apply-production-migration@694e1922e69552ff8f98310ae79d0cdcd99f76fd,
+#       github-actions:apply-production-migration@2d1de99827064f6856374bfc3c094cf50ae1cc3f,
 #       naming the workflow and the commit it ran from. The gate never selects
 #       this column at all;
-#     - idempotency_key is otj:migration:0049_spond_team_reconcile against a
+#     - idempotency_key is otj:migration:0050_bulk_delete_players against a
 #       UNIQUE column, so the same migration cannot be applied twice. The gate
 #       checks that key only BEFORE the apply, to prove the migration had not
 #       already run; assert_post does not re-read it;
-#     - the NAME of the preceding row is spond_session_link_unique. A row that
-#       kept version 20260812102912 under a different name would satisfy the
+#     - the NAME of the preceding row is spond_team_reconcile. A row that
+#       kept version 20260817104226 under a different name would satisfy the
 #       gate, so this half of that row's identity rests on the readback.
 #
-# Those probes are why the object's existence and its security posture belong
-# above and not here: they are asserted by the gate on every run, not merely
-# read back once. What the readback adds, and the ONLY thing it adds, is the
-# six parameter NAMES: p_player_id, p_expected_team_id, p_target_team_id,
-# p_expected_member_id, p_confirm_member_id, p_batch_id. It read them with
-# pg_get_function_identity_arguments, and pg_proc.proargnames holds all six.
+# Those probes are why the objects' existence and their security posture
+# belong above and not here: they are asserted by the gate on every run, not
+# merely read back once. What the readback adds, and the ONLY thing it adds,
+# is the parameter NAMES: delete_players(p_player_ids, p_expected_count),
+# preview_delete_players(p_player_ids), player_deletion_counts(p_club, p_ids)
+# and audit_bulk_delete_metadata_ok(p_metadata). It read them with
+# pg_get_function_identity_arguments, and pg_proc.proargnames holds every one.
 #
-# No probe reads proargnames, so a function with the same TYPES and renamed
-# parameters would satisfy all three of them. That gap is the reason the names
-# are recorded here at all, and it is a real one: a PostgREST call using named
-# arguments would break on it while the gate stayed green.
+# No probe reads proargnames, so functions with the same TYPES and renamed
+# parameters would satisfy all five of them. That gap is the reason the names
+# are recorded here at all, and it is a real one: the client calls the entry
+# point and the preview through PostgREST rpc() with NAMED arguments, which
+# would break on a rename while the gate stayed green.
 #
-# What NONE of that establishes is the other half of "0049 adds one function
-# and NOTHING else". The probes look at one function and its privileges, and
-# the readback at that same function; neither inventories tables, columns,
-# indexes, policies or triggers, so nothing in either could tell a 0049 that
-# added only the function from one that added the function and something more.
-#
-# Nor does 0049's own in-migration self-verification establish it, and an
-# earlier draft of this block wrongly said it did. That block does compare a
-# fingerprint taken BEFORE the DDL against the same reads after, which is a
-# real comparison rather than a value compared with itself, but it is an
-# ENUMERATED comparison and not a schema wide one: row counts on
-# player_registrations, player_spond_links, register_entries,
-# spond_event_responses and audit_events, plus the policy count, the grant
-# string and the trigger names over a named handful of tables. An added table,
-# column or index, or a policy on a table outside that list, would leave every
-# one of those assertions passing.
-#
-# "One function and nothing else" therefore rests on REVIEW OF THE MIGRATION
-# SQL, which is what the gated production process exists to provide, and this
-# block claims no more than that.
+# What NONE of that establishes is the other half of "0050 adds four functions
+# and NOTHING else". The probes look at four functions and their privileges,
+# and the readback at those same functions; neither inventories tables,
+# columns, indexes, policies or triggers, so nothing in either could tell a
+# 0050 that added only the functions from one that added the functions and
+# something more. That property rests on REVIEW OF THE MIGRATION SQL, which is
+# what the gated production process exists to provide, and this block claims
+# no more than that.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters
@@ -200,7 +205,7 @@ import urllib.parse
 # so it cannot be known before the apply happens. The order is always: apply ->
 # read back the recorded version -> set this constant to exactly that value in
 # a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260817104226"  # 0049_spond_team_reconcile
+EXPECTED_LAST_MIGRATION = "20260823065041"  # 0050_bulk_delete_players
 
 # The EXACT set of club ids permitted to have public_sharing_enabled true.
 # This is a deployment review pin in the same sense as
