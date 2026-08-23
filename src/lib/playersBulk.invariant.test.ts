@@ -97,6 +97,16 @@ describe('the drop-on-filter-change rule stays in the filter handler', () => {
     expect(page).toMatch(/if \(modal\?\.kind === 'bulkDelete' && selectedPlayers\.length === 0\) setModal\(null\)/)
   })
 
+  it('discards the stored mode and selection when eligibility disappears', () => {
+    // Substituting an empty set for the render alone left bulkMode and the
+    // selection stored, so a capability or writable season restored later
+    // silently revived bulk mode with the old players already ticked.
+    const page = code(read('routes/Players.tsx'))
+    const guard = page.slice(page.indexOf('if (bulkMode && !bulkAllowed)'))
+    expect(guard.slice(0, 120)).toContain('setBulkMode(false)')
+    expect(guard.slice(0, 120)).toContain('setSelected(clearSelection())')
+  })
+
   it('the page decides nothing about which filters narrow the view', () => {
     // The key list lives in playersBulk.ts so it has one test. A component
     // rebuilding it is how the two drift.

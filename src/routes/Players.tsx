@@ -300,6 +300,16 @@ export function Players() {
   // permission faster; it does not create one, and it does not make an archived
   // or superseded season writable.
   const bulkAllowed = canBulkDelete({ canManage, canDelete, writable })
+  // Losing eligibility (a capability revoked, the season no longer writable)
+  // EXITS bulk mode and discards the stored selection, during render like
+  // every other reconciliation here, because a background capability or
+  // season refresh has no handler. Substituting an empty set for the render
+  // alone left both stored, so eligibility restored later silently revived
+  // bulk mode with the old players already ticked.
+  if (bulkMode && !bulkAllowed) {
+    setBulkMode(false)
+    setSelected(clearSelection())
+  }
   const bulkActive = bulkMode && bulkAllowed
   const shownIds = sorted.map((r) => r.playerId)
   // The selection is confined to what is shown TWICE, and neither is a
@@ -324,8 +334,9 @@ export function Players() {
   // drop and confineToShown returns the same instance otherwise, so it cannot
   // loop, and it is deliberately not an effect, which would leave a rendered
   // moment where the hidden row was still selected.
-  // Losing the capability or moving to a read only season empties it the same
-  // way, because bulkActive gates the whole derivation.
+  // Losing the capability or moving to a read only season is handled above:
+  // it exits bulk mode and discards the stored selection outright, so a
+  // restored eligibility starts from nothing rather than reviving old ticks.
   const confined = bulkActive ? confineToShown(selected, shownIds) : null
   if (confined !== null && confined.dropped > 0) setSelected(confined.next)
   const selectedNow = confined !== null ? confined.next : EMPTY_SELECTION
