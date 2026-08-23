@@ -174,6 +174,31 @@ describe('the confirmation gate has one implementation', () => {
     expect(modal).toContain('previewIsStale')
     expect(modal).toMatch(/disabled=\{!confirmed \|\| deleting\}/)
   })
+
+  it('a withdrawn eligibility disarms an unsubmitted dialog without unmounting it', () => {
+    // The page passes its own bulk gate in; the dialog stays mounted (an
+    // unmount could lose an in flight run's report) but never arms while
+    // the gate is withdrawn, because the RPC's own check is narrower than
+    // the page's rule (players.delete without players.manage or a writable
+    // season would still pass the server).
+    const modal = code(read('components/BulkDeletePlayersModal.tsx'))
+    expect(modal).toMatch(/confirmed = ready && eligible && bulkDeleteConfirmed/)
+    expect(modal).toMatch(/\{!eligible && !deleting &&/)
+    const page = code(read('routes/Players.tsx'))
+    expect(page).toContain('eligible={bulkAllowed}')
+  })
+
+  it('an unreadable committed reply is reported as unknown, never as not deleted, with no Retry', () => {
+    // Every refusal in delete_players RAISES, so an HTTP success carrying a
+    // body that cannot prove the outcome most likely committed; claiming
+    // "not deleted" there would be a false claim after a commit.
+    const queries = code(read('lib/queries.ts'))
+    expect(queries).toMatch(/whether it completed is unknown/)
+    const modal = code(read('components/BulkDeletePlayersModal.tsx'))
+    expect(modal).toContain('isIndeterminateBulkOutcome(error)')
+    expect(modal).toMatch(/onRetry=\{confirmed && !isIndeterminateBulkOutcome\(error\) \? run : undefined\}/)
+    expect(modal).toMatch(/outcome is unknown/)
+  })
 })
 
 describe('no child name leaves the page', () => {

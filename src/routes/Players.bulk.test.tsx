@@ -42,6 +42,7 @@ vi.mock('../lib/queries', () => ({
   useBulkDeletePlayers: () => ({ mutateAsync: async () => ({}) }),
   useDeletePlayersPreview: () => ({ isLoading: false, isError: false, isSuccess: false, data: undefined }),
   isStaleBulkSelection: () => false,
+  isIndeterminateBulkOutcome: () => false,
 }))
 
 function row(playerId: string, displayName: string, over: Partial<RegisteredPlayer> = {}): RegisteredPlayer {

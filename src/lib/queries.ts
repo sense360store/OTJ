@@ -4411,6 +4411,16 @@ export function isStaleBulkSelection(err: unknown): boolean {
   return /out of date|selection changed/i.test(message)
 }
 
+// The run finished but its reply could not prove what happened (see the
+// mutation below). The dialog says the outcome is unknown and offers no
+// Retry, because retrying against an unknown outcome invites confirming a
+// second run against a register the admin has not re-read; the server's
+// identity revalidation would refuse it anyway once the rows are gone.
+export function isIndeterminateBulkOutcome(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  return /whether it completed is unknown/i.test(message)
+}
+
 // The transactional bulk permanent deletion. One RPC call, one database
 // transaction: a failure anywhere deletes nobody, so there is deliberately no
 // per player loop, no partial result and nothing to reconcile on retry.
@@ -4432,12 +4442,22 @@ export function useBulkDeletePlayers() {
       })
       if (error) throw error
       const result = parseDeletePreview(data)
-      // The RPC returns what it actually deleted. A reply that cannot be read
-      // or does not account for the confirmed number is surfaced as a failure
-      // rather than reported as a success, the same rule deletedExactlyOne
-      // applies to the single row path.
+      // The RPC returns what it actually deleted, and success is only ever
+      // reported from a reply that proves it. But an HTTP success whose body
+      // cannot prove what happened is an INDETERMINATE outcome, not a
+      // failure: every refusal in delete_players RAISES, which arrives as an
+      // error above, so a success carrying a malformed or miscounting body
+      // most likely means the deletion committed on a backend whose reply
+      // shape has drifted. Claiming "not deleted" here would be a false
+      // claim after a commit. The message says the outcome is unknown, the
+      // dialog recognises it (isIndeterminateBulkOutcome) and withholds
+      // Retry for it, and onSettled below has already refetched the
+      // register, which is the truth to read.
       if (result === null || result.players !== expectedCount) {
-        throw new Error('The players were not deleted. Reload and try again.')
+        throw new Error(
+          'The deletion finished with a reply that could not be read, so whether it completed is unknown. ' +
+            'The register has been refreshed; check it before selecting again.',
+        )
       }
       return result
     },

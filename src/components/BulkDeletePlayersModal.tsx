@@ -14,7 +14,12 @@
 // listed are the ones the caller already holds; they reach no URL, no log and
 // no audit payload.
 import { useState } from 'react'
-import { useBulkDeletePlayers, useDeletePlayersPreview, isStaleBulkSelection } from '../lib/queries'
+import {
+  useBulkDeletePlayers,
+  useDeletePlayersPreview,
+  isIndeterminateBulkOutcome,
+  isStaleBulkSelection,
+} from '../lib/queries'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
 import {
   PREVIEW_SNAPSHOT_NOTE,
@@ -35,12 +40,20 @@ import { ActionError, Loading, Modal } from './ui'
 
 export function BulkDeletePlayersModal({
   players,
+  eligible,
   onClose,
   onDeleted,
 }: {
   // The selected rows, in the order the table showed them. The dialog counts
   // these and sends their player ids; it never re-derives the selection.
   players: RegisteredPlayer[]
+  // Whether the page's bulk eligibility rule still holds (canBulkDelete).
+  // The dialog stays mounted when it flips false, because unmounting could
+  // lose an in flight run's report, but an UNSUBMITTED dialog disarms: the
+  // UI withdrew the action, and the server's own gate is narrower than the
+  // page's (the RPC checks players.delete, not players.manage or a writable
+  // season), so honouring the withdrawal is this dialog's job.
+  eligible: boolean
   onClose: () => void
   onDeleted: (result: DeletePreview) => void
 }) {
@@ -75,7 +88,7 @@ export function BulkDeletePlayersModal({
   // would still accept.
   const stale = preview.data ? previewIsStale(preview.data) : false
   const ready = preview.isSuccess && !stale
-  const confirmed = ready && bulkDeleteConfirmed(typed, count)
+  const confirmed = ready && eligible && bulkDeleteConfirmed(typed, count)
 
   const run = () => {
     if (!confirmed || deleting) return
@@ -109,6 +122,13 @@ export function BulkDeletePlayersModal({
       {overLimit && (
         <div role="alert" className="bulk-delete-stale">
           {overLimitMessage(count)}
+        </div>
+      )}
+
+      {!eligible && !deleting && (
+        <div role="alert" className="bulk-delete-stale">
+          Bulk deletion is no longer available: the permission or the season changed while this dialog was open.
+          Nothing has been deleted from this dialog; close it.
         </div>
       )}
 
@@ -178,17 +198,23 @@ export function BulkDeletePlayersModal({
               placeholder={bulkDeletePhrase(count)}
               autoComplete="off"
               spellCheck={false}
-              disabled={deleting || stale}
+              disabled={deleting || stale || !eligible}
             />
           </div>
         </>
       )}
 
       {failed && (
-        <ActionError onRetry={confirmed ? run : undefined} style={{ marginTop: 10 }}>
-          {isStaleBulkSelection(error)
-            ? 'The register changed while this was open, so nothing was deleted. Close this, check the list and select again.'
-            : 'The players were not deleted, and nothing was partly deleted. Reload and try again.'}
+        <ActionError
+          onRetry={confirmed && !isIndeterminateBulkOutcome(error) ? run : undefined}
+          style={{ marginTop: 10 }}
+        >
+          {isIndeterminateBulkOutcome(error)
+            ? 'The deletion may have completed: the reply could not be read, so the outcome is unknown. The ' +
+              'register has been refreshed; close this and check it before selecting again.'
+            : isStaleBulkSelection(error)
+              ? 'The register changed while this was open, so nothing was deleted. Close this, check the list and select again.'
+              : 'The players were not deleted, and nothing was partly deleted. Reload and try again.'}
         </ActionError>
       )}
     </Modal>

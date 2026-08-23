@@ -701,6 +701,7 @@ export function Players() {
       {modal?.kind === 'bulkDelete' && modal.players.length > 0 && (
         <BulkDeletePlayersModal
           players={modal.players}
+          eligible={bulkAllowed}
           onClose={close}
           onDeleted={() => {
             // The run committed, so the selection it described is gone.
