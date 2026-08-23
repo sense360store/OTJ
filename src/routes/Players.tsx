@@ -77,7 +77,7 @@ type ModalState =
   | { kind: 'importFile' }
   | { kind: 'renew' }
   | { kind: 'export' }
-  | { kind: 'bulkDelete' }
+  | { kind: 'bulkDelete'; players: RegisteredPlayer[] }
   | null
 
 // The checkbox column, present only while bulk selection mode is on. Passed to
@@ -341,16 +341,18 @@ export function Players() {
   if (confined !== null && confined.dropped > 0) setSelected(confined.next)
   const selectedNow = confined !== null ? confined.next : EMPTY_SELECTION
   const selectedPlayers = selectedRows(sorted, selectedNow)
-  // A refetch can empty the selection while the deletion dialog is open (the
-  // last selected child left the view or the register). Hiding the dialog on
-  // an empty selection alone left modal.kind primed, so the page came back to
-  // life with a deletion dialog that remounted on the NEXT tick without
-  // Delete being pressed. The stale state is cleared the same way the
-  // confinement is persisted: during render, conditionally, because no
-  // handler runs for a background refetch. The legitimate paths never see
-  // this: opening requires a non empty selection, and a completed run clears
-  // the selection and the modal in one batched handler.
-  if (modal?.kind === 'bulkDelete' && selectedPlayers.length === 0) setModal(null)
+  // The open dialog renders the selection CAPTURED when Delete was pressed
+  // (modal.players), never this live derivation. Deriving it live made the
+  // dialog's mount a function of background refetches, which produced two
+  // real defects in turn: an emptied derivation unmounted the dialog leaving
+  // modal.kind primed to remount on the next tick, and, once that state was
+  // cleared reactively, the same emptying could unmount a dialog whose RPC
+  // was still IN FLIGHT, suppressing the completion report of a permanent
+  // deletion (useGuardedSubmit goes inactive on unmount). Capturing at press
+  // time removes the whole class: the dialog stays mounted until it closes
+  // itself, and a selection the world moved under is the server's designed
+  // refusal (identity revalidation) and the preview's staleness message,
+  // not a vanishing dialog.
   const rowSelection: RowSelection | undefined = bulkActive
     ? { selected: selectedNow, onToggle: (id) => setSelected((prev) => toggleSelected(prev, id)) }
     : undefined
@@ -651,7 +653,7 @@ export function Players() {
             allSelected={allShownSelected(selectedNow, shownIds)}
             onSelectAllShown={() => setSelected((prev) => selectAllShown(prev, shownIds))}
             onClear={() => setSelected(clearSelection())}
-            onDelete={() => open({ kind: 'bulkDelete' })}
+            onDelete={() => open({ kind: 'bulkDelete', players: selectedPlayers })}
             onExit={() => {
               setSelected(clearSelection())
               setBulkMode(false)
@@ -692,10 +694,13 @@ export function Players() {
       {modal?.kind === 'delete' && <DeletePlayerModal player={modal.player} onClose={close} />}
       {/* Zero selected is not a destructive state: the bar's button is disabled
           at zero, and this refuses to mount a dialog for nobody even if it were
-          reached another way. */}
-      {modal?.kind === 'bulkDelete' && selectedPlayers.length > 0 && (
+          reached another way. The dialog renders the CAPTURED selection, so a
+          background refetch can neither unmount it mid flight nor change what
+          it lists; the server's identity revalidation is what answers a
+          selection the world moved under. */}
+      {modal?.kind === 'bulkDelete' && modal.players.length > 0 && (
         <BulkDeletePlayersModal
-          players={selectedPlayers}
+          players={modal.players}
           onClose={close}
           onDeleted={() => {
             // The run committed, so the selection it described is gone.

@@ -88,13 +88,21 @@ describe('the drop-on-filter-change rule stays in the filter handler', () => {
     expect(page).toMatch(/if \(confined !== null && confined\.dropped > 0\) setSelected\(confined\.next\)/)
   })
 
-  it('clears the primed dialog when confinement empties its selection', () => {
-    // Hiding the dialog on an empty selection is not enough: modal.kind left
-    // set meant the next tick REMOUNTED the deletion dialog without Delete
-    // being pressed. Cleared during render for the same reason the
-    // confinement is persisted there: a refetch has no handler.
+  it('the dialog renders the selection captured at press time, never the live derivation', () => {
+    // Deriving the dialog's players live made its mount a function of
+    // background refetches: an emptied derivation first left modal.kind
+    // primed to remount, and once that was cleared reactively it could
+    // unmount a dialog whose RPC was still in flight, suppressing the
+    // completion report of a permanent deletion. Capturing at press time
+    // removes the class: the dialog closes itself, and a moved world is the
+    // server's designed identity refusal.
     const page = code(read('routes/Players.tsx'))
-    expect(page).toMatch(/if \(modal\?\.kind === 'bulkDelete' && selectedPlayers\.length === 0\) setModal\(null\)/)
+    expect(page).toContain("open({ kind: 'bulkDelete', players: selectedPlayers })")
+    expect(page).toContain('players={modal.players}')
+    expect(page).not.toMatch(/'bulkDelete' && selectedPlayers/)
+    // The close handler may clear the modal; a render-time reconciliation
+    // must not, because that is what could unmount an in-flight deletion.
+    expect(page).not.toMatch(/length === 0\) setModal/)
   })
 
   it('discards the stored mode and selection when eligibility disappears', () => {
