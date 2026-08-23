@@ -38,7 +38,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
-| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | Later | P2 | Destructive-change review; no silent history loss |
+| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Destructive-change review; no silent history loss. Migration `0050_bulk_delete_players` was applied to production on 23 August 2026 (hosted head `20260823065041`) from the reviewed commit on draft PR #191, ahead of the branch merging, which is the reverse rollout order its register entry documents; the application half remains on #191 |
 | SPOND-07 | Spond | Scheduled/automatic Spond refresh with visible freshness/failure state | Later | P2 | Rate behaviour and scheduling review |
 | LIVE-01 | Live session | Screen wake lock while delivering a session | Later | P2 | Browser capability/fallback |
 | LIVE-02 | Live session | Unmissable time-up cue and improved live connectivity/offline state | Later | P2 | Coordinate with accessibility |
@@ -381,5 +381,6 @@ These documents contain deeper design history and security decisions. They do no
 | SPOND-08 — current-season team reconciled from a proved Spond link | #190, #192 | 16–17 Aug 2026 |
 | OPS-03 — hosted ledger reconciliation after 0049 | #199 | 20 Aug 2026 |
 | OPS-04 — live sharing state preserved across content-sharing deploys | #200 | 21 Aug 2026 |
+| OPS-05 — hosted ledger reconciliation after 0050 | #208 | 23 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.
