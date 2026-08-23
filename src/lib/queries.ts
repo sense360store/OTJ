@@ -4385,7 +4385,12 @@ export function useDeletePlayersPreview(playerIds: string[], enabled: boolean) {
     queryFn: async (): Promise<DeletePreview> => {
       const { data, error } = await supabase.rpc('preview_delete_players', { p_player_ids: key })
       if (error) throw error
-      return parseDeletePreview(data)
+      // A malformed payload REFUSES rather than reading as zeroes: the dialog
+      // lands on its error and retry path, and nothing arms against counts
+      // that were never established.
+      const parsed = parseDeletePreview(data)
+      if (parsed === null) throw new Error('the deletion preview could not be read')
+      return parsed
     },
   })
 }
@@ -4421,11 +4426,11 @@ export function useBulkDeletePlayers() {
       })
       if (error) throw error
       const result = parseDeletePreview(data)
-      // The RPC returns what it actually deleted. A reply that does not account
-      // for the confirmed number is surfaced as a failure rather than reported
-      // as a success, the same rule deletedExactlyOne applies to the single row
-      // path.
-      if (result.players !== expectedCount) {
+      // The RPC returns what it actually deleted. A reply that cannot be read
+      // or does not account for the confirmed number is surfaced as a failure
+      // rather than reported as a success, the same rule deletedExactlyOne
+      // applies to the single row path.
+      if (result === null || result.players !== expectedCount) {
         throw new Error('The players were not deleted. Reload and try again.')
       }
       return result

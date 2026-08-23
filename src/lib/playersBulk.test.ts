@@ -240,7 +240,7 @@ describe('the typed confirmation names the number', () => {
   })
 })
 
-describe('the preview is the server’s answer, adapted defensively', () => {
+describe('the preview is the server’s answer, refused when unreadable', () => {
   const raw = {
     requested: 6,
     players: 6,
@@ -273,22 +273,43 @@ describe('the preview is the server’s answer, adapted defensively', () => {
     })
   })
 
-  it('reads a missing, null or non numeric field as zero rather than NaN', () => {
-    const p = parseDeletePreview({ players: 2, register_entries: null, spond_links: 'many' })
-    expect(p.players).toBe(2)
-    expect(p.registerEntries).toBe(0)
-    expect(p.spondLinks).toBe(0)
-    expect(Number.isNaN(p.registrations)).toBe(false)
+  it('refuses a payload missing any field, rather than fabricating a zero', () => {
+    // Zero-filling was the original behaviour, and it failed the wrong way
+    // for a destructive confirmation: a partial payload with valid requested
+    // and players fields armed deletion while showing fabricated zeroes. A
+    // missing field is a refusal; the dialog lands on its error path.
+    for (const key of Object.keys(raw)) {
+      const partial: Record<string, unknown> = { ...raw }
+      delete partial[key]
+      expect(parseDeletePreview(partial), `missing ${key}`).toBeNull()
+    }
   })
 
-  it('reads a non object as nothing at all', () => {
-    expect(parseDeletePreview(null)).toEqual(ZERO_PREVIEW)
-    expect(parseDeletePreview('6')).toEqual(ZERO_PREVIEW)
+  it('refuses a null, non numeric, fractional, negative or boolean field', () => {
+    expect(parseDeletePreview({ ...raw, register_entries: null })).toBeNull()
+    expect(parseDeletePreview({ ...raw, spond_links: 'many' })).toBeNull()
+    expect(parseDeletePreview({ ...raw, boards: 1.5 })).toBeNull()
+    expect(parseDeletePreview({ ...raw, players: -1 })).toBeNull()
+    expect(parseDeletePreview({ ...raw, requested: true })).toBeNull()
+    expect(parseDeletePreview({ ...raw, registrations: Number.NaN })).toBeNull()
+  })
+
+  it('refuses a non object outright', () => {
+    expect(parseDeletePreview(null)).toBeNull()
+    expect(parseDeletePreview('6')).toBeNull()
+    expect(parseDeletePreview(undefined)).toBeNull()
+  })
+
+  it('accepts genuine zeroes from a well formed payload', () => {
+    // A club with no Spond and no boards must still preview honestly; the
+    // refusal is of ABSENT counts, never of zero ones.
+    const zeros = Object.fromEntries(Object.keys(raw).map((k) => [k, 0]))
+    expect(parseDeletePreview(zeros)).toEqual(ZERO_PREVIEW)
   })
 
   it('calls a selection stale when the server found fewer live players than were asked about', () => {
-    expect(previewIsStale(parseDeletePreview(raw))).toBe(false)
-    expect(previewIsStale(parseDeletePreview({ ...raw, players: 4 }))).toBe(true)
+    expect(previewIsStale(parseDeletePreview(raw)!)).toBe(false)
+    expect(previewIsStale(parseDeletePreview({ ...raw, players: 4 })!)).toBe(true)
   })
 })
 

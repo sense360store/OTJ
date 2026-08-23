@@ -238,31 +238,44 @@ export const ZERO_PREVIEW: DeletePreview = {
   boards: 0,
 }
 
-function num(raw: Record<string, unknown>, key: string): number {
-  const v = raw[key]
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0
+// Every field the RPC must supply, app name to payload key. A closed list so
+// the parser can refuse a payload that is missing any of them.
+const PREVIEW_KEYS: Record<keyof DeletePreview, string> = {
+  requested: 'requested',
+  players: 'players',
+  registrations: 'registrations',
+  registrationSeasons: 'registration_seasons',
+  registrationsCurrent: 'registrations_current',
+  registrationsArchived: 'registrations_archived',
+  registerEntries: 'register_entries',
+  registerSessions: 'register_sessions',
+  spondLinks: 'spond_links',
+  spondReplies: 'spond_replies',
+  boardTokens: 'board_tokens',
+  boards: 'boards',
 }
 
-// Adapt the RPC's jsonb to the app shape. Defensive rather than trusting: a
-// missing or non numeric field reads as 0 rather than NaN, so the dialog can
-// never render "NaN register entries" at an admin about to erase children.
-export function parseDeletePreview(raw: unknown): DeletePreview {
-  if (!raw || typeof raw !== 'object') return ZERO_PREVIEW
+// Adapt the RPC's jsonb to the app shape, or REFUSE. An earlier version
+// zero-filled a missing or non numeric field so the dialog could never render
+// "NaN register entries"; exact head review pointed out that zero-filling
+// fails the wrong way for a destructive confirmation: a partial or
+// type-drifted payload (an out of sync deployment, a future function change)
+// would arm permanent deletion while showing fabricated zeroes, telling the
+// admin nothing would be destroyed when nothing had been counted. Null always
+// fails the caller's path closed, the same rule canonical_club_ids follows in
+// the deploy verifier: unreadable is never read as empty. A genuinely zero
+// count from a well formed payload remains valid, so a club with no Spond and
+// no boards still previews honestly.
+export function parseDeletePreview(raw: unknown): DeletePreview | null {
+  if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
-  return {
-    requested: num(r, 'requested'),
-    players: num(r, 'players'),
-    registrations: num(r, 'registrations'),
-    registrationSeasons: num(r, 'registration_seasons'),
-    registrationsCurrent: num(r, 'registrations_current'),
-    registrationsArchived: num(r, 'registrations_archived'),
-    registerEntries: num(r, 'register_entries'),
-    registerSessions: num(r, 'register_sessions'),
-    spondLinks: num(r, 'spond_links'),
-    spondReplies: num(r, 'spond_replies'),
-    boardTokens: num(r, 'board_tokens'),
-    boards: num(r, 'boards'),
+  const out = {} as Record<keyof DeletePreview, number>
+  for (const [field, key] of Object.entries(PREVIEW_KEYS) as [keyof DeletePreview, string][]) {
+    const v = r[key]
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return null
+    out[field] = v
   }
+  return out
 }
 
 // The server has already been asked about a selection that no longer exists as
