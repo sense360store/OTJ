@@ -145,6 +145,16 @@ describe('the dependency counts come from the server, never from the browser', (
     expect(hook.slice(0, 900)).toMatch(/staleTime:\s*0/)
     expect(hook.slice(0, 900)).toMatch(/gcTime:\s*0/)
   })
+
+  it('the preview hook refuses an unreadable or unanswering payload', () => {
+    // Both refusals throw into the dialog's error path: a malformed payload
+    // (parseDeletePreview null) and a well formed one counting a different
+    // selection (previewAnswersFor false). Their rules are pure and tested
+    // in playersBulk.test.ts; this pins that the hook applies them.
+    const queries = code(read('lib/queries.ts'))
+    const hook = queries.slice(queries.indexOf('useDeletePlayersPreview'), queries.indexOf('isStaleBulkSelection'))
+    expect(hook).toMatch(/parsed === null \|\| !previewAnswersFor\(parsed, key\.length\)/)
+  })
 })
 
 describe('the confirmation gate has one implementation', () => {

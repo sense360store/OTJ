@@ -26,6 +26,7 @@ import {
   overBulkDeleteLimit,
   overLimitMessage,
   parseDeletePreview,
+  previewAnswersFor,
   previewIsStale,
   removalLines,
   selectAllShown,
@@ -310,6 +311,19 @@ describe('the preview is the server’s answer, refused when unreadable', () => 
   it('calls a selection stale when the server found fewer live players than were asked about', () => {
     expect(previewIsStale(parseDeletePreview(raw)!)).toBe(false)
     expect(previewIsStale(parseDeletePreview({ ...raw, players: 4 })!)).toBe(true)
+  })
+
+  it('requires the preview to answer for the submitted ids', () => {
+    // A well formed payload counting a DIFFERENT selection is as unreadable
+    // as a malformed one: requested 0 for five submitted ids would show zero
+    // identities while the typed phrase armed five. Fewer live players than
+    // requested stays valid, because that is the designed stale display.
+    const p = parseDeletePreview(raw)!
+    expect(previewAnswersFor(p, 6)).toBe(true)
+    expect(previewAnswersFor(p, 5)).toBe(false)
+    expect(previewAnswersFor({ ...p, requested: 0, players: 0 }, 6)).toBe(false)
+    expect(previewAnswersFor({ ...p, players: 4 }, 6)).toBe(true)
+    expect(previewAnswersFor({ ...p, players: 7 }, 6)).toBe(false)
   })
 })
 

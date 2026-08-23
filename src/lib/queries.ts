@@ -31,7 +31,7 @@ import {
 } from './activityView'
 import { useAuth } from '../hooks/useAuth'
 import type { ExportFilterPayload, ExportPlayerRow } from './playersExport'
-import { parseDeletePreview, type DeletePreview } from './playersBulk'
+import { parseDeletePreview, previewAnswersFor, type DeletePreview } from './playersBulk'
 import type { ImportPayload, ImportServerResult } from './playersImportCommit'
 import type {
   Activity,
@@ -4385,11 +4385,17 @@ export function useDeletePlayersPreview(playerIds: string[], enabled: boolean) {
     queryFn: async (): Promise<DeletePreview> => {
       const { data, error } = await supabase.rpc('preview_delete_players', { p_player_ids: key })
       if (error) throw error
-      // A malformed payload REFUSES rather than reading as zeroes: the dialog
-      // lands on its error and retry path, and nothing arms against counts
-      // that were never established.
+      // A malformed payload REFUSES rather than reading as zeroes, and so
+      // does a well formed one that answers for a different selection (a
+      // requested count that is not the submitted id count, or more live
+      // players than were asked about): the dialog lands on its error and
+      // retry path, and nothing arms against counts that were never
+      // established for THESE ids. players below requested stays valid,
+      // because that is the designed stale display.
       const parsed = parseDeletePreview(data)
-      if (parsed === null) throw new Error('the deletion preview could not be read')
+      if (parsed === null || !previewAnswersFor(parsed, key.length)) {
+        throw new Error('the deletion preview could not be read')
+      }
       return parsed
     },
   })

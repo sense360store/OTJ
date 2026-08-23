@@ -286,6 +286,16 @@ export function previewIsStale(p: DeletePreview): boolean {
   return p.players !== p.requested
 }
 
+// A well formed payload must also ANSWER FOR the ids that were submitted: a
+// preview whose requested count is not the number of distinct ids sent is a
+// count of some other selection, as unreadable for a destructive confirmation
+// as a malformed one, and players can never exceed requested. players BELOW
+// requested is not refused here, because that is the designed stale display
+// (previewIsStale) rather than an unreadable reply.
+export function previewAnswersFor(p: DeletePreview, submitted: number): boolean {
+  return p.requested === submitted && p.players <= p.requested
+}
+
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`
 }
