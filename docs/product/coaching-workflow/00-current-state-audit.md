@@ -850,11 +850,14 @@ payload pinned by a test.
 
 ## 25. Migration ledger position
 
-- The highest migration file on disk is `0049_spond_team_reconcile.sql`, applied
-  to production on 17 August 2026 (hosted head `20260817104226`).
-- **`0050_bulk_delete_players.sql` is already claimed by open draft PR #191**
-  (PLAYERS-01). So the first migration of any new programme is `0051` at the
-  earliest.
+- The highest migration file on disk on `main` is `0049_spond_team_reconcile.sql`,
+  applied to production on 17 August 2026. The hosted head is no longer 0049's
+  row: it is `20260823065041` (`bulk_delete_players`), applied 23 August 2026.
+- **`0050_bulk_delete_players.sql` is claimed by open draft PR #191**
+  (PLAYERS-01), and was applied to production on 23 August 2026 from that
+  branch's reviewed commit, ahead of the branch merging, which is the reverse
+  rollout order its register entry documents. So the first migration of any new
+  programme is `0051` at the earliest.
 - The live ledger is the authority, not the highest file on disk. Confirm the next
   free number against it before writing a migration (`CLAUDE.md`, Data model).
 
