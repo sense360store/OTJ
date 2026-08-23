@@ -86,9 +86,20 @@ export function BulkDeletePlayersModal({
   // has deleted one of these children since the selection was made. The button
   // stays disabled: there is no number the admin could confirm that the server
   // would still accept.
+  // Eligibility loss LATCHES for this dialog. The page reacts to the same
+  // loss by exiting bulk mode and discarding its stored selection, so a
+  // later restoration starts from nothing there; a dialog that re-armed its
+  // captured players and typed phrase when eligibility returned would revive
+  // exactly the choices the page just discarded. Once lost, this dialog only
+  // closes. A run already in flight still reports its result. The ratchet is
+  // a conditional state write during render, the same pattern the page uses,
+  // and cannot loop.
+  const [eligibilityLost, setEligibilityLost] = useState(false)
+  if (!eligible && !eligibilityLost) setEligibilityLost(true)
+
   const stale = preview.data ? previewIsStale(preview.data) : false
   const ready = preview.isSuccess && !stale
-  const confirmed = ready && eligible && bulkDeleteConfirmed(typed, count)
+  const confirmed = ready && !eligibilityLost && bulkDeleteConfirmed(typed, count)
 
   const run = () => {
     if (!confirmed || deleting) return
@@ -125,10 +136,10 @@ export function BulkDeletePlayersModal({
         </div>
       )}
 
-      {!eligible && !deleting && (
+      {eligibilityLost && !deleting && (
         <div role="alert" className="bulk-delete-stale">
           Bulk deletion is no longer available: the permission or the season changed while this dialog was open.
-          Nothing has been deleted from this dialog; close it.
+          Nothing has been deleted from this dialog; close it and select again.
         </div>
       )}
 
@@ -198,7 +209,7 @@ export function BulkDeletePlayersModal({
               placeholder={bulkDeletePhrase(count)}
               autoComplete="off"
               spellCheck={false}
-              disabled={deleting || stale || !eligible}
+              disabled={deleting || stale || eligibilityLost}
             />
           </div>
         </>

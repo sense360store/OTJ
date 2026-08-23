@@ -189,15 +189,18 @@ describe('the confirmation gate has one implementation', () => {
     expect(modal).toMatch(/disabled=\{!confirmed \|\| deleting\}/)
   })
 
-  it('a withdrawn eligibility disarms an unsubmitted dialog without unmounting it', () => {
+  it('a withdrawn eligibility disarms an unsubmitted dialog permanently, without unmounting it', () => {
     // The page passes its own bulk gate in; the dialog stays mounted (an
-    // unmount could lose an in flight run's report) but never arms while
-    // the gate is withdrawn, because the RPC's own check is narrower than
+    // unmount could lose an in flight run's report) but never arms once the
+    // gate has been withdrawn, because the RPC's own check is narrower than
     // the page's rule (players.delete without players.manage or a writable
-    // season would still pass the server).
+    // season would still pass the server). The loss LATCHES: the page
+    // discards its mode and selection on the same signal, so eligibility
+    // returning must not revive this dialog's captured choices either.
     const modal = code(read('components/BulkDeletePlayersModal.tsx'))
-    expect(modal).toMatch(/confirmed = ready && eligible && bulkDeleteConfirmed/)
-    expect(modal).toMatch(/\{!eligible && !deleting &&/)
+    expect(modal).toMatch(/if \(!eligible && !eligibilityLost\) setEligibilityLost\(true\)/)
+    expect(modal).toMatch(/confirmed = ready && !eligibilityLost && bulkDeleteConfirmed/)
+    expect(modal).toMatch(/\{eligibilityLost && !deleting &&/)
     const page = code(read('routes/Players.tsx'))
     expect(page).toContain('eligible={bulkAllowed}')
   })
