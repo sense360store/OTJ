@@ -159,6 +159,19 @@ Both were exercised against a real two session PostgreSQL run: overlapping
 selections produced one complete run and one whole refusal with the untouched
 third child surviving, and identical reversed selections produced no deadlock.
 
+One second-hop residual is recorded deliberately, found by exact head review
+after the apply: a stored Spond REPLY references the link row, not the player
+row, so a `spond-sync` run inserting a reply for a linked, selected child
+takes its `FOR KEY SHARE` on `player_spond_links`, which the identity lock
+does not cover. A reply committed between the in-lock count and the delete is
+removed by the cascade, correctly, with its child; the `spond_replies` figure
+the run returns and audits was counted before that insert and undercounts by
+exactly those racing rows. Nothing outlives the erasure and no first-hop
+count can miscount (registrations, register entries and links are blocked as
+above). Closing it means locking the selected link rows in deterministic
+order before counting, which is a change to the applied function and
+therefore a candidate follow-up migration, never an edit to this one.
+
 ### Audit
 
 One run writes:

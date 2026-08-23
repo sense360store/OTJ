@@ -313,9 +313,22 @@ export function Players() {
   //     can currently see. A background refetch that removes a row therefore
   //     shrinks the selection immediately rather than sending an id the server
   //     would refuse.
+  // The confinement is also PERSISTED, during render, because a background
+  // refetch has no event handler to persist it in: deriving alone kept the
+  // hidden id in the stored set, so a row a refetch hid and a later refetch
+  // showed again came back TICKED with nobody having selected it, which is
+  // the re-widened-filter rule broken by another door. Dropping it from
+  // storage the moment it leaves the view makes a returning row arrive
+  // unticked whichever door hid it. Adjusting state during render is React's
+  // own pattern for reconciling state with props; it is conditional on a real
+  // drop and confineToShown returns the same instance otherwise, so it cannot
+  // loop, and it is deliberately not an effect, which would leave a rendered
+  // moment where the hidden row was still selected.
   // Losing the capability or moving to a read only season empties it the same
   // way, because bulkActive gates the whole derivation.
-  const selectedNow = bulkActive ? confineToShown(selected, shownIds).next : EMPTY_SELECTION
+  const confined = bulkActive ? confineToShown(selected, shownIds) : null
+  if (confined !== null && confined.dropped > 0) setSelected(confined.next)
+  const selectedNow = confined !== null ? confined.next : EMPTY_SELECTION
   const selectedPlayers = selectedRows(sorted, selectedNow)
   const rowSelection: RowSelection | undefined = bulkActive
     ? { selected: selectedNow, onToggle: (id) => setSelected((prev) => toggleSelected(prev, id)) }

@@ -78,6 +78,16 @@ describe('the drop-on-filter-change rule stays in the filter handler', () => {
     expect(page).not.toMatch(/useEffect\([\s\S]{0,200}setSelected/)
   })
 
+  it('persists the render-time confinement, so a row a refetch hid cannot return ticked', () => {
+    // A background refetch has no handler, so the drop happens during render
+    // and is WRITTEN BACK: deriving alone kept the hidden id in storage, and
+    // a later refetch that showed the row again brought it back selected
+    // with nobody having ticked it.
+    const page = code(read('routes/Players.tsx'))
+    expect(page).toMatch(/const confined = bulkActive \? confineToShown\(selected, shownIds\) : null/)
+    expect(page).toMatch(/if \(confined !== null && confined\.dropped > 0\) setSelected\(confined\.next\)/)
+  })
+
   it('the page decides nothing about which filters narrow the view', () => {
     // The key list lives in playersBulk.ts so it has one test. A component
     // rebuilding it is how the two drift.
