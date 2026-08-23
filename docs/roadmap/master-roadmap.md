@@ -302,9 +302,11 @@ the reversible action for a player genuinely leaving the club. No anonymised
 history redesign is in scope.
 
 The migration is written, self verifying and wrapped in its own explicit
-transaction, and is NOT applied to production by this PR. It is now REGISTERED
-for apply, which is a different thing: the workflow is dispatch only and holds
-at the production environment gate for a human.
+transaction, and has been APPLIED to production: workflow run 32623941411 ran
+it from this PR's reviewed commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f` on
+23 August 2026, holding at the production environment gate for a human first,
+and the hosted ledger stamped it `20260823065041` / `bulk_delete_players`. The
+deploy pin reconciliation landed separately as OPS-05 (#208).
 
 Numbering: slot 0049 belongs to SPOND-08's `0049_spond_team_reconcile.sql`, so
 this file is `0050_bulk_delete_players.sql`; the rename was forced, because two
@@ -315,12 +317,12 @@ name exists and has been read rather than guessed. 0050 is in
 `REVIEWED_MIGRATIONS` against exactly that row, with five object probes and its
 own idempotency key, and in the workflow dropdown.
 
-Rollout order, which is the reverse of the usual one: apply 0050 from the
-reviewed #191 branch commit FIRST, confirm the pre-apply gate, the apply and
-the post-apply readback, and only then merge. Main auto-deploys to Vercel and
-the new screens call these functions, so merging first would ship a client
-calling an RPC the database does not have.
-See the file header and `docs/security/player-deletion-boundary.md`.
+Rollout order, which was the reverse of the usual one: 0050 was applied from
+the reviewed #191 branch commit FIRST, with the pre-apply gate, the apply and
+the post-apply readback all confirmed, and only then does the branch merge.
+Main auto-deploys to Vercel and the new screens call these functions, so
+merging first would have shipped a client calling an RPC the database did not
+have. See the file header and `docs/security/player-deletion-boundary.md`.
 
 **DRILL-02 — drill diagrams across session delivery**
 

@@ -68,7 +68,7 @@ path), not a UI change, and it is out of scope for PLAYERS-01.
 Two functions, added by `0050_bulk_delete_players.sql`. Neither adds a
 capability, a table, a column, a policy or a grant on any table.
 
-> **Numbering: 0050, and now REGISTERED for apply.** Slot `0049` belongs to
+> **Numbering: 0050, registered and now APPLIED.** Slot `0049` belongs to
 > `0049_spond_team_reconcile.sql` (PR #190). This file was written as 0049 while
 > #190 was still a draft and was renamed to 0050 the moment that merge landed,
 > because two files carrying one version make `supabase db reset` abort on
@@ -76,7 +76,7 @@ capability, a table, a column, a policy or a grant on any table.
 >
 > #190's 0049 **has since been applied to production**, on 17 August 2026. The
 > hosted ledger stamped it `20260817104226` under the name
-> `spond_team_reconcile`, and that row is now the newest one. It is recorded in
+> `spond_team_reconcile`. It is recorded in
 > `docs/operations/production-migration-apply.md` and in the roadmap's SPOND-08
 > entry. The earlier note here, that the newest row was still
 > `spond_session_link_unique` (`20260812102912`) with no `spond_team_reconcile`
@@ -87,9 +87,14 @@ capability, a table, a column, a policy or a grant on any table.
 > `expected_previous_version` `20260817104226` / `spond_team_reconcile`, the
 > ACTUAL stamp rather than a guessed one, with the idempotency key
 > `otj:migration:0050_bulk_delete_players` and five object probes, and it is in
-> the production workflow's dropdown. Nothing about that applies it: the
-> workflow is `workflow_dispatch` only and holds at the production environment
-> gate for a human.
+> the production workflow's dropdown. The registration alone applied nothing:
+> the workflow is `workflow_dispatch` only and holds at the production
+> environment gate for a human. That gate has since been passed: **0050 was
+> applied on 23 August 2026** by workflow run 32623941411 from this PR's
+> reviewed commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f`, the hosted ledger
+> stamped it `20260823065041` / `bulk_delete_players`, the recorded statement
+> matched the reviewed file, all five probes read true post-apply, and 0049's
+> row is now the entry immediately before it.
 >
 > **The probes resolve no name, and do not spell the function names.** Three of
 > the four functions carry the substring `delete`, which the verifier's

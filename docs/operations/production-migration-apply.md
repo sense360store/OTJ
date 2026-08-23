@@ -254,12 +254,14 @@ was a separate gated step and was likewise safe in either order: a deployment
 that does not return the member id yet lands as `''`, which the client reads as
 no identity, so the reconciliation offers nothing rather than misfiring.
 
-## Reviewed, registered, not yet applied
+## What `0050` does, kept for reference
 
-`0050_bulk_delete_players`, on the PLAYERS-01 branch (PR #191). **DESTRUCTIVE**,
-and the one entry in this document that deletes child data. Registered against
+`0050_bulk_delete_players` is **DESTRUCTIVE** when its entry point is called,
+and the one entry in this document that deletes child data; applying it
+destroyed nothing, since it only creates functions. Registered against
 `20260817104226` / `spond_team_reconcile`, the row `0049`'s apply stamped, with
-the idempotency key `otj:migration:0050_bulk_delete_players`.
+the idempotency key `otj:migration:0050_bulk_delete_players`, and applied on
+23 August 2026 at hosted version `20260823065041` (see the apply record above).
 
 It adds four functions and nothing else: no table, no column, no index, no
 policy, no grant on any table, no capability key and no trigger. It creates no
@@ -285,16 +287,20 @@ identical text without carrying the word.
 `test_0050_probe_totality.sh` flips all five probes against a real PostgreSQL
 in the absent state, the applied state and six wrong-ACL states, and runs in CI.
 
-**The rollout order for this one is the reverse of the usual.** `0048` was
+**The rollout order for this one was the reverse of the usual.** `0048` was
 applied before its frontend merged and this document explains why that is
-normally right. Here it is not merely right, it is required: the repository
+normally right. Here it was not merely right, it was required: the repository
 auto-deploys `main` to Vercel and the new Registered players screens call these
-RPCs, so merging first would ship a client calling functions the database does
-not have. Run this workflow against the reviewed **#191 branch commit**, confirm
-the post-apply gate, and only then merge.
+RPCs, so merging first would have shipped a client calling functions the
+database did not have. The workflow was therefore run against the reviewed
+**#191 branch commit** `2d1de99827064f6856374bfc3c094cf50ae1cc3f` on 23 August
+2026, the post-apply gate passed, and only then did the branch merge.
 
-Applied entries are never removed from the register, so this section being empty
-means there is nothing pending, not that nothing is registered.
+## Reviewed, registered, not yet applied
+
+Nothing. Every entry in `REVIEWED_MIGRATIONS` has been applied. Applied entries
+are never removed from the register, so this section being empty means there is
+nothing pending, not that nothing is registered.
 
 ## What runs, in order
 
