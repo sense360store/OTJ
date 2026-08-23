@@ -23,6 +23,8 @@ import {
   bulkDeletePhrase,
   changeLines,
   historyLines,
+  overBulkDeleteLimit,
+  overLimitMessage,
   previewIsStale,
   removalLines,
   type DeletePreview,
@@ -46,7 +48,13 @@ export function BulkDeletePlayersModal({
   const count = playerIds.length
   const [typed, setTyped] = useState('')
 
-  const preview = useDeletePlayersPreview(playerIds, true)
+  // The server refuses a run over its cap outright (0050, 22023), so a
+  // selection past it must never arm: the dialog says exactly what to do
+  // instead, and the preview is not even asked, because counting what an
+  // impossible run would touch reads as though the run could happen.
+  const overLimit = overBulkDeleteLimit(count)
+
+  const preview = useDeletePlayersPreview(playerIds, !overLimit)
   const del = useBulkDeletePlayers()
   const { submit, pending, failed, error } = useGuardedSubmit<
     { playerIds: string[]; expectedCount: number },
@@ -98,6 +106,12 @@ export function BulkDeletePlayersModal({
         </>
       }
     >
+      {overLimit && (
+        <div role="alert" className="bulk-delete-stale">
+          {overLimitMessage(count)}
+        </div>
+      )}
+
       {preview.isLoading && <Loading />}
 
       {preview.isError && (

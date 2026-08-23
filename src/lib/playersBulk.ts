@@ -143,6 +143,30 @@ export function canBulkDelete(opts: { canManage: boolean; canDelete: boolean; wr
 // The confirmation gate
 // ---------------------------------------------------------------------
 
+// The server's hard cap on one run, mirrored from the applied
+// 0050_bulk_delete_players.sql ("if v_requested > 200 then ... 22023").
+// That file is frozen (it is what production ran), so the number cannot
+// drift server side; this constant is what lets the dialog refuse an
+// oversized selection with an actionable sentence instead of arming a run
+// the server will always reject with a generic failure.
+export const BULK_DELETE_MAX = 200
+
+export function overBulkDeleteLimit(count: number): boolean {
+  return count > BULK_DELETE_MAX
+}
+
+// The actionable refusal: it names the cap, the selection and exactly what
+// to do. Deselecting down to the cap and running in parts are both real
+// answers; silently capping the selection is not, because the run must
+// only ever be what the admin chose.
+export function overLimitMessage(count: number): string {
+  const excess = count - BULK_DELETE_MAX
+  return (
+    `At most ${BULK_DELETE_MAX} players can be deleted in one run, and ${count} are selected. ` +
+    `Deselect ${excess === 1 ? '1 player' : `${excess} players`} and try again, or delete in smaller runs.`
+  )
+}
+
 // The typed phrase. The single row delete asks for the child's name, which does
 // not scale and would mean typing six names; the bulk gate asks for a phrase
 // that NAMES THE NUMBER, so a stale count is something the admin has to retype

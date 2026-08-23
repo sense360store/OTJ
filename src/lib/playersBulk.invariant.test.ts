@@ -185,6 +185,24 @@ describe('the applied migration stays frozen', () => {
   })
 })
 
+describe('the server cap is refused before the server has to', () => {
+  it('the applied SQL still carries the cap the client mirrors', () => {
+    // BULK_DELETE_MAX must equal the applied function's cap. The SQL side
+    // cannot move (the file is hash-frozen above); this catches the mirror
+    // being edited away from it. The value itself is pinned behaviourally
+    // in playersBulk.test.ts.
+    const sql = readFileSync(join(ROOT, 'supabase/migrations/0050_bulk_delete_players.sql'), 'utf8')
+    expect(sql).toContain('if v_requested > 200 then')
+  })
+
+  it('the dialog refuses an oversized selection and never asks for its preview', () => {
+    const modal = code(read('components/BulkDeletePlayersModal.tsx'))
+    expect(modal).toContain('overBulkDeleteLimit')
+    expect(modal).toContain('{overLimitMessage(count)}')
+    expect(modal).toMatch(/useDeletePlayersPreview\(playerIds, !overLimit\)/)
+  })
+})
+
 describe('the preview reads as a snapshot, not a frozen deletion total', () => {
   it('the dialog mounts the snapshot note beside the counts', () => {
     // The note is the one concise statement that the counts are current and

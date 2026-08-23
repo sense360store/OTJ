@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RegisteredPlayer } from './data'
 import {
+  BULK_DELETE_MAX,
   EMPTY_SELECTION,
   PREVIEW_SNAPSHOT_NOTE,
   ZERO_PREVIEW,
@@ -22,6 +23,8 @@ import {
   clearSelection,
   confineToShown,
   historyLines,
+  overBulkDeleteLimit,
+  overLimitMessage,
   parseDeletePreview,
   previewIsStale,
   removalLines,
@@ -432,5 +435,27 @@ describe('the history contract survives dependency drift, because the preview is
     expect(previewIsStale({ ...ZERO_PREVIEW, requested: 6, players: 5 })).toBe(true)
     expect(bulkDeletePhrase(6)).toBe('DELETE 6 PLAYERS')
     expect(bulkDeleteConfirmed('delete 6 players', 6)).toBe(true)
+  })
+})
+
+describe('a selection past the server cap never arms', () => {
+  // delete_players refuses more than 200 ids outright (0050, errcode 22023),
+  // and that message is not one the client's stale-selection recognition
+  // matches, so without this gate an admin was walked through the preview and
+  // the typed phrase into a run that could only ever fail generically.
+
+  it('mirrors the applied cap exactly and trips only past it', () => {
+    expect(BULK_DELETE_MAX).toBe(200)
+    expect(overBulkDeleteLimit(BULK_DELETE_MAX)).toBe(false)
+    expect(overBulkDeleteLimit(BULK_DELETE_MAX + 1)).toBe(true)
+    expect(overBulkDeleteLimit(0)).toBe(false)
+  })
+
+  it('says the cap, the selection and exactly what to do', () => {
+    expect(overLimitMessage(214)).toBe(
+      'At most 200 players can be deleted in one run, and 214 are selected. ' +
+        'Deselect 14 players and try again, or delete in smaller runs.',
+    )
+    expect(overLimitMessage(201)).toContain('Deselect 1 player and')
   })
 })
