@@ -29,6 +29,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { DesktopTable, PlayerCard, type RowSelection } from './Players'
 import { BulkSelectionBar } from '../components/BulkDeletePlayersModal'
 import {
+  PREVIEW_SNAPSHOT_NOTE,
   bulkDeleteConfirmed,
   changeLines,
   historyLines,
@@ -218,6 +219,16 @@ describe('the preview says what a run destroys before it can be confirmed', () =
 
   it('says in words that the register entries are destroyed and kept nowhere else', () => {
     expect(historyLines(preview)[0]).toContain('kept nowhere else')
+  })
+
+  it('describes the counts as the current preview, and the note states the snapshot contract', () => {
+    // The deletion is defined by the selected identities; the counts are what
+    // exists now, and entries recorded after the preview still go with their
+    // child. The copy has to be true across that window.
+    expect(historyLines(preview)[0]).toContain('current preview shows 27 register entries across 9 sessions')
+    expect(historyLines(preview)[0]).toContain('when the deletion runs')
+    expect(PREVIEW_SNAPSHOT_NOTE).toContain('current snapshot')
+    expect(PREVIEW_SNAPSHOT_NOTE).toContain('exist when the deletion runs')
   })
 
   it('says Spond itself is never changed', () => {

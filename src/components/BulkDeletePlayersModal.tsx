@@ -7,13 +7,17 @@
 //
 // Nothing here is optimistic. The dialog cannot be dismissed while the run is
 // in flight, a failure keeps the selection so Retry resends exactly the same
-// ids, and a stale preview is refused by the server rather than reconciled
-// here. The names listed are the ones the caller already holds; they reach no
-// URL, no log and no audit payload.
+// ids, and a stale PLAYER SELECTION (the identity count) is refused by the
+// server rather than reconciled here. The dependency counts are a current
+// snapshot beside that gate, not part of it: the server recomputes them as
+// truth under the deletion lock, and the copy states that contract. The names
+// listed are the ones the caller already holds; they reach no URL, no log and
+// no audit payload.
 import { useState } from 'react'
 import { useBulkDeletePlayers, useDeletePlayersPreview, isStaleBulkSelection } from '../lib/queries'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
 import {
+  PREVIEW_SNAPSHOT_NOTE,
   bulkDeleteButtonLabel,
   bulkDeleteConfirmed,
   bulkDeletePhrase,
@@ -128,6 +132,8 @@ export function BulkDeletePlayersModal({
               </ul>
             </>
           )}
+
+          <p className="bulk-delete-note">{PREVIEW_SNAPSHOT_NOTE}</p>
 
           <div className="bulk-delete-history">
             <h4>What happens to history</h4>

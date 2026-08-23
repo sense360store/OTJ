@@ -11,6 +11,7 @@
 // src/lib/playersBulk.test.ts, src/routes/Players.bulk.test.tsx, the migration's
 // own SQL behaviour proof and tests/security/players-bulk-delete.test.ts.
 // =====================================================================
+import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -139,6 +140,64 @@ describe('no child name leaves the page', () => {
   it('the model writes no name into any string it builds', () => {
     const model = code(read('lib/playersBulk.ts'))
     expect(model).not.toMatch(/displayName/)
+  })
+})
+
+describe('the applied migration stays frozen', () => {
+  // 0050 was applied to production on 23 August 2026 from commit 2d1de998
+  // (hosted version 20260823065041). The destructive review holds only for
+  // those bytes, so the file may never drift from what production ran. The
+  // hashes are taken over the file with its trailing newline stripped,
+  // which is the shape the hosted ledger stores and the workflow records.
+  const applied = () => {
+    const raw = readFileSync(join(ROOT, 'supabase/migrations/0050_bulk_delete_players.sql'), 'utf8')
+    return Buffer.from(raw.replace(/\n+$/, ''), 'utf8')
+  }
+
+  it('hashes to exactly what production recorded', () => {
+    const bytes = applied()
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      'caeadd53de608ae7ae83e789ea5b4733328b59f2f38bfad048115159cdf16a08',
+    )
+    expect(createHash('md5').update(bytes).digest('hex')).toBe('a34ad8932597a467795d47867254fe62')
+  })
+
+  it('its registration still records the state it was reviewed against', () => {
+    // expected_previous is the head BEFORE 0050 applied, a review fact that
+    // never moves with the ledger; the key is what refuses a second apply.
+    const register = readFileSync(
+      join(ROOT, '.github/scripts/production-migration/reviewed_migrations.py'),
+      'utf8',
+    )
+    const entry = register.slice(register.indexOf('0050_bulk_delete_players.sql": ReviewedMigration'))
+    expect(entry).toContain('idempotency_key="otj:migration:0050_bulk_delete_players"')
+    expect(entry).toContain('expected_previous_version="20260817104226"')
+    expect(entry).toContain('expected_previous_name="spond_team_reconcile"')
+  })
+
+  it('the client still calls the applied signature and nothing else', () => {
+    // The RPC names and argument keys are the applied function's identity;
+    // a renamed parameter breaks a PostgREST named-argument call while every
+    // catalog probe stays green, so the seam is pinned here.
+    const queries = code(read('lib/queries.ts'))
+    expect(queries).toMatch(/rpc\('preview_delete_players', \{ p_player_ids: key \}\)/)
+    expect(queries).toMatch(/rpc\('delete_players', \{\s*p_player_ids: playerIds,\s*p_expected_count: expectedCount,\s*\}\)/)
+  })
+})
+
+describe('the preview reads as a snapshot, not a frozen deletion total', () => {
+  it('the dialog mounts the snapshot note beside the counts', () => {
+    // The note is the one concise statement that the counts are current and
+    // the deletion is defined by the selected identities. Its wording is
+    // proved in playersBulk.test.ts; this pins that the dialog shows it.
+    const modal = code(read('components/BulkDeletePlayersModal.tsx'))
+    expect(modal).toContain('{PREVIEW_SNAPSHOT_NOTE}')
+  })
+
+  it('no surface reintroduces the wording that promised a zero stays zero', () => {
+    for (const file of sources()) {
+      expect(code(file.text), file.path).not.toMatch(/no session record changes/i)
+    }
   })
 })
 

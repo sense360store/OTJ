@@ -4369,8 +4369,11 @@ export function useDeletePlayer() {
 //
 // staleTime 0 and gcTime 0: a preview of a destructive operation must never be
 // served from cache. Between opening the dialog twice another admin may have
-// deleted somebody, and a cached count is exactly the stale confirmation the
-// server refuses.
+// deleted somebody, and a cached identity count is exactly the stale
+// confirmation the server refuses. That refusal covers the PLAYER SELECTION
+// only: the dependency counts are informational current-state context, which
+// the server recomputes as truth under the deletion lock rather than
+// revalidating against this preview, and the dialog's copy says so.
 export function useDeletePlayersPreview(playerIds: string[], enabled: boolean) {
   const key = playerIds.slice().sort()
   return useQuery({
@@ -4403,8 +4406,11 @@ export function isStaleBulkSelection(err: unknown): boolean {
 //
 // expectedCount is the number the admin's typed confirmation named. The server
 // revalidates it inside the transaction against the live set and refuses on a
-// mismatch, so a preview that went stale while the dialog was open cannot
-// become a deletion of a different number of children.
+// mismatch, so a selection that went stale while the dialog was open cannot
+// become a deletion of a different number of children. That revalidation is
+// the identity count only, by design: the dependency counts are recomputed as
+// server truth under the deletion lock and are returned and audited from
+// there, never compared against the preview the dialog showed.
 export function useBulkDeletePlayers() {
   const qc = useQueryClient()
   return useMutation<DeletePreview, Error, { playerIds: string[]; expectedCount: number }>({

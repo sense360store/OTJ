@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import type { RegisteredPlayer } from './data'
 import {
   EMPTY_SELECTION,
+  PREVIEW_SNAPSHOT_NOTE,
   ZERO_PREVIEW,
   allShownSelected,
   bulkDeleteButtonLabel,
@@ -373,5 +374,63 @@ describe('the history statement is always made, and says what is destroyed', () 
       expect(joined).toMatch(/cannot be undone/)
       expect(joined).toMatch(/Withdraw is the reversible way/)
     }
+  })
+})
+
+describe('the history contract survives dependency drift, because the preview is a snapshot', () => {
+  // The window this pins: dependency counts are read at preview time, and a
+  // register entry recorded for a selected child between the preview and the
+  // press is deleted with that child. The server revalidates only the
+  // identity count and recomputes the dependency counts under the deletion
+  // lock, so the COPY has to be true across that window: it may describe the
+  // counts as current, and it may never promise that a zero stays zero.
+
+  it('never promises that no session history can change, whatever the current count reads', () => {
+    // The mutation this exists to catch: restoring the earlier zero-count
+    // wording, "no session record changes", which a coach recording
+    // attendance between the preview and the press made false.
+    for (const p of [
+      { ...ZERO_PREVIEW, players: 2, requested: 2 },
+      { ...ZERO_PREVIEW, players: 6, requested: 6, registerEntries: 27, registerSessions: 9 },
+    ]) {
+      const joined = historyLines(p).join(' ')
+      expect(joined).not.toMatch(/no session record changes/i)
+      expect(joined).not.toMatch(/nothing (?:will|can) change/i)
+      expect(joined).not.toMatch(/have no register entries, so/i)
+    }
+  })
+
+  it('describes a non zero count as the current preview, never as a frozen deletion total', () => {
+    const line = historyLines({
+      ...ZERO_PREVIEW,
+      players: 6,
+      requested: 6,
+      registerEntries: 27,
+      registerSessions: 9,
+    })[0]
+    expect(line).toMatch(/current preview shows 27 register entries across 9 sessions/)
+    expect(line).toMatch(/when the deletion runs/)
+  })
+
+  it('says at zero that entries recorded before the press still go, and the sessions never do', () => {
+    const line = historyLines({ ...ZERO_PREVIEW, players: 2, requested: 2 })[0]
+    expect(line).toMatch(/current preview shows no register entries/)
+    expect(line).toMatch(/before Delete is pressed/)
+    expect(line).toMatch(/permanently removed with the player identities/)
+    expect(line).toMatch(/sessions themselves are never touched/)
+  })
+
+  it('states the snapshot contract once, beside the counts', () => {
+    expect(PREVIEW_SNAPSHOT_NOTE).toMatch(/current snapshot/)
+    expect(PREVIEW_SNAPSHOT_NOTE).toMatch(/selected players/)
+    expect(PREVIEW_SNAPSHOT_NOTE).toMatch(/exist when the deletion runs/)
+  })
+
+  it('gates nothing on a dependency count: staleness and the typed phrase stay identity based', () => {
+    // A drifted dependency count arms and refuses exactly as before.
+    expect(previewIsStale({ ...ZERO_PREVIEW, requested: 6, players: 6, registerEntries: 999 })).toBe(false)
+    expect(previewIsStale({ ...ZERO_PREVIEW, requested: 6, players: 5 })).toBe(true)
+    expect(bulkDeletePhrase(6)).toBe('DELETE 6 PLAYERS')
+    expect(bulkDeleteConfirmed('delete 6 players', 6)).toBe(true)
   })
 })

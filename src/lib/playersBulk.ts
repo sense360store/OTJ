@@ -173,6 +173,14 @@ export function bulkDeleteButtonLabel(count: number): string {
 // server computed count over server truth; nothing here is derived in the
 // browser, because a browser derived preview of a destructive operation is a
 // guess wearing a number.
+//
+// The counts are a point-in-time snapshot, and only the identity count is a
+// gate. The server refuses a stale PLAYER SELECTION (players versus requested
+// here, and the typed number inside the transaction); the dependency counts
+// are informational current-state context, recomputed as server truth under
+// the deletion lock and returned and audited from there. The dialog's copy
+// states that contract (historyLines, PREVIEW_SNAPSHOT_NOTE) rather than
+// implying every number on screen is revalidated.
 export interface DeletePreview {
   // How many distinct ids were asked about.
   requested: number
@@ -245,6 +253,14 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
+// One concise statement of the snapshot contract, rendered beside the
+// dependency counts so the numbers cannot read as a frozen deletion total.
+// The deletion is defined by the selected identities; the counts are what
+// exists now.
+export const PREVIEW_SNAPSHOT_NOTE =
+  'These counts are a current snapshot. Permanent deletion applies to the selected players and any of their ' +
+  'local records that exist when the deletion runs.'
+
 // The "this will remove" list. Rows that would remove nothing are left out
 // entirely, so a club with no Spond and no boards reads a short honest list
 // instead of a wall of zeroes; the identities line is always present because it
@@ -289,17 +305,32 @@ export function changeLines(p: DeletePreview): string[] {
 // criteria: register entries are the one dependency that is DESTROYED rather
 // than degraded to a neutral reference, so the dialog says so in the plainest
 // words available rather than leaving it to a number in a list.
+//
+// Both branches state the same contract, and it is the identity contract:
+// permanent deletion is defined by the selected player identities, and it
+// takes whatever register entries those identities hold WHEN THE DELETION
+// RUNS. The counts are a current snapshot. The server revalidates only the
+// identity count; it recomputes the dependency counts under the deletion
+// lock and returns and audits those recomputed numbers, never comparing
+// them against this preview. So a zero count must never promise that no
+// session history can change, which is what an earlier wording of the zero
+// branch did ("no session record changes"): a coach recording attendance
+// for a selected child between the preview and the press made it false.
 export function historyLines(p: DeletePreview): string[] {
   const lines: string[] = []
   if (p.registerEntries > 0) {
     lines.push(
-      'Session history: each of those register entries is that child’s own attendance, group inclusion and bib ' +
-        'for one session. It goes with them and is kept nowhere else. The sessions themselves, their plans and every ' +
+      'Session history: any register entries belonging to these players when the deletion runs are permanently ' +
+        'removed with them. Each one is that child’s own attendance, group inclusion and bib for one session. It ' +
+        'goes with them and is kept nowhere else. The current preview shows ' +
+        `${plural(p.registerEntries, 'register entry', 'register entries')} across ` +
+        `${plural(p.registerSessions, 'session', 'sessions')}. The sessions themselves, their plans and every ` +
         'other child’s entries are untouched.',
     )
   } else {
     lines.push(
-      'Session history: these players have no register entries, so no session record changes. The sessions ' +
+      'Session history: the current preview shows no register entries for these players. If any are recorded ' +
+        'before Delete is pressed, they are permanently removed with the player identities too. The sessions ' +
         'themselves are never touched by a deletion.',
     )
   }
