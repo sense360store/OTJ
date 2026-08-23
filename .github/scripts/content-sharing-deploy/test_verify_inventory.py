@@ -14,7 +14,9 @@ import contextlib
 import io
 import json
 import os
+import pathlib
 import tempfile
+import tomllib
 import unittest
 import urllib.error
 
@@ -22,19 +24,48 @@ import verify_inventory as vi
 
 TOKEN_SENTINEL = "sk-TEST-TOKEN-SHOULD-NEVER-BE-PRINTED-000"
 
-# A well-formed ten-function CLI list, verify_jwt present and correct.
-TEN_VALID = [
+# A well-formed ELEVEN-function CLI list, verify_jwt present and correct: the
+# nine authenticated functions plus the two sharing ones. Written out rather
+# than derived from vi.EXPECTED on purpose. Deriving it would make the
+# happy-path test tautological, since the fixture would agree with the pin by
+# construction whatever the pin said; this is a second, independent statement
+# of the production inventory, and test_the_fixture_and_the_pin_agree below is
+# what reports it if the two ever drift.
+ELEVEN_VALID = [
     {"slug": "invite-user", "verify_jwt": True, "version": 15, "updated_at": "2026-07-01T00:00:00Z", "ezbr_sha256": "aa"},
     {"slug": "fa-import", "verify_jwt": True, "version": 15, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "bb"},
     {"slug": "fa-import-programme", "verify_jwt": True, "version": 14, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "cc"},
     {"slug": "remove-user", "verify_jwt": True, "version": 9, "updated_at": "2026-07-01T00:00:00Z", "ezbr_sha256": "dd"},
     {"slug": "spond-sync", "verify_jwt": True, "version": 9, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "ee"},
     {"slug": "spond-roster-import", "verify_jwt": True, "version": 10, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "ff"},
+    {"slug": "spond-link-members", "verify_jwt": True, "version": 4, "updated_at": "2026-08-17T10:52:25Z", "ezbr_sha256": "55"},
     {"slug": "feedback-to-github", "verify_jwt": True, "version": 5, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "11"},
     {"slug": "feedback-github-refresh", "verify_jwt": True, "version": 1, "updated_at": "2026-06-01T00:00:00Z", "ezbr_sha256": "22"},
     {"slug": "manage-content-share", "verify_jwt": True, "version": 1, "updated_at": "2026-07-22T00:00:00Z", "ezbr_sha256": "33"},
     {"slug": "read-content-share", "verify_jwt": False, "version": 2, "updated_at": "2026-07-22T00:00:00Z", "ezbr_sha256": "44"},
 ]
+
+
+def declared_jwt_postures(config_text: str) -> dict[str, bool]:
+    """Every [functions.<slug>] block that declares verify_jwt, from TOML.
+
+    Parsed with tomllib rather than matched with a regex. A regex anchored to
+    the line after the header silently drops any block with an entrypoint,
+    another setting or a comment first, which makes a check over the result
+    quietly narrower than it reads. A block that declares no verify_jwt is
+    omitted rather than defaulted: the deployer's default is true, but this
+    function reports what the file SAYS, and inventing a value here would be
+    the same mistake one level down.
+    """
+    data = tomllib.loads(config_text)
+    functions = data.get("functions")
+    if not isinstance(functions, dict):
+        return {}
+    out: dict[str, bool] = {}
+    for slug, table in functions.items():
+        if isinstance(table, dict) and isinstance(table.get("verify_jwt"), bool):
+            out[slug] = table["verify_jwt"]
+    return out
 
 
 def write_json(payload) -> str:
@@ -63,29 +94,33 @@ def run_cli(payload) -> tuple[int, str]:
 
 
 class TestValidInventory(unittest.TestCase):
-    def test_valid_ten_function_cli_json_passes(self):
-        code, out = run_cli(TEN_VALID)
+    def test_the_exact_eleven_function_inventory_passes(self):
+        code, out = run_cli(ELEVEN_VALID)
         self.assertEqual(code, 0, out)
         self.assertIn("PASS", out)
         self.assertIn("JWT posture verified from CLI metadata", out)
+        # The count in the PASS line is derived from EXPECTED, not written out
+        # again, so a future addition cannot leave a stale number behind.
+        self.assertIn(f"{len(vi.EXPECTED)} functions present", out)
+        self.assertEqual(len(ELEVEN_VALID), 11)
 
     def test_valid_json_wrapped_in_object_passes(self):
         # Defensive: some CLI/API shapes wrap the array under a key.
-        code, out = run_cli({"functions": TEN_VALID})
+        code, out = run_cli({"functions": ELEVEN_VALID})
         self.assertEqual(code, 0, out)
         self.assertIn("PASS", out)
 
 
 class TestFailureModes(unittest.TestCase):
     def test_missing_manage_content_share_fails(self):
-        payload = [f for f in TEN_VALID if f["slug"] != "manage-content-share"]
+        payload = [f for f in ELEVEN_VALID if f["slug"] != "manage-content-share"]
         code, out = run_cli(payload)
         self.assertEqual(code, 1)
         self.assertIn("missing function(s)", out)
         self.assertIn("manage-content-share", out)
 
     def test_unexpected_function_fails(self):
-        payload = TEN_VALID + [{"slug": "rogue-fn", "verify_jwt": True, "version": 1}]
+        payload = ELEVEN_VALID + [{"slug": "rogue-fn", "verify_jwt": True, "version": 1}]
         code, out = run_cli(payload)
         self.assertEqual(code, 1)
         self.assertIn("unexpected function(s) deployed", out)
@@ -93,7 +128,7 @@ class TestFailureModes(unittest.TestCase):
 
     def test_wrong_jwt_posture_fails(self):
         # read-content-share must be anonymous; flip it to verify_jwt=true.
-        payload = json.loads(json.dumps(TEN_VALID))
+        payload = json.loads(json.dumps(ELEVEN_VALID))
         for fn in payload:
             if fn["slug"] == "read-content-share":
                 fn["verify_jwt"] = True
@@ -107,13 +142,73 @@ class TestFailureModes(unittest.TestCase):
         )
 
     def test_second_anonymous_function_fails(self):
-        payload = json.loads(json.dumps(TEN_VALID))
+        payload = json.loads(json.dumps(ELEVEN_VALID))
         for fn in payload:
             if fn["slug"] == "manage-content-share":
                 fn["verify_jwt"] = False
         code, out = run_cli(payload)
         self.assertEqual(code, 1)
         self.assertIn("only anonymous function", out)
+
+    def test_missing_spond_link_members_fails(self):
+        """The new pin must bite in the missing direction as well.
+
+        Adding a slug to an allowlist is only half a reconciliation: if the
+        function then disappears from hosted, the gate has to notice.
+        """
+        payload = [f for f in ELEVEN_VALID if f["slug"] != "spond-link-members"]
+        code, out = run_cli(payload)
+        self.assertEqual(code, 1)
+        self.assertIn("missing function(s)", out)
+        self.assertIn("spond-link-members", out)
+        self.assertIn(f"expected {len(vi.EXPECTED)} functions, found 10", out)
+
+    def test_spond_link_members_anonymous_fails(self):
+        """It is an authenticated function and must stay one.
+
+        Two assertions catch this independently: its own verify_jwt pin, and
+        the rule that read-content-share is the only anonymous function. Both
+        are checked here so neither can be quietly removed.
+        """
+        payload = json.loads(json.dumps(ELEVEN_VALID))
+        for fn in payload:
+            if fn["slug"] == "spond-link-members":
+                fn["verify_jwt"] = False
+        code, out = run_cli(payload)
+        self.assertEqual(code, 1)
+        self.assertIn("spond-link-members: verify_jwt expected True, got False", out)
+        self.assertIn("only anonymous function", out)
+
+    def test_read_content_share_remains_the_only_anonymous_function(self):
+        """Stated over the pin itself, not only over a fixture.
+
+        A fixture can be edited to agree with a mistake. This asserts the
+        reviewed allowlist carries exactly one anonymous entry, so widening the
+        anonymous surface fails here even if every fixture were updated to
+        match.
+        """
+        anonymous = sorted(slug for slug, jwt in vi.EXPECTED.items() if jwt is False)
+        self.assertEqual(anonymous, ["read-content-share"])
+        fixture_anonymous = sorted(
+            fn["slug"] for fn in ELEVEN_VALID if fn["verify_jwt"] is False
+        )
+        self.assertEqual(fixture_anonymous, ["read-content-share"])
+
+    def test_an_unknown_function_alongside_spond_link_members_still_fails(self):
+        """Reconciling one function must not make the gate tolerant of another.
+
+        This is the failure the reconciliation is answering, so it is worth
+        proving that the answer was "add the reviewed slug" and not "stop
+        minding extra slugs".
+        """
+        payload = ELEVEN_VALID + [
+            {"slug": "spond-link-members-v2", "verify_jwt": True, "version": 1}
+        ]
+        code, out = run_cli(payload)
+        self.assertEqual(code, 1)
+        self.assertIn("unexpected function(s) deployed", out)
+        self.assertIn("spond-link-members-v2", out)
+        self.assertIn(f"expected {len(vi.EXPECTED)} functions, found 12", out)
 
     def test_malformed_cli_response_fails(self):
         # Not JSON at all.
@@ -132,7 +227,7 @@ class TestJwtMetadataAbsent(unittest.TestCase):
     def test_absent_verify_jwt_defers_to_smoke_tests(self):
         # A CLI build that omits verify_jwt: inventory still verified, JWT
         # posture not claimed (deferred), overall PASS on inventory.
-        payload = [{k: v for k, v in fn.items() if k != "verify_jwt"} for fn in TEN_VALID]
+        payload = [{k: v for k, v in fn.items() if k != "verify_jwt"} for fn in ELEVEN_VALID]
         code, out = run_cli(payload)
         self.assertEqual(code, 0, out)
         self.assertIn("deferred to smoke tests", out)
@@ -141,7 +236,7 @@ class TestJwtMetadataAbsent(unittest.TestCase):
     def test_absent_metadata_still_fails_on_missing_function(self):
         payload = [
             {k: v for k, v in fn.items() if k != "verify_jwt"}
-            for fn in TEN_VALID
+            for fn in ELEVEN_VALID
             if fn["slug"] != "spond-sync"
         ]
         code, out = run_cli(payload)
@@ -193,11 +288,136 @@ class TestNoSecretPrinted(unittest.TestCase):
     def test_token_never_appears_in_output(self):
         os.environ["SUPABASE_ACCESS_TOKEN"] = TOKEN_SENTINEL
         try:
-            code, out = run_cli(TEN_VALID)
+            code, out = run_cli(ELEVEN_VALID)
         finally:
             del os.environ["SUPABASE_ACCESS_TOKEN"]
         self.assertEqual(code, 0, out)
         self.assertNotIn(TOKEN_SENTINEL, out)
+
+
+class TestInventoryPinIsReconciled(unittest.TestCase):
+    """Guards against the drift that caused GitHub Actions run 32480333370.
+
+    spond-link-members was added to the repository and deployed on 17 August
+    2026 through its own gated workflow. This pin was not reconciled with it,
+    and the next content-sharing deploy failed at the inventory step with both
+    sharing functions already deployed. Nothing in the build said so first.
+    """
+
+    def test_the_pin_holds_exactly_eleven_functions(self):
+        self.assertEqual(len(vi.EXPECTED), 11)
+
+    def test_the_fixture_and_the_pin_agree(self):
+        """The fixture is an independent statement; report drift, do not hide it."""
+        self.assertEqual(
+            sorted(fn["slug"] for fn in ELEVEN_VALID), sorted(vi.EXPECTED)
+        )
+        for fn in ELEVEN_VALID:
+            self.assertIs(
+                fn["verify_jwt"], vi.EXPECTED[fn["slug"]],
+                f"{fn['slug']}: fixture and pin disagree on verify_jwt",
+            )
+
+    def test_expected_matches_the_repositorys_edge_functions(self):
+        """Every deployable function directory must be in the pin, and vice versa.
+
+        This is the tripwire that was missing. Adding
+        supabase/functions/<slug>/ without reconciling EXPECTED now fails the
+        build at review time instead of at a production deploy.
+
+        What it cannot catch, stated rather than implied: a function that
+        exists on hosted but not in this repository. Nothing in the repository
+        can see that, and it is precisely what the inventory gate itself
+        catches at deploy time by comparing the pin against the live CLI list.
+
+        Directories beginning with an underscore are shared modules, not
+        deployable functions, and are excluded.
+        """
+        root = pathlib.Path(vi.__file__).resolve().parents[3]
+        functions_dir = root / "supabase" / "functions"
+        self.assertTrue(functions_dir.is_dir(), f"not found: {functions_dir}")
+        on_disk = sorted(
+            d.name for d in functions_dir.iterdir()
+            if d.is_dir() and not d.name.startswith("_")
+        )
+        self.assertTrue(on_disk, "found no function directories to compare")
+        self.assertEqual(
+            on_disk, sorted(vi.EXPECTED),
+            "the reviewed inventory pin and supabase/functions/ disagree. "
+            "Adding an Edge Function means reconciling EXPECTED in "
+            "verify_inventory.py, even when the function is unrelated to "
+            "content sharing and has its own gated deploy workflow.",
+        )
+
+    def test_the_config_parser_sees_every_block_whatever_its_shape(self):
+        """The parser must not silently narrow what it is checking.
+
+        This existed first as a regex requiring verify_jwt to be the line
+        immediately after the [functions.<slug>] header. Any block with an
+        entrypoint, another setting or a comment in between was dropped
+        entirely, so the comparison below skipped it and passed while checking
+        less than it claimed: exactly the vacuous-check shape these tripwires
+        are meant to prevent. Parsed as TOML now, and pinned here over the
+        shapes that defeated the regex.
+        """
+        awkward = (
+            "[functions.manage-content-share]\n"
+            "verify_jwt = true\n"
+            "\n"
+            "[functions.read-content-share]\n"
+            'entrypoint = "./functions/read-content-share/index.ts"\n'
+            "verify_jwt = false\n"
+            "\n"
+            "[functions.spond-sync]\n"
+            "# a comment about posture\n"
+            "verify_jwt = true\n"
+        )
+        self.assertEqual(
+            declared_jwt_postures(awkward),
+            {
+                "manage-content-share": True,
+                "read-content-share": False,
+                "spond-sync": True,
+            },
+        )
+        # A block with no verify_jwt key is absent rather than guessed at.
+        self.assertEqual(declared_jwt_postures("[functions.x]\nentrypoint = \"y\"\n"), {})
+        self.assertEqual(declared_jwt_postures(""), {})
+
+    def test_every_pinned_function_declares_its_jwt_posture_in_config(self):
+        """config.toml and the pin must not disagree about the anonymous one.
+
+        Only functions with an explicit [functions.<slug>] block are checked;
+        the deployer's default is verify_jwt = true and the pin agrees with
+        that default for the rest. A block saying false for anything but
+        read-content-share, or true for read-content-share, fails here.
+
+        The count assertion is what keeps this honest: every negative below
+        sits behind a positive, so a parser that started returning nothing
+        would fail here rather than vacuously agreeing with the pin.
+        """
+        root = pathlib.Path(vi.__file__).resolve().parents[3]
+        config = (root / "supabase" / "config.toml").read_text(encoding="utf-8")
+        declared = declared_jwt_postures(config)
+
+        self.assertEqual(
+            sorted(declared),
+            ["manage-content-share", "read-content-share", "spond-link-members",
+             "spond-roster-import", "spond-sync"],
+            "the set of functions declaring an explicit verify_jwt in "
+            "config.toml changed; reconcile this test with the pin",
+        )
+        self.assertIs(declared["read-content-share"], False,
+                      "config.toml no longer declares read-content-share anonymous")
+
+        for slug, value in declared.items():
+            self.assertIn(slug, vi.EXPECTED,
+                          f"config.toml declares {slug}, which is not in the pin")
+            self.assertIs(
+                value, vi.EXPECTED[slug],
+                f"{slug}: config.toml says verify_jwt = {value}, the pin says "
+                f"{vi.EXPECTED[slug]}",
+            )
 
 
 if __name__ == "__main__":

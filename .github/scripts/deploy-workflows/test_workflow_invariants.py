@@ -178,6 +178,119 @@ check("sys.exit(0)" in readback,
       "the readback no longer exits 0 unconditionally; a differing bundle must stay non fatal")
 check("cleanup_workdir" in readback, "the readback step no longer uses cleanup_workdir")
 
+# ---------------------------------------------------------------------------
+# content-sharing: the pre/post hosted gates, and the live sharing baseline
+# that is handed from one to the other.
+#
+# The baseline is what makes "the deploy changed no sharing state" provable
+# now that shares legitimately exist. It is only worth anything if the two
+# phases agree on the path, if the deploy cannot run before the pre phase has
+# succeeded, and if the file never leaves the runner.
+# ---------------------------------------------------------------------------
+ccs = WORKFLOWS / "deploy-content-sharing-functions.yml"
+ccs_steps = steps_of(ccs)
+ccs_names = [s.get("name", "") for s in ccs_steps]
+ccs_bodies = {s.get("name", ""): strip_shell_comments(s.get("run") or "")
+              for s in ccs_steps if s.get("run")}
+ccs_whole = "\n".join(ccs_bodies.values())
+
+BASELINE_FLAG = re.compile(r"--baseline-(out|in)\s+\"([^\"]+)\"")
+# The phase must be matched as a WHOLE argument. A substring test read
+# "--phase post-DISABLED" as the post phase and reported the gate present while
+# the verifier would have refused the argument outright.
+PHASE_ARG = re.compile(r"--phase\s+(\S+)")
+
+
+def runs_phase(body: str, phase: str) -> bool:
+    return ("verify_no_residue.py" in body
+            and phase in PHASE_ARG.findall(body))
+
+
+paths = {}
+for phase in ("pre", "post"):
+    body = next((b for b in ccs_bodies.values() if runs_phase(b, phase)), None)
+    check(body is not None,
+          f"deploy-content-sharing-functions.yml: no step runs verify_no_residue --phase {phase}")
+    if body is None:
+        continue
+    found = BASELINE_FLAG.findall(body)
+    check(len(found) == 1,
+          f"the {phase} phase must pass exactly one baseline flag, found {found}")
+    if found:
+        direction, path = found[0]
+        want = "out" if phase == "pre" else "in"
+        check(direction == want,
+              f"the {phase} phase passes --baseline-{direction}, expected --baseline-{want}")
+        paths[phase] = path
+
+# The single most load-bearing line here. Two different paths would leave the
+# post phase reading a baseline that was never written, which fails closed but
+# fails EVERY run, and the pressure to "fix" that is what would remove the
+# comparison altogether.
+check(len(paths) == 2 and len(set(paths.values())) == 1,
+      f"the pre and post phases must use the SAME baseline path, got {paths}")
+
+# Runner-local and discarded with the runner.
+for phase, path in paths.items():
+    check(path.startswith("${RUNNER_TEMP}/"),
+          f"the {phase} baseline path is not under RUNNER_TEMP: {path}")
+
+# Never published. An artifact outlives the job and is downloadable by anyone
+# who can see the run.
+for step in ccs_steps:
+    uses = str(step.get("uses") or "")
+    check("upload-artifact" not in uses,
+          f"deploy-content-sharing-functions.yml uploads an artifact ({uses}); "
+          "the sharing baseline must never leave the runner")
+check("upload-artifact" not in ccs_whole,
+      "an artifact upload appears in the content-sharing deploy's executable text")
+
+# Ordering. The pre gate must come before both deploys, and the post gate after
+# the smoke tests, so a breached gate stops the run with nothing deployed.
+def idx(predicate, label):
+    for i, step in enumerate(ccs_steps):
+        if predicate(step):
+            return i
+    check(False, f"deploy-content-sharing-functions.yml: no step {label}")
+    return len(ccs_steps) + 1
+
+pre_i = idx(lambda s: runs_phase(s.get("run") or "", "pre"), "runs the pre gate")
+post_i = idx(lambda s: runs_phase(s.get("run") or "", "post"), "runs the post gate")
+manage_i = idx(lambda s: "functions deploy manage-content-share" in (s.get("run") or ""),
+               "deploys manage-content-share")
+read_i = idx(lambda s: "functions deploy read-content-share" in (s.get("run") or ""),
+             "deploys read-content-share")
+inventory_i = idx(lambda s: "verify_inventory.py" in (s.get("run") or ""),
+                  "verifies the deployed inventory")
+smoke_i = idx(lambda s: "smoke_tests.py" in (s.get("run") or ""), "runs the smoke tests")
+
+check(pre_i < manage_i and pre_i < read_i,
+      "the pre-deploy gate no longer runs before both function deploys")
+check(manage_i < inventory_i and read_i < inventory_i,
+      "inventory verification no longer runs after both deploys")
+check(inventory_i < smoke_i, "the smoke tests no longer run after inventory verification")
+check(smoke_i < post_i, "the post-deploy gate no longer runs after the smoke tests")
+
+# The gates that must survive this change untouched.
+check("check_config_jwt.py" in ccs_whole, "the config.toml JWT posture check is gone")
+check("validate_token.py" in ccs_whole, "the access token validation is gone")
+check("check_source_bytes.py" in ccs_whole, "the deploy source hashing is gone")
+check("verify_inventory.py" in ccs_whole, "the function inventory verification is gone")
+check("smoke_tests.py" in ccs_whole, "the endpoint smoke tests are gone")
+check('!= "${EXPECTED_PROJECT_REF}"' in ccs_whole
+      or '!= "${SUPABASE_PROJECT_ID}"' in ccs_whole,
+      "the project-ref double gate is gone")
+check("--no-verify-jwt" in ccs_whole,
+      "read-content-share is no longer deployed explicitly anonymous")
+
+# The DB URL still reaches only the two verifier steps, never the job env.
+db_steps = [s.get("name", "") for s in ccs_steps
+            if "SUPABASE_DB_URL" in str((s.get("env") or {}).keys())]
+check(len(db_steps) == 3,
+      "SUPABASE_DB_URL is exposed to "
+      f"{len(db_steps)} steps ({db_steps}); expected the two verifier steps plus "
+      "the presence assertion")
+
 print(f"checked {checks} invariants across {len(deploy_workflows)} deploy workflows")
 if failures:
     print("\nFAILED:")

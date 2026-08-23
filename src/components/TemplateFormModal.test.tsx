@@ -25,6 +25,8 @@ function render(): string {
       onDuration={noop}
       onMove={noop}
       onRemove={noop}
+      activities={[activity]}
+      onRole={noop}
     />,
   )
 }

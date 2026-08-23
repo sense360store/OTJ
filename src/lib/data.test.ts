@@ -32,6 +32,46 @@ describe('sessionMinutes', () => {
     ]
     expect(sessionMinutes({ activities })).toBe(25)
   })
+
+  // The one existing rule the coaching structure changes, asserted on the sum
+  // six session surfaces inherit (the session cards, the session day header,
+  // Live, the sessions list, Home and the calendar description).
+  it('is unchanged by declaring the structure', () => {
+    const declared = [
+      { phase: 'Warm-Up' as const, duration: 10, slot: 'station' as const },
+      { phase: 'Skill' as const, duration: 20, drillId: 'd1', slot: 'station' as const },
+      { phase: 'Game' as const, duration: 15, drillId: 'd2', slot: 'game' as const },
+    ]
+    expect(sessionMinutes({ activities: declared })).toBe(45)
+  })
+
+  it('drops a stood-down activity, and only that activity', () => {
+    const activities = [
+      { phase: 'Warm-Up' as const, duration: 10, slot: 'station' as const },
+      { phase: 'Skill' as const, duration: 20, drillId: 'd1', slot: 'station' as const, skipped: true as const },
+      { phase: 'Game' as const, duration: 15, drillId: 'd2', slot: 'game' as const },
+    ]
+    expect(sessionMinutes({ activities })).toBe(25)
+  })
+
+  it('keeps a stray skipped on an activity carrying no slot', () => {
+    // The qualifier's own test: `skipped` means "this station is not running
+    // tonight", so an activity that is not a station has nothing to stand
+    // down and keeps its minutes.
+    const activities = [
+      { phase: 'Warm-Up' as const, duration: 10, skipped: true as const },
+      { phase: 'Game' as const, duration: 15, slot: 'game' as const },
+    ]
+    expect(sessionMinutes({ activities })).toBe(25)
+  })
+
+  it('is zero when every operational activity is stood down', () => {
+    const activities = [
+      { phase: 'Skill' as const, duration: 20, slot: 'station' as const, skipped: true as const },
+      { phase: 'Game' as const, duration: 15, slot: 'game' as const, skipped: true as const },
+    ]
+    expect(sessionMinutes({ activities })).toBe(0)
+  })
 })
 
 describe('embedSrc', () => {

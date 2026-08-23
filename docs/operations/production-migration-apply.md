@@ -18,6 +18,15 @@ order where each one fails before the next can do damage.
 | `0047_register_group_inclusion` | `20260812064038` | `register_group_inclusion` | 2026-08-12 |
 | `0048_spond_session_link_unique` | `20260812102912` | `spond_session_link_unique` | 2026-08-12 |
 | `0049_spond_team_reconcile` | `20260817104226` | `spond_team_reconcile` | 2026-08-17 |
+| `0050_bulk_delete_players` | `20260823065041` | `bulk_delete_players` | 2026-08-23 |
+
+`0050` was applied from the reviewed PLAYERS-01 branch commit
+`2d1de99827064f6856374bfc3c094cf50ae1cc3f` (PR #191) before that branch merged,
+the reverse rollout order its register entry documents: `main` auto-deploys to
+Vercel and the new Registered players screens call these functions, so merging
+first would have shipped a client calling functions the database did not have.
+Until #191 merges, the migration file and its register entry live on that
+branch; the hosted ledger, which is the authority, already records the apply.
 
 `0047` stays in the dropdown and in `REVIEWED_MIGRATIONS` now that it has run.
 Entries are never removed once applied: the register is the closed list of what
@@ -114,7 +123,7 @@ constraint and the three validation functions all exist.
 `0049` was applied on 17 August 2026. The workflow ran to the end: the
 pre-apply gate passed, the apply committed, and the post-apply gate passed. The
 hosted ledger assigned it version `20260817104226` under the name
-`spond_team_reconcile`, and that is now the newest row.
+`spond_team_reconcile`, the newest row until `0050`'s apply on 23 August 2026.
 
 Its `expected_previous_version` stays `20260812102912` /
 `spond_session_link_unique` for the same reason `0047`'s and `0048`'s stay where
@@ -145,6 +154,38 @@ the types, so its comparison was false with the function correctly in place and
 the POST gate would have failed after the apply had already run. Both were fixed
 before the successful run, and the database was untouched throughout the first
 one.
+
+`0050` was applied on 23 August 2026, by workflow run 32623941411, from the
+reviewed PLAYERS-01 branch commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f`
+rather than from `main` (see the note under the table above). The workflow ran
+to the end in one run: the pre-apply gate passed against a ledger still headed
+by `20260817104226` / `spond_team_reconcile` with every object the migration
+creates absent, the apply committed, and the post-apply gate passed. The hosted
+ledger assigned it version `20260823065041` under the name
+`bulk_delete_players`, and that is now the newest row. Applying it destroyed
+nothing: the migration creates four functions and deletes no row, and its entry
+point is destructive only when called.
+
+Its `expected_previous_version` stays `20260817104226` / `spond_team_reconcile`
+for the same reason `0047`'s, `0048`'s and `0049`'s stay where they are: it
+records the state `0050` was REVIEWED against, not the current head.
+
+The post-apply gate confirmed `bulk_delete_players` was the unique newest
+ledger row, that the VERSION of the row before it was `20260817104226` (the
+gate compares only the version; the name `spond_team_reconcile` was asserted
+by the pre-apply gate as the newest row before the apply, and confirmed again
+by the reconciliation's own readback), that the recorded `statements` array
+held exactly one entry hashing to the reviewed file, MD5
+`a34ad8932597a467795d47867254fe62`, and that all five registered object probes
+were true: the bulk deletion entry point `(uuid[], int)` and the deletion
+preview `(uuid[])` exist as SECURITY DEFINER with an empty `search_path` and
+are executable by `authenticated` and not by `anon`, the counting helper
+`(uuid, uuid[])` exists and no client role may execute it, and the audit
+metadata predicate `(jsonb)` exists. No gate reads a SHA-256: the plan step
+recorded the file's SHA-256,
+`caeadd53de608ae7ae83e789ea5b4733328b59f2f38bfad048115159cdf16a08`, computed
+like the recorded statement over the file with its trailing newline stripped,
+which is the shape the ledger stores.
 
 ## What `0049` does, kept for reference
 
@@ -389,13 +430,12 @@ Until that lands, the content-sharing Edge Function deploy workflow fails
 closed on its own ledger gate. That is intended: it is far safer than a check
 that passes regardless.
 
-**Outstanding.** `EXPECTED_LAST_MIGRATION` is still `20260812102912`
-(`0048_spond_session_link_unique`), and the hosted head has been
-`20260817104226` (`spond_team_reconcile`) since 17 August 2026. The
-content-sharing deploy workflow is therefore failing closed right now, as
-designed, and stays that way until the reconciliation pull request above sets
-the pin to `20260817104226`. That is its own reviewed change and is deliberately
-not folded into anything else.
+**Reconciled.** `EXPECTED_LAST_MIGRATION` is `20260823065041`
+(`0050_bulk_delete_players`), matching the hosted head applied on 23 August
+2026. The gate stopped failing closed when that reconciliation landed, and it
+was its own reviewed change rather than being folded into anything else. The
+apply evidence behind the move is recorded in
+`docs/operations/content-sharing-edge-function-deploy.md`.
 
 ## Writing an object probe
 

@@ -7,7 +7,8 @@ name: Deploy content-sharing Edge Functions
 # disables public sharing for any club, never reclassifies content, never
 # creates a share, and never applies a migration or changes a database grant.
 # It verifies that the set of clubs with public sharing enabled is exactly the
-# reviewed allowlist, before and after the deploy. See
+# reviewed allowlist, before and after the deploy, and that the live sharing
+# state it found before the deploy is unchanged after it. See
 # docs/operations/content-sharing-edge-function-deploy.md.
 #
 # Secrets are read only through environment variables and are never printed.
@@ -156,21 +157,35 @@ jobs:
             supabase/functions/_shared/share.ts \
             supabase/functions/_shared/fa.ts
 
-      - name: Verify hosted ledger and reviewed state BEFORE deploying (read-only)
+      - name: Verify hosted gates and capture the live sharing baseline (read-only)
         shell: bash
-        # The pre-deploy gate. Identical assertions to the post-deploy check,
-        # run while BOTH functions are still untouched: the migration ledger's
-        # newest version must be exactly the reviewed one, the set of clubs with
-        # public sharing enabled must be exactly the reviewed allowlist in
-        # EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS, there must be no share, no
-        # dependency row, no content_share audit event, no reclassified drill or
-        # media and no content_share cron job.
+        # The pre-deploy gate, run while BOTH functions are still untouched. It
+        # does two things, in this order.
+        #
+        # First the ABSOLUTE invariants, the ones a correct deploy can never
+        # move: the migration ledger's newest version must be exactly the
+        # reviewed one, the set of clubs with public sharing enabled must be
+        # exactly the reviewed allowlist in
+        # EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS, no drill or media row may be
+        # reclassified away from internal_only, and there must be no
+        # content_share cron job.
+        #
+        # Then, only if all of those hold, it captures a baseline of the LIVE
+        # SHARING STATE: a row count and a server-computed fingerprint for
+        # content_shares, content_share_dependencies and the content_share
+        # audit events. Existing shares are legitimate product data, not
+        # residue, and this gate no longer requires any of the three to be
+        # empty. The post-deploy step proves they are UNCHANGED instead.
         #
         # Why before and not only after: a deploy against a schema this commit
         # was never reviewed against is exactly the thing that must not happen,
         # and a post-deploy failure would report it only once both functions had
-        # already been changed. A wrong ledger or a dirty hosted state now stops
-        # the workflow with nothing deployed.
+        # already been changed. A wrong ledger or a breached absolute invariant
+        # now stops the workflow with nothing deployed and no baseline written.
+        #
+        # The baseline is runner-local, mode 0600 and holds only counts and
+        # fingerprints. It is never uploaded as an artifact and RUNNER_TEMP is
+        # discarded with the runner.
         #
         # SUPABASE_DB_URL is exposed only to this step and the matching
         # post-deploy step. The verifier connects with psql inside a
@@ -181,7 +196,9 @@ jobs:
         run: |
           set -euo pipefail
           command -v psql >/dev/null 2>&1 || { echo "psql is not installed on the runner"; exit 1; }
-          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py --phase pre
+          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py \
+            --phase pre \
+            --baseline-out "${RUNNER_TEMP}/content-sharing-state-baseline.json"
 
       - name: Deploy manage-content-share (verify_jwt = true)
         shell: bash
@@ -298,11 +315,26 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/content-sharing-deploy/smoke_tests.py
 
-      - name: Verify no hosted residue (read-only)
+      - name: Verify hosted gates and that live sharing state is unchanged (read-only)
         shell: bash
-        # SUPABASE_DB_URL is exposed only to this step, the one place it is
-        # needed, and never to the job-wide env the CLI steps run under. The
-        # verifier connects with psql inside a rollback-only, read-only
+        # The post-deploy half. It re-runs every absolute invariant, then loads
+        # the baseline captured before the deploy and requires each of the three
+        # live sharing datasets to match it exactly, on both count and
+        # fingerprint. The baseline path is the SAME runner-local path the
+        # pre-deploy step wrote; a missing, malformed or differently-committed
+        # baseline fails the step rather than skipping the comparison.
+        #
+        # What this proves, precisely: the deployment changed nothing about the
+        # sharing state. What it cannot distinguish is a change made BY the
+        # deployment from one made by a coach legitimately creating, refreshing,
+        # rotating or revoking a share while the job was running. Both fail, and
+        # that is the intended direction: no production lock is taken, sharing
+        # is never disabled during a deploy, and no coach is blocked. A failure
+        # here means inspect the state and rerun later.
+        #
+        # SUPABASE_DB_URL is exposed only to this step and the matching
+        # pre-deploy step, never to the job-wide env the CLI steps run under.
+        # The verifier connects with psql inside a rollback-only, read-only
         # transaction; it never reads SUPABASE_ACCESS_TOKEN, and the URL and its
         # password are never printed.
         env:
@@ -310,12 +342,14 @@ jobs:
         run: |
           set -euo pipefail
           command -v psql >/dev/null 2>&1 || { echo "psql is not installed on the runner"; exit 1; }
-          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py --phase post
+          python3 .github/scripts/content-sharing-deploy/verify_no_residue.py \
+            --phase post \
+            --baseline-in "${RUNNER_TEMP}/content-sharing-state-baseline.json"
 
       - name: Deploy complete
         shell: bash
         run: |
           set -euo pipefail
-          echo "Content-sharing functions deployed and verified. The enabled club set is unchanged."
+          echo "Content-sharing functions deployed and verified. The enabled club set is unchanged and the live sharing state is unchanged."
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Public sharing is enabled only for the reviewed allowlisted club ids, unchanged by this run. No share was created." >> "$GITHUB_STEP_SUMMARY"
+          echo "Public sharing is enabled only for the reviewed allowlisted club ids, unchanged by this run. The live sharing state (shares, dependencies and content_share audit events) is byte-identical to the pre-deploy baseline: this run created, altered and revoked nothing." >> "$GITHUB_STEP_SUMMARY"

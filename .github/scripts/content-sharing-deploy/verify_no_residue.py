@@ -1,34 +1,69 @@
 #!/usr/bin/env python3
-"""Read-only proof that the deploy left no hosted residue (STAGE 9).
+"""Read-only proof that the deploy changed nothing it must not change.
 
 Runs a small set of SELECT-only queries through psql against a full PostgreSQL
-connection string and asserts the hosted sharing state is exactly the reviewed
-one and no share machinery has been left behind:
+connection string. Two kinds of check, and the difference between them is the
+whole design:
+
+ABSOLUTE INVARIANTS, asserted identically in both phases against fixed
+reviewed values. A breach stops the deploy outright:
 
   - the set of clubs with public_sharing_enabled is EXACTLY the reviewed
     allowlist of club ids (see EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS);
-  - content_shares has zero rows;
-  - content_share_dependencies has zero rows;
-  - no content_share audit event exists;
   - every drill is internal_only;
   - every media row is internal_only;
   - the migration ledger's newest version is exactly EXPECTED_LAST_MIGRATION,
-    currently 20260812102912 (0048, spond_session_link_unique);
+    currently 20260823065041 (0050, bulk_delete_players);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
-Runs TWICE in the deploy workflow, with identical assertions:
+LIVE SHARING STATE, which is legitimate mutable product data and is therefore
+PRESERVED rather than pinned. Three datasets are baselined before the deploy
+and proved unchanged after it:
 
-  --phase pre    before either function is deployed. A wrong ledger version or a
-                 dirty hosted state stops the workflow while both functions are
-                 still untouched, so a deploy is never made against a schema it
-                 was not reviewed against.
-  --phase post   after the deploy (the original use), proving the deploy itself
-                 left no residue.
+  - public.content_shares
+  - public.content_share_dependencies
+  - public.audit_events where entity_type = 'content_share'
+
+Why this is not a relaxation. Until 10 August 2026 those three were asserted to
+be EMPTY, and that was correct: public sharing had shipped switched off, so a
+deploy could prove it changed nothing observable by proving nothing observable
+existed. Ossett Town Juniors was then deliberately enabled and a coach created
+a session share through manage-content-share, which is the feature working as
+designed. From that moment "must be empty" asserted a state the product is
+built to leave behind, and it failed every deploy: GitHub Actions run
+32426729784 stopped at this gate with `shares expected 0, got 1` and
+`share_audit expected 0, got 1`, before either function was deployed.
+
+The invariant it is replaced by is strictly about the DEPLOYMENT, which is what
+this verifier exists to police: the sharing state immediately after the deploy
+must be byte-identical to the sharing state immediately before it. A share
+created, refreshed, rotated, revoked or deleted during the deploy window fails
+the run, whatever created it. That is a preservation gate, not a looser count.
+
+Runs TWICE in the deploy workflow:
+
+  --phase pre --baseline-out PATH
+                 before either function is deployed. Asserts every absolute
+                 invariant while both functions are still untouched, then
+                 captures the live sharing baseline. A wrong ledger version or
+                 a breached absolute invariant stops the workflow with nothing
+                 deployed, and no baseline is written.
+  --phase post --baseline-in PATH
+                 after the deploy. Asserts every absolute invariant again, then
+                 requires each dataset's count AND fingerprint to equal the
+                 baseline exactly.
 
 The assertion on the ledger version is an EXACT equality in both phases. It is
 never relaxed to a >=, a prefix match or an "exists somewhere" check: the point
 is to prove the hosted schema is precisely the reviewed one, and a loose check
 would pass against an unreviewed migration.
+
+Fingerprints
+------------
+Computed SERVER SIDE. Only a count and a 32 hex digit aggregate hash ever leave
+Postgres, so no share row, token hash, snapshot, audit metadata or actor
+identity reaches Python, the runner filesystem, the log, the job summary or an
+artifact. See STATE_SELECT for the construction and its determinism argument.
 
 Credential model
 ----------------
@@ -59,11 +94,13 @@ PGSSLMODE=require and a bounded connection timeout, and a guard rejects any
 statement that is not a single read-only SELECT before it is ever sent.
 
 Usage:
-  verify_no_residue.py [--phase pre|post]
-  verify_no_residue.py --sample <results.json> [--phase pre|post]
+  verify_no_residue.py --phase pre  --baseline-out <baseline.json>
+  verify_no_residue.py --phase post --baseline-in  <baseline.json>
+  verify_no_residue.py --sample <results.json> [--phase pre|post] [...]
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -78,31 +115,86 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0048_spond_session_link_unique was deliberately applied
-# to the hosted project through the gated production process, and hosted
-# assigned it this exact version. It was read back from
-# supabase_migrations.schema_migrations after the apply and confirmed to be the
-# unique newest ledger entry, with the previously pinned 20260812064038 /
-# register_group_inclusion now the entry before it.
+# below is RECONCILED: 0050_bulk_delete_players was deliberately applied to
+# the hosted project through the gated production process (workflow run
+# 32623941411, from the reviewed commit
+# 2d1de99827064f6856374bfc3c094cf50ae1cc3f on the PLAYERS-01 branch, applied
+# BEFORE that branch merged, which is the reverse rollout order its register
+# entry documents), and hosted assigned it this exact version, 20260823065041.
+# It was read back from supabase_migrations.schema_migrations after the apply
+# and confirmed to be the unique newest ledger entry, appearing exactly once
+# with no row newer, and with the previously pinned 20260817104226 /
+# spond_team_reconcile now the entry before it. The migration is DESTRUCTIVE
+# by design when its entry point is called; APPLYING it destroyed nothing. It
+# creates four functions and deletes no row.
 #
 # The row carries the evidence the gated workflow
-# (.github/workflows/apply-production-migration.yml) records: created_by names
-# the workflow and the commit it ran from,
-# 74621ef8a04c45cb61ff4963e700a5fad968c2ca; idempotency_key holds
-# otj:migration:0048_spond_session_link_unique against a UNIQUE column; and
-# md5(statements[1]) is a559695830bfa6713dc741f9fd27b2e2, the reviewed file
-# with its trailing newline stripped. The workflow's own post-apply gate
-# asserted all of that, and it was confirmed again independently before this
-# constant moved.
+# (.github/workflows/apply-production-migration.yml) records. Each fact below
+# names WHAT ESTABLISHED IT, because the mechanisms do not cover the same
+# ground and an auditor who assumes they do will trust more than was checked:
 #
-# 0048 repairs ONE bad Spond link and adds sessions_spond_event_id_unique, the
-# partial unique index over sessions.spond_event_id that makes one session per
-# mirrored event a database fact. It deletes no session, rewrites no status,
-# clears no live_activity_index and changes no policy, grant or trigger. The
-# hosted state was read back after the apply: the index exists and is both
-# unique and partial, and across the 10 sessions carrying a Spond link there
-# are now zero duplicated links, which is what the repair plus the index must
-# read.
+#   ASSERTED BY THE POST-APPLY GATE (verify_hosted_state.assert_post), and
+#   read back again here:
+#     - the row is the unique newest one, recorded at the newest version;
+#     - the VERSION of the row before it is 20260817104226. Only the version:
+#       assert_post compares second_version against expected_previous_version
+#       and never compares second_name, which it reads but uses only in the
+#       failure message and the report table. The NAME below is readback;
+#     - statements holds exactly one entry, and md5(statements[1]) is
+#       a34ad8932597a467795d47867254fe62, the reviewed file with its trailing
+#       newline stripped;
+#     - and, through the five registered object probes in
+#       reviewed_migrations.py: that public.delete_players resolves with
+#       exactly two arguments of the reviewed types (uuid[], int) and is
+#       SECURITY DEFINER with an empty search_path; that authenticated may
+#       EXECUTE the entry point while anon may not, a probe that pins the
+#       name and the two argument arity but NOT the argument types; that
+#       public.preview_delete_players(uuid[]) holds the same definer
+#       posture and the same authenticated-only EXECUTE in one probe; that
+#       public.player_deletion_counts(uuid, uuid[]) exists, is SECURITY
+#       DEFINER, and NO client role may execute it; and that
+#       public.audit_bulk_delete_metadata_ok(jsonb) exists. Those probes
+#       resolve no name textually: each joins pg_proc to pg_namespace and
+#       matches the catalog row by proname and pronargs, four of the five
+#       pinning proargtypes as well, composing the names through concat()
+#       because three of the four spell a token the read-only statement
+#       guard refuses.
+#
+#   READ BACK HERE ONLY, and NOT asserted by that gate:
+#     - created_by is
+#       github-actions:apply-production-migration@2d1de99827064f6856374bfc3c094cf50ae1cc3f,
+#       naming the workflow and the commit it ran from. The gate never selects
+#       this column at all;
+#     - idempotency_key is otj:migration:0050_bulk_delete_players against a
+#       UNIQUE column, so the same migration cannot be applied twice. The gate
+#       checks that key only BEFORE the apply, to prove the migration had not
+#       already run; assert_post does not re-read it;
+#     - the NAME of the preceding row is spond_team_reconcile. A row that
+#       kept version 20260817104226 under a different name would satisfy the
+#       gate, so this half of that row's identity rests on the readback.
+#
+# Those probes are why the objects' existence and their security posture
+# belong above and not here: they are asserted by the gate on every run, not
+# merely read back once. What the readback adds, and the ONLY thing it adds,
+# is the parameter NAMES: delete_players(p_player_ids, p_expected_count),
+# preview_delete_players(p_player_ids), player_deletion_counts(p_club, p_ids)
+# and audit_bulk_delete_metadata_ok(p_metadata). It read them with
+# pg_get_function_identity_arguments, and pg_proc.proargnames holds every one.
+#
+# No probe reads proargnames, so functions with the same TYPES and renamed
+# parameters would satisfy all five of them. That gap is the reason the names
+# are recorded here at all, and it is a real one: the client calls the entry
+# point and the preview through PostgREST rpc() with NAMED arguments, which
+# would break on a rename while the gate stayed green.
+#
+# What NONE of that establishes is the other half of "0050 adds four functions
+# and NOTHING else". The probes look at four functions and their privileges,
+# and the readback at those same functions; neither inventories tables,
+# columns, indexes, policies or triggers, so nothing in either could tell a
+# 0050 that added only the functions from one that added the functions and
+# something more. That property rests on REVIEW OF THE MIGRATION SQL, which is
+# what the gated production process exists to provide, and this block claims
+# no more than that.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters
@@ -113,7 +205,7 @@ import urllib.parse
 # so it cannot be known before the apply happens. The order is always: apply ->
 # read back the recorded version -> set this constant to exactly that value in
 # a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260812102912"  # 0048_spond_session_link_unique
+EXPECTED_LAST_MIGRATION = "20260823065041"  # 0050_bulk_delete_players
 
 # The EXACT set of club ids permitted to have public_sharing_enabled true.
 # This is a deployment review pin in the same sense as
@@ -154,23 +246,131 @@ SUBPROCESS_TIMEOUT_SECONDS = 60
 
 # The read-only preamble every statement runs under. No COMMIT ever appears; the
 # transaction is always discarded with ROLLBACK.
+#
+# The output-formatting GUCs are pinned because the state fingerprints below
+# render WHOLE ROWS through to_jsonb(t)::text, and several PostgreSQL types are
+# rendered according to a session setting. The same unchanged row then hashes
+# two ways in two sessions, which would report the live sharing state as
+# changed when nothing had changed. A fail-closed gate that cries wolf is a
+# gate somebody switches off, so this is a correctness requirement rather than
+# tidiness.
+#
+# Each value below was checked against this project's database with
+# pg_settings, not assumed from the PostgreSQL defaults, and THREE of the six
+# are load bearing rather than prophylactic:
+#
+#   TimeZone, for timestamptz (six columns across these three tables):
+#     UTC              {"c": "2026-08-10T17:14:53.087233+00:00"}
+#                      md5 ac1dd26dbe9da00843070d826a17f311
+#     America/New_York {"c": "2026-08-10T13:14:53.087233-04:00"}
+#                      md5 1010c8de772c30ce2fcd8fc225914fed
+#
+#   bytea_output, for bytea (content_shares.token_hash):
+#     hex              {"b": "\\xdeadbeef01"}
+#                      md5 249af7b5e5582f80b1f4434c6150d254
+#     escape           {"b": "\\336\\255\\276\\357\\001"}
+#                      md5 5e46159b11924b75616ee4f7598e836f
+#
+#   extra_float_digits is pinned to 3, and this one is NOT the value the
+#   session already carries. pg_settings on hosted reports setting 0 (boot_val
+#   1, reset_val 0), and at 0 a float8 is rounded on the way out, which makes
+#   the fingerprint MISS A REAL CHANGE rather than merely report a false one:
+#
+#     0.3::float8 = 0.30000000000000004::float8   -> false, two distinct values
+#     at extra_float_digits = 0, BOTH render {"f": 0.3}
+#                                and BOTH hash 7e759e089897d8f60a69bb1f3a7bcd90
+#
+#   3 is the shortest-exact rendering, so two values that differ at all render
+#   differently. A change detection fingerprint that cannot distinguish two
+#   different stored values is worse than a noisy one, so this pin deliberately
+#   overrides the session and changes float rendering from what hosted would
+#   otherwise produce. No float column exists in these three tables today; this
+#   is what makes the pin correct if one is ever added.
+#
+# DateStyle, IntervalStyle, lc_monetary and search_path are prophylactic, and
+# deliberately so. to_jsonb(t) covers the whole row precisely SO THAT a column
+# added by a future migration is fingerprinted without this file being edited,
+# which means the class of session-dependent rendering is open even though no
+# bare date, interval, money or OID-alias column exists in these tables today.
+# Two of the four were measured to be real members of the class rather than
+# theoretical ones:
+#
+#   lc_monetary is USERSET and pg_settings reports it currently en_US.UTF-8
+#   against a boot value of C, so two connections genuinely can disagree; the
+#   money output function formats the currency symbol and separators from it.
+#
+#   search_path decides whether an OID alias (regclass, regtype, regproc,
+#   regprocedure, regoper, regoperator, regnamespace, regrole, regconfig,
+#   regdictionary) renders schema qualified:
+#     search_path='public'  {"c": "content_shares"}
+#                           md5 0a01d9da95493739615688552330ee82
+#     search_path=''        {"c": "public.content_shares"}
+#                           md5 527e7c64099b759b9c5fb7d25a582096
+#   Pinned to '' rather than to a schema list, which renders every such value
+#   fully qualified and unambiguous, and which matches the SET search_path = ''
+#   posture the SECURITY DEFINER migrations already use. Safe because every
+#   relation in all three shipped statements is schema qualified and every
+#   function they call lives in pg_catalog, which is always searched implicitly.
+#
+# THE ENUMERATION IS THE RESIDUAL, and it is worth stating rather than implying
+# completeness. This list is knowledge, not something the code derives: a type
+# whose output function reads a setting not pinned here would slip through. The
+# sweep behind the current list is timestamptz and timetz (TimeZone), bytea
+# (bytea_output), float4 and float8 (extra_float_digits), date and timestamp
+# (DateStyle), interval (IntervalStyle), money (lc_monetary) and the OID
+# aliases (search_path); arrays and domains inherit their element's dependency
+# and so are covered by the same pins, and jsonb, json, uuid, text, the integer
+# family, boolean and enums have no session dependency at all.
+#
+# The failure DIRECTION of a miss is worth knowing too, because it is not
+# uniform. An unpinned rendering setting normally produces a FALSE ALARM: an
+# unchanged row hashes differently, the post phase fails, and a human looks.
+# That is the safe direction and it is why the residual above is tolerable.
+# extra_float_digits is the exception and is the reason it is pinned to 3
+# rather than left alone: at 0 it loses information, so it fails the other way,
+# by hashing two DIFFERENT values the same.
+#
+# Three settings are deliberately NOT pinned, because they are not in this
+# class, and they are named so a later reader does not have to re-derive it:
+#
+#   lc_numeric   PostgreSQL's numeric and float output functions always emit a
+#                '.' radix. lc_numeric reaches to_char(), which nothing here
+#                calls.
+#   lc_time      likewise reaches to_char() only; date and timestamp output use
+#                DateStyle, which IS pinned.
+#   client_encoding  md5() runs SERVER side over server-encoded text, so the
+#                digest is fixed before any client encoding applies. Only the
+#                32 hex digits cross the wire.
+#
+# SET LOCAL is transaction-scoped and is not a write; a read-only transaction
+# permits it.
 READ_ONLY_PREAMBLE = (
     "begin;\n"
     "set transaction read only;\n"
     "set local statement_timeout = '30s';\n"
+    "set local timezone = 'UTC';\n"
+    "set local bytea_output = 'hex';\n"
+    "set local datestyle = 'ISO, MDY';\n"
+    "set local intervalstyle = 'postgres';\n"
+    "set local extra_float_digits = 3;\n"
+    "set local lc_monetary = 'C';\n"
+    "set local search_path = '';\n"
 )
 READ_ONLY_EPILOGUE = "rollback;\n"
 
-# All eight residue facts plus the cron-schema probe, emitted as one JSON object.
-# count(*) renders as a JSON number; max(version) is text and renders as a JSON
-# string; has_cron is a JSON boolean.
+# Every ABSOLUTE invariant fact plus the cron-schema probe, emitted as one JSON
+# object. count(*) renders as a JSON number; max(version) is text and renders as
+# a JSON string; has_cron is a JSON boolean.
+#
+# The three live sharing datasets are deliberately ABSENT here. They are read by
+# STATE_SELECT instead, which takes each dataset's count and its fingerprint in
+# ONE statement and therefore one snapshot: a count from this query and a
+# fingerprint from that one would be two transactions, and a share created
+# between them would make the pair disagree with itself.
 RESIDUE_SELECT = """select json_build_object(
   'clubs_enabled',       (select count(*) from public.clubs where public_sharing_enabled),
   'enabled_club_ids',    (select coalesce(json_agg(c.id::text order by c.id::text), '[]'::json)
                           from public.clubs c where c.public_sharing_enabled),
-  'shares',              (select count(*) from public.content_shares),
-  'deps',                (select count(*) from public.content_share_dependencies),
-  'share_audit',         (select count(*) from public.audit_events where entity_type='content_share'),
   'non_internal_drills', (select count(*) from public.drills where rights <> 'internal_only'),
   'non_internal_media',  (select count(*) from public.media  where rights <> 'internal_only'),
   'total_drills',        (select count(*) from public.drills),
@@ -178,6 +378,78 @@ RESIDUE_SELECT = """select json_build_object(
   'last_migration',      (select max(version) from supabase_migrations.schema_migrations),
   'has_cron',            (to_regclass('cron.job') is not null)
 )"""
+
+# The three live sharing datasets, each as a count and a deterministic
+# fingerprint of its complete row content, in ONE statement so both halves of a
+# pair describe the same snapshot.
+#
+# Construction, per dataset:
+#
+#   md5( coalesce( string_agg( md5(to_jsonb(t)::text), '' order by t.id ), '' ) )
+#
+#   to_jsonb(t)     the WHOLE row, so a column added by a future migration is
+#                   covered without this query being edited, and no column has
+#                   to be named here (naming one would also be the only way a
+#                   word like "created_at" could reach the SELECT-only guard's
+#                   forbidden-token list and be refused as if it were DDL);
+#   ::text          jsonb renders with its keys in a canonical order, so the
+#                   physical column order cannot change the hash;
+#   md5(...) inner  a FIXED-LENGTH 32 character hash per row, so concatenation
+#                   is unambiguous: two rows cannot be concatenated into the
+#                   same string as two other rows;
+#   order by t.id   explicit and total. Every one of the three tables has a uuid
+#                   primary key named id. Ordered by the uuid ITSELF rather than
+#                   by id::text, because text ordering is collation dependent
+#                   and the uuid type compares by value, so row order cannot
+#                   move with a database's lc_collate;
+#   coalesce(...,'')  string_agg over zero rows is NULL, so an empty dataset
+#                   fingerprints as md5('') = EMPTY_FINGERPRINT rather than as
+#                   SQL NULL, which would compare unequal to itself;
+#   md5(...) outer  one aggregate value.
+#
+# This is a CHANGE DETECTION fingerprint, not an authentication primitive. It
+# answers "is this byte-identical to what I saw before"; md5 is appropriate for
+# that and needs no extension. The security control on who may write these rows
+# is the database's own RLS and grants, not this hash.
+#
+# What leaves Postgres is a count and 32 hex digits per dataset. Row bodies,
+# token hashes, share snapshots, audit metadata and actor identities are hashed
+# inside the server and never materialise in Python, on the runner's disk, in
+# the log or in the job summary.
+STATE_SELECT = """select json_build_object(
+  'content_shares', json_build_object(
+    'count',       (select count(*) from public.content_shares),
+    'fingerprint', (select md5(coalesce(string_agg(md5(to_jsonb(t)::text), '' order by t.id), ''))
+                    from public.content_shares t)
+  ),
+  'content_share_dependencies', json_build_object(
+    'count',       (select count(*) from public.content_share_dependencies),
+    'fingerprint', (select md5(coalesce(string_agg(md5(to_jsonb(t)::text), '' order by t.id), ''))
+                    from public.content_share_dependencies t)
+  ),
+  'content_share_audit_events', json_build_object(
+    'count',       (select count(*) from public.audit_events t where t.entity_type = 'content_share'),
+    'fingerprint', (select md5(coalesce(string_agg(md5(to_jsonb(t)::text), '' order by t.id), ''))
+                    from public.audit_events t where t.entity_type = 'content_share')
+  )
+)"""
+
+# The three datasets, in the order they are reported. Every baseline must carry
+# exactly these keys: a baseline missing one, or carrying an unknown one, is
+# refused rather than partially compared.
+MUTABLE_DATASETS = (
+    "content_shares",
+    "content_share_dependencies",
+    "content_share_audit_events",
+)
+
+# md5 of the empty string: what an empty dataset fingerprints to. Written out
+# rather than computed so a test can pin the value the SQL must produce.
+EMPTY_FINGERPRINT = "d41d8cd98f00b204e9800998ecf8427e"
+
+# The baseline file's format. POST refuses any other value outright rather than
+# guessing which fields a future shape carries.
+BASELINE_FORMAT_VERSION = 1
 
 # Only run when has_cron is true; referencing cron.job when the schema is absent
 # would error at parse time, so the schema's presence is proven first.
@@ -374,7 +646,15 @@ def gather(runner=None) -> dict:
         if not isinstance(cron, dict):
             raise SystemExit("FAIL: cron probe returned an unexpected shape")
         cron_jobs = int(cron.get("n", 0))
-    return {"residue": residue, "has_cron": has_cron, "cron_jobs": cron_jobs}
+    state = run_read_only_select(STATE_SELECT, runner)
+    if not isinstance(state, dict):
+        raise SystemExit("FAIL: sharing state query returned an unexpected shape")
+    return {
+        "residue": residue,
+        "has_cron": has_cron,
+        "cron_jobs": cron_jobs,
+        "state": state,
+    }
 
 
 def as_int(row: dict, key: str) -> int:
@@ -420,13 +700,17 @@ def expected_enabled_club_ids() -> list[str]:
     return sorted(c.strip().lower() for c in EXPECTED_ENABLED_PUBLIC_SHARING_CLUB_IDS)
 
 
-def assert_clean(data: dict) -> list[str]:
+def assert_absolute_invariants(data: dict) -> list[str]:
+    """The checks that hold against FIXED reviewed values, in both phases.
+
+    Deliberately does NOT look at content_shares, content_share_dependencies or
+    the content_share audit events. Those are live product state: they are
+    preserved across the deploy by compare_state, never pinned to a value. Every
+    check here is one a correct deploy can never move.
+    """
     errors: list[str] = []
     r = data.get("residue", {})
     checks = {
-        "shares": 0,
-        "deps": 0,
-        "share_audit": 0,
         "non_internal_drills": 0,
         "non_internal_media": 0,
     }
@@ -479,9 +763,220 @@ def assert_clean(data: dict) -> list[str]:
     return errors
 
 
+# A fingerprint is exactly 32 lowercase hex digits, the shape md5() returns.
+# Anything else is malformed and fails closed; it is never coerced or trusted.
+_FINGERPRINT_RE = re.compile(r"\A[0-9a-f]{32}\Z")
+
+
+def canonical_dataset(value: object) -> dict | None:
+    """Canonicalise one dataset's {count, fingerprint}, or None if untrustworthy.
+
+    None always fails the caller's assertion. It is never read as "empty
+    dataset", which would turn a malformed or missing read into a silent pass,
+    the same rule canonical_club_ids follows for the club allowlist.
+    """
+    if not isinstance(value, dict):
+        return None
+    count = value.get("count")
+    # bool is a subclass of int; True must not read as a count of 1.
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        return None
+    fingerprint = value.get("fingerprint")
+    if not isinstance(fingerprint, str) or not _FINGERPRINT_RE.match(fingerprint):
+        return None
+    return {"count": count, "fingerprint": fingerprint}
+
+
+def canonical_state(value: object) -> dict | None:
+    """Canonicalise all three datasets, or None if any one is untrustworthy.
+
+    All or nothing: a state missing one dataset cannot be partially compared,
+    because the dataset it is missing is exactly the one a comparison would
+    then fail to notice had changed.
+    """
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, dict] = {}
+    for name in MUTABLE_DATASETS:
+        one = canonical_dataset(value.get(name))
+        if one is None:
+            return None
+        out[name] = one
+    return out
+
+
+def build_baseline(state: dict, github_sha: str | None) -> dict:
+    """The baseline document. Counts and fingerprints only, by construction.
+
+    Names the two keys it copies rather than copying the dataset dict, so this
+    function strips on its own account and does not rely on having been handed
+    an already-canonical state. Both layers matter and both are pinned: a test
+    that only goes end to end passes as soon as EITHER strips, so it cannot say
+    which is doing the work. Replacing this dict literal with dict(state[name])
+    left such a test green.
+    """
+    doc: dict = {
+        "format": BASELINE_FORMAT_VERSION,
+        "datasets": {
+            name: {
+                "count": state[name]["count"],
+                "fingerprint": state[name]["fingerprint"],
+            }
+            for name in MUTABLE_DATASETS
+        },
+    }
+    if github_sha:
+        doc["github_sha"] = github_sha
+    return doc
+
+
+def write_baseline(path: str, doc: dict) -> None:
+    """Write the baseline runner-locally, 0600, never overwriting.
+
+    Refusing an existing file is the point rather than tidiness: a baseline
+    already at this path was written by something this run does not know about,
+    and silently replacing it would let a POST phase compare against a state
+    that was never this deploy's starting point.
+
+    The write goes through a .partial file and os.replace, so a reader never
+    sees a half-written baseline. That is not a defence against a racing
+    writer: the existence check and the replace are two operations, and a file
+    appearing between them would be overwritten. It does not need to be. This
+    runs once per job, in that job's own RUNNER_TEMP, under a concurrency group
+    that admits one production deploy at a time.
+    """
+    if os.path.exists(path):
+        raise SystemExit(
+            f"FAIL: refusing to overwrite an existing baseline at {path}. "
+            "Remove it and rerun, or use a fresh path; a stale baseline would "
+            "prove the wrong thing."
+        )
+    partial = f"{path}.partial"
+    try:
+        fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise SystemExit(
+            f"FAIL: a partial baseline already exists at {partial}; refusing to "
+            "reuse it."
+        )
+    except OSError as exc:
+        raise SystemExit(f"FAIL: cannot create the baseline file: {exc.strerror}")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(partial, path)
+    except OSError as exc:
+        with contextlib.suppress(OSError):
+            os.unlink(partial)
+        raise SystemExit(f"FAIL: cannot write the baseline file: {exc.strerror}")
+
+
+def load_baseline(path: str) -> dict:
+    """Read and fully validate a baseline, or fail closed.
+
+    Every rejection below is a case where continuing would compare against
+    something that is not a baseline this run wrote, so each one stops the
+    deploy rather than degrading to a weaker comparison.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"FAIL: no pre-deploy baseline at {path}. The post-deploy phase "
+            "cannot prove the live sharing state is unchanged without the "
+            "state captured before the deploy."
+        )
+    except json.JSONDecodeError:
+        raise SystemExit(f"FAIL: the baseline at {path} is not valid JSON")
+    except OSError as exc:
+        raise SystemExit(f"FAIL: cannot read the baseline at {path}: {exc.strerror}")
+
+    if not isinstance(doc, dict):
+        raise SystemExit("FAIL: the baseline is not a JSON object")
+    if doc.get("format") != BASELINE_FORMAT_VERSION:
+        raise SystemExit(
+            f"FAIL: baseline format {doc.get('format')!r}, expected "
+            f"{BASELINE_FORMAT_VERSION}"
+        )
+    datasets = doc.get("datasets")
+    if not isinstance(datasets, dict):
+        raise SystemExit("FAIL: the baseline carries no datasets object")
+    unknown = sorted(set(datasets) - set(MUTABLE_DATASETS))
+    if unknown:
+        raise SystemExit(f"FAIL: the baseline carries unknown datasets: {unknown}")
+    canonical = canonical_state(datasets)
+    if canonical is None:
+        missing = [n for n in MUTABLE_DATASETS if n not in datasets]
+        if missing:
+            raise SystemExit(f"FAIL: the baseline is missing datasets: {missing}")
+        raise SystemExit(
+            "FAIL: the baseline carries a malformed count or fingerprint; a "
+            "fingerprint must be 32 lowercase hex digits and a count a "
+            "non-negative integer"
+        )
+
+    sha = doc.get("github_sha")
+    if sha is not None and not isinstance(sha, str):
+        raise SystemExit("FAIL: the baseline's github_sha is not a string")
+    return {"datasets": canonical, "github_sha": sha}
+
+
+def assert_baseline_commit(baseline: dict, github_sha: str | None) -> list[str]:
+    """Bind the baseline to the checkout that wrote it, when both know it.
+
+    A baseline from a different commit is a baseline from a different run, so
+    comparing against it would prove nothing about THIS deploy. Binding is
+    skipped only when the pre phase recorded no SHA, which is the case outside
+    Actions; it is never skipped merely because the post phase lost its own.
+    """
+    recorded = baseline.get("github_sha")
+    if not recorded:
+        return []
+    if not github_sha:
+        return [
+            "the baseline is bound to commit "
+            f"{recorded} but this phase has no GITHUB_SHA to compare it with"
+        ]
+    if recorded != github_sha:
+        return [
+            f"the baseline was captured on commit {recorded}, but this phase is "
+            f"running on {github_sha}"
+        ]
+    return []
+
+
+def compare_state(baseline: dict, current: dict) -> list[str]:
+    """Require every dataset to be byte-identical to the baseline.
+
+    Reports WHICH dataset moved and, for a count change, by how much. It never
+    reports a row: the verifier holds no row to report, having only ever
+    received two scalars per dataset from the server.
+    """
+    errors: list[str] = []
+    for name in MUTABLE_DATASETS:
+        was = baseline[name]
+        now = current[name]
+        if was["count"] != now["count"]:
+            errors.append(
+                f"{name} changed during deploy: count {was['count']} -> {now['count']}"
+            )
+        elif was["fingerprint"] != now["fingerprint"]:
+            errors.append(
+                f"{name} changed during deploy: same row count ({now['count']}) "
+                "but the row contents differ from the pre-deploy baseline"
+            )
+    return errors
+
+
 def main(argv: list[str]) -> int:
     sample = ""
     phase = "post"
+    baseline_out = ""
+    baseline_in = ""
     i = 1
     while i < len(argv):
         if argv[i] == "--sample" and i + 1 < len(argv):
@@ -493,9 +988,34 @@ def main(argv: list[str]) -> int:
                 print(f"FAIL: --phase must be pre or post, got {phase!r}")
                 return 1
             i += 2
+        elif argv[i] == "--baseline-out" and i + 1 < len(argv):
+            baseline_out = argv[i + 1]
+            i += 2
+        elif argv[i] == "--baseline-in" and i + 1 < len(argv):
+            baseline_in = argv[i + 1]
+            i += 2
         else:
             print(f"FAIL: unknown argument {argv[i]}")
             return 1
+
+    if baseline_out and phase != "pre":
+        print("FAIL: --baseline-out is only meaningful with --phase pre")
+        return 1
+    if baseline_in and phase != "post":
+        print("FAIL: --baseline-in is only meaningful with --phase post")
+        return 1
+    # The post phase REQUIRES a baseline. Without one it has nothing to prove
+    # the sharing state against, and a phase that quietly skipped its own
+    # comparison would report PASS having checked less than it claims. The pre
+    # phase's flag is not required in the same way: a pre run that writes no
+    # baseline leaves the post phase with nothing to load, which fails closed
+    # there rather than passing here.
+    if phase == "post" and not baseline_in:
+        print(
+            "FAIL: --phase post requires --baseline-in <path>; the live sharing "
+            "state cannot be proved unchanged without the pre-deploy baseline"
+        )
+        return 1
 
     if sample:
         with open(sample, "r", encoding="utf-8") as fh:
@@ -503,14 +1023,14 @@ def main(argv: list[str]) -> int:
     else:
         data = gather()
 
+    github_sha = os.environ.get("GITHUB_SHA") or None
     r = data.get("residue", {})
+    state = canonical_state(data.get("state"))
+
     print("Hosted state before deploy:" if phase == "pre" else "Hosted state after deploy:")
     print(f"  clubs with public_sharing_enabled : {as_int(r, 'clubs_enabled')}")
     print(f"    enabled club ids                : {r.get('enabled_club_ids')}")
     print(f"    reviewed allowlist              : {expected_enabled_club_ids()}")
-    print(f"  content_shares rows               : {as_int(r, 'shares')}")
-    print(f"  content_share_dependencies rows   : {as_int(r, 'deps')}")
-    print(f"  content_share audit events        : {as_int(r, 'share_audit')}")
     print(f"  drills not internal_only          : {as_int(r, 'non_internal_drills')} "
           f"(of {as_int(r, 'total_drills')})")
     print(f"  media not internal_only           : {as_int(r, 'non_internal_media')} "
@@ -518,14 +1038,28 @@ def main(argv: list[str]) -> int:
     print(f"  newest migration version          : {r.get('last_migration')}")
     print(f"  content_share cron jobs           : {data.get('cron_jobs', 0)} "
           f"(pg_cron present: {data.get('has_cron')})")
+    # Counts only. The fingerprints are never printed: they are a derived
+    # summary of live sharing rows and belong in the runner-local baseline
+    # alone, not in a log a person can read or a summary GitHub retains.
+    print("Live sharing state (preserved across the deploy, never pinned):")
+    if state is None:
+        print("  content_shares rows               : unavailable")
+        print("  content_share_dependencies rows   : unavailable")
+        print("  content_share audit events        : unavailable")
+    else:
+        print(f"  content_shares rows               : {state['content_shares']['count']}")
+        print(f"  content_share_dependencies rows   : "
+              f"{state['content_share_dependencies']['count']}")
+        print(f"  content_share audit events        : "
+              f"{state['content_share_audit_events']['count']}")
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as sfh:
             heading = (
-                "Pre-deploy hosted ledger and inert-state check"
+                "Pre-deploy hosted gates and live sharing baseline"
                 if phase == "pre"
-                else "Post-deploy hosted residue check"
+                else "Post-deploy hosted gates and live sharing comparison"
             )
             sfh.write(f"\n### {heading}\n\n")
             sfh.write("| Check | Value | Expected |\n|---|---|---|\n")
@@ -537,23 +1071,61 @@ def main(argv: list[str]) -> int:
                 f"| enabled club ids | {canonical_club_ids(r.get('enabled_club_ids'))} | "
                 f"{expected_enabled_club_ids()} |\n"
             )
-            sfh.write(f"| content_shares rows | {as_int(r,'shares')} | 0 |\n")
-            sfh.write(f"| content_share_dependencies rows | {as_int(r,'deps')} | 0 |\n")
-            sfh.write(f"| content_share audit events | {as_int(r,'share_audit')} | 0 |\n")
             sfh.write(f"| drills not internal_only | {as_int(r,'non_internal_drills')} | 0 |\n")
             sfh.write(f"| media not internal_only | {as_int(r,'non_internal_media')} | 0 |\n")
             sfh.write(f"| newest migration | {r.get('last_migration')} | {EXPECTED_LAST_MIGRATION} |\n")
-            sfh.write(f"| content_share cron jobs | {data.get('cron_jobs',0)} | 0 |\n\n")
+            sfh.write(f"| content_share cron jobs | {data.get('cron_jobs',0)} | 0 |\n")
+            if state is not None:
+                expectation = (
+                    "baselined" if phase == "pre" else "unchanged from baseline"
+                )
+                for name in MUTABLE_DATASETS:
+                    sfh.write(
+                        f"| {name} rows | {state[name]['count']} | {expectation} |\n"
+                    )
+            sfh.write("\n")
 
-    errors = assert_clean(data)
+    errors = assert_absolute_invariants(data)
+    if state is None:
+        errors.append(
+            "the live sharing state read is missing or malformed; a count must "
+            "be a non-negative integer and a fingerprint 32 lowercase hex digits"
+        )
+
+    # The absolute gates decide first, in BOTH phases. In the pre phase that
+    # ordering is load bearing: no baseline is written unless the hosted state
+    # is one this commit was reviewed against, so a refused run leaves nothing
+    # behind for a later run to compare against by mistake.
     if errors:
         for e in errors:
             print(f"FAIL: {e}")
         return 1
+
     if phase == "pre":
-        print("PASS: hosted ledger and enabled club set are the reviewed ones, and no share residue exists; safe to deploy")
-    else:
-        print("PASS: no hosted residue; the enabled club set is unchanged and no share was created")
+        if baseline_out:
+            write_baseline(baseline_out, build_baseline(state, github_sha))
+            print(
+                "PASS: absolute hosted-state gates passed and the live sharing "
+                "baseline was captured; safe to deploy"
+            )
+        else:
+            print(
+                "PASS: absolute hosted-state gates passed (no --baseline-out "
+                "given, so no baseline was captured)"
+            )
+        return 0
+
+    baseline = load_baseline(baseline_in)
+    errors = assert_baseline_commit(baseline, github_sha)
+    errors += compare_state(baseline["datasets"], state)
+    if errors:
+        for e in errors:
+            print(f"FAIL: {e}")
+        return 1
+    print(
+        "PASS: absolute hosted-state gates still hold and live sharing state is "
+        "unchanged from the pre-deploy baseline"
+    )
     return 0
 
 
