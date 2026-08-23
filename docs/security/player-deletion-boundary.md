@@ -159,17 +159,32 @@ Both were exercised against a real two session PostgreSQL run: overlapping
 selections produced one complete run and one whole refusal with the untouched
 third child surviving, and identical reversed selections produced no deadlock.
 
-One second-hop residual is recorded deliberately, found by exact head review
-after the apply: a stored Spond REPLY references the link row, not the player
-row, so a `spond-sync` run inserting a reply for a linked, selected child
-takes its `FOR KEY SHARE` on `player_spond_links`, which the identity lock
-does not cover. A reply committed between the in-lock count and the delete is
-removed by the cascade, correctly, with its child; the `spond_replies` figure
-the run returns and audits was counted before that insert and undercounts by
-exactly those racing rows. Nothing outlives the erasure and no first-hop
-count can miscount (registrations, register entries and links are blocked as
-above). Closing it means locking the selected link rows in deterministic
-order before counting, which is a change to the applied function and
+The residuals of that lock are recorded deliberately, found by exact head
+review after the apply. The identity lock guarantees the IDENTITY SET
+exactly, and it blocks first-hop INSERTS, because inserting a child row takes
+`FOR KEY SHARE` on the locked player row. It does not block everything else
+that can move a dependency count between the in-lock count and the delete:
+
+- a stored Spond REPLY references the link row, not the player row, so a
+  `spond-sync` run inserting a reply for a linked, selected child is not
+  blocked; the cascade removes the racing reply, correctly, and the audited
+  `spond_replies` figure undercounts by exactly those rows;
+- another writer DELETING a child row (a coach removing a register entry, a
+  manager unlinking a Spond row) takes no lock on the player row, deletes of
+  a referencing row never do, so the audited figure for that dependency
+  overstates what this run removed by exactly those already gone rows;
+- a board save rewrites `boards.tokens` jsonb with no foreign key at all, so
+  the `board_tokens` figure can drift in either direction.
+
+Every one of those rows belongs to a child being erased, nothing outlives the
+erasure (an orphan reply is unrepresentable through the FK), and the identity
+count, the typed confirmation and the refusal matrix are unaffected. The
+audited dependency counts are exact against a quiet database and a faithful
+current snapshot against a busy one, which is the same contract the dialog
+states for the preview. Closing them fully means the follow-up design locks
+the child rows (the selected link rows in deterministic order before
+counting, and the rest alike) or takes the counts under an isolation level
+that refuses the phantom; either is a change to the applied function and
 therefore a candidate follow-up migration, never an edit to this one.
 
 ### Audit

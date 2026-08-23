@@ -330,6 +330,16 @@ export function Players() {
   if (confined !== null && confined.dropped > 0) setSelected(confined.next)
   const selectedNow = confined !== null ? confined.next : EMPTY_SELECTION
   const selectedPlayers = selectedRows(sorted, selectedNow)
+  // A refetch can empty the selection while the deletion dialog is open (the
+  // last selected child left the view or the register). Hiding the dialog on
+  // an empty selection alone left modal.kind primed, so the page came back to
+  // life with a deletion dialog that remounted on the NEXT tick without
+  // Delete being pressed. The stale state is cleared the same way the
+  // confinement is persisted: during render, conditionally, because no
+  // handler runs for a background refetch. The legitimate paths never see
+  // this: opening requires a non empty selection, and a completed run clears
+  // the selection and the modal in one batched handler.
+  if (modal?.kind === 'bulkDelete' && selectedPlayers.length === 0) setModal(null)
   const rowSelection: RowSelection | undefined = bulkActive
     ? { selected: selectedNow, onToggle: (id) => setSelected((prev) => toggleSelected(prev, id)) }
     : undefined

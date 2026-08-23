@@ -88,6 +88,15 @@ describe('the drop-on-filter-change rule stays in the filter handler', () => {
     expect(page).toMatch(/if \(confined !== null && confined\.dropped > 0\) setSelected\(confined\.next\)/)
   })
 
+  it('clears the primed dialog when confinement empties its selection', () => {
+    // Hiding the dialog on an empty selection is not enough: modal.kind left
+    // set meant the next tick REMOUNTED the deletion dialog without Delete
+    // being pressed. Cleared during render for the same reason the
+    // confinement is persisted there: a refetch has no handler.
+    const page = code(read('routes/Players.tsx'))
+    expect(page).toMatch(/if \(modal\?\.kind === 'bulkDelete' && selectedPlayers\.length === 0\) setModal\(null\)/)
+  })
+
   it('the page decides nothing about which filters narrow the view', () => {
     // The key list lives in playersBulk.ts so it has one test. A component
     // rebuilding it is how the two drift.
