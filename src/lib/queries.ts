@@ -4456,7 +4456,7 @@ export function useBulkDeletePlayers() {
       if (result === null || result.players !== expectedCount) {
         throw new Error(
           'The deletion finished with a reply that could not be read, so whether it completed is unknown. ' +
-            'The register has been refreshed; check it before selecting again.',
+            'Close this and reload the register to see the current state before selecting again.',
         )
       }
       return result

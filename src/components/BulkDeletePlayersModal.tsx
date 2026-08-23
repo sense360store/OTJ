@@ -210,11 +210,13 @@ export function BulkDeletePlayersModal({
           style={{ marginTop: 10 }}
         >
           {isIndeterminateBulkOutcome(error)
-            ? 'The deletion may have completed: the reply could not be read, so the outcome is unknown. The ' +
-              'register has been refreshed; close this and check it before selecting again.'
+            ? 'The deletion may have completed: the reply could not be read, so the outcome is unknown. Close ' +
+              'this and reload the register to see the current state before selecting again.'
             : isStaleBulkSelection(error)
               ? 'The register changed while this was open, so nothing was deleted. Close this, check the list and select again.'
-              : 'The players were not deleted, and nothing was partly deleted. Reload and try again.'}
+              : 'The run did not report success. If the server refused it, nothing was deleted; if the connection ' +
+                'dropped mid run, the outcome may not have reached this dialog. Reload the register to check ' +
+                'before trying again; a repeat of a run that already completed is refused rather than run twice.'}
         </ActionError>
       )}
     </Modal>
