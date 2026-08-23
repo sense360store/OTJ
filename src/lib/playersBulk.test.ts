@@ -26,6 +26,7 @@ import {
   overBulkDeleteLimit,
   overLimitMessage,
   parseDeletePreview,
+  parseDeleteRunResult,
   previewAnswersFor,
   previewIsStale,
   removalLines,
@@ -311,6 +312,28 @@ describe('the preview is the server’s answer, refused when unreadable', () => 
   it('calls a selection stale when the server found fewer live players than were asked about', () => {
     expect(previewIsStale(parseDeletePreview(raw)!)).toBe(false)
     expect(previewIsStale(parseDeletePreview({ ...raw, players: 4 })!)).toBe(true)
+  })
+
+  it('parses the run reply by its own shape, which carries no requested field', () => {
+    // delete_players returns the shared counts plus batch_id and outcome and
+    // NEVER 'requested' (0050, `return v_counts || jsonb_build_object(...)`).
+    // Requiring the preview's 'requested' on this reply once made every
+    // successful deletion read as indeterminate, so the two shapes get two
+    // parsers over one closed key list, and this pins both directions.
+    const runCounts: Record<string, unknown> = { ...raw }
+    delete runCounts.requested
+    const runReply = { ...runCounts, batch_id: '9f3f3f3f-0000-4000-8000-000000000001', outcome: 'succeeded' }
+    expect(parseDeletePreview(runReply)).toBeNull()
+    const parsed = parseDeleteRunResult(runReply)
+    expect(parsed).not.toBeNull()
+    expect(parsed!.players).toBe(6)
+    expect(parsed!.registerEntries).toBe(27)
+    // The run parser still refuses a missing or malformed count of its own.
+    expect(parseDeleteRunResult({ ...runReply, players: undefined })).toBeNull()
+    expect(parseDeleteRunResult({ ...runReply, boards: 'two' })).toBeNull()
+    // A preview reply satisfies the run parser too, being a superset; the
+    // hooks decide which parser answers for which RPC.
+    expect(parseDeleteRunResult(raw)).not.toBeNull()
   })
 
   it('requires the preview to answer for the submitted ids', () => {

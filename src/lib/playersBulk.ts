@@ -205,11 +205,11 @@ export function bulkDeleteButtonLabel(count: number): string {
 // the deletion lock and returned and audited from there. The dialog's copy
 // states that contract (historyLines, PREVIEW_SNAPSHOT_NOTE) rather than
 // implying every number on screen is revalidated.
-export interface DeletePreview {
-  // How many distinct ids were asked about.
-  requested: number
-  // How many of them are live players of the caller's club. Less than
-  // requested means the selection is already stale and the server will refuse.
+// The counts BOTH RPCs return: what a deletion of these identities touches.
+// delete_players returns exactly these plus a batch id and an outcome word.
+export interface DeleteRunResult {
+  // How many of the submitted ids are live players of the caller's club; for
+  // the run's reply, how many identities the committed run deleted.
   players: number
   registrations: number
   registrationSeasons: number
@@ -221,6 +221,12 @@ export interface DeletePreview {
   spondReplies: number
   boardTokens: number
   boards: number
+}
+
+// The preview's reply carries one field the run's does not: how many distinct
+// ids were asked about. Fewer players than requested is the stale display.
+export interface DeletePreview extends DeleteRunResult {
+  requested: number
 }
 
 export const ZERO_PREVIEW: DeletePreview = {
@@ -238,10 +244,14 @@ export const ZERO_PREVIEW: DeletePreview = {
   boards: 0,
 }
 
-// Every field the RPC must supply, app name to payload key. A closed list so
-// the parser can refuse a payload that is missing any of them.
-const PREVIEW_KEYS: Record<keyof DeletePreview, string> = {
-  requested: 'requested',
+// Every field each RPC must supply, app name to payload key. Closed lists so
+// each parser can refuse a payload missing any of its own fields. TWO lists,
+// because the two replies genuinely differ by one field: preview_delete_players
+// appends 'requested' to the shared counts and delete_players does not (it
+// appends batch_id and outcome instead, which the app does not consume).
+// Sharing the preview's list with the run's reply is exactly how a required
+// 'requested' key once made every successful deletion read as indeterminate.
+const RUN_KEYS: Record<keyof DeleteRunResult, string> = {
   players: 'players',
   registrations: 'registrations',
   registrationSeasons: 'registration_seasons',
@@ -255,6 +265,11 @@ const PREVIEW_KEYS: Record<keyof DeletePreview, string> = {
   boards: 'boards',
 }
 
+const PREVIEW_KEYS: Record<keyof DeletePreview, string> = {
+  ...RUN_KEYS,
+  requested: 'requested',
+}
+
 // Adapt the RPC's jsonb to the app shape, or REFUSE. An earlier version
 // zero-filled a missing or non numeric field so the dialog could never render
 // "NaN register entries"; exact head review pointed out that zero-filling
@@ -266,16 +281,27 @@ const PREVIEW_KEYS: Record<keyof DeletePreview, string> = {
 // the deploy verifier: unreadable is never read as empty. A genuinely zero
 // count from a well formed payload remains valid, so a club with no Spond and
 // no boards still previews honestly.
-export function parseDeletePreview(raw: unknown): DeletePreview | null {
+function readCounts<K extends string>(raw: unknown, keys: Record<K, string>): Record<K, number> | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
-  const out = {} as Record<keyof DeletePreview, number>
-  for (const [field, key] of Object.entries(PREVIEW_KEYS) as [keyof DeletePreview, string][]) {
+  const out = {} as Record<K, number>
+  for (const [field, key] of Object.entries(keys) as [K, string][]) {
     const v = r[key]
     if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return null
     out[field] = v
   }
   return out
+}
+
+export function parseDeletePreview(raw: unknown): DeletePreview | null {
+  return readCounts(raw, PREVIEW_KEYS)
+}
+
+// The run's reply, which carries no 'requested'. Extra fields (batch_id,
+// outcome) are ignored rather than refused: they are the server's own
+// additions, and refusing them would make every genuine success unreadable.
+export function parseDeleteRunResult(raw: unknown): DeleteRunResult | null {
+  return readCounts(raw, RUN_KEYS)
 }
 
 // The server has already been asked about a selection that no longer exists as

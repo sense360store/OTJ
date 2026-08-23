@@ -31,7 +31,13 @@ import {
 } from './activityView'
 import { useAuth } from '../hooks/useAuth'
 import type { ExportFilterPayload, ExportPlayerRow } from './playersExport'
-import { parseDeletePreview, previewAnswersFor, type DeletePreview } from './playersBulk'
+import {
+  parseDeletePreview,
+  parseDeleteRunResult,
+  previewAnswersFor,
+  type DeletePreview,
+  type DeleteRunResult,
+} from './playersBulk'
 import type { ImportPayload, ImportServerResult } from './playersImportCommit'
 import type {
   Activity,
@@ -4434,14 +4440,19 @@ export function isIndeterminateBulkOutcome(err: unknown): boolean {
 // there, never compared against the preview the dialog showed.
 export function useBulkDeletePlayers() {
   const qc = useQueryClient()
-  return useMutation<DeletePreview, Error, { playerIds: string[]; expectedCount: number }>({
+  return useMutation<DeleteRunResult, Error, { playerIds: string[]; expectedCount: number }>({
     mutationFn: async ({ playerIds, expectedCount }) => {
       const { data, error } = await supabase.rpc('delete_players', {
         p_player_ids: playerIds,
         p_expected_count: expectedCount,
       })
       if (error) throw error
-      const result = parseDeletePreview(data)
+      // The run's reply is its own shape: the shared counts WITHOUT
+      // 'requested', plus a batch id and outcome the app does not consume.
+      // Parsed by the run parser, because requiring the preview's
+      // 'requested' here once made every successful deletion read as
+      // indeterminate.
+      const result = parseDeleteRunResult(data)
       // The RPC returns what it actually deleted, and success is only ever
       // reported from a reply that proves it. But an HTTP success whose body
       // cannot prove what happened is an INDETERMINATE outcome, not a

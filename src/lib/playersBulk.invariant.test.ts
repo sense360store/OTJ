@@ -155,6 +155,20 @@ describe('the dependency counts come from the server, never from the browser', (
     const hook = queries.slice(queries.indexOf('useDeletePlayersPreview'), queries.indexOf('isStaleBulkSelection'))
     expect(hook).toMatch(/parsed === null \|\| !previewAnswersFor\(parsed, key\.length\)/)
   })
+
+  it('each RPC reply is parsed by its own shape', () => {
+    // The run reply carries no 'requested', so parsing it with the preview's
+    // parser reads every success as indeterminate. The preview hook must use
+    // parseDeletePreview and the run mutation parseDeleteRunResult; the
+    // shape facts themselves are proved in playersBulk.test.ts.
+    const queries = code(read('lib/queries.ts'))
+    const previewHook = queries.slice(queries.indexOf('useDeletePlayersPreview'), queries.indexOf('isStaleBulkSelection'))
+    expect(previewHook).toContain('parseDeletePreview(data)')
+    expect(previewHook).not.toContain('parseDeleteRunResult')
+    const runHook = queries.slice(queries.indexOf('useBulkDeletePlayers'))
+    expect(runHook.slice(0, 2400)).toContain('parseDeleteRunResult(data)')
+    expect(runHook.slice(0, 2400)).not.toContain('parseDeletePreview(data)')
+  })
 })
 
 describe('the confirmation gate has one implementation', () => {

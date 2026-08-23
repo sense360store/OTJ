@@ -32,7 +32,7 @@ import {
   overLimitMessage,
   previewIsStale,
   removalLines,
-  type DeletePreview,
+  type DeleteRunResult,
 } from '../lib/playersBulk'
 import type { RegisteredPlayer } from '../lib/data'
 import { Icon } from './icons'
@@ -55,7 +55,7 @@ export function BulkDeletePlayersModal({
   // season), so honouring the withdrawal is this dialog's job.
   eligible: boolean
   onClose: () => void
-  onDeleted: (result: DeletePreview) => void
+  onDeleted: (result: DeleteRunResult) => void
 }) {
   const playerIds = players.map((p) => p.playerId)
   const count = playerIds.length
@@ -71,7 +71,7 @@ export function BulkDeletePlayersModal({
   const del = useBulkDeletePlayers()
   const { submit, pending, failed, error } = useGuardedSubmit<
     { playerIds: string[]; expectedCount: number },
-    DeletePreview
+    DeleteRunResult
   >({
     operation: 'bulk delete players',
     perform: (input) => del.mutateAsync(input),
