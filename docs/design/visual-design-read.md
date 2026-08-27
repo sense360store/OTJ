@@ -251,14 +251,25 @@ Control heights are unsystematic: `.btn` 42px, `.btn-sm` 36px, `.btn-lg` 52px,
 `.chip` 34px, `.icon-btn` 38px, `.field input` 42px, `.select` and `.search-lg
 input` 48px. Seven heights, no token.
 
-**The screens have already noticed and patched around it**, and the overrides
-are of two kinds that must not be confused. Thirteen rules across seven files
-set a shared control's own size, which is the kind a primitive should make
-unnecessary. Between them they invent **five** control heights, none of which is
-the shared value: 34px, 38px, 40px, 42px and 44px. A further five rules across
-three files compose a control into a route's layout (`margin-bottom: 0`,
-`flex: 1`, `width: 100%`, `max-width: 100%`); those are legitimate, belong to
-the route, and are not overrides of anything.
+**The screens have already noticed and patched around it**, and the local rules
+that touch a shared primitive are of three kinds that must not be confused.
+Twenty rules across eight files, classified:
+
+- **control size, 13 rules across 7 files.** These duplicate a primitive's own
+  sizing and are the kind a primitive should make unnecessary. Between them they
+  invent **five** control heights, none of which is the shared value: 34px,
+  38px, 40px, 42px and 44px;
+- **route layout, 5 rules across 3 files.** `margin-bottom: 0` on a field,
+  `flex: 1` on a button, `width: 100%` on a select, `max-width: 100%`. These
+  compose a shared control into one route's layout. They are legitimate, they
+  belong to the route, and no primitive can or should absorb them;
+- **contextual restyle, 2 rules across 2 files.** `.dv .icon-btn:disabled` and
+  `.shares-summary .pill b`. These change a primitive's appearance for one
+  context rather than its size. They point at a missing variant rather than a
+  missing rule: `.dv .icon-btn` sets 44px **and** a dark-surface background,
+  border and text colour in one rule, so it is counted under control size above
+  while also being the clearest case for VISUAL-01 providing a dark-surface icon
+  button rather than leaving the viewer to repaint one.
 
 The newer, mobile first screens use the first kind to reach larger touch
 targets:
