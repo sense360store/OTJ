@@ -940,21 +940,31 @@ between 901 and 1080.
 
 ### VISUAL-01, foundation and shell
 
-Accept against these five, because between them they exercise every primitive
-and both shells:
+Accept against these five, because between them they exercise both shells and
+every primitive the product can show at this point:
 
 | Screen | Why this one |
 |---|---|
 | **Home** (`/`) | hero, stat cards, week list rows, `.page-head`, and both shells at once. The densest single exercise of the shared vocabulary |
 | **Sessions** (`/sessions`) | filter chips (kind, team, ownership, upcoming and past), list rows, the empty state, and a page head with actions |
 | **Login** (`/login`) | the product outside the shell: brand gradient, crest, inputs, primary button, error state. Checked in VISUAL-01, adopted in VISUAL-02: see below |
-| **The More sheet**, phone only | the one overlay with no primitive today, and the acceptance test for the new Sheet |
+| **The More sheet**, at and below 900px | the one overlay with no primitive today, and the acceptance test for the new Sheet |
 | **Any `Modal`**, for example Delete session | dialog, focus trap, Escape, focus restore, and the new `btn-danger` |
 
 VISUAL-01 is accepted when: the token set is in place, the primitives exist
 including the `danger` and `on-dark` button variants and the `Note` and `Sheet`
 primitives, each of the five surfaces above is visually checked in both themes
 **at every width where it exists**, and the 137 test files stay green.
+
+**The table primitive is the one exception, and its acceptance is deferred.**
+Part 1 establishes that the product has exactly one `<table>`, in Registered
+Players, and Part 4 schedules that screen for VISUAL-02. So none of the five
+surfaces above can exercise a table, and VISUAL-01 would otherwise be able to
+ship an unverified one. VISUAL-01 therefore **defines** the table and list-row
+rules in 2.9 and does not claim to have accepted them; Registered Players is
+where they are accepted, in VISUAL-02, against the real table, its 1024px column
+drop and its card equivalent. Building a demonstration table for VISUAL-01 to
+check would be a second implementation of the thing 2.9 exists to prevent.
 
 **Login is checked in VISUAL-01 and adopted in VISUAL-02**, and both roadmaps
 list it under VISUAL-02's stable surface group, which is correct and is not a
@@ -966,9 +976,11 @@ matrix (invalid credentials, magic link sent, expired link, set password,
 permission-limited) that VISUAL-01 does not attempt. The same split applies to
 Home and Sessions, which Part 4 lists in both waves for the same reason.
 
-Widths per surface, since two of the five are not present at every one: Home,
-Sessions and Login at all seven. The More sheet at 360, 390 and 430 only, since
-the bottom navigation it opens from does not render above 900px. A dialog at all
+Widths per surface, since one of the five is not present at every one: Home,
+Sessions and Login at all seven. The More sheet at 360, 390, 430, 768 and 900,
+which is every listed width at or below the 900px breakpoint plus the boundary
+itself, because the bottom navigation it opens from renders under
+`@media (max-width: 900px)` and 900 is the width where its presence changes. A dialog at all
 seven, and at 900px in both of its forms, because 2.13 turns a form dialog into
 a bottom sheet at and below that width and the changeover is the thing worth
 looking at.
@@ -1026,7 +1038,9 @@ a reason to keep the override.
 Registered Players is the primary acceptance screen for this wave. It is the
 only table, it holds the only irreversible destructive flow, it has a full
 mobile card equivalent, and it is where the colour role and contrast decisions
-in 2.2 are most visibly tested.
+in 2.2 are most visibly tested. **It also carries the table primitive's deferred
+acceptance from VISUAL-01**: 2.9 is defined in that wave and proved in this one,
+because this is the only screen that can prove it.
 
 ### VISUAL-03, feature area waves
 
