@@ -981,7 +981,9 @@ Four primitives look absent from a file-level reading of the five and are not:
 - **note** (2.4) and **success** (2.14). Login renders `.login-note` at
   `Login.tsx:79` for "Check your email for a sign-in link" and the reset
   equivalent, which is an informational note and the product's most reachable
-  success state at once.
+  success state at once. Home's other quick action opens `ImportFAModal`, which
+  carries four tinted note blocks of its own in the warning and success colours,
+  so neither primitive rests on the Login carve-out alone.
 
 The last of those needs a carve-out, because Login's state matrix is otherwise
 deferred to VISUAL-02: **VISUAL-01 checks the `info` state of Login**, and only
