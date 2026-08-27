@@ -184,7 +184,7 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
         )}
       </div>
       {error && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           {error}
         </p>
       )}

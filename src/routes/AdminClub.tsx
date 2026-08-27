@@ -17,7 +17,7 @@ function NoteLine({ note }: { note: Note }) {
   return (
     <p
       className="muted"
-      style={{ fontSize: 13.5, marginTop: 10, marginBottom: 0, color: note.kind === 'error' ? 'var(--m-pdf)' : 'var(--m-image)' }}
+      style={{ fontSize: 13.5, marginTop: 10, marginBottom: 0, color: note.kind === 'error' ? 'var(--danger)' : 'var(--success)' }}
     >
       {note.text}
     </p>
@@ -215,7 +215,7 @@ export function AdminClub() {
     <div style={{ maxWidth: 680 }}>
       <div className="page-head">
         <div>
-          <h2>Club</h2>
+          <h1>Club</h1>
           <div className="sub">The club's name, motto and crest, shown across the app and on the sign in screen.</div>
         </div>
       </div>

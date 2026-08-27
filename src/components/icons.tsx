@@ -134,4 +134,9 @@ export const Icon = {
     'M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   ]),
   share: S([C(18, 5, 3), C(6, 12, 3), C(18, 19, 3), L(8.6, 13.5, 15.4, 17.5), L(15.4, 6.5, 8.6, 10.5)]),
+  // The state icons the Note and the error state need. A tone is never the
+  // only cue: each note carries its own icon as well as its colour.
+  info: S([C(12, 12, 9), L(12, 11, 12, 16.5), L(12, 7.6, 12, 8.2)]),
+  alert: S(['M12 3.5 21.5 20H2.5L12 3.5Z', L(12, 9.5, 12, 14), L(12, 16.6, 12, 17.2)]),
+  danger: S([C(12, 12, 9), L(12, 7.5, 12, 13), L(12, 15.9, 12, 16.5)]),
 } satisfies Record<string, IconComponent>

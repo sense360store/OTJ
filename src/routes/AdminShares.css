@@ -106,13 +106,13 @@
   white-space: nowrap;
 }
 .share-badge-active {
-  color: var(--m-image);
+  color: var(--success);
 }
 .share-badge-expired {
   color: var(--slate);
 }
 .share-badge-revoked {
-  color: var(--m-pdf);
+  color: var(--danger);
 }
 
 .shares-more {

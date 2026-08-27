@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { bottomItemsFor, moreItemsFor } from './nav'
 import { Icon } from './icons'
+import { Sheet } from './primitives'
 import { useMyCapabilities } from '../lib/queries'
 import { screenFromPath } from '../lib/screen'
 
@@ -31,7 +32,14 @@ export function BottomNav() {
         {items.map((it) => {
           const active = screen === it.id
           return (
-            <button key={it.id} className={'bn-item' + (active ? ' active' : '')} onClick={() => go(it.to)}>
+            <button
+              key={it.id}
+              className={'bn-item' + (active ? ' active' : '')}
+              // The current destination is a navy tint AND a gold rule above
+              // it AND aria-current, so it is never signalled by colour alone.
+              aria-current={active ? 'page' : undefined}
+              onClick={() => go(it.to)}
+            >
               <it.icon />
               {it.label}
             </button>
@@ -49,30 +57,28 @@ export function BottomNav() {
           </button>
         )}
       </nav>
+      {/* The Sheet primitive. A menu is not a dialog, so this keeps
+          role="menu" and takes Escape and focus return without the Tab trap. */}
       {moreOpen && (
-        <div className="sheet-overlay" onClick={() => setMoreOpen(false)}>
-          <div className="more-sheet" role="menu" aria-label="More destinations" onClick={(e) => e.stopPropagation()}>
-            <div className="more-sheet-head">
-              <h3>More</h3>
-              <button className="icon-btn" aria-label="Close" onClick={() => setMoreOpen(false)}>
-                <Icon.x />
-              </button>
-            </div>
-            <div className="more-sheet-list">
-              {more.map((it) => (
+        <Sheet title="More" label="More destinations" role="menu" trapFocus={false} onClose={() => setMoreOpen(false)}>
+          <div className="more-sheet-list">
+            {more.map((it) => {
+              const active = screen === it.id
+              return (
                 <button
                   key={it.id}
-                  className={'more-sheet-item' + (screen === it.id ? ' active' : '')}
+                  className={'more-sheet-item' + (active ? ' active' : '')}
                   role="menuitem"
+                  aria-current={active ? 'page' : undefined}
                   onClick={() => go(it.to)}
                 >
                   <it.icon className="nav-ico" />
                   {it.label}
                 </button>
-              ))}
-            </div>
+              )
+            })}
           </div>
-        </div>
+        </Sheet>
       )}
     </>
   )

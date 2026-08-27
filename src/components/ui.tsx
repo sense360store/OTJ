@@ -58,7 +58,7 @@ export function CornerTag({ corner, small }: { corner: CornerKey; small?: boolea
   return (
     <span
       className={'tag corner-' + cornerClass[corner]}
-      style={small ? { padding: '2px 7px', fontSize: 11 } : undefined}
+      style={small ? { padding: 'var(--space-2) var(--space-8)', fontSize: 'var(--text-xs)' } : undefined}
     >
       <span className="tag-dot" style={{ background: c.color }}></span>
       {c.label}
@@ -76,7 +76,7 @@ export function TopicTags({ tags, small }: { tags: string[]; small?: boolean }) 
   return (
     <span className="row wrap" style={{ gap: 5 }}>
       {tags.map((t) => (
-        <span key={t} className="pill" style={small ? { padding: '2px 7px', fontSize: 11 } : undefined}>
+        <span key={t} className="pill" style={small ? { padding: 'var(--space-2) var(--space-8)', fontSize: 'var(--text-xs)' } : undefined}>
           #{t}
         </span>
       ))}
@@ -113,9 +113,12 @@ export function MediaThumb({
   const { src: signedUrl, onError, onLoad } = useMediaSrc(previewPath)
   if (!media) {
     return (
-      <div className="thumb thumb-diagram">
-        <span style={{ color: 'var(--slate-2)', fontSize: 12, fontWeight: 700 }}>No media</span>
-        <span className="thumb-label">add a clip or diagram</span>
+      // Two lines in normal flow rather than a corner label: at the 12px
+      // reading floor the hint is wide enough to run into the "No media" text
+      // behind it on a phone-width card.
+      <div className="thumb thumb-diagram thumb-empty">
+        <span className="thumb-empty-title">No media</span>
+        <span className="thumb-empty-hint">Add a clip or diagram</span>
       </div>
     )
   }
@@ -166,7 +169,13 @@ export function MediaThumb({
         </div>
       )}
       {!isVideo && media.kind === 'pdf' && !hasReal && (
-        <Icon.fileText style={{ width: 34, height: 34, color: 'var(--m-pdf)', opacity: 0.6 }} />
+        // The placeholder art under this glyph is a fixed light stripe in
+        // both themes, so the glyph takes a fixed colour from .thumb-glyph
+        // rather than the media token: at 60% opacity over that pink it
+        // measured 1.81:1 in light and 1.39:1 once --m-pdf lightened for
+        // dark. For a caller passing showBadge={false} it is the only cue
+        // that the file is a PDF.
+        <Icon.fileText className="thumb-glyph" />
       )}
       {showBadge && (
         <span className="media-badge" style={{ background: meta.color }}>
@@ -272,11 +281,18 @@ export function ListInput({
     <div>
       {value.length > 0 &&
         (numbered ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+          // The rows carry the densest stack of icon buttons in the product.
+          // Each remove button is 26px inside a 44px hit area, so its target
+          // reaches 9px past the visible box on each side; at the old 6px gap
+          // two neighbouring targets overlapped by 3px and the lower one won
+          // on paint order, so a click on the bottom edge of one Remove
+          // deleted the NEXT point. The gap has to exceed the two overhangs
+          // together, which is 18px, and the next step on the scale is 20.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-20)', marginBottom: 'var(--space-8)' }}>
             {value.map((v, i) => (
               <div key={i} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
                 <span className="cp-num">{i + 1}</span>
-                <span style={{ flex: 1, fontSize: 14, lineHeight: 1.45 }}>{v}</span>
+                <span style={{ flex: 1, fontSize: 'var(--text-base)', lineHeight: 1.45 }}>{v}</span>
                 <button
                   className="icon-btn"
                   style={{ width: 26, height: 26 }}
@@ -340,7 +356,7 @@ export function MediaAttribution({ media, style }: { media?: MediaItem | null; s
   if (!media?.sourceLabel) return null
   const noun = media.type === 'video' || media.type === 'youtube' ? 'Video' : 'Image'
   const line = `${noun}: ${media.sourceLabel}`
-  const base: CSSProperties = { fontSize: 12, fontWeight: 600, ...style }
+  const base: CSSProperties = { fontSize: 'var(--text-xs)', fontWeight: 600, ...style }
   if (media.sourceUrl) {
     return (
       <a className="muted" href={media.sourceUrl} target="_blank" rel="noreferrer" style={base}>
@@ -380,7 +396,7 @@ export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: 
         <p
           className="muted"
           style={{
-            fontSize: 13,
+            fontSize: 'var(--text-sm)',
             lineHeight: 1.45,
             margin: 0,
             display: '-webkit-box',
@@ -563,11 +579,14 @@ export function Modal({
 }
 
 /* ---- phase color ----------------------------------------------- */
+// A phase of a session is not a corner of the FA model. These are the same
+// values the phase bars have always had, held as their own tokens so the two
+// classifications are free to move apart.
 export const PHASE_COLOR: Record<Phase, string> = {
-  'Warm-Up': 'var(--c-physical)',
-  Skill: 'var(--c-technical)',
-  Game: 'var(--c-social)',
-  'Cool-Down': 'var(--c-psych)',
+  'Warm-Up': 'var(--phase-warmup)',
+  Skill: 'var(--phase-skill)',
+  Game: 'var(--phase-game)',
+  'Cool-Down': 'var(--phase-cooldown)',
 }
 
 /* ---- empty state ----------------------------------------------- */
@@ -581,19 +600,44 @@ export function Empty({ icon: Ico, title, children }: { icon?: IconComponent; ti
   )
 }
 
-/* ---- loading and error ----------------------------------------- */
+/* ---- loading and error -----------------------------------------
+   These two used to be byte identical, so a screen that had failed and a
+   screen that was still working looked the same. Loading is a labelled
+   spinner (or a skeleton where the shape is known); an error is a danger
+   Note with role="alert" and a retry where retrying is meaningful. */
 export function Loading({ label = 'Loading…' }: { label?: string }) {
   return (
-    <div className="muted" style={{ padding: '48px 0', textAlign: 'center', fontWeight: 600 }}>
+    <div className="loading" role="status">
+      <span className="spinner" aria-hidden="true"></span>
       {label}
     </div>
   )
 }
 
-export function ErrorNote({ children }: { children?: ReactNode }) {
+// The shape-known variant: a list of rows arriving. Nothing is announced,
+// because the labelled Loading above is what a screen reader is told.
+export function LoadingRows({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="muted" style={{ padding: '48px 0', textAlign: 'center', fontWeight: 600 }}>
-      {children ?? 'Something went wrong loading this. Refresh to try again.'}
+    <div className="skeleton-list" aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="skeleton skeleton-row"></div>
+      ))}
+    </div>
+  )
+}
+
+export function ErrorNote({ children, onRetry }: { children?: ReactNode; onRetry?: () => void }) {
+  return (
+    <div className="state-error" role="alert">
+      <Icon.danger aria-hidden="true" />
+      <div className="state-error-body">
+        {children ?? 'Something went wrong loading this. Refresh to try again.'}
+      </div>
+      {onRetry && (
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>
+          Retry
+        </button>
+      )}
     </div>
   )
 }
@@ -611,10 +655,10 @@ export function ActionError({ children, onRetry, style }: { children: ReactNode;
         display: 'flex',
         alignItems: 'center',
         gap: 10,
-        fontSize: 13.5,
+        fontSize: 'var(--text-sm)',
         fontWeight: 600,
         lineHeight: 1.45,
-        color: 'var(--m-pdf)',
+        color: 'var(--danger)',
         ...style,
       }}
     >
@@ -667,12 +711,12 @@ export function ShareControlView({
         {label}
       </button>
       {note && (
-        <span className="muted" style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+        <span className="muted" style={{ fontSize: 'var(--text-xs)', lineHeight: 1.45 }}>
           {note}
         </span>
       )}
       {feedback.role === 'status' && (
-        <span role="status" style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-physical)' }}>
+        <span role="status" style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--success)' }}>
           {feedback.message}
         </span>
       )}
@@ -790,8 +834,8 @@ export function UploadProgress({
       style={{ border: '1.5px solid var(--line)', borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}
     >
       <div className="row" style={{ gap: 10, justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <span style={{ fontWeight: 700, fontSize: 13.5, overflowWrap: 'anywhere' }}>{label}</span>
-        <span className="mono muted" style={{ fontSize: 12, flex: '0 0 auto' }}>
+        <span style={{ fontWeight: 700, fontSize: 'var(--text-sm)', overflowWrap: 'anywhere' }}>{label}</span>
+        <span className="mono muted" style={{ fontSize: 'var(--text-xs)', flex: '0 0 auto' }}>
           {formatBytes(total)}
         </span>
       </div>
@@ -812,15 +856,15 @@ export function UploadProgress({
           }}
         />
       </div>
-      <div className="muted" style={{ fontSize: 12.5 }}>
+      <div className="muted" style={{ fontSize: 'var(--text-xs)' }}>
         {status}
       </div>
       {/* The readout row holds a line of height even when empty (the Starting
           state) so the block does not jump as the numbers appear and update. */}
-      <div className="mono muted" style={{ fontSize: 12, minHeight: 16, overflowWrap: 'anywhere' }}>
+      <div className="mono muted" style={{ fontSize: 'var(--text-xs)', minHeight: 16, overflowWrap: 'anywhere' }}>
         {stats}
       </div>
-      <div className="muted" style={{ fontSize: 12 }}>
+      <div className="muted" style={{ fontSize: 'var(--text-xs)' }}>
         Large files can take a little while. Keep this open until it finishes.
       </div>
     </div>

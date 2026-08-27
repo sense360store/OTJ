@@ -327,7 +327,7 @@ export function ParentDashboard({
       <div className="page-head">
         <div>
           <div className="eyebrow">{todayLine}</div>
-          <h2 style={{ marginTop: 4 }}>Welcome{firstName ? `, ${firstName}` : ''}</h2>
+          <h1 style={{ marginTop: 4 }}>Welcome{firstName ? `, ${firstName}` : ''}</h1>
           <div className="sub">How the team is developing, and a few ways to support it at home.</div>
         </div>
       </div>

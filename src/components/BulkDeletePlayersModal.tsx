@@ -129,8 +129,7 @@ export function BulkDeletePlayersModal({
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={run}
             disabled={!confirmed || deleting}
           >
@@ -282,8 +281,7 @@ export function BulkSelectionBar({
         Done
       </button>
       <button
-        className="btn btn-primary btn-sm"
-        style={{ background: 'var(--m-pdf)' }}
+        className="btn btn-danger btn-sm"
         onClick={onDelete}
         disabled={selectedCount === 0}
       >

@@ -251,7 +251,7 @@ export function PlayerFormModal({
             id="pf-shirt-error"
             role="alert"
             className="muted"
-            style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 6, marginBottom: 0 }}
+            style={{ fontSize: 12.5, color: 'var(--danger)', marginTop: 6, marginBottom: 0 }}
           >
             Shirt number must be a whole number from 1 to 99.
           </p>

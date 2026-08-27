@@ -255,7 +255,7 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
       {note && (
         <p
           className="muted"
-          style={{ fontSize: 13.5, marginTop: 10, color: note.kind === 'error' ? 'var(--m-pdf)' : 'var(--m-image)' }}
+          style={{ fontSize: 13.5, marginTop: 10, color: note.kind === 'error' ? 'var(--danger)' : 'var(--success)' }}
         >
           {note.text}
         </p>
@@ -384,7 +384,7 @@ function ManageMemberModal({
         />
       </div>
       {error && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 12 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 12 }}>
           {error}
         </p>
       )}
@@ -452,7 +452,7 @@ function MemberRow({
           </span>
         ))}
         {m.roles.length === 0 && (
-          <span className="pill" style={{ fontSize: 11.5, color: 'var(--m-pdf)' }} title="No roles means no write access. Assign one.">
+          <span className="pill" style={{ fontSize: 11.5, color: 'var(--danger)' }} title="No roles means no write access. Assign one.">
             No roles
           </span>
         )}
@@ -491,7 +491,7 @@ export function MemberShareWarning({ memberId }: { memberId: string }) {
   const { data: count } = useMemberActiveShareCount(canManage ? memberId : null)
   if (!canManage || typeof count !== 'number' || count < 1) return null
   return (
-    <p role="status" style={{ fontSize: 13.5, lineHeight: 1.55, color: 'var(--m-pdf)' }}>
+    <p role="status" style={{ fontSize: 13.5, lineHeight: 1.55, color: 'var(--danger)' }}>
       This member has {count} public {count === 1 ? 'link' : 'links'} still working. Removing them does not turn
       {count === 1 ? ' it' : ' them'} off: the {count === 1 ? 'link keeps' : 'links keep'} working and will show as
       made by a former member.{' '}
@@ -521,8 +521,7 @@ function RemoveMemberModal({
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             disabled={remove.isPending}
             onClick={() =>
               remove.mutate(
@@ -546,7 +545,7 @@ function RemoveMemberModal({
       </p>
       <MemberShareWarning memberId={member.id} />
       {remove.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           {remove.error.message}
         </p>
       )}
@@ -577,8 +576,7 @@ function DeleteRoleModal({
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             disabled={deleteRole.isPending}
             onClick={() => deleteRole.mutate({ id: role.id }, { onSuccess: onClose })}
           >
@@ -595,7 +593,7 @@ function DeleteRoleModal({
         Its capability ticks are removed with it. Members keep their other roles and stay in the club.
       </p>
       {deleteRole.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           {deleteRole.error.message}
         </p>
       )}
@@ -705,12 +703,12 @@ function RolesCard({ roles, members }: { roles: RoleInfo[]; members: Member[] })
         </p>
       )}
       {createRole.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 8 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 8 }}>
           {createRole.error.message}
         </p>
       )}
       {renameRole.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 8 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 8 }}>
           {renameRole.error.message}
         </p>
       )}
@@ -812,7 +810,7 @@ function ConfirmGridModal({
         ))}
       </ul>
       {error && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           {error}
         </p>
       )}
@@ -1003,7 +1001,7 @@ export function AdminUsers() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Users</h2>
+          <h1>Users</h1>
           <div className="sub">Invite and remove members, manage roles and teams, and decide what each role can do.</div>
         </div>
       </div>
@@ -1019,7 +1017,7 @@ export function AdminUsers() {
           </span>
         </div>
         {removedNote && (
-          <p className="muted" style={{ fontSize: 13.5, color: 'var(--m-image)', paddingBottom: 10 }}>
+          <p className="muted" style={{ fontSize: 13.5, color: 'var(--success)', paddingBottom: 10 }}>
             {removedNote}
           </p>
         )}

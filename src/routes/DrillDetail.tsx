@@ -478,7 +478,7 @@ export function DrillDetail() {
             {drill.theme && <span className="pill">{drill.theme}</span>}
             {drill.format && <span className="pill">{drill.format}</span>}
           </div>
-          <h2 style={{ fontSize: 28, lineHeight: 1.1 }}>{drill.title}</h2>
+          <h1 style={{ fontSize: 28, lineHeight: 1.1 }}>{drill.title}</h1>
           <p className="muted" style={{ fontSize: 15.5, lineHeight: 1.55, marginTop: 10 }}>
             {drill.summary}
           </p>

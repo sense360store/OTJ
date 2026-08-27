@@ -155,8 +155,8 @@ function LiveComplete({
               width: 88,
               height: 88,
               borderRadius: '50%',
-              background: 'color-mix(in srgb, var(--c-physical) 22%, transparent)',
-              color: 'var(--c-physical)',
+              background: 'color-mix(in srgb, var(--success) 22%, transparent)',
+              color: 'var(--success)',
               display: 'grid',
               placeItems: 'center',
             }}
@@ -317,7 +317,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
     return (
       <div className="live theme-dark">
         <div className="live-top">
-          <button className="icon-btn" onClick={onExit} title="Exit">
+          <button className="icon-btn" onClick={onExit} aria-label="Exit">
             <Icon.x />
           </button>
           <div style={{ flex: 1 }}>
@@ -331,7 +331,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
   return (
     <div className="live theme-dark">
       <div className="live-top">
-        <button className="icon-btn" onClick={onExit} title="Exit">
+        <button className="icon-btn" onClick={onExit} aria-label="Exit">
           <Icon.x />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -346,7 +346,6 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
         <button
           className="icon-btn"
           onClick={() => nav('sessionDay', { sessionId: session.id })}
-          title="Session day"
           aria-label="Session day"
         >
           <Icon.cone />
@@ -377,7 +376,7 @@ function LiveRunner({ session, onExit }: { session: Session; onExit: () => void 
                 style={{
                   height: '100%',
                   width: frac * 100 + '%',
-                  background: remaining <= 30 ? 'var(--m-pdf)' : 'var(--gold)',
+                  background: remaining <= 30 ? 'var(--danger)' : 'var(--gold)',
                   transition: 'width 1s linear',
                 }}
               ></div>
@@ -532,8 +531,8 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
                 width: 88,
                 height: 88,
                 borderRadius: '50%',
-                background: 'color-mix(in srgb, var(--c-physical) 22%, transparent)',
-                color: 'var(--c-physical)',
+                background: 'color-mix(in srgb, var(--success) 22%, transparent)',
+                color: 'var(--success)',
                 display: 'grid',
                 placeItems: 'center',
               }}
@@ -558,7 +557,7 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
     return (
       <div className="live theme-dark">
         <div className="live-top">
-          <button className="icon-btn" onClick={onExit} title="Exit">
+          <button className="icon-btn" onClick={onExit} aria-label="Exit">
             <Icon.x />
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -612,7 +611,7 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
     return (
       <div className="live theme-dark">
         <div className="live-top">
-          <button className="icon-btn" onClick={onExit} title="Exit">
+          <button className="icon-btn" onClick={onExit} aria-label="Exit">
             <Icon.x />
           </button>
           <div style={{ flex: 1 }}>
@@ -633,7 +632,7 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
   return (
     <div className="live theme-dark">
       <div className="live-top">
-        <button className="icon-btn" onClick={onExit} title="Exit">
+        <button className="icon-btn" onClick={onExit} aria-label="Exit">
           <Icon.x />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -648,7 +647,6 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
         <button
           className="icon-btn"
           onClick={() => nav('sessionDay', { sessionId: session.id })}
-          title="Session day"
           aria-label="Session day"
         >
           <Icon.cone />
@@ -674,7 +672,7 @@ function LiveWatcher({ session, onExit }: { session: Session; onExit: () => void
                 style={{
                   height: '100%',
                   width: frac * 100 + '%',
-                  background: remaining <= 30 ? 'var(--m-pdf)' : 'var(--gold)',
+                  background: remaining <= 30 ? 'var(--danger)' : 'var(--gold)',
                   transition: 'width 1s linear',
                 }}
               ></div>
@@ -745,7 +743,7 @@ function LiveMessage({ title, sub, onExit }: { title: string; sub?: string; onEx
   return (
     <div className="live theme-dark">
       <div className="live-top">
-        <button className="icon-btn" onClick={onExit} title="Exit">
+        <button className="icon-btn" onClick={onExit} aria-label="Exit">
           <Icon.x />
         </button>
         <div style={{ flex: 1 }}>

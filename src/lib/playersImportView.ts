@@ -8,13 +8,13 @@ import type { PlanSummary, PreviewFilter, RowClass } from './playersImportPlan'
 // The coloured pill and word for each class, plus a colour token. The word is
 // always shown, so a class is never conveyed by colour alone (ux section 12).
 export const PREVIEW_PILL: Record<RowClass, { word: string; color: string }> = {
-  new: { word: 'Will add', color: 'var(--c-physical)' },
+  new: { word: 'Will add', color: 'var(--success)' },
   update: { word: 'Will update', color: 'var(--royal)' },
   already_present: { word: 'Already present', color: 'var(--slate-2)' },
-  needs_choice: { word: 'Needs your choice', color: 'var(--c-social)' },
-  invalid: { word: 'Invalid', color: 'var(--m-pdf)' },
+  needs_choice: { word: 'Needs your choice', color: 'var(--warning)' },
+  invalid: { word: 'Invalid', color: 'var(--danger)' },
 }
-export const WARNING_COLOR = 'var(--c-social)'
+export const WARNING_COLOR = 'var(--warning)'
 
 // The preview filter chips, in the fixed order from ux section 8.
 export const FILTER_CHIPS: { key: PreviewFilter; label: string }[] = [

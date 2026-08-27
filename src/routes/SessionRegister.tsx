@@ -716,7 +716,7 @@ export function TonightScreen({ session }: { session: Session }) {
           <Icon.chevL />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h2>{PLAYERS_GROUPS_TITLE}</h2>
+          <h1>{PLAYERS_GROUPS_TITLE}</h1>
           <div className="sd-sub">{[session.name, fmtDate(session.date), session.time].filter(Boolean).join(' · ')}</div>
         </div>
       </div>

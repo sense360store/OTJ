@@ -19,14 +19,16 @@
   align-items: flex-start;
   background: var(--gold-soft);
   border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line));
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   padding: 14px 16px;
   margin-bottom: 16px;
 }
 .parent-note svg {
   width: 20px;
   height: 20px;
-  color: var(--gold-600);
+  /* On the note's own --gold-soft ground, so it takes dark ink: gold on
+     gold measured 1.88:1. */
+  color: var(--ink);
   flex: 0 0 20px;
   margin-top: 1px;
 }
@@ -67,7 +69,7 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--slate-2);
+  color: var(--slate);
 }
 .psn-day {
   display: block;
@@ -97,14 +99,14 @@
   margin-top: 7px;
   font-weight: 700;
   font-size: 13.5px;
-  color: var(--gold-600);
+  color: var(--ink-2);
 }
 
 /* Last session: a prominent focus line above the drill cards. */
 .parent-focus {
   font-weight: 800;
   font-size: 15px;
-  color: var(--gold-600);
+  color: var(--ink-2);
   margin-bottom: 10px;
 }
 
@@ -140,7 +142,7 @@
   display: grid;
   place-items: center;
   background: color-mix(in srgb, var(--navy) 10%, transparent);
-  color: var(--navy);
+  color: var(--royal);
 }
 .practice-ico svg {
   width: 17px;
@@ -163,7 +165,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--slate-2);
+  color: var(--slate);
 }
 
 /* Positive support: a warm list with gold markers. */

@@ -264,7 +264,11 @@ describe('the product no longer calls this a register', () => {
     // One constant for both, so the Session Day card and the opened
     // screen cannot drift into two names for one surface.
     const src = read('routes/SessionRegister.tsx')
-    expect(src).toMatch(/<h2>\{PLAYERS_GROUPS_TITLE\}<\/h2>/)
+    // An <h1> since VISUAL-01: the page title is the page's heading, and the
+    // club name in the sidebar stopped being the document's only one. What
+    // this pins is that the title comes from the one constant, so the heading
+    // level is matched loosely.
+    expect(src).toMatch(/<h1[^>]*>\{PLAYERS_GROUPS_TITLE\}<\/h1>/)
     expect(src).toMatch(/reg-card-title">\{PLAYERS_GROUPS_TITLE\}/)
     expect(PLAYERS_GROUPS_TITLE).toBe('Players & groups')
   })

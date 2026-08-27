@@ -92,16 +92,16 @@ function SessionCard({
             {ended && (
               <span
                 className="pill"
-                style={{ color: 'var(--gold-600)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
+                style={{ color: 'var(--ink)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
               >
                 Ended earlier today
               </span>
             )}
           </div>
           <h3 style={{ fontSize: 19 }}>{s.name}</h3>
-          <div style={{ color: 'var(--gold-600)', fontWeight: 700, fontSize: 14, marginTop: 2 }}>{s.focus}</div>
+          <div style={{ color: 'var(--ink-2)', fontWeight: 700, fontSize: 'var(--text-base)', marginTop: 2 }}>{s.focus}</div>
         </div>
-        <div className="avatar" style={{ background: 'var(--bg-2)', color: 'var(--navy)', fontSize: 13 }}>
+        <div className="avatar" style={{ background: 'var(--bg-2)', color: 'var(--royal)', fontSize: 13 }}>
           {s.ageGroup}
         </div>
       </div>
@@ -290,7 +290,7 @@ export function Sessions() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Sessions</h2>
+          <h1>Sessions</h1>
           <div className="sub">
             {canPlan
               ? `Training coming up across the club, including today's after it has finished. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds earlier days.`

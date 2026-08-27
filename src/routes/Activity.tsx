@@ -406,7 +406,7 @@ export function Activity() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Activity</h2>
+          <h1>Activity</h1>
           <div className="sub">Who changed what, across the club.</div>
         </div>
         <button

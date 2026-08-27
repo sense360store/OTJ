@@ -112,7 +112,7 @@ function DeleteTemplateModal({ t, onClose }: { t: Template; onClose: () => void 
           <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
             Cancel
           </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
+          <button className="btn btn-danger" onClick={remove} disabled={del.isPending}>
             <Icon.trash />
             {del.isPending ? 'Deleting…' : 'Delete'}
           </button>
@@ -125,7 +125,7 @@ function DeleteTemplateModal({ t, onClose }: { t: Template; onClose: () => void 
         {t.programmeId != null ? ' It is a programme week, so that week goes back to having no template.' : ''}
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           Could not delete. Try again.
         </p>
       )}
@@ -167,7 +167,7 @@ export function Templates() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Session Templates</h2>
+          <h1>Session Templates</h1>
           <div className="sub">Reusable session shells — build a new plan in one click.</div>
         </div>
         <div className="row wrap">

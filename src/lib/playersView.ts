@@ -210,8 +210,8 @@ export function statusCounts(rows: RegisteredPlayer[]): StatusCounts {
 // its colour token. Withdrawn is the muted slate; the row it sits on is also
 // slightly muted (the component applies that). Registered green, Pending amber.
 export const STATUS_META: Record<RegistrationStatus, { label: string; dot: string; muted: boolean }> = {
-  pending: { label: 'Pending', dot: 'var(--c-social)', muted: false },
-  registered: { label: 'Registered', dot: 'var(--c-physical)', muted: false },
+  pending: { label: 'Pending', dot: 'var(--warning)', muted: false },
+  registered: { label: 'Registered', dot: 'var(--success)', muted: false },
   withdrawn: { label: 'Withdrawn', dot: 'var(--slate-2)', muted: true },
 }
 

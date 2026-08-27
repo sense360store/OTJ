@@ -78,7 +78,7 @@ export function Library() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Drill Library</h2>
+          <h1>Drill Library</h1>
           <div className="sub">Every drill and skill, tagged to the FA four-corner model.</div>
         </div>
         {(canImport || canPlan || canCreate) && (

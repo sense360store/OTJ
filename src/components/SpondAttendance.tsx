@@ -41,7 +41,7 @@ export function CancelledBadge() {
   return (
     <span
       className="tag"
-      style={{ background: 'color-mix(in srgb, var(--m-pdf) 14%, transparent)', color: 'var(--m-pdf)' }}
+      style={{ background: 'var(--danger-surface)', color: 'var(--danger)' }}
     >
       Cancelled
     </span>
@@ -54,7 +54,7 @@ export function MatchBadge() {
   return (
     <span
       className="tag"
-      style={{ background: 'color-mix(in srgb, var(--m-video) 14%, transparent)', color: 'var(--m-video)' }}
+      style={{ background: 'var(--info-surface)', color: 'var(--info)' }}
     >
       Match
     </span>
@@ -294,7 +294,7 @@ export function SpondAttendanceCard({
         </>
       )}
       {errorText && (
-        <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', margin: '8px 0 0' }}>
+        <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', margin: '8px 0 0' }}>
           {errorText}
         </p>
       )}

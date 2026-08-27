@@ -89,7 +89,7 @@ function ProgrammeCard({
           </span>
         )}
         {hint && (
-          <span className="pill" style={{ color: 'var(--c-physical)' }}>
+          <span className="pill" style={{ color: 'var(--success)' }}>
             <Icon.checkCircle />
             {hint}
           </span>
@@ -119,7 +119,7 @@ export function Programmes() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Programmes</h2>
+          <h1>Programmes</h1>
           <div className="sub">Six-week blocks of linked sessions, imported from England Football or built by hand.</div>
         </div>
         {(canImport || canCreate) && (

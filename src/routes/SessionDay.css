@@ -65,7 +65,7 @@
 .sd-card {
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
   padding: 14px 15px;
 }
@@ -79,7 +79,7 @@
   height: 28px;
   border-radius: 50%;
   background: var(--gold-soft);
-  color: var(--gold-600);
+  color: var(--ink);
   font-weight: 800;
   font-size: 13px;
   display: grid;
@@ -130,7 +130,9 @@
   border: 1.5px solid var(--line);
   display: grid;
   place-items: center;
-  color: #fff;
+  /* As in SessionRegister.css: the tick's ground is --success, so it takes
+     that fill's own label colour rather than a hardcoded white. */
+  color: var(--success-fg);
   flex: 0 0 28px;
 }
 .sd-check svg {
@@ -138,8 +140,8 @@
   height: 16px;
 }
 .sd-kit-item.on .sd-check {
-  background: var(--c-physical);
-  border-color: var(--c-physical);
+  background: var(--success);
+  border-color: var(--success);
 }
 .sd-kit-name {
   font-weight: 800;

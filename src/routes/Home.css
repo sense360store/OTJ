@@ -68,7 +68,7 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--slate-2);
+  color: var(--slate);
 }
 .ww-num {
   display: block;
@@ -106,9 +106,10 @@
   border-top: 1px solid var(--line);
   margin-top: auto;
 }
+/* The full width footer action stays; its size does not. The 44px minimum
+   is the Button primitive's now, so only the composition is left here. */
 .week-foot .btn {
   width: 100%;
-  min-height: 44px;
 }
 
 /* Quick actions */
@@ -147,7 +148,7 @@
   display: grid;
   place-items: center;
   background: color-mix(in srgb, var(--navy) 10%, transparent);
-  color: var(--navy);
+  color: var(--royal);
 }
 .qa-ico svg {
   width: 18px;
@@ -155,7 +156,9 @@
 }
 .qa-btn.qa-live .qa-ico {
   background: var(--gold);
-  color: var(--ink);
+  /* Gold does not darken in the dark theme, so its glyph takes --gold-fg
+     rather than --ink, which flips to near white. */
+  color: var(--gold-fg);
 }
 
 @media (max-width: 900px) {

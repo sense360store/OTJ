@@ -27,7 +27,7 @@ function NoteLine({ note }: { note: Note }) {
   return (
     <p
       className="muted"
-      style={{ fontSize: 13.5, marginTop: 10, marginBottom: 0, color: note.kind === 'error' ? 'var(--m-pdf)' : 'var(--m-image)' }}
+      style={{ fontSize: 13.5, marginTop: 10, marginBottom: 0, color: note.kind === 'error' ? 'var(--danger)' : 'var(--success)' }}
     >
       {note.text}
     </p>
@@ -436,7 +436,7 @@ export function Account() {
     <div style={{ maxWidth: 680 }}>
       <div className="page-head">
         <div>
-          <h2>Account</h2>
+          <h1>Account</h1>
           <div className="sub">Your details, how you sign in, and your club membership.</div>
         </div>
       </div>

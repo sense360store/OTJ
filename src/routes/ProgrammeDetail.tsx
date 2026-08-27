@@ -87,7 +87,6 @@ function WeekRow({
             className="icon-btn"
             style={{ width: 34, height: 34, flex: '0 0 auto' }}
             aria-label={`Edit week ${week} template`}
-            title="Edit template"
             onClick={() => onEditTemplate(template)}
           >
             <Icon.edit style={{ width: 15, height: 15 }} />
@@ -113,7 +112,7 @@ function WeekRow({
               <button
                 key={s.id}
                 className="pill"
-                style={{ minHeight: 32, cursor: 'pointer', color: done ? 'var(--c-physical)' : undefined }}
+                style={{ minHeight: 32, cursor: 'pointer', color: done ? 'var(--success)' : undefined }}
                 onClick={() => nav('sessionDay', { sessionId: s.id })}
               >
                 {done ? <Icon.checkCircle /> : <Icon.calendar />}
@@ -172,8 +171,7 @@ function DeleteProgrammeModal({ p, onClose, onDeleted }: { p: Programme; onClose
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={remove}
             disabled={del.isPending}
           >
@@ -188,7 +186,7 @@ function DeleteProgrammeModal({ p, onClose, onDeleted }: { p: Programme; onClose
         stay on the calendar; they just stop pointing at a programme.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           Could not delete. Try again.
         </p>
       )}
@@ -260,7 +258,7 @@ function ProgrammeView({ p }: { p: Programme }) {
           <Icon.chevL />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 style={{ fontSize: 24 }}>{p.name}</h2>
+          <h1 style={{ fontSize: 24 }}>{p.name}</h1>
           {p.focus && (
             <span className="tag corner-technical" style={{ marginTop: 6 }}>
               {p.focus}

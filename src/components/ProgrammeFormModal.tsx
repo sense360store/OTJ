@@ -362,7 +362,10 @@ export function ProgrammeFormModal({
             <div key={i}>
               <div
                 className="row"
-                style={{ gap: 8, padding: '8px 10px', borderRadius: 12, border: '1px solid var(--line)', background: 'var(--card)' }}
+                // gap-12: the row holds 34px icon buttons whose hit area is
+                // 44px, so each reaches 5px past its box and two neighbours
+                // need more than 10px between them.
+                style={{ gap: 12, padding: '8px 10px', borderRadius: 12, border: '1px solid var(--line)', background: 'var(--card)' }}
               >
                 <span className="role-badge" style={{ fontSize: 12, flex: '0 0 auto' }}>
                   Week {i + 1}
@@ -458,7 +461,7 @@ export function ProgrammeFormModal({
         )}
       </div>
       {error && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           {error}
         </p>
       )}

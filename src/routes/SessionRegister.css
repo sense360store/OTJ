@@ -72,8 +72,8 @@
   overflow: hidden;
 }
 .reg-row.on {
-  border-color: var(--c-physical);
-  background: color-mix(in srgb, var(--c-physical) 7%, var(--card));
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 7%, var(--card));
 }
 
 /* The tick target: the name, the number and everything around them. */
@@ -99,15 +99,18 @@
   border: 1.5px solid var(--line);
   display: grid;
   place-items: center;
-  color: #fff;
+  /* The tick rides on --success when the row is on, so its colour is that
+     fill's own label rather than a hardcoded white: --success lightens in
+     the dark theme and a white tick would drop under 2:1. */
+  color: var(--success-fg);
 }
 .reg-check svg {
   width: 16px;
   height: 16px;
 }
 .reg-row.on .reg-check {
-  background: var(--c-physical);
-  border-color: var(--c-physical);
+  background: var(--success);
+  border-color: var(--success);
 }
 .reg-name {
   min-width: 0;
@@ -148,8 +151,8 @@
   white-space: nowrap;
 }
 .reg-rsvp.out {
-  color: var(--m-pdf);
-  border-color: var(--m-pdf);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 /* Going or Everyone, and the way to pull the replies again. Sits under the
@@ -198,9 +201,9 @@
   cursor: pointer;
 }
 .reg-here.on {
-  background: color-mix(in srgb, var(--c-social) 16%, var(--card));
-  border-color: var(--c-social);
-  color: var(--c-social);
+  background: color-mix(in srgb, var(--warning) 16%, var(--card));
+  border-color: var(--warning);
+  color: var(--warning);
 }
 .reg-here.static {
   cursor: default;
@@ -394,7 +397,7 @@
    the link coverage beside it because it is context about the event rather
    than about the squad the coach is organising. */
 .tn-audience {
-  color: var(--slate-2);
+  color: var(--slate);
 }
 /* Which teams hold the unlinked players. It answers the coverage line
    beside it, so it reads at the same weight as the note it explains. */
@@ -498,13 +501,15 @@
   color: var(--slate);
 }
 .tn-status-dirty {
-  color: var(--gold-600);
+  /* Unsaved work is a warning state, and it sits beside .tn-status-failed's
+     --danger. Gold read at 2.06:1 here. */
+  color: var(--warning);
 }
 .tn-status-failed {
-  color: var(--m-pdf);
+  color: var(--danger);
 }
 .tn-status-saved {
-  color: var(--c-physical);
+  color: var(--success);
 }
 .tn-save-btn {
   min-height: 48px;
@@ -621,6 +626,6 @@
   font-weight: 600;
 }
 .setup-issue {
-  color: var(--c-social);
+  color: var(--warning);
   line-height: 1.45;
 }

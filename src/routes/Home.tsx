@@ -45,12 +45,6 @@ import './Home.css'
 
 type Nav = ReturnType<typeof useNav>
 
-const GHOST_ON_NAVY = {
-  background: 'rgba(255,255,255,.12)',
-  color: '#fff',
-  borderColor: 'rgba(255,255,255,.25)',
-} as const
-
 function toIso(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
@@ -124,7 +118,7 @@ function NextSessionHero({
         · {live ? 'Live now' : countdownLabel(s.date, todayStr)}
       </div>
       <h2>{s.name}</h2>
-      {s.focus && <div style={{ fontWeight: 700, color: 'var(--gold)', fontSize: 15 }}>{s.focus}</div>}
+      {s.focus && <div style={{ fontWeight: 700, color: 'var(--brand-gold)', fontSize: 'var(--text-md)' }}>{s.focus}</div>}
       <div className="hero-meta">
         <span className="row">
           <Icon.calendar />
@@ -151,14 +145,13 @@ function NextSessionHero({
           <Icon.cone />
           Session day
         </button>
-        <button className="btn btn-ghost btn-lg" style={GHOST_ON_NAVY} onClick={() => nav('live', { sessionId: s.id })}>
+        <button className="btn btn-on-dark btn-lg" onClick={() => nav('live', { sessionId: s.id })}>
           {canManage && !live ? <Icon.play /> : <Icon.eye />}
           Live
         </button>
         {canManage && (
           <button
-            className="btn btn-ghost btn-lg"
-            style={GHOST_ON_NAVY}
+            className="btn btn-on-dark btn-lg"
             onClick={() => nav('planner', { sessionId: s.id })}
           >
             <Icon.edit />
@@ -211,11 +204,11 @@ function EmptyHero({
         </button>
         {fresh && (
           <>
-            <button className="btn btn-ghost btn-lg" style={GHOST_ON_NAVY} onClick={() => nav('library')}>
+            <button className="btn btn-on-dark btn-lg" onClick={() => nav('library')}>
               <Icon.grid />
               Browse the drill library
             </button>
-            <button className="btn btn-ghost btn-lg" style={GHOST_ON_NAVY} onClick={onImport}>
+            <button className="btn btn-on-dark btn-lg" onClick={onImport}>
               <Icon.download />
               Import an FA session
             </button>
@@ -260,7 +253,7 @@ function WeekRow({
           {ended && (
             <span
               className="pill"
-              style={{ color: 'var(--gold-600)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
+              style={{ color: 'var(--ink)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
             >
               Ended earlier today
             </span>
@@ -304,7 +297,7 @@ function TemplateMiniCard({ t, onClick }: { t: Template; onClick: () => void }) 
       </div>
       <div className="dc-body">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <span className="tag" style={{ color: 'var(--gold-600)', background: 'var(--gold-soft)' }}>
+          <span className="tag" style={{ color: 'var(--ink)', background: 'var(--gold-soft)' }}>
             <Icon.book style={{ width: 12, height: 12 }} />
             Template
           </span>
@@ -473,7 +466,7 @@ function CoachHome() {
       <div className="page-head">
         <div>
           <div className="eyebrow">{todayLine}</div>
-          <h2 style={{ marginTop: 4 }}>Welcome back{firstName ? `, ${firstName}` : ''}</h2>
+          <h1 style={{ marginTop: 4 }}>Welcome back{firstName ? `, ${firstName}` : ''}</h1>
           <div className="sub">
             {canPlan
               ? 'Your schedule first, then everything you need for the next session.'

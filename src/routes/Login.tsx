@@ -6,6 +6,7 @@ import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { Crest } from '../components/Crest'
 import { Icon } from '../components/icons'
+import { Note } from '../components/primitives'
 import { useClubBranding } from '../hooks/useClubBranding'
 import './Login.css'
 
@@ -75,8 +76,19 @@ export function Login() {
           </div>
         </div>
 
-        {error && <div className="login-error">{error}</div>}
-        {info && <div className="login-note">{info}</div>}
+        {/* The error is the danger Note; the confirmation is the success
+            treatment. Both used to borrow a classification colour, the PDF
+            media red and the physical corner green, to mean a state. */}
+        {error && (
+          <Note tone="danger" role="alert" className="login-note-slot">
+            {error}
+          </Note>
+        )}
+        {info && (
+          <Note tone="success" role="status" className="login-note-slot">
+            {info}
+          </Note>
+        )}
 
         <div className="field">
           <label htmlFor="email">Email</label>

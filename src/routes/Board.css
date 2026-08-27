@@ -93,7 +93,7 @@
   max-width: 540px;
   margin: 0 auto;
   aspect-ratio: 680 / 1050;
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--pitch-grass);
   box-shadow: var(--shadow-sm);
@@ -199,7 +199,7 @@
   font-weight: 600;
 }
 .board-token-label:focus {
-  outline: none;
+  outline: none; /* replaced by the ring below */
   background: #fff;
   box-shadow: 0 0 0 2px var(--token-home);
 }
@@ -332,9 +332,9 @@
   padding: 0 12px;
 }
 .board-name .input:focus {
-  outline: none;
-  border-color: var(--royal);
-  box-shadow: 0 0 0 3px rgba(31, 67, 214, 0.1);
+  outline: none; /* replaced by the ring below */
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 22%, transparent);
 }
 .board-save-actions {
   display: flex;
@@ -351,7 +351,7 @@
   flex-basis: 100%;
   margin: 4px 0 0;
   font-size: 13px;
-  color: var(--m-pdf);
+  color: var(--danger);
 }
 
 /* The saved boards list rows inside the modal. */

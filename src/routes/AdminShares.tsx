@@ -275,7 +275,7 @@ export function ShareLookupField({
         never sent or stored.
       </p>
       {error && (
-        <p role="alert" className="shares-lookup-note" style={{ color: 'var(--m-pdf)' }}>
+        <p role="alert" className="shares-lookup-note" style={{ color: 'var(--danger)' }}>
           {error}
         </p>
       )}
@@ -328,7 +328,7 @@ export function ShareRow({
           <button
             type="button"
             className="btn btn-ghost"
-            style={{ minHeight: 44, color: 'var(--m-pdf)' }}
+            style={{ minHeight: 44, color: 'var(--danger)' }}
             aria-label={`Turn off the link for ${label}`}
             onClick={onTurnOff}
           >
@@ -476,7 +476,7 @@ export function ShareTurnOffModal({
           <button
             type="button"
             className="btn btn-primary"
-            style={{ minHeight: 44, background: 'var(--m-pdf)' }}
+            style={{ minHeight: 44 }}
             onClick={confirm}
             disabled={revoke.isPending}
           >
@@ -597,7 +597,7 @@ export function AdminShares() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Shared links</h2>
+          <h1>Shared links</h1>
           <div className="sub">Every public link the club has made, and whether it still works.</div>
         </div>
       </div>

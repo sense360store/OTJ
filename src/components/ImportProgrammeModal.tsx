@@ -49,8 +49,8 @@ function ResultCard({ result, onClose }: { result: ImportProgrammeResult; onClos
             height: 38,
             borderRadius: '50%',
             flex: '0 0 38px',
-            background: 'color-mix(in srgb, var(--c-physical) 18%, transparent)',
-            color: 'var(--c-physical)',
+            background: 'color-mix(in srgb, var(--success) 18%, transparent)',
+            color: 'var(--success)',
             display: 'grid',
             placeItems: 'center',
           }}
@@ -80,7 +80,7 @@ function ResultCard({ result, onClose }: { result: ImportProgrammeResult; onClos
               </span>
               <span
                 className="muted"
-                style={{ fontSize: 12.5, fontWeight: 700, color: w.status === 'failed' ? 'var(--m-pdf)' : undefined }}
+                style={{ fontSize: 12.5, fontWeight: 700, color: w.status === 'failed' ? 'var(--danger)' : undefined }}
               >
                 {weekLine(w)}
               </span>
@@ -199,7 +199,7 @@ export function ImportProgrammeModal({ onClose }: { onClose: () => void }) {
             </p>
           )}
           {error && (
-            <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+            <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
               {error}
             </p>
           )}

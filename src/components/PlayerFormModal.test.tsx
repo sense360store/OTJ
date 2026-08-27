@@ -50,7 +50,7 @@ describe('shared field styles keep checkboxes off the text-input sizing rule', (
   it('scopes the .field input width and height rule to exclude checkbox and radio', () => {
     // The root cause: the text-input sizing selector must skip checkbox and radio
     // so a checkbox in a .field is not stretched to a full-width 42px block.
-    const sizing = styles.match(/\.field input[^{]*\{[^}]*width: 100%; height: 42px;/)
+    const sizing = styles.match(/\.field input[^{]*\{[^}]*width: 100%; height: var\(--control-h\);/)
     expect(sizing).not.toBeNull()
     expect(sizing?.[0]).toContain(':not([type="checkbox"])')
     expect(sizing?.[0]).toContain(':not([type="radio"])')
@@ -65,8 +65,13 @@ describe('shared field styles keep checkboxes off the text-input sizing rule', (
   })
 
   it('keeps text inputs sized (no regression to other modals and fields)', () => {
-    // The text-input rule still applies width:100%;height:42px to real inputs,
-    // so Name, Shirt number and every other .field input are unchanged.
-    expect(styles).toMatch(/\.field input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\)[^{]*\{ width: 100%; height: 42px;/)
+    // The text-input rule still gives every real input the one control height,
+    // so Name, Shirt number and every other .field input are unchanged. The
+    // height is the --control-h token rather than a literal, because VISUAL-01
+    // moved every single-line control onto one height; what this pins is that
+    // the rule still SIZES text inputs, not what that size happens to be.
+    expect(styles).toMatch(
+      /\.field input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\), \.field select, \.field textarea \{\s*width: 100%; height: var\(--control-h\);/,
+    )
   })
 })

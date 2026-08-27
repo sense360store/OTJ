@@ -3,8 +3,9 @@
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: linear-gradient(120deg, var(--navy-900), var(--navy) 60%, #1b3aa8);
+  padding: var(--space-24);
+  /* The same fixed brand ground as the Home hero. */
+  background: var(--brand-gradient);
 }
 .login-card {
   width: 100%;
@@ -13,72 +14,57 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
-  padding: 32px 30px;
+  padding: var(--space-32) var(--space-24);
 }
 .login-head {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 12px;
-  margin-bottom: 22px;
+  gap: var(--space-12);
+  margin-bottom: var(--space-20);
 }
 .login-head .crest,
 .login-head .crest-fallback {
   width: 56px;
   height: 56px;
   flex-basis: 56px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
 }
 .login-head .crest-fallback {
-  font-size: 18px;
+  font-size: var(--text-lg);
 }
 .login-head h1 {
-  font-size: 22px;
+  font-size: var(--text-xl);
   font-weight: 800;
 }
 .login-head p {
-  margin: 2px 0 0;
-  font-size: 14px;
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-base);
   color: var(--slate);
 }
 .login-motto {
   display: block;
-  margin-top: 6px;
-  font-size: 12px;
+  margin-top: var(--space-4);
+  font-size: var(--text-xs);
   font-style: italic;
-  color: var(--slate-2);
+  color: var(--slate);
 }
-.login-error {
-  background: color-mix(in srgb, var(--m-pdf) 12%, transparent);
-  color: var(--m-pdf);
-  border: 1px solid color-mix(in srgb, var(--m-pdf) 30%, transparent);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 13.5px;
-  font-weight: 600;
-  margin-bottom: 14px;
-}
-.login-note {
-  background: color-mix(in srgb, var(--c-physical) 12%, transparent);
-  color: var(--c-physical);
-  border: 1px solid color-mix(in srgb, var(--c-physical) 30%, transparent);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 13.5px;
-  font-weight: 600;
-  margin-bottom: 14px;
+/* The error and the confirmation are the Note primitive and the success
+   treatment now; only their margin is left here, which is composition. */
+.login-note-slot {
+  margin-bottom: var(--space-12);
 }
 .login-divider {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--slate-2);
-  font-size: 12px;
+  gap: var(--space-8);
+  color: var(--slate);
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin: 16px 0;
+  margin: var(--space-16) 0;
 }
 .login-divider::before,
 .login-divider::after {
@@ -89,8 +75,8 @@
 }
 .login-foot {
   text-align: center;
-  margin-top: 18px;
-  font-size: 13px;
+  margin-top: var(--space-16);
+  font-size: var(--text-sm);
   color: var(--slate);
 }
 .login-link {
@@ -99,8 +85,9 @@
   background: none;
   border: 0;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-family: inherit;
+  min-height: var(--hit);
 }
 .login-link:hover {
   text-decoration: underline;
