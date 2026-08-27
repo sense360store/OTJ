@@ -251,25 +251,36 @@ Control heights are unsystematic: `.btn` 42px, `.btn-sm` 36px, `.btn-lg` 52px,
 `.chip` 34px, `.icon-btn` 38px, `.field input` 42px, `.select` and `.search-lg
 input` 48px. Seven heights, no token.
 
-**The screens have already noticed and patched around it**, and the local rules
-that touch a shared primitive are of three kinds that must not be confused.
-Twenty rules across eight files, classified:
+**The screens have already noticed and patched around it**, and the rules that
+touch a shared primitive are of three kinds that must not be confused. Twenty
+four rules across nine stylesheets, the shared one included, classified:
 
-- **control size, 13 rules across 7 files.** These duplicate a primitive's own
-  sizing and are the kind a primitive should make unnecessary. Between them they
-  invent **five** control heights, none of which is the shared value: 34px,
-  38px, 40px, 42px and 44px;
-- **route layout, 5 rules across 3 files.** `margin-bottom: 0` on a field,
-  `flex: 1` on a button, `width: 100%` on a select, `max-width: 100%`. These
-  compose a shared control into one route's layout. They are legitimate, they
-  belong to the route, and no primitive can or should absorb them;
-- **contextual restyle, 2 rules across 2 files.** `.dv .icon-btn:disabled` and
-  `.shares-summary .pill b`. These change a primitive's appearance for one
+- **control size, 14 rules across 8 stylesheets.** These duplicate a
+  primitive's own sizing and are the kind a primitive should make unnecessary.
+  Between them they invent **six** control heights, none of which is the shared
+  value: 28px, 34px, 38px, 40px, 42px and 44px;
+- **route layout, 8 rules across 4 stylesheets.** `margin-bottom: 0` on a field,
+  `flex: 1` on a button, `width: 100%` on a select, `min-width` on a filter.
+  These compose a shared control into one screen's layout. They are legitimate,
+  they belong to the screen, and no primitive can or should absorb them;
+- **contextual restyle, 2 rules across 2 stylesheets.** `.dv .icon-btn:disabled`
+  and `.shares-summary .pill b`. These change a primitive's appearance for one
   context rather than its size. They point at a missing variant rather than a
   missing rule: `.dv .icon-btn` sets 44px **and** a dark-surface background,
   border and text colour in one rule, so it is counted under control size above
-  while also being the clearest case for VISUAL-01 providing a dark-surface icon
-  button rather than leaving the viewer to repaint one.
+  while also being the clearest case for the dark-surface icon button 2.5 now
+  requires.
+
+Two further `.btn` rules sit inside the `@media print` block. Print is a
+different medium with its own correct answers and those are left alone.
+
+**The shared stylesheet overrides its own primitive**, which is the sharpest
+version of this finding. `src/styles.css:200` is
+`.act-role-row .chip { height: 28px; padding: 0 11px; font-size: 12px }`, six
+pixels shorter than the `.chip` defined 11 lines later in the same file, and the
+smallest interactive control in the product. Nothing about that is a screen
+working around a missing rule; it is the system disagreeing with itself in one
+file.
 
 The newer, mobile first screens use the first kind to reach larger touch
 targets:
@@ -600,7 +611,15 @@ Rules:
 dead for months without anyone seeing it.
 
 Variants: `primary` (navy), `gold` (the one accent action, currently New
-Session), `ghost`, `quiet`, `danger` (new). Sizes: `sm`, `md`, `lg`.
+Session), `ghost`, `quiet`, `danger` (new) and `on-dark` (new). Sizes: `sm`,
+`md`, `lg`.
+
+`on-dark` exists because two surfaces put shared controls on a dark ground that
+does not come from the theme: the diagram viewer chrome and the live view. Today
+`.dv .icon-btn` repaints the primitive's background, border and text colour
+inline in its own stylesheet, which is the contextual restyle 1.6 identifies.
+Without the variant, VISUAL-01 can satisfy every other rule here and still leave
+that repaint in place, so `on-dark` is part of the contract rather than a note.
 
 - heights: `sm` 36px, `md` 44px, `lg` 52px. The default becomes 44px, up from
   42px;
@@ -877,9 +896,10 @@ and both shells:
 | **The More sheet**, phone only | the one overlay with no primitive today, and the acceptance test for the new Sheet |
 | **Any `Modal`**, for example Delete session | dialog, focus trap, Escape, focus restore, and the new `btn-danger` |
 
-VISUAL-01 is accepted when: the token set is in place, the primitives exist, the
-five screens above are visually checked at all seven widths in both themes, and
-the 137 test files stay green.
+VISUAL-01 is accepted when: the token set is in place, the primitives exist
+including the `danger` and `on-dark` button variants and the `Note` and `Sheet`
+primitives, the five screens above are visually checked at all seven widths in
+both themes, and the 137 test files stay green.
 
 **Only the control-size overrides are in scope, and they are not all
 VISUAL-01's to delete.** The five route-layout rules identified in 1.6
@@ -888,17 +908,20 @@ composition, not duplication: they belong to their route and no primitive can or
 should absorb them. Deleting them would either leak a route's layout into every
 other caller or fail a later wave for correctly keeping them.
 
-The 13 control-size rules are the ones a primitive makes unnecessary, and each
+The 14 control-size rules are the ones a primitive makes unnecessary, and each
 goes with its route's wave, for the same reason Part 2 opens with the wave
 split. Only `Home.css`'s single rule sits on a VISUAL-01 acceptance surface and
 goes with this wave. `SpondLinks.css` (1) goes with VISUAL-02.
 `SessionRegister.css` (5), `DrillDiagramEditor.css` (2), `AddDrillModal.css`
-(2), `Board.css` (1) and `DiagramViewer.css` (1) go with VISUAL-03.
+(2), `Board.css` (1), `DiagramViewer.css` (1) and `styles.css`'s
+`.act-role-row .chip` (1) go with VISUAL-03; that last one styles the activity
+card row, which Planner and the week plan editor both render.
 
-What VISUAL-01 owns is making all 13 unnecessary by putting the rule in the
-primitive. A later wave that meets a control-size override it cannot delete has
-found a gap in the primitive, and that is a VISUAL-01 defect to fix rather than
-a reason to keep the override.
+What VISUAL-01 owns is making all 14 unnecessary by putting the rule in the
+primitive, which for `.dv .icon-btn` means shipping the dark-surface icon button
+2.5 requires, not only the 44px hit area. A later wave that meets a control-size
+override it cannot delete has found a gap in the primitive, and that is a
+VISUAL-01 defect to fix rather than a reason to keep the override.
 
 ### VISUAL-02, stable everyday surfaces
 
