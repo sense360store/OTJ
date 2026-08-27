@@ -63,7 +63,7 @@ the product.
 | `src/styles.css` | 837 lines | yes, the only shared layer |
 | 13 route and component CSS files | 2,780 lines | no, locally scoped |
 | Inline `style={{…}}` in JSX | 1,142 occurrences | no |
-| Hardcoded hex in JSX | 8 non-test files | no |
+| Hardcoded hex in JSX | 6 non-test files | no |
 
 Seventy-seven per cent of the product's CSS lives outside the shared stylesheet,
 in 13 locally scoped files. Those are not all one screen each. Three are
@@ -83,18 +83,20 @@ The largest single stylesheet in the product is still not the shared one:
 `src/routes/SessionRegister.css` is 626 lines, three quarters the size of
 `styles.css`, and that one genuinely does serve one screen.
 
-Colour discipline is the exception and it is good. Only 8 non-test `.tsx` files
-contain a raw hex value, counting the three-digit form (`#fff`) as well as the
-six-digit one, and most are defensible: the SVG token
+Colour discipline is the exception and it is good. Only 6 non-test `.tsx` files
+contain a raw colour literal, counting the three-digit form (`#fff`) as well as
+the six-digit one, and most are defensible. A hex-shaped search finds two more,
+`ExportConfirmModal.tsx` and `SetupSuggestion.tsx`, whose only matches are pull
+request references in comments (`#103`, `#109`, `#203`); those are not colours
+and are not counted. the SVG token
 fills in `DrillDiagramView.tsx` (`#18181b`, `#ffffff`) and the media letterbox
 in `MediaPlayerModal.tsx` and `ui.tsx` (`#0a0e1a`) are all deliberately
 theme-invariant, because a drawn diagram and a video frame should read the same
 in both themes and on paper. The exception is `RenewSeasonModal.tsx:32-34`,
 which hardcodes three status dot colours, two of which duplicate `--c-physical`
 and `--c-social` and one of which (`#94a3b8`) exists nowhere else in the
-product. The four `#fff` uses (`Home.tsx`, `AdminClub.tsx`,
-`ExportConfirmModal.tsx`, `SetupSuggestion.tsx`) are text on a brand fill, where
-a literal white is defensible but a token would be better. Almost everything
+product. The two `#fff` uses (`Home.tsx:50` and `AdminClub.tsx:39`) sit on a
+brand fill, where a literal white is defensible but a token would be better. Almost everything
 else already routes through a CSS variable, so the problem with colour is not
 that it is hardcoded. It is what the variables mean, covered in 1.3.
 
@@ -969,11 +971,21 @@ goes with this wave. `SpondLinks.css` (1) goes with VISUAL-02.
 `.act-role-row .chip` (1) go with VISUAL-03; that last one styles the activity
 card row, which Planner and the week plan editor both render.
 
-What VISUAL-01 owns is making all 14 unnecessary by putting the rule in the
-primitive, which for `.dv .icon-btn` means shipping the dark-surface icon button
-2.5 requires, not only the 44px hit area. A later wave that meets a control-size
-override it cannot delete has found a gap in the primitive, and that is a
-VISUAL-01 defect to fix rather than a reason to keep the override.
+**What is retired is the declaration, not always the rule.** Two of the 14 carry
+a size declaration and a composition or restyle declaration in the same block,
+and deleting the block would regress the screen:
+`Home.css`'s `.week-foot .btn` sets `min-height: 44px` **and** `width: 100%`,
+and `.dv .icon-btn` sets 44px **and** the dark-surface background, border and
+text colour. In both cases the size declaration goes and the rest stays, until
+`on-dark` makes the viewer's colours unnecessary too. A wave that deletes a
+whole rule and loses a full-width footer action has misread this criterion.
+
+What VISUAL-01 owns is making all 14 size declarations unnecessary by putting
+the rule in the primitive, which for `.dv .icon-btn` means shipping the
+`on-dark` variant 2.5 requires, not only the 44px hit area. A later wave that
+meets a control-size declaration it cannot retire has found a gap in the
+primitive, and that is a VISUAL-01 defect to fix rather than a reason to keep
+the override.
 
 ### VISUAL-02, stable everyday surfaces
 
