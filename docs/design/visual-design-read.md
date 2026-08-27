@@ -963,7 +963,7 @@ every primitive the product can show at this point:
 
 | Screen | Why this one |
 |---|---|
-| **Home** (`/`) | hero, stat cards, week list rows, `.page-head`, and both shells at once. The densest single exercise of the shared vocabulary. **Two screens behind one URL**: `/` dispatches to `CoachHome` or `ParentHome` by capability, and both must be checked, since the parent composition is the only read-only surface in this wave |
+| **Home** (`/`) | hero, stat cards, week list rows, `.page-head`, and both shells at once. The densest single exercise of the shared vocabulary. **Two screens behind one URL**: `/` dispatches to `CoachHome` or `ParentHome` by capability |
 | **Sessions** (`/sessions`) | filter chips (kind, team, ownership, upcoming and past), list rows, the empty state, and a page head with actions |
 | **Login** (`/login`) | the product outside the shell: brand gradient, crest, inputs, primary button, error state. Checked in VISUAL-01, adopted in VISUAL-02: see below |
 | **The More sheet**, at and below 900px | the one overlay with no primitive today, and the acceptance test for the new Sheet |
@@ -1046,6 +1046,16 @@ VISUAL-01 does not attempt, with the two exceptions carved out above, the
 `error` and `info` states that prove the Note primitive and the success
 treatment. The same split applies to
 Home and Sessions, which Part 4 lists in both waves for the same reason.
+
+**Each surface is checked in every capability variant it renders**, stated as a
+rule rather than a list because three of the five branch and enumerating them
+is how this gets missed. `/` dispatches to `CoachHome` or `ParentHome`;
+`/sessions` hides New session and the planner links without `sessions.create`
+and scopes the schedule to the member's team; and the bottom navigation itself
+offers a member without that capability two destinations rather than the full
+set, so the More sheet may not exist for them at all. The read-only variants are
+where a control that should be absent for a role shows up, which is the thing a
+visual pass is most likely to let through.
 
 Widths per surface, since one of the five is not present at every one: Home,
 Sessions and Login at all seven. The More sheet at 360, 390, 430, 768 and 900,
