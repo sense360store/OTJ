@@ -240,8 +240,9 @@ them towards larger touch targets:
 - `.add-drill-controls .chip { height: 40px }` and `.btn-sm { height: 40px }` in
   `AddDrillModal.css`.
 
-So the shared chip is 34px and three screens have independently decided it
-should be 40px or 44px. `Home.css` opens with the comment "every action is a
+So the shared chip is 34px, and three separate chip groups across two files have
+independently decided it should be 40px or 44px, disagreeing with each other as
+well as with the shared value. `Home.css` opens with the comment "every action is a
 44px-plus target" and enforces it locally. `SessionRegister.css` enforces 44px,
 48px and 56px minimums locally and designs explicitly for a 360px viewport.
 A further 44 sites across 13 files reach 44px with an inline `minHeight: 44`,
