@@ -147,6 +147,23 @@ _PROBE_QUOTED = re.compile(r"'([^']*)'")
 _PROBE_TO_REG_CALL = re.compile(r"to_reg[a-z]+\(\s*\Z", re.I)
 _TO_REG_ANYWHERE = re.compile(r"\bto_reg[a-z]+\s*\(", re.I)
 
+# A probe is a SELECT, and a SELECT cannot write. These few functions are the
+# exception: they take TEXT and run it, or read the filesystem, so a probe using
+# one would no longer be bounded by the shape of the statement it sits in.
+#
+# The forbidden token list already stops the obvious spelling, but a probe may
+# legitimately compose a string (0049 composes chr(34), and sql_text_value now
+# composes a ledger name), and composition defeats a substring check by
+# construction. Banning the executors themselves closes that properly: it does
+# not matter what a probe spells if nothing can run it. The read-only
+# transaction would refuse a write underneath all of this anyway; this is the
+# layer that stops a probe reaching for a second statement at all.
+_PROBE_FORBIDDEN_CALLS = (
+    "query_to_xml", "query_to_xmlschema", "dblink", "pg_read_file",
+    "pg_read_binary_file", "pg_ls_dir", "lo_import", "lo_export",
+    "pg_stat_file", "pg_logdir_ls",
+)
+
 # The access privilege inquiry functions that RESOLVE A CATALOG OBJECT,
 # surveyed against the server version this repository tests on (PostgreSQL 16).
 # Each was run against an absent object of its own kind and each raised, which
@@ -288,6 +305,62 @@ def sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _banned_token_in(text: str) -> str | None:
+    """The first _FORBIDDEN_TOKENS entry this text carries, if any."""
+    low = text.lower()
+    for bad in _FORBIDDEN_TOKENS:
+        if bad in low:
+            return bad
+    return None
+
+
+def sql_text_value(value: str) -> str:
+    """A SQL expression for a DATA value that may spell a forbidden token.
+
+    assert_select_only bans seventeen words as SUBSTRINGS of the whole
+    statement, deliberately bluntly, so that no edit to the register can smuggle
+    a write in through an object probe. That is the right guard and it is not
+    relaxed here. But it also reads values the statement merely COMPARES
+    against, and a migration is entitled to be called what it does: the ledger
+    name `bulk_delete_players` and the key `otj:migration:0050_bulk_delete_players`
+    both spell "delete" while asking the ledger a read-only question about a row.
+    Nine of the seventeen words are ordinary migration vocabulary (create, drop,
+    alter, insert, update, delete, grant, revoke, truncate), so this was going to
+    happen; 0050 is simply the first to reach it.
+
+    So a value that spells one is COMPOSED rather than quoted whole, exactly as
+    0049's probes compose chr(34) for a character the same guard refuses. The
+    statement then carries no banned substring while comparing the identical
+    text, because concat() of the pieces is the value.
+
+    This adds no injection surface. Every value that reaches here is already
+    proved to be a bare identifier, a 14 digit stamp, a hex digest or a key
+    matching its own pattern, so there is never a quote to escape, and splitting
+    a string cannot introduce one.
+    """
+    if _banned_token_in(value) is None:
+        return sql_literal(value)
+    pieces: list[str] = [""]
+    for char in value:
+        pieces[-1] += char
+        if _banned_token_in(pieces[-1]) is not None:
+            # Break BEFORE the character that completed the token, so the token
+            # is split across two literals and neither piece spells it.
+            pieces[-1] = pieces[-1][:-1]
+            pieces.append(char)
+    rendered = "concat(" + ", ".join(sql_literal(p) for p in pieces if p) + ")"
+    if _banned_token_in(rendered) is not None:
+        # Unreachable for any value shaped like a ledger name or key, and a
+        # fallback rather than a guess: one character per piece cannot spell a
+        # token of three or more characters, whatever the value turns out to be.
+        rendered = "concat(" + ", ".join(sql_literal(c) for c in value) + ")"
+    if _banned_token_in(rendered) is not None:
+        raise SystemExit(
+            f"FAIL: cannot express {value!r} without spelling a forbidden token"
+        )
+    return rendered
+
+
 def dollar_quoting_error(label: str) -> str:
     """One message for the one character both guards refuse for one reason."""
     return (
@@ -416,6 +489,15 @@ def assert_probe_is_total(label: str, probe: str) -> None:
     # carrying no apostrophe, so every rule below would look straight past it.
     if "$" in probe:
         raise SystemExit(dollar_quoting_error(label))
+    low = probe.lower()
+    for executor in _PROBE_FORBIDDEN_CALLS:
+        if executor in low:
+            raise SystemExit(
+                f"FAIL: object probe {label!r} calls {executor}(), which runs text as "
+                "SQL or reads the filesystem. A probe answers a yes/no question about "
+                "one object and needs neither, and a composed string must never be "
+                "able to become a statement."
+            )
     cast = _PROBE_REG_CAST.search(probe)
     if cast:
         raise SystemExit(
@@ -485,8 +567,11 @@ def state_select(entry: ReviewedMigration, expected_md5: str) -> str:
                 )
         assert_probe_is_total(label, probe)
 
-    name = sql_literal(entry.ledger_name)
-    key = sql_literal(entry.idempotency_key)
+    # The ledger name and the idempotency key are the two values a migration
+    # chooses, so they are the two that can spell a forbidden token. Composed
+    # when they do; quoted whole when they do not.
+    name = sql_text_value(entry.ledger_name)
+    key = sql_text_value(entry.idempotency_key)
     prev_version = sql_literal(entry.expected_previous_version)
     objects = ",\n    ".join(
         f"{sql_literal(label)}, {probe}" for label, probe in entry.objects.items()

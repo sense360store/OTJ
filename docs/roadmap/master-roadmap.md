@@ -38,7 +38,7 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
-| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Destructive-change review; no silent history loss. Migration `0050_bulk_delete_players` was applied to production on 23 August 2026 (hosted head `20260823065041`) from the reviewed commit on draft PR #191, ahead of the branch merging, which is the reverse rollout order its register entry documents; the application half remains on #191 |
+| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Destructive-change review; no silent history loss; boundary in `docs/security/player-deletion-boundary.md`. Migration `0050_bulk_delete_players`, registered against `20260817104226` / `spond_team_reconcile` (the row 0049's apply stamped), was applied to production on 23 August 2026 (hosted head `20260823065041`) by workflow run 32623941411 from this PR's reviewed commit, ahead of the branch merging, because main auto-deploys and the new Registered players screens call these functions; the application half is this PR |
 | SPOND-07 | Spond | Scheduled/automatic Spond refresh with visible freshness/failure state | Later | P2 | Rate behaviour and scheduling review |
 | LIVE-01 | Live session | Screen wake lock while delivering a session | Later | P2 | Browser capability/fallback |
 | LIVE-02 | Live session | Unmissable time-up cue and improved live connectivity/offline state | Later | P2 | Coordinate with accessibility |
@@ -286,6 +286,43 @@ the behaviour was confirmed against production rather than against this file.
 - Explicit confirmation naming the number deleted; one transaction, so a partial failure deletes nobody.
 - Session history is never silently destroyed: removals that would orphan register entries are surfaced, and the chosen semantics are stated on screen.
 - Audit events per run; concurrency tests for overlapping selections; destructive change review gate.
+
+In progress against the draft PR. The proven cascade, the refusal matrix, the
+concurrency argument and the audit shape are recorded in
+`docs/security/player-deletion-boundary.md`. The one finding worth reading
+before review: `register_entries` is destroyed rather than degraded to a
+neutral reference, which the single row Delete permanently has done since 0044
+without saying so. The bulk dialog states it in full and counts it; changing
+that outcome would be a schema decision, not a UI one, and is out of scope
+here. The permanent delete semantic is approved as it stands: Delete
+permanently is full erasure of that player identity, their historic register
+entries go with them by cascade, the sessions and every other player's history
+remain, and the preview and confirmation state that plainly. Withdraw remains
+the reversible action for a player genuinely leaving the club. No anonymised
+history redesign is in scope.
+
+The migration is written, self verifying and wrapped in its own explicit
+transaction, and has been APPLIED to production: workflow run 32623941411 ran
+it from this PR's reviewed commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f` on
+23 August 2026, holding at the production environment gate for a human first,
+and the hosted ledger stamped it `20260823065041` / `bulk_delete_players`. The
+deploy pin reconciliation landed separately as OPS-05 (#208).
+
+Numbering: slot 0049 belongs to SPOND-08's `0049_spond_team_reconcile.sql`, so
+this file is `0050_bulk_delete_players.sql`; the rename was forced, because two
+files carrying one version make `supabase db reset` abort and take the security
+suite with it. 0049 has since been applied to production, on 17 August 2026, at
+hosted version `20260817104226` / `spond_team_reconcile`, so the row 0050 must
+name exists and has been read rather than guessed. 0050 is in
+`REVIEWED_MIGRATIONS` against exactly that row, with five object probes and its
+own idempotency key, and in the workflow dropdown.
+
+Rollout order, which was the reverse of the usual one: 0050 was applied from
+the reviewed #191 branch commit FIRST, with the pre-apply gate, the apply and
+the post-apply readback all confirmed, and only then does the branch merge.
+Main auto-deploys to Vercel and the new screens call these functions, so
+merging first would have shipped a client calling an RPC the database did not
+have. See the file header and `docs/security/player-deletion-boundary.md`.
 
 **DRILL-02 — drill diagrams across session delivery**
 

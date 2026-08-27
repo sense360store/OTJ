@@ -31,6 +31,13 @@ import {
 } from './activityView'
 import { useAuth } from '../hooks/useAuth'
 import type { ExportFilterPayload, ExportPlayerRow } from './playersExport'
+import {
+  parseDeletePreview,
+  parseDeleteRunResult,
+  previewAnswersFor,
+  type DeletePreview,
+  type DeleteRunResult,
+} from './playersBulk'
 import type { ImportPayload, ImportServerResult } from './playersImportCommit'
 import type {
   Activity,
@@ -4352,6 +4359,144 @@ export function useDeletePlayer() {
     // (['registrations']), plus the current-season roster and any board name
     // map, so an add, edit or delete refreshes every reader consistently.
     onSettled: () => invalidatePlayerReads(qc),
+  })
+}
+
+// ---------------------------------------------------------------------
+// Bulk permanent deletion (roadmap PLAYERS-01, 0050_bulk_delete_players.sql)
+// ---------------------------------------------------------------------
+
+// The dependency preview a bulk deletion opens with. A QUERY rather than a
+// mutation: it writes nothing and audits nothing, so it may be re-asked freely,
+// and the modal gets loading, error and retry from the query layer instead of
+// hand rolling three states around a destructive dialog. The key carries the
+// player ids, which are opaque uuids and never names; the search term and the
+// names themselves stay out of it, as they stay out of the URL.
+//
+// staleTime 0 and gcTime 0: a preview of a destructive operation must never be
+// served from cache. Between opening the dialog twice another admin may have
+// deleted somebody, and a cached identity count is exactly the stale
+// confirmation the server refuses. That refusal covers the PLAYER SELECTION
+// only: the dependency counts are informational current-state context, which
+// the server recomputes as truth under the deletion lock rather than
+// revalidating against this preview, and the dialog's copy says so.
+export function useDeletePlayersPreview(playerIds: string[], enabled: boolean) {
+  const key = playerIds.slice().sort()
+  return useQuery({
+    queryKey: ['player-delete-preview', key],
+    enabled: enabled && key.length > 0,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    queryFn: async (): Promise<DeletePreview> => {
+      const { data, error } = await supabase.rpc('preview_delete_players', { p_player_ids: key })
+      if (error) throw error
+      // A malformed payload REFUSES rather than reading as zeroes, and so
+      // does a well formed one that answers for a different selection (a
+      // requested count that is not the submitted id count, or more live
+      // players than were asked about): the dialog lands on its error and
+      // retry path, and nothing arms against counts that were never
+      // established for THESE ids. players below requested stays valid,
+      // because that is the designed stale display.
+      const parsed = parseDeletePreview(data)
+      if (parsed === null || !previewAnswersFor(parsed, key.length)) {
+        throw new Error('the deletion preview could not be read')
+      }
+      return parsed
+    },
+  })
+}
+
+// The message a refusal carried, whatever shape it arrived in. A message
+// RAISED in the database reaches these recognisers as PostgREST's parsed
+// error body: a PLAIN OBJECT with a string `message` beside details, hint
+// and code, not an Error instance, because the client only constructs its
+// Error subclass under throwOnError and this app does not use it. A reader
+// that stopped at `instanceof Error` returned silence for exactly the
+// server refusals the recognisers below exist to name, which put the stale
+// refusal on the generic copy branch with Retry offered.
+function refusalMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === 'string') return err
+  if (err !== null && typeof err === 'object') {
+    const message = (err as { message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return ''
+}
+
+// The server refused because the selection is no longer what was previewed:
+// another admin deleted one of these children, or an id is not this club's.
+// Recognised by the message the RPC raises (0050) so the dialog can say
+// something a person can act on ("review the preview again") rather than a
+// generic failure. Pure, so it is unit tested directly, including against
+// the raw object shape the client actually returns.
+export function isStaleBulkSelection(err: unknown): boolean {
+  return /out of date|selection changed/i.test(refusalMessage(err))
+}
+
+// The run finished but its reply could not prove what happened (see the
+// mutation below). The dialog says the outcome is unknown and offers no
+// Retry, because retrying against an unknown outcome invites confirming a
+// second run against a register the admin has not re-read; the server's
+// identity revalidation would refuse it anyway once the rows are gone.
+export function isIndeterminateBulkOutcome(err: unknown): boolean {
+  return /whether it completed is unknown/i.test(refusalMessage(err))
+}
+
+// The transactional bulk permanent deletion. One RPC call, one database
+// transaction: a failure anywhere deletes nobody, so there is deliberately no
+// per player loop, no partial result and nothing to reconcile on retry.
+//
+// expectedCount is the number the admin's typed confirmation named. The server
+// revalidates it inside the transaction against the live set and refuses on a
+// mismatch, so a selection that went stale while the dialog was open cannot
+// become a deletion of a different number of children. That revalidation is
+// the identity count only, by design: the dependency counts are recomputed as
+// server truth under the deletion lock and are returned and audited from
+// there, never compared against the preview the dialog showed.
+export function useBulkDeletePlayers() {
+  const qc = useQueryClient()
+  return useMutation<DeleteRunResult, Error, { playerIds: string[]; expectedCount: number }>({
+    mutationFn: async ({ playerIds, expectedCount }) => {
+      const { data, error } = await supabase.rpc('delete_players', {
+        p_player_ids: playerIds,
+        p_expected_count: expectedCount,
+      })
+      if (error) throw error
+      // The run's reply is its own shape: the shared counts WITHOUT
+      // 'requested', plus a batch id and outcome the app does not consume.
+      // Parsed by the run parser, because requiring the preview's
+      // 'requested' here once made every successful deletion read as
+      // indeterminate.
+      const result = parseDeleteRunResult(data)
+      // The RPC returns what it actually deleted, and success is only ever
+      // reported from a reply that proves it. But an HTTP success whose body
+      // cannot prove what happened is an INDETERMINATE outcome, not a
+      // failure: every refusal in delete_players RAISES, which arrives as an
+      // error above, so a success carrying a malformed or miscounting body
+      // most likely means the deletion committed on a backend whose reply
+      // shape has drifted. Claiming "not deleted" here would be a false
+      // claim after a commit. The message says the outcome is unknown, the
+      // dialog recognises it (isIndeterminateBulkOutcome) and withholds
+      // Retry for it, and onSettled below has already refetched the
+      // register, which is the truth to read.
+      if (result === null || result.players !== expectedCount) {
+        throw new Error(
+          'The deletion finished with a reply that could not be read, so whether it completed is unknown. ' +
+            'Close this and reload the register to see the current state before selecting again.',
+        )
+      }
+      return result
+    },
+    // The register, the current-season list and every board name map refresh,
+    // exactly as they do after a single deletion. The activity feed is
+    // invalidated too, because a run writes one event per identity plus its
+    // own, and an admin who deletes from one tab expects to see it in another.
+    onSettled: () => {
+      invalidatePlayerReads(qc)
+      qc.invalidateQueries({ queryKey: ['activity'] })
+    },
   })
 }
 

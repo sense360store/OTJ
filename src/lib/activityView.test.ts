@@ -294,8 +294,21 @@ describe('entityRef', () => {
     expect(entityRef(ev({ id: 'a', entityType: 'import_batch', entityId: 'batch-1' }), opts)).toEqual({
       kind: 'batch',
       batchId: 'batch-1',
+      label: 'Import batch',
     })
     expect(entityRef(ev({ id: 'a', entityType: 'export', entityId: null }), opts)).toEqual({ kind: 'export' })
+  })
+
+  it('links a bulk deletion run under its own label, never as an import', () => {
+    // A deletion run and an import run are both a batch of rows. Rendering the
+    // most destructive event in the feed as "Import batch" would be the one
+    // mislabel that matters.
+    expect(entityRef(ev({ id: 'a', entityType: 'delete_batch', entityId: 'batch-2' }), opts)).toEqual({
+      kind: 'batch',
+      batchId: 'batch-2',
+      label: 'Deletion run',
+    })
+    expect(entityRef(ev({ id: 'a', entityType: 'delete_batch', entityId: null }), opts)).toEqual({ kind: 'none' })
   })
 
   // ---- PR 8 wider rollout entities ------------------------------------

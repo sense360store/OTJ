@@ -8,7 +8,9 @@ import {
   deletedExactlyOne,
   faImportBody,
   invalidatePlayerReads,
+  isIndeterminateBulkOutcome,
   isSpondLinkTaken,
+  isStaleBulkSelection,
   isUniqueViolation,
   MEDIA_MAX_BYTES,
   oversizeMessage,
@@ -643,6 +645,60 @@ describe('isSpondLinkTaken, telling one duplicate key from another', () => {
   it('survives an error carrying no message or details at all', () => {
     expect(isSpondLinkTaken({ code: '23505' })).toBe(false)
     expect(isSpondLinkTaken({ code: '23505', message: null, details: null })).toBe(false)
+  })
+})
+
+describe('the bulk delete refusal recognisers read every shape a refusal arrives in', () => {
+  // A message RAISED in delete_players (0050) reaches the client as
+  // PostgREST's parsed error body: a plain object with a string `message`,
+  // NOT an Error instance, because supabase.rpc only constructs its Error
+  // subclass under throwOnError and this app does not use it. The dialog's
+  // copy branch and its Retry gate both rest on these recognisers, so a
+  // reader that stopped at `instanceof Error` put the real stale refusal on
+  // the generic branch with Retry offered. The fixtures are the exact
+  // messages 0050 raises.
+  const staleObject = {
+    code: 'P0001',
+    details: null,
+    hint: null,
+    message:
+      'delete_players: the selection is out of date (1 of 3 selected players are no longer available); review the preview again',
+  }
+  const changedObject = {
+    code: 'P0001',
+    details: null,
+    hint: null,
+    message: 'delete_players: the selection changed (3 confirmed, 2 found); review the preview again',
+  }
+
+  it('recognises both stale refusals as the raw object the client actually returns', () => {
+    expect(isStaleBulkSelection(staleObject)).toBe(true)
+    expect(isStaleBulkSelection(changedObject)).toBe(true)
+  })
+
+  it('still recognises a stale refusal carried by an Error or a bare string', () => {
+    expect(isStaleBulkSelection(new Error(staleObject.message))).toBe(true)
+    expect(isStaleBulkSelection(changedObject.message)).toBe(true)
+  })
+
+  it('is false for anything that carries no readable stale message', () => {
+    expect(isStaleBulkSelection({ code: 'P0001', message: null })).toBe(false)
+    expect(isStaleBulkSelection({ message: 42 })).toBe(false)
+    expect(isStaleBulkSelection({})).toBe(false)
+    expect(isStaleBulkSelection(new Error('permission denied'))).toBe(false)
+    expect(isStaleBulkSelection(null)).toBe(false)
+    expect(isStaleBulkSelection(undefined)).toBe(false)
+  })
+
+  it('the indeterminate recogniser reads the same shapes', () => {
+    const message =
+      'The deletion finished with a reply that could not be read, so whether it completed is unknown. ' +
+      'Close this and reload the register to see the current state before selecting again.'
+    expect(isIndeterminateBulkOutcome(new Error(message))).toBe(true)
+    expect(isIndeterminateBulkOutcome({ message })).toBe(true)
+    expect(isIndeterminateBulkOutcome(message)).toBe(true)
+    expect(isIndeterminateBulkOutcome(staleObject)).toBe(false)
+    expect(isIndeterminateBulkOutcome(null)).toBe(false)
   })
 })
 
