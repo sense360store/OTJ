@@ -4407,14 +4407,32 @@ export function useDeletePlayersPreview(playerIds: string[], enabled: boolean) {
   })
 }
 
+// The message a refusal carried, whatever shape it arrived in. A message
+// RAISED in the database reaches these recognisers as PostgREST's parsed
+// error body: a PLAIN OBJECT with a string `message` beside details, hint
+// and code, not an Error instance, because the client only constructs its
+// Error subclass under throwOnError and this app does not use it. A reader
+// that stopped at `instanceof Error` returned silence for exactly the
+// server refusals the recognisers below exist to name, which put the stale
+// refusal on the generic copy branch with Retry offered.
+function refusalMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === 'string') return err
+  if (err !== null && typeof err === 'object') {
+    const message = (err as { message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return ''
+}
+
 // The server refused because the selection is no longer what was previewed:
 // another admin deleted one of these children, or an id is not this club's.
 // Recognised by the message the RPC raises (0050) so the dialog can say
 // something a person can act on ("review the preview again") rather than a
-// generic failure. Pure, so it is unit tested directly.
+// generic failure. Pure, so it is unit tested directly, including against
+// the raw object shape the client actually returns.
 export function isStaleBulkSelection(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
-  return /out of date|selection changed/i.test(message)
+  return /out of date|selection changed/i.test(refusalMessage(err))
 }
 
 // The run finished but its reply could not prove what happened (see the
@@ -4423,8 +4441,7 @@ export function isStaleBulkSelection(err: unknown): boolean {
 // second run against a register the admin has not re-read; the server's
 // identity revalidation would refuse it anyway once the rows are gone.
 export function isIndeterminateBulkOutcome(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
-  return /whether it completed is unknown/i.test(message)
+  return /whether it completed is unknown/i.test(refusalMessage(err))
 }
 
 // The transactional bulk permanent deletion. One RPC call, one database
