@@ -956,15 +956,25 @@ including the `danger` and `on-dark` button variants and the `Note` and `Sheet`
 primitives, each of the five surfaces above is visually checked in both themes
 **at every width where it exists**, and the 137 test files stay green.
 
-**The table primitive is the one exception, and its acceptance is deferred.**
-Part 1 establishes that the product has exactly one `<table>`, in Registered
-Players, and Part 4 schedules that screen for VISUAL-02. So none of the five
-surfaces above can exercise a table, and VISUAL-01 would otherwise be able to
-ship an unverified one. VISUAL-01 therefore **defines** the table and list-row
-rules in 2.9 and does not claim to have accepted them; Registered Players is
-where they are accepted, in VISUAL-02, against the real table, its 1024px column
-drop and its card equivalent. Building a demonstration table for VISUAL-01 to
-check would be a second implementation of the thing 2.9 exists to prevent.
+**Five primitives have no instance on these five surfaces, and their acceptance
+is deferred rather than faked.** VISUAL-01 defines every primitive in Part 2;
+it can only *accept* the ones the product actually shows on a surface this wave
+touches. Building a demonstration screen for the rest would be a second
+implementation of the thing Part 2 exists to prevent, so each is accepted in the
+wave that owns its first real instance:
+
+| Primitive | No instance on the five because | Accepted in |
+|---|---|---|
+| table and its card equivalent (2.9) | the product's only `<table>` is Registered Players | VISUAL-02 |
+| badge (2.7) | the only status badges are on Registered Players and the season renewal | VISUAL-02 |
+| note (2.4) | the archived banner, the import note and the sharing notices all sit on later surfaces | VISUAL-02 |
+| textarea (2.6) | none of the five has one; the first are Feedback and the drill and programme forms | VISUAL-02 for Feedback, VISUAL-03 for the forms |
+| toggle and checkbox (2.7) | the only `.check-row` is in the player form | VISUAL-02 |
+
+This is a real limit on what VISUAL-01 can claim, and it is why the wave's
+acceptance says the primitives *exist* rather than that they are all proved. A
+primitive that turns out to be wrong when its wave reaches it is a VISUAL-01
+defect to fix, not a licence for that wave to write its own.
 
 **Login is checked in VISUAL-01 and adopted in VISUAL-02**, and both roadmaps
 list it under VISUAL-02's stable surface group, which is correct and is not a
@@ -1038,9 +1048,11 @@ a reason to keep the override.
 Registered Players is the primary acceptance screen for this wave. It is the
 only table, it holds the only irreversible destructive flow, it has a full
 mobile card equivalent, and it is where the colour role and contrast decisions
-in 2.2 are most visibly tested. **It also carries the table primitive's deferred
-acceptance from VISUAL-01**: 2.9 is defined in that wave and proved in this one,
-because this is the only screen that can prove it.
+in 2.2 are most visibly tested. **It also carries four of VISUAL-01's five
+deferred primitive acceptances**: the table and its card equivalent (2.9), the
+badge (2.7), the note (2.4) and the toggle and checkbox (2.7) are all defined in
+VISUAL-01 and proved here, because this is the first wave whose surfaces show
+them. Feedback carries the fifth, the textarea.
 
 ### VISUAL-03, feature area waves
 
