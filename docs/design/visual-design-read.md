@@ -695,8 +695,17 @@ tappable. It replaces the three different local answers in `SessionRegister.css`
 
 ### 2.6 Inputs, selects and textareas
 
-One height (44px), one radius (`--radius-sm`), one border (`--line`), one focus
-treatment, one disabled treatment, one error treatment. This binds **every**
+One height (44px) **for the single-line controls**, one radius (`--radius-sm`),
+one border (`--line`), one focus treatment, one disabled treatment, one error
+treatment.
+
+A textarea is multiline and takes a **minimum** height of 44px with `height:
+auto` above it, sized by its `rows` and resizable vertically, which is what
+`styles.css:364` already does. Everything else in this section binds it
+unchanged: the same radius, border, focus ring, disabled and error treatments.
+Reading the one-height rule as applying to textareas would collapse the drill
+form's Summary and Setup notes fields to a single line, and that form is
+reachable from Home. This binds **every**
 shared input, the two search fields included: today `.field input` is 42px,
 `.topbar-search input` is 40px, and `.select` and `.search-lg input` are 48px,
 for no reason a user could name. `.topbar-search input` is the shell's own
