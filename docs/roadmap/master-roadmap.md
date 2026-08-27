@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 18 August 2026 (SPOND-08 shipped, applied to production and verified live; OPS-02 shipped in #195; DRILL-02's authenticated surfaces merged in #189, with print and public share still held for DRILL-02b; the coaching workflow design set reconciled after coach discovery, documentation only)
+Last reviewed: 27 August 2026 (PLAYERS-01 shipped in #191 after migration 0050 was applied and reconciled; the visual redesign programme is approved as VISUAL-00 through VISUAL-04; DRILL-02's public/share half remains separately gated)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -35,10 +35,15 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
 | SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | Done | P0 | Shipped in #190, completed in #192. Both gates have run: migration 0049 applied 17 August 2026 (hosted head `20260817104226`, `spond_team_reconcile`) and `spond-link-members` deployed at version 4. Verified by a live production smoke test |
-| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
+| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b). This public half does not block VISUAL-00/01 |
+| VISUAL-00 | Product design | Design Read: define the target OTJ visual language from current code, the reference design and representative real screens before changing pixels | Next | P1 | Preferred baseline is current `main` plus closure of #196; detailed plan in `docs/roadmap/visual-redesign-roadmap.md` |
+| VISUAL-01 | Product design | Build the shared visual foundation and app shell: tokens, typography, primitives, sidebar/top bar/content frame and mobile bottom navigation | Later | P1 | VISUAL-00; presentation only, no route/permission/data behaviour changes |
+| VISUAL-02 | Product design | Apply the new system to stable everyday surfaces including Home, Sessions, Registered Players, Activity, account/login, Feedback and stable admin screens | Later | P1 | VISUAL-01; PLAYERS-01 is already shipped so its destructive flow is redesigned once against final behaviour |
+| VISUAL-03 | Product design | Redesign evolving feature areas alongside their functional work rather than polishing them immediately before they change | Later | P1 | VISUAL-01; pair Planner/week plans with COACH-11/12/13, Training Day with COACH-5/6/7/8, public/share after DRILL-02b |
+| VISUAL-04 | Product design | Whole-product visual/accessibility QA across phone, tablet, desktop, light/dark/live modes and all state families | Later | P1 | VISUAL-01/02 and the relevant VISUAL-03 waves |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
-| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Destructive-change review; no silent history loss; boundary in `docs/security/player-deletion-boundary.md`. Migration `0050_bulk_delete_players`, registered against `20260817104226` / `spond_team_reconcile` (the row 0049's apply stamped), was applied to production on 23 August 2026 (hosted head `20260823065041`) by workflow run 32623941411 from this PR's reviewed commit, ahead of the branch merging, because main auto-deploys and the new Registered players screens call these functions; the application half is this PR |
+| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | Done | P2 | Shipped in #191 on 27 August 2026. Migration `0050_bulk_delete_players` was applied first on 23 August (hosted `20260823065041`) and the deploy pin was reconciled in #208 before the application half merged |
 | SPOND-07 | Spond | Scheduled/automatic Spond refresh with visible freshness/failure state | Later | P2 | Rate behaviour and scheduling review |
 | LIVE-01 | Live session | Screen wake lock while delivering a session | Later | P2 | Browser capability/fallback |
 | LIVE-02 | Live session | Unmissable time-up cue and improved live connectivity/offline state | Later | P2 | Coordinate with accessibility |
@@ -46,25 +51,37 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | LIVE-04 | Live session | Shared pause state for driver/watchers if still needed after re-audit | Parked | P2 | Reconfirm current friction first |
 | SHARE-01 | Sharing | Complete safe public session/programme sharing where appropriate | Later | P2 | Existing content-sharing security boundary |
 | SHARE-02 | Sharing | Multi-item Share Packs | Parked | P3 | Follow single-item session/programme sharing |
-| QUALITY-01 | Product quality | Re-audit old Product Excellence roadmap against current code and retire completed/stale items | Next | P1 | Do not implement from PR #100-era evidence without rechecking |
-| QUALITY-02 | Product quality | Core accessibility pass: modal focus, non-colour cues, live announcements, keyboard paths | Later | P2 | Coordinate with planning/live work |
+| QUALITY-01 | Product quality | Re-audit old Product Excellence roadmap against current code and retire completed/stale items | Later | P1 | VISUAL-00 absorbs the presentation audit; only non-visual/still-relevant findings should survive a fresh recheck |
+| QUALITY-02 | Product quality | Core accessibility pass: modal focus, non-colour cues, live announcements, keyboard paths | Later | P2 | Use as an acceptance lens during VISUAL-01/04; independent residuals can remain separate |
 | QUALITY-03 | Product quality | Error resilience and explicit retry/recovery where silent failures remain | Later | P2 | Re-audit current state first |
 
 ## Delivery order
 
 When there is capacity, prefer this sequence unless production evidence changes the order:
 
-1. Finish Drill Maker DRILL-02: the authenticated surfaces are in #189, and the print and public share half needs the separate reviewed DRILL-02b change before the row closes.
-2. Pick up QUALITY-01, since re-auditing the old Product Excellence roadmap gates several later items.
-3. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
+1. Close PR #196 as the preferred Drill Maker baseline for the visual programme. PLAYERS-01 / #191 is already merged and no longer blocks the redesign.
+2. Run **VISUAL-00**, the Design Read. It is a documentation/design decision pass over current code, `design-reference/`, the shared styles and representative real screens; no CSS or application behaviour changes yet.
+3. Land **VISUAL-01**, the shared foundation and shell, before route-by-route polishing. This is the point after which new feature work should inherit the new system rather than extend the old one.
+4. Run **VISUAL-02** over the stable everyday surfaces, in reviewable groups rather than one application-wide PR.
+5. Continue **VISUAL-03** alongside the functional roadmap: Planner/week-plan authoring with COACH-11/12/13, Training Day/setup with COACH-5/6/7/8, public/share only after DRILL-02b, and Live coordinated with LIVE-01/02 and accessibility.
+6. Finish with **VISUAL-04**, a whole-product phone-first visual/accessibility QA pass.
 
-REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have shipped too, so the Spond linking programme that ran from #178 to #187 is closed and stays closed. SPOND-08 was its follow-up rather than its continuation: those items scoped exposing a mismatch and delivered it, and acting on one was a separate piece of work because it writes to a child's registration. It has now shipped, both of its gates have run in production and a live smoke test has confirmed the behaviour, so it no longer outranks DRILL-02 under roadmap rule 4. DRILL-02 is the active step and is partly delivered: its authenticated surfaces are in #189 and its public half is held deliberately, so the row is not closed.
+DRILL-02b remains a separate security-reviewed public projection decision and does not hold up VISUAL-00/01. QUALITY-01 no longer outranks the redesign: its useful presentation re-audit is part of VISUAL-00, and any genuinely non-visual old-roadmap findings must still be re-derived from current code before implementation.
 
 ## Acceptance criteria for scheduled items
 
 Captured 15 August 2026 from the Spond linking investigation (PR #178),
 folded here so there is one roadmap. Each set binds the row above it;
 deeper design still happens when the item starts.
+
+**VISUAL-00 to VISUAL-04 — visual redesign programme**
+
+- The detailed implementation sequence and boundaries live in `docs/roadmap/visual-redesign-roadmap.md`; this master table owns status and priority.
+- The redesign is a presentation programme, not a rewrite. Existing routes, permissions, Supabase/RLS behaviour, data semantics and security boundaries do not move merely to make a design easier.
+- VISUAL-00 must establish the target system before VISUAL-01 changes shared styles: typography, colour roles, spacing/density, surfaces, controls, navigation, responsive behaviour, state treatment, accessibility cues and what remains recognisably OTJ.
+- VISUAL-01 centralises the system and shell first. VISUAL-02 then applies it to stable surfaces; evolving product areas are handled under VISUAL-03 with their functional work so they are not redesigned twice.
+- Do not create one giant redesign PR. Keep foundation, stable surface groups and feature waves independently reviewable, with existing behaviour tests staying green.
+- VISUAL-04 is phone-first and then widens to tablet/desktop, and covers long copy, loading/empty/error/destructive states, touch targets, focus/keyboard, contrast/non-colour cues and modal behaviour.
 
 **TRAIN-01 — one-glance coach view**
 
@@ -282,47 +299,13 @@ the behaviour was confirmed against production rather than against this file.
 
 **PLAYERS-01 — bulk delete**
 
+Shipped in #191 on 27 August 2026. The destructive boundary and its documented residuals remain in `docs/security/player-deletion-boundary.md`.
+
 - Explicit multi select with a count, never all by default; a dependency preview names what each deletion touches (register entries, Spond links and their cascaded replies, board tokens) before anything runs.
-- Explicit confirmation naming the number deleted; one transaction, so a partial failure deletes nobody.
-- Session history is never silently destroyed: removals that would orphan register entries are surfaced, and the chosen semantics are stated on screen.
-- Audit events per run; concurrency tests for overlapping selections; destructive change review gate.
-
-In progress against the draft PR. The proven cascade, the refusal matrix, the
-concurrency argument and the audit shape are recorded in
-`docs/security/player-deletion-boundary.md`. The one finding worth reading
-before review: `register_entries` is destroyed rather than degraded to a
-neutral reference, which the single row Delete permanently has done since 0044
-without saying so. The bulk dialog states it in full and counts it; changing
-that outcome would be a schema decision, not a UI one, and is out of scope
-here. The permanent delete semantic is approved as it stands: Delete
-permanently is full erasure of that player identity, their historic register
-entries go with them by cascade, the sessions and every other player's history
-remain, and the preview and confirmation state that plainly. Withdraw remains
-the reversible action for a player genuinely leaving the club. No anonymised
-history redesign is in scope.
-
-The migration is written, self verifying and wrapped in its own explicit
-transaction, and has been APPLIED to production: workflow run 32623941411 ran
-it from this PR's reviewed commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f` on
-23 August 2026, holding at the production environment gate for a human first,
-and the hosted ledger stamped it `20260823065041` / `bulk_delete_players`. The
-deploy pin reconciliation landed separately as OPS-05 (#208).
-
-Numbering: slot 0049 belongs to SPOND-08's `0049_spond_team_reconcile.sql`, so
-this file is `0050_bulk_delete_players.sql`; the rename was forced, because two
-files carrying one version make `supabase db reset` abort and take the security
-suite with it. 0049 has since been applied to production, on 17 August 2026, at
-hosted version `20260817104226` / `spond_team_reconcile`, so the row 0050 must
-name exists and has been read rather than guessed. 0050 is in
-`REVIEWED_MIGRATIONS` against exactly that row, with five object probes and its
-own idempotency key, and in the workflow dropdown.
-
-Rollout order, which was the reverse of the usual one: 0050 was applied from
-the reviewed #191 branch commit FIRST, with the pre-apply gate, the apply and
-the post-apply readback all confirmed, and only then does the branch merge.
-Main auto-deploys to Vercel and the new screens call these functions, so
-merging first would have shipped a client calling an RPC the database did not
-have. See the file header and `docs/security/player-deletion-boundary.md`.
+- Explicit confirmation naming the number deleted; the server revalidates the identity set and the deletion is one transaction, so a server refusal deletes nobody.
+- Permanent-delete semantics are explicit: deleting the player also removes that player's historic `register_entries`; sessions and every other player's history remain. Withdraw remains the reversible action for a player genuinely leaving the club.
+- The dialog treats dependency counts as a current preview rather than a frozen future total, refuses malformed preview payloads, caps runs at the server's 200-player limit, and handles stale/indeterminate outcomes without offering a retry that can only repeat a terminal refusal.
+- Migration `0050_bulk_delete_players` was applied through the gated workflow on 23 August 2026 from the reviewed #191 commit, the hosted ledger stamped `20260823065041` / `bulk_delete_players`, and OPS-05 (#208) reconciled the content-sharing deploy pin before the application half merged.
 
 **DRILL-02 — drill diagrams across session delivery**
 
@@ -375,12 +358,13 @@ have. See the file header and `docs/security/player-deletion-boundary.md`.
 
 These documents contain deeper design history and security decisions. They do not override the status/priority table above.
 
-- `docs/roadmap/product-excellence-roadmap.md` — older product-quality survey; re-audit before implementation because it was grounded much earlier in the codebase.
+- `docs/roadmap/visual-redesign-roadmap.md` — approved VISUAL-00 to VISUAL-04 programme: Design Read, shared foundation/shell, stable-surface waves, feature-area waves and whole-product visual/accessibility QA.
+- `docs/roadmap/product-excellence-roadmap.md` — older product-quality survey; re-audit before implementation because it was grounded much earlier in the codebase. Presentation findings are re-derived under VISUAL-00 rather than copied forward.
 - `docs/roadmaps/registered-players-delivery-plan.md` — detailed Registered Players programme and data-model history.
 - `docs/roadmaps/content-sharing-roadmap.md` — public content-sharing architecture and security model.
 - `docs/roadmaps/share-packs-roadmap.md` — later multi-item public sharing design.
 - `docs/roadmap/foundation-retrospective.md` — completed security/foundation programme history.
-- `docs/product/coaching-workflow/` — end-to-end coaching workflow design (reconciled 18 August 2026 after the completed coach discovery, then corrected: stations and the games phase are declared on an activity rather than inferred from its coaching phase; the games phase is ONE activity carrying a game count, because activities are sequential and summed; venue layouts are scoped to venue, season and age group rather than to a venue alone, and a session's season resolution fails closed rather than falling back to the current season): current-state audit, target product model, data-model proposal, share-boundary analysis and a thirteen-slice implementation plan. The product model is settled, no product question is outstanding, and **nothing in it is implemented**. Its four gated migrations are sequenced against the hosted ledger, never by filename, and none of them touches or assumes migration 0050. It proposes reconciling DRILL-02, DRILL-03 and TRAIN-02 under one umbrella programme; **no status in the table above has been changed by it**, and the table changes only when that proposal is approved. Start at `docs/product/coaching-workflow/README.md`.
+- `docs/product/coaching-workflow/` — end-to-end coaching workflow design (reconciled 18 August 2026 after the completed coach discovery, then corrected: stations and the games phase are declared on an activity rather than inferred from its coaching phase; the games phase is ONE activity carrying a game count, because activities are sequential and summed; venue layouts are scoped to venue, season and age group rather than to a venue alone, and a session's season resolution fails closed rather than falling back to the current season): current-state audit, target product model, data-model proposal, share-boundary analysis and a thirteen-slice implementation plan. The product model is settled, no product question is outstanding. COACH-2/3/4/10 have since shipped; the remaining slices stay sequenced by their actual dependencies and any migration is registered against the hosted ledger head it will really run against. Start at `docs/product/coaching-workflow/README.md`.
 
 ## Roadmap rules
 
@@ -419,5 +403,6 @@ These documents contain deeper design history and security decisions. They do no
 | OPS-03 — hosted ledger reconciliation after 0049 | #199 | 20 Aug 2026 |
 | OPS-04 — live sharing state preserved across content-sharing deploys | #200 | 21 Aug 2026 |
 | OPS-05 — hosted ledger reconciliation after 0050 | #208 | 23 Aug 2026 |
+| PLAYERS-01 — bulk player deletion | #191 | 27 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.
