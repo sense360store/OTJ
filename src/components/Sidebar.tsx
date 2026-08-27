@@ -32,7 +32,9 @@ export function Sidebar() {
       <div className="sb-brand">
         <Crest />
         <div>
-          <h1>{name ?? 'Ossett Town Juniors'}</h1>
+          {/* The club name is a label, not the heading of the page a coach is
+              reading: the routed page title is the <h1>. */}
+          <div className="sb-name">{name ?? 'Ossett Town Juniors'}</div>
           <p>Training Hub</p>
         </div>
       </div>
@@ -70,7 +72,7 @@ export function Sidebar() {
           {/* The identity block opens the account screen; log out stays its
               own button beside it. */}
           <button
-            title="Account"
+            aria-label="Account"
             onClick={() => navigate('/account')}
             style={{
               display: 'flex',
@@ -94,7 +96,7 @@ export function Sidebar() {
               <span className="role-badge">{role ? ROLE_LABELS[role] : 'Coach'}</span>
             </div>
           </button>
-          <button className="icon-btn" title="Log out" onClick={() => void signOut()}>
+          <button className="icon-btn" aria-label="Log out" onClick={() => void signOut()}>
             <Icon.logout />
           </button>
         </div>

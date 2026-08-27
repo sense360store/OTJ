@@ -50,8 +50,7 @@ export function DeleteDrillModal({
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={remove}
             disabled={del.isPending}
           >
@@ -74,7 +73,7 @@ export function DeleteDrillModal({
         Sessions already built keep their timing and show a removed drill placeholder.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           Could not delete. Try again.
         </p>
       )}

@@ -110,7 +110,7 @@ function CreateSeasonModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
       {touched && validation.message && (
-        <p role="alert" className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: 0 }}>
+        <p role="alert" className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', marginTop: 0 }}>
           {validation.message}
         </p>
       )}
@@ -223,7 +223,7 @@ function ArchiveSeasonModal({ season, onClose }: { season: Season; onClose: () =
           <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={run} disabled={busy}>
+          <button className="btn btn-danger" onClick={run} disabled={busy}>
             {busy ? 'Archiving…' : 'Archive'}
           </button>
         </>
@@ -304,7 +304,7 @@ function SeasonRow({
         <div style={{ fontWeight: 700 }}>
           {season.name}
           {season.isCurrent && (
-            <span className="pill" style={{ marginLeft: 8, color: 'var(--c-physical)' }}>
+            <span className="pill" style={{ marginLeft: 8, color: 'var(--success)' }}>
               Current
             </span>
           )}

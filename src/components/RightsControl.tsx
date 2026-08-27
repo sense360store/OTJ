@@ -137,7 +137,7 @@ export function RightsFieldView({
               >
                 {saving ? 'Saving…' : 'Save sharing level'}
               </button>
-              <span role="status" style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-physical)' }}>
+              <span role="status" style={{ fontSize: 13, fontWeight: 700, color: 'var(--success)' }}>
                 {saved ? 'Sharing level saved' : ''}
               </span>
             </div>

@@ -29,7 +29,7 @@ export function DeleteSessionModal({
           <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
             Cancel
           </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
+          <button className="btn btn-danger" onClick={remove} disabled={del.isPending}>
             <Icon.trash />
             {del.isPending ? 'Deleting…' : 'Delete'}
           </button>
@@ -40,7 +40,7 @@ export function DeleteSessionModal({
         This removes the session and its plan from the club calendar. The drills themselves stay in the library.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           Could not delete. Try again.
         </p>
       )}

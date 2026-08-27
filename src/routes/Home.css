@@ -106,9 +106,10 @@
   border-top: 1px solid var(--line);
   margin-top: auto;
 }
+/* The full width footer action stays; its size does not. The 44px minimum
+   is the Button primitive's now, so only the composition is left here. */
 .week-foot .btn {
   width: 100%;
-  min-height: 44px;
 }
 
 /* Quick actions */

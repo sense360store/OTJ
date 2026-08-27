@@ -89,7 +89,7 @@ function ProgrammeCard({
           </span>
         )}
         {hint && (
-          <span className="pill" style={{ color: 'var(--c-physical)' }}>
+          <span className="pill" style={{ color: 'var(--success)' }}>
             <Icon.checkCircle />
             {hint}
           </span>

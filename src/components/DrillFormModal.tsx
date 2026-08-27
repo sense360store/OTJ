@@ -256,7 +256,7 @@ function InlineMediaCreator({
         <input placeholder="Name shown in the library" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       {error && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, margin: 0 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, margin: 0 }}>
           {error}
         </p>
       )}
@@ -523,7 +523,7 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
         <MediaPicker value={form.mediaId} onChange={(id) => set('mediaId', id)} upload={upload} />
       </div>
       {error && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 10 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 10 }}>
           {error}
         </p>
       )}

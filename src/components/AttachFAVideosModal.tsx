@@ -25,18 +25,18 @@ import { Icon } from './icons'
 import { Modal, UploadProgress } from './ui'
 
 const PLAN_META: Record<AttachPlanStatus, { label: string; color: string }> = {
-  store: { label: 'Will store', color: 'var(--c-physical)' },
+  store: { label: 'Will store', color: 'var(--success)' },
   skip: { label: 'Already has a file', color: 'var(--slate-2)' },
-  unmatched: { label: 'No match', color: 'var(--c-social)' },
-  rejected: { label: 'Not accepted', color: 'var(--m-pdf)' },
+  unmatched: { label: 'No match', color: 'var(--warning)' },
+  rejected: { label: 'Not accepted', color: 'var(--danger)' },
 }
 
 const OUTCOME_META: Record<AttachFAFilesOutcome['status'], { label: string; color: string }> = {
-  stored: { label: 'Stored', color: 'var(--c-physical)' },
+  stored: { label: 'Stored', color: 'var(--success)' },
   skipped: { label: 'Already had a file', color: 'var(--slate-2)' },
-  unmatched: { label: 'No match', color: 'var(--c-social)' },
-  rejected: { label: 'Not accepted', color: 'var(--m-pdf)' },
-  failed: { label: 'Failed', color: 'var(--m-pdf)' },
+  unmatched: { label: 'No match', color: 'var(--warning)' },
+  rejected: { label: 'Not accepted', color: 'var(--danger)' },
+  failed: { label: 'Failed', color: 'var(--danger)' },
 }
 
 function FileRow({ name, label, color, detail }: { name: string; label: string; color: string; detail: string }) {
@@ -230,7 +230,7 @@ export function AttachFAVideosModal({ onClose }: { onClose: () => void }) {
           {plan && (
             <div style={{ marginTop: 12 }}>
               {plan.warnings.map((w, i) => (
-                <p key={i} className="muted" style={{ color: 'var(--m-pdf)', fontSize: 12.5, margin: '0 0 6px' }}>
+                <p key={i} className="muted" style={{ color: 'var(--danger)', fontSize: 12.5, margin: '0 0 6px' }}>
                   {w}
                 </p>
               ))}
@@ -253,7 +253,7 @@ export function AttachFAVideosModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
           {error && (
-            <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 8 }}>
+            <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 8 }}>
               {error}
             </p>
           )}

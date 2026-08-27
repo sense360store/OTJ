@@ -229,7 +229,7 @@ function RenameModal({ item, onClose }: { item: MediaItem; onClose: () => void }
         />
       </div>
       {rename.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 10 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 10 }}>
           {rename.error.message}
         </p>
       )}
@@ -270,8 +270,7 @@ function DeleteModal({ item, onClose }: { item: MediaItem; onClose: () => void }
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={remove}
             disabled={del.isPending}
           >
@@ -285,7 +284,7 @@ function DeleteModal({ item, onClose }: { item: MediaItem; onClose: () => void }
         This removes the file from storage and the library. {usedLabel(used)}
         {used > 0 ? '. Those drills fall back to no media.' : '.'}
       </p>
-      {del.isError && <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>Could not delete. Try again.</p>}
+      {del.isError && <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>Could not delete. Try again.</p>}
     </Modal>
   )
 }
@@ -308,8 +307,7 @@ function RemoveSamplesModal({ samples, drills, onClose }: { samples: MediaItem[]
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={remove}
             disabled={removeSamples.isPending}
           >
@@ -335,7 +333,7 @@ function RemoveSamplesModal({ samples, drills, onClose }: { samples: MediaItem[]
         </ul>
       )}
       {removeSamples.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 10 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 10 }}>
           {removeSamples.error.message}
         </p>
       )}
@@ -489,7 +487,7 @@ export function UploadModal({ replace, onClose }: { replace?: MediaItem; onClose
         <input placeholder="Name shown in the library" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
 
-      {error && <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5, marginTop: 4 }}>{error}</p>}
+      {error && <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 4 }}>{error}</p>}
     </Modal>
   )
 }

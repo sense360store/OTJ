@@ -37,8 +37,8 @@ export function ResultCard({ result, onClose }: { result: ImportFAResult; onClos
             height: 38,
             borderRadius: '50%',
             flex: '0 0 38px',
-            background: 'color-mix(in srgb, var(--c-physical) 18%, transparent)',
-            color: 'var(--c-physical)',
+            background: 'color-mix(in srgb, var(--success) 18%, transparent)',
+            color: 'var(--success)',
             display: 'grid',
             placeItems: 'center',
           }}
@@ -108,8 +108,8 @@ export function DuplicateCard({
             height: 38,
             borderRadius: '50%',
             flex: '0 0 38px',
-            background: 'color-mix(in srgb, var(--c-social) 18%, transparent)',
-            color: 'var(--c-social)',
+            background: 'color-mix(in srgb, var(--warning) 18%, transparent)',
+            color: 'var(--warning)',
             display: 'grid',
             placeItems: 'center',
           }}
@@ -217,7 +217,7 @@ export function ImportFAModal({ onClose }: { onClose: () => void }) {
             </p>
           )}
           {error && (
-            <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+            <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
               {error}
             </p>
           )}

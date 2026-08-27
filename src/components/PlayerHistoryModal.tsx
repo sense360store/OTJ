@@ -38,7 +38,7 @@ export function PlayerHistoryModal({
           Loading…
         </p>
       ) : isError ? (
-        <p role="alert" className="muted" style={{ fontSize: 14, color: 'var(--m-pdf)' }}>
+        <p role="alert" className="muted" style={{ fontSize: 14, color: 'var(--danger)' }}>
           Could not load the history. Refresh to try again.
         </p>
       ) : entries.length === 0 ? (

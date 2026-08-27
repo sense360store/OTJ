@@ -129,7 +129,7 @@ export function PublicShareResultView({
         )}
       </div>
       <p className="muted" style={{ marginTop: 6 }}>{expiryLabel(expiresAt)}</p>
-      <span role="status" className="public-live" style={{ color: 'var(--c-physical)', fontWeight: 700 }}>
+      <span role="status" className="public-live" style={{ color: 'var(--success)', fontWeight: 700 }}>
         {copyState.role === 'status' ? copyState.message : ''}
       </span>
       {copyState.role === 'alert' && <ActionError onRetry={onCopy}>{copyState.message}</ActionError>}
@@ -733,7 +733,7 @@ export function ShareDialog({
           <button
             type="button"
             className="btn btn-block"
-            style={{ minHeight: 44, color: 'var(--m-pdf)' }}
+            style={{ minHeight: 44, color: 'var(--danger)' }}
             onClick={() => setStep('confirmRevoke')}
             disabled={writing}
           >

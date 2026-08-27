@@ -130,7 +130,7 @@ export function WithdrawModal({
           <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={run} disabled={busy}>
+          <button className="btn btn-danger" onClick={run} disabled={busy}>
             {busy ? 'Withdrawing…' : 'Withdraw'}
           </button>
         </>
@@ -254,8 +254,7 @@ export function DeletePlayerModal({ player, onClose }: { player: RegisteredPlaye
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={remove}
             disabled={!confirmed || deleting}
           >
@@ -356,7 +355,7 @@ export function ImportFromSpondModal({
             </p>
           )}
           {result.warnings.map((w, i) => (
-            <p key={i} className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)' }}>
+            <p key={i} className="muted" style={{ fontSize: 13, color: 'var(--danger)' }}>
               {w}
             </p>
           ))}
@@ -374,7 +373,7 @@ export function ImportFromSpondModal({
             created for them: change who they play for on the Registered players page.
           </p>
           {importer.isError && (
-            <p role="alert" className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+            <p role="alert" className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
               Nothing was imported. {importer.error.message}
             </p>
           )}

@@ -45,12 +45,6 @@ import './Home.css'
 
 type Nav = ReturnType<typeof useNav>
 
-const GHOST_ON_NAVY = {
-  background: 'rgba(255,255,255,.12)',
-  color: '#fff',
-  borderColor: 'rgba(255,255,255,.25)',
-} as const
-
 function toIso(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
@@ -151,14 +145,13 @@ function NextSessionHero({
           <Icon.cone />
           Session day
         </button>
-        <button className="btn btn-ghost btn-lg" style={GHOST_ON_NAVY} onClick={() => nav('live', { sessionId: s.id })}>
+        <button className="btn btn-on-dark btn-lg" onClick={() => nav('live', { sessionId: s.id })}>
           {canManage && !live ? <Icon.play /> : <Icon.eye />}
           Live
         </button>
         {canManage && (
           <button
-            className="btn btn-ghost btn-lg"
-            style={GHOST_ON_NAVY}
+            className="btn btn-on-dark btn-lg"
             onClick={() => nav('planner', { sessionId: s.id })}
           >
             <Icon.edit />
@@ -211,11 +204,11 @@ function EmptyHero({
         </button>
         {fresh && (
           <>
-            <button className="btn btn-ghost btn-lg" style={GHOST_ON_NAVY} onClick={() => nav('library')}>
+            <button className="btn btn-on-dark btn-lg" onClick={() => nav('library')}>
               <Icon.grid />
               Browse the drill library
             </button>
-            <button className="btn btn-ghost btn-lg" style={GHOST_ON_NAVY} onClick={onImport}>
+            <button className="btn btn-on-dark btn-lg" onClick={onImport}>
               <Icon.download />
               Import an FA session
             </button>

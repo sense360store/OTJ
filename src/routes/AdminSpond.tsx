@@ -98,7 +98,7 @@ function AddMappingModal({ teams, onClose }: { teams: Team[]; onClose: () => voi
         />
       </div>
       {source.trim() && !parsed && (
-        <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginTop: -6, marginBottom: 12 }}>
+        <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', marginTop: -6, marginBottom: 12 }}>
           Paste a Spond group id, an id pair, or the group's page link from spond.com.
         </p>
       )}
@@ -126,7 +126,7 @@ function AddMappingModal({ teams, onClose }: { teams: Team[]; onClose: () => voi
         </select>
       </div>
       {insert.isError && (
-        <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+        <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
           {insert.error.message}
         </p>
       )}
@@ -147,7 +147,7 @@ function RemoveMappingModal({ mapping, onClose }: { mapping: SpondMapping; onClo
           <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
             Cancel
           </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
+          <button className="btn btn-danger" onClick={remove} disabled={del.isPending}>
             <Icon.trash />
             {del.isPending ? 'Removing…' : 'Remove'}
           </button>
@@ -159,7 +159,7 @@ function RemoveMappingModal({ mapping, onClose }: { mapping: SpondMapping; onClo
         their counts.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           Could not remove the mapping. Try again.
         </p>
       )}
@@ -251,7 +251,7 @@ export function SyncReport({ result }: { result: SpondSyncResult }) {
           <div className="row" style={{ gap: 8 }}>
             <b style={{ fontSize: 14, flex: 1, minWidth: 0 }}>{o.name}</b>
             <span
-              style={{ fontSize: 12, fontWeight: 800, color: o.status === 'synced' ? 'var(--m-image)' : 'var(--m-pdf)' }}
+              style={{ fontSize: 12, fontWeight: 800, color: o.status === 'synced' ? 'var(--success)' : 'var(--danger)' }}
             >
               {o.status === 'synced' ? 'Synced' : 'Failed'}
             </span>
@@ -260,7 +260,7 @@ export function SyncReport({ result }: { result: SpondSyncResult }) {
             </span>
           </div>
           {o.error && (
-            <p style={{ color: 'var(--m-pdf)', fontSize: 13, lineHeight: 1.5, margin: '5px 0 0' }}>{o.error}</p>
+            <p style={{ color: 'var(--danger)', fontSize: 13, lineHeight: 1.5, margin: '5px 0 0' }}>{o.error}</p>
           )}
           {o.warnings.map((w, i) => (
             <p key={i} className="muted" style={{ fontSize: 12.5, lineHeight: 1.5, margin: '5px 0 0' }}>
@@ -270,7 +270,7 @@ export function SyncReport({ result }: { result: SpondSyncResult }) {
         </div>
       ))}
       {result.stopped && (
-        <p style={{ color: 'var(--m-pdf)', fontSize: 13, lineHeight: 1.5, margin: '10px 0 0' }}>{result.stopped}</p>
+        <p style={{ color: 'var(--danger)', fontSize: 13, lineHeight: 1.5, margin: '10px 0 0' }}>{result.stopped}</p>
       )}
       {result.window && (
         <p className="muted" style={{ fontSize: 12.5, fontWeight: 600, margin: '10px 0 0' }}>
@@ -296,7 +296,7 @@ function SyncCard() {
         {sync.isPending ? 'Syncing…' : 'Sync now'}
       </button>
       {sync.isError && (
-        <p className="muted" style={{ fontSize: 13.5, color: 'var(--m-pdf)', marginTop: 12, marginBottom: 0 }}>
+        <p className="muted" style={{ fontSize: 13.5, color: 'var(--danger)', marginTop: 12, marginBottom: 0 }}>
           {sync.error.message}
         </p>
       )}

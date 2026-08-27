@@ -278,7 +278,7 @@ export function RenewSeasonModal({
           </div>
 
           {sourceSeasonId === targetSeasonId ? (
-            <p role="alert" className="muted" style={{ fontSize: 13.5, color: 'var(--m-pdf)' }}>
+            <p role="alert" className="muted" style={{ fontSize: 13.5, color: 'var(--danger)' }}>
               Choose two different seasons to renew between.
             </p>
           ) : loadingRows ? (

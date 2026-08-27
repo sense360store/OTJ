@@ -17,7 +17,7 @@ function NoteLine({ note }: { note: Note }) {
   return (
     <p
       className="muted"
-      style={{ fontSize: 13.5, marginTop: 10, marginBottom: 0, color: note.kind === 'error' ? 'var(--m-pdf)' : 'var(--m-image)' }}
+      style={{ fontSize: 13.5, marginTop: 10, marginBottom: 0, color: note.kind === 'error' ? 'var(--danger)' : 'var(--success)' }}
     >
       {note.text}
     </p>

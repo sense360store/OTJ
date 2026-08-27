@@ -19,7 +19,7 @@
   align-items: flex-start;
   background: var(--gold-soft);
   border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line));
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   padding: 14px 16px;
   margin-bottom: 16px;
 }

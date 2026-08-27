@@ -738,7 +738,7 @@ function RenameBoardModal({ board, onClose }: { board: Board; onClose: () => voi
         <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus />
       </div>
       {rename.isError && (
-        <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+        <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
           {rename.error.message}
         </p>
       )}
@@ -760,8 +760,7 @@ function DeleteBoardModal({ board, onClose }: { board: Board; onClose: () => voi
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={remove}
             disabled={del.isPending}
           >
@@ -773,7 +772,7 @@ function DeleteBoardModal({ board, onClose }: { board: Board; onClose: () => voi
     >
       <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>This removes the saved board for the whole club. It cannot be undone.</p>
       {del.isError && (
-        <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+        <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
           {del.error.message}
         </p>
       )}

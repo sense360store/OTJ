@@ -33,16 +33,16 @@ import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
 // background with the full strength colour as text.
 const KIND_COLOR: Record<FeedbackKind, string> = {
   feature: 'var(--royal)',
-  bug: 'var(--m-pdf)',
-  general: 'var(--c-social)',
+  bug: 'var(--danger)',
+  general: 'var(--warning)',
 }
 
 const STATUS_COLOR: Record<FeedbackStatus, string> = {
   new: 'var(--slate)',
   planned: 'var(--royal)',
-  in_progress: 'var(--c-social)',
-  done: 'var(--m-image)',
-  declined: 'var(--m-pdf)',
+  in_progress: 'var(--warning)',
+  done: 'var(--success)',
+  declined: 'var(--danger)',
 }
 
 function TagBadge({ color, children }: { color: string; children: ReactNode }) {
@@ -218,7 +218,7 @@ export function FeedbackCard({
         </>
       )}
       {statusError && (
-        <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', margin: '6px 0 0' }}>
+        <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', margin: '6px 0 0' }}>
           {statusError}
         </p>
       )}
@@ -309,7 +309,7 @@ export function FeedbackFormModal({
         />
       </div>
       {error && (
-        <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+        <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
           {error}
         </p>
       )}
@@ -363,8 +363,7 @@ function DeleteFeedbackModal({ item, onClose }: { item: FeedbackItem; onClose: (
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={() => del.mutate({ id: item.id }, { onSuccess: onClose })}
             disabled={del.isPending}
           >
@@ -379,7 +378,7 @@ function DeleteFeedbackModal({ item, onClose }: { item: FeedbackItem; onClose: (
         visible keeps the record straight.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           {del.error.message}
         </p>
       )}
@@ -441,7 +440,7 @@ function PromoteToGithubModal({ item, onClose }: { item: FeedbackItem; onClose: 
             </a>
           </p>
           {done.warning && (
-            <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)' }}>
+            <p className="muted" style={{ fontSize: 13, color: 'var(--danger)' }}>
               {done.warning}
             </p>
           )}
@@ -452,8 +451,8 @@ function PromoteToGithubModal({ item, onClose }: { item: FeedbackItem; onClose: 
             style={{
               fontSize: 13.5,
               lineHeight: 1.55,
-              background: 'color-mix(in srgb, var(--m-pdf) 12%, transparent)',
-              color: 'var(--m-pdf)',
+              background: 'color-mix(in srgb, var(--danger) 12%, transparent)',
+              color: 'var(--danger)',
               padding: '10px 12px',
               borderRadius: 11,
               margin: '0 0 12px',
@@ -483,7 +482,7 @@ function PromoteToGithubModal({ item, onClose }: { item: FeedbackItem; onClose: 
             />
           </div>
           {promote.isError && (
-            <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+            <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
               {promote.error.message}
             </p>
           )}
@@ -624,7 +623,7 @@ function EditCommentModal({ comment, onClose }: { comment: FeedbackComment; onCl
         />
       </div>
       {edit.isError && (
-        <p className="muted" style={{ fontSize: 13, color: 'var(--m-pdf)', marginBottom: 0 }}>
+        <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
           {edit.error.message}
         </p>
       )}
@@ -646,8 +645,7 @@ function DeleteCommentModal({ comment, onClose }: { comment: FeedbackComment; on
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={() => del.mutate({ id: comment.id }, { onSuccess: onClose })}
             disabled={del.isPending}
           >
@@ -659,7 +657,7 @@ function DeleteCommentModal({ comment, onClose }: { comment: FeedbackComment; on
     >
       <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>This removes the comment from the thread for the whole club.</p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           {del.error.message}
         </p>
       )}
@@ -719,7 +717,7 @@ function FeedbackThread({ feedbackId, canManage }: { feedbackId: string; canMana
         </button>
       </div>
       {add.isError && (
-        <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', margin: '6px 0 0' }}>
+        <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', margin: '6px 0 0' }}>
           {add.error.message}
         </p>
       )}

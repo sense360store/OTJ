@@ -44,8 +44,7 @@ export function DeleteVenueModalView({
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={onConfirm}
             disabled={busy}
           >
@@ -70,7 +69,7 @@ export function DeleteVenueModalView({
         </p>
       )}
       {failed && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           Could not remove the venue. Try again.
         </p>
       )}
@@ -188,7 +187,7 @@ export function AdminVenues() {
           </button>
         </div>
         {insert.isError && (
-          <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginBottom: 8 }}>
+          <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', marginBottom: 8 }}>
             Could not add the venue. The name may already exist.
           </p>
         )}

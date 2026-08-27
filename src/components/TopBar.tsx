@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { Icon } from './icons'
 import { Crest } from './Crest'
 import { UserAvatar } from './UserAvatar'
+import { Toggle } from './primitives'
 import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
 import { useMyCapabilities } from '../lib/queries'
@@ -15,8 +16,16 @@ export function TopSearch({ canSearch }: { canSearch: boolean }) {
   if (!canSearch) return null
   return (
     <div className="topbar-search">
-      <Icon.search />
-      <input placeholder="Search drills, skills, media…" onFocus={() => navigate('/library')} readOnly />
+      <Icon.search aria-hidden="true" />
+      {/* The placeholder is not an accessible name, so the field carries its
+          own label. Whether it should become a real search is an open product
+          decision; what it does is unchanged here. */}
+      <input
+        aria-label="Search drills, skills and media"
+        placeholder="Search drills, skills, media…"
+        onFocus={() => navigate('/library')}
+        readOnly
+      />
     </div>
   )
 }
@@ -32,12 +41,12 @@ export function TopBar() {
     <div className="topbar">
       <TopSearch canSearch={canPlan} />
       <div className="topbar-spacer"></div>
-      <button className="icon-btn" title="Notifications">
+      <button className="icon-btn" aria-label="Notifications">
         <Icon.bell />
       </button>
-      <button className="icon-btn" onClick={() => setDark(!dark)} title="Toggle theme">
-        {dark ? <Icon.sun /> : <Icon.moon />}
-      </button>
+      {/* A real switch with its state exposed, rather than an icon that
+          changes colour. */}
+      <Toggle checked={dark} onChange={setDark} label="Dark mode" />
       {canPlan && (
         <button className="btn btn-gold" onClick={() => navigate('/planner')}>
           <Icon.plus />
@@ -57,9 +66,9 @@ export function MobileTop() {
       <Crest />
       <b>Training Hub</b>
       <div style={{ flex: 1 }}></div>
-      <button className="icon-btn" onClick={() => setDark(!dark)}>
-        {dark ? <Icon.sun /> : <Icon.moon />}
-      </button>
+      {/* The same switch, with the label carried by aria-label alone: the
+          phone bar holds four controls at 360px. */}
+      <Toggle checked={dark} onChange={setDark} label="Dark mode" hideLabel />
       {/* The mobile counterpart of the sidebar identity block. */}
       <button
         aria-label="Account"

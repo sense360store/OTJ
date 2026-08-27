@@ -563,11 +563,14 @@ export function Modal({
 }
 
 /* ---- phase color ----------------------------------------------- */
+// A phase of a session is not a corner of the FA model. These are the same
+// values the phase bars have always had, held as their own tokens so the two
+// classifications are free to move apart.
 export const PHASE_COLOR: Record<Phase, string> = {
-  'Warm-Up': 'var(--c-physical)',
-  Skill: 'var(--c-technical)',
-  Game: 'var(--c-social)',
-  'Cool-Down': 'var(--c-psych)',
+  'Warm-Up': 'var(--phase-warmup)',
+  Skill: 'var(--phase-skill)',
+  Game: 'var(--phase-game)',
+  'Cool-Down': 'var(--phase-cooldown)',
 }
 
 /* ---- empty state ----------------------------------------------- */
@@ -581,19 +584,44 @@ export function Empty({ icon: Ico, title, children }: { icon?: IconComponent; ti
   )
 }
 
-/* ---- loading and error ----------------------------------------- */
+/* ---- loading and error -----------------------------------------
+   These two used to be byte identical, so a screen that had failed and a
+   screen that was still working looked the same. Loading is a labelled
+   spinner (or a skeleton where the shape is known); an error is a danger
+   Note with role="alert" and a retry where retrying is meaningful. */
 export function Loading({ label = 'Loading…' }: { label?: string }) {
   return (
-    <div className="muted" style={{ padding: '48px 0', textAlign: 'center', fontWeight: 600 }}>
+    <div className="loading" role="status">
+      <span className="spinner" aria-hidden="true"></span>
       {label}
     </div>
   )
 }
 
-export function ErrorNote({ children }: { children?: ReactNode }) {
+// The shape-known variant: a list of rows arriving. Nothing is announced,
+// because the labelled Loading above is what a screen reader is told.
+export function LoadingRows({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="muted" style={{ padding: '48px 0', textAlign: 'center', fontWeight: 600 }}>
-      {children ?? 'Something went wrong loading this. Refresh to try again.'}
+    <div className="skeleton-list" aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="skeleton skeleton-row"></div>
+      ))}
+    </div>
+  )
+}
+
+export function ErrorNote({ children, onRetry }: { children?: ReactNode; onRetry?: () => void }) {
+  return (
+    <div className="state-error" role="alert">
+      <Icon.danger aria-hidden="true" />
+      <div className="state-error-body">
+        {children ?? 'Something went wrong loading this. Refresh to try again.'}
+      </div>
+      {onRetry && (
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>
+          Retry
+        </button>
+      )}
     </div>
   )
 }
@@ -611,10 +639,10 @@ export function ActionError({ children, onRetry, style }: { children: ReactNode;
         display: 'flex',
         alignItems: 'center',
         gap: 10,
-        fontSize: 13.5,
+        fontSize: 'var(--text-sm)',
         fontWeight: 600,
         lineHeight: 1.45,
-        color: 'var(--m-pdf)',
+        color: 'var(--danger)',
         ...style,
       }}
     >
@@ -672,7 +700,7 @@ export function ShareControlView({
         </span>
       )}
       {feedback.role === 'status' && (
-        <span role="status" style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-physical)' }}>
+        <span role="status" style={{ fontSize: 13, fontWeight: 700, color: 'var(--success)' }}>
           {feedback.message}
         </span>
       )}

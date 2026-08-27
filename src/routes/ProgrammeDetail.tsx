@@ -113,7 +113,7 @@ function WeekRow({
               <button
                 key={s.id}
                 className="pill"
-                style={{ minHeight: 32, cursor: 'pointer', color: done ? 'var(--c-physical)' : undefined }}
+                style={{ minHeight: 32, cursor: 'pointer', color: done ? 'var(--success)' : undefined }}
                 onClick={() => nav('sessionDay', { sessionId: s.id })}
               >
                 {done ? <Icon.checkCircle /> : <Icon.calendar />}
@@ -172,8 +172,7 @@ function DeleteProgrammeModal({ p, onClose, onDeleted }: { p: Programme; onClose
             Cancel
           </button>
           <button
-            className="btn btn-primary"
-            style={{ background: 'var(--m-pdf)' }}
+            className="btn btn-danger"
             onClick={remove}
             disabled={del.isPending}
           >
@@ -188,7 +187,7 @@ function DeleteProgrammeModal({ p, onClose, onDeleted }: { p: Programme; onClose
         stay on the calendar; they just stop pointing at a programme.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           Could not delete. Try again.
         </p>
       )}

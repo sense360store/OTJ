@@ -93,7 +93,7 @@
   max-width: 540px;
   margin: 0 auto;
   aspect-ratio: 680 / 1050;
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--pitch-grass);
   box-shadow: var(--shadow-sm);
@@ -351,7 +351,7 @@
   flex-basis: 100%;
   margin: 4px 0 0;
   font-size: 13px;
-  color: var(--m-pdf);
+  color: var(--danger);
 }
 
 /* The saved boards list rows inside the modal. */

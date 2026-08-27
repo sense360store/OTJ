@@ -246,7 +246,7 @@ export function ApplyProgrammeFormView({
         </div>
       </div>
       {error && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           {error}
         </p>
       )}
@@ -385,8 +385,8 @@ export function ApplyProgrammeModal({
               height: 38,
               borderRadius: '50%',
               flex: '0 0 38px',
-              background: 'color-mix(in srgb, var(--c-physical) 18%, transparent)',
-              color: 'var(--c-physical)',
+              background: 'color-mix(in srgb, var(--success) 18%, transparent)',
+              color: 'var(--success)',
               display: 'grid',
               placeItems: 'center',
             }}

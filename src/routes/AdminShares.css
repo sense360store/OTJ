@@ -112,7 +112,7 @@
   color: var(--slate);
 }
 .share-badge-revoked {
-  color: var(--m-pdf);
+  color: var(--danger);
 }
 
 .shares-more {

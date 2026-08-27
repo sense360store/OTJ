@@ -65,7 +65,7 @@
 .sd-card {
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
   padding: 14px 15px;
 }
@@ -138,8 +138,8 @@
   height: 16px;
 }
 .sd-kit-item.on .sd-check {
-  background: var(--c-physical);
-  border-color: var(--c-physical);
+  background: var(--success);
+  border-color: var(--success);
 }
 .sd-kit-name {
   font-weight: 800;

@@ -7,6 +7,7 @@ import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { Crest } from '../components/Crest'
+import { Note } from '../components/primitives'
 import { useClubBranding } from '../hooks/useClubBranding'
 import './Login.css'
 
@@ -46,7 +47,11 @@ export function SetPassword() {
           </div>
         </div>
 
-        {error && <div className="login-error">{error}</div>}
+        {error && (
+          <Note tone="danger" role="alert" className="login-note-slot">
+            {error}
+          </Note>
+        )}
 
         <div className="field">
           <label htmlFor="new-password">New password</label>

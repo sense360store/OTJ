@@ -43,7 +43,7 @@ function DeleteTeamModal({
           <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
             Cancel
           </button>
-          <button className="btn btn-primary" style={{ background: 'var(--m-pdf)' }} onClick={remove} disabled={del.isPending}>
+          <button className="btn btn-danger" onClick={remove} disabled={del.isPending}>
             <Icon.trash />
             {del.isPending ? 'Removing…' : 'Remove'}
           </button>
@@ -61,7 +61,7 @@ function DeleteTeamModal({
         picks the teams again. It never widens to the whole club.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--m-pdf)', fontSize: 13.5 }}>
+        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
           Could not remove the team. Try again.
         </p>
       )}
@@ -203,7 +203,7 @@ export function AdminTeams() {
           </button>
         </div>
         {insert.isError && (
-          <p className="muted" style={{ fontSize: 12.5, color: 'var(--m-pdf)', marginBottom: 8 }}>
+          <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', marginBottom: 8 }}>
             Could not add the team. The name may already exist.
           </p>
         )}
