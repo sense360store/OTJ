@@ -67,8 +67,8 @@ every brand and semantic hue is theme-invariant, which puts `--royal` links at
 panel at 1.01:1; there are no control primitive components, only 350
 hand-written class strings across 26 combinations; and the newer mobile-first
 screens have already discovered the right touch-target rules and encoded them
-locally, as 18 per-screen overrides of the shared primitives at three different
-values.
+locally, as 13 control-size rules across seven files inventing five different
+heights (34, 38, 40, 42 and 44px), none of them the shared value.
 
 ### VISUAL-01 — Foundation and shell
 

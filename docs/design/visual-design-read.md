@@ -69,11 +69,15 @@ Seventy-seven per cent of the product's CSS lives outside the shared stylesheet,
 in 13 locally scoped files. Those are not all one screen each. Three are
 imported by more than one module: `Board.css` by Board, Session Day, Public
 Session and BoardPicker; `Login.css` by Login and Set Password; and
-`SessionDay.css` by Session Day and Session Register. One more,
-`DrillDiagram.css`, backs a component rendered from two routes. The other nine
-have a single owner. So the 77 per cent measures how much styling sits outside
-the shared layer, which is the number that matters for consolidation, and not
-how much is single-screen.
+`SessionDay.css` by Session Day and Session Register. `DrillDiagram.css` reaches
+further than any of them without being imported more than once: it backs
+`DrillDiagramView`, which renders on Drill Detail directly and on Planner,
+Session Day and Live Session through `ActivityDiagram`, and the Drill Maker
+editor reuses its `dd-` classes. So the 77 per cent measures how much styling
+sits outside the shared layer, which is the number that matters for
+consolidation, and not how much is single-screen. An import count is a weak
+proxy for reach, which is why this paragraph gives the render path rather than a
+tally.
 
 The largest single stylesheet in the product is still not the shared one:
 `src/routes/SessionRegister.css` is 626 lines, three quarters the size of
@@ -247,9 +251,17 @@ Control heights are unsystematic: `.btn` 42px, `.btn-sm` 36px, `.btn-lg` 52px,
 `.chip` 34px, `.icon-btn` 38px, `.field input` 42px, `.select` and `.search-lg
 input` 48px. Seven heights, no token.
 
-**The screens have already noticed and patched around it.** Eight files override
-the shared primitives 18 times, and the newer, mobile first screens override
-them towards larger touch targets:
+**The screens have already noticed and patched around it**, and the overrides
+are of two kinds that must not be confused. Thirteen rules across seven files
+set a shared control's own size, which is the kind a primitive should make
+unnecessary. Between them they invent **five** control heights, none of which is
+the shared value: 34px, 38px, 40px, 42px and 44px. A further five rules across
+three files compose a control into a route's layout (`margin-bottom: 0`,
+`flex: 1`, `width: 100%`, `max-width: 100%`); those are legitimate, belong to
+the route, and are not overrides of anything.
+
+The newer, mobile first screens use the first kind to reach larger touch
+targets:
 
 - `.tn-filters .chip { min-height: 44px }` in `SessionRegister.css:335`;
 - `.reg-scope .chip { min-height: 40px }` in `SessionRegister.css:166`;
@@ -858,16 +870,24 @@ VISUAL-01 is accepted when: the token set is in place, the primitives exist, the
 five screens above are visually checked at all seven widths in both themes, and
 the 137 test files stay green.
 
-**The 18 local primitive overrides are not all VISUAL-01's to delete**, for the
-same reason Part 2 opens with the wave split: an override lives on a route, and
-deleting it is that route's wave. Only `Home.css`'s single override sits on a
-VISUAL-01 acceptance surface, and it goes with this wave. `AdminShares.css` (3)
-and `SpondLinks.css` (1) go with VISUAL-02; `SessionRegister.css` (5),
-`Board.css` (2), `DrillDiagramEditor.css` (3), `AddDrillModal.css` (2) and
-`DiagramViewer.css` (1) go with VISUAL-03. What VISUAL-01 owns is making each
-override unnecessary by putting the rule in the primitive. A later wave that
-finds an override it cannot delete has found a gap in the primitive, and that is
-a VISUAL-01 defect to fix rather than a reason to keep the override.
+**Only the control-size overrides are in scope, and they are not all
+VISUAL-01's to delete.** The five route-layout rules identified in 1.6
+(`margin-bottom: 0` on a field, `flex: 1` on a button, a full-width select) are
+composition, not duplication: they belong to their route and no primitive can or
+should absorb them. Deleting them would either leak a route's layout into every
+other caller or fail a later wave for correctly keeping them.
+
+The 13 control-size rules are the ones a primitive makes unnecessary, and each
+goes with its route's wave, for the same reason Part 2 opens with the wave
+split. Only `Home.css`'s single rule sits on a VISUAL-01 acceptance surface and
+goes with this wave. `SpondLinks.css` (1) goes with VISUAL-02.
+`SessionRegister.css` (5), `DrillDiagramEditor.css` (2), `AddDrillModal.css`
+(2), `Board.css` (1) and `DiagramViewer.css` (1) go with VISUAL-03.
+
+What VISUAL-01 owns is making all 13 unnecessary by putting the rule in the
+primitive. A later wave that meets a control-size override it cannot delete has
+found a gap in the primitive, and that is a VISUAL-01 defect to fix rather than
+a reason to keep the override.
 
 ### VISUAL-02, stable everyday surfaces
 
