@@ -324,6 +324,13 @@ h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; c
   border-radius: var(--radius-sm); border: 1px solid var(--slate-2); background: var(--card);
   display: grid; place-items: center; color: var(--slate);
   transition: color var(--dur-fast), border-color var(--dur-fast), background var(--dur-fast); }
+/* This expands the target in BOTH directions, unlike the chip and sm button
+   pseudo-elements, which only grow vertically. So a row or column of icon
+   buttons needs a gap wider than the two overhangs together: more than
+   44 minus the visible size, which is 6px at the default 38px and 18px where
+   a caller shrinks the button to 26px. Below that the later sibling's target
+   covers the earlier one's visible box and takes its clicks.
+   tools/visual/checks.mjs measures this on the surfaces the harness renders. */
 .icon-btn::after { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: var(--hit); height: var(--hit); }
 .icon-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-2); }
@@ -960,7 +967,12 @@ table.reg-table th button { background: none; border: 0; color: inherit; font: i
 table.reg-table td { padding: var(--space-8); border-bottom: 1px solid var(--line-2); vertical-align: middle; }
 table.reg-table tr.withdrawn td { color: var(--slate); }
 table.reg-table td.muted-cell { color: var(--slate); }
-.reg-row-actions { display: flex; gap: var(--space-4); justify-content: flex-end; align-items: center; }
+/* gap-8, not gap-4. These are 38px icon buttons whose hit area is 44px, so
+   each target reaches 3px past its box and two neighbours need more than 6px
+   between them. The rule read 6px before the spacing scale landed, which
+   exactly touched; rounding it down to the nearest step made it overlap. A
+   gap that separates controls has a floor the scale does not know about. */
+.reg-row-actions { display: flex; gap: var(--space-8); justify-content: flex-end; align-items: center; }
 
 /* Mobile card list: no dependence on the table, no horizontal scroll. */
 .player-card { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-12) var(--space-12); margin-bottom: var(--space-8);

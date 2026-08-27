@@ -14,7 +14,7 @@ import { TopBar, MobileTop } from '../../src/components/TopBar'
 import { BottomNav } from '../../src/components/BottomNav'
 import { SessionsProvider } from '../../src/context/SessionsContext'
 import { ThemeProvider } from '../../src/hooks/useTheme'
-import { Modal } from '../../src/components/ui'
+import { ListInput, Modal } from '../../src/components/ui'
 import { Badge, Button, Card, IconButton, Note, PageHeader, TextField, Toggle } from '../../src/components/primitives'
 import { Icon } from '../../src/components/icons'
 import { Home } from '../../src/routes/Home'
@@ -138,6 +138,12 @@ function Primitives() {
               <option value="titans">Titans</option>
             </select>
             <Toggle checked={on} onChange={setOn} label="Dark mode" />
+          </div>
+          {/* A numbered ListInput: the densest stack of icon buttons in the
+              product, and the one place an enlarged hit area can reach a
+              neighbouring control. */}
+          <div style={{ marginTop: 'var(--space-16)' }}>
+            <ListInput numbered value={['Open the body before the ball arrives', 'Head up between touches', 'Small touches into the turn']} onChange={() => {}} placeholder="Add a coaching point" />
           </div>
           <div style={{ ...row, marginTop: 'var(--space-12)' }}>
             <button className="chip on" aria-pressed="true">Training</button>

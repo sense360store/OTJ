@@ -275,7 +275,14 @@ export function ListInput({
     <div>
       {value.length > 0 &&
         (numbered ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+          // The rows carry the densest stack of icon buttons in the product.
+          // Each remove button is 26px inside a 44px hit area, so its target
+          // reaches 9px past the visible box on each side; at the old 6px gap
+          // two neighbouring targets overlapped by 3px and the lower one won
+          // on paint order, so a click on the bottom edge of one Remove
+          // deleted the NEXT point. The gap has to exceed the two overhangs
+          // together, which is 18px, and the next step on the scale is 20.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-20)', marginBottom: 'var(--space-8)' }}>
             {value.map((v, i) => (
               <div key={i} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
                 <span className="cp-num">{i + 1}</span>
