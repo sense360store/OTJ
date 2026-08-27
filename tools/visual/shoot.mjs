@@ -75,6 +75,25 @@ await context.route(isFont, async (route) => {
 console.log(haveFonts ? 'serving the local font cache' : 'NO FONT CACHE: shots use the fallback stack, run tools/visual/fetch-fonts.mjs')
 
 let failures = 0
+// Serving a cache is not the same as rendering in the right typeface: a stale
+// or malformed cache produces a CSS decode error, which is a console message
+// rather than a pageerror, and Chromium falls back silently. So the claim
+// above is checked once against the browser, and a run that made it falsely
+// fails rather than shipping a hundred and thirty six shots in the wrong face.
+let fontsChecked = false
+async function verifyFonts(page) {
+  if (fontsChecked || !haveFonts) return
+  fontsChecked = true
+  const loaded = await page.evaluate(() =>
+    [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family),
+  )
+  for (const family of ['Archivo', 'Hanken Grotesk']) {
+    if (!loaded.includes(family)) {
+      failures++
+      console.log(`ERROR font cache served but ${family} did not load: [${loaded.join(', ')}]`)
+    }
+  }
+}
 
 for (const theme of ['light', 'dark']) {
   for (const s of SHOTS) {
@@ -86,6 +105,7 @@ for (const theme of ['light', 'dark']) {
     if (s.caps) q.set('caps', s.caps)
     await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
     await page.evaluate(() => document.fonts.ready)
+    await verifyFonts(page)
     await page.waitForTimeout(250)
     if (s.open === 'more') {
       const more = page.getByRole('button', { name: 'More', exact: true })
