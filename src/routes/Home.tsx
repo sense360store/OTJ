@@ -118,7 +118,7 @@ function NextSessionHero({
         · {live ? 'Live now' : countdownLabel(s.date, todayStr)}
       </div>
       <h2>{s.name}</h2>
-      {s.focus && <div style={{ fontWeight: 700, color: 'var(--gold)', fontSize: 15 }}>{s.focus}</div>}
+      {s.focus && <div style={{ fontWeight: 700, color: 'var(--brand-gold)', fontSize: 'var(--text-md)' }}>{s.focus}</div>}
       <div className="hero-meta">
         <span className="row">
           <Icon.calendar />
@@ -253,7 +253,7 @@ function WeekRow({
           {ended && (
             <span
               className="pill"
-              style={{ color: 'var(--gold-600)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
+              style={{ color: 'var(--ink)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
             >
               Ended earlier today
             </span>
@@ -297,7 +297,7 @@ function TemplateMiniCard({ t, onClick }: { t: Template; onClick: () => void }) 
       </div>
       <div className="dc-body">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <span className="tag" style={{ color: 'var(--gold-600)', background: 'var(--gold-soft)' }}>
+          <span className="tag" style={{ color: 'var(--ink)', background: 'var(--gold-soft)' }}>
             <Icon.book style={{ width: 12, height: 12 }} />
             Template
           </span>

@@ -396,6 +396,44 @@ describe('an icon only button always has an accessible name', () => {
   })
 })
 
+describe('gold is a fill behind dark text, never text itself', () => {
+  // --gold-600 measures 2.06:1 on the card and 1.88:1 on --gold-soft, so it
+  // is the hover FILL of the gold button and nothing else. Nine sites used
+  // it as text, four of them on the two screens this wave accepts.
+  it('never paints text with --gold-600', () => {
+    const offenders: string[] = []
+    for (const f of sourceFiles) {
+      if (rel(f) === 'styles.css') {
+        // The one legitimate use: .btn-gold's hover fill.
+        for (const m of read(f).matchAll(/(?<![-a-z])color: *var\(--gold-600\)/g)) offenders.push(`${rel(f)}: ${m[0]}`)
+        continue
+      }
+      for (const m of read(f).matchAll(/(?<![-a-z])color: *'?var\(--gold-600\)'?/g)) offenders.push(`${rel(f)}: ${m[0]}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('paints text with --gold only where the ground is the brand navy', () => {
+    // Named rather than pattern-matched, because the ground is not something
+    // a scan of one declaration can see. The active navigation icon sits on
+    // the navy fill; the live view's play glyph sits on the forced dark card
+    // at 9.67:1. A new caller belongs in this list with its ratio, or it
+    // belongs on --ink.
+    const allowed = new Set([
+      'styles.css:.nav-item.active .nav-ico',
+      'styles.css:.more-sheet-item.active .nav-ico',
+      'routes/LiveSession.tsx:play glyph',
+    ])
+    const found: string[] = []
+    for (const f of sourceFiles) {
+      // (?<![-a-z]) or `border-color: var(--gold)` counts as gold text,
+      // which is how this scan first reported five sites for three.
+      for (const m of read(f).matchAll(/(?<![-a-z])color: *'?var\(--gold\)'?/g)) found.push(`${rel(f)}: ${m[0]}`)
+    }
+    expect(found.length, `gold-as-text sites: ${found.join(', ')}`).toBe(allowed.size)
+  })
+})
+
 describe('a semantic fill carries its own label colour', () => {
   // --success, --warning, --danger and --info lighten in the dark theme, so a
   // hardcoded white label on one of them reads at under 2:1 there. The fill's

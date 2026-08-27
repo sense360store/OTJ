@@ -501,7 +501,9 @@
   color: var(--slate);
 }
 .tn-status-dirty {
-  color: var(--gold-600);
+  /* Unsaved work is a warning state, and it sits beside .tn-status-failed's
+     --danger. Gold read at 2.06:1 here. */
+  color: var(--warning);
 }
 .tn-status-failed {
   color: var(--danger);

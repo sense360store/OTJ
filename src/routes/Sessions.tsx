@@ -92,14 +92,14 @@ function SessionCard({
             {ended && (
               <span
                 className="pill"
-                style={{ color: 'var(--gold-600)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
+                style={{ color: 'var(--ink)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
               >
                 Ended earlier today
               </span>
             )}
           </div>
           <h3 style={{ fontSize: 19 }}>{s.name}</h3>
-          <div style={{ color: 'var(--gold-600)', fontWeight: 700, fontSize: 14, marginTop: 2 }}>{s.focus}</div>
+          <div style={{ color: 'var(--ink-2)', fontWeight: 700, fontSize: 'var(--text-base)', marginTop: 2 }}>{s.focus}</div>
         </div>
         <div className="avatar" style={{ background: 'var(--bg-2)', color: 'var(--navy)', fontSize: 13 }}>
           {s.ageGroup}

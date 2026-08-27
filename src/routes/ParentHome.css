@@ -26,7 +26,9 @@
 .parent-note svg {
   width: 20px;
   height: 20px;
-  color: var(--gold-600);
+  /* On the note's own --gold-soft ground, so it takes dark ink: gold on
+     gold measured 1.88:1. */
+  color: var(--ink);
   flex: 0 0 20px;
   margin-top: 1px;
 }
@@ -97,14 +99,14 @@
   margin-top: 7px;
   font-weight: 700;
   font-size: 13.5px;
-  color: var(--gold-600);
+  color: var(--ink-2);
 }
 
 /* Last session: a prominent focus line above the drill cards. */
 .parent-focus {
   font-weight: 800;
   font-size: 15px;
-  color: var(--gold-600);
+  color: var(--ink-2);
   margin-bottom: 10px;
 }
 

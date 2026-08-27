@@ -1004,8 +1004,7 @@ table.reg-table td.col-select input, .player-card .pc-select input { width: 20px
 .player-card.selected { border-color: var(--royal); box-shadow: inset 0 0 0 1px var(--royal); }
 
 .bulk-delete-stale { padding: var(--space-8) var(--space-12); border-radius: var(--radius-sm); margin-bottom: var(--space-12); font-size: var(--text-sm);
-  font-weight: 600; line-height: 1.45; color: var(--ink); background: var(--danger-surface);
-  border: 1px solid var(--danger); }
+  font-weight: 600; line-height: 1.45; color: var(--danger); border: 1px solid var(--danger); }
 .bulk-delete-lede { font-size: var(--text-base); font-weight: 700; margin: 0 0 var(--space-4); }
 .bulk-delete-list { margin: 0 0 var(--space-12); padding-left: var(--space-20); font-size: var(--text-base); line-height: 1.6; }
 .bulk-delete-note { font-size: var(--text-sm); color: var(--slate); line-height: 1.5; margin: calc(var(--space-4) * -1) 0 var(--space-12); }
