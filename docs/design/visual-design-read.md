@@ -66,16 +66,14 @@ the product.
 | Hardcoded hex in JSX | 8 non-test files | no |
 
 Seventy-seven per cent of the product's CSS lives outside the shared stylesheet,
-in 13 locally scoped files. Those are not all one screen each, and the
-distinction matters for what VISUAL-01 consolidates. Five serve more than one
-caller: `Board.css` is imported by Board, Session Day, Public Session and
-BoardPicker; `Home.css` by Home and Parent Home; `Login.css` by Login and Set
-Password; `SessionDay.css` by Session Day and Session Register; and the
-component sheets (`DrillDiagram.css`, `DiagramViewer.css`, `Tick.css`,
-`AddDrillModal.css`) are component-scoped and render on several routes. So the
-77 per cent measures how much styling sits outside the shared layer, which is
-the number that matters for consolidation, and not how much is genuinely
-single-screen.
+in 13 locally scoped files. Those are not all one screen each. Three are
+imported by more than one module: `Board.css` by Board, Session Day, Public
+Session and BoardPicker; `Login.css` by Login and Set Password; and
+`SessionDay.css` by Session Day and Session Register. One more,
+`DrillDiagram.css`, backs a component rendered from two routes. The other nine
+have a single owner. So the 77 per cent measures how much styling sits outside
+the shared layer, which is the number that matters for consolidation, and not
+how much is single-screen.
 
 The largest single stylesheet in the product is still not the shared one:
 `src/routes/SessionRegister.css` is 626 lines, three quarters the size of
@@ -523,13 +521,16 @@ it measures 1.69:1. Royal is links and focus.
 
 Rules:
 
-- 6, 7, 9, 10, 11, 13, 14, 18, 22, 26, 28, 30 and 60 are retired; each site
-  resolves to the nearer step;
+- **every value not on the scale is retired**, and each site resolves to the
+  nearer step. Against the 31 currently in use that is 22 values: 1, 3, 5, 6, 7,
+  9, 10, 11, 13, 14, 15, 18, 22, 26, 28, 30, 38, 40, 44, 60, 70 and 90. The rule
+  is what binds, not the list: a value absent from both is still retired;
 - gaps between conceptual groups are larger than gaps within one group. This is
   the rule that produces hierarchy, and the product currently produces it by
   accident;
 - section rhythm: 24px between sections, 16px within a section, 8px within a row;
-- card padding: 16px on a phone, 20px above 900px. One value each, not eleven.
+- card padding: 16px on a phone, 20px above 900px. One value each, replacing the
+  per-screen padding each card variant currently picks for itself;
 
 This is the one decision that produces visible 1px and 2px shifts across many
 screens. That is expected and acceptable, and it is why VISUAL-01 is a
@@ -854,9 +855,19 @@ and both shells:
 | **Any `Modal`**, for example Delete session | dialog, focus trap, Escape, focus restore, and the new `btn-danger` |
 
 VISUAL-01 is accepted when: the token set is in place, the primitives exist, the
-five screens above are visually checked at all seven widths in both themes, the
-18 per screen primitive overrides are deleted rather than left alongside the new
-rules, and the 137 test files stay green.
+five screens above are visually checked at all seven widths in both themes, and
+the 137 test files stay green.
+
+**The 18 local primitive overrides are not all VISUAL-01's to delete**, for the
+same reason Part 2 opens with the wave split: an override lives on a route, and
+deleting it is that route's wave. Only `Home.css`'s single override sits on a
+VISUAL-01 acceptance surface, and it goes with this wave. `AdminShares.css` (3)
+and `SpondLinks.css` (1) go with VISUAL-02; `SessionRegister.css` (5),
+`Board.css` (2), `DrillDiagramEditor.css` (3), `AddDrillModal.css` (2) and
+`DiagramViewer.css` (1) go with VISUAL-03. What VISUAL-01 owns is making each
+override unnecessary by putting the rule in the primitive. A later wave that
+finds an override it cannot delete has found a gap in the primitive, and that is
+a VISUAL-01 defect to fix rather than a reason to keep the override.
 
 ### VISUAL-02, stable everyday surfaces
 
