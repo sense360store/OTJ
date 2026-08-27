@@ -231,6 +231,33 @@ describe('the editor tool palette', () => {
     expect(html).not.toContain('Play runs up')
   })
 
+  it('opens a drill with no diagram on a blank area, with the pitches still offered', () => {
+    // Build diagram on a drill that has none is initEditor(null), which is what
+    // `state()` is here. Most drills are a grid, a channel or a box, so a blank
+    // area is what a coach starts on and a pitch is one tap from the same
+    // selector. Rendered, not read off the model, because the selector is what
+    // a coach actually sees.
+    const html = editor({ state: initEditor(null) })
+    expect(html).toMatch(/<option[^>]*value="blank"[^>]*selected/)
+    expect(html).not.toMatch(/<option[^>]*value="full_pitch"[^>]*selected/)
+    expect(html).not.toContain('dd-lines')
+    expect(html).toContain('Full pitch')
+    expect(html).toContain('Half pitch')
+  })
+
+  it('opens a saved diagram on the surface it was saved on, not on the new diagram default', () => {
+    // The other half of the same rule: changing what a NEW diagram starts as
+    // must not redraw work already in the column.
+    const stored: DrillDiagram = {
+      ...emptyDiagram(),
+      surface: { kind: 'full_pitch', orientation: 'landscape' },
+      elements: [{ type: 'cone', id: 'cone-1', x: 0.2, y: 0.3, colour: 'orange' }],
+    }
+    const html = editor({ state: initEditor(stored) })
+    expect(html).toMatch(/<option[^>]*value="full_pitch"[^>]*selected/)
+    expect(html).toContain('dd-lines')
+  })
+
   it('shows how full the diagram is', () => {
     expect(editor()).toContain('0 of 60')
   })
@@ -245,13 +272,19 @@ describe('the editor tool palette', () => {
 })
 
 describe('the editor canvas', () => {
-  it('draws the pitch and everything on it', () => {
+  it('draws the surface and everything on it', () => {
     let s = initEditor(null)
     const types: DiagramElement['type'][] = ['player', 'cone', 'ball', 'goal', 'arrow', 'zone', 'text']
     for (const t of types) s = editorReducer(s, { op: 'add', element: t, at: { x: 0.4, y: 0.5 } })
     const html = editor({ state: s })
     for (const t of types) expect(html, `${t} is missing from the canvas`).toContain(`data-el="${t}"`)
-    expect(html).toContain('dd-lines')
+    expect(html).toContain('dd-svg')
+    // A new diagram opens blank, so there are no markings to draw yet.
+    expect(html).not.toContain('dd-lines')
+    // Choosing a pitch draws them, through the real action the selector fires.
+    const onPitch = editor({ state: editorReducer(s, { op: 'setSurface', surface: 'full_pitch' }) })
+    expect(onPitch).toContain('dd-lines')
+    for (const t of types) expect(onPitch, `${t} was lost with the surface`).toContain(`data-el="${t}"`)
   })
 
   it('gives every element a generous invisible target and a name', () => {

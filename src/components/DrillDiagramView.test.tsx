@@ -9,8 +9,18 @@ import { surfaceSize } from '../lib/drillDiagramGeometry'
 // seven element types, the surfaces, and the one rule that separates this from
 // the editor, which is that it carries no editor chrome at all.
 
+// The surface these tests draw on unless one is named. Stated here rather than
+// taken from emptyDiagram, because what a NEW diagram opens on is a product
+// decision that has already moved once, and the renderer's own rules (markings,
+// viewBox, scaling) are about the surface in front of it, not about that
+// default. A diagram carrying no surface is not a case the renderer ever sees:
+// parseDrillDiagram supplies one on every read.
+const FULL_PITCH = { kind: 'full_pitch', orientation: 'portrait' } as const
+
 function render(elements: DiagramElement[], over: Partial<DrillDiagram> = {}): string {
-  return renderToStaticMarkup(<DrillDiagramView diagram={{ ...emptyDiagram(), elements, ...over }} />)
+  return renderToStaticMarkup(
+    <DrillDiagramView diagram={{ ...emptyDiagram(), surface: FULL_PITCH, elements, ...over }} />,
+  )
 }
 
 const ALL: DiagramElement[] = [
