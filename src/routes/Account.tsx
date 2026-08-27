@@ -436,7 +436,7 @@ export function Account() {
     <div style={{ maxWidth: 680 }}>
       <div className="page-head">
         <div>
-          <h2>Account</h2>
+          <h1>Account</h1>
           <div className="sub">Your details, how you sign in, and your club membership.</div>
         </div>
       </div>

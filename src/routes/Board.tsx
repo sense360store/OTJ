@@ -284,7 +284,7 @@ export function Board() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Tactics board</h2>
+          <h1>Tactics board</h1>
           <div className="sub">Place players and drag them into shape. Save a board to load it back later.</div>
         </div>
         <div className="row" style={{ gap: 8 }}>

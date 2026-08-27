@@ -1001,7 +1001,7 @@ export function AdminUsers() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Users</h2>
+          <h1>Users</h1>
           <div className="sub">Invite and remove members, manage roles and teams, and decide what each role can do.</div>
         </div>
       </div>

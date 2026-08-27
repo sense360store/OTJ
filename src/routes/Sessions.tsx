@@ -290,7 +290,7 @@ export function Sessions() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Sessions</h2>
+          <h1>Sessions</h1>
           <div className="sub">
             {canPlan
               ? `Training coming up across the club, including today's after it has finished. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds earlier days.`

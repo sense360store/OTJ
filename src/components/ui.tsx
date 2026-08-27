@@ -113,9 +113,12 @@ export function MediaThumb({
   const { src: signedUrl, onError, onLoad } = useMediaSrc(previewPath)
   if (!media) {
     return (
-      <div className="thumb thumb-diagram">
-        <span style={{ color: 'var(--slate)', fontSize: 'var(--text-xs)', fontWeight: 700 }}>No media</span>
-        <span className="thumb-label">add a clip or diagram</span>
+      // Two lines in normal flow rather than a corner label: at the 12px
+      // reading floor the hint is wide enough to run into the "No media" text
+      // behind it on a phone-width card.
+      <div className="thumb thumb-diagram thumb-empty">
+        <span className="thumb-empty-title">No media</span>
+        <span className="thumb-empty-hint">Add a clip or diagram</span>
       </div>
     )
   }

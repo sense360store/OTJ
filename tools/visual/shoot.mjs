@@ -4,7 +4,10 @@
 //   node tools/visual/shoot.mjs [outDir]
 //
 // Expects the harness to be serving: npx vite --config vite.visual.config.ts
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 
 const OUT = process.argv[2] ?? 'visual-shots'
@@ -22,8 +25,16 @@ const SHOTS = [
       WIDTHS.map((w) => ({ screen, caps, w })),
     ),
   ),
-  // Login is outside the shell, so it has no capability variant.
+  // Login is outside the shell, so it has no capability variant. Its error
+  // and info states are the Note primitive and the success treatment, and
+  // they are driven rather than faked: pressing the magic link button with an
+  // empty field is the real error path, and pressing it with one filled is
+  // the real confirmation.
   ...WIDTHS.map((w) => ({ screen: 'login', w })),
+  ...[390, 1280].flatMap((w) => [
+    { screen: 'login', w, open: 'error' },
+    { screen: 'login', w, open: 'info' },
+  ]),
   // The More sheet only exists under the phone breakpoint, and only for a
   // member whose capability set fills the overflow.
   ...PHONE.map((w) => ({ screen: 'home', caps: 'coach', w, open: 'more' })),
@@ -38,15 +49,31 @@ const name = (s, theme) =>
   [s.screen, s.caps ?? 'na', s.open ?? 'default', theme, `${s.w}w`].join('_') + '.png'
 
 await mkdir(OUT, { recursive: true })
-// An outbound HTTP proxy, when the environment has one, so the Google Fonts
-// link resolves and the shots carry Archivo and Hanken Grotesk rather than a
-// fallback stack. Without it every page also waits out a connection reset.
-const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy
-const browser = await chromium.launch({
-  executablePath: EXE,
-  ...(proxy ? { proxy: { server: proxy, bypass: 'localhost,127.0.0.1' } } : {}),
-})
+// No proxy and no outbound request: the only external resource the harness
+// loads is the font stylesheet, and that is served from the cache below.
+const browser = await chromium.launch({ executablePath: EXE })
 const context = await browser.newContext({ ignoreHTTPSErrors: true, deviceScaleFactor: 1 })
+
+// Google Fonts is not reachable from the browser in every environment, and a
+// request that times out costs twelve seconds a page. Serve the cache that
+// fetch-fonts.mjs wrote; with no cache, abort the request at once and say so,
+// rather than shooting a hundred and thirty pages in a fallback typeface
+// without noticing.
+const FONTS = path.resolve(fileURLToPath(new URL('../../node_modules/.visual-harness-fonts', import.meta.url)))
+const haveFonts = existsSync(path.join(FONTS, 'manifest.json'))
+const manifest = haveFonts ? JSON.parse(await readFile(path.join(FONTS, 'manifest.json'), 'utf8')) : {}
+// A predicate rather than a glob: a glob treats the ? that begins the css2
+// query string as a single character wildcard, and the pattern silently
+// matches nothing.
+const isFont = (url) => url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com'
+await context.route(isFont, async (route) => {
+  const file = manifest[route.request().url()]
+  if (!file) return route.abort()
+  const body = await readFile(path.join(FONTS, file))
+  await route.fulfill({ body, contentType: file.endsWith('.css') ? 'text/css' : 'font/woff2' })
+})
+console.log(haveFonts ? 'serving the local font cache' : 'NO FONT CACHE: shots use the fallback stack, run tools/visual/fetch-fonts.mjs')
+
 let failures = 0
 
 for (const theme of ['light', 'dark']) {
@@ -67,7 +94,12 @@ for (const theme of ['light', 'dark']) {
         await page.waitForTimeout(400)
       }
     }
-    await page.screenshot({ path: `${OUT}/${name(s, theme)}`, fullPage: !s.open })
+    if (s.open === 'error' || s.open === 'info') {
+      if (s.open === 'info') await page.getByLabel('Email').fill('coach@example.invalid')
+      await page.getByRole('button', { name: 'Email me a link' }).click()
+      await page.waitForTimeout(300)
+    }
+    await page.screenshot({ path: `${OUT}/${name(s, theme)}`, fullPage: s.open !== 'more' })
     if (errors.length) {
       failures++
       console.log(`ERROR ${name(s, theme)}: ${errors[0].slice(0, 160)}`)

@@ -798,7 +798,7 @@ export function Feedback() {
     <div style={{ maxWidth: 760 }}>
       <div className="page-head">
         <div>
-          <h2>Feedback</h2>
+          <h1>Feedback</h1>
           <div className="sub">Feature requests, bugs and general feedback, club wide so nothing is filed twice.</div>
         </div>
         <button className="btn btn-primary" onClick={() => setCreating(true)}>

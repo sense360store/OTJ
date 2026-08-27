@@ -14,9 +14,26 @@ stylesheet, with the data layer replaced by fixtures. Everything a screenshot
 shows is the component that ships; only the rows behind it are invented. No
 real child, coach or club member appears in the fixtures.
 
+Chromium and `playwright-core` drive it. `playwright-core` is deliberately
+NOT a dependency of the application: install it on demand.
+
+```bash
+npm install --no-save playwright-core
+node tools/visual/fetch-fonts.mjs                    # once: cache the two families
+
+# to look at it
+npx vite --config vite.visual.config.ts              # then open the printed URL
+
+# to screenshot and check it
+npx vite build --config vite.visual.config.ts
+npx vite preview --config vite.visual.config.ts &
+node tools/visual/shoot.mjs visual-shots             # one PNG per surface, width, theme and role
+node tools/visual/checks.mjs                         # computed styles and live interaction
 ```
-npx vite --config vite.visual.config.ts    # then open the printed URL
-```
+
+Build and preview rather than the dev server for the screenshots: the dev
+server re-transforms two hundred modules on every page load, which turns a
+hundred and thirty six shots into half an hour.
 
 Query string, all optional:
 

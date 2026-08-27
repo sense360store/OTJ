@@ -215,7 +215,7 @@ export function AdminClub() {
     <div style={{ maxWidth: 680 }}>
       <div className="page-head">
         <div>
-          <h2>Club</h2>
+          <h1>Club</h1>
           <div className="sub">The club's name, motto and crest, shown across the app and on the sign in screen.</div>
         </div>
       </div>

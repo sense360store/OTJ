@@ -360,7 +360,7 @@ export function AdminSeasons() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Seasons</h2>
+          <h1>Seasons</h1>
           <div className="sub">The club's registration seasons. Exactly one is current; archived seasons are read only.</div>
         </div>
         <button className="btn btn-primary" onClick={() => setCreating(true)}>

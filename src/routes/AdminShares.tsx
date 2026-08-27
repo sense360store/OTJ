@@ -597,7 +597,7 @@ export function AdminShares() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Shared links</h2>
+          <h1>Shared links</h1>
           <div className="sub">Every public link the club has made, and whether it still works.</div>
         </div>
       </div>

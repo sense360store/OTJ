@@ -466,7 +466,7 @@ function CoachHome() {
       <div className="page-head">
         <div>
           <div className="eyebrow">{todayLine}</div>
-          <h2 style={{ marginTop: 4 }}>Welcome back{firstName ? `, ${firstName}` : ''}</h2>
+          <h1 style={{ marginTop: 4 }}>Welcome back{firstName ? `, ${firstName}` : ''}</h1>
           <div className="sub">
             {canPlan
               ? 'Your schedule first, then everything you need for the next session.'

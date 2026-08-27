@@ -949,7 +949,7 @@ export default function SpondLinks() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Spond links</h2>
+          <h1>Spond links</h1>
           <div className="sub">
             Link each Spond member to a registered player. Linking lets Players &amp; groups show what each parent
             replied; it never marks anybody present.

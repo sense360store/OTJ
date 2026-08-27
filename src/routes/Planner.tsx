@@ -250,7 +250,7 @@ export function PlannerHeaderView({
           <Icon.chevL />
           Sessions
         </button>
-        <h2>{readOnly ? 'View session' : isExisting ? 'Edit session' : 'Plan a session'}</h2>
+        <h1>{readOnly ? 'View session' : isExisting ? 'Edit session' : 'Plan a session'}</h1>
         <div className="sub">
           {readOnly
             ? `${ownerName || 'Another coach'}'s session. You can view it and watch it live, but only the owner or an admin can change or drive it.`

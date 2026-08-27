@@ -172,7 +172,7 @@ function SessionDayView({ session }: { session: Session }) {
           <Icon.chevL />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h2>{session.name}</h2>
+          <h1>{session.name}</h1>
           <div className="sd-sub">{subBits.join(' · ')}</div>
         </div>
         <button className="btn btn-gold" style={{ height: 44 }} onClick={() => nav('live', { sessionId: session.id })}>

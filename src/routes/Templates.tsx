@@ -167,7 +167,7 @@ export function Templates() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Session Templates</h2>
+          <h1>Session Templates</h1>
           <div className="sub">Reusable session shells — build a new plan in one click.</div>
         </div>
         <div className="row wrap">

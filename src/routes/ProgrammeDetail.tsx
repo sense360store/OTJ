@@ -258,7 +258,7 @@ function ProgrammeView({ p }: { p: Programme }) {
           <Icon.chevL />
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 style={{ fontSize: 24 }}>{p.name}</h2>
+          <h1 style={{ fontSize: 24 }}>{p.name}</h1>
           {p.focus && (
             <span className="tag corner-technical" style={{ marginTop: 6 }}>
               {p.focus}

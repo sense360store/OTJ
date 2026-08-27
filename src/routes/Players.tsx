@@ -491,7 +491,7 @@ export function Players() {
   const header = (
     <div className="page-head">
       <div>
-        <h2>Registered players</h2>
+        <h1>Registered players</h1>
         <div className="sub">The club's register for a season. Read is club wide; team is a filter.</div>
       </div>
       <div className="row" style={{ gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>

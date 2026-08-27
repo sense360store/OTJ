@@ -460,7 +460,7 @@ export function AdminSpond() {
     <div style={{ maxWidth: 760 }}>
       <div className="page-head">
         <div>
-          <h2>Spond</h2>
+          <h1>Spond</h1>
           <div className="sub">
             Attendance mirrored from Spond, counts only. Sessions stay arranged and answered in Spond.
           </div>

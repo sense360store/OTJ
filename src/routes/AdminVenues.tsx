@@ -160,7 +160,7 @@ export function AdminVenues() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Venues</h2>
+          <h1>Venues</h1>
           <div className="sub">The places the club trains. A coach picks one when planning a session.</div>
         </div>
       </div>

@@ -176,7 +176,7 @@ export function AdminTeams() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Teams</h2>
+          <h1>Teams</h1>
           <div className="sub">The club's teams. A filter and a default for sessions and coaches, never a wall.</div>
         </div>
       </div>

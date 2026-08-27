@@ -40,4 +40,10 @@ export default defineConfig({
   root: path.resolve(root, 'tools/visual'),
   plugins: [react(), visualStubs()],
   server: { port: 5199, strictPort: true },
+  preview: { port: 5199, strictPort: true },
+  // Built into the scratch directory rather than dist/, so it can never be
+  // mistaken for the application's own build output. shoot.mjs runs against
+  // the built copy: a dev server re-transforms two hundred modules on every
+  // page load, which turns a hundred and thirty screenshots into half an hour.
+  build: { outDir: path.resolve(root, 'node_modules/.visual-harness'), emptyOutDir: true },
 })

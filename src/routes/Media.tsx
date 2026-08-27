@@ -535,7 +535,7 @@ export function Media() {
     <div>
       <div className="page-head">
         <div>
-          <h2>Media Library</h2>
+          <h1>Media Library</h1>
           <div className="sub">All your videos, YouTube links, diagrams and PDFs in one place.</div>
         </div>
         <div className="row wrap" style={{ gap: 10 }}>
