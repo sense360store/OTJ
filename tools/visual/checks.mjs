@@ -108,6 +108,59 @@ const open = async (screen, width, opts = {}) => {
   await page.close()
 }
 
+/* ---- an enlarged hit area must not steal a neighbour's clicks ---- */
+{
+  for (const [screen, width] of [
+    ['home', 360],
+    ['sessions', 360],
+    ['sessions', 390],
+    ['sessions', 1280],
+    ['primitives', 390],
+  ]) {
+    const page = await open(screen, width)
+    const r = await page.evaluate(() => {
+      // Every control whose hit area comes from an ::after: does that box
+      // reach into a NEIGHBOURING control's own visible box? Two chips on
+      // wrapped rows are the case worth checking, since each pseudo extends
+      // five pixels past a 34px chip into the row gap.
+      const els = [...document.querySelectorAll('.chip, .btn-sm, .icon-btn, .toggle')]
+      const boxes = els.map((el) => {
+        const b = el.getBoundingClientRect()
+        const a = getComputedStyle(el, '::after')
+        const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+        const ph = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+        const pw = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+        return {
+          label: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 14),
+          hit: {
+            l: b.left - (pw - b.width) / 2,
+            r: b.right + (pw - b.width) / 2,
+            t: b.top - (ph - b.height) / 2,
+            b: b.bottom + (ph - b.height) / 2,
+          },
+          box: b,
+        }
+      })
+      const clashes = []
+      for (const a of boxes) {
+        for (const c of boxes) {
+          if (a === c) continue
+          const ox = Math.min(a.hit.r, c.box.right) - Math.max(a.hit.l, c.box.left)
+          const oy = Math.min(a.hit.b, c.box.bottom) - Math.max(a.hit.t, c.box.top)
+          if (ox > 0.5 && oy > 0.5) clashes.push(`${a.label} over ${c.label}`)
+        }
+      }
+      return { count: boxes.length, clashes: [...new Set(clashes)] }
+    })
+    check(
+      `no hit area overlaps a neighbouring control on ${screen} at ${width}`,
+      r.clashes.length === 0,
+      `${r.count} controls${r.clashes.length ? ': ' + r.clashes.slice(0, 3).join(', ') : ''}`,
+    )
+    await page.close()
+  }
+}
+
 /* ---- the phone shell ---- */
 {
   const page = await open('home', 390)

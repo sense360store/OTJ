@@ -396,6 +396,40 @@ describe('an icon only button always has an accessible name', () => {
   })
 })
 
+describe('a semantic fill carries its own label colour', () => {
+  // --success, --warning, --danger and --info lighten in the dark theme, so a
+  // hardcoded white label on one of them reads at under 2:1 there. The fill's
+  // own --*-fg (or --on-accent, where the fill is chosen per row) is what
+  // flips with it.
+  //
+  // WHAT THIS CANNOT CATCH, and it is the shape that actually shipped: a rule
+  // that sets the fill on one selector and the label on another. Three of
+  // those were found by hand rather than here (SessionRegister's .reg-check,
+  // SessionDay's .sd-check and the import preview's .ip-pill), because the
+  // glyph colour sat on the base class and the fill arrived with a modifier.
+  // A scan of one rule at a time sees neither half of that pair.
+  it('never writes a fixed white label in the same rule as a semantic fill', () => {
+    const offenders: string[] = []
+    for (const f of sourceFiles.filter((x) => x.endsWith('.css'))) {
+      for (const m of read(f).matchAll(/\{[^{}]*\}/g)) {
+        const rule = m[0]
+        if (!/background: *var\(--(success|warning|danger|info)\)/.test(rule)) continue
+        if (/color: *#fff|color: *#ffffff|color: *white/i.test(rule)) {
+          offenders.push(`${rel(f)}: ${rule.replace(/\s+/g, ' ').slice(0, 110)}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('leaves the three cross-selector pairs on their fill\'s own label', () => {
+    // Pinned by name, because the scan above cannot see them.
+    expect(read(join(srcDir, 'routes/SessionRegister.css'))).toContain('color: var(--success-fg)')
+    expect(read(join(srcDir, 'routes/SessionDay.css'))).toContain('color: var(--success-fg)')
+    expect(styles).toMatch(/\.ip-pill \{[^}]*color: var\(--on-accent\)/)
+  })
+})
+
 /* ---- 2.15 focus, 2.17 motion ------------------------------------ */
 
 describe('focus and motion', () => {

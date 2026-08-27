@@ -130,7 +130,9 @@
   border: 1.5px solid var(--line);
   display: grid;
   place-items: center;
-  color: #fff;
+  /* As in SessionRegister.css: the tick's ground is --success, so it takes
+     that fill's own label colour rather than a hardcoded white. */
+  color: var(--success-fg);
   flex: 0 0 28px;
 }
 .sd-check svg {

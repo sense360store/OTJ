@@ -99,7 +99,10 @@
   border: 1.5px solid var(--line);
   display: grid;
   place-items: center;
-  color: #fff;
+  /* The tick rides on --success when the row is on, so its colour is that
+     fill's own label rather than a hardcoded white: --success lightens in
+     the dark theme and a white tick would drop under 2:1. */
+  color: var(--success-fg);
 }
 .reg-check svg {
   width: 16px;
