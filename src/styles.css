@@ -174,11 +174,14 @@
   --bg-2: #11163a;
   --card: #161c44;
 
-  /* On a dark ground both the resting and the hover fill must still
-     carry a white label at 4.5:1, which caps how light the hover can
-     go, so the primary deepens on hover here rather than lightening. */
-  --navy: #4a6ae8;
-  --navy-900: #3c5ae0;
+  /* Two constraints meet on this value. Both the resting and the hover
+     fill carry a white label at 4.5:1, which caps how light they can go,
+     so the primary deepens on hover here rather than lightening. And the
+     active navigation item's gold icon sits on this fill, so it has a
+     floor of its own: at #4a6ae8 that pairing measured 2.75:1, against
+     7.29:1 in light. Both are asserted in the invariant test. */
+  --navy: #4460e2;
+  --navy-900: #3a54d6;
   --royal: #8aa4ff;
   --royal-600: #a6b9ff;
   /* Gold is a fill behind dark text in both themes, so the fill itself
@@ -291,7 +294,9 @@ h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; c
 .nav-item:hover .nav-ico { color: var(--ink-2); }
 .nav-badge { margin-left: auto; font-size: var(--text-xs); font-weight: 800; background: var(--gold); color: var(--gold-fg);
   padding: 0 var(--space-8); border-radius: var(--radius-pill); }
-.nav-item.active .nav-badge { background: var(--gold); color: var(--ink); }
+/* No .nav-item.active .nav-badge override: the base rule already pairs the
+   gold fill with --gold-fg, and restating it as --ink put a near white label
+   on gold at 1.56:1 in the dark theme. */
 
 .sb-foot { border-top: 1px solid var(--line); padding: var(--space-12); }
 .coach-chip { display: flex; align-items: center; gap: var(--space-8); padding: var(--space-8); border-radius: var(--radius-sm); }
@@ -579,11 +584,14 @@ summary:focus-visible,
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-transform: uppercase; color: rgba(255,255,255,.85); font-family: ui-monospace, monospace; }
 .thumb-diagram .thumb-label, .thumb-pdf .thumb-label, .thumb-img .thumb-label { color: rgba(16,22,49,.45); }
-/* The empty placeholder: a title and a hint stacked, both in flow. */
+/* The empty placeholder: a title and a hint stacked, both in flow.
+   The placeholder ART is a fixed light stripe in both themes, so its text is
+   a fixed dark rather than a neutral token: --slate flips to #a4abbe in the
+   dark theme and would read at 1.91:1 on a ground that has not moved. */
 .thumb-empty { grid-auto-flow: row; gap: var(--space-2); padding: 0 var(--space-8); text-align: center; }
-.thumb-empty-title { font-size: var(--text-xs); font-weight: 700; color: var(--slate); }
+.thumb-empty-title { font-size: var(--text-xs); font-weight: 700; color: rgba(16,22,49,.72); }
 .thumb-empty-hint { font-size: var(--text-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  color: rgba(16,22,49,.45); font-family: ui-monospace, monospace; }
+  color: rgba(16,22,49,.55); font-family: ui-monospace, monospace; }
 .play-btn { width: 48px; height: 48px; border-radius: 50%; background: rgba(255,255,255,.92); display: grid; place-items: center;
   color: var(--navy); box-shadow: var(--shadow); }
 .play-btn svg { width: 20px; height: 20px; margin-left: var(--space-2); }

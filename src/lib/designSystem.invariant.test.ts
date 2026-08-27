@@ -156,6 +156,12 @@ describe('the semantic state roles meet their contrast floors in both themes', (
       expect(ratio('--gold-fg', '--gold-600', dark)).toBeGreaterThanOrEqual(4.5)
       // Gold is only ever a fill behind dark text, never text on the card.
       expect(ratio('--ink', '--gold-soft', dark)).toBeGreaterThanOrEqual(4.5)
+      // The active navigation item is a navy fill with a GOLD icon, which is
+      // the thing 2.11 says must not become a generic grey highlight. That
+      // pairing has a floor of its own, and lightening --navy for the dark
+      // theme is what put it at 2.75:1 before this was asserted.
+      expect(ratio('--gold', '--navy', dark)).toBeGreaterThanOrEqual(3)
+      expect(ratio('--gold', '--navy-900', dark)).toBeGreaterThanOrEqual(3)
     })
 
     it(`${theme}: a classification tag reads on its own tint`, () => {
@@ -390,6 +396,28 @@ describe('an icon only button always has an accessible name', () => {
     for (const f of sourceFiles.filter((f) => f.endsWith('.tsx'))) {
       for (const tag of openingTags(read(f), 'button')) {
         if (/\bicon-btn\b/.test(tag) && /\btitle=/.test(tag)) offenders.push(`${rel(f)}: ${tag.replace(/\s+/g, ' ').slice(0, 90)}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('a gold fill is never restated with a different label', () => {
+  // The shape Codex found on the sidebar badge: the base rule paired --gold
+  // with --gold-fg, and a more-specific contextual rule restated the pair as
+  // --ink, which is near white in the dark theme. The override looked
+  // redundant in the diff and was not: it won on specificity and measured
+  // 1.56:1.
+  it('pairs every --gold background with --gold-fg, or with no label at all', () => {
+    const offenders: string[] = []
+    for (const f of sourceFiles.filter((x) => x.endsWith('.css'))) {
+      for (const m of read(f).matchAll(/\{[^{}]*\}/g)) {
+        const rule = m[0]
+        if (!/background: *var\(--gold\)/.test(rule)) continue
+        const colour = rule.match(/(?<![-a-z])color: *([^;]+);/)
+        if (colour && colour[1].trim() !== 'var(--gold-fg)') {
+          offenders.push(`${rel(f)}: ${rule.replace(/\s+/g, ' ').slice(0, 110)}`)
+        }
       }
     }
     expect(offenders).toEqual([])

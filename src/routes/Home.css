@@ -156,7 +156,9 @@
 }
 .qa-btn.qa-live .qa-ico {
   background: var(--gold);
-  color: var(--ink);
+  /* Gold does not darken in the dark theme, so its glyph takes --gold-fg
+     rather than --ink, which flips to near white. */
+  color: var(--gold-fg);
 }
 
 @media (max-width: 900px) {
