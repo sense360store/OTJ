@@ -61,6 +61,24 @@ function openingTags(src: string, tag: string): string[] {
   return out
 }
 
+
+// Names the site of a match so an allowlist can compare WHAT was found rather
+// than how much: the selector for a CSS declaration, the trimmed line for a
+// JSX one.
+function siteOf(src: string, index: number, isCss: boolean): string {
+  if (!isCss) {
+    const start = src.lastIndexOf('\n', index) + 1
+    const end = src.indexOf('\n', index)
+    return src.slice(start, end === -1 ? undefined : end).trim()
+  }
+  const open = src.lastIndexOf('{', index)
+  const prev = Math.max(src.lastIndexOf('}', open), src.lastIndexOf('*/', open))
+  return src
+    .slice(prev + 1, open)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /* ---- the token blocks, parsed ---------------------------------- */
 
 function block(selector: string): Record<string, string> {
@@ -275,8 +293,21 @@ describe('the type scale is the only source of a font size', () => {
   })
 
   it('has no half pixel step, and none below the 12px reading floor', () => {
+    // The NAMES, not the count. A count passes while one step is renamed and
+    // another added, which is the same hole Codex found in the gold allowlist
+    // below; there is no reason to leave a second one here.
     const scale = Object.entries(LIGHT).filter(([t]) => t.startsWith('--text-'))
-    expect(scale.length).toBe(9)
+    expect(scale.map(([t]) => t).sort()).toEqual([
+      '--text-2xl',
+      '--text-3xl',
+      '--text-base',
+      '--text-display',
+      '--text-lg',
+      '--text-md',
+      '--text-sm',
+      '--text-xl',
+      '--text-xs',
+    ])
     for (const [token, v] of scale) {
       const px = Number(v.replace('px', ''))
       expect(Number.isInteger(px), `${token} is a whole pixel`).toBe(true)
@@ -441,24 +472,31 @@ describe('gold is a fill behind dark text, never text itself', () => {
     expect(offenders).toEqual([])
   })
 
-  it('paints text with --gold only where the ground is the brand navy', () => {
+  it('paints text with --gold only at the three sites whose ground is navy', () => {
     // Named rather than pattern-matched, because the ground is not something
     // a scan of one declaration can see. The active navigation icon sits on
-    // the navy fill; the live view's play glyph sits on the forced dark card
-    // at 9.67:1. A new caller belongs in this list with its ratio, or it
-    // belongs on --ink.
-    const allowed = new Set([
-      'styles.css:.nav-item.active .nav-ico',
-      'styles.css:.more-sheet-item.active .nav-ico',
-      'routes/LiveSession.tsx:play glyph',
-    ])
+    // the navy fill (3.09:1 in dark, 7.62:1 in light, asserted above); the
+    // live view's play glyph sits on the forced dark card at 9.67:1. A new
+    // caller belongs in this list with its ratio, or it belongs on --ink.
+    //
+    // The SET is compared, not its size. Comparing counts would pass while
+    // one approved site was removed and a new low-contrast one appeared,
+    // which is a real way for this to go quiet.
+    const allowed = [
+      'styles.css :: .nav-item.active .nav-ico',
+      'styles.css :: .more-sheet-item.active .nav-ico',
+      'routes/LiveSession.tsx :: <span style={{ color: \'var(--gold)\' }}>',
+    ]
     const found: string[] = []
     for (const f of sourceFiles) {
+      const src = read(f)
       // (?<![-a-z]) or `border-color: var(--gold)` counts as gold text,
       // which is how this scan first reported five sites for three.
-      for (const m of read(f).matchAll(/(?<![-a-z])color: *'?var\(--gold\)'?/g)) found.push(`${rel(f)}: ${m[0]}`)
+      for (const m of src.matchAll(/(?<![-a-z])color: *'?var\(--gold\)'?/g)) {
+        found.push(`${rel(f)} :: ${siteOf(src, m.index ?? 0, f.endsWith('.css'))}`)
+      }
     }
-    expect(found.length, `gold-as-text sites: ${found.join(', ')}`).toBe(allowed.size)
+    expect(found.sort()).toEqual([...allowed].sort())
   })
 })
 
