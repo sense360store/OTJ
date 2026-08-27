@@ -68,7 +68,7 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--slate-2);
+  color: var(--slate);
 }
 .ww-num {
   display: block;
@@ -148,7 +148,7 @@
   display: grid;
   place-items: center;
   background: color-mix(in srgb, var(--navy) 10%, transparent);
-  color: var(--navy);
+  color: var(--royal);
 }
 .qa-ico svg {
   width: 18px;

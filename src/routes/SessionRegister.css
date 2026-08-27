@@ -397,7 +397,7 @@
    the link coverage beside it because it is context about the event rather
    than about the squad the coach is organising. */
 .tn-audience {
-  color: var(--slate-2);
+  color: var(--slate);
 }
 /* Which teams hold the unlinked players. It answers the coverage line
    beside it, so it reads at the same weight as the note it explains. */

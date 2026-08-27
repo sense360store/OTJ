@@ -18,9 +18,19 @@
   --brand-gradient: linear-gradient(120deg, var(--brand-navy-900), var(--brand-navy) 60%, var(--brand-royal));
 
   /* ---- Brand roles ------------------------------------------------
-     Navy is the primary action and the active navigation state, gold is
-     the one accent, royal is links and focus. Every one of them has a
-     dark value below. */
+     Navy is the primary FILL and gold is the one accent; royal is the
+     brand as a FOREGROUND: links, focus, the active navigation label and
+     every glyph drawn in the brand. Every one of them has a dark value
+     below.
+
+     Navy fills and royal draws, and that split is arithmetic rather than
+     taste. Navy's dark value has to stay dark enough to carry a white
+     label (4.5:1 caps it at a relative luminance of .183) and light
+     enough to read as a word on --card (4.5:1 needs .234), and no value
+     satisfies both. It does not clear the 3:1 glyph floor on its own 10%
+     tint either, at 2.84:1. So the one foreground left on --navy is the
+     play button's glyph, which sits on a fixed white circle in both
+     themes. */
   --navy-900: #0a1f6b;      /* primary hover */
   --navy: #122a86;          /* primary fill */
   --royal: #1f43d6;         /* links */
@@ -36,10 +46,15 @@
   --ink: #101631;
   --ink-2: #2b3350;
   --slate: #616b82;         /* every secondary text colour */
-  /* --slate-2 is a NON TEXT role: control borders, disabled glyphs and
+  /* --slate-2 is a NON TEXT role: control borders, disabled labels and
      decorative rules. It is darkened from #8a93a7 so a control outlined
      with it clears 3:1 on every light surface, including --line. Text
-     that used it has moved to --slate. */
+     that used it has moved to --slate; a rendered sweep found five it
+     had been left on, none of which cleared 4.5:1 in either theme.
+     Three foreground uses remain and each is one of the exemptions:
+     a disabled menu item, the activity separator glyph, and the board
+     token placeholder, which sits on a fixed light label and belongs to
+     the tactics board's own wave. They are named in the invariant. */
   --slate-2: #79839a;
   --line: #e8e8e3;          /* between group separator, card borders */
   --line-2: #f0f0ec;        /* within group separator, list and table rows */
@@ -601,7 +616,7 @@ summary:focus-visible,
 .thumb-empty { grid-auto-flow: row; gap: var(--space-2); padding: 0 var(--space-8); text-align: center; }
 .thumb-empty-title { font-size: var(--text-xs); font-weight: 700; color: rgba(16,22,49,.72); }
 .thumb-empty-hint { font-size: var(--text-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  color: rgba(16,22,49,.55); font-family: ui-monospace, monospace; }
+  color: rgba(16,22,49,.7); font-family: ui-monospace, monospace; }
 .play-btn { width: 48px; height: 48px; border-radius: 50%; background: rgba(255,255,255,.92); display: grid; place-items: center;
   color: var(--navy); box-shadow: var(--shadow); }
 .play-btn svg { width: 20px; height: 20px; margin-left: var(--space-2); }
@@ -731,7 +746,7 @@ summary:focus-visible,
 .add-slot { width: 100%; border: 1.5px dashed var(--line); background: transparent; border-radius: var(--radius-sm); padding: var(--space-12);
   color: var(--slate); font-weight: 700; font-size: var(--text-sm); display: flex; align-items: center; justify-content: center; gap: var(--space-8); margin-bottom: var(--space-12);
   transition: border-color var(--dur-fast), color var(--dur-fast), background var(--dur-fast); }
-.add-slot:hover { border-color: var(--navy); color: var(--navy); background: color-mix(in srgb, var(--navy) 4%, transparent); }
+.add-slot:hover { border-color: var(--navy); color: var(--royal); background: color-mix(in srgb, var(--navy) 4%, transparent); }
 .add-slot svg { width: 16px; height: 16px; }
 
 .planner-side { position: sticky; top: 78px; display: flex; flex-direction: column; gap: var(--space-16); }
@@ -894,7 +909,7 @@ summary:focus-visible,
 .state-success > svg { width: 16px; height: 16px; flex: 0 0 auto; }
 
 .section-title { display: flex; align-items: center; gap: var(--space-8); margin: 0 0 var(--space-12); }
-.section-title svg { width: 20px; height: 20px; color: var(--navy); }
+.section-title svg { width: 20px; height: 20px; color: var(--royal); }
 .section-title h3 { font-size: var(--text-lg); font-weight: 800; }
 .divider { height: 1px; background: var(--line); margin: var(--space-24) 0; border: 0; }
 
@@ -930,7 +945,7 @@ summary:focus-visible,
   /* The active destination is a navy tint AND a gold rule above it, so the
      current item is never signalled by colour alone; aria-current="page"
      carries the same fact to assistive technology. */
-  .bn-item.active { color: var(--navy); background: color-mix(in srgb, var(--navy) 10%, transparent); font-weight: 800; }
+  .bn-item.active { color: var(--royal); background: color-mix(in srgb, var(--navy) 10%, transparent); font-weight: 800; }
   .bn-item.active::before { content: ""; position: absolute; top: 0; left: 20%; right: 20%; height: 3px;
     border-radius: 0 0 var(--radius-xs) var(--radius-xs); background: var(--gold); }
   .bn-item { position: relative; }
@@ -1193,7 +1208,7 @@ a.activity-batch:hover { text-decoration: underline; }
 .public-week-head { display: grid; gap: var(--space-8); }
 .public-week-title { display: flex; flex-wrap: wrap; gap: var(--space-8); align-items: baseline; margin: 0;
   font-family: var(--display); font-weight: 800; font-size: var(--text-md); }
-.public-week-number { color: var(--navy); }
+.public-week-number { color: var(--royal); }
 .public-week-name { font-weight: 700; }
 .public-week-meta { display: flex; flex-wrap: wrap; gap: var(--space-8); align-items: center; }
 .public-week-focus { background: var(--gold-soft); border-color: var(--gold); font-weight: 800; }

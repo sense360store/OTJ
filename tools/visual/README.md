@@ -29,6 +29,7 @@ npx vite build --config vite.visual.config.ts
 npx vite preview --config vite.visual.config.ts &
 node tools/visual/shoot.mjs visual-shots             # one PNG per surface, width, theme and role
 node tools/visual/checks.mjs                         # computed styles and live interaction
+node tools/visual/contrast.mjs                       # every rendered text run, both themes
 ```
 
 Build and preview rather than the dev server for the screenshots: the dev
@@ -48,3 +49,15 @@ fails, rather than degrading quietly, when it cannot earn its own result: no
 font cache, a cache that does not actually load, a page that threw, or a
 required interaction whose control has gone. A screenshot that is present,
 plausible and wrong is worse than none.
+
+`tools/visual/contrast.mjs` measures the contrast of every rendered text run,
+which is the gap between the other two: the invariant test measures the token
+pairings somebody thought to name, and a screenshot shows a colour without
+judging it. It found five text runs under their threshold that forty four
+invariant tests and a hundred and thirty six screenshots had all passed. It
+runs under reduced motion, so it measures the settled paint rather than a
+transition, and it treats a gradient as one candidate ground per colour stop
+rather than measuring against the page behind it. Two categories are reported
+without failing, each for a stated reason rather than as a list of instances:
+an inactive control, which WCAG 1.4.3 exempts, and a frozen classification
+hue, which the VISUAL programme has not decided to move.

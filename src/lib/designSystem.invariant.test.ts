@@ -120,6 +120,34 @@ function contrast(a: string, b: string): number {
 
 const ratio = (fg: string, bg: string, dark: boolean) => contrast(value(fg, dark), value(bg, dark))
 
+// Every place a token is used as a FOREGROUND, named by its CSS selector or
+// its JSX line so an allowlist can compare what was found rather than how
+// much. The lookbehind is what keeps `border-color:` out of the results.
+function foregroundSites(token: string): Set<string> {
+  const out = new Set<string>()
+  for (const f of sourceFiles) {
+    const src = read(f)
+    const isCss = f.endsWith('.css')
+    const pattern = isCss
+      ? new RegExp(`(?<![-a-z])color: *var\\(${token}\\)`, 'g')
+      : new RegExp(`(?<![-a-z])color: *'var\\(${token}\\)'`, 'g')
+    for (const m of src.matchAll(pattern)) out.add(`${rel(f)}: ${siteOf(src, m.index!, isCss)}`)
+  }
+  return out
+}
+
+// A colour laid over a ground at a given alpha, for the tints that are
+// written as color-mix() and so have no token of their own.
+function mix(fg: string, bg: string, alpha: number): string {
+  // channels() is normalised to 0..1, so the blend is scaled back to bytes.
+  // Without that every mix rounded to #010101 and the tint assertion failed
+  // at 1.69:1 against a colour that is nowhere on the screen.
+  const [r1, g1, b1] = channels(fg)
+  const [r2, g2, b2] = channels(bg)
+  const blend = (a: number, b: number) => Math.round((a * alpha + b * (1 - alpha)) * 255)
+  return '#' + [blend(r1, r2), blend(g1, g2), blend(b1, b2)].map((v) => v.toString(16).padStart(2, '0')).join('')
+}
+
 /* ---- 2.2 contrast floors, measured ----------------------------- */
 
 describe('the semantic state roles meet their contrast floors in both themes', () => {
@@ -461,6 +489,90 @@ describe('a fixed ground carries a fixed foreground', () => {
     const ui = read(join(srcDir, 'components/ui.tsx'))
     expect(ui).toContain('className="thumb-glyph"')
     expect(ui).not.toMatch(/Icon\.fileText style=\{\{[^}]*--m-pdf/)
+  })
+})
+
+/* ---- 2.2 the brand as a foreground ------------------------------ */
+
+// The one foreground left on --navy: a glyph on a fixed white circle,
+// which does not flip with the theme and so is not held to a token pairing.
+const ALLOWED_NAVY_FOREGROUNDS = new Set<string>(['styles.css: .play-btn'])
+
+
+describe('a brand coloured word takes --royal, not --navy', () => {
+  // Found by rendering rather than by reading: tools/visual/contrast.mjs
+  // measures every text run on the acceptance surfaces and reported the
+  // active bottom nav label at 3.13:1 and a session avatar's initials at
+  // 3.35:1, both in the dark theme, both painted --navy. Nothing in this
+  // file saw them, because --navy on --card was not a pairing anybody had
+  // thought to name.
+  //
+  // --navy cannot be fixed in place, and that is arithmetic rather than
+  // taste: carrying a white label caps its dark value at a relative
+  // luminance of .183, and reading as text on --card needs .234. So the
+  // fill role and the foreground role are two tokens, and a WORD takes
+  // --royal. Icons and indicators stay on --navy at the 3:1 floor.
+  for (const theme of ['light', 'dark'] as const) {
+    const dark = theme === 'dark'
+
+    it(`${theme}: --royal reads as a word on every surface one lands on`, () => {
+      for (const surface of ['--card', '--bg', '--bg-2']) {
+        expect(ratio('--royal', surface, dark), `--royal on ${surface}`).toBeGreaterThanOrEqual(4.5)
+      }
+    })
+
+    it(`${theme}: --royal clears the 3:1 glyph floor on the tints it draws on`, () => {
+      // The quick action glyphs sit on a 10% navy tint rather than on the
+      // bare card, so the mix is measured rather than approximated by the
+      // surface underneath it. This is the pairing that sent them to
+      // --royal: --navy on its own tint measures 2.84:1 in the dark theme.
+      const tint = mix(value('--navy', dark), value('--card', dark), 0.1)
+      expect(contrast(value('--royal', dark), tint), '--royal on the navy tint').toBeGreaterThanOrEqual(3)
+      expect(contrast(value('--navy', true), mix(value('--navy', true), value('--card', true), 0.1))).toBeLessThan(3)
+    })
+  }
+
+  it('records the two floors --navy cannot satisfy at once', () => {
+    // Stated as measurements, because the conclusion is that no value of
+    // --navy passes both and a future nudge cannot make it.
+    expect(contrast('#ffffff', value('--navy', true))).toBeGreaterThanOrEqual(4.5)
+    expect(ratio('--navy', '--card', true)).toBeLessThan(4.5)
+  })
+
+  it('leaves --navy as a foreground only where the 3:1 floor applies', () => {
+    // Every one of these draws a glyph or an indicator, never a word.
+    // Compared as a SET rather than a count, which would pass if an
+    // approved site were removed while a word elsewhere took --navy.
+    const ALLOWED = ALLOWED_NAVY_FOREGROUNDS
+    expect([...foregroundSites('--navy')].sort()).toEqual([...ALLOWED].sort())
+  })
+})
+
+describe('--slate-2 is a non text role', () => {
+  // The same sweep found five text runs still painted with it, none of
+  // which cleared 4.5:1 in either theme: two day labels, the Spond
+  // audience line and two diagram editor labels. The token's own comment
+  // had said text had moved off it, and the comment was wrong.
+  //
+  // Scoped to the stylesheets, which is what this wave owns. A route still
+  // carries inline `color: 'var(--slate-2)'`, almost all of it on an
+  // Icon.* glyph held to 3:1, and the handful that are words belong to
+  // that route's wave. Nothing here can tell a glyph from a word, which is
+  // the reason tools/visual/contrast.mjs exists: it measures what renders.
+  it('paints text with it only where a contrast floor does not apply', () => {
+    const ALLOWED = new Set([
+      'styles.css: .menu-list button:disabled', // an inactive control, exempt from 1.4.3
+      'styles.css: .activity-sep', // a decorative separator glyph
+      'routes/Board.css: .board-token-label::placeholder', // a fixed light label, the board's own wave
+    ])
+    const found = new Set<string>()
+    for (const f of sourceFiles.filter((x) => x.endsWith('.css'))) {
+      const src = read(f)
+      for (const m of src.matchAll(/(?<![-a-z])color: *var\(--slate-2\)/g)) {
+        found.add(`${rel(f)}: ${siteOf(src, m.index!, true)}`)
+      }
+    }
+    expect([...found].sort()).toEqual([...ALLOWED].sort())
   })
 })
 

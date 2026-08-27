@@ -101,7 +101,7 @@ function SessionCard({
           <h3 style={{ fontSize: 19 }}>{s.name}</h3>
           <div style={{ color: 'var(--ink-2)', fontWeight: 700, fontSize: 'var(--text-base)', marginTop: 2 }}>{s.focus}</div>
         </div>
-        <div className="avatar" style={{ background: 'var(--bg-2)', color: 'var(--navy)', fontSize: 13 }}>
+        <div className="avatar" style={{ background: 'var(--bg-2)', color: 'var(--royal)', fontSize: 13 }}>
           {s.ageGroup}
         </div>
       </div>
