@@ -250,8 +250,9 @@ is broken; a class name has simply been dead for some time and nobody could see
 it.
 
 Control heights are unsystematic: `.btn` 42px, `.btn-sm` 36px, `.btn-lg` 52px,
-`.chip` 34px, `.icon-btn` 38px, `.field input` 42px, `.select` and `.search-lg
-input` 48px. Seven heights, no token.
+`.chip` 34px, `.icon-btn` 38px, `.topbar-search input` 40px, `.field input`
+42px, `.select` and `.search-lg input` 48px. Nine selectors, seven distinct
+heights, no token.
 
 **The screens have already noticed and patched around it**, and the rules that
 touch a shared primitive are of three kinds that must not be confused.
@@ -691,9 +692,13 @@ tappable. It replaces the three different local answers in `SessionRegister.css`
 ### 2.6 Inputs, selects and textareas
 
 One height (44px), one radius (`--radius-sm`), one border (`--line`), one focus
-treatment, one disabled treatment, one error treatment. Today `.field input` is
-42px and `.select` and `.search-lg input` are 48px, for no reason a user could
-name.
+treatment, one disabled treatment, one error treatment. This binds **every**
+shared input, the two search fields included: today `.field input` is 42px,
+`.topbar-search input` is 40px, and `.select` and `.search-lg input` are 48px,
+for no reason a user could name. `.topbar-search input` is the shell's own
+search and is named here explicitly, because the shell is VISUAL-01's to change
+and a 40px control left behind in it would contradict both the one-height rule
+and the 44px hit area on the wave's own surface.
 
 - the label is always a real `<label>` bound to the control, never a styled
   `<div>`;
@@ -942,14 +947,31 @@ and both shells:
 |---|---|
 | **Home** (`/`) | hero, stat cards, week list rows, `.page-head`, and both shells at once. The densest single exercise of the shared vocabulary |
 | **Sessions** (`/sessions`) | filter chips (kind, team, ownership, upcoming and past), list rows, the empty state, and a page head with actions |
-| **Login** (`/login`) | the product outside the shell: brand gradient, crest, inputs, primary button, error state |
+| **Login** (`/login`) | the product outside the shell: brand gradient, crest, inputs, primary button, error state. Checked in VISUAL-01, adopted in VISUAL-02: see below |
 | **The More sheet**, phone only | the one overlay with no primitive today, and the acceptance test for the new Sheet |
 | **Any `Modal`**, for example Delete session | dialog, focus trap, Escape, focus restore, and the new `btn-danger` |
 
 VISUAL-01 is accepted when: the token set is in place, the primitives exist
 including the `danger` and `on-dark` button variants and the `Note` and `Sheet`
-primitives, the five screens above are visually checked at all seven widths in
-both themes, and the 137 test files stay green.
+primitives, each of the five surfaces above is visually checked in both themes
+**at every width where it exists**, and the 137 test files stay green.
+
+**Login is checked in VISUAL-01 and adopted in VISUAL-02**, and both roadmaps
+list it under VISUAL-02's stable surface group, which is correct and is not a
+conflict once the two verbs are separated. VISUAL-01 checks it because it is the
+only surface that exercises the new primitives with no shell around them, so a
+token or primitive that only works inside the content frame fails here first.
+VISUAL-02 owns adopting it in full: the account screen beside it, and the state
+matrix (invalid credentials, magic link sent, expired link, set password,
+permission-limited) that VISUAL-01 does not attempt. The same split applies to
+Home and Sessions, which Part 4 lists in both waves for the same reason.
+
+Widths per surface, since two of the five are not present at every one: Home,
+Sessions and Login at all seven. The More sheet at 360, 390 and 430 only, since
+the bottom navigation it opens from does not render above 900px. A dialog at all
+seven, and at 900px in both of its forms, because 2.13 turns a form dialog into
+a bottom sheet at and below that width and the changeover is the thing worth
+looking at.
 
 **Only the control-size overrides are in scope, and they are not all
 VISUAL-01's to delete.** The ten composition rules identified in 1.6
@@ -980,12 +1002,15 @@ text colour. In both cases the size declaration goes and the rest stays, until
 `on-dark` makes the viewer's colours unnecessary too. A wave that deletes a
 whole rule and loses a full-width footer action has misread this criterion.
 
-What VISUAL-01 owns is making all 14 size declarations unnecessary by putting
-the rule in the primitive, which for `.dv .icon-btn` means shipping the
-`on-dark` variant 2.5 requires, not only the 44px hit area. A later wave that
-meets a control-size declaration it cannot retire has found a gap in the
-primitive, and that is a VISUAL-01 defect to fix rather than a reason to keep
-the override.
+What VISUAL-01 owns is making **every control-sizing declaration in all 14
+rules** unnecessary by putting the rule in the primitive. That is more than 14
+declarations: `.dv .icon-btn` sets both `width` and `height`, and
+`.act-role-row .chip` sets `height`, `padding` and `font-size`, all three of
+which are the chip's own sizing and all three of which go. For `.dv .icon-btn`
+it also means shipping the `on-dark` variant 2.5 requires, not only the 44px hit
+area. A later wave that meets a control-sizing declaration it cannot retire has
+found a gap in the primitive, and that is a VISUAL-01 defect to fix rather than
+a reason to keep the override.
 
 ### VISUAL-02, stable everyday surfaces
 

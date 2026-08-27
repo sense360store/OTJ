@@ -102,6 +102,8 @@ Then apply them to the shared shell: sidebar, top bar, content frame and mobile 
 
 **Initial surface group.** Home, Sessions, Registered Players, Activity, Login/account, Feedback and stable admin screens.
 
+Home, Sessions and Login also appear as VISUAL-01 acceptance surfaces in `docs/design/visual-design-read.md`. That is a split of verbs rather than a conflict: VISUAL-01 checks them to prove the primitives and the shell, and VISUAL-02 adopts them in full, including the state matrix each one owns. The Design Read's Part 4 states the split.
+
 Players is deliberately in this wave only after #191, so bulk selection, dependency preview and destructive confirmation are redesigned once against their final application behaviour rather than being restyled on a moving branch.
 
 **Acceptance.** Every surface covers normal, loading, empty, error, read-only/permission-limited and narrow-phone states where those states are reachable. Destructive flows remain unmistakably destructive and preserve their existing confirmation semantics.
