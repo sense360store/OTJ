@@ -269,22 +269,30 @@ crest on a phone is a deliberate responsive choice rather than a missing rule.
 
 Twenty five rules across nine stylesheets, the shared one included, classified:
 
+**One repaint is not a CSS rule at all**, which is a limit of this count worth
+stating rather than hiding. `src/routes/Home.tsx:48` declares `GHOST_ON_NAVY`, an
+inline style object giving ghost buttons a translucent white background, a white
+label and a translucent border, applied at four call sites inside the Home hero.
+It does exactly what `.dv .icon-btn` does and a stylesheet sweep cannot see it.
+It is the reason 2.5's `on-dark` variant has two callers rather than one.
+
 - **control size, 14 rules across 8 stylesheets.** These duplicate a
   primitive's own sizing and are the kind a primitive should make unnecessary.
   Between them they invent **six** control heights, none of which is the shared
   value: 28px, 34px, 38px, 40px, 42px and 44px;
-- **route layout, 9 rules across 4 stylesheets.** `margin-bottom: 0` on a field,
+- **composition, 10 rules across 5 stylesheets.** `margin-bottom: 0` on a field,
   `flex: 1` on a button, `flex: 0 0 auto` on an icon button, `width: 100%` on a
-  select, `min-width` on a filter. These compose a shared control into one
-  screen's layout. They are legitimate, they belong to the screen, and no
-  primitive can or should absorb them;
-- **contextual restyle, 2 rules across 2 stylesheets.** `.dv .icon-btn:disabled`
-  and `.shares-summary .pill b`. These change a primitive's appearance for one
-  context rather than its size. They point at a missing variant rather than a
-  missing rule: `.dv .icon-btn` sets 44px **and** a dark-surface background,
-  border and text colour in one rule, so it is counted under control size above
-  while also being the clearest case for the dark-surface icon button 2.5 now
-  requires.
+  select, `min-width` on a filter, and `.shares-summary .pill b { color:
+  var(--ink) }`, which emphasises the count inside a pill. These place a shared
+  control in one screen's layout or emphasise its own content. They are
+  legitimate, they belong to the screen, and no primitive can or should absorb
+  them;
+- **contextual restyle, 1 rule.** `.dv .icon-btn:disabled`. It changes a
+  primitive's appearance for one context rather than its size, and points at a
+  missing variant rather than a missing rule. Its sibling `.dv .icon-btn` sets
+  44px **and** a dark-surface background, border and text colour in one rule, so
+  it is counted under control size above while being the clearest case for the
+  `on-dark` variant 2.5 requires.
 
 Three further rules touching a named primitive sit inside the `@media print`
 block: two on `.btn` and one setting `print-color-adjust` on `.tag` alongside
@@ -640,12 +648,19 @@ Variants: `primary` (navy), `gold` (the one accent action, currently New
 Session), `ghost`, `quiet`, `danger` (new) and `on-dark` (new). Sizes: `sm`,
 `md`, `lg`.
 
-`on-dark` exists for one surface, not two: the diagram viewer chrome, which puts
-shared controls on a dark ground that does **not** come from the theme. Today
-`.dv .icon-btn` repaints the primitive's background, border and text colour in
-its own stylesheet, which is the contextual restyle 1.6 identifies. Without the
-variant, VISUAL-01 can satisfy every other rule here and still leave that
-repaint in place, so `on-dark` is part of the contract rather than a note.
+`on-dark` exists for the two surfaces that put shared controls on a dark ground
+which does **not** come from the theme:
+
+- the **Home hero**, whose fixed navy gradient is the product's signature
+  surface. `Home.tsx:48` repaints ghost buttons for it inline through
+  `GHOST_ON_NAVY`, at four call sites;
+- the **diagram viewer chrome**, where `.dv .icon-btn` repaints the primitive's
+  background, border and text colour in its own stylesheet.
+
+Home is a VISUAL-01 acceptance screen, so without this variant VISUAL-01 can
+satisfy every other rule here and still ship the hero with an inline repaint of
+a primitive it has just rebuilt. `on-dark` is part of the contract rather than a
+note, and Home is where it is accepted.
 
 **The live view is deliberately not an `on-dark` case.** It renders as
 `className="live theme-dark"` and takes its surfaces and text from the dark
@@ -935,14 +950,15 @@ primitives, the five screens above are visually checked at all seven widths in
 both themes, and the 137 test files stay green.
 
 **Only the control-size overrides are in scope, and they are not all
-VISUAL-01's to delete.** The nine route-layout rules identified in 1.6
+VISUAL-01's to delete.** The ten composition rules identified in 1.6
 (`margin-bottom: 0` on a field, `flex: 1` on a button, `flex: 0 0 auto` on an
-icon button, a full-width select, a `min-width` on a filter) are composition,
-not duplication: all nine belong to their screen and no primitive can or should
-absorb them. Deleting any of them would either leak a screen's layout into every
-other caller or fail a later wave for correctly keeping them. The two contextual
-restyles are likewise not deletions: `.dv .icon-btn:disabled` and
-`.shares-summary .pill b` resolve when the variant they imply exists.
+icon button, a full-width select, a `min-width` on a filter, and the emphasised
+count inside a pill) are composition, not duplication: all ten belong to their
+screen and no primitive can or should absorb them. Deleting any of them would
+either leak a screen's layout into every other caller or fail a later wave for
+correctly keeping them. The single contextual restyle,
+`.dv .icon-btn:disabled`, is likewise not a deletion: it resolves when
+`on-dark` gives it a disabled state to inherit.
 
 The 14 control-size rules are the ones a primitive makes unnecessary, and each
 goes with its route's wave, for the same reason Part 2 opens with the wave
