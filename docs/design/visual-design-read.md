@@ -31,6 +31,12 @@ grep -nE "\.(chip|btn|card|field|select|icon-btn)[ ,{]" src/routes/*.css src/com
 grep -rn "focus-visible\|prefers-reduced-motion\|prefers-color-scheme" src --include=*.css
 ```
 
+Counts of JSX occurrences exclude the test files, because the figures are claims
+about the product's styling rather than about its test fixtures. That exclusion
+matters most for the ARIA counts, where the tests assert on the same attributes:
+`role="alert"` appears 18 times in the product and 32 times if the tests are
+counted with it. CSS counts cover all 14 stylesheets.
+
 Contrast ratios were computed from the token hex values with the WCAG relative
 luminance formula, in both themes, against the surface each token actually sits
 on in the shipped CSS.
@@ -57,36 +63,45 @@ the product.
 | `src/styles.css` | 837 lines | yes, the only shared layer |
 | 13 route and component CSS files | 2,780 lines | no, one screen each |
 | Inline `style={{…}}` in JSX | 1,142 occurrences | no |
-| Hardcoded hex in JSX | 5 files | no |
+| Hardcoded hex in JSX | 4 non-test files | no |
 
 Seventy-seven per cent of the product's CSS is per-screen. The largest single stylesheet in
 the product is not the shared one: `src/routes/SessionRegister.css` is 626
 lines, three quarters the size of `styles.css`, for one screen.
 
-Colour discipline is the exception and it is good. Only 5 `.tsx` files contain a
-raw hex value, and most of those are legitimate (bib swatches, which name a
-physical garment). Almost everything else already routes through a CSS variable.
-The problem with colour is not that it is hardcoded. It is what the variables
-mean, covered in 1.3.
+Colour discipline is the exception and it is good. Only 4 non-test `.tsx` files
+contain a raw hex value, and three of the four are defensible: the SVG token
+fills in `DrillDiagramView.tsx` (`#18181b`, `#ffffff`) and the media letterbox
+in `MediaPlayerModal.tsx` and `ui.tsx` (`#0a0e1a`) are all deliberately
+theme-invariant, because a drawn diagram and a video frame should read the same
+in both themes and on paper. The exception is `RenewSeasonModal.tsx:32-34`,
+which hardcodes three status dot colours, two of which duplicate `--c-physical`
+and `--c-social` and one of which (`#94a3b8`) exists nowhere else in the
+product. Almost everything else already routes through a CSS variable, so the
+problem with colour is not that it is hardcoded. It is what the variables mean,
+covered in 1.3.
 
-### 1.2 Typography: 24 distinct sizes and no scale
+The bib swatches in `src/lib/bibs.ts` are also raw hex and are deliberately so;
+see 2.16.
 
-Font size is set 406 times inline and 200 times in CSS. Between them the product
-uses 24 distinct values:
+### 1.2 Typography: 25 distinct sizes and no scale
+
+Font size is set 420 times inline and 219 times in CSS. Between them the product
+uses 25 distinct values:
 
 ```
 9.5 10 10.5 11 11.5 12 12.5 13 13.5 14 14.5 15 15.5 16 17 18 19 20 22 24 28 30 34 38 40
 ```
 
-Nine of those are half pixel values, and the two most used sizes in the whole
+Seven of those are half pixel values, and the two most used sizes in the whole
 product are half pixel: `13.5px` (124 inline uses) and `12.5px` (81). There is
 no token, no scale and no rule, so a new screen picks a number that looks right
 next to the one beside it, which is how the set grew.
 
-Five sizes sit within one pixel of each other in the 12 to 15 band, which is
-where nearly all the product's text lives. A coach cannot perceive the
-difference between 13px and 13.5px, so those five steps buy no hierarchy and
-cost every future screen a decision.
+Eight distinct sizes sit between 12px and 15.5px, which is where nearly all the
+product's text lives. A coach cannot perceive the difference between 13px and
+13.5px, so those eight steps buy no hierarchy and cost every future screen a
+decision.
 
 Font family and weight are in better shape. Two families, Archivo for display
 and Hanken Grotesk for body, applied consistently through `--display` and
@@ -109,7 +124,7 @@ Three problems, all structural rather than cosmetic.
 **There are no semantic state tokens.** No `--danger`, `--success`, `--warning`
 or `--info` exists. So state colour is borrowed from classification palettes:
 
-- destructive is `var(--m-pdf)`, the **PDF media type** colour, used 110 times,
+- destructive is `var(--m-pdf)`, the **PDF media type** colour, used 111 times,
   including the permanent bulk delete confirm button
   (`src/components/BulkDeletePlayersModal.tsx:133` sets
   `background: 'var(--m-pdf)'` inline, because no `btn-danger` variant exists);
@@ -162,14 +177,15 @@ action renders its label at 3.34:1.
 ### 1.4 Spacing: no scale at all
 
 Padding, gap and margin between them use every integer from 1 to 14, then 16,
-18, 20, 22, 24, 26, 28, 30, 32 and 60. Twenty three distinct values.
+18, 20, 22, 24, 26, 28, 30, 32 and 60. Twenty four distinct non-zero values.
 
 There is no base unit. The most used values inline are 10 (108 uses), 8 (94) and
 12 (70), which is close to a 2px rhythm by accident rather than by rule.
 
-Radii are similar: 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 22 and 999 are all in
-use, against three declared tokens (`--radius-sm` 11, `--radius` 16,
-`--radius-lg` 22). The tokens exist and are routinely bypassed.
+Radii are similar. Thirteen distinct literal values are in use (3, 4, 5, 6, 7,
+8, 9, 10, 11, 12, 13, 14 and 999) against three declared tokens (`--radius-sm`
+11, `--radius` 16, `--radius-lg` 22), which are used 29 times between them. The
+tokens exist and are routinely bypassed.
 
 Density itself is appropriate. This is operational software and it is
 correctly dense. The problem is the absence of a rhythm, not the amount of space.
@@ -228,8 +244,8 @@ So the shared chip is 34px and three screens have independently decided it
 should be 40px or 44px. `Home.css` opens with the comment "every action is a
 44px-plus target" and enforces it locally. `SessionRegister.css` enforces 44px,
 48px and 56px minimums locally and designs explicitly for a 360px viewport.
-A further 17 sites reach 44px with an inline `minHeight: 44` (`ShareModal`,
-`RightsControl`, `ApplyProgrammeModal`, `ui.tsx`).
+A further 44 sites across 13 files reach 44px with an inline `minHeight: 44`,
+led by `ShareModal.tsx` (12) and `AdminShares.tsx` (11).
 
 This is the most important finding in the audit, and it is a positive one. The
 right rules are already known and already written down. They are written down in
@@ -281,7 +297,8 @@ redesign nearly intact. It has `role="dialog"`, `aria-labelledby` and
 `aria-describedby`, a pure and unit tested Tab trap (`src/lib/modalFocus.ts`),
 focus move on open, focus restore to the opener on close, Escape handling, a
 `focusKey` for dialogs that swap their own body, and a `dismissible` flag that
-freezes every dismissal route while a write is in flight. 34 components use it.
+freezes every dismissal route while a write is in flight. 39 non-test files
+render it.
 
 Three overlays are not it, and each solved the problem differently:
 
@@ -296,9 +313,9 @@ Three overlays are not it, and each solved the problem differently:
 
 ### 1.9 State families: well covered, weakly differentiated
 
-Coverage is a real strength. Across the product: 42 `<Loading>`, 37
-`<ErrorNote>`, 33 `<ActionError>`, 31 `<Empty>`, 31 `role="alert"`, 29
-`role="status"` and 13 `aria-live`. States are not an afterthought here.
+Coverage is a real strength. Counted in non-test files: 41 `<Loading>`, 36
+`<ErrorNote>`, 33 `<ActionError>`, 31 `<Empty>`, 21 `role="status"`, 18
+`role="alert"` and 12 `aria-live`. States are not an afterthought here.
 
 But `Loading` and `ErrorNote` are visually identical. Both are
 `className="muted"` with `padding: '48px 0', textAlign: 'center', fontWeight:
@@ -329,9 +346,9 @@ which on `.btn-primary` sits on navy and on `.nav-item.active` sits on navy.
 Three specialised places (`Board.css`, `DrillDiagramEditor.css`, `Tick.css`)
 each invented their own `:focus-visible`.
 
-`prefers-reduced-motion` appears nowhere. The product has 8 hover transforms
+`prefers-reduced-motion` appears nowhere. The product has 9 hover transforms
 (`translateY(-1px)` on buttons, `-3px` on drill cards, `-2px` on the live round
-buttons), three keyframe animations (`fade`, `pop`, `sheet-up`) and 8 bare
+buttons), three keyframe animations (`fade`, `pop`, `sheet-up`) and 10 bare
 `transition: .12s` declarations, which is `transition-property: all`.
 
 `prefers-color-scheme` appears nowhere. Dark mode is opt in through the toggle
@@ -350,7 +367,7 @@ even if every screen looked better:
 - the `Modal` primitive and its focus behaviour;
 - `.page-head` as a shared page heading, adopted in 21 routes;
 - the surface and elevation model, which is already four sensible levels;
-- the state coverage, including 13 `aria-live` regions and the `role="alert"` on
+- the state coverage, including 12 `aria-live` regions and the `role="alert"` on
   every `ActionError`;
 - the Registered Players table plus card duality, and its explicit column drop
   band between 901px and 1080px;
@@ -456,7 +473,7 @@ it measures 1.69:1. Royal is links and focus.
 
 ### 2.3 Spacing and density
 
-**A 4px base scale**, nine steps, plus one 2px step for tight icon gaps only:
+**A 4px base scale**, eight steps, plus one 2px step for tight icon gaps only:
 
 ```
 2, 4, 8, 12, 16, 20, 24, 32, 48
@@ -476,7 +493,7 @@ This is the one decision that produces visible 1px and 2px shifts across many
 screens. That is expected and acceptable, and it is why VISUAL-01 is a
 foundation PR reviewed visually rather than a silent refactor.
 
-**Radii**, five steps replacing twelve:
+**Radii**, five steps replacing thirteen literal values:
 
 | Token | Value | Role |
 |---|---|---|
@@ -726,7 +743,7 @@ Nothing in the product may be distinguishable by colour alone.
 - add a `prefers-reduced-motion: reduce` block that removes the hover
   transforms, the `pop` and `sheet-up` animations and reduces transitions to
   opacity. It does not exist today;
-- replace the 8 bare `transition: .12s` declarations with explicit properties;
+- replace the 10 bare `transition: .12s` declarations with explicit properties;
 - motion communicates change: sheet entry, focus and press feedback, newly
   inserted rows. Nothing decorative, no entrance sequences;
 - durations: 120ms for state feedback, 180ms for overlay entry.

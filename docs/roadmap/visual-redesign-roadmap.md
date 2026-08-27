@@ -57,8 +57,8 @@ OTJ. Part 4 names the acceptance screens and the seven viewport widths for
 VISUAL-01, 02 and 03. Part 5 records seven open product decisions that evidence
 could not settle; none of them blocks VISUAL-01.
 
-The findings that most shape VISUAL-01: there is no type scale (24 distinct font
-sizes, nine of them half-pixel) and no spacing scale (23 distinct values); there
+The findings that most shape VISUAL-01: there is no type scale (25 distinct font
+sizes, seven of them half-pixel) and no spacing scale (24 distinct values); there
 are no semantic state tokens, so destructive borrows the PDF media colour,
 success borrows the physical corner colour and warning borrows the social corner
 colour; `.theme-dark` flips only the 12 neutral and shadow tokens, so every brand
