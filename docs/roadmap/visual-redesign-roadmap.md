@@ -1,8 +1,8 @@
 # OTJ visual redesign roadmap
 
-Status: approved direction, implementation not started
+Status: approved direction. VISUAL-00 delivered; VISUAL-01 is next and implementation has not started.
 
-Created: 27 August 2026
+Created: 27 August 2026. VISUAL-00 completed 27 August 2026.
 
 This document defines the visual redesign programme for OTJ Training Hub. The master roadmap remains the source of truth for priority and status; this file owns the detailed visual-redesign sequence and acceptance criteria.
 
@@ -20,7 +20,7 @@ Start the redesign from a stable application baseline.
 2. PR #196, the small Drill Maker blank-surface default, should be closed before redesign work changes Drill Maker presentation.
 3. Normal CI on `main` must be green after those changes.
 
-PR #191 merged on 27 August 2026. PR #196 is therefore the remaining preferred baseline close before the Design Read begins.
+Both gates closed on 27 August 2026. PR #191 merged, then PR #196 merged, and the push CI on `main` at `434f67f` completed green across all eight jobs (lint, typecheck and build, test, edge functions, security policy suite, and the migration, deploy and content-sharing script suites). The Design Read was captured against that commit.
 
 The redesign does **not** wait for DRILL-02b, the later coaching migrations, public Training Day sharing, or every other roadmap feature. New feature work should inherit the new visual system once the foundation lands rather than extending the old one indefinitely.
 
@@ -48,6 +48,28 @@ The redesign does **not** wait for DRILL-02b, the later coaching migrations, pub
 **Non-goals.** No app code, CSS or persistence changes. Do not redesign from screenshots alone or from the old prototype alone; both are evidence, not current truth.
 
 **Acceptance.** The document identifies representative screens for each surface family and makes enough decisions that VISUAL-01 is implementation rather than another design discovery round.
+
+**Delivered** in #210 as `docs/design/visual-design-read.md`, captured against `main` at
+`434f67f`. Part 1 is the current-state audit, counted from source rather than
+estimated. Part 2 settles every item in the Scope list above as a decision
+VISUAL-01 implements rather than reopens. Part 3 records what stays recognisably
+OTJ. Part 4 names the acceptance screens and the seven viewport widths for
+VISUAL-01, 02 and 03. Part 5 records seven open product decisions that evidence
+could not settle; none of them blocks VISUAL-01.
+
+The findings that most shape VISUAL-01: there is no type scale (25 distinct font
+sizes, seven of them half-pixel) and no spacing scale (31 distinct non-zero
+values); there are no semantic state tokens, so destructive borrows the PDF media
+colour, success borrows the physical corner colour and warning borrows the social
+corner colour; `.theme-dark` flips only the 12 neutral and shadow tokens, so
+every brand and semantic hue is theme-invariant, which puts `--royal` links at
+2.21:1 on the dark card and inherited note text on an unflipped `--gold-soft`
+panel at 1.01:1; there are no control primitive components, only 350
+hand-written class strings across 26 combinations; and the newer mobile-first
+screens have already discovered the right touch-target rules and encoded them
+locally, as 14 control-size rules across eight stylesheets inventing six
+different heights (28, 34, 38, 40, 42 and 44px), none of them the shared value,
+one of them in the shared stylesheet itself.
 
 ### VISUAL-01 — Foundation and shell
 
@@ -80,6 +102,8 @@ Then apply them to the shared shell: sidebar, top bar, content frame and mobile 
 
 **Initial surface group.** Home, Sessions, Registered Players, Activity, Login/account, Feedback and stable admin screens.
 
+Home, Sessions and Login also appear as VISUAL-01 acceptance surfaces in `docs/design/visual-design-read.md`. That is a split of verbs rather than a conflict: VISUAL-01 checks them to prove the primitives and the shell, and VISUAL-02 adopts them in full, including the state matrix each one owns. The Design Read's Part 4 states the split.
+
 Players is deliberately in this wave only after #191, so bulk selection, dependency preview and destructive confirmation are redesigned once against their final application behaviour rather than being restyled on a moving branch.
 
 **Acceptance.** Every surface covers normal, loading, empty, error, read-only/permission-limited and narrow-phone states where those states are reachable. Destructive flows remain unmistakably destructive and preserve their existing confirmation semantics.
@@ -92,7 +116,7 @@ Use the foundation for later waves rather than freezing all feature development 
 
 - Planner and week-plan authoring alongside the COACH-11/12/13 authoring work;
 - Training Day and richer session setup alongside COACH-5/6/7/8;
-- Drill Maker once #196 is closed and when further authoring changes are actually scheduled;
+- Drill Maker, now that #196 has merged, when further authoring changes are actually scheduled;
 - public/share surfaces after DRILL-02b settles their payload and boundary;
 - Live surfaces coordinated with LIVE-01/02 and accessibility requirements.
 

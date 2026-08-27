@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 27 August 2026 (PLAYERS-01 shipped in #191 after migration 0050 was applied and reconciled; the visual redesign programme is approved as VISUAL-00 through VISUAL-04; DRILL-02's public/share half remains separately gated)
+Last reviewed: 27 August 2026 (PLAYERS-01 shipped in #191 after migration 0050 was applied and reconciled; #196 merged, so the visual redesign baseline is closed; VISUAL-00 is delivered in #210 as `docs/design/visual-design-read.md` and VISUAL-01 is next; DRILL-02's public/share half remains separately gated)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -36,8 +36,8 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
 | SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | Done | P0 | Shipped in #190, completed in #192. Both gates have run: migration 0049 applied 17 August 2026 (hosted head `20260817104226`, `spond_team_reconcile`) and `spond-link-members` deployed at version 4. Verified by a live production smoke test |
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b). This public half does not block VISUAL-00/01 |
-| VISUAL-00 | Product design | Design Read: define the target OTJ visual language from current code, the reference design and representative real screens before changing pixels | Next | P1 | Preferred baseline is current `main` plus closure of #196; detailed plan in `docs/roadmap/visual-redesign-roadmap.md` |
-| VISUAL-01 | Product design | Build the shared visual foundation and app shell: tokens, typography, primitives, sidebar/top bar/content frame and mobile bottom navigation | Later | P1 | VISUAL-00; presentation only, no route/permission/data behaviour changes |
+| VISUAL-00 | Product design | Design Read: define the target OTJ visual language from current code, the reference design and representative real screens before changing pixels | Done | P1 | Delivered in #210 as `docs/design/visual-design-read.md`, captured against `main` at `434f67f` after #196 merged and CI went green. Documentation only: no React, CSS, behaviour, route, permission, Supabase or migration change. Settles the type scale, semantic colour roles and contrast floors, the spacing and radius scales, surfaces, the control primitives, both shells, the modal and sheet contract, the seven state families, focus and touch requirements, non-colour cues and what stays recognisably OTJ. Names the acceptance screens for VISUAL-01/02/03 and records seven open product decisions in its Part 5 |
+| VISUAL-01 | Product design | Build the shared visual foundation and app shell: tokens, typography, primitives, sidebar/top bar/content frame and mobile bottom navigation | Next | P1 | VISUAL-00 is done and is the task contract; implement Part 2 of `docs/design/visual-design-read.md` and accept against the five screens in its Part 4. Presentation only, no route/permission/data behaviour changes |
 | VISUAL-02 | Product design | Apply the new system to stable everyday surfaces including Home, Sessions, Registered Players, Activity, account/login, Feedback and stable admin screens | Later | P1 | VISUAL-01; PLAYERS-01 is already shipped so its destructive flow is redesigned once against final behaviour |
 | VISUAL-03 | Product design | Redesign evolving feature areas alongside their functional work rather than polishing them immediately before they change | Later | P1 | VISUAL-01; pair Planner/week plans with COACH-11/12/13, Training Day with COACH-5/6/7/8, public/share after DRILL-02b |
 | VISUAL-04 | Product design | Whole-product visual/accessibility QA across phone, tablet, desktop, light/dark/live modes and all state families | Later | P1 | VISUAL-01/02 and the relevant VISUAL-03 waves |
@@ -59,8 +59,8 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 
 When there is capacity, prefer this sequence unless production evidence changes the order:
 
-1. Close PR #196 as the preferred Drill Maker baseline for the visual programme. PLAYERS-01 / #191 is already merged and no longer blocks the redesign.
-2. Run **VISUAL-00**, the Design Read. It is a documentation/design decision pass over current code, `design-reference/`, the shared styles and representative real screens; no CSS or application behaviour changes yet.
+1. ~~Close PR #196 as the preferred Drill Maker baseline for the visual programme.~~ Done: #196 merged on 27 August 2026 and CI on `main` at `434f67f` is green across all eight jobs. PLAYERS-01 / #191 merged earlier the same day. The redesign baseline is closed.
+2. ~~Run **VISUAL-00**, the Design Read.~~ Done. `docs/design/visual-design-read.md` (#210) is the written target visual language, captured against `main` at `434f67f`, and is the task contract for VISUAL-01.
 3. Land **VISUAL-01**, the shared foundation and shell, before route-by-route polishing. This is the point after which new feature work should inherit the new system rather than extend the old one.
 4. Run **VISUAL-02** over the stable everyday surfaces, in reviewable groups rather than one application-wide PR.
 5. Continue **VISUAL-03** alongside the functional roadmap: Planner/week-plan authoring with COACH-11/12/13, Training Day/setup with COACH-5/6/7/8, public/share only after DRILL-02b, and Live coordinated with LIVE-01/02 and accessibility.
