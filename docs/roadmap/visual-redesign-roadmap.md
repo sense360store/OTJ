@@ -1,8 +1,8 @@
 # OTJ visual redesign roadmap
 
-Status: approved direction, implementation not started
+Status: approved direction. VISUAL-00 delivered; VISUAL-01 is next and implementation has not started.
 
-Created: 27 August 2026
+Created: 27 August 2026. VISUAL-00 completed 27 August 2026.
 
 This document defines the visual redesign programme for OTJ Training Hub. The master roadmap remains the source of truth for priority and status; this file owns the detailed visual-redesign sequence and acceptance criteria.
 
@@ -20,7 +20,7 @@ Start the redesign from a stable application baseline.
 2. PR #196, the small Drill Maker blank-surface default, should be closed before redesign work changes Drill Maker presentation.
 3. Normal CI on `main` must be green after those changes.
 
-PR #191 merged on 27 August 2026. PR #196 is therefore the remaining preferred baseline close before the Design Read begins.
+Both gates closed on 27 August 2026. PR #191 merged, then PR #196 merged, and the push CI on `main` at `434f67f` completed green across all eight jobs (lint, typecheck and build, test, edge functions, security policy suite, and the migration, deploy and content-sharing script suites). The Design Read was captured against that commit.
 
 The redesign does **not** wait for DRILL-02b, the later coaching migrations, public Training Day sharing, or every other roadmap feature. New feature work should inherit the new visual system once the foundation lands rather than extending the old one indefinitely.
 
@@ -48,6 +48,24 @@ The redesign does **not** wait for DRILL-02b, the later coaching migrations, pub
 **Non-goals.** No app code, CSS or persistence changes. Do not redesign from screenshots alone or from the old prototype alone; both are evidence, not current truth.
 
 **Acceptance.** The document identifies representative screens for each surface family and makes enough decisions that VISUAL-01 is implementation rather than another design discovery round.
+
+**Delivered.** `docs/design/visual-design-read.md`, captured against `main` at
+`434f67f`. Part 1 is the current-state audit, counted from source rather than
+estimated. Part 2 settles every item in the Scope list above as a decision
+VISUAL-01 implements rather than reopens. Part 3 records what stays recognisably
+OTJ. Part 4 names the acceptance screens and the seven viewport widths for
+VISUAL-01, 02 and 03. Part 5 records seven open product decisions that evidence
+could not settle; none of them blocks VISUAL-01.
+
+The findings that most shape VISUAL-01: there is no type scale (24 distinct font
+sizes, nine of them half-pixel) and no spacing scale (23 distinct values); there
+are no semantic state tokens, so destructive borrows the PDF media colour,
+success borrows the physical corner colour and warning borrows the social corner
+colour; `.theme-dark` flips only the 12 neutral and shadow tokens, so every brand
+and semantic hue is theme-invariant; there are no control primitive components,
+only 339 hand-written class strings; and the newer mobile-first screens have
+already discovered the right touch-target rules and encoded them locally, as 19
+per-screen overrides of the shared primitives at three different values.
 
 ### VISUAL-01 — Foundation and shell
 
