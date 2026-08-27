@@ -15,9 +15,10 @@ failed. The CLI path is authoritative; the direct call is a fallback only.
 
 Asserts:
 
-  - exactly the ten expected functions exist (no more, no fewer);
+  - exactly the functions in EXPECTED exist, no more and no fewer (currently
+    eleven: the two sharing functions plus nine others);
   - manage-content-share and read-content-share both exist;
-  - the previous eight functions exist;
+  - the nine non-sharing functions exist;
   - no unexpected function exists;
   - manage-content-share verify_jwt = true;
   - read-content-share verify_jwt = false;
@@ -53,6 +54,32 @@ import sys
 import urllib.error
 import urllib.request
 
+# The EXACT production function inventory this deploy is reviewed against, as
+# slug -> required verify_jwt. Asserted as SET EQUALITY: a missing function
+# fails, an unexpected function fails, and the count must match. It is
+# deliberately an explicit reviewed allowlist rather than discovery from the
+# hosted list or from the repository, because the whole point is to compare
+# hosted against something a human approved.
+#
+# THIS PIN MUST BE RECONCILED WHEN A REVIEWED EDGE FUNCTION IS ADDED, even
+# when that function has nothing to do with content sharing and is deployed by
+# its own gated workflow. It is a statement about the WHOLE project, not about
+# the two sharing functions.
+#
+# That is not hypothetical. spond-link-members was added and deployed on
+# 17 August 2026 through .github/workflows/deploy-spond-link-members.yml, its
+# own production gated deploy. This pin was not reconciled with it, so the
+# first content-sharing deploy after that date failed here:
+#
+#   FAIL: unexpected function(s) deployed: ['spond-link-members']
+#   FAIL: expected 10 functions, found 11
+#
+# GitHub Actions run 32480333370. Both sharing functions had already deployed
+# successfully; the readback, smoke tests and post-deploy state comparison were
+# skipped. The gate was working exactly as designed, over a stale list.
+# test_expected_matches_the_repositorys_edge_functions in the test file now
+# fails the build on that drift, so the next such addition is caught at review
+# rather than at a production deploy.
 EXPECTED = {
     "fa-import": True,
     "fa-import-programme": True,
@@ -62,6 +89,7 @@ EXPECTED = {
     "manage-content-share": True,
     "read-content-share": False,
     "remove-user": True,
+    "spond-link-members": True,
     "spond-roster-import": True,
     "spond-sync": True,
 }
@@ -304,9 +332,11 @@ def main(argv: list[str]) -> int:
         if jwt_fully_verified
         else "inventory verified; JWT posture deferred to smoke tests"
     )
+    # The count is derived from EXPECTED, never written out again. A second
+    # literal here is exactly the kind of stale number this change is fixing.
     print(
-        "PASS: ten functions present, read-content-share is the only anonymous "
-        f"function; {posture}"
+        f"PASS: {len(EXPECTED)} functions present, read-content-share is the "
+        f"only anonymous function; {posture}"
     )
     return 0
 

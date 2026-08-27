@@ -731,7 +731,12 @@ export function setDraftBib(draft: TonightDraft, playerId: string, value: string
   }
 }
 
-function draftIncluded(draft: TonightDraft, playerId: string): boolean {
+// The two canonical draft readers. EXPORTED so a consumer never rebuilds
+// them: `draft.included[id]` is sparse and `draft.bibs[id]` may be absent
+// or explicitly null, and a second reader that got either wrong would read
+// an untouched child as excluded or a cleared override as a colour.
+// sessionSetup.ts (COACH-3) reads both through these.
+export function draftIncluded(draft: TonightDraft, playerId: string): boolean {
   return draft.included[playerId] === true
 }
 
@@ -766,7 +771,7 @@ function effective(
   }
 }
 
-function draftBib(draft: TonightDraft, playerId: string): string | null {
+export function draftBib(draft: TonightDraft, playerId: string): string | null {
   return draft.bibs[playerId] ?? null
 }
 

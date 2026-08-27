@@ -249,8 +249,10 @@ press can never quietly cover a row a person has not looked at.
 
 ### Two corrections from a follow-up review, before either gate ran
 
-Both landed in the unapplied `0049`, so the migration was corrected in place
-rather than superseded; the reviewed path and ledger predecessor are unchanged.
+Both landed in `0049` while it was still unapplied, so the migration was
+corrected in place rather than superseded; the reviewed path and ledger
+predecessor are unchanged. It has since been applied to production, on 17
+August 2026, at hosted version `20260817104226`.
 
 - **A contested subgroup is ambiguity, and it outranks a unique one.** Two
   mappings claiming one Spond subgroup for two teams names neither team, and

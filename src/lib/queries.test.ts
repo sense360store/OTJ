@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   alreadyImportedFrom,
@@ -6,7 +8,9 @@ import {
   deletedExactlyOne,
   faImportBody,
   invalidatePlayerReads,
+  isIndeterminateBulkOutcome,
   isSpondLinkTaken,
+  isStaleBulkSelection,
   isUniqueViolation,
   MEDIA_MAX_BYTES,
   oversizeMessage,
@@ -16,14 +20,18 @@ import {
   sessionWriteError,
   SPOND_LINK_UNIQUE_INDEX,
   SpondLinkTakenError,
+  SESSION_LOCAL_ACTIVITY_KEYS,
+  stripSessionLocalActivityKeys,
   toActivity,
   toActivityRow,
+  toTemplateActivityRows,
   toDrill,
   toProgramme,
   toProgrammeList,
   toSession,
   toSessionWriteRow,
   upsertSessionWrite,
+  type ActivityRow,
   type DrillRow,
   type ProgrammeRow,
   type SessionRow,
@@ -226,6 +234,153 @@ describe('activity mapping round-trips', () => {
     const activity = { phase: 'Cool-Down' as const, duration: 5, title: 'Stretch' }
     expect(toActivityRow(activity)).toEqual({ phase: 'Cool-Down', duration: 5, title: 'Stretch' })
     expect(toActivity(toActivityRow(activity))).toEqual(activity)
+  })
+
+  // BOTH MAPPERS OR THE KEY IS LOST. They rebuild field by field from an
+  // allow-list, so a key added to one and not the other survives one render
+  // and disappears on the next save. That is the failure these round trips
+  // exist to catch, and it is silent without them.
+  it('round-trips the declared slot in both directions', () => {
+    const station = { phase: 'Warm-Up' as const, duration: 10, drillId: 'd1', slot: 'station' as const }
+    expect(toActivityRow(station)).toEqual({ phase: 'Warm-Up', duration: 10, drill_id: 'd1', slot: 'station' })
+    expect(toActivity(toActivityRow(station))).toEqual(station)
+
+    const games = { phase: 'Game' as const, duration: 20, drillId: 'd6', slot: 'game' as const }
+    expect(toActivity(toActivityRow(games))).toEqual(games)
+
+    const row = { phase: 'Skill' as const, duration: 10, slot: 'station' as const }
+    expect(toActivityRow(toActivity(row))).toEqual(row)
+  })
+
+  it('round-trips a stood-down activity in both directions', () => {
+    const stoodDown = {
+      phase: 'Skill' as const,
+      duration: 10,
+      drillId: 'd5',
+      slot: 'station' as const,
+      skipped: true as const,
+    }
+    expect(toActivityRow(stoodDown)).toEqual({
+      phase: 'Skill',
+      duration: 10,
+      drill_id: 'd5',
+      slot: 'station',
+      skipped: true,
+    })
+    expect(toActivity(toActivityRow(stoodDown))).toEqual(stoodDown)
+  })
+
+  it('writes no key at all for a running activity, rather than false', () => {
+    // Each state has exactly one representation. Restoring a station removes
+    // the key, so no stored row ever says skipped: false.
+    const running = { phase: 'Skill' as const, duration: 10, slot: 'station' as const }
+    expect('skipped' in toActivityRow(running)).toBe(false)
+    expect('skipped' in toActivity(toActivityRow(running))).toBe(false)
+    const undeclared = { phase: 'Skill' as const, duration: 10 }
+    expect('slot' in toActivityRow(undeclared)).toBe(false)
+    expect('slot' in toActivity(toActivityRow(undeclared))).toBe(false)
+  })
+
+  it('validates rather than casts, because activities is unconstrained jsonb', () => {
+    // A malformed value declares nothing and stands nothing down, which is
+    // the direction that fails towards running the drill.
+    const dirty = { phase: 'Skill', duration: 10, slot: 'Station', skipped: 'yes' } as unknown as ActivityRow
+    const mapped = toActivity(dirty)
+    expect(mapped).toEqual({ phase: 'Skill', duration: 10 })
+    const falseSkipped = { phase: 'Skill', duration: 10, slot: 'station', skipped: false } as unknown as ActivityRow
+    expect(toActivity(falseSkipped)).toEqual({ phase: 'Skill', duration: 10, slot: 'station' })
+  })
+})
+
+describe('the template boundary', () => {
+  // `skipped` is a decision about ONE EVENING and a template is a reusable
+  // plan, so it is stripped on the way in and ignored on the way out. Both
+  // ends deliberately, and neither depends on the other: the write keeps it
+  // out of new rows, and the read makes a row that predates this helper, or
+  // one written by some future hand-rolled call, behave anyway.
+  const stationRow: ActivityRow = { phase: 'Skill', duration: 10, drill_id: 'd1', slot: 'station' }
+  const stoodDownRow: ActivityRow = { phase: 'Skill', duration: 10, drill_id: 'd2', slot: 'station', skipped: true }
+
+  it('strips the session-local keys and keeps everything else', () => {
+    expect(stripSessionLocalActivityKeys(stoodDownRow)).toEqual({
+      phase: 'Skill',
+      duration: 10,
+      drill_id: 'd2',
+      slot: 'station',
+    })
+    expect('skipped' in stripSessionLocalActivityKeys(stoodDownRow)).toBe(false)
+  })
+
+  it('keeps the slot, because declaring the stations belongs to the plan', () => {
+    // A week plan says which activities are the stations and which is the
+    // games phase, and every dated session built from it inherits that.
+    expect(stripSessionLocalActivityKeys(stationRow)).toEqual(stationRow)
+    expect(toTemplateActivityRows([stationRow])[0].slot).toBe('station')
+  })
+
+  it('leaves the caller its own array and rows', () => {
+    const rows = [stoodDownRow]
+    const out = toTemplateActivityRows(rows)
+    expect(rows[0].skipped).toBe(true)
+    expect(out[0]).not.toBe(rows[0])
+  })
+
+  it('reads a dirty template row as if it carried nothing session local', () => {
+    const stale = [{ phase: 'Skill', duration: 10, slot: 'station', skipped: true }] as ActivityRow[]
+    expect(toTemplateActivityRows(stale).map(toActivity)).toEqual([
+      { phase: 'Skill', duration: 10, slot: 'station' },
+    ])
+  })
+
+  it('reads an absent activities array as an empty plan', () => {
+    expect(toTemplateActivityRows(null)).toEqual([])
+    expect(toTemplateActivityRows(undefined)).toEqual([])
+  })
+
+  it('hands back a malformed jsonb element exactly as it arrived', () => {
+    // Stripping keys is all this does. Spreading a non-object would turn null
+    // into {} and a string into an index map, which would change what
+    // toActivity does with a row nobody wrote through the app.
+    // The array is the case worth naming: `typeof [] === 'object'`, so it is
+    // the one non-object jsonb shape a bare typeof guard lets through into a
+    // spread, and it comes back as an index map rather than as itself.
+    for (const bad of [null, undefined, 'activity', 7, [], [1, 2]]) {
+      expect(stripSessionLocalActivityKeys(bad as unknown as ActivityRow)).toBe(bad)
+    }
+  })
+
+  it('names every session-local key in one list, so the next one joins it', () => {
+    expect([...SESSION_LOCAL_ACTIVITY_KEYS]).toEqual(['skipped'])
+  })
+})
+
+describe('every template boundary in queries.ts goes through the one helper', () => {
+  // A source-text tripwire, because the failure is a THIRD write path being
+  // added without the boundary, which nothing else would notice: the review
+  // that produced this slice found the programme week copy was exactly that,
+  // an insert of its own rather than a call to toTemplateWriteRow.
+  //
+  // A tripwire, not a proof. It reads text, so it catches somebody typing the
+  // obvious thing; a call reaching the write through a variable walks past it.
+  const src = readFileSync(join(import.meta.dirname, 'queries.ts'), 'utf8')
+
+  it('has exactly one activities write into the templates table, plus the shared builder', () => {
+    // Every `activities:` written next to toActivityRow, split by whether the
+    // template boundary is on it.
+    const writes = [...src.matchAll(/activities: ([^\n]*toActivityRow[^\n]*)/g)].map((m) => m[1])
+    const throughBoundary = writes.filter((w) => w.includes('toTemplateActivityRows'))
+    const direct = writes.filter((w) => !w.includes('toTemplateActivityRows'))
+    // Two template writes: toTemplateWriteRow (which both the insert and the
+    // update call) and the programme week copy.
+    expect(throughBoundary).toHaveLength(2)
+    // One session write, which must NOT be sanitised: a session is exactly
+    // where `skipped` belongs.
+    expect(direct).toHaveLength(1)
+  })
+
+  it('reads a template through the boundary and a session straight through', () => {
+    expect(src).toMatch(/activities: toTemplateActivityRows\(r\.activities\)\.map\(toActivity\)/)
+    expect(src).toMatch(/activities: \(r\.activities \?\? \[\]\)\.map\(toActivity\)/)
   })
 })
 
@@ -490,6 +645,60 @@ describe('isSpondLinkTaken, telling one duplicate key from another', () => {
   it('survives an error carrying no message or details at all', () => {
     expect(isSpondLinkTaken({ code: '23505' })).toBe(false)
     expect(isSpondLinkTaken({ code: '23505', message: null, details: null })).toBe(false)
+  })
+})
+
+describe('the bulk delete refusal recognisers read every shape a refusal arrives in', () => {
+  // A message RAISED in delete_players (0050) reaches the client as
+  // PostgREST's parsed error body: a plain object with a string `message`,
+  // NOT an Error instance, because supabase.rpc only constructs its Error
+  // subclass under throwOnError and this app does not use it. The dialog's
+  // copy branch and its Retry gate both rest on these recognisers, so a
+  // reader that stopped at `instanceof Error` put the real stale refusal on
+  // the generic branch with Retry offered. The fixtures are the exact
+  // messages 0050 raises.
+  const staleObject = {
+    code: 'P0001',
+    details: null,
+    hint: null,
+    message:
+      'delete_players: the selection is out of date (1 of 3 selected players are no longer available); review the preview again',
+  }
+  const changedObject = {
+    code: 'P0001',
+    details: null,
+    hint: null,
+    message: 'delete_players: the selection changed (3 confirmed, 2 found); review the preview again',
+  }
+
+  it('recognises both stale refusals as the raw object the client actually returns', () => {
+    expect(isStaleBulkSelection(staleObject)).toBe(true)
+    expect(isStaleBulkSelection(changedObject)).toBe(true)
+  })
+
+  it('still recognises a stale refusal carried by an Error or a bare string', () => {
+    expect(isStaleBulkSelection(new Error(staleObject.message))).toBe(true)
+    expect(isStaleBulkSelection(changedObject.message)).toBe(true)
+  })
+
+  it('is false for anything that carries no readable stale message', () => {
+    expect(isStaleBulkSelection({ code: 'P0001', message: null })).toBe(false)
+    expect(isStaleBulkSelection({ message: 42 })).toBe(false)
+    expect(isStaleBulkSelection({})).toBe(false)
+    expect(isStaleBulkSelection(new Error('permission denied'))).toBe(false)
+    expect(isStaleBulkSelection(null)).toBe(false)
+    expect(isStaleBulkSelection(undefined)).toBe(false)
+  })
+
+  it('the indeterminate recogniser reads the same shapes', () => {
+    const message =
+      'The deletion finished with a reply that could not be read, so whether it completed is unknown. ' +
+      'Close this and reload the register to see the current state before selecting again.'
+    expect(isIndeterminateBulkOutcome(new Error(message))).toBe(true)
+    expect(isIndeterminateBulkOutcome({ message })).toBe(true)
+    expect(isIndeterminateBulkOutcome(message)).toBe(true)
+    expect(isIndeterminateBulkOutcome(staleObject)).toBe(false)
+    expect(isIndeterminateBulkOutcome(null)).toBe(false)
   })
 })
 

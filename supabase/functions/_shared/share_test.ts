@@ -554,6 +554,154 @@ Deno.test('total duration sums the activity durations', () => {
   assertEquals(s.totalDuration, 45)
 })
 
+// ---------------------------------------------------------------------------
+// The active duration rule, in the fourth independent implementation of the
+// session sum. This is a DELIBERATE DUPLICATE of src/lib/activityStructure.ts:
+// Edge Functions run in their own runtime and cannot import from src/lib/, so
+// the rule is written twice and the same cases are pinned at both ends. The
+// browser half lives in src/lib/activityStructure.test.ts.
+// ---------------------------------------------------------------------------
+
+Deno.test('declaring the structure changes no published total', () => {
+  const declared = session({
+    activities: [
+      { phase: 'Warm-Up', drill_id: DRILL_A, duration: 15, slot: 'station' },
+      { phase: 'Skill', title: 'Free play', duration: 10, slot: 'station' },
+      { phase: 'Game', drill_id: DRILL_B, duration: 20, slot: 'game' },
+    ],
+  })
+  const s = buildSessionSnapshot(declared, [drillA(), drillB()], [], null, AT)
+  assertEquals(s.totalDuration, 45)
+})
+
+Deno.test('a stood-down station contributes nothing to the published total', () => {
+  const standDown = session({
+    activities: [
+      { phase: 'Warm-Up', drill_id: DRILL_A, duration: 15, slot: 'station' },
+      { phase: 'Skill', title: 'Free play', duration: 10, slot: 'station', skipped: true },
+      { phase: 'Game', drill_id: DRILL_B, duration: 20, slot: 'game' },
+    ],
+  })
+  const s = buildSessionSnapshot(standDown, [drillA(), drillB()], [], null, AT)
+  assertEquals(s.totalDuration, 35)
+})
+
+Deno.test('a stood-down games phase contributes nothing to the published total', () => {
+  const noGames = session({
+    activities: [
+      { phase: 'Warm-Up', drill_id: DRILL_A, duration: 15, slot: 'station' },
+      { phase: 'Game', drill_id: DRILL_B, duration: 20, slot: 'game', skipped: true },
+    ],
+  })
+  const s = buildSessionSnapshot(noGames, [drillA(), drillB()], [], null, AT)
+  assertEquals(s.totalDuration, 15)
+})
+
+Deno.test('a stray skipped on an activity with no slot still counts', () => {
+  // Both halves of the rule are load bearing. `skipped` means "this station
+  // is not running tonight"; an activity that is not a station has nothing to
+  // stand down, so it keeps its minutes.
+  const stray = session({
+    activities: [
+      { phase: 'Warm-Up', drill_id: DRILL_A, duration: 15, skipped: true },
+      { phase: 'Game', drill_id: DRILL_B, duration: 20 },
+    ],
+  })
+  const s = buildSessionSnapshot(stray, [drillA(), drillB()], [], null, AT)
+  assertEquals(s.totalDuration, 35)
+})
+
+Deno.test('only literal true stands an activity down', () => {
+  // activities is unconstrained jsonb, so a row can carry anything. Every one
+  // of these runs, which is the direction that fails towards the drill.
+  for (const skipped of [false, 0, 1, 'true', 'yes', null]) {
+    const dirty = session({
+      activities: [
+        { phase: 'Skill', drill_id: DRILL_A, duration: 15, slot: 'station', skipped },
+      ],
+    } as unknown as Partial<SessionRow>)
+    assertEquals(buildSessionSnapshot(dirty, [drillA()], [], null, AT).totalDuration, 15)
+  }
+  // And an unrecognised slot declares nothing, so `skipped` is inert on it.
+  const badSlot = session({
+    activities: [{ phase: 'Skill', drill_id: DRILL_A, duration: 15, slot: 'Station', skipped: true }],
+  } as unknown as Partial<SessionRow>)
+  assertEquals(buildSessionSnapshot(badSlot, [drillA()], [], null, AT).totalDuration, 15)
+})
+
+Deno.test('a session with every operational activity stood down publishes a zero total', () => {
+  const off = session({
+    activities: [
+      { phase: 'Skill', drill_id: DRILL_A, duration: 15, slot: 'station', skipped: true },
+      { phase: 'Game', drill_id: DRILL_B, duration: 20, slot: 'game', skipped: true },
+    ],
+  })
+  const s = buildSessionSnapshot(off, [drillA(), drillB()], [], null, AT)
+  assertEquals(s.totalDuration, 0)
+})
+
+Deno.test('a stood-down activity stays in the projected list, keeps its own duration, and never publishes slot or skipped', () => {
+  // The share boundary decision, stated as a test. Dropping the activity
+  // would make the public plan disagree with the plan the coach shared;
+  // zeroing its own duration would publish WHICH station was stood down; and
+  // publishing the key would mean widening two allow lists in two runtimes.
+  // PublicActivity is exactly phase, duration, drillRef and customTitle.
+  const standDown = session({
+    activities: [
+      { phase: 'Warm-Up', drill_id: DRILL_A, duration: 15, slot: 'station' },
+      { phase: 'Skill', title: 'Free play', duration: 10, slot: 'station', skipped: true },
+    ],
+  })
+  const s = buildSessionSnapshot(standDown, [drillA()], [], null, AT)
+  assertEquals(s.activities.length, 2)
+  assertEquals(s.activities[1].duration, 10)
+  assertEquals(s.activities[1].customTitle, 'Free play')
+  assertEquals(s.totalDuration, 15)
+  for (const a of s.activities) {
+    assertEquals(Object.keys(a).sort(), ['customTitle', 'drillRef', 'duration', 'phase'])
+  }
+  // Serialised, so nothing rides along in a key the type does not name.
+  const json = JSON.stringify(s)
+  assert(!json.includes('skipped'))
+  assert(!json.includes('slot'))
+})
+
+Deno.test('a declared session is still eligible to share', () => {
+  // The structural keys must not make a session unshareable: activityShape
+  // classifies on drill_id alone and knows nothing about them.
+  const declared = session({
+    activities: [
+      { phase: 'Warm-Up', drill_id: DRILL_A, duration: 15, slot: 'station', skipped: true },
+      { phase: 'Game', drill_id: DRILL_B, duration: 20, slot: 'game' },
+    ],
+  })
+  const e = evaluateSessionEligibility(declared, [drillA(), drillB()], [], null)
+  assert(e.eligible)
+  assertEquals(e.blocked, [])
+})
+
+Deno.test('the programme snapshot is untouched by the session rule', () => {
+  // buildProgrammeSnapshot sums WEEK activities, and a template never carries
+  // `skipped`: the client strips it at every template boundary. A dirty week
+  // row therefore totals exactly what its durations say, which is the same
+  // answer it gave before this change.
+  const dirtyWeek = template({
+    activities: [
+      { phase: 'Warm-Up', drill_id: DRILL_A, duration: 15, slot: 'station', skipped: true },
+      { phase: 'Game', drill_id: DRILL_B, duration: 20, slot: 'game', skipped: true },
+    ],
+  } as unknown as Partial<TemplateRow>)
+  const snapshot = buildProgrammeSnapshot(
+    programme({ weeks: 1 }),
+    [dirtyWeek],
+    [drill({ id: DRILL_A, club_id: CLUB }), drill({ id: DRILL_B, club_id: CLUB })],
+    [],
+    AT,
+  )
+  // 15 + 20, exactly as it totalled before this change.
+  assertEquals(snapshot.weekTemplates[0].totalDuration, 35)
+})
+
 Deno.test('a repeated drill dedupes to one referenced drill and both activities share the ref', () => {
   const repeat = session({
     activities: [

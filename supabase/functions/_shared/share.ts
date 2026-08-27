@@ -551,6 +551,34 @@ interface RawActivity {
   drill_id?: unknown
   title?: unknown
   duration?: unknown
+  // The structural declaration and the session-local stand-down. Read as
+  // `unknown` and validated below, never projected: neither reaches
+  // PublicActivity and neither is allowed to.
+  slot?: unknown
+  skipped?: unknown
+}
+
+// THE ACTIVE DURATION RULE, IN DENO.
+//
+// This is a DELIBERATE DUPLICATE of src/lib/activityStructure.ts. Edge
+// Functions run in their own runtime and cannot import from src/lib/, so the
+// choice is one rule written twice and tested at both ends, or one rule and an
+// inappropriate cross-runtime import. It is written twice, and
+// share_test.ts pins the same cases src/lib/activityStructure.test.ts pins so
+// the two cannot drift silently.
+//
+// An activity stops counting only when it carries a valid operational slot AND
+// is stood down. Both halves are load bearing: a stray `skipped` on an
+// activity with no slot changes nothing, so the key is inert outside the
+// operational plan. No stored row carries `skipped` today, so every existing
+// snapshot totals exactly what it totalled before.
+//
+// SESSIONS ONLY. buildProgrammeSnapshot sums WEEK activities and must not use
+// this: a template never carries `skipped`, because the client strips it at
+// every template boundary.
+function isStoodDownActivity(a: RawActivity): boolean {
+  const operational = a.slot === 'station' || a.slot === 'game'
+  return operational && a.skipped === true
 }
 
 // A public activity entry: its phase and duration, and EITHER a snapshot-local
@@ -801,7 +829,35 @@ export function buildSessionSnapshot(
     const a = raw as RawActivity
     const phase = sanitizeText(a.phase, 60)
     const duration = numOrNull(a.duration)
-    if (typeof duration === 'number') totalDuration += duration
+    // A stood-down activity STAYS IN THE PROJECTED LIST, carrying the duration
+    // the coach planned for it, and contributes nothing to the total. That is
+    // the smallest consistent choice and it falls out of the existing allow
+    // list rather than needing a new rule:
+    //
+    //   - Dropping the activity would make the public plan disagree with the
+    //     plan the coach shared, for no gain.
+    //   - Zeroing its own duration would say the coach planned nothing for it,
+    //     which is a different and untrue statement about the plan.
+    //   - Publishing `skipped` would mean widening two allow lists in two
+    //     runtimes. PublicActivity is exactly phase, duration, drillRef and
+    //     customTitle, enforced here and by ACTIVITY_KEYS in
+    //     src/lib/publicShare.ts, so slot and skipped are already excluded.
+    //
+    // THE STOOD-DOWN ACTIVITY IS STILL DERIVABLE, AND THAT IS ACCEPTED RATHER
+    // THAN CLAIMED OTHERWISE. On a session with something stood down the
+    // published activity durations sum to MORE than totalDuration, and both
+    // numbers render on the same page (PublicSessionView prints a per activity
+    // minutes pill and a Duration meta row), so a reader who subtracts can
+    // usually name the activity. No projection short of dropping the activity
+    // or lying about its duration hides that, and both of those misrepresent
+    // the plan the coach shared. What the delta discloses is a fact about the
+    // coach's own plan: no child, no group, no bib, no attendance, nothing a
+    // person could be identified from. The key itself is still not published,
+    // which is what keeps the allow lists closed.
+    //
+    // totalDuration is the answer to how long the session ran, and it is the
+    // same number the browser shows.
+    if (typeof duration === 'number' && !isStoodDownActivity(a)) totalDuration += duration
     if (shape.kind === 'drill') {
       activities.push({ phase, duration, drillRef: ensureDrillRef(shape.drillId), customTitle: null })
     } else {

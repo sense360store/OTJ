@@ -211,10 +211,30 @@ jobs:
       # the pre gate reads and the state the post gate reads, because the
       # defect it exists for was a true statement about the wrong string
       # rather than a shape mistake, and only a server could tell them apart.
-      # The runner image ships the server binaries; the script skips itself
-      # if they are ever absent rather than failing for the wrong reason.
+      # It also surveys the server's whole privilege inquiry family and fails
+      # if the guard's covered set and the set that raises for an absent
+      # object ever disagree.
+      #
+      # REQUIRE_POSTGRES=1 turns every skip inside the script into a failure.
+      # The runner image ships the server binaries, so a skip here would mean
+      # the image changed under us, and a skipped proof reported as a green
+      # check is worth less than no check at all. Run by hand it still skips,
+      # which is what keeps it usable during a review on a machine with no
+      # server installed.
       - name: Object probes are total, against a real PostgreSQL
+        env:
+          REQUIRE_POSTGRES: '1'
         run: bash .github/scripts/production-migration/test_probe_totality.sh
+      # 0050 is DESTRUCTIVE and its probes are shaped unlike the rest of the
+      # register: they resolve no name at all, and they do not spell the
+      # function names, because three of the four carry a word the read-only
+      # statement guard bans as a substring. Both properties are easy to lose
+      # in an edit and neither is visible offline, so the registered probes are
+      # flipped against a real server here.
+      - name: The bulk delete probes are total, against a real PostgreSQL
+        env:
+          REQUIRE_POSTGRES: '1'
+        run: bash .github/scripts/production-migration/test_0050_probe_totality.sh
 
   # The Edge Function parser tests are hermetic Deno tests pinned against
   # real FA fixture pages; npm ci first because Deno resolves the npm

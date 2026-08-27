@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 17 August 2026 (SPOND-08 shipped, applied to production and verified live; OPS-02 added from the post-#193 Codex review; DRILL-02 is next)
+Last reviewed: 18 August 2026 (SPOND-08 shipped, applied to production and verified live; OPS-02 shipped in #195; DRILL-02's authenticated surfaces merged in #189, with print and public share still held for DRILL-02b; the coaching workflow design set reconciled after coach discovery, documentation only)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -27,16 +27,18 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | SPOND-04 | Spond | Website-wide British-English sweep: remove user-visible “roster” | Done | P1 | Shipped in #186; audit found nothing to reword, the tripwire was widened |
 | SPOND-05 | Spond | Audit current Spond API/upstream library and safely usable event/member facts | Done | P1 | Shipped in #186; existing docs reconciled, nothing stored was broadened |
 | OPS-01 | Operations | Reconcile hosted migration ledger pin after migration 0048 | Done | P0 | Shipped in #183; docs/tests only, no production migration |
-| OPS-02 | Operations | Harden production migration probe-totality validation for non-function textual privilege lookups | Later | P2 | Follow-up to the late #193 Codex review: textual table, schema, sequence and similar privilege probes must either resolve through an absence-safe nullable `to_reg*` path or be rejected before production; mutation/real-Postgres proof should cover the rule |
+| OPS-02 | Operations | Harden production migration probe-totality validation for non-function textual privilege lookups | Done | P2 | Shipped in #195; tooling, tests and docs only, no migration, register, Edge or production change. `assert_probe_is_total` now judges an object name by the ARGUMENT POSITION it is handed to rather than by whether the literal carries an argument list, covering every privilege inquiry function PostgreSQL 16 has plus the `regclass` argument family, and refusing a `to_reg*` result passed straight to a strict privilege function. Proved offline and against a real PostgreSQL in CI (`REQUIRE_POSTGRES=1`, so it cannot skip), with each of function, table, schema and sequence mutated back to the textual form and caught before any connection |
+| OPS-03 | Operations | Reconcile hosted migration ledger pin after migration 0049 | Done | P0 | Shipped in #199; docs and tests only, no production migration, no register change and no Edge deploy. Moves `EXPECTED_LAST_MIGRATION` from `20260812102912` (0048) to `20260817104226` (`0049_spond_team_reconcile`), which the hosted head has carried since 17 August, so the gated content-sharing Edge deploy stops failing closed on its own ledger gate. The exact-equality assertion is MOVED, never widened: the retired value is now asserted to be rejected, which is what tells a move apart from a loosening. The migration register's `expected_previous_version` is deliberately untouched, because it records what the head was BEFORE 0049 applied, a different fact |
+| OPS-04 | Operations | Preserve live sharing state across content-sharing Edge deploys | Done | P0 | Shipped in #200; deploy tooling, tests and docs only, no migration, no register change, no Edge deploy and no hosted data touched. The deploy verifier asserted `content_shares`, `content_share_dependencies` and the `content_share` audit events were EMPTY, which was a correct inert-state invariant during the dark rollout and stopped being one on 10 August when a coach created a share through the shipped feature. Run 32426729784 failed on it at the pre-deploy gate, before either function was deployed. The invariant becomes preservation: the pre phase captures a count and a server-computed fingerprint of each of the three datasets, and the post phase requires both to be unchanged. Strictly stronger in one respect, since a MODIFIED share was invisible to a count check and is caught by the fingerprint. The migration equality gate, the enabled-club allowlist, the drill and media rights assertions and the cron check stay absolute and untouched. A share created by a coach mid-deploy also fails, deliberately: no production lock is taken and no coach is blocked, so an ambiguous difference fails closed and the deploy is rerun |
 | REG-01 | Training Day | Fix stored guest removal oscillation so Saved settles correctly | Done | P1 | Shipped in #184; client register state only, no migration, Spond or Edge change |
 | PLAN-01 | Planning | Improve Add from Library: shared filters, recent ordering parity and phone-friendly single-column layout | Done | P1 | Shipped in #179; see the Done table |
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
 | SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | Done | P0 | Shipped in #190, completed in #192. Both gates have run: migration 0049 applied 17 August 2026 (hosted head `20260817104226`, `spond_team_reconcile`) and `spond-link-members` deployed at version 4. Verified by a live production smoke test |
-| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | Next | P1 | Builds on Drill Maker C1; no schema change expected |
+| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b) |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
 | DRILL-03 | Drill Maker | Venue/pitch session composer showing how drills are laid out across training areas | Later | P2 | DRILL-02; venue/session design likely required |
-| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | Later | P2 | Destructive-change review; no silent history loss |
+| PLAYERS-01 | Registered Players | Bulk select and bulk delete with dependency preview, explicit confirmation and history safety | In progress | P2 | Destructive-change review; no silent history loss; boundary in `docs/security/player-deletion-boundary.md`. Migration `0050_bulk_delete_players`, registered against `20260817104226` / `spond_team_reconcile` (the row 0049's apply stamped), was applied to production on 23 August 2026 (hosted head `20260823065041`) by workflow run 32623941411 from this PR's reviewed commit, ahead of the branch merging, because main auto-deploys and the new Registered players screens call these functions; the application half is this PR |
 | SPOND-07 | Spond | Scheduled/automatic Spond refresh with visible freshness/failure state | Later | P2 | Rate behaviour and scheduling review |
 | LIVE-01 | Live session | Screen wake lock while delivering a session | Later | P2 | Browser capability/fallback |
 | LIVE-02 | Live session | Unmissable time-up cue and improved live connectivity/offline state | Later | P2 | Coordinate with accessibility |
@@ -52,11 +54,11 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 
 When there is capacity, prefer this sequence unless production evidence changes the order:
 
-1. Continue Drill Maker with DRILL-02 before the larger venue composer DRILL-03.
+1. Finish Drill Maker DRILL-02: the authenticated surfaces are in #189, and the print and public share half needs the separate reviewed DRILL-02b change before the row closes.
 2. Pick up QUALITY-01, since re-auditing the old Product Excellence roadmap gates several later items.
 3. Treat destructive Registered Players changes and public Training Day sharing as separate reviewed programmes, not opportunistic additions to unrelated PRs.
 
-REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have shipped too, so the Spond linking programme that ran from #178 to #187 is closed and stays closed. SPOND-08 was its follow-up rather than its continuation: those items scoped exposing a mismatch and delivered it, and acting on one was a separate piece of work because it writes to a child's registration. It has now shipped, both of its gates have run in production and a live smoke test has confirmed the behaviour, so it no longer outranks DRILL-02 under roadmap rule 4. DRILL-02 is next.
+REG-01, TRAIN-01 and the whole Spond polish set (SPOND-04, SPOND-05, SPOND-06) have shipped and have left this list. SPOND-01 and SPOND-03 have shipped too, so the Spond linking programme that ran from #178 to #187 is closed and stays closed. SPOND-08 was its follow-up rather than its continuation: those items scoped exposing a mismatch and delivered it, and acting on one was a separate piece of work because it writes to a child's registration. It has now shipped, both of its gates have run in production and a live smoke test has confirmed the behaviour, so it no longer outranks DRILL-02 under roadmap rule 4. DRILL-02 is the active step and is partly delivered: its authenticated surfaces are in #189 and its public half is held deliberately, so the row is not closed.
 
 ## Acceptance criteria for scheduled items
 
@@ -285,6 +287,86 @@ the behaviour was confirmed against production rather than against this file.
 - Session history is never silently destroyed: removals that would orphan register entries are surfaced, and the chosen semantics are stated on screen.
 - Audit events per run; concurrency tests for overlapping selections; destructive change review gate.
 
+In progress against the draft PR. The proven cascade, the refusal matrix, the
+concurrency argument and the audit shape are recorded in
+`docs/security/player-deletion-boundary.md`. The one finding worth reading
+before review: `register_entries` is destroyed rather than degraded to a
+neutral reference, which the single row Delete permanently has done since 0044
+without saying so. The bulk dialog states it in full and counts it; changing
+that outcome would be a schema decision, not a UI one, and is out of scope
+here. The permanent delete semantic is approved as it stands: Delete
+permanently is full erasure of that player identity, their historic register
+entries go with them by cascade, the sessions and every other player's history
+remain, and the preview and confirmation state that plainly. Withdraw remains
+the reversible action for a player genuinely leaving the club. No anonymised
+history redesign is in scope.
+
+The migration is written, self verifying and wrapped in its own explicit
+transaction, and has been APPLIED to production: workflow run 32623941411 ran
+it from this PR's reviewed commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f` on
+23 August 2026, holding at the production environment gate for a human first,
+and the hosted ledger stamped it `20260823065041` / `bulk_delete_players`. The
+deploy pin reconciliation landed separately as OPS-05 (#208).
+
+Numbering: slot 0049 belongs to SPOND-08's `0049_spond_team_reconcile.sql`, so
+this file is `0050_bulk_delete_players.sql`; the rename was forced, because two
+files carrying one version make `supabase db reset` abort and take the security
+suite with it. 0049 has since been applied to production, on 17 August 2026, at
+hosted version `20260817104226` / `spond_team_reconcile`, so the row 0050 must
+name exists and has been read rather than guessed. 0050 is in
+`REVIEWED_MIGRATIONS` against exactly that row, with five object probes and its
+own idempotency key, and in the workflow dropdown.
+
+Rollout order, which was the reverse of the usual one: 0050 was applied from
+the reviewed #191 branch commit FIRST, with the pre-apply gate, the apply and
+the post-apply readback all confirmed, and only then does the branch merge.
+Main auto-deploys to Vercel and the new screens call these functions, so
+merging first would have shipped a client calling an RPC the database did not
+have. See the file header and `docs/security/player-deletion-boundary.md`.
+
+**DRILL-02 — drill diagrams across session delivery**
+
+- The authenticated surfaces are delivered in #189: the planner activity
+  panel, session day setup cards and both live stages (driver and watcher)
+  show the drill's saved Drill Maker diagram. One stored diagram, one parser
+  (`parseDrillDiagram`), one renderer (`DrillDiagramView`), one display rule
+  (`diagramForDisplay`) and one seam (`components/ActivityDiagram.tsx`). No
+  migration, no schema change, no Edge Function change.
+- The diagram needs its own read, and that is deliberate rather than an
+  oversight: `DRILL_COLS` omits the column so a diagram cannot ride a list
+  read or a snapshot builder, and an invariant test fails the build on
+  widening it. The read stays per drill and shares the drill page's cache key
+  rather than adding a batched second cache shape.
+- An England Football derived drill shows no hand drawn diagram on any of the
+  new surfaces, matching the drill page. The licence excludes a redrawn FA
+  diagram wherever it renders, not only where it was made; the FA's own image
+  keeps rendering through media.
+- **The row stays In progress**, because print and public share are named in
+  its scope and neither is delivered. `window.print()` exists in exactly one
+  place, `PublicShare.tsx`, and the print stylesheet targets only `.public-*`,
+  so there is no authenticated print path: print IS the public share page and
+  inherits its gate exactly.
+
+**DRILL-02b — publishing a diagram (separate, security reviewed)**
+
+- Blocked on a decision before it is blocked on code: whether a coach drawn
+  diagram may be published at all. A diagram carries free text a coach typed,
+  and a share is a frozen copy, so a key that reaches
+  `content_shares.snapshot` is served until the link is revoked and no later
+  fix to the projection takes it back. That reasoning is recorded in the Edge
+  Function's own deny list beside the `'diagram'` entry.
+- If agreed, the change is one reviewed PR touching: the Edge `DRILL_COLS`,
+  `projectDrillFields`, `TOP_ALLOWED`, `REF_DRILL_ALLOWED`, the removal from
+  `FORBIDDEN_ANYWHERE`, `PublicDrillSnapshot` / `PublicReferencedDrill` /
+  `PublicSessionSnapshot` with their mirrored client key sets, and a redeploy
+  of BOTH `read-content-share` and `manage-content-share`, which share
+  `_shared/share.ts`. Existing shares are frozen and would need reminting to
+  carry one.
+- Print then follows with no further work beyond a page break rule, since it
+  renders the snapshot DOM.
+- Gated by the review gates in CLAUDE.md, with the deploy verified by reading
+  the deployed source back byte for byte rather than by a version number.
+
 **DRILL-03 — venue/pitch composer**
 
 - Captured, not specified: acceptance criteria are written when the Drill Maker and venue composer direction is confirmed, not before. Do not implement ahead of that decision.
@@ -298,6 +380,7 @@ These documents contain deeper design history and security decisions. They do no
 - `docs/roadmaps/content-sharing-roadmap.md` — public content-sharing architecture and security model.
 - `docs/roadmaps/share-packs-roadmap.md` — later multi-item public sharing design.
 - `docs/roadmap/foundation-retrospective.md` — completed security/foundation programme history.
+- `docs/product/coaching-workflow/` — end-to-end coaching workflow design (reconciled 18 August 2026 after the completed coach discovery, then corrected: stations and the games phase are declared on an activity rather than inferred from its coaching phase; the games phase is ONE activity carrying a game count, because activities are sequential and summed; venue layouts are scoped to venue, season and age group rather than to a venue alone, and a session's season resolution fails closed rather than falling back to the current season): current-state audit, target product model, data-model proposal, share-boundary analysis and a thirteen-slice implementation plan. The product model is settled, no product question is outstanding, and **nothing in it is implemented**. Its four gated migrations are sequenced against the hosted ledger, never by filename, and none of them touches or assumes migration 0050. It proposes reconciling DRILL-02, DRILL-03 and TRAIN-02 under one umbrella programme; **no status in the table above has been changed by it**, and the table changes only when that proposal is approved. Start at `docs/product/coaching-workflow/README.md`.
 
 ## Roadmap rules
 
@@ -333,5 +416,8 @@ These documents contain deeper design history and security decisions. They do no
 | SPOND-01 — registered players reconciled against Spond members | #187 | 16 Aug 2026 |
 | SPOND-03 — member-to-player linking UX, duplicate-member case included | #187 | 16 Aug 2026 |
 | SPOND-08 — current-season team reconciled from a proved Spond link | #190, #192 | 16–17 Aug 2026 |
+| OPS-03 — hosted ledger reconciliation after 0049 | #199 | 20 Aug 2026 |
+| OPS-04 — live sharing state preserved across content-sharing deploys | #200 | 21 Aug 2026 |
+| OPS-05 — hosted ledger reconciliation after 0050 | #208 | 23 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.

@@ -55,6 +55,10 @@ const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) => 
       rows={r}
       counts={tonightCounts(r, d, null)}
       draft={d}
+      // COACH-3's suggestion is its own surface with its own suite
+      // (./coach3.screens.test.tsx). Absent here so these cases keep
+      // asserting the register itself.
+      setup={null}
       filter="going"
       canEdit
       saveStatus="saved"
@@ -484,6 +488,7 @@ describe('no filter or selection writes anything', () => {
         rows={rows()}
         counts={tonightCounts(rows(), draftFromEntries([]), null)}
         draft={draftFromEntries([])}
+        setup={null}
         filter="going"
         canEdit
         saveStatus="saved"

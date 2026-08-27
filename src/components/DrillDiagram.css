@@ -94,7 +94,14 @@
   font-family: var(--display, inherit);
   font-weight: 800;
   font-size: 22px;
-  fill: var(--ink, #16181d);
+  /* A LITERAL, not the theme's ink. The chip is a fixed near white pill over a
+     pitch that deliberately stays green in dark mode (see the top of this
+     file), so the surface under this text never flips and the text must not
+     either. Reading --ink here put near white on near white, a contrast of
+     about 1 to 1: the pill stayed and the word disappeared. Latent for a dark
+     mode coach on the drill page, and certain once a session shows the diagram,
+     because the live view forces .theme-dark on everyone. */
+  fill: #16181d;
   text-anchor: middle;
   dominant-baseline: central;
 }
@@ -104,3 +111,62 @@
 .dd-on-detail {
   max-width: 460px;
 }
+
+/* ---- The same diagram, inside a session (DRILL-02) ---------------------- */
+
+/* WHY THESE CAPS EXIST AT ALL. .dd-surface is width:100% and takes its height
+   from the surface's own aspect ratio, which is right on the drill page where
+   the diagram IS the content. Inside a session it is context beside other
+   content, and the tall case is genuinely tall: a portrait full pitch is 680 by
+   1050 view units, so its height is one and a half times its width. Left
+   uncapped on a 560px live stage that is roughly 865px, taller than most phone
+   screens, and a coach would scroll past the drill to reach anything under it.
+
+   A HEIGHT CAP ALONE IS NOT ENOUGH, AND THIS PROJECT ALREADY KNOWS WHY.
+   width:100% plus an aspect ratio plus a max-height cannot all hold: with the
+   width definite the height clamps and the ratio is lost, so the box keeps the
+   whole column while the SVG's own preserveAspectRatio draws the pitch only as
+   large as the cap allows and centres it. That is the defect the editor canvas
+   fixed once already (DrillDiagramEditor.css: a box 844 by 118 with the pitch
+   drawn 76 pixels wide in the middle of it). Here it would be quieter and no
+   better: a 688px session day card capping at 340px draws a portrait pitch
+   220px wide with 234px of grass either side, and identically on a phone and a
+   laptop, so the larger screen would buy nothing but bars.
+
+   SO THE WIDTH IS BOUND FROM THE HEIGHT, AND NOT FROM HERE. A cap of H allows a
+   width of at most H times the surface ratio, and the box then measures exactly
+   the drawing. That multiplication used to live in this file, as
+
+     max-width: calc(var(--dd-cap) * var(--dd-ratio, 1))
+
+   and a review of #189 was right to refuse it. calc() multiplying two custom
+   properties is dropped whole on engines that will not do that arithmetic,
+   including iOS Safari 18.x and Chromium before 140, and a dropped width cap
+   leaves the height cap standing alone, which is exactly the letterboxed box
+   above. So the caps and the arithmetic both moved to src/lib/drillDiagramSize.ts,
+   the renderer emits max-height and max-width together as PLAIN LENGTHS, and
+   this stylesheet declares no cap for these two surfaces and does no arithmetic
+   anywhere. margin: 0 auto on .dd-surface still centres what is left. */
+
+/* The planner's activity panel. Matched to .act-panel-media (420px) so the
+   diagram and the media thumbnail above it line up as one column rather than
+   two widths. Deliberately not .dd-on-detail's 460px: this is a panel inside a
+   row, not a page. A WIDTH cap needs no arithmetic and no partner: the ratio
+   bounds the height from it, so this one stays here. */
+.dd-in-panel {
+  max-width: 420px;
+  margin-top: 12px;
+}
+
+/* Session day, preparing before the session. Its height cap is
+   DIAGRAM_HEIGHT_CAP.sessionDay; only the spacing is a stylesheet concern. */
+.dd-in-sd {
+  margin-top: 12px;
+}
+
+/* Live delivery has no rule here at all. Its height cap is
+   DIAGRAM_HEIGHT_CAP.live, emitted by the renderer with the width that cap
+   implies, and .dd-in-live carries nothing else: .live-foot sits outside
+   .live-body's scroll container, so the primary action stays pinned however
+   tall the stage grows. The class is left on the element as the surface marker
+   the screen tests read. */

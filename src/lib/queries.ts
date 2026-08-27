@@ -31,6 +31,13 @@ import {
 } from './activityView'
 import { useAuth } from '../hooks/useAuth'
 import type { ExportFilterPayload, ExportPlayerRow } from './playersExport'
+import {
+  parseDeletePreview,
+  parseDeleteRunResult,
+  previewAnswersFor,
+  type DeletePreview,
+  type DeleteRunResult,
+} from './playersBulk'
 import type { ImportPayload, ImportServerResult } from './playersImportCommit'
 import type {
   Activity,
@@ -65,6 +72,8 @@ import type {
   Template,
 } from './data'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
+import { isActivitySlot } from './activityStructure'
+import type { ActivitySlot } from './activityStructure'
 import { SESSION_SPOND_LINK_TAKEN_ERROR } from './sessionSubmit'
 import { type EventKindContext, spondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
@@ -146,11 +155,19 @@ interface MediaRow {
 }
 
 // The activities jsonb element. drill_id on the wire maps to drillId in the UI.
+//
+// `slot` and `skipped` are the same lowercase word on both sides, so there is
+// no snake_case mapping to get wrong, exactly as `phase` and `duration`
+// already are. Neither is constrained by the database: activities is
+// unconstrained jsonb, so both mappers validate rather than cast, and a
+// malformed value declares nothing.
 export interface ActivityRow {
   phase: Phase
   duration: number
   drill_id?: string | null
   title?: string | null
+  slot?: ActivitySlot
+  skipped?: true
 }
 
 interface TemplateRow {
@@ -286,10 +303,23 @@ const CLUB_COLS = 'id, name, motto, crest_url'
 
 // ---- Mappers -----------------------------------------------------------
 
+// Both mappers rebuild field by field from an allow-list and DROP any key they
+// do not name, so a key added to one and not the other is lost on the next
+// save. They are shared and context free: the template read and the session
+// read both call toActivity, and all three writes call toActivityRow, so a
+// mapper cannot tell which side it is on and cannot make a key session local
+// by itself. stripSessionLocalActivityKeys below is what does that.
+//
+// `slot` and `skipped` are VALIDATED rather than copied. activities is
+// unconstrained jsonb, so a row can carry slot: 'Station', slot: 3 or
+// skipped: 'yes'. Every one of those declares nothing and stands nothing
+// down, which is the direction that fails towards running the drill.
 export function toActivity(a: ActivityRow): Activity {
   const out: Activity = { phase: a.phase, duration: a.duration }
   if (a.drill_id != null) out.drillId = a.drill_id
   if (a.title != null) out.title = a.title
+  if (isActivitySlot(a.slot)) out.slot = a.slot
+  if (a.skipped === true) out.skipped = true
   return out
 }
 
@@ -297,7 +327,60 @@ export function toActivityRow(a: Activity): ActivityRow {
   const out: ActivityRow = { phase: a.phase, duration: a.duration }
   if (a.drillId != null) out.drill_id = a.drillId
   if (a.title != null) out.title = a.title
+  if (isActivitySlot(a.slot)) out.slot = a.slot
+  // Only literal true is ever written. Restoring a station removes the key,
+  // so each state has exactly one representation and no stored row says
+  // skipped: false.
+  if (a.skipped === true) out.skipped = true
   return out
+}
+
+// The activity keys that belong to ONE EVENING and never to a reusable plan.
+// A list rather than a line of code, so the next session-local key joins it
+// instead of growing a second code path.
+export const SESSION_LOCAL_ACTIVITY_KEYS = ['skipped'] as const
+
+// THE TEMPLATE BOUNDARY. One helper, applied at every point an activity
+// crosses into or out of a template, because the shared mappers cannot tell
+// which side they are on.
+//
+// It is applied at BOTH ends deliberately, and neither end depends on the
+// other: the write paths strip the key so a template never stores it, and the
+// read ignores it so a row that predates this helper, or one written by some
+// future hand-rolled call, still behaves. A template somehow carrying
+// `skipped` is read exactly as if it did not.
+//
+// `slot` is NOT stripped. Declaring which activities are the stations and
+// which is the games phase belongs to the reusable plan, so a week plan
+// carries it and every dated session built from that template inherits it.
+//
+// THERE IS A FOURTH TEMPLATE WRITE AND IT IS NOT IN THIS FILE.
+// supabase/functions/_shared/fa.ts inserts an FA imported template straight
+// into the table from Deno, which this helper structurally cannot reach. It
+// is safe because it CONSTRUCTS its activities from drill ids rather than
+// copying a session's, so no session-local key can arrive there; that is a
+// property of the literal, and activityStructure.invariant.test.ts is what
+// notices if the literal ever starts carrying one.
+export function stripSessionLocalActivityKeys(row: ActivityRow): ActivityRow {
+  // A jsonb element that is not an object carries no keys to strip, and is
+  // handed back exactly as it arrived. Spreading it instead would turn null
+  // into {}, and a string OR AN ARRAY into an index map, which would quietly
+  // change what toActivity does with a malformed stored row. `typeof [] ===
+  // 'object'`, so the array clause is the one this guard needs spelling out,
+  // the same clause activityShape uses over the same jsonb in the Deno share
+  // module. This helper strips keys; it is not the place a shape problem is
+  // discovered or repaired.
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return row
+  const out: ActivityRow = { ...row }
+  for (const key of SESSION_LOCAL_ACTIVITY_KEYS) delete out[key]
+  return out
+}
+
+// The template's activities, in either direction: rows on the way in from the
+// database, rows on the way out to it. Named so a call site reads as what it
+// is rather than as a map of a map.
+export function toTemplateActivityRows(activities: readonly ActivityRow[] | null | undefined): ActivityRow[] {
+  return (activities ?? []).map(stripSessionLocalActivityKeys)
 }
 
 // Of the imported drills tied to a programme or template being deleted, which
@@ -382,7 +465,9 @@ function toTemplate(r: TemplateRow): Template {
     author: r.author ?? '',
     focus: r.focus ?? '',
     createdBy: r.created_by ?? undefined,
-    activities: (r.activities ?? []).map(toActivity),
+    // Through the template boundary on the way out too, so a row that somehow
+    // carries a session-local key is read as if it did not.
+    activities: toTemplateActivityRows(r.activities).map(toActivity),
     intentions: r.intentions ?? [],
     programme: r.programme ?? '',
     week: r.week,
@@ -1483,17 +1568,42 @@ export async function saveDrillDiagram(
   return { diagram: parseDrillDiagram(stored), matched: diagramSaveMatches(diagram, stored) }
 }
 
+// How long a read diagram counts as fresh. FIVE MINUTES, and the number matters
+// less than the fact that it is not zero.
+//
+// A diagram changes when a coach presses Save in Drill Maker, and that save
+// invalidates this key explicitly (useUpdateDrillDiagram below). Nothing else
+// changes it, so there is no reason for a screen that merely SHOWS one to go
+// back to the database every time it mounts. With no staleTime TanStack marks
+// the result stale the instant it arrives, and every remount is a mount of a
+// stale query, so it refetches: collapsing and reopening a planner panel
+// repeated the read, and leaving Session Day's Setup tab and coming back
+// remounted every card and repeated one read PER DRILL. A session of eight
+// drills paid eight requests for a tab change that showed the same pictures.
+//
+// This does NOT weaken the save. invalidateQueries marks the query invalidated
+// as well as stale, and an invalidated query refetches on mount and on the spot
+// for anything already watching it, whatever the staleTime says. So a coach who
+// saves a diagram and walks back into the session still sees the new drawing
+// immediately; what stops is the traffic that changed nothing.
+export const DRILL_DIAGRAM_STALE = 5 * 60 * 1000
+
 // The drill's diagram, read on its own. Separate from useDrill so the diagram
 // never rides a list read.
-export function useDrillDiagram(id: string | undefined) {
-  return useQuery({
-    queryKey: ['drill_diagram', id],
+//
+// The options are a named value rather than an object literal inline, so the
+// remount behaviour above can be proved against the REAL options a screen uses
+// rather than against a retyped copy of them (drillDiagramRemount.test.ts).
+export function drillDiagramQuery(id: string | undefined) {
+  return {
+    queryKey: ['drill_diagram', id] as const,
     enabled: !!id,
     // No retry. This read fires on EVERY drill page for every role, parents
     // included, and the one failure mode worth naming is the column not being
     // there yet (migration 0046 unapplied), which no number of retries will
     // fix. Four rejected requests per page view is noise nobody can act on.
-    retry: false,
+    retry: false as const,
+    staleTime: DRILL_DIAGRAM_STALE,
     queryFn: async (): Promise<DrillDiagram | null> => {
       const { data, error } = await supabase.from('drills').select(DRILL_DIAGRAM_COLS).eq('id', id!).maybeSingle()
       if (error) throw error
@@ -1502,7 +1612,11 @@ export function useDrillDiagram(id: string | undefined) {
       // crashing the drill page.
       return data ? parseDrillDiagram((data as { diagram: unknown }).diagram) : null
     },
-  })
+  }
+}
+
+export function useDrillDiagram(id: string | undefined) {
+  return useQuery(drillDiagramQuery(id))
 }
 
 export function useUpdateDrillDiagram() {
@@ -1547,7 +1661,10 @@ function toTemplateWriteRow(input: TemplateInput) {
     name: input.name,
     focus: input.focus || null,
     intentions: input.intentions,
-    activities: input.activities.map(toActivityRow),
+    // Both the insert and the update go through here, so the template
+    // boundary is crossed once for the two of them. `slot` survives; the
+    // session-local keys do not.
+    activities: toTemplateActivityRows(input.activities.map(toActivityRow)),
     ...toSourceFields(input.sourceUrl),
   }
 }
@@ -1794,7 +1911,10 @@ export function useCopyTemplateToWeek() {
         name: template.name,
         focus: template.focus || null,
         author: template.author || null,
-        activities: template.activities.map(toActivityRow),
+        // The third template write path, and the one a reader misses: a
+        // programme week copy is an insert of its own rather than a call to
+        // toTemplateWriteRow, so it crosses the boundary explicitly.
+        activities: toTemplateActivityRows(template.activities.map(toActivityRow)),
         intentions: template.intentions,
         programme_id: programmeId,
         programme_week: week,
@@ -4239,6 +4359,144 @@ export function useDeletePlayer() {
     // (['registrations']), plus the current-season roster and any board name
     // map, so an add, edit or delete refreshes every reader consistently.
     onSettled: () => invalidatePlayerReads(qc),
+  })
+}
+
+// ---------------------------------------------------------------------
+// Bulk permanent deletion (roadmap PLAYERS-01, 0050_bulk_delete_players.sql)
+// ---------------------------------------------------------------------
+
+// The dependency preview a bulk deletion opens with. A QUERY rather than a
+// mutation: it writes nothing and audits nothing, so it may be re-asked freely,
+// and the modal gets loading, error and retry from the query layer instead of
+// hand rolling three states around a destructive dialog. The key carries the
+// player ids, which are opaque uuids and never names; the search term and the
+// names themselves stay out of it, as they stay out of the URL.
+//
+// staleTime 0 and gcTime 0: a preview of a destructive operation must never be
+// served from cache. Between opening the dialog twice another admin may have
+// deleted somebody, and a cached identity count is exactly the stale
+// confirmation the server refuses. That refusal covers the PLAYER SELECTION
+// only: the dependency counts are informational current-state context, which
+// the server recomputes as truth under the deletion lock rather than
+// revalidating against this preview, and the dialog's copy says so.
+export function useDeletePlayersPreview(playerIds: string[], enabled: boolean) {
+  const key = playerIds.slice().sort()
+  return useQuery({
+    queryKey: ['player-delete-preview', key],
+    enabled: enabled && key.length > 0,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    queryFn: async (): Promise<DeletePreview> => {
+      const { data, error } = await supabase.rpc('preview_delete_players', { p_player_ids: key })
+      if (error) throw error
+      // A malformed payload REFUSES rather than reading as zeroes, and so
+      // does a well formed one that answers for a different selection (a
+      // requested count that is not the submitted id count, or more live
+      // players than were asked about): the dialog lands on its error and
+      // retry path, and nothing arms against counts that were never
+      // established for THESE ids. players below requested stays valid,
+      // because that is the designed stale display.
+      const parsed = parseDeletePreview(data)
+      if (parsed === null || !previewAnswersFor(parsed, key.length)) {
+        throw new Error('the deletion preview could not be read')
+      }
+      return parsed
+    },
+  })
+}
+
+// The message a refusal carried, whatever shape it arrived in. A message
+// RAISED in the database reaches these recognisers as PostgREST's parsed
+// error body: a PLAIN OBJECT with a string `message` beside details, hint
+// and code, not an Error instance, because the client only constructs its
+// Error subclass under throwOnError and this app does not use it. A reader
+// that stopped at `instanceof Error` returned silence for exactly the
+// server refusals the recognisers below exist to name, which put the stale
+// refusal on the generic copy branch with Retry offered.
+function refusalMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === 'string') return err
+  if (err !== null && typeof err === 'object') {
+    const message = (err as { message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return ''
+}
+
+// The server refused because the selection is no longer what was previewed:
+// another admin deleted one of these children, or an id is not this club's.
+// Recognised by the message the RPC raises (0050) so the dialog can say
+// something a person can act on ("review the preview again") rather than a
+// generic failure. Pure, so it is unit tested directly, including against
+// the raw object shape the client actually returns.
+export function isStaleBulkSelection(err: unknown): boolean {
+  return /out of date|selection changed/i.test(refusalMessage(err))
+}
+
+// The run finished but its reply could not prove what happened (see the
+// mutation below). The dialog says the outcome is unknown and offers no
+// Retry, because retrying against an unknown outcome invites confirming a
+// second run against a register the admin has not re-read; the server's
+// identity revalidation would refuse it anyway once the rows are gone.
+export function isIndeterminateBulkOutcome(err: unknown): boolean {
+  return /whether it completed is unknown/i.test(refusalMessage(err))
+}
+
+// The transactional bulk permanent deletion. One RPC call, one database
+// transaction: a failure anywhere deletes nobody, so there is deliberately no
+// per player loop, no partial result and nothing to reconcile on retry.
+//
+// expectedCount is the number the admin's typed confirmation named. The server
+// revalidates it inside the transaction against the live set and refuses on a
+// mismatch, so a selection that went stale while the dialog was open cannot
+// become a deletion of a different number of children. That revalidation is
+// the identity count only, by design: the dependency counts are recomputed as
+// server truth under the deletion lock and are returned and audited from
+// there, never compared against the preview the dialog showed.
+export function useBulkDeletePlayers() {
+  const qc = useQueryClient()
+  return useMutation<DeleteRunResult, Error, { playerIds: string[]; expectedCount: number }>({
+    mutationFn: async ({ playerIds, expectedCount }) => {
+      const { data, error } = await supabase.rpc('delete_players', {
+        p_player_ids: playerIds,
+        p_expected_count: expectedCount,
+      })
+      if (error) throw error
+      // The run's reply is its own shape: the shared counts WITHOUT
+      // 'requested', plus a batch id and outcome the app does not consume.
+      // Parsed by the run parser, because requiring the preview's
+      // 'requested' here once made every successful deletion read as
+      // indeterminate.
+      const result = parseDeleteRunResult(data)
+      // The RPC returns what it actually deleted, and success is only ever
+      // reported from a reply that proves it. But an HTTP success whose body
+      // cannot prove what happened is an INDETERMINATE outcome, not a
+      // failure: every refusal in delete_players RAISES, which arrives as an
+      // error above, so a success carrying a malformed or miscounting body
+      // most likely means the deletion committed on a backend whose reply
+      // shape has drifted. Claiming "not deleted" here would be a false
+      // claim after a commit. The message says the outcome is unknown, the
+      // dialog recognises it (isIndeterminateBulkOutcome) and withholds
+      // Retry for it, and onSettled below has already refetched the
+      // register, which is the truth to read.
+      if (result === null || result.players !== expectedCount) {
+        throw new Error(
+          'The deletion finished with a reply that could not be read, so whether it completed is unknown. ' +
+            'Close this and reload the register to see the current state before selecting again.',
+        )
+      }
+      return result
+    },
+    // The register, the current-season list and every board name map refresh,
+    // exactly as they do after a single deletion. The activity feed is
+    // invalidated too, because a run writes one event per identity plus its
+    // own, and an admin who deletes from one tab expects to see it in another.
+    onSettled: () => {
+      invalidatePlayerReads(qc)
+      qc.invalidateQueries({ queryKey: ['activity'] })
+    },
   })
 }
 

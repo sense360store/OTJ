@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { DragEventHandler, ReactNode } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
@@ -15,13 +15,14 @@ import {
   useTeams,
   useVenues,
 } from '../lib/queries'
-import { blankSession, embedSrc, isSampleMedia, PHASES } from '../lib/data'
+import { ActivityStructureSummary } from '../components/ActivityRoleControls'
+import { type ActivityRole, applyRole, setNotRunning } from '../lib/activityRole'
+import { blankSession, embedSrc, isSampleMedia, sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
 import { soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
-import type { IconComponent } from '../components/icons'
 import {
   ActionError,
   Empty,
@@ -30,10 +31,10 @@ import {
   Loading,
   MediaAttribution,
   MediaThumb,
-  PHASE_COLOR,
   ShareControlView,
   SourceLink,
 } from '../components/ui'
+import { ActivityListEditor, type SessionRowContent } from '../components/ActivityListEditor'
 import {
   createPlannerActions,
   logSessionWriteError,
@@ -48,6 +49,7 @@ import {
 import type { PlannerAction, PlannerActions } from '../lib/sessionSubmit'
 import { useShare } from '../hooks/useShare'
 import { canonicalUrl, SAVE_AND_SHARE_NOTE, SHARE_ACCOUNT_NOTE, type ShareFeedback } from '../lib/share'
+import { ActivityDiagram } from '../components/ActivityDiagram'
 import { AddDrillModal } from '../components/AddDrillModal'
 import { BoardPickerModal } from '../components/BoardPicker'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
@@ -58,54 +60,11 @@ import { downloadSessionIcs } from '../lib/ics'
 import { PlanFromSpond } from '../components/PlanFromSpond'
 import { RightsControl } from '../components/RightsControl'
 
-interface DragHandlers {
-  onDragStart: DragEventHandler<HTMLDivElement>
-  onDragEnter: DragEventHandler<HTMLDivElement>
-  onDragEnd: DragEventHandler<HTMLDivElement>
-  onDragOver: DragEventHandler<HTMLDivElement>
-}
-
-// A labelled setup cell, the drill detail's grid square reused at panel size.
-function MetaCell({ icon: Ico, k, v }: { icon: IconComponent; k: string; v: string }) {
-  return (
-    <div className="setup-cell">
-      <div className="k">
-        <Ico />
-        {k}
-      </div>
-      <div className="v">
-        {v || (
-          <span className="muted" style={{ fontWeight: 500 }}>
-            Not set
-          </span>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// A numbered sentence list (coaching points, the easier and harder STEP
-// adaptations), the same shape the drill detail uses. Renders nothing when
-// the drill carries none.
-function PanelList({ icon: Ico, label, items }: { icon: IconComponent; label: string; items: string[] }) {
-  if (!items.length) return null
-  return (
-    <div>
-      <div className="act-panel-label">
-        <Ico style={{ width: 13, height: 13 }} />
-        {label}
-      </div>
-      <div className="coach-points">
-        {items.map((p, i) => (
-          <div className="cp" key={i}>
-            <span className="cp-num">{i + 1}</span>
-            <span style={{ fontSize: 14, lineHeight: 1.45 }}>{p}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
+// COACH-10: the activity row, the add bar and the list itself live in the
+// shared authoring seam now, mounted below by PlannerEditor and by the
+// week-plan editor alike. Re-exported so existing imports (and the suites
+// that pin the row's behaviour) keep their one path.
+export { ActivityCardView, AddActivityBar } from '../components/ActivityListEditor'
 
 // The expanded card's media preview. An image opens the full-screen diagram
 // viewer; a video or YouTube clip opens the player overlay, the same patterns
@@ -146,269 +105,6 @@ function ActivityPanelMedia({ media, drill }: { media: MediaItem | null; drill: 
       )}
       {viewer === 'player' && <MediaPlayerModal item={media} onClose={() => setViewer(null)} />}
     </div>
-  )
-}
-
-// The planner's drill row, presentational so the expand and collapse
-// behaviour and the row controls render in a test without the data hooks.
-// ActivityRow resolves the drill, its media nodes and the title and passes
-// them in. A drill row's body is a button that toggles the detail panel
-// beneath; a custom activity (no drill) keeps the old static body with
-// nothing to expand.
-export function ActivityCardView({
-  act,
-  idx,
-  title,
-  drill,
-  thumb,
-  expandedMedia,
-  drillHref,
-  expanded,
-  onToggle,
-  onRemove,
-  onDur,
-  onPhase,
-  dragHandlers,
-  dragging,
-  readOnly,
-  busy = false,
-}: {
-  act: Activity
-  idx: number
-  title: string
-  drill: Drill | null
-  thumb: ReactNode
-  expandedMedia: ReactNode
-  drillHref: string
-  expanded: boolean
-  onToggle: () => void
-  onRemove: (i: number) => void
-  onDur: (i: number, v: number) => void
-  onPhase: (i: number, v: Phase) => void
-  dragHandlers: DragHandlers
-  dragging: boolean
-  readOnly: boolean
-  // A Save or Start is in flight on the whole draft; reordering, changing a
-  // phase or duration, or removing a row all edit that draft, so they freeze
-  // until the write settles. Expanding the detail panel is passive viewing and
-  // stays live. readOnly rows are never busy (a viewer starts no write).
-  busy?: boolean
-}) {
-  const panelId = `act-panel-${idx}`
-  const frozen = readOnly || busy
-  return (
-    <div className="act-item">
-      <div
-        className="act-card"
-        style={dragging ? { opacity: 0.4 } : undefined}
-        draggable={!frozen}
-        {...(frozen ? {} : dragHandlers)}
-      >
-        {!readOnly && (
-          <span className="act-grip">
-            <Icon.grip />
-          </span>
-        )}
-        {drill ? (
-          <button
-            type="button"
-            className="ac-toggle"
-            aria-expanded={expanded}
-            aria-controls={panelId}
-            onClick={onToggle}
-          >
-            <span className="act-thumb" style={{ overflow: 'hidden' }}>
-              {thumb}
-            </span>
-            <span className="ac-toggle-text">
-              <span className="ac-title">{title}</span>
-              <span className="ac-sub">
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>
-                  {act.phase}
-                </span>
-                {drill.skill ? <span>{drill.skill}</span> : null}
-              </span>
-            </span>
-            <span className={'ac-caret' + (expanded ? ' open' : '')}>
-              <Icon.chevDown />
-            </span>
-          </button>
-        ) : (
-          <>
-            <div className="act-thumb" style={{ overflow: 'hidden' }}>
-              {thumb}
-            </div>
-            <div className="ac-body">
-              <h4>{title}</h4>
-              <div className="ac-sub">
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>
-                  {act.phase}
-                </span>
-              </div>
-            </div>
-          </>
-        )}
-        <select
-          value={act.phase}
-          disabled={frozen}
-          onChange={(e) => onPhase(idx, e.target.value as Phase)}
-          style={{
-            height: 34,
-            borderRadius: 8,
-            border: '1px solid var(--line)',
-            background: 'var(--bg)',
-            fontSize: 12.5,
-            fontWeight: 700,
-            color: 'var(--ink)',
-            padding: '0 6px',
-          }}
-        >
-          {PHASES.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <div className="row" style={{ gap: 4 }}>
-          <input
-            type="number"
-            value={act.duration}
-            min="1"
-            max="90"
-            disabled={frozen}
-            onChange={(e) => onDur(idx, parseInt(e.target.value) || 0)}
-            style={{
-              width: 52,
-              height: 34,
-              borderRadius: 8,
-              border: '1px solid var(--line)',
-              background: 'var(--bg)',
-              textAlign: 'center',
-              fontWeight: 800,
-              fontSize: 13,
-              color: 'var(--ink)',
-            }}
-          />
-          <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
-            min
-          </span>
-        </div>
-        {!readOnly && (
-          <button className="act-x" disabled={busy} onClick={() => onRemove(idx)} aria-label="Remove activity">
-            <Icon.trash />
-          </button>
-        )}
-      </div>
-
-      {expanded && drill && (
-        <div className="act-panel" id={panelId} role="region" aria-label={`${drill.title} details`}>
-          {expandedMedia}
-          {drill.summary && <p className="act-panel-summary">{drill.summary}</p>}
-          <div className="setup-grid">
-            <MetaCell icon={Icon.clock} k="Duration" v={drill.duration + ' min'} />
-            <MetaCell icon={Icon.users} k="Players" v={drill.players} />
-            <MetaCell icon={Icon.ruler} k="Area" v={drill.area} />
-            <MetaCell icon={Icon.target} k="Skill" v={drill.skill} />
-          </div>
-          <div>
-            <div className="act-panel-label">
-              <Icon.cone style={{ width: 13, height: 13 }} />
-              Equipment
-            </div>
-            <div className="row wrap" style={{ gap: 7 }}>
-              {drill.equipment.length ? (
-                drill.equipment.map((e) => (
-                  <span className="pill" key={e}>
-                    {e}
-                  </span>
-                ))
-              ) : (
-                <span className="muted" style={{ fontSize: 13 }}>
-                  None needed
-                </span>
-              )}
-            </div>
-          </div>
-          <PanelList icon={Icon.whistle} label="Coaching points" items={drill.points} />
-          <PanelList icon={Icon.chevDown} label="Make it easier" items={drill.easier} />
-          <PanelList icon={Icon.bolt} label="Make it harder" items={drill.harder} />
-          {/* Reading the detail is passive viewing and stays live, but the link
-              OUT to the full drill leaves the planner and would abandon the
-              draft, so it freezes with the other navigation controls while a
-              write is in flight. A read-only viewer is never busy, so their
-              link stays live. */}
-          {busy ? (
-            <button type="button" className="btn btn-ghost btn-sm act-panel-link" disabled>
-              <Icon.external />
-              Open full drill
-            </button>
-          ) : (
-            <Link className="btn btn-ghost btn-sm act-panel-link" to={drillHref}>
-              <Icon.external />
-              Open full drill
-            </Link>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ActivityRow({
-  act,
-  idx,
-  onRemove,
-  onDur,
-  onPhase,
-  dragHandlers,
-  dragging,
-  readOnly,
-  busy,
-  expanded,
-  onToggle,
-}: {
-  act: Activity
-  idx: number
-  onRemove: (i: number) => void
-  onDur: (i: number, v: number) => void
-  onPhase: (i: number, v: Phase) => void
-  dragHandlers: DragHandlers
-  dragging: boolean
-  readOnly: boolean
-  busy: boolean
-  expanded: boolean
-  onToggle: () => void
-}) {
-  const drillById = useDrillMap()
-  const mediaById = useMediaMap()
-  const actTitle = useActivityTitle()
-  // A drillId whose drill was deleted resolves to null; the row stays usable
-  // with a removed drill placeholder from actTitle and is not expandable.
-  const drill = act.drillId ? (drillById[act.drillId] ?? null) : null
-  const media = drill && drill.mediaId ? (mediaById[drill.mediaId] ?? null) : null
-  return (
-    <ActivityCardView
-      act={act}
-      idx={idx}
-      title={actTitle(act)}
-      drill={drill}
-      thumb={<MediaThumb media={media} showPlay={false} showBadge={false} label="" />}
-      // Built lazily: the element only renders, and so only mints a signed
-      // URL, when the panel is open.
-      expandedMedia={drill ? <ActivityPanelMedia media={media} drill={drill} /> : null}
-      drillHref={drill ? `/drill/${drill.id}` : ''}
-      expanded={expanded}
-      onToggle={onToggle}
-      onRemove={onRemove}
-      onDur={onDur}
-      onPhase={onPhase}
-      dragHandlers={dragHandlers}
-      dragging={dragging}
-      readOnly={readOnly}
-      busy={busy}
-    />
   )
 }
 
@@ -565,31 +261,6 @@ export function PlannerHeaderView({
   )
 }
 
-// The two "add an activity" buttons under the timeline. Adding a drill or a
-// custom activity edits the draft, so both freeze while a write is in flight.
-export function AddActivityBar({
-  busy,
-  onAddLibrary,
-  onAddCustom,
-}: {
-  busy: boolean
-  onAddLibrary: () => void
-  onAddCustom: () => void
-}) {
-  return (
-    <div className="row" style={{ gap: 10, marginTop: 4 }}>
-      <button className="add-slot" style={{ marginBottom: 0 }} disabled={busy} onClick={onAddLibrary}>
-        <Icon.plus />
-        Add from library
-      </button>
-      <button className="add-slot" style={{ marginBottom: 0 }} disabled={busy} onClick={onAddCustom}>
-        <Icon.edit />
-        Add custom
-      </button>
-    </div>
-  )
-}
-
 type SessionFieldKey = 'name' | 'date' | 'time' | 'ageGroup' | 'focus' | 'space' | 'sourceUrl'
 
 // The covered teams control. Coverage is a set, not one team: a Thursday
@@ -713,7 +384,12 @@ export function SessionFieldsView({
   onOpenBoardPicker: () => void
 }) {
   const frozen = readOnly || busy
-  const mins = session.activities.reduce((a, x) => a + (x.duration || 0), 0)
+  // The "min total" headline the coach reads while standing a station down.
+  // It used to be an inline reduce of its own, which made it a fourth answer
+  // to how long a session runs and the one most likely to disagree, because
+  // it is the number changing under the coach's finger. It reads the shared
+  // seam now, so the active duration rule reaches it by construction.
+  const mins = sessionMinutes(session)
   return (
     <div className="card side-card">
       <div className="total-time" style={{ marginBottom: 4 }}>
@@ -722,8 +398,14 @@ export function SessionFieldsView({
           min total
         </span>
       </div>
-      <div className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+      <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
         {session.activities.length} activities
+      </div>
+      {/* COACH-2B. What this plan declares, beside the number it produces.
+          Warnings are stated and never block: a coach who declares three
+          stations is told, and Save stays available. */}
+      <div style={{ marginBottom: 14 }}>
+        <ActivityStructureSummary activities={session.activities} />
       </div>
       <div className="field">
         <label>Session name</label>
@@ -906,6 +588,12 @@ function PlannerEditor({
   const venues = venuesQuery.data ?? []
   const { data: boards = [] } = useBoards()
   const memberById = useMemberMap()
+  // The lookups only this host can resolve for the shared editor's rows.
+  // They lived in a per-row wrapper before COACH-10; the same cached reads
+  // happen once here and the editor receives plain values and nodes.
+  const drillById = useDrillMap()
+  const mediaById = useMediaMap()
+  const actTitle = useActivityTitle()
 
   const [session, setSession] = useState<Session>(() =>
     existing
@@ -984,7 +672,42 @@ function PlannerEditor({
       a[i] = { ...a[i], phase: v }
       return { ...s, activities: a }
     })
+  // COACH-2B. Both go through the pure rules in ../lib/activityRole, which own
+  // exactly what each press writes and removes: a role change never touches
+  // `phase`, and it clears any stand-down so stale session-local state cannot
+  // follow an activity into another role. Draft edits like every other control
+  // here; nothing autosaves.
+  const setRole = (i: number, role: ActivityRole) =>
+    setSession((s) => {
+      const a = [...s.activities]
+      a[i] = applyRole(a[i], role)
+      return { ...s, activities: a }
+    })
+  const setStandDown = (i: number, on: boolean) =>
+    setSession((s) => {
+      const a = [...s.activities]
+      a[i] = setNotRunning(a[i], on)
+      return { ...s, activities: a }
+    })
   const addActivities = (items: Activity[]) => setSession((s) => ({ ...s, activities: [...s.activities, ...items] }))
+
+  // One dated row's resolved content for the shared editor. A drillId whose
+  // drill was deleted resolves to null; the row stays usable with a removed
+  // drill placeholder from actTitle and is not expandable. The two panel
+  // nodes are built lazily in effect: each element only renders, and so only
+  // mints a signed URL or fires the diagram read, when the panel is open.
+  const rowContent = (act: Activity): SessionRowContent => {
+    const drill = act.drillId ? (drillById[act.drillId] ?? null) : null
+    const media = drill && drill.mediaId ? (mediaById[drill.mediaId] ?? null) : null
+    return {
+      title: actTitle(act),
+      drill,
+      thumb: <MediaThumb media={media} showPlay={false} showBadge={false} label="" />,
+      expandedMedia: drill ? <ActivityPanelMedia media={media} drill={drill} /> : null,
+      expandedDiagram: drill ? <ActivityDiagram drill={drill} className="dd-in-panel" /> : null,
+      drillHref: drill ? `/drill/${drill.id}` : '',
+    }
+  }
 
   const reorder = (to: number) => {
     const from = dragFrom.current
@@ -1148,52 +871,50 @@ function PlannerEditor({
               )}
             </div>
           )}
-          {session.activities.length === 0 ? (
-            <div className="card" style={{ padding: 0 }}>
-              <Empty icon={Icon.layers} title="Empty session">
-                {readOnly ? 'No activities in this session yet.' : 'Add drills from the library or load a template to get started.'}
-              </Empty>
-            </div>
-          ) : (
-            <div className="timeline">
-              {session.activities.map((act, i) => (
-                <ActivityRow
-                  key={i}
-                  act={act}
-                  idx={i}
-                  onRemove={removeAct}
-                  onDur={setDur}
-                  onPhase={setPhase}
-                  dragging={dragIdx === i}
-                  readOnly={readOnly}
-                  busy={busy}
-                  expanded={expandedIdx === i}
-                  onToggle={() => setExpandedIdx((cur) => (cur === i ? null : i))}
-                  dragHandlers={{
-                    onDragStart: () => {
-                      dragFrom.current = i
-                      setDragIdx(i)
-                      // Collapse so the open index does not drift as rows move.
-                      setExpandedIdx(null)
-                    },
-                    onDragEnter: () => reorder(i),
-                    onDragEnd: () => {
-                      dragFrom.current = null
-                      setDragIdx(null)
-                    },
-                    onDragOver: (e) => e.preventDefault(),
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          {!readOnly && (
-            <AddActivityBar
-              busy={busy}
-              onAddLibrary={() => setAddOpen(true)}
-              onAddCustom={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
-            />
-          )}
+          {/* COACH-10: the one shared activity-list editor, mounted here and
+              by the week-plan editor. The planner supplies what only it owns:
+              the resolved row content, the empty state, the drag mechanics,
+              the busy freeze and the session-local stand-down. */}
+          <ActivityListEditor
+            activities={session.activities}
+            variant={{
+              kind: 'session',
+              readOnly,
+              busy,
+              empty: (
+                <div className="card" style={{ padding: 0 }}>
+                  <Empty icon={Icon.layers} title="Empty session">
+                    {readOnly ? 'No activities in this session yet.' : 'Add drills from the library or load a template to get started.'}
+                  </Empty>
+                </div>
+              ),
+              expandedIdx,
+              onToggle: (i) => setExpandedIdx((cur) => (cur === i ? null : i)),
+              onStandDown: setStandDown,
+              draggingIdx: dragIdx,
+              dragHandlersFor: (i) => ({
+                onDragStart: () => {
+                  dragFrom.current = i
+                  setDragIdx(i)
+                  // Collapse so the open index does not drift as rows move.
+                  setExpandedIdx(null)
+                },
+                onDragEnter: () => reorder(i),
+                onDragEnd: () => {
+                  dragFrom.current = null
+                  setDragIdx(null)
+                },
+                onDragOver: (e) => e.preventDefault(),
+              }),
+              content: rowContent,
+            }}
+            onPhase={setPhase}
+            onDuration={setDur}
+            onRole={setRole}
+            onRemove={removeAct}
+            onAddLibrary={() => setAddOpen(true)}
+            onAddCustom={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
+          />
         </div>
 
         <div className="planner-side">

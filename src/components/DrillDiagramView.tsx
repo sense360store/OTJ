@@ -13,7 +13,7 @@
 // It carries no person. A diagram holds generic players; there is no name, no
 // playerId and no roster lookup anywhere in this file, unlike the tactics board
 // which deliberately resolves one (see tacticsBoard.ts).
-import { useId } from 'react'
+import { useId, type CSSProperties } from 'react'
 import {
   ARROW_LABEL,
   describeDiagram,
@@ -35,6 +35,7 @@ import {
   wavyPath,
   type Marking,
 } from '../lib/drillDiagramGeometry'
+import { diagramWidthCap } from '../lib/drillDiagramSize'
 import './DrillDiagram.css'
 
 // White text sits on a dark bib, dark text on a light one. Contrast, not
@@ -264,9 +265,36 @@ export function DiagramElementLayer({ diagram }: { diagram: DrillDiagram }) {
 
 // The read only diagram. The one renderer a drill page, and from C2 a session,
 // uses.
-export function DrillDiagramView({ diagram, className }: { diagram: DrillDiagram; className?: string }) {
+//
+// heightCap is how a surface says "no taller than this" (DIAGRAM_HEIGHT_CAP).
+// The width that cap implies is computed HERE, from the same surface geometry
+// the aspect ratio comes from, and emitted as a plain CSS length. Both caps go
+// on together or neither does, which is the whole point: width:100% plus an
+// aspect ratio plus a height cap leaves the box the full column with the pitch
+// drawn small in the middle of it, so a height cap that lost its width is worse
+// than no cap at all. See drillDiagramSize.ts for why this arithmetic is not in
+// the stylesheet.
+export function DrillDiagramView({
+  diagram,
+  className,
+  heightCap,
+}: {
+  diagram: DrillDiagram
+  className?: string
+  heightCap?: string
+}) {
+  const size = surfaceSize(diagram.surface)
+  const widthCap = heightCap ? diagramWidthCap(heightCap, size.width / size.height) : undefined
   return (
-    <div className={'dd-surface' + (className ? ' ' + className : '')} style={{ aspectRatio: surfaceAspect(diagram.surface) }}>
+    <div
+      className={'dd-surface' + (className ? ' ' + className : '')}
+      style={
+        {
+          aspectRatio: surfaceAspect(diagram.surface),
+          ...(widthCap ? { maxHeight: heightCap, maxWidth: widthCap } : null),
+        } as CSSProperties
+      }
+    >
       <svg className="dd-svg" viewBox={viewBox(diagram.surface)} role="img" aria-label={describeDiagram(diagram)}>
         <DiagramSurfaceBackdrop surface={diagram.surface} />
         <DiagramElementLayer diagram={diagram} />

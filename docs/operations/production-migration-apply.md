@@ -12,11 +12,21 @@ order where each one fails before the next can do damage.
 
 ## Applied through this workflow
 
-| Migration | Hosted version | Applied |
-|---|---|---|
-| `0046_drill_diagram` | `20260811210248` | 2026-08-11 |
-| `0047_register_group_inclusion` | `20260812064038` | 2026-08-12 |
-| `0048_spond_session_link_unique` | `20260812102912` | 2026-08-12 |
+| Migration | Hosted version | Ledger name | Applied |
+|---|---|---|---|
+| `0046_drill_diagram` | `20260811210248` | `drill_diagram` | 2026-08-11 |
+| `0047_register_group_inclusion` | `20260812064038` | `register_group_inclusion` | 2026-08-12 |
+| `0048_spond_session_link_unique` | `20260812102912` | `spond_session_link_unique` | 2026-08-12 |
+| `0049_spond_team_reconcile` | `20260817104226` | `spond_team_reconcile` | 2026-08-17 |
+| `0050_bulk_delete_players` | `20260823065041` | `bulk_delete_players` | 2026-08-23 |
+
+`0050` was applied from the reviewed PLAYERS-01 branch commit
+`2d1de99827064f6856374bfc3c094cf50ae1cc3f` (PR #191) before that branch merged,
+the reverse rollout order its register entry documents: `main` auto-deploys to
+Vercel and the new Registered players screens call these functions, so merging
+first would have shipped a client calling functions the database did not have.
+Until #191 merges, the migration file and its register entry live on that
+branch; the hosted ledger, which is the authority, already records the apply.
 
 `0047` stays in the dropdown and in `REVIEWED_MIGRATIONS` now that it has run.
 Entries are never removed once applied: the register is the closed list of what
@@ -110,11 +120,74 @@ the reviewed file. The post-apply gate confirmed it was the unique newest row
 with `20260810182333` / `spond_links` before it, and that the column, the check
 constraint and the three validation functions all exist.
 
-## Reviewed, registered, not yet applied
+`0049` was applied on 17 August 2026. The workflow ran to the end: the
+pre-apply gate passed, the apply committed, and the post-apply gate passed. The
+hosted ledger assigned it version `20260817104226` under the name
+`spond_team_reconcile`, the newest row until `0050`'s apply on 23 August 2026.
 
-`0049_spond_team_reconcile`. Registered 16 August 2026 and **not applied**; the
-hosted ledger's newest row is still `20260812102912` /
-`spond_session_link_unique`, which is also its `expected_previous_version`.
+Its `expected_previous_version` stays `20260812102912` /
+`spond_session_link_unique` for the same reason `0047`'s and `0048`'s stay where
+they are: it records the state `0049` was REVIEWED against, checked 16 August
+2026, not the current head. That is a historical review fact and it does not
+move when the ledger does.
+
+The post-apply gate confirmed `spond_team_reconcile` was the unique newest
+ledger row, that the row before it was `20260812102912` /
+`spond_session_link_unique`, that the recorded `statements` array held exactly
+one entry hashing to the reviewed file, and that all three registered object
+probes were true: the function exists with the reviewed six argument signature,
+it is SECURITY DEFINER with an empty `search_path`, and `authenticated` may
+execute it while `anon` may not.
+
+Getting there took two runs, and the first one is the reason
+`.github/scripts/production-migration/test_probe_totality.sh` exists. The
+pre-apply gate stopped with `function
+"public.spond_reconcile_player_team(uuid, ...)" does not exist`, reported as a
+role or readability problem. Nothing was unreadable and nothing was wrong with
+the database: the function had not been created yet, which is the one state a
+pre gate exists to confirm. The probe asked the question through
+`has_function_privilege(role, 'public.f(uuid, ...)', 'EXECUTE')`, which resolves
+the textual signature first and raises when nothing matches, so it could never
+answer no. A second probe carried a matching defect at the other gate:
+`pg_get_function_identity_arguments()` renders the argument NAMES as well as
+the types, so its comparison was false with the function correctly in place and
+the POST gate would have failed after the apply had already run. Both were fixed
+before the successful run, and the database was untouched throughout the first
+one.
+
+`0050` was applied on 23 August 2026, by workflow run 32623941411, from the
+reviewed PLAYERS-01 branch commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f`
+rather than from `main` (see the note under the table above). The workflow ran
+to the end in one run: the pre-apply gate passed against a ledger still headed
+by `20260817104226` / `spond_team_reconcile` with every object the migration
+creates absent, the apply committed, and the post-apply gate passed. The hosted
+ledger assigned it version `20260823065041` under the name
+`bulk_delete_players`, and that is now the newest row. Applying it destroyed
+nothing: the migration creates four functions and deletes no row, and its entry
+point is destructive only when called.
+
+Its `expected_previous_version` stays `20260817104226` / `spond_team_reconcile`
+for the same reason `0047`'s, `0048`'s and `0049`'s stay where they are: it
+records the state `0050` was REVIEWED against, not the current head.
+
+The post-apply gate confirmed `bulk_delete_players` was the unique newest
+ledger row, that the VERSION of the row before it was `20260817104226` (the
+gate compares only the version; the name `spond_team_reconcile` was asserted
+by the pre-apply gate as the newest row before the apply, and confirmed again
+by the reconciliation's own readback), that the recorded `statements` array
+held exactly one entry hashing to the reviewed file, MD5
+`a34ad8932597a467795d47867254fe62`, and that all five registered object probes
+were true: the bulk deletion entry point `(uuid[], int)` and the deletion
+preview `(uuid[])` exist as SECURITY DEFINER with an empty `search_path` and
+are executable by `authenticated` and not by `anon`, the counting helper
+`(uuid, uuid[])` exists and no client role may execute it, and the audit
+metadata predicate `(jsonb)` exists. No gate reads a SHA-256: the plan step
+recorded the file's SHA-256,
+`caeadd53de608ae7ae83e789ea5b4733328b59f2f38bfad048115159cdf16a08`, computed
+like the recorded statement over the file with its trailing newline stripped,
+which is the shape the ledger stores.
+
+## What `0049` does, kept for reference
 
 It adds ONE function, `public.spond_reconcile_player_team`, and nothing else:
 no table, no column, no index, no policy, no grant on any table, no capability
@@ -172,17 +245,62 @@ without reliably reproducing the interleaving.
 It needs a local PostgreSQL server and is therefore not part of CI; run it by
 hand when reviewing this migration.
 
-Ordering. Unlike `0048`, this one is safe to apply either side of the frontend:
-a client running against a database without it gets `PGRST202` from the RPC and
-says the database change has not been applied yet
+Ordering. Unlike `0048`, this one was safe to apply either side of the
+frontend: a client running against a database without it gets `PGRST202` from
+the RPC and says the database change has not been applied yet
 (`isMissingFunction`/`RECONCILE_UNAVAILABLE` in `src/lib/queries.ts`), and no
 other screen calls it. The `spond-link-members` deploy in the same pull request
-is a separate gated step and is likewise safe in either order: a deployment
+was a separate gated step and was likewise safe in either order: a deployment
 that does not return the member id yet lands as `''`, which the client reads as
 no identity, so the reconciliation offers nothing rather than misfiring.
 
-Applied entries are never removed from the register, so an empty version of
-this section means there is nothing pending, not that nothing is registered.
+## What `0050` does, kept for reference
+
+`0050_bulk_delete_players` is **DESTRUCTIVE** when its entry point is called,
+and the one entry in this document that deletes child data; applying it
+destroyed nothing, since it only creates functions. Registered against
+`20260817104226` / `spond_team_reconcile`, the row `0049`'s apply stamped, with
+the idempotency key `otj:migration:0050_bulk_delete_players`, and applied on
+23 August 2026 at hosted version `20260823065041` (see the apply record above).
+
+It adds four functions and nothing else: no table, no column, no index, no
+policy, no grant on any table, no capability key and no trigger. It creates no
+permission. `players.delete` is admin only by default (0030) and the
+`players_delete_admin` policy from 0032 is untouched, so nobody gains the
+ability to delete a child who could not already delete one; what it adds is a
+way to spend that same permission on many identities in one transaction, with a
+preview, an expected count and an audit row. A deleted player takes their
+register entries with them by cascade, exactly as the single row Delete
+permanently has done since 0044. The full boundary is
+`docs/security/player-deletion-boundary.md`.
+
+**Its probes are shaped unlike every other entry here, for two reasons.** They
+resolve no name at all: each joins `pg_proc` to `pg_namespace` and reads the
+privilege off the row it found, so an absent function is an empty join and the
+probe is false rather than null and rather than an error. And they do not spell
+the function names, because three of the four carry the substring `delete`,
+which the read-only statement guard bans outright. So does the ledger name.
+Rather than weaken a guard that exists to stop a register edit smuggling a write
+through a probe, the names are composed: `sql_text_value` renders any value that
+spells a banned word as a `concat` of pieces, and the statement compares the
+identical text without carrying the word.
+`test_0050_probe_totality.sh` flips all five probes against a real PostgreSQL
+in the absent state, the applied state and six wrong-ACL states, and runs in CI.
+
+**The rollout order for this one was the reverse of the usual.** `0048` was
+applied before its frontend merged and this document explains why that is
+normally right. Here it was not merely right, it was required: the repository
+auto-deploys `main` to Vercel and the new Registered players screens call these
+RPCs, so merging first would have shipped a client calling functions the
+database did not have. The workflow was therefore run against the reviewed
+**#191 branch commit** `2d1de99827064f6856374bfc3c094cf50ae1cc3f` on 23 August
+2026, the post-apply gate passed, and only then did the branch merge.
+
+## Reviewed, registered, not yet applied
+
+Nothing. Every entry in `REVIEWED_MIGRATIONS` has been applied. Applied entries
+are never removed from the register, so this section being empty means there is
+nothing pending, not that nothing is registered.
 
 ## What runs, in order
 
@@ -318,6 +436,68 @@ Until that lands, the content-sharing Edge Function deploy workflow fails
 closed on its own ledger gate. That is intended: it is far safer than a check
 that passes regardless.
 
+**Reconciled.** `EXPECTED_LAST_MIGRATION` is `20260823065041`
+(`0050_bulk_delete_players`), matching the hosted head applied on 23 August
+2026. The gate stopped failing closed when that reconciliation landed, and it
+was its own reviewed change rather than being folded into anything else. The
+apply evidence behind the move is recorded in
+`docs/operations/content-sharing-edge-function-deploy.md`.
+
+## Writing an object probe
+
+Every register entry names the objects its migration creates, as boolean SQL
+expressions that must be FALSE before the apply and TRUE after it. A probe has
+to be TOTAL: false when the object is absent, true when it is present and
+correct, and never an error merely because the thing it was written to find is
+not there yet. The pre gate reads a database where, by definition, none of it
+exists.
+
+What breaks that is EAGER TEXTUAL OBJECT RESOLUTION. PostgreSQL's privilege
+inquiry functions resolve a textual object name before doing anything else and
+raise when nothing matches, so a probe written this way can never answer no:
+
+```sql
+has_function_privilege('authenticated', 'public.f(uuid)', 'EXECUTE')  -- raises
+has_table_privilege('authenticated', 'public.new_table', 'SELECT')    -- raises
+has_schema_privilege('authenticated', 'new_schema', 'USAGE')          -- raises
+has_sequence_privilege('authenticated', 'public.new_seq', 'USAGE')    -- raises
+```
+
+Resolve the name once through the absence-safe `to_reg*` family, which returns
+null, then read the privilege off the catalog row that resolution found:
+
+```sql
+(select count(*) > 0 from pg_class c
+  where c.oid = to_regclass('public.new_table')
+    and c.relkind = 'r'
+    and has_table_privilege('authenticated', c.oid, 'SELECT'))
+```
+
+An absent object makes `c.oid = null` match nothing, so the count is 0 and the
+probe is false. `to_regprocedure` for a function, `to_regclass` for a relation
+or a sequence, `to_regnamespace` for a schema, `to_regtype` for a type,
+`to_regrole` for a role. Where no `to_reg*` exists (a database, a tablespace, a
+language, a foreign data wrapper, a foreign server) a nullable catalog lookup
+yielding the oid is the same shape from another source.
+
+Three things that look safe and are not. A `::regclass` or `::regprocedure` cast
+raises exactly as the textual name does; it is the same resolution with
+different punctuation. A `to_reg*` result handed STRAIGHT to a privilege
+function is null rather than false, because those functions are strict, and the
+gate refuses a non boolean rather than reading it as absent, so the run stops
+with the reviewed object correctly missing. And a dollar quoted name is a
+textual name: `$$public.new_table$$` resolves exactly as `'public.new_table'`
+does, so `$` is refused outright in a probe, alongside `"` and `\`. Compose
+`chr(36)` if a literal dollar is ever genuinely needed, as the register already
+composes `chr(34)` for a double quote.
+
+`assert_probe_is_total` in `verify_hosted_state.py` refuses all of these shapes
+before the run connects to anything, for every privilege inquiry function
+PostgreSQL 16 has and for the `regclass` argument family beside them. It is
+about the ARGUMENT POSITION rather than about the punctuation inside a string,
+so ordinary literals are untouched: `nspname = 'public'` and
+`relname = 'players'` are comparisons, not lookups.
+
 ## What the tests cover, and what they cannot
 
 `.github/scripts/production-migration/test_reviewed_migrations.py` and
@@ -325,12 +505,27 @@ that passes regardless.
 register, the gate assertions against sample hosted reads, the apply script's
 statement order, and the workflow's shape.
 
-They are tripwires, not proofs. They never connect to a database, so they
-cannot tell you the migration is correct, cannot tell you the production
-environment has a required reviewer, and cannot tell you the hosted project is
-in the state the register expects. The first is what the migration's own pull
-request is for; the second is the manual check above; the third is what the pre
-gate does at run time, against the real database.
+`test_probe_totality.sh` runs in CI too, against a throwaway PostgreSQL the
+job starts for it. It is the behavioural half: the offline tests pin the SHAPE
+of a probe, and only a server can tell a shape mistake apart from a true
+statement about the wrong string, which is what the second `0049` defect was.
+It surveys every privilege inquiry function the server has, runs the four
+protected object classes through the pre state, the post state and a wrong ACL,
+and mutates each safe probe back to the eager textual form to prove the guard
+refuses it before anything connects. CI runs it with `REQUIRE_POSTGRES=1`, which
+turns every skip inside it into a failure, because a skipped proof reported as
+a green check is worth less than no check at all. Run by hand it still skips
+where no server is installed.
+
+They are tripwires, not proofs. The Python tests never connect to a database,
+and the harness connects only to a throwaway local one, so none of them can
+tell you the migration is correct, tell you the production environment has a
+required reviewer, or tell you the hosted project is in the state the register
+expects. The first is what the migration's own pull request is for; the second
+is the manual check above; the third is what the pre gate does at run time,
+against the real database. The probe guard reads the register as text, so a
+name reaching an eager function through a variable or a view is invisible to
+it, and it says nothing about the role named in a probe's user argument.
 
 The apply mechanics were exercised end to end against a throwaway PostgreSQL 16
 before this shipped: a clean apply, a repeat apply refused by the unique
