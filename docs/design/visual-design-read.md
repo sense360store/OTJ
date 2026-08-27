@@ -362,7 +362,10 @@ The global search input is `readOnly` and navigates to `/library` on focus. That
 is deliberate and commented, but it presents as a text field and is not one.
 
 Page headings are the strongest shared pattern in the product: `.page-head` is
-used in exactly 21 routes, once each. Nine routes do not use it; five of those
+used in exactly 21 route modules, once each, covering 20 distinct routes.
+`Home.tsx` and `ParentHome.tsx` both carry one while `/` is a single route that
+dispatches to whichever the viewer's capabilities select, so `ParentHome` is
+never registered in `App.tsx`. Nine routes do not use it; five of those
 are legitimately outside the shell (Login, LiveSession, DrillDiagramEditor,
 PublicShare, SetPassword) and four are inside it and invent their own heading
 (SessionDay, SessionRegister, DrillDetail, ProgrammeDetail).
@@ -451,7 +454,7 @@ even if every screen looked better:
 - the four corners palette as a *classification*, which is FA vocabulary a coach
   already reads;
 - the `Modal` primitive and its focus behaviour;
-- `.page-head` as a shared page heading, adopted in 21 routes;
+- `.page-head` as a shared page heading, adopted in 21 route modules;
 - the surface and elevation model, which is already four sensible levels;
 - the state coverage, including 12 `aria-live` regions and the `role="alert"` on
   every `ActionError`;
@@ -960,7 +963,7 @@ every primitive the product can show at this point:
 
 | Screen | Why this one |
 |---|---|
-| **Home** (`/`) | hero, stat cards, week list rows, `.page-head`, and both shells at once. The densest single exercise of the shared vocabulary |
+| **Home** (`/`) | hero, stat cards, week list rows, `.page-head`, and both shells at once. The densest single exercise of the shared vocabulary. **Two screens behind one URL**: `/` dispatches to `CoachHome` or `ParentHome` by capability, and both must be checked, since the parent composition is the only read-only surface in this wave |
 | **Sessions** (`/sessions`) | filter chips (kind, team, ownership, upcoming and past), list rows, the empty state, and a page head with actions |
 | **Login** (`/login`) | the product outside the shell: brand gradient, crest, inputs, primary button, error state. Checked in VISUAL-01, adopted in VISUAL-02: see below |
 | **The More sheet**, at and below 900px | the one overlay with no primitive today, and the acceptance test for the new Sheet |
