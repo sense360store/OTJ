@@ -252,17 +252,29 @@ Control heights are unsystematic: `.btn` 42px, `.btn-sm` 36px, `.btn-lg` 52px,
 input` 48px. Seven heights, no token.
 
 **The screens have already noticed and patched around it**, and the rules that
-touch a shared primitive are of three kinds that must not be confused. Twenty
-four rules across nine stylesheets, the shared one included, classified:
+touch a shared primitive are of three kinds that must not be confused.
+
+The count below is over the **control** primitives, meaning `.btn` and its size
+modifiers, `.chip`, `.field` and its inputs, `.select`, `.icon-btn`, `.card`,
+`.tag` and `.pill`. It counts a rule only where a screen or feature context
+re-specifies one of those, not where the primitive defines its own modifiers and
+internal parts (`.chip.on`, `.nav-item.active`, `.stat .val`, `.act-card
+.ac-body` and the like), which are the primitive rather than an override of it.
+`.mobile-topbar .crest` resizes the crest from 42px to 34px and is deliberately
+outside the count: the crest is a brand asset, not a control, and a smaller
+crest on a phone is a deliberate responsive choice rather than a missing rule.
+
+Twenty five rules across nine stylesheets, the shared one included, classified:
 
 - **control size, 14 rules across 8 stylesheets.** These duplicate a
   primitive's own sizing and are the kind a primitive should make unnecessary.
   Between them they invent **six** control heights, none of which is the shared
   value: 28px, 34px, 38px, 40px, 42px and 44px;
-- **route layout, 8 rules across 4 stylesheets.** `margin-bottom: 0` on a field,
-  `flex: 1` on a button, `width: 100%` on a select, `min-width` on a filter.
-  These compose a shared control into one screen's layout. They are legitimate,
-  they belong to the screen, and no primitive can or should absorb them;
+- **route layout, 9 rules across 4 stylesheets.** `margin-bottom: 0` on a field,
+  `flex: 1` on a button, `flex: 0 0 auto` on an icon button, `width: 100%` on a
+  select, `min-width` on a filter. These compose a shared control into one
+  screen's layout. They are legitimate, they belong to the screen, and no
+  primitive can or should absorb them;
 - **contextual restyle, 2 rules across 2 stylesheets.** `.dv .icon-btn:disabled`
   and `.shares-summary .pill b`. These change a primitive's appearance for one
   context rather than its size. They point at a missing variant rather than a
