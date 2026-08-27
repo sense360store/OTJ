@@ -978,13 +978,26 @@ Four primitives look absent from a file-level reading of the five and are not:
   an icon button that changes mode with no label and no state exposed, so they
   are not merely available to check: **they are VISUAL-01's own work**, on
   VISUAL-01's own shell;
-- **note** (2.4) and **success** (2.14). Login renders `.login-note` at
-  `Login.tsx:79` for "Check your email for a sign-in link" and the reset
-  equivalent, which is an informational note and the product's most reachable
-  success state at once. It is the **only** reachable proof of either, which is
-  what makes the carve-out below load-bearing rather than a convenience.
+- **note** (2.4) and **success** (2.14), which are two primitives and need two
+  proofs. `success` is deliberately not one of 2.4's Note tones, so a single
+  instance rendered as an info Note would prove the Note and leave success
+  unproved. Login carries both, adjacently, at `Login.tsx:78-79`:
 
-  Home's `ImportFAModal` looked like a second instance and is not, which is
+  - `.login-error` is a tinted surface, a matching border and coloured text.
+    That is 2.4's **danger Note** in everything but the icon, so it is the Note
+    proof;
+  - `.login-note` is the same shape in green, carrying "Check your email for a
+    sign-in link". The copy is a confirmation that the request succeeded, so it
+    is the **success** proof and becomes 2.14's success treatment rather than an
+    info Note.
+
+  Both currently borrow their colour from the classification palettes 2.2
+  retires, `--m-pdf` for the error and `--c-physical` for the confirmation,
+  which makes Login an unusually good acceptance case: getting these two right
+  exercises the new semantic tokens, the Note primitive and the success
+  treatment in one screen.
+
+  Home's `ImportFAModal` looked like a third instance and is not, which is
   Part 1's note finding in miniature. Its outcome markers are 38px tinted
   circular discs, its warnings sit on a neutral `--bg-2` panel, and its error is
   plain coloured text. Three shapes for three notices, none of them the icon,
@@ -992,10 +1005,12 @@ Four primitives look absent from a file-level reading of the five and are not:
   with 25 note-shaped classes and no Note primitive is a product where looking
   for a note by its colour finds something else.
 
-The last of those needs a carve-out, because Login's state matrix is otherwise
-deferred to VISUAL-02: **VISUAL-01 checks the `info` state of Login**, and only
-that one, because it is what proves the note and the success treatment. The
-remaining Login states stay with VISUAL-02.
+Those two need a carve-out, because Login's state matrix is otherwise deferred
+to VISUAL-02: **VISUAL-01 checks Login's `error` and `info` states**, and only
+those two, because they are what prove the Note primitive and the success
+treatment. The Part 4 table above already names the error state for this reason.
+The remaining Login states (expired link, set password, permission-limited) stay
+with VISUAL-02, along with the account screen.
 
 The wave's acceptance says the primitives *exist* rather than that all are
 proved, and the deferral above is what that wording is protecting. A primitive
@@ -1007,10 +1022,11 @@ list it under VISUAL-02's stable surface group, which is correct and is not a
 conflict once the two verbs are separated. VISUAL-01 checks it because it is the
 only surface that exercises the new primitives with no shell around them, so a
 token or primitive that only works inside the content frame fails here first.
-VISUAL-02 owns adopting it in full: the account screen beside it, and the state
-matrix (invalid credentials, expired link, set password, permission-limited)
-that VISUAL-01 does not attempt, with the one exception carved out above, the
-`info` state that proves the note and success treatments. The same split applies to
+VISUAL-02 owns adopting it in full: the account screen beside it, and the rest
+of the state matrix (expired link, set password, permission-limited) that
+VISUAL-01 does not attempt, with the two exceptions carved out above, the
+`error` and `info` states that prove the Note primitive and the success
+treatment. The same split applies to
 Home and Sessions, which Part 4 lists in both waves for the same reason.
 
 Widths per surface, since one of the five is not present at every one: Home,
