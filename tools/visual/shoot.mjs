@@ -48,6 +48,31 @@ const SHOTS = [
 const name = (s, theme) =>
   [s.screen, s.caps ?? 'na', s.open ?? 'default', theme, `${s.w}w`].join('_') + '.png'
 
+
+// Every entry whose name claims a state must PROVE that state before its
+// screenshot is filed. Without this the interaction can no-op and leave an
+// ordinary page under a name that says otherwise, which is worse evidence
+// than a missing file because it looks like proof. The selector is what the
+// state actually renders, so a primitive that stops rendering fails here too.
+const REACHED = {
+  more: '.more-sheet',
+  error: '.note-danger[role="alert"]',
+  info: '.note-success[role="status"]',
+}
+
+async function reached(page, s, theme) {
+  const selector = REACHED[s.open]
+  if (!selector) return true
+  const ok = await page
+    .waitForSelector(selector, { state: 'visible', timeout: 3000 })
+    .then(() => true, () => false)
+  if (!ok) {
+    failures++
+    console.log(`ERROR ${name(s, theme)}: ${selector} never appeared, so the ${s.open} state was not reached`)
+  }
+  return ok
+}
+
 await mkdir(OUT, { recursive: true })
 // No proxy and no outbound request: the only external resource the harness
 // loads is the font stylesheet, and that is served from the cache below.
@@ -115,25 +140,23 @@ for (const theme of ['light', 'dark']) {
     await verifyFonts(page)
     await page.waitForTimeout(250)
     if (s.open === 'more') {
-      // These entries claim to show the OPEN sheet. If the More button has
-      // gone, skipping the click quietly would file an ordinary Home
-      // screenshot under a `more` name, which is the worst kind of evidence:
-      // present, plausible and wrong. The matrix only asks for this with the
-      // coach capability set, where the button must exist.
+      // The matrix only asks for this with the coach capability set, where
+      // the button must exist; a parent legitimately has no More.
       const more = page.getByRole('button', { name: 'More', exact: true })
       if ((await more.count()) === 0) {
         failures++
         console.log(`ERROR ${name(s, theme)}: no More button, so the sheet was never opened`)
       } else {
         await more.first().click()
-        await page.waitForTimeout(400)
       }
     }
     if (s.open === 'error' || s.open === 'info') {
+      // The real paths: pressing the magic link button with an empty field is
+      // the error, and with one filled is the confirmation. Neither is faked.
       if (s.open === 'info') await page.getByLabel('Email').fill('coach@example.invalid')
       await page.getByRole('button', { name: 'Email me a link' }).click()
-      await page.waitForTimeout(300)
     }
+    await reached(page, s, theme)
     await page.screenshot({ path: `${OUT}/${name(s, theme)}`, fullPage: s.open !== 'more' })
     if (errors.length) {
       failures++
