@@ -637,8 +637,12 @@ Rules:
   the between group separator (card borders, section rules);
 - **one Note primitive replaces the 25 note, banner, warning and hint classes.**
   It takes a tone (`info`, `warning`, `danger`, `neutral`), and renders an icon,
-  a tinted `--*-surface` background, a `--*` border and text at
-  `--ink`. `--gold-soft` stops being the universal note background and becomes
+  a tinted `--*-surface` background, a `--*` border and text at `--ink`.
+  **`neutral` is the one tone with no semantic token family and does not get
+  one**: it uses the existing neutrals, `--line-2` for the surface and `--line`
+  for the border, which is what `.archived-banner` already does today and is the
+  correct answer for a notice that carries no state. Adding a `--neutral-*`
+  family would duplicate tokens that exist. `--gold-soft` stops being the universal note background and becomes
   what its name says: a gold tint.
 
 ### 2.5 Buttons and icon buttons
