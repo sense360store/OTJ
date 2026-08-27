@@ -256,7 +256,10 @@ touch a shared primitive are of three kinds that must not be confused.
 
 The count below is over the **control** primitives, meaning `.btn` and its size
 modifiers, `.chip`, `.field` and its inputs, `.select`, `.icon-btn`, `.card`,
-`.tag` and `.pill`. It counts a rule only where a screen or feature context
+`.tag`, `.pill`, and the two shared search inputs `.search-lg input` and
+`.topbar-search input`. The search inputs carry no contextual override today, so
+including them does not move the total, but they are controls and leaving them
+out would make the scope incomplete. It counts a rule only where a screen or feature context
 re-specifies one of those, not where the primitive defines its own modifiers and
 internal parts (`.chip.on`, `.nav-item.active`, `.stat .val`, `.act-card
 .ac-body` and the like), which are the primitive rather than an override of it.
@@ -283,8 +286,12 @@ Twenty five rules across nine stylesheets, the shared one included, classified:
   while also being the clearest case for the dark-surface icon button 2.5 now
   requires.
 
-Two further `.btn` rules sit inside the `@media print` block. Print is a
-different medium with its own correct answers and those are left alone.
+Three further rules touching a named primitive sit inside the `@media print`
+block: two on `.btn` and one setting `print-color-adjust` on `.tag` alongside
+`.public-pill` and `.board-disc`. **Every print-medium rule is outside this
+count.** Print is a different medium with its own correct answers, a printed
+page has no hover, focus or touch target, and forcing colour to survive a
+printer is not an override of anything the screen does.
 
 **The shared stylesheet overrides its own primitive**, which is the sharpest
 version of this finding. `src/styles.css:200` is
@@ -530,6 +537,13 @@ value, a fill value and a tinted surface value, each defined in both themes:
 - add a `btn-danger` variant so no destructive control needs an inline
   `background`.
 
+**The dark palette is not optional, because one surface is always dark.** The
+live view forces `theme-dark` on its own container regardless of the user's
+setting, so every dark-theme decision here binds the pitch-side surface
+unconditionally, for every coach, including those who have never opened the
+toggle. Judging the dark palette by how many people switch to it is therefore
+the wrong measure.
+
 **Every hue is defined in `.theme-dark`, not only the neutrals.** `--royal`,
 `--navy`, `--gold`, `--gold-soft`, the four corner hues and the media hues all
 get a dark value. `--gold-soft` in particular must become a dark tinted surface,
@@ -626,12 +640,19 @@ Variants: `primary` (navy), `gold` (the one accent action, currently New
 Session), `ghost`, `quiet`, `danger` (new) and `on-dark` (new). Sizes: `sm`,
 `md`, `lg`.
 
-`on-dark` exists because two surfaces put shared controls on a dark ground that
-does not come from the theme: the diagram viewer chrome and the live view. Today
-`.dv .icon-btn` repaints the primitive's background, border and text colour
-inline in its own stylesheet, which is the contextual restyle 1.6 identifies.
-Without the variant, VISUAL-01 can satisfy every other rule here and still leave
-that repaint in place, so `on-dark` is part of the contract rather than a note.
+`on-dark` exists for one surface, not two: the diagram viewer chrome, which puts
+shared controls on a dark ground that does **not** come from the theme. Today
+`.dv .icon-btn` repaints the primitive's background, border and text colour in
+its own stylesheet, which is the contextual restyle 1.6 identifies. Without the
+variant, VISUAL-01 can satisfy every other rule here and still leave that
+repaint in place, so `on-dark` is part of the contract rather than a note.
+
+**The live view is deliberately not an `on-dark` case.** It renders as
+`className="live theme-dark"` and takes its surfaces and text from the dark
+theme tokens, so theme-aware controls already work there and a special variant
+would be the wrong fix. What the live view needs is the dark palette in 2.2
+being right, which is a stronger requirement rather than a weaker one: see the
+note in 2.2.
 
 - heights: `sm` 36px, `md` 44px, `lg` 52px. The default becomes 44px, up from
   42px;
@@ -914,11 +935,14 @@ primitives, the five screens above are visually checked at all seven widths in
 both themes, and the 137 test files stay green.
 
 **Only the control-size overrides are in scope, and they are not all
-VISUAL-01's to delete.** The five route-layout rules identified in 1.6
-(`margin-bottom: 0` on a field, `flex: 1` on a button, a full-width select) are
-composition, not duplication: they belong to their route and no primitive can or
-should absorb them. Deleting them would either leak a route's layout into every
-other caller or fail a later wave for correctly keeping them.
+VISUAL-01's to delete.** The nine route-layout rules identified in 1.6
+(`margin-bottom: 0` on a field, `flex: 1` on a button, `flex: 0 0 auto` on an
+icon button, a full-width select, a `min-width` on a filter) are composition,
+not duplication: all nine belong to their screen and no primitive can or should
+absorb them. Deleting any of them would either leak a screen's layout into every
+other caller or fail a later wave for correctly keeping them. The two contextual
+restyles are likewise not deletions: `.dv .icon-btn:disabled` and
+`.shares-summary .pill b` resolve when the variant they imply exists.
 
 The 14 control-size rules are the ones a primitive makes unnecessary, and each
 goes with its route's wave, for the same reason Part 2 opens with the wave
