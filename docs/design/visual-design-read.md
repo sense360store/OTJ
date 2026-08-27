@@ -61,25 +61,40 @@ the product.
 | Location | Size | Shared? |
 |---|---|---|
 | `src/styles.css` | 837 lines | yes, the only shared layer |
-| 13 route and component CSS files | 2,780 lines | no, one screen each |
+| 13 route and component CSS files | 2,780 lines | no, locally scoped |
 | Inline `style={{…}}` in JSX | 1,142 occurrences | no |
-| Hardcoded hex in JSX | 4 non-test files | no |
+| Hardcoded hex in JSX | 8 non-test files | no |
 
-Seventy-seven per cent of the product's CSS is per-screen. The largest single stylesheet in
-the product is not the shared one: `src/routes/SessionRegister.css` is 626
-lines, three quarters the size of `styles.css`, for one screen.
+Seventy-seven per cent of the product's CSS lives outside the shared stylesheet,
+in 13 locally scoped files. Those are not all one screen each, and the
+distinction matters for what VISUAL-01 consolidates. Five serve more than one
+caller: `Board.css` is imported by Board, Session Day, Public Session and
+BoardPicker; `Home.css` by Home and Parent Home; `Login.css` by Login and Set
+Password; `SessionDay.css` by Session Day and Session Register; and the
+component sheets (`DrillDiagram.css`, `DiagramViewer.css`, `Tick.css`,
+`AddDrillModal.css`) are component-scoped and render on several routes. So the
+77 per cent measures how much styling sits outside the shared layer, which is
+the number that matters for consolidation, and not how much is genuinely
+single-screen.
 
-Colour discipline is the exception and it is good. Only 4 non-test `.tsx` files
-contain a raw hex value, and three of the four are defensible: the SVG token
+The largest single stylesheet in the product is still not the shared one:
+`src/routes/SessionRegister.css` is 626 lines, three quarters the size of
+`styles.css`, and that one genuinely does serve one screen.
+
+Colour discipline is the exception and it is good. Only 8 non-test `.tsx` files
+contain a raw hex value, counting the three-digit form (`#fff`) as well as the
+six-digit one, and most are defensible: the SVG token
 fills in `DrillDiagramView.tsx` (`#18181b`, `#ffffff`) and the media letterbox
 in `MediaPlayerModal.tsx` and `ui.tsx` (`#0a0e1a`) are all deliberately
 theme-invariant, because a drawn diagram and a video frame should read the same
 in both themes and on paper. The exception is `RenewSeasonModal.tsx:32-34`,
 which hardcodes three status dot colours, two of which duplicate `--c-physical`
 and `--c-social` and one of which (`#94a3b8`) exists nowhere else in the
-product. Almost everything else already routes through a CSS variable, so the
-problem with colour is not that it is hardcoded. It is what the variables mean,
-covered in 1.3.
+product. The four `#fff` uses (`Home.tsx`, `AdminClub.tsx`,
+`ExportConfirmModal.tsx`, `SetupSuggestion.tsx`) are text on a brand fill, where
+a literal white is defensible but a token would be better. Almost everything
+else already routes through a CSS variable, so the problem with colour is not
+that it is hardcoded. It is what the variables mean, covered in 1.3.
 
 The bib swatches in `src/lib/bibs.ts` are also raw hex and are deliberately so;
 see 2.16.
@@ -124,7 +139,8 @@ Three problems, all structural rather than cosmetic.
 **There are no semantic state tokens.** No `--danger`, `--success`, `--warning`
 or `--info` exists. So state colour is borrowed from classification palettes:
 
-- destructive is `var(--m-pdf)`, the **PDF media type** colour, used 111 times,
+- destructive is `var(--m-pdf)`, the **PDF media type** colour, referenced 113
+  times (111 as `var(--m-pdf)` and twice as `var(--m-pdf, #ef5a5a)`),
   including the permanent bulk delete confirm button
   (`src/components/BulkDeletePlayersModal.tsx:133` sets
   `background: 'var(--m-pdf)'` inline, because no `btn-danger` variant exists);
@@ -176,8 +192,10 @@ action renders its label at 3.34:1.
 
 ### 1.4 Spacing: no scale at all
 
-Padding, gap and margin between them use every integer from 1 to 14, then 16,
-18, 20, 22, 24, 26, 28, 30, 32 and 60. Twenty four distinct non-zero values.
+Padding, gap and margin between them use every integer from 1 to 16, then 18,
+20, 22, 24, 26, 28, 30, 32, 38, 40, 44, 48, 60, 70 and 90. Thirty one distinct
+non-zero values, counting every value inside a shorthand such as
+`padding: 13px 15px` rather than only single-value declarations.
 
 There is no base unit. The most used values inline are 10 (108 uses), 8 (94) and
 12 (70), which is close to a 2px rhythm by accident rather than by rule.
@@ -231,8 +249,8 @@ Control heights are unsystematic: `.btn` 42px, `.btn-sm` 36px, `.btn-lg` 52px,
 `.chip` 34px, `.icon-btn` 38px, `.field input` 42px, `.select` and `.search-lg
 input` 48px. Seven heights, no token.
 
-**The screens have already noticed and patched around it.** Nine files override
-the shared primitives 19 times, and the newer, mobile first screens override
+**The screens have already noticed and patched around it.** Eight files override
+the shared primitives 18 times, and the newer, mobile first screens override
 them towards larger touch targets:
 
 - `.tn-filters .chip { min-height: 44px }` in `SessionRegister.css:335`;
@@ -298,8 +316,8 @@ redesign nearly intact. It has `role="dialog"`, `aria-labelledby` and
 `aria-describedby`, a pure and unit tested Tab trap (`src/lib/modalFocus.ts`),
 focus move on open, focus restore to the opener on close, Escape handling, a
 `focusKey` for dialogs that swap their own body, and a `dismissible` flag that
-freezes every dismissal route while a write is in flight. 39 non-test files
-render it.
+freezes every dismissal route while a write is in flight. 38 non-test files
+render it, 64 times between them.
 
 Three overlays are not it, and each solved the problem differently:
 
@@ -315,7 +333,7 @@ Three overlays are not it, and each solved the problem differently:
 ### 1.9 State families: well covered, weakly differentiated
 
 Coverage is a real strength. Counted in non-test files: 41 `<Loading>`, 36
-`<ErrorNote>`, 33 `<ActionError>`, 31 `<Empty>`, 21 `role="status"`, 18
+`<ErrorNote>`, 33 `<ActionError>`, 30 `<Empty>`, 21 `role="status"`, 18
 `role="alert"` and 12 `aria-live`. States are not an afterthought here.
 
 But `Loading` and `ErrorNote` are visually identical. Both are
@@ -347,10 +365,13 @@ which on `.btn-primary` sits on navy and on `.nav-item.active` sits on navy.
 Three specialised places (`Board.css`, `DrillDiagramEditor.css`, `Tick.css`)
 each invented their own `:focus-visible`.
 
-`prefers-reduced-motion` appears nowhere. The product has 9 hover transforms
-(`translateY(-1px)` on buttons, `-3px` on drill cards, `-2px` on the live round
-buttons), three keyframe animations (`fade`, `pop`, `sheet-up`) and 10 bare
-`transition: .12s` declarations, which is `transition-property: all`.
+`prefers-reduced-motion` appears nowhere. The product has five hover lift rules
+(`translateY(-1px)` on the primary and gold buttons and on a Home row, `-3px` on
+drill cards, `-2px` on the live round buttons), three keyframe animations
+(`fade`, `pop`, `sheet-up`) and 10 property-less `transition` shorthands, which
+mean `transition-property: all`. Five of those are `.12s`; the rest are `.14s`,
+`.15s` and `.25s`. Three further `transform: translateY` declarations are static
+centring rather than motion and are unaffected by any of this.
 
 `prefers-color-scheme` appears nowhere. Dark mode is opt in through the toggle
 and persisted to `localStorage` under `otj_dark`, so a coach whose phone is in
@@ -383,7 +404,27 @@ even if every screen looked better:
 
 ## Part 2. The target visual language
 
-These are decisions. VISUAL-01 implements them; it does not reopen them.
+These are decisions. The waves implement them; they do not reopen them.
+
+**Which wave implements which half.** Part 2 settles two different kinds of
+thing, and conflating them would put VISUAL-01 in an impossible position, since
+some sections here name routes that Part 4 deliberately schedules for VISUAL-02
+or VISUAL-03. The rule is:
+
+- **defining a primitive, token or contract is VISUAL-01.** The type scale, the
+  colour roles and contrast floors, the spacing and radius scales, the surface
+  levels, `Button`, `Input`, `Chip`, `Badge`, `Card`, the `Note` primitive, the
+  `Sheet` primitive, the `PageHeader`, the shared focus treatment, the state
+  primitives and the reduced-motion block. VISUAL-01 also applies them to the
+  shared shell and to its own five acceptance screens in Part 4;
+- **adopting them on a route is that route's wave.** So 2.9's table rules bind
+  Registered Players when VISUAL-02 reaches it, and 2.16's second cue for the
+  live progress segments binds the live view when VISUAL-03 reaches it. Neither
+  is VISUAL-01 work, and neither licenses VISUAL-01 to touch those routes.
+
+Where a section below names a route, read it as the standard that route is held
+to when its wave arrives, not as a VISUAL-01 deliverable. Part 4 is the
+authority on which wave that is.
 
 ### 2.0 Principles
 
@@ -399,7 +440,7 @@ These are decisions. VISUAL-01 implements them; it does not reopen them.
 
 ### 2.1 Typography and type scale
 
-Nine steps replace 24 values. Tokens, not literals.
+Nine steps replace 25 values. Tokens, not literals.
 
 | Token | Size | Role |
 |---|---|---|
@@ -663,9 +704,12 @@ Largely unchanged, which is correct. It works.
 
 **`Modal` is the definition and everything else adopts it.**
 
-- the More sheet, `DiagramViewer` and the Players overflow menu move onto the
-  shared focus behaviour in `src/lib/modalFocus.ts`: focus in on open, Tab
-  trapped, Escape closes, focus restored to the opener;
+- the More sheet and `DiagramViewer` move onto the shared focus behaviour in
+  `src/lib/modalFocus.ts`: focus in on open, Tab trapped, Escape closes, focus
+  restored to the opener. The Players overflow menu deliberately does not, for
+  the reason in the last bullet of this section: it is a menu, not a dialog.
+  What it adopts is the shared Escape handling and focus return, not the Tab
+  trap;
 - a **Sheet** primitive is introduced for the bottom sheet form, sharing
   `Modal`'s focus contract and differing only in placement, radius and entry
   animation. The More sheet becomes its first caller;
@@ -744,7 +788,7 @@ Nothing in the product may be distinguishable by colour alone.
 - add a `prefers-reduced-motion: reduce` block that removes the hover
   transforms, the `pop` and `sheet-up` animations and reduces transitions to
   opacity. It does not exist today;
-- replace the 10 bare `transition: .12s` declarations with explicit properties;
+- replace the 10 property-less `transition` shorthands with explicit properties;
 - motion communicates change: sheet entry, focus and press feedback, newly
   inserted rows. Nothing decorative, no entrance sequences;
 - durations: 120ms for state feedback, 180ms for overlay entry.
@@ -811,7 +855,7 @@ and both shells:
 
 VISUAL-01 is accepted when: the token set is in place, the primitives exist, the
 five screens above are visually checked at all seven widths in both themes, the
-19 per screen primitive overrides are deleted rather than left alongside the new
+18 per screen primitive overrides are deleted rather than left alongside the new
 rules, and the 137 test files stay green.
 
 ### VISUAL-02, stable everyday surfaces

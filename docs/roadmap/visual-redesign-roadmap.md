@@ -58,14 +58,17 @@ VISUAL-01, 02 and 03. Part 5 records seven open product decisions that evidence
 could not settle; none of them blocks VISUAL-01.
 
 The findings that most shape VISUAL-01: there is no type scale (25 distinct font
-sizes, seven of them half-pixel) and no spacing scale (24 distinct values); there
-are no semantic state tokens, so destructive borrows the PDF media colour,
-success borrows the physical corner colour and warning borrows the social corner
-colour; `.theme-dark` flips only the 12 neutral and shadow tokens, so every brand
-and semantic hue is theme-invariant; there are no control primitive components,
-only 350 hand-written class strings across 26 combinations; and the newer mobile-first screens have
-already discovered the right touch-target rules and encoded them locally, as 19
-per-screen overrides of the shared primitives at three different values.
+sizes, seven of them half-pixel) and no spacing scale (31 distinct non-zero
+values); there are no semantic state tokens, so destructive borrows the PDF media
+colour, success borrows the physical corner colour and warning borrows the social
+corner colour; `.theme-dark` flips only the 12 neutral and shadow tokens, so
+every brand and semantic hue is theme-invariant, which puts `--royal` links at
+2.21:1 on the dark card and inherited note text on an unflipped `--gold-soft`
+panel at 1.01:1; there are no control primitive components, only 350
+hand-written class strings across 26 combinations; and the newer mobile-first
+screens have already discovered the right touch-target rules and encoded them
+locally, as 18 per-screen overrides of the shared primitives at three different
+values.
 
 ### VISUAL-01 — Foundation and shell
 
