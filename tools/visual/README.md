@@ -43,4 +43,8 @@ Query string, all optional:
 | `caps` | `coach` (default), `parent`, `viewer` |
 | `theme` | `light` (default), `dark` |
 
-`tools/visual/shoot.mjs` drives Chromium over the matrix and writes PNGs.
+`tools/visual/shoot.mjs` drives Chromium over the matrix and writes PNGs. It
+fails, rather than degrading quietly, when it cannot earn its own result: no
+font cache, a cache that does not actually load, a page that threw, or a
+required interaction whose control has gone. A screenshot that is present,
+plausible and wrong is worse than none.

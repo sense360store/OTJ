@@ -60,8 +60,15 @@ const context = await browser.newContext({ ignoreHTTPSErrors: true, deviceScaleF
 // rather than shooting a hundred and thirty pages in a fallback typeface
 // without noticing.
 const FONTS = path.resolve(fileURLToPath(new URL('../../node_modules/.visual-harness-fonts', import.meta.url)))
-const haveFonts = existsSync(path.join(FONTS, 'manifest.json'))
-const manifest = haveFonts ? JSON.parse(await readFile(path.join(FONTS, 'manifest.json'), 'utf8')) : {}
+// No cache means every font request is aborted and all 136 shots render in a
+// fallback typeface. These screenshots exist to verify a type scale, so that
+// is a failed run rather than a degraded one, and it fails HERE rather than
+// after writing 136 useless PNGs.
+if (!existsSync(path.join(FONTS, 'manifest.json'))) {
+  console.log('NO FONT CACHE: run `node tools/visual/fetch-fonts.mjs` first. These shots verify a type scale and cannot do that in a fallback face.')
+  process.exit(1)
+}
+const manifest = JSON.parse(await readFile(path.join(FONTS, 'manifest.json'), 'utf8'))
 // A predicate rather than a glob: a glob treats the ? that begins the css2
 // query string as a single character wildcard, and the pattern silently
 // matches nothing.
@@ -72,7 +79,7 @@ await context.route(isFont, async (route) => {
   const body = await readFile(path.join(FONTS, file))
   await route.fulfill({ body, contentType: file.endsWith('.css') ? 'text/css' : 'font/woff2' })
 })
-console.log(haveFonts ? 'serving the local font cache' : 'NO FONT CACHE: shots use the fallback stack, run tools/visual/fetch-fonts.mjs')
+console.log('serving the local font cache')
 
 let failures = 0
 // Serving a cache is not the same as rendering in the right typeface: a stale
@@ -82,7 +89,7 @@ let failures = 0
 // fails rather than shipping a hundred and thirty six shots in the wrong face.
 let fontsChecked = false
 async function verifyFonts(page) {
-  if (fontsChecked || !haveFonts) return
+  if (fontsChecked) return
   fontsChecked = true
   const loaded = await page.evaluate(() =>
     [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family),
@@ -108,8 +115,16 @@ for (const theme of ['light', 'dark']) {
     await verifyFonts(page)
     await page.waitForTimeout(250)
     if (s.open === 'more') {
+      // These entries claim to show the OPEN sheet. If the More button has
+      // gone, skipping the click quietly would file an ordinary Home
+      // screenshot under a `more` name, which is the worst kind of evidence:
+      // present, plausible and wrong. The matrix only asks for this with the
+      // coach capability set, where the button must exist.
       const more = page.getByRole('button', { name: 'More', exact: true })
-      if (await more.count()) {
+      if ((await more.count()) === 0) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: no More button, so the sheet was never opened`)
+      } else {
         await more.first().click()
         await page.waitForTimeout(400)
       }
