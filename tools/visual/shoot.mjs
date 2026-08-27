@@ -111,3 +111,8 @@ for (const theme of ['light', 'dark']) {
 await context.close()
 await browser.close()
 console.log(`${SHOTS.length * 2} shots written to ${OUT}/, ${failures} with page errors`)
+// A crashed page produces a screenshot of a blank or half rendered surface,
+// which is worse than no screenshot: it looks like evidence. Fail the run so a
+// chained verification cannot accept it on the strength of a log line nobody
+// read, the same way checks.mjs fails on a failed check.
+if (failures > 0) process.exitCode = 1

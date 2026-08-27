@@ -582,6 +582,9 @@ summary:focus-visible,
 .thumb-pitch::before { content: ""; position: absolute; left: 50%; top: 14%; bottom: 14%; width: 2px; background: rgba(255,255,255,.3); }
 .thumb-diagram { background: repeating-linear-gradient(45deg, #eef1f7 0 11px, #e6eaf3 11px 22px); }
 .thumb-pdf { background: repeating-linear-gradient(45deg, #fdeaea 0 11px, #f9dede 11px 22px); }
+/* The PDF placeholder's own glyph. Fixed, like the stripe it sits on:
+   5.15:1 on the darker band and 5.64:1 on the lighter, in either theme. */
+.thumb-glyph { width: 34px; height: 34px; color: #b3261e; }
 .thumb-img { background: repeating-linear-gradient(45deg, #e9f5ee 0 11px, #ddefe4 11px 22px); }
 /* At the 12px reading floor this label is wide enough to wrap into the
    placeholder text behind it on a narrow card, so it is held to one line and

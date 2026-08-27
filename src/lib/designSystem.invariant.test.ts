@@ -433,6 +433,37 @@ describe('an icon only button always has an accessible name', () => {
   })
 })
 
+describe('a fixed ground carries a fixed foreground', () => {
+  // The media thumbnail placeholders are painted with hardcoded light
+  // stripes that do NOT flip with the theme, so anything drawn on them must
+  // not flip either. This class of defect shipped twice in this wave and was
+  // caught twice by looking rather than by reading: the placeholder label
+  // demoted to --slate went from 3.10:1 to 1.91:1 in dark, and the PDF glyph
+  // on --m-pdf at 60% opacity measured 1.39:1 there (1.81:1 in light, so it
+  // was already poor). Both take fixed colours now.
+  const FIXED_ON_FIXED = ['.thumb-empty-title', '.thumb-empty-hint', '.thumb-glyph', '.thumb-label']
+
+  it('uses no theme token for text on a fixed placeholder', () => {
+    const offenders: string[] = []
+    for (const sel of FIXED_ON_FIXED) {
+      for (const m of styles.matchAll(new RegExp(`\\${sel}[^{]*\\{([^}]*)\\}`, 'g'))) {
+        const colour = m[1].match(/(?<![-a-z])color: *([^;]+);/)
+        if (colour && colour[1].includes('var(')) offenders.push(`${sel}: ${colour[1].trim()}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps the placeholder glyph off the media token entirely', () => {
+    // It is the only type cue a caller passing showBadge={false} gets, so it
+    // is not allowed to inherit the classification hue that moves with the
+    // theme.
+    const ui = read(join(srcDir, 'components/ui.tsx'))
+    expect(ui).toContain('className="thumb-glyph"')
+    expect(ui).not.toMatch(/Icon\.fileText style=\{\{[^}]*--m-pdf/)
+  })
+})
+
 describe('a gold fill is never restated with a different label', () => {
   // The shape Codex found on the sidebar badge: the base rule paired --gold
   // with --gold-fg, and a more-specific contextual rule restated the pair as

@@ -169,7 +169,13 @@ export function MediaThumb({
         </div>
       )}
       {!isVideo && media.kind === 'pdf' && !hasReal && (
-        <Icon.fileText style={{ width: 34, height: 34, color: 'var(--m-pdf)', opacity: 0.6 }} />
+        // The placeholder art under this glyph is a fixed light stripe in
+        // both themes, so the glyph takes a fixed colour from .thumb-glyph
+        // rather than the media token: at 60% opacity over that pink it
+        // measured 1.81:1 in light and 1.39:1 once --m-pdf lightened for
+        // dark. For a caller passing showBadge={false} it is the only cue
+        // that the file is a PDF.
+        <Icon.fileText className="thumb-glyph" />
       )}
       {showBadge && (
         <span className="media-badge" style={{ background: meta.color }}>
