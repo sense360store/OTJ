@@ -106,6 +106,16 @@ export function BulkDeletePlayersModal({
     void submit({ playerIds, expectedCount: count })
   }
 
+  // Retry resends the identical ids, so the failure report withholds it from
+  // both terminal refusals: an indeterminate outcome, where retrying would
+  // confirm a second run against a state the admin has not re-read, and a
+  // stale selection, where the server has already counted fewer live players
+  // than these ids name and must refuse the same set again while the copy
+  // says to close and reselect. The run does not invalidate the preview
+  // query, so confirmed alone would stay armed against a selection the
+  // server has refused.
+  const retriable = confirmed && !isIndeterminateBulkOutcome(error) && !isStaleBulkSelection(error)
+
   return (
     <Modal
       title={`Delete ${count} ${count === 1 ? 'player' : 'players'} permanently`}
@@ -217,7 +227,7 @@ export function BulkDeletePlayersModal({
 
       {failed && (
         <ActionError
-          onRetry={confirmed && !isIndeterminateBulkOutcome(error) ? run : undefined}
+          onRetry={retriable ? run : undefined}
           style={{ marginTop: 10 }}
         >
           {isIndeterminateBulkOutcome(error)

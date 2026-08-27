@@ -213,8 +213,22 @@ describe('the confirmation gate has one implementation', () => {
     expect(queries).toMatch(/whether it completed is unknown/)
     const modal = code(read('components/BulkDeletePlayersModal.tsx'))
     expect(modal).toContain('isIndeterminateBulkOutcome(error)')
-    expect(modal).toMatch(/onRetry=\{confirmed && !isIndeterminateBulkOutcome\(error\) \? run : undefined\}/)
     expect(modal).toMatch(/outcome is unknown/)
+  })
+
+  it('neither terminal refusal offers Retry: unknown outcome and stale selection both withhold it', () => {
+    // Retry resends the identical ids. After an indeterminate outcome that
+    // risks confirming a second run against a state nobody re-read; after a
+    // stale selection refusal the server has already counted fewer live
+    // players than the ids name, so the same set is refused again while the
+    // copy tells the admin to close and reselect. The run's onSettled does
+    // not invalidate the preview query, so nothing else would disarm the
+    // button: the retry gate itself must name both recognisers.
+    const modal = code(read('components/BulkDeletePlayersModal.tsx'))
+    expect(modal).toMatch(
+      /retriable = confirmed && !isIndeterminateBulkOutcome\(error\) && !isStaleBulkSelection\(error\)/,
+    )
+    expect(modal).toMatch(/onRetry=\{retriable \? run : undefined\}/)
   })
 })
 
