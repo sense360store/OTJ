@@ -87,7 +87,6 @@ function WeekRow({
             className="icon-btn"
             style={{ width: 34, height: 34, flex: '0 0 auto' }}
             aria-label={`Edit week ${week} template`}
-            title="Edit template"
             onClick={() => onEditTemplate(template)}
           >
             <Icon.edit style={{ width: 15, height: 15 }} />

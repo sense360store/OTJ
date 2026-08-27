@@ -58,7 +58,7 @@ export function CornerTag({ corner, small }: { corner: CornerKey; small?: boolea
   return (
     <span
       className={'tag corner-' + cornerClass[corner]}
-      style={small ? { padding: '2px 7px', fontSize: 11 } : undefined}
+      style={small ? { padding: 'var(--space-2) var(--space-8)', fontSize: 'var(--text-xs)' } : undefined}
     >
       <span className="tag-dot" style={{ background: c.color }}></span>
       {c.label}
@@ -76,7 +76,7 @@ export function TopicTags({ tags, small }: { tags: string[]; small?: boolean }) 
   return (
     <span className="row wrap" style={{ gap: 5 }}>
       {tags.map((t) => (
-        <span key={t} className="pill" style={small ? { padding: '2px 7px', fontSize: 11 } : undefined}>
+        <span key={t} className="pill" style={small ? { padding: 'var(--space-2) var(--space-8)', fontSize: 'var(--text-xs)' } : undefined}>
           #{t}
         </span>
       ))}
@@ -114,7 +114,7 @@ export function MediaThumb({
   if (!media) {
     return (
       <div className="thumb thumb-diagram">
-        <span style={{ color: 'var(--slate-2)', fontSize: 12, fontWeight: 700 }}>No media</span>
+        <span style={{ color: 'var(--slate)', fontSize: 'var(--text-xs)', fontWeight: 700 }}>No media</span>
         <span className="thumb-label">add a clip or diagram</span>
       </div>
     )
@@ -276,7 +276,7 @@ export function ListInput({
             {value.map((v, i) => (
               <div key={i} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
                 <span className="cp-num">{i + 1}</span>
-                <span style={{ flex: 1, fontSize: 14, lineHeight: 1.45 }}>{v}</span>
+                <span style={{ flex: 1, fontSize: 'var(--text-base)', lineHeight: 1.45 }}>{v}</span>
                 <button
                   className="icon-btn"
                   style={{ width: 26, height: 26 }}
@@ -340,7 +340,7 @@ export function MediaAttribution({ media, style }: { media?: MediaItem | null; s
   if (!media?.sourceLabel) return null
   const noun = media.type === 'video' || media.type === 'youtube' ? 'Video' : 'Image'
   const line = `${noun}: ${media.sourceLabel}`
-  const base: CSSProperties = { fontSize: 12, fontWeight: 600, ...style }
+  const base: CSSProperties = { fontSize: 'var(--text-xs)', fontWeight: 600, ...style }
   if (media.sourceUrl) {
     return (
       <a className="muted" href={media.sourceUrl} target="_blank" rel="noreferrer" style={base}>
@@ -380,7 +380,7 @@ export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: 
         <p
           className="muted"
           style={{
-            fontSize: 13,
+            fontSize: 'var(--text-sm)',
             lineHeight: 1.45,
             margin: 0,
             display: '-webkit-box',
@@ -695,12 +695,12 @@ export function ShareControlView({
         {label}
       </button>
       {note && (
-        <span className="muted" style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+        <span className="muted" style={{ fontSize: 'var(--text-xs)', lineHeight: 1.45 }}>
           {note}
         </span>
       )}
       {feedback.role === 'status' && (
-        <span role="status" style={{ fontSize: 13, fontWeight: 700, color: 'var(--success)' }}>
+        <span role="status" style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--success)' }}>
           {feedback.message}
         </span>
       )}
@@ -818,8 +818,8 @@ export function UploadProgress({
       style={{ border: '1.5px solid var(--line)', borderRadius: 12, padding: 12, display: 'grid', gap: 8 }}
     >
       <div className="row" style={{ gap: 10, justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <span style={{ fontWeight: 700, fontSize: 13.5, overflowWrap: 'anywhere' }}>{label}</span>
-        <span className="mono muted" style={{ fontSize: 12, flex: '0 0 auto' }}>
+        <span style={{ fontWeight: 700, fontSize: 'var(--text-sm)', overflowWrap: 'anywhere' }}>{label}</span>
+        <span className="mono muted" style={{ fontSize: 'var(--text-xs)', flex: '0 0 auto' }}>
           {formatBytes(total)}
         </span>
       </div>
@@ -840,15 +840,15 @@ export function UploadProgress({
           }}
         />
       </div>
-      <div className="muted" style={{ fontSize: 12.5 }}>
+      <div className="muted" style={{ fontSize: 'var(--text-xs)' }}>
         {status}
       </div>
       {/* The readout row holds a line of height even when empty (the Starting
           state) so the block does not jump as the numbers appear and update. */}
-      <div className="mono muted" style={{ fontSize: 12, minHeight: 16, overflowWrap: 'anywhere' }}>
+      <div className="mono muted" style={{ fontSize: 'var(--text-xs)', minHeight: 16, overflowWrap: 'anywhere' }}>
         {stats}
       </div>
-      <div className="muted" style={{ fontSize: 12 }}>
+      <div className="muted" style={{ fontSize: 'var(--text-xs)' }}>
         Large files can take a little while. Keep this open until it finishes.
       </div>
     </div>

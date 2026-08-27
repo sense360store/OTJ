@@ -54,7 +54,7 @@ export function MatchBadge() {
   return (
     <span
       className="tag"
-      style={{ background: 'color-mix(in srgb, var(--m-video) 14%, transparent)', color: 'var(--m-video)' }}
+      style={{ background: 'var(--info-surface)', color: 'var(--info)' }}
     >
       Match
     </span>

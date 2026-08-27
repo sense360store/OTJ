@@ -128,7 +128,7 @@
 /* Element chrome, inside the SVG. */
 .dde-hit {
   cursor: grab;
-  outline: none;
+  outline: none; /* replaced by the :focus-visible stroke below */
 }
 .dde-hit:active {
   cursor: grabbing;
@@ -143,9 +143,13 @@
   stroke-width: 4;
   stroke-dasharray: 10 7;
 }
+/* The shared page ring cannot work on an SVG hit area: it would ring the
+   element's bounding box rather than the token on the pitch. 2.15 allows a
+   bespoke treatment here, and the replacement is drawn on the shape itself
+   by the rule below, in the shared --focus colour. */
 .dde-hit:focus-visible + .dde-handle .dde-handle-dot,
 .dde-hit:focus-visible {
-  outline: none;
+  outline: none; /* replaced by the stroke below */
 }
 .dde-el .dde-hit:focus-visible ~ * {
   /* nothing: the focus ring is drawn on the element below */
@@ -153,7 +157,7 @@
 .dde-hit:focus-visible circle,
 .dde-hit:focus-visible rect,
 .dde-hit:focus-visible line {
-  stroke: var(--royal, #1f43d6);
+  stroke: var(--focus, #1f43d6);
   stroke-width: 4;
   stroke-dasharray: 6 5;
 }
