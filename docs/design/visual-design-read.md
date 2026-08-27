@@ -34,8 +34,10 @@ grep -rn "focus-visible\|prefers-reduced-motion\|prefers-color-scheme" src --inc
 Counts of JSX occurrences exclude the test files, because the figures are claims
 about the product's styling rather than about its test fixtures. That exclusion
 matters most for the ARIA counts, where the tests assert on the same attributes:
-`role="alert"` appears 18 times in the product and 32 times if the tests are
-counted with it. CSS counts cover all 14 stylesheets.
+`role="alert"` appears 31 times across the `.tsx` files, 18 in the product and 13
+in the tests. A 32nd occurrence sits inside a comment in `src/lib/share.ts` and
+is not counted, because a comment describing a rule is not an instance of it.
+CSS counts cover all 14 stylesheets.
 
 Contrast ratios were computed from the token hex values with the WCAG relative
 luminance formula, in both themes, against the surface each token actually sits
