@@ -956,25 +956,42 @@ including the `danger` and `on-dark` button variants and the `Note` and `Sheet`
 primitives, each of the five surfaces above is visually checked in both themes
 **at every width where it exists**, and the 137 test files stay green.
 
-**Five primitives have no instance on these five surfaces, and their acceptance
-is deferred rather than faked.** VISUAL-01 defines every primitive in Part 2;
-it can only *accept* the ones the product actually shows on a surface this wave
-touches. Building a demonstration screen for the rest would be a second
-implementation of the thing Part 2 exists to prevent, so each is accepted in the
-wave that owns its first real instance:
+**Two primitives have no instance these five surfaces can reach, and their
+acceptance is deferred rather than faked.** VISUAL-01 defines every primitive in
+Part 2; it can only *accept* the ones the product actually shows somewhere this
+wave touches. Building a demonstration screen for the rest would be a second
+implementation of the thing Part 2 exists to prevent.
 
-| Primitive | No instance on the five because | Accepted in |
+| Primitive | Unreachable from the five because | Accepted in |
 |---|---|---|
 | table and its card equivalent (2.9) | the product's only `<table>` is Registered Players | VISUAL-02 |
-| badge (2.7) | the only status badges are on Registered Players and the season renewal | VISUAL-02 |
-| note (2.4) | the archived banner, the import note and the sharing notices all sit on later surfaces | VISUAL-02 |
-| textarea (2.6) | none of the five has one; the first are Feedback and the drill and programme forms | VISUAL-02 for Feedback, VISUAL-03 for the forms |
-| toggle and checkbox (2.7) | the only `.check-row` is in the player form | VISUAL-02 |
+| badge (2.7) | the only status badges are on Registered Players and the season renewal, neither reachable from these five | VISUAL-02 |
 
-This is a real limit on what VISUAL-01 can claim, and it is why the wave's
-acceptance says the primitives *exist* rather than that they are all proved. A
-primitive that turns out to be wrong when its wave reaches it is a VISUAL-01
-defect to fix, not a licence for that wave to write its own.
+**Reachable counts, including what a surface opens and what state it can enter.**
+Four primitives look absent from a file-level reading of the five and are not:
+
+- **textarea** (2.6). Home's quick action opens `DrillFormModal`
+  (`Home.tsx:602`), whose Summary and Setup notes fields are `<textarea>`. It is
+  in scope for this wave;
+- **toggle** (2.7). The shell carries two, the desktop and mobile theme
+  switches at `TopBar.tsx:38` and `:60`. They are the exact shape 2.7 forbids,
+  an icon button that changes mode with no label and no state exposed, so they
+  are not merely available to check: **they are VISUAL-01's own work**, on
+  VISUAL-01's own shell;
+- **note** (2.4) and **success** (2.14). Login renders `.login-note` at
+  `Login.tsx:79` for "Check your email for a sign-in link" and the reset
+  equivalent, which is an informational note and the product's most reachable
+  success state at once.
+
+The last of those needs a carve-out, because Login's state matrix is otherwise
+deferred to VISUAL-02: **VISUAL-01 checks the `info` state of Login**, and only
+that one, because it is what proves the note and the success treatment. The
+remaining Login states stay with VISUAL-02.
+
+The wave's acceptance says the primitives *exist* rather than that all are
+proved, and the deferral above is what that wording is protecting. A primitive
+that turns out to be wrong when its wave reaches it is a VISUAL-01 defect to
+fix, not a licence for that wave to write its own.
 
 **Login is checked in VISUAL-01 and adopted in VISUAL-02**, and both roadmaps
 list it under VISUAL-02's stable surface group, which is correct and is not a
@@ -982,8 +999,9 @@ conflict once the two verbs are separated. VISUAL-01 checks it because it is the
 only surface that exercises the new primitives with no shell around them, so a
 token or primitive that only works inside the content frame fails here first.
 VISUAL-02 owns adopting it in full: the account screen beside it, and the state
-matrix (invalid credentials, magic link sent, expired link, set password,
-permission-limited) that VISUAL-01 does not attempt. The same split applies to
+matrix (invalid credentials, expired link, set password, permission-limited)
+that VISUAL-01 does not attempt, with the one exception carved out above, the
+`info` state that proves the note and success treatments. The same split applies to
 Home and Sessions, which Part 4 lists in both waves for the same reason.
 
 Widths per surface, since one of the five is not present at every one: Home,
@@ -1048,11 +1066,10 @@ a reason to keep the override.
 Registered Players is the primary acceptance screen for this wave. It is the
 only table, it holds the only irreversible destructive flow, it has a full
 mobile card equivalent, and it is where the colour role and contrast decisions
-in 2.2 are most visibly tested. **It also carries four of VISUAL-01's five
-deferred primitive acceptances**: the table and its card equivalent (2.9), the
-badge (2.7), the note (2.4) and the toggle and checkbox (2.7) are all defined in
-VISUAL-01 and proved here, because this is the first wave whose surfaces show
-them. Feedback carries the fifth, the textarea.
+in 2.2 are most visibly tested. **It also carries both of VISUAL-01's deferred
+primitive acceptances**: the table and its card equivalent (2.9) and the badge
+(2.7) are defined in VISUAL-01 and proved here, because this is the first wave
+whose surfaces show them.
 
 ### VISUAL-03, feature area waves
 
