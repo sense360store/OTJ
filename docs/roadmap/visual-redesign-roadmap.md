@@ -49,7 +49,7 @@ The redesign does **not** wait for DRILL-02b, the later coaching migrations, pub
 
 **Acceptance.** The document identifies representative screens for each surface family and makes enough decisions that VISUAL-01 is implementation rather than another design discovery round.
 
-**Delivered.** `docs/design/visual-design-read.md`, captured against `main` at
+**Delivered** in #210 as `docs/design/visual-design-read.md`, captured against `main` at
 `434f67f`. Part 1 is the current-state audit, counted from source rather than
 estimated. Part 2 settles every item in the Scope list above as a decision
 VISUAL-01 implements rather than reopens. Part 3 records what stays recognisably
@@ -63,7 +63,7 @@ are no semantic state tokens, so destructive borrows the PDF media colour,
 success borrows the physical corner colour and warning borrows the social corner
 colour; `.theme-dark` flips only the 12 neutral and shadow tokens, so every brand
 and semantic hue is theme-invariant; there are no control primitive components,
-only 339 hand-written class strings; and the newer mobile-first screens have
+only 350 hand-written class strings across 26 combinations; and the newer mobile-first screens have
 already discovered the right touch-target rules and encoded them locally, as 19
 per-screen overrides of the shared primitives at three different values.
 
@@ -110,7 +110,7 @@ Use the foundation for later waves rather than freezing all feature development 
 
 - Planner and week-plan authoring alongside the COACH-11/12/13 authoring work;
 - Training Day and richer session setup alongside COACH-5/6/7/8;
-- Drill Maker once #196 is closed and when further authoring changes are actually scheduled;
+- Drill Maker, now that #196 has merged, when further authoring changes are actually scheduled;
 - public/share surfaces after DRILL-02b settles their payload and boundary;
 - Live surfaces coordinated with LIVE-01/02 and accessibility requirements.
 
