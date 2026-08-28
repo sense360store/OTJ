@@ -441,6 +441,40 @@ const open = async (screen, width, opts = {}) => {
     await page.close()
   }
 
+  // The selection bar sticks so the count and the destructive button stay
+  // reachable while a coach scrolls a long register. That is the whole point
+  // of it sticking, and it is a claim about what is on top: the bar is
+  // z-index 20 and the shell's header is 30, so an offset that only cleared
+  // the page edge left every control in it drawn underneath the header and
+  // unclickable. Reachability is read from the point each control is drawn
+  // at, in both shells, because the two headers are different heights.
+  for (const width of [1280, 390]) {
+    const page = await open('players', width, { state: 'overlimit' })
+    await page.getByRole('button', { name: 'Select players', exact: true }).click()
+    await page.waitForTimeout(200)
+    await page.evaluate(() => window.scrollTo(0, 1500))
+    await page.waitForTimeout(300)
+    const r = await page.evaluate(() => {
+      const bar = document.querySelector('.bulk-bar')
+      if (!bar) return null
+      const b = bar.getBoundingClientRect()
+      const head = [...document.querySelectorAll('.topbar, .mobile-topbar')].find((e) => e.getBoundingClientRect().height > 0)
+      const h = head ? head.getBoundingClientRect() : null
+      const controls = [...bar.querySelectorAll('button')].map((el) => {
+        const g = el.getBoundingClientRect()
+        const hit = document.elementFromPoint(g.left + g.width / 2, g.top + g.height / 2)
+        return { label: el.textContent.trim().slice(0, 16), reachable: !!hit && (el.contains(hit) || el === hit) }
+      })
+      return { stuck: Math.round(b.top) < 400, clearsHeader: !h || b.top >= h.bottom, unreachable: controls.filter((c) => !c.reachable).map((c) => c.label) }
+    })
+    check(
+      `the selection bar stays reachable below the header at ${width}`,
+      !!r && r.stuck && r.clearsHeader && r.unreachable.length === 0,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
   // A read only member sees the register and no write affordance at all.
   {
     const page = await open('players', 1280, { caps: 'viewer' })

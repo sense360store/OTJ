@@ -145,6 +145,11 @@
   --radius-lg: 22px;     /* dialogs, sheets, hero */
   --radius-pill: 999px;  /* chips, status pills, avatars */
 
+  /* The sticky header's height, declared once because anything that sticks
+     BELOW it has to clear it. Both shells set their own min-height from this
+     and the phone value is redefined at the breakpoint that swaps them. */
+  --topbar-h: 60px;
+
   /* ---- Control sizing ----------------------------------------------
      One height per size, and one minimum hit area. The visible box may be
      smaller than the hit area, which is what lets a chip stay 34px tall
@@ -328,7 +333,7 @@ h1,h2,h3,h4 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; c
   position: sticky; top: 0; z-index: 30; background: color-mix(in srgb, var(--bg) 86%, transparent);
   backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
   display: flex; align-items: center; gap: var(--space-12); padding: var(--space-8) var(--space-24);
-  min-height: 60px;
+  min-height: var(--topbar-h);
 }
 /* The icon button is the square form of the Button primitive: width equals
    height, and every instance carries an aria-label, because an icon with no
@@ -928,9 +933,10 @@ summary:focus-visible,
 @media (max-width: 900px) {
   .sidebar { display: none; }
   .main { padding-bottom: var(--space-48); }
+  :root { --topbar-h: 56px; }
   .mobile-topbar { display: flex; align-items: center; gap: var(--space-8); padding: var(--space-8) var(--space-16);
     background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30;
-    min-height: 56px; }
+    min-height: var(--topbar-h); }
   .mobile-topbar .crest, .mobile-topbar .crest-fallback { width: 34px; height: 34px; flex-basis: 34px; }
   .mobile-topbar b { font-size: var(--text-md); font-weight: 800; }
   .topbar { display: none; }
@@ -1028,10 +1034,12 @@ table.reg-table td.muted-cell { color: var(--slate); }
 .player-card .pc-shirt { font-weight: 800; min-width: 26px; text-align: center; color: var(--slate); }
 /* A withdrawn card is muted the way a withdrawn table row is: by taking
    --slate, not by fading the whole card. opacity multiplies down the tree and
-   applies to the text itself, so .72 over --slate measured 2.87:1 on the page
-   ground for the name, the meta, the shirt number and the dates. The table
-   has always done it this way (tr.withdrawn td above), and the Withdrawn
-   badge is the non colour cue in both layouts. */
+   applies to the text itself, so the three runs already painted --slate (the
+   meta, the shirt number and the register dates) measured 2.87:1 on the page
+   ground. The name is the one that CHANGES here: it inherited --ink and was
+   faded, and it takes --slate now, which is what the withdrawn table row has
+   always done (tr.withdrawn td above). The Withdrawn badge is the non colour
+   cue in both layouts. */
 .player-card.withdrawn { color: var(--slate); }
 
 /* Overflow menu, reused by the desktop row and the mobile card. */
@@ -1070,7 +1078,13 @@ table.reg-table td.muted-cell { color: var(--slate); }
    while scrolling a long register, and wraps rather than scrolls sideways. */
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); padding: var(--space-8) var(--space-12); margin-bottom: var(--space-4);
   border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); box-shadow: var(--shadow-sm);
-  position: sticky; top: var(--space-8); z-index: 20; }
+  /* Sticks below the sticky header, not underneath it. The header is z-index
+     30 and this bar is 20, so an offset that only cleared the page edge left
+     the bar drawn at the top of the viewport with the header painted over it:
+     every control in it, the destructive one included, was unreachable while
+     a coach scrolled a long register. The offset is the header's own height
+     plus its border plus one step of the scale. */
+  position: sticky; top: calc(var(--topbar-h) + 1px + var(--space-8)); z-index: 20; }
 .bulk-bar-count { font-weight: 800; font-size: var(--text-base); }
 .bulk-bar-spacer { flex: 1 1 auto; }
 .bulk-bar-note { color: var(--slate); font-size: var(--text-sm); margin: 0 0 var(--space-12); }
@@ -1080,10 +1094,12 @@ table.reg-table td.muted-cell { color: var(--slate); }
    any more: a column narrower than the target would clip it. */
 table.reg-table th.col-select, table.reg-table td.col-select { width: 52px; padding-right: 0; }
 table.reg-table td.col-select input, .player-card .pc-select input { width: 20px; height: 20px; accent-color: var(--royal); }
-/* A 44px target around the box, in both layouts. On the card it is a label
-   pulled into the card's own padding so the row height does not grow; in the
-   table it is a label filling the cell. The negative margins are the card's
-   padding, restated, so the target reaches the card edge. */
+/* A 44px target around the box, in both layouts, each pulled back into the
+   padding around it so the row it sits in does not grow taller. The VERTICAL
+   margins cancel that padding exactly: -12px against the card's 12px, -8px
+   against the cell's 8px. The card's LEFT margin is -4px rather than the -12px
+   that would reach the card edge, which is PLAYERS-01's shipped inset and is
+   left where it is; a full -12px puts the checkbox on the border. */
 .player-card .pc-select, table.reg-table td.col-select .cell-select {
   display: flex; align-items: center; justify-content: center;
   min-width: var(--hit); min-height: var(--hit); cursor: pointer; }
