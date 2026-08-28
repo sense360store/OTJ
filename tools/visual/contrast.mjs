@@ -6,8 +6,8 @@
 // This exists because the invariant test measures the token pairings it
 // names, and a screenshot shows a colour without judging it. Neither can
 // see a pairing nobody thought to write down: this found five text runs
-// under their threshold that forty four invariant tests and a hundred and
-// thirty six screenshots had all passed.
+// under their threshold that forty four invariant tests and the whole
+// screenshot matrix had all passed.
 //
 // Two things its first version got wrong, both of which made it report
 // failures that were not there. It measured mid transition, so a chip in
@@ -27,8 +27,10 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { assertServingCurrentBuild } from './fresh.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
+await assertServingCurrentBuild(BASE)
 const FONTS = path.resolve(fileURLToPath(new URL('../../node_modules/.visual-harness-fonts', import.meta.url)))
 if (!existsSync(path.join(FONTS, 'manifest.json'))) {
   console.log('NO FONT CACHE: run node tools/visual/fetch-fonts.mjs first.')
@@ -141,18 +143,36 @@ const SWEEP = `() => {
   return rows
 }`
 
-const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives']
+const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players']
+// Which capability variants a screen renders, and which of its own states are
+// worth measuring. Registered players carries the destructive dialog, whose
+// confirm button label is the pairing VISUAL-00 measured at 3.34:1, so it is
+// opened here rather than left to a screenshot.
+const CAPS_FOR = (screen) =>
+  screen === 'home' || screen === 'sessions' || screen === 'players' ? ['coach', 'viewer', 'parent'] : ['na']
+// `allactions` opens the register with the Spond mapped team selected, which
+// is the only way every header action is offered; the run below then opens the
+// More actions popup, so its labels are measured on the ground they sit on
+// rather than assumed from the token pairing.
+const STATES_FOR = (screen) =>
+  screen === 'players' ? ['default', 'error', 'archived', 'empty', 'withdrawn', 'allactions'] : ['default']
+
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
 
 for (const screen of SCREENS) {
   for (const theme of ['light', 'dark']) {
     for (const w of [390, 1280]) {
-      for (const caps of screen === 'home' || screen === 'sessions' ? ['coach', 'viewer', 'parent'] : ['na']) {
+      for (const caps of CAPS_FOR(screen)) {
+       for (const state of STATES_FOR(screen)) {
+        // The states only vary what a coach sees; a member with no write and
+        // a member with no access render the same thing in every one of them.
+        if (state !== 'default' && caps !== 'coach') continue
         const page = await context.newPage()
         await page.setViewportSize({ width: w, height: 1400 })
         const q = new URLSearchParams({ screen, theme })
         if (caps !== 'na') q.set('caps', caps)
+        if (state !== 'default') q.set('state', state)
         await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
         await page.evaluate(() => document.fonts.ready)
         await page.waitForTimeout(400)
@@ -164,16 +184,63 @@ for (const screen of SCREENS) {
           await page.getByRole('button', { name: /magic link/i }).first().click().catch(() => {})
           await page.waitForTimeout(300)
         }
+        // The header's overflow. Named exactly: every row's trigger reads
+        // "More actions for <child>", so a loose name resolves to a row.
+        if (screen === 'players' && state === 'allactions') {
+          const more = page.getByRole('button', { name: 'More actions', exact: true })
+          if (await more.count()) {
+            await more.first().click()
+            await page.waitForTimeout(250)
+          }
+        }
+        // The selection bar and the destructive dialog, driven through the
+        // real controls, so their labels are measured on the fills they
+        // actually sit on rather than assumed from a token pairing.
+        if (screen === 'players' && state === 'default' && caps === 'coach') {
+          const select = page.getByRole('button', { name: 'Select players', exact: true })
+          if (await select.count()) {
+            await select.click()
+            await page.waitForTimeout(200)
+            const all = page.getByRole('button', { name: /^Select all \d+ shown$/ })
+            if (await all.count()) {
+              await all.click()
+              await page.waitForTimeout(150)
+              const del = page.getByRole('button', { name: /^Delete \d+ players?$/ })
+              if (await del.count()) {
+                await del.click()
+                await page.waitForTimeout(300)
+                // Type the phrase so the confirm button is measured ARMED:
+                // a disabled control is exempt from 1.4.3 and would be
+                // recorded rather than judged, which would quietly skip the
+                // one label this screen exists to check.
+                const field = page.getByLabel(/^To confirm, type/)
+                if (await field.count()) {
+                  const title = await page.locator('.modal h3, .modal h2').first().textContent().catch(() => '')
+                  const n = (title || '').match(/\d+/)
+                  if (n) await field.fill(`DELETE ${n[0]} PLAYERS`)
+                  await page.waitForTimeout(200)
+                }
+              }
+            }
+          }
+        }
         const rows = await page.evaluate('(' + SWEEP + ')()')
         for (const r of rows) {
           if (r.ratio >= r.need) continue
-          const key = `${r.sel}|${r.fg}|${r.bg}|${theme}`
+          // Size and weight are part of the key, because label() emits a
+          // bare tag for an unclassed element and two different text runs
+          // that share a tag and a computed colour would otherwise collapse
+          // into one line. That is not only a reporting nicety: it is how a
+          // card's new date line hid behind the meta line above it, both
+          // rendering as `span` in the same colour at different sizes.
+          const key = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
           if (seen.has(key)) continue
           seen.add(key)
-          const row = { ...r, where: `${screen}/${caps}/${theme}/${w}w` }
+          const row = { ...r, where: `${screen}/${caps}/${state}/${theme}/${w}w` }
           ;(r.disabled ? exempt : r.frozen ? frozen : failed).push(row)
         }
         await page.close()
+       }
       }
     }
   }

@@ -271,6 +271,148 @@ export function rowActionKeys(
   return keys
 }
 
+// ---- the page header's action hierarchy -----------------------------------
+// The sibling of rowActionKeys, one level up: which of the header's actions
+// stay in the action slot and which ride in the More actions overflow. Kept
+// pure for the same reason, and shaped like components/nav.ts's bottomItemsFor
+// and moreItemsFor, which solve exactly this problem for the phone navigation.
+//
+// WHY AN OVERFLOW AT ALL, AND AT EVERY WIDTH. Measured in a real browser with
+// the full capability set, the eight actions the slot held wrapped to five rows
+// at 360px and a 371px tall header, four at 390px and 430px, and never fewer
+// than two at any desktop width; 901px, where the 264px sidebar returns and the
+// content drops to 589px, was three rows and worse than 900px. The row that
+// fits on one line does not exist at any width this product is used at, so the
+// hierarchy is one rule rather than a breakpoint: there is no width where the
+// old layout was the clean one to preserve, and a rule that changed at a
+// breakpoint would need a second implementation and would still leave 901px
+// as the worst case on the page.
+//
+// Design Read 2.10: "one primary action per page, at most. Everything else is
+// ghost, quiet, or in an overflow menu."
+export type PlayerHeaderAction =
+  | 'add'
+  | 'select'
+  | 'spond'
+  | 'links'
+  | 'renew'
+  | 'import'
+  | 'export'
+  | 'template'
+
+// One flag per action, exactly the gates the page has already derived. Written
+// as a total record rather than a bag of optional booleans so an action added
+// later cannot compile without stating when it is offered.
+export type PlayerHeaderAvailability = Record<PlayerHeaderAction, boolean>
+
+// Reading order, shared by the slot and the overflow, so the two can never
+// present the same actions in two different orders.
+const HEADER_ORDER: readonly PlayerHeaderAction[] = [
+  'add',
+  'select',
+  'spond',
+  'links',
+  'renew',
+  'import',
+  'export',
+  'template',
+]
+
+// The actions that stay in the slot beside the season select: the one primary
+// action, and entering selection mode, which is the gesture every other row
+// level action on this page is reached through. Everything else is lower
+// frequency and overflows.
+const HEADER_DIRECT: readonly PlayerHeaderAction[] = ['add', 'select']
+
+// What the page knows when it decides which actions to offer. Every field is
+// already derived in the component; naming them here is what lets the seven
+// gates below be proved without a DOM.
+//
+// `select` is deliberately absent: entering bulk selection mode is gated by
+// canBulkDelete in playersBulk.ts, which has its own pure implementation and
+// its own tests, and a second copy of that rule here is exactly what this
+// module exists to avoid. The caller passes its answer in.
+export interface PlayerHeaderContext {
+  canManage: boolean
+  canExport: boolean
+  canImport: boolean
+  /* canBulkDelete's answer, computed by the caller. */
+  bulkAllowed: boolean
+  /* A season is selected at all. */
+  hasSeason: boolean
+  /* The selected season is the current one, and so writable from this page. */
+  isCurrent: boolean
+  writable: boolean
+  archived: boolean
+  /* How many seasons the club has, which is what Renew needs two of. */
+  seasonCount: number
+  /* The club has at least one Spond mapping, and the linking screen is
+     available (its read can answer that the feature is not configured). */
+  hasSpondMapping: boolean
+  spondLinksAvailable: boolean
+  /* The team filter resolves to a specific team that has a Spond mapping. */
+  spondTeamMapped: boolean
+  /* The register read has answered, neither loading nor errored. */
+  registerSettled: boolean
+}
+
+// The seven gates, exactly as the header carried them when each action was its
+// own conditional in the component. Pure, so every combination is provable in
+// the fast suite: with the actions in an overflow, none of their labels is in
+// a closed page's markup, and a rendered test asserting their absence would
+// pass whatever the gate did.
+export function headerAvailability(c: PlayerHeaderContext): PlayerHeaderAvailability {
+  return {
+    add: c.canManage && c.isCurrent && c.writable,
+    select: c.bulkAllowed,
+    // Import from Spond is gated on players.import (managers and admins by
+    // default), and renders only on the current season with a specific mapped
+    // team selected (Spond stays current season only, server chosen).
+    spond: c.canImport && c.isCurrent && c.writable && c.spondTeamMapped,
+    links: c.canManage && c.hasSpondMapping && c.spondLinksAvailable,
+    // Renew is a season level bulk action (players.manage), independent of the
+    // page's selected season, available whenever there is more than one season
+    // to renew between. The modal picks the source and target seasons itself.
+    renew: c.canManage && c.seasonCount >= 2,
+    // Spreadsheet import targets any non archived season (defaulting to
+    // current), so it is gated on a non archived selected season, not on
+    // writable or current. The preview reads the current register, so it waits
+    // for a settled load.
+    import: c.canImport && c.hasSeason && !c.archived && c.registerSettled,
+    // Export is allowed on ANY selected season (a past register is a
+    // legitimate export), so it is not gated on writable or current like the
+    // write affordances. It IS gated on a settled, non errored register load,
+    // because the header renders before the body resolves the row query, and
+    // the confirm dialog's previewed count must never read 0 while the real
+    // set is still loading or errored.
+    export: c.canExport && c.hasSeason && c.registerSettled,
+    // The blank template is season neutral and available to any players.import
+    // holder, including on an archived season (it writes nothing and carries
+    // no child data).
+    template: c.canImport && c.hasSeason,
+  }
+}
+
+// Every action the capability set and the selected season open, in order.
+export function availableHeaderActions(av: PlayerHeaderAvailability): PlayerHeaderAction[] {
+  return HEADER_ORDER.filter((k) => av[k])
+}
+
+// The actions rendered directly in the slot.
+export function directHeaderActions(av: PlayerHeaderAvailability): PlayerHeaderAction[] {
+  return availableHeaderActions(av).filter((k) => HEADER_DIRECT.includes(k))
+}
+
+// The actions rendered in the More actions overflow: every available action the
+// slot does not carry, DERIVED rather than listed a second time. That is what
+// makes "an action is offered exactly once" a property of the partition instead
+// of a pair of lists somebody has to keep in step, and it is why an action
+// added to HEADER_ORDER and to nothing else still appears.
+export function overflowHeaderActions(av: PlayerHeaderAvailability): PlayerHeaderAction[] {
+  const direct = new Set(directHeaderActions(av))
+  return availableHeaderActions(av).filter((k) => !direct.has(k))
+}
+
 // The board eligibility selector (docs/product/registered-players-spec.md):
 // current season registered players on the selected team by default; Pending
 // only when the picker's toggle is on; Withdrawn never; Unassigned (team null)

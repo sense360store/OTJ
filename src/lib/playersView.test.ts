@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  availableHeaderActions,
   DEFAULT_FILTERS,
   DEFAULT_STATUS_FILTER,
+  directHeaderActions,
   deleteConfirmed,
   describeHistoryEntry,
   eligibleForBoard,
   filterRows,
   filtersAreActive,
   filtersToParams,
+  headerAvailability,
+  overflowHeaderActions,
   parseFilters,
   parseShirt,
   planPlayerEdit,
@@ -20,6 +24,9 @@ import {
   statusesForFilter,
   statusTransitionAllowed,
   statusTransitions,
+  type PlayerHeaderAction,
+  type PlayerHeaderAvailability,
+  type PlayerHeaderContext,
   type PlayersFilters,
 } from './playersView'
 import type { PlayerHistoryEntry, RegisteredPlayer, RegistrationStatus } from './data'
@@ -244,6 +251,192 @@ describe('rowActionKeys', () => {
   })
   it('adds Delete only with players.delete', () => {
     expect(rowActionKeys('registered', { ...manage, canDelete: true })).toEqual(['move', 'withdraw', 'delete'])
+  })
+})
+
+describe('headerAvailability, the seven header gates', () => {
+  // Everything closed, so each test opens exactly what it means. A manager on
+  // the current season with a settled register and one season is the base a
+  // real page starts from; each field is turned on deliberately.
+  const CTX: PlayerHeaderContext = {
+    canManage: false,
+    canExport: false,
+    canImport: false,
+    bulkAllowed: false,
+    hasSeason: true,
+    isCurrent: true,
+    writable: true,
+    archived: false,
+    seasonCount: 1,
+    hasSpondMapping: false,
+    spondLinksAvailable: true,
+    spondTeamMapped: false,
+    registerSettled: true,
+  }
+  const av = (over: Partial<PlayerHeaderContext> = {}) => headerAvailability({ ...CTX, ...over })
+
+  it('offers nothing to a member holding no write capability', () => {
+    expect(Object.values(av()).some(Boolean)).toBe(false)
+  })
+
+  it('gates Add player on players.manage and a writable current season', () => {
+    expect(av({ canManage: true }).add).toBe(true)
+    expect(av({ canManage: true, isCurrent: false }).add).toBe(false)
+    expect(av({ canManage: true, writable: false }).add).toBe(false)
+    expect(av({ canManage: false }).add).toBe(false)
+  })
+
+  it('passes selection through rather than deciding it here', () => {
+    // canBulkDelete owns that rule and has its own tests; a second copy is
+    // what this module exists to avoid.
+    expect(av({ bulkAllowed: true }).select).toBe(true)
+    expect(av({ bulkAllowed: false, canManage: true }).select).toBe(false)
+  })
+
+  it('gates Import from Spond on players.import, the current season and a mapped team', () => {
+    const on = { canImport: true, spondTeamMapped: true }
+    expect(av(on).spond).toBe(true)
+    // The team filter is the one that catches people out: with All teams
+    // selected there is no mapping to import from.
+    expect(av({ ...on, spondTeamMapped: false }).spond).toBe(false)
+    expect(av({ ...on, isCurrent: false }).spond).toBe(false)
+    expect(av({ ...on, writable: false }).spond).toBe(false)
+    expect(av({ ...on, canImport: false }).spond).toBe(false)
+  })
+
+  it('gates Spond links on players.manage and a club that has a mapping', () => {
+    // Deliberately NOT on the team filter: an affordance that appears only
+    // once a specific team is selected is one nobody finds.
+    expect(av({ canManage: true, hasSpondMapping: true }).links).toBe(true)
+    expect(av({ canManage: true, hasSpondMapping: true, spondTeamMapped: false }).links).toBe(true)
+    expect(av({ canManage: true, hasSpondMapping: false }).links).toBe(false)
+    expect(av({ canManage: true, hasSpondMapping: true, spondLinksAvailable: false }).links).toBe(false)
+    expect(av({ canManage: false, hasSpondMapping: true }).links).toBe(false)
+  })
+
+  it('gates Renew on players.manage and two seasons to renew between', () => {
+    expect(av({ canManage: true, seasonCount: 2 }).renew).toBe(true)
+    expect(av({ canManage: true, seasonCount: 1 }).renew).toBe(false)
+    // Independent of which season the page is showing: the modal picks both.
+    expect(av({ canManage: true, seasonCount: 2, archived: true, isCurrent: false }).renew).toBe(true)
+  })
+
+  it('withdraws Export and Import players while the register is unsettled', () => {
+    // The header renders before the row query resolves, and the confirm
+    // dialog's previewed count must never read 0 while the real set is still
+    // arriving or has failed.
+    expect(av({ canExport: true, canImport: true }).export).toBe(true)
+    expect(av({ canExport: true, canImport: true }).import).toBe(true)
+    expect(av({ canExport: true, canImport: true, registerSettled: false }).export).toBe(false)
+    expect(av({ canExport: true, canImport: true, registerSettled: false }).import).toBe(false)
+  })
+
+  it('exports any season and imports only a season that can be written to', () => {
+    // A past register is a legitimate export, so Export is not gated on
+    // current or writable; a spreadsheet import targets a non archived season.
+    const past = { isCurrent: false, writable: false }
+    expect(av({ canExport: true, ...past }).export).toBe(true)
+    expect(av({ canImport: true, ...past }).import).toBe(true)
+    expect(av({ canImport: true, archived: true }).import).toBe(false)
+    expect(av({ canExport: true, archived: true }).export).toBe(true)
+    expect(av({ canExport: true, hasSeason: false }).export).toBe(false)
+    expect(av({ canImport: true, hasSeason: false }).import).toBe(false)
+  })
+
+  it('offers the blank template to any importer on any season, settled or not', () => {
+    // It writes nothing and carries no child data, so nothing about the
+    // register gates it.
+    expect(av({ canImport: true }).template).toBe(true)
+    expect(av({ canImport: true, archived: true, isCurrent: false, writable: false }).template).toBe(true)
+    expect(av({ canImport: true, registerSettled: false }).template).toBe(true)
+    expect(av({ canImport: true, hasSeason: false }).template).toBe(false)
+    expect(av({ canExport: true }).template).toBe(false)
+  })
+
+  it('lets no capability open an action that belongs to another', () => {
+    // One capability at a time against the actions it must NOT open, which is
+    // the shape of the mistake worth catching: a gate widened by a copy paste
+    // to a neighbouring capability.
+    expect(av({ canExport: true }).import).toBe(false)
+    expect(av({ canExport: true }).spond).toBe(false)
+    expect(av({ canExport: true }).links).toBe(false)
+    expect(av({ canImport: true }).export).toBe(false)
+    expect(av({ canImport: true }).links).toBe(false)
+    expect(av({ canImport: true }).add).toBe(false)
+    expect(av({ canManage: true }).export).toBe(false)
+    expect(av({ canManage: true }).import).toBe(false)
+    expect(av({ canManage: true }).template).toBe(false)
+  })
+})
+
+describe('the page header action hierarchy', () => {
+  // The eight gates, all closed, so each test opens exactly the ones it means.
+  const NONE: PlayerHeaderAvailability = {
+    add: false,
+    select: false,
+    spond: false,
+    links: false,
+    renew: false,
+    import: false,
+    export: false,
+    template: false,
+  }
+  const ALL: PlayerHeaderAvailability = {
+    add: true,
+    select: true,
+    spond: true,
+    links: true,
+    renew: true,
+    import: true,
+    export: true,
+    template: true,
+  }
+  const KEYS = Object.keys(ALL) as PlayerHeaderAction[]
+
+  it('offers nothing to a member whose capabilities open nothing', () => {
+    expect(availableHeaderActions(NONE)).toEqual([])
+    expect(directHeaderActions(NONE)).toEqual([])
+    expect(overflowHeaderActions(NONE)).toEqual([])
+  })
+
+  it('keeps Add player and Select players in the slot, and overflows the other six', () => {
+    expect(directHeaderActions(ALL)).toEqual(['add', 'select'])
+    // The six, in the order they are read, which is the order the slot used to
+    // render them in.
+    expect(overflowHeaderActions(ALL)).toEqual(['spond', 'links', 'renew', 'import', 'export', 'template'])
+  })
+
+  it('offers every action exactly once, whichever gates are open', () => {
+    // Every one of the 256 combinations: the two lists partition the available
+    // set, so no action is offered twice and none is dropped. This is what the
+    // overflow being DERIVED buys, and it is the property a second hand written
+    // list would lose.
+    for (let mask = 0; mask < 1 << KEYS.length; mask++) {
+      const av = { ...NONE } as PlayerHeaderAvailability
+      KEYS.forEach((k, i) => {
+        if (mask & (1 << i)) av[k] = true
+      })
+      const available = availableHeaderActions(av)
+      const offered = [...directHeaderActions(av), ...overflowHeaderActions(av)]
+      expect(new Set(offered).size).toBe(offered.length)
+      expect([...offered].sort()).toEqual([...available].sort())
+    }
+  })
+
+  it('offers an action only where its own gate is open', () => {
+    // One gate at a time: nothing else appears, so no action rides in on
+    // another's capability.
+    for (const key of KEYS) {
+      const av = { ...NONE, [key]: true } as PlayerHeaderAvailability
+      expect(availableHeaderActions(av)).toEqual([key])
+      expect([...directHeaderActions(av), ...overflowHeaderActions(av)]).toEqual([key])
+    }
+  })
+
+  it('drops the whole overflow when only the slot actions are open', () => {
+    // A coach on an archived season with nothing but Add: the More actions
+    // trigger renders nothing, rather than an empty popup.
+    expect(overflowHeaderActions({ ...NONE, add: true, select: true })).toEqual([])
   })
 })
 

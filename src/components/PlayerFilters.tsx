@@ -3,9 +3,18 @@
 // aria-label), and each change is a partial filter update the page folds into
 // the URL. Team offers All teams, each team, then Unassigned (a filter, not an
 // access boundary, so it shows for every viewer).
+//
+// Team and Status are the shared SelectField: a real <label> bound to a native
+// select. The search and the sort control keep an aria-label rather than
+// gaining a visible one, because each already names itself in the control (the
+// placeholder "Search by name…", and every sort option reading "Sort: Name").
+// 2.6's rule is that a label is a real <label> rather than a styled <div>, not
+// that an accessible name must be visible; adding a visible "Sort" label above
+// options that already begin "Sort:" would state it twice.
 import type { PlayersFilters, SortKey, StatusFilter, TeamFilter } from '../lib/playersView'
 import type { Team } from '../lib/data'
 import { Icon } from './icons'
+import { SelectField } from './primitives'
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'name', label: 'Sort: Name' },
@@ -60,38 +69,32 @@ export function PlayerFilters({
         </select>
       </div>
       <div className="reg-filters">
-        <div className="field">
-          <label htmlFor="filter-team">Team</label>
-          <select
-            id="filter-team"
-            className="select"
-            value={filters.team}
-            onChange={(e) => onChange({ team: e.target.value as TeamFilter })}
-          >
-            <option value="all">All teams</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-            <option value="unassigned">Unassigned</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="filter-status">Status</label>
-          <select
-            id="filter-status"
-            className="select"
-            value={filters.status}
-            onChange={(e) => onChange({ status: e.target.value as StatusFilter })}
-          >
-            {STATUS_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SelectField
+          id="filter-team"
+          label="Team"
+          value={filters.team}
+          onChange={(e) => onChange({ team: e.target.value as TeamFilter })}
+        >
+          <option value="all">All teams</option>
+          {teams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+          <option value="unassigned">Unassigned</option>
+        </SelectField>
+        <SelectField
+          id="filter-status"
+          label="Status"
+          value={filters.status}
+          onChange={(e) => onChange({ status: e.target.value as StatusFilter })}
+        >
+          {STATUS_OPTIONS.map((o) => (
+            <option key={o.key} value={o.key}>
+              {o.label}
+            </option>
+          ))}
+        </SelectField>
       </div>
     </div>
   )

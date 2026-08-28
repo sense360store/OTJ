@@ -17,10 +17,12 @@ import { ThemeProvider } from '../../src/hooks/useTheme'
 import { ListInput, Modal } from '../../src/components/ui'
 import { Badge, Button, Card, IconButton, Note, PageHeader, TextField, Toggle } from '../../src/components/primitives'
 import { Icon } from '../../src/components/icons'
+import { RequireCap } from '../../src/components/RequireCap'
 import { Home } from '../../src/routes/Home'
 import { Sessions } from '../../src/routes/Sessions'
 import { Login } from '../../src/routes/Login'
-import { SESSIONS } from './fixtures'
+import { Players } from '../../src/routes/Players'
+import { PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
 import '../../src/styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -165,16 +167,47 @@ function Harness() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/sessions" element={<Sessions />} />
+        {/* Behind the real route guard, so the capability variant that has no
+            access shows what a parent actually gets (a redirect to Home)
+            rather than an empty content frame. */}
+        <Route element={<RequireCap cap="players.view" />}>
+          <Route path="/players" element={<Players />} />
+        </Route>
       </Routes>
     </Shell>
   )
+}
+
+// The register reads its structural filters from the URL, so the states that
+// are a filter (an archived season selected, withdrawn rows shown) are reached
+// by the address the screen opens on, exactly as a coach reaches them.
+function playersEntry(): string {
+  if (harnessState === 'archived') return `/players?season=${PAST_SEASON.id}`
+  if (harnessState === 'withdrawn') return '/players?status=all'
+  // Every header action at once. Import from Spond is the only one gated on
+  // the team filter (it needs a specific Spond mapped team selected), so the
+  // fullest header a coach can reach is only reachable through the address,
+  // and the six the overflow is specified to hold are all present only here.
+  if (harnessState === 'allactions') return `/players?team=${SPOND_TEAM_ID}`
+  // An archived season WITH the mapped team selected. `archived` alone leaves
+  // the team filter on All teams, and Import from Spond is then absent because
+  // no mapped team is selected rather than because the season is not the
+  // current one, so a check asserting the archived gate against it cannot
+  // fail. This is the address that makes the two reasons distinguishable.
+  if (harnessState === 'archivedteam') return `/players?season=${PAST_SEASON.id}&team=${SPOND_TEAM_ID}`
+  return '/players'
+}
+
+const ENTRY: Record<string, string> = {
+  sessions: '/sessions',
+  players: playersEntry(),
 }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={client}>
       <ThemeProvider>
-      <MemoryRouter initialEntries={[screen === 'sessions' ? '/sessions' : '/']}>
+      <MemoryRouter initialEntries={[ENTRY[screen] ?? '/']}>
         <SessionsProvider>
           <Harness />
         </SessionsProvider>
