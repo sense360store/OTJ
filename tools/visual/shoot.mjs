@@ -89,6 +89,12 @@ const OVERLAY = new Set(['more', 'delete'])
 // ordinary page under a name that says otherwise, which is worse evidence
 // than a missing file because it looks like proof. The selector is what the
 // state actually renders, so a primitive that stops rendering fails here too.
+//
+// The filename carries TWO claims, and both are proved. `open` is a state the
+// run drives by pressing a control; `state` is one the harness's own reads
+// answer with. A shot named for a state whose read quietly returned the
+// ordinary register is the exact failure this map exists to stop, and the
+// state axis was the half that had no proof when it was introduced.
 const REACHED = {
   more: '.more-sheet',
   error: '.note-danger[role="alert"]',
@@ -97,15 +103,56 @@ const REACHED = {
   delete: '.modal',
 }
 
+// What each named state actually renders. `default` claims nothing, so it
+// needs nothing; every other value MUST be listed, and an unlisted one is a
+// failure rather than a pass, so adding a state without its proof cannot go
+// quiet. Playwright's :has-text() is what separates two states that render
+// the same element with different words.
+const REACHED_STATE = {
+  loading: '.content > .loading[role="status"]',
+  rowsloading: '.skeleton-list',
+  empty: '.empty',
+  error: '.state-error[role="alert"]',
+  archived: '.note-neutral:has-text("archived and read only")',
+  // :visible, because this state renders in whichever of the two layouts the
+  // width selects and the other is display:none. Without it a comma list
+  // resolves to the first match in DOM ORDER, which is the table row, and
+  // every phone width failed against a row it had correctly hidden.
+  withdrawn: '.player-card.withdrawn:visible, table.reg-table tr.withdrawn:visible',
+  noseason: '.empty:has-text("season")',
+  stale: '.modal .note-danger:has-text("out of date")',
+  overlimit: '.modal .note-danger:has-text("At most 200")',
+}
+
+async function visible(page, selector) {
+  return page.waitForSelector(selector, { state: 'visible', timeout: 3000 }).then(() => true, () => false)
+}
+
 async function reached(page, s, theme) {
-  const selector = REACHED[s.open]
-  if (!selector) return true
-  const ok = await page
-    .waitForSelector(selector, { state: 'visible', timeout: 3000 })
-    .then(() => true, () => false)
-  if (!ok) {
-    failures++
-    console.log(`ERROR ${name(s, theme)}: ${selector} never appeared, so the ${s.open} state was not reached`)
+  let ok = true
+  if (s.open) {
+    const selector = REACHED[s.open]
+    if (!selector) {
+      failures++
+      console.log(`ERROR ${name(s, theme)}: no proof selector for open=${s.open}, so the shot claims a state nothing checked`)
+      ok = false
+    } else if (!(await visible(page, selector))) {
+      failures++
+      console.log(`ERROR ${name(s, theme)}: ${selector} never appeared, so the ${s.open} state was not reached`)
+      ok = false
+    }
+  }
+  if (s.state && s.state !== 'default') {
+    const selector = REACHED_STATE[s.state]
+    if (!selector) {
+      failures++
+      console.log(`ERROR ${name(s, theme)}: no proof selector for state=${s.state}, so the shot claims a state nothing checked`)
+      ok = false
+    } else if (!(await visible(page, selector))) {
+      failures++
+      console.log(`ERROR ${name(s, theme)}: ${selector} never appeared, so the ${s.state} state was not reached`)
+      ok = false
+    }
   }
   return ok
 }

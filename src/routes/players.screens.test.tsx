@@ -191,11 +191,18 @@ describe('a read that has not answered is never rendered as an empty club', () =
     expect(out).not.toContain('<table')
   })
 
-  it('claims no count while the register loads', () => {
+  it('claims no count while the register loads, and keeps the strip\'s place', () => {
     state.rowsLoading = true
     const out = html()
-    expect(out).not.toContain('reg-count')
+    // No number is claimed: no total, no chip, no zero.
     expect(out).not.toContain('0 players')
+    expect(out).not.toContain('Registered 0')
+    expect(out).not.toMatch(/class="chip/)
+    // The box stays, as skeleton bars sized like what they stand in for, so
+    // the filter bar and the list below do not move when the read lands.
+    expect(out).toContain('<div class="reg-count" aria-hidden="true">')
+    expect(out).toContain('skeleton skeleton-total')
+    expect(out.match(/skeleton skeleton-chip/g) ?? []).toHaveLength(3)
   })
 
   it('announces a failed register read and offers a retry', () => {
@@ -206,16 +213,21 @@ describe('a read that has not answered is never rendered as an empty club', () =
     expect(out).toContain('>Retry<')
   })
 
-  it('claims no count on a failed register read', () => {
+  it('claims no count on a failed register read, and offers no skeleton either', () => {
     // The defect this pins: every number on the page derives from a rows
     // array that defaults to empty, so a failed read rendered "0 players"
     // and three zero chips, which is a claim about the club rather than
     // about the read.
     state.rowsError = true
     const out = html()
-    expect(out).not.toContain('reg-count')
     expect(out).not.toContain('0 players')
     expect(out).not.toContain('Registered 0')
+    // And no skeleton: a skeleton means "still arriving", which a failed
+    // read is not. This is the one settled state where the strip is absent
+    // outright, and nothing moves under the coach again until they press
+    // Retry themselves.
+    expect(out).not.toContain('reg-count')
+    expect(out).not.toContain('skeleton')
   })
 
   it('offers neither Export nor Import while the register is unsettled', () => {

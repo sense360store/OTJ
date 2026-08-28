@@ -968,6 +968,11 @@ summary:focus-visible,
 /* ---- Registered players (PR 3) --------------------------------------- */
 .reg-count { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); margin: var(--space-4) 0 var(--space-16); font-size: var(--text-base); }
 .reg-count .total { font-weight: 800; }
+/* The loading summary: the same box, the same rhythm, no numbers. Sized like
+   the total and the chip each stands in for, so the strip holds its height and
+   the filter bar below it does not move when the register lands. */
+.reg-count .skeleton-total { width: 84px; height: 17px; }
+.reg-count .skeleton-chip { width: 112px; height: 34px; border-radius: var(--radius-pill); }
 .reg-count .showing { color: var(--slate); font-weight: 600; }
 
 /* Status badge: a coloured dot plus the word, so status is never colour alone. */
@@ -1011,7 +1016,13 @@ table.reg-table td.muted-cell { color: var(--slate); }
 .player-card .pc-dates { color: var(--slate); font-size: var(--text-xs); display: flex; flex-wrap: wrap;
   gap: var(--space-2) var(--space-12); margin-top: var(--space-4); }
 .player-card .pc-shirt { font-weight: 800; min-width: 26px; text-align: center; color: var(--slate); }
-.player-card.withdrawn { opacity: .72; }
+/* A withdrawn card is muted the way a withdrawn table row is: by taking
+   --slate, not by fading the whole card. opacity multiplies down the tree and
+   applies to the text itself, so .72 over --slate measured 2.87:1 on the page
+   ground for the name, the meta, the shirt number and the dates. The table
+   has always done it this way (tr.withdrawn td above), and the Withdrawn
+   badge is the non colour cue in both layouts. */
+.player-card.withdrawn { color: var(--slate); }
 
 /* Overflow menu, reused by the desktop row and the mobile card. */
 .menu { position: relative; display: inline-flex; }

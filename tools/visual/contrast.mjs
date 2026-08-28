@@ -148,7 +148,7 @@ const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players']
 // opened here rather than left to a screenshot.
 const CAPS_FOR = (screen) =>
   screen === 'home' || screen === 'sessions' || screen === 'players' ? ['coach', 'viewer', 'parent'] : ['na']
-const STATES_FOR = (screen) => (screen === 'players' ? ['default', 'error', 'archived', 'empty'] : ['default'])
+const STATES_FOR = (screen) => (screen === 'players' ? ['default', 'error', 'archived', 'empty', 'withdrawn'] : ['default'])
 
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
@@ -211,7 +211,13 @@ for (const screen of SCREENS) {
         const rows = await page.evaluate('(' + SWEEP + ')()')
         for (const r of rows) {
           if (r.ratio >= r.need) continue
-          const key = `${r.sel}|${r.fg}|${r.bg}|${theme}`
+          // Size and weight are part of the key, because label() emits a
+          // bare tag for an unclassed element and two different text runs
+          // that share a tag and a computed colour would otherwise collapse
+          // into one line. That is not only a reporting nicety: it is how a
+          // card's new date line hid behind the meta line above it, both
+          // rendering as `span` in the same colour at different sizes.
+          const key = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
           if (seen.has(key)) continue
           seen.add(key)
           const row = { ...r, where: `${screen}/${caps}/${state}/${theme}/${w}w` }

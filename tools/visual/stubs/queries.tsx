@@ -94,7 +94,8 @@ export const useSeasons = () => {
 
 export const useRegisteredPlayers = () => {
   // `error` fails the register read, which is the state INSIDE the page body:
-  // the header, the season select and the counts still render, and the list
+  // the header and the season select still render, the count strip is
+  // withheld because a read that has not answered has no count, and the list
   // region is an error with a retry. The page level gate (the seasons read)
   // is a different screen and is not what this state shows.
   if (state === 'loading' || state === 'rowsloading') return pendingQuery<typeof REGISTERED_PLAYERS>()

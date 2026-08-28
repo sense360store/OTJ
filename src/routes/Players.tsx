@@ -644,6 +644,23 @@ export function Players() {
           about the club rather than about the read. Unreadable is never
           rendered as empty, which is the rule the rest of this product
           already follows for a link set and a reply state. */}
+      {/* While the register is arriving, the summary keeps its SHAPE and claims
+          no number: skeleton bars sized like the total and the three chips
+          they stand in for. Withholding the block outright was the first
+          version of this and it moved the search field, both filter selects
+          and the whole list down at the moment the read landed, which on a
+          phone puts a status filter chip under a thumb already reaching for
+          the search box. A failed read gets no skeleton, because a skeleton
+          means "still arriving"; it is a settled render, and nothing moves
+          under the coach again until they press Retry themselves. */}
+      {!registerKnown && !rowsError && (
+        <div className="reg-count" aria-hidden="true">
+          <span className="skeleton skeleton-total"></span>
+          <span className="skeleton skeleton-chip"></span>
+          <span className="skeleton skeleton-chip"></span>
+          <span className="skeleton skeleton-chip"></span>
+        </div>
+      )}
       {registerKnown && (
       <div className="reg-count">
         <span className="total">
