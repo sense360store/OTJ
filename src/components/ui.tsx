@@ -614,15 +614,27 @@ export function Loading({ label = 'Loading…' }: { label?: string }) {
   )
 }
 
-// The shape-known variant: a list of rows arriving. Nothing is announced,
-// because the labelled Loading above is what a screen reader is told.
-export function LoadingRows({ rows = 3 }: { rows?: number }) {
+// The shape-known variant: a list of rows arriving. The bars themselves are
+// decoration and stay aria-hidden, so `label` is how the load is announced.
+// It is optional because a caller that already renders a labelled Loading
+// beside these bars would otherwise announce the same load twice; a caller
+// that renders ONLY these has to pass one, or the load is silent. That gap
+// was found by the first caller (the Registered players register), which is
+// the first surface in the product whose row shape is known.
+export function LoadingRows({ rows = 3, label }: { rows?: number; label?: string }) {
   return (
-    <div className="skeleton-list" aria-hidden="true">
-      {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="skeleton skeleton-row"></div>
-      ))}
-    </div>
+    <>
+      {label && (
+        <span className="sr-only" role="status">
+          {label}
+        </span>
+      )}
+      <div className="skeleton-list" aria-hidden="true">
+        {Array.from({ length: rows }, (_, i) => (
+          <div key={i} className="skeleton skeleton-row"></div>
+        ))}
+      </div>
+    </>
   )
 }
 

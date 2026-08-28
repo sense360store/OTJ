@@ -37,6 +37,7 @@ import {
 import type { RegisteredPlayer } from '../lib/data'
 import { Icon } from './icons'
 import { ActionError, Loading, Modal } from './ui'
+import { Button, Card, Note, TextField } from './primitives'
 
 export function BulkDeletePlayersModal({
   players,
@@ -125,31 +126,32 @@ export function BulkDeletePlayersModal({
       dismissible={!deleting}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={deleting}>
+          <Button onClick={onClose} disabled={deleting}>
             Cancel
-          </button>
-          <button
-            className="btn btn-danger"
-            onClick={run}
-            disabled={!confirmed || deleting}
-          >
-            <Icon.trash />
+          </Button>
+          {/* The destructive control. Its fill is the danger variant, and the
+              red is never the only cue: the label always carries the word
+              Delete and the number it names. */}
+          <Button variant="danger" icon={Icon.trash} onClick={run} disabled={!confirmed || deleting}>
             {deleting ? 'Deleting…' : bulkDeleteButtonLabel(count)}
-          </button>
+          </Button>
         </>
       }
     >
+      {/* The three refusals. Each is a danger Note announced on appearance,
+          which is 2.14's error treatment; each still refuses to arm the run,
+          which is behaviour and is unchanged. */}
       {overLimit && (
-        <div role="alert" className="bulk-delete-stale">
+        <Note tone="danger" role="alert" className="bulk-delete-notice">
           {overLimitMessage(count)}
-        </div>
+        </Note>
       )}
 
       {eligibilityLost && !deleting && (
-        <div role="alert" className="bulk-delete-stale">
+        <Note tone="danger" role="alert" className="bulk-delete-notice">
           Bulk deletion is no longer available: the permission or the season changed while this dialog was open.
           Nothing has been deleted from this dialog; close it and select again.
-        </div>
+        </Note>
       )}
 
       {preview.isLoading && <Loading />}
@@ -163,10 +165,10 @@ export function BulkDeletePlayersModal({
       {preview.isSuccess && (
         <>
           {stale && (
-            <div role="alert" className="bulk-delete-stale">
+            <Note tone="danger" role="alert" className="bulk-delete-notice">
               The selection is out of date: {preview.data.players} of the {preview.data.requested} selected players are
               still here. Somebody else has changed the register. Close this, check the list and select again.
-            </div>
+            </Note>
           )}
 
           <p className="bulk-delete-lede">This will remove:</p>
@@ -189,12 +191,14 @@ export function BulkDeletePlayersModal({
 
           <p className="bulk-delete-note">{PREVIEW_SNAPSHOT_NOTE}</p>
 
-          <div className="bulk-delete-history">
+          {/* A titled block that contains rather than decorates: the Card
+              primitive, not a fourth locally bordered panel. */}
+          <Card className="bulk-delete-history">
             <h4>What happens to history</h4>
             {historyLines(preview.data).map((line) => (
               <p key={line}>{line}</p>
             ))}
-          </div>
+          </Card>
 
           <details className="bulk-delete-who" open={count <= 12}>
             <summary>
@@ -207,28 +211,26 @@ export function BulkDeletePlayersModal({
             </ul>
           </details>
 
-          <div className="field bulk-delete-confirm">
-            <label htmlFor="bulk-delete-phrase">
-              To confirm, type <b>{bulkDeletePhrase(count)}</b>
-            </label>
-            <input
-              id="bulk-delete-phrase"
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              placeholder={bulkDeletePhrase(count)}
-              autoComplete="off"
-              spellCheck={false}
-              disabled={deleting || stale || eligibilityLost}
-            />
-          </div>
+          <TextField
+            id="bulk-delete-phrase"
+            className="bulk-delete-confirm"
+            label={
+              <>
+                To confirm, type <b>{bulkDeletePhrase(count)}</b>
+              </>
+            }
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={bulkDeletePhrase(count)}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={deleting || stale || eligibilityLost}
+          />
         </>
       )}
 
       {failed && (
-        <ActionError
-          onRetry={retriable ? run : undefined}
-          style={{ marginTop: 10 }}
-        >
+        <ActionError onRetry={retriable ? run : undefined} style={{ marginTop: 'var(--space-12)' }}>
           {isIndeterminateBulkOutcome(error)
             ? 'The deletion may have completed: the reply could not be read, so the outcome is unknown. Close ' +
               'this and reload the register to see the current state before selecting again.'
@@ -270,24 +272,19 @@ export function BulkSelectionBar({
       <span className="bulk-bar-count" aria-live="polite">
         {selectedCount} selected
       </span>
-      <button className="btn btn-ghost btn-sm" onClick={onSelectAllShown} disabled={shownCount === 0 || allSelected}>
+      <Button size="sm" onClick={onSelectAllShown} disabled={shownCount === 0 || allSelected}>
         Select all {shownCount} shown
-      </button>
-      <button className="btn btn-ghost btn-sm" onClick={onClear} disabled={selectedCount === 0}>
+      </Button>
+      <Button size="sm" onClick={onClear} disabled={selectedCount === 0}>
         Clear
-      </button>
+      </Button>
       <span className="bulk-bar-spacer" />
-      <button className="btn btn-quiet btn-sm" onClick={onExit}>
+      <Button variant="quiet" size="sm" onClick={onExit}>
         Done
-      </button>
-      <button
-        className="btn btn-danger btn-sm"
-        onClick={onDelete}
-        disabled={selectedCount === 0}
-      >
-        <Icon.trash />
+      </Button>
+      <Button variant="danger" size="sm" icon={Icon.trash} onClick={onDelete} disabled={selectedCount === 0}>
         Delete {selectedCount} {selectedCount === 1 ? 'player' : 'players'}
-      </button>
+      </Button>
     </div>
   )
 }

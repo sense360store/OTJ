@@ -17,10 +17,12 @@ import { ThemeProvider } from '../../src/hooks/useTheme'
 import { ListInput, Modal } from '../../src/components/ui'
 import { Badge, Button, Card, IconButton, Note, PageHeader, TextField, Toggle } from '../../src/components/primitives'
 import { Icon } from '../../src/components/icons'
+import { RequireCap } from '../../src/components/RequireCap'
 import { Home } from '../../src/routes/Home'
 import { Sessions } from '../../src/routes/Sessions'
 import { Login } from '../../src/routes/Login'
-import { SESSIONS } from './fixtures'
+import { Players } from '../../src/routes/Players'
+import { PAST_SEASON, SESSIONS, harnessState } from './fixtures'
 import '../../src/styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -165,16 +167,36 @@ function Harness() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/sessions" element={<Sessions />} />
+        {/* Behind the real route guard, so the capability variant that has no
+            access shows what a parent actually gets (a redirect to Home)
+            rather than an empty content frame. */}
+        <Route element={<RequireCap cap="players.view" />}>
+          <Route path="/players" element={<Players />} />
+        </Route>
       </Routes>
     </Shell>
   )
+}
+
+// The register reads its structural filters from the URL, so the states that
+// are a filter (an archived season selected, withdrawn rows shown) are reached
+// by the address the screen opens on, exactly as a coach reaches them.
+function playersEntry(): string {
+  if (harnessState === 'archived') return `/players?season=${PAST_SEASON.id}`
+  if (harnessState === 'withdrawn') return '/players?status=all'
+  return '/players'
+}
+
+const ENTRY: Record<string, string> = {
+  sessions: '/sessions',
+  players: playersEntry(),
 }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={client}>
       <ThemeProvider>
-      <MemoryRouter initialEntries={[screen === 'sessions' ? '/sessions' : '/']}>
+      <MemoryRouter initialEntries={[ENTRY[screen] ?? '/']}>
         <SessionsProvider>
           <Harness />
         </SessionsProvider>

@@ -14,6 +14,7 @@ import type {
   InputHTMLAttributes,
   KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
+  Ref,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from 'react'
@@ -92,6 +93,12 @@ type IconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'
   /* A 44px visible box, for a control that sits in a row of md buttons. */
   large?: boolean
   className?: string
+  /* A caller that has to return focus to this control needs a handle on it.
+     ButtonHTMLAttributes carries no ref, so it is named rather than arriving
+     through the spread; React 19 passes it as an ordinary prop. The first
+     caller is the Registered players row menu, which focuses its trigger
+     again when the popup closes. */
+  ref?: Ref<HTMLButtonElement>
 }
 
 export function IconButton({ label, icon: Ico, tone = 'default', large, className, type = 'button', ...rest }: IconButtonProps) {

@@ -492,6 +492,12 @@ summary:focus-visible,
 @media (min-width: 901px) { .card-padded { padding: var(--space-20); } }
 
 .muted { color: var(--slate); }
+/* Visually hidden but read by assistive technology: a table caption, a label
+   that must not show on screen, and the announcement beside a skeleton whose
+   own bars are aria-hidden. Shared, because LoadingRows in the shared
+   vocabulary renders it. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .eyebrow { font-size: var(--text-xs); font-weight: 800; text-transform: uppercase; letter-spacing: .09em; color: var(--slate); }
 /* The page heading: eyebrow, title, subtitle and one action slot. The title
    is the page's <h1>. */
@@ -960,11 +966,6 @@ summary:focus-visible,
 }
 
 /* ---- Registered players (PR 3) --------------------------------------- */
-/* Visually hidden but read by assistive technology: the table caption and any
-   label that must not show on screen. */
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
-  clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-
 .reg-count { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); margin: var(--space-4) 0 var(--space-16); font-size: var(--text-base); }
 .reg-count .total { font-weight: 800; }
 .reg-count .showing { color: var(--slate); font-weight: 600; }
@@ -980,8 +981,16 @@ table.reg-table { width: 100%; border-collapse: collapse; font-size: var(--text-
 table.reg-table caption { text-align: left; }
 table.reg-table th { text-align: left; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .04em;
   color: var(--slate); font-weight: 700; padding: var(--space-8) var(--space-8); border-bottom: 1px solid var(--line); white-space: nowrap; }
+/* A sortable header is a control, and the 44px rule is not a phone rule. The
+   padding moves off the cell and onto the button, so the button's own box is
+   the target and it fills the cell: no pseudo-element overhang to reach into
+   the first row. A th that carries no button (the select and actions columns)
+   keeps the cell padding above. */
+table.reg-table th.sort-th { padding: 0; }
 table.reg-table th button { background: none; border: 0; color: inherit; font: inherit; letter-spacing: inherit;
-  text-transform: inherit; cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: var(--space-4); }
+  text-transform: inherit; cursor: pointer; padding: var(--space-8); min-height: var(--hit); width: 100%;
+  display: inline-flex; align-items: center; gap: var(--space-4); }
+table.reg-table th button svg { width: 12px; height: 12px; flex: 0 0 auto; }
 table.reg-table td { padding: var(--space-8); border-bottom: 1px solid var(--line-2); vertical-align: middle; }
 table.reg-table tr.withdrawn td { color: var(--slate); }
 table.reg-table td.muted-cell { color: var(--slate); }
@@ -999,6 +1008,8 @@ table.reg-table td.muted-cell { color: var(--slate); }
 .player-card .pc-name { font-weight: 700; overflow-wrap: anywhere; }
 .player-card .pc-meta { color: var(--slate); font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-8);
   margin-top: var(--space-2); flex-wrap: wrap; }
+.player-card .pc-dates { color: var(--slate); font-size: var(--text-xs); display: flex; flex-wrap: wrap;
+  gap: var(--space-2) var(--space-12); margin-top: var(--space-4); }
 .player-card .pc-shirt { font-weight: 800; min-width: 26px; text-align: center; color: var(--slate); }
 .player-card.withdrawn { opacity: .72; }
 
@@ -1013,10 +1024,20 @@ table.reg-table td.muted-cell { color: var(--slate); }
 .menu-list button:disabled { color: var(--slate-2); cursor: default; }
 .menu-list button.danger { color: var(--danger); }
 
-.archived-banner { display: flex; align-items: center; gap: var(--space-8); padding: var(--space-8) var(--space-12); border-radius: var(--radius-sm);
-  background: var(--line-2); border: 1px solid var(--line); color: var(--slate); font-size: var(--text-sm); font-weight: 600;
-  margin-bottom: var(--space-16); }
-.archived-banner svg { width: 16px; height: 16px; flex: 0 0 auto; }
+/* The archived season banner and the no teams notice are the Note primitive
+   now; the ground, border, icon and type came with it. What is left here is
+   composition: where the notice sits on the page. */
+.reg-banner { margin-bottom: var(--space-16); }
+/* The season select in the page header's action slot. .field's own bottom
+   margin would push it out of line with the buttons beside it, and the cap
+   keeps a long season name from taking the whole row. */
+.reg-season-field { margin-bottom: 0; max-width: 260px; }
+/* An Empty's call to action, clear of the sentence above it. */
+.reg-empty-action { margin-top: var(--space-12); }
+/* The action slot holds a labelled select beside plain buttons, so it aligns
+   on the bottom edge rather than the middle: the select's label sits above it
+   and centring would leave the control sitting lower than the buttons. */
+.reg-head .page-head-acts { align-items: flex-end; }
 
 .reg-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-8); align-items: center; margin-bottom: var(--space-12); }
 .reg-filters { display: flex; flex-wrap: wrap; gap: var(--space-12); align-items: flex-end; margin-bottom: var(--space-8); }
@@ -1028,25 +1049,35 @@ table.reg-table td.muted-cell { color: var(--slate); }
    while scrolling a long register, and wraps rather than scrolls sideways. */
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); padding: var(--space-8) var(--space-12); margin-bottom: var(--space-4);
   border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); box-shadow: var(--shadow-sm);
-  position: sticky; top: 6px; z-index: 20; }
+  position: sticky; top: var(--space-8); z-index: 20; }
 .bulk-bar-count { font-weight: 800; font-size: var(--text-base); }
 .bulk-bar-spacer { flex: 1 1 auto; }
 .bulk-bar-note { color: var(--slate); font-size: var(--text-sm); margin: 0 0 var(--space-12); }
 @media (max-width: 900px) { .bulk-bar-spacer { flex-basis: 100%; height: 0; } }
 
-table.reg-table th.col-select, table.reg-table td.col-select { width: 40px; padding-right: 0; }
+/* Wide enough to hold the 44px target below, which is why this is not 40px
+   any more: a column narrower than the target would clip it. */
+table.reg-table th.col-select, table.reg-table td.col-select { width: 52px; padding-right: 0; }
 table.reg-table td.col-select input, .player-card .pc-select input { width: 20px; height: 20px; accent-color: var(--royal); }
-/* A 44px target on the card, so a thumb selects the row rather than the box. */
-.player-card .pc-select { display: flex; align-items: center; justify-content: center;
-  min-width: 44px; min-height: 44px; margin: calc(var(--space-12) * -1) 0 calc(var(--space-12) * -1) calc(var(--space-4) * -1); cursor: pointer; }
+/* A 44px target around the box, in both layouts. On the card it is a label
+   pulled into the card's own padding so the row height does not grow; in the
+   table it is a label filling the cell. The negative margins are the card's
+   padding, restated, so the target reaches the card edge. */
+.player-card .pc-select, table.reg-table td.col-select .cell-select {
+  display: flex; align-items: center; justify-content: center;
+  min-width: var(--hit); min-height: var(--hit); cursor: pointer; }
+.player-card .pc-select { margin: calc(var(--space-12) * -1) 0 calc(var(--space-12) * -1) calc(var(--space-4) * -1); }
+table.reg-table td.col-select .cell-select { margin: calc(var(--space-8) * -1) 0; }
 .player-card.selected { border-color: var(--royal); box-shadow: inset 0 0 0 1px var(--royal); }
 
-.bulk-delete-stale { padding: var(--space-8) var(--space-12); border-radius: var(--radius-sm); margin-bottom: var(--space-12); font-size: var(--text-sm);
-  font-weight: 600; line-height: 1.45; color: var(--danger); border: 1px solid var(--danger); }
+/* The three refusals are danger Notes now: the tinted ground, the border, the
+   icon and the type came with the primitive, so only the gap below is left. */
+.bulk-delete-notice { margin-bottom: var(--space-12); }
 .bulk-delete-lede { font-size: var(--text-base); font-weight: 700; margin: 0 0 var(--space-4); }
 .bulk-delete-list { margin: 0 0 var(--space-12); padding-left: var(--space-20); font-size: var(--text-base); line-height: 1.6; }
 .bulk-delete-note { font-size: var(--text-sm); color: var(--slate); line-height: 1.5; margin: calc(var(--space-4) * -1) 0 var(--space-12); }
-.bulk-delete-history { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-12) var(--space-12); margin-bottom: var(--space-12); }
+/* A Card now; the border, radius and padding came with it. */
+.bulk-delete-history { margin-bottom: var(--space-12); }
 .bulk-delete-history h4 { margin: 0 0 var(--space-4); font-size: var(--text-sm); text-transform: uppercase; letter-spacing: .04em;
   color: var(--slate); }
 .bulk-delete-history p { font-size: var(--text-sm); line-height: 1.5; margin: 0 0 var(--space-8); }

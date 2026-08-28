@@ -4,9 +4,20 @@
 // itself and only the reads and writes are replaced.
 export * from '../../../src/lib/queries'
 
-import { DRILLS, MEDIA, SESSIONS, TEAMS, TEMPLATES, fixtures } from '../fixtures'
+import {
+  CURRENT_SEASON,
+  DRILLS,
+  MEDIA,
+  OVER_LIMIT_PLAYERS,
+  REGISTERED_PLAYERS,
+  SEASONS,
+  SESSIONS,
+  TEAMS,
+  TEMPLATES,
+  fixtures,
+} from '../fixtures'
 
-const query = <T,>(data: T) => ({
+const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
   data,
   isLoading: false,
   isPending: false,
@@ -16,7 +27,16 @@ const query = <T,>(data: T) => ({
   isRefetchError: false,
   error: null,
   refetch: () => {},
+  ...over,
 })
+
+// A read that has not answered and a read that failed. Both are real states a
+// screen must render, and neither can be reached by inventing rows: they are
+// the query's own flags, so the screen takes exactly the branch it takes in
+// the product.
+const pendingQuery = <T,>() => query(undefined as T, { isLoading: true, isPending: true, isSuccess: false })
+const failedQuery = <T,>() =>
+  query(undefined as T, { isLoading: false, isPending: false, isSuccess: false, isError: true, error: new Error('read failed') })
 
 const mutation = () => ({
   mutate: () => {},
@@ -52,13 +72,79 @@ export const useVenueMap = () => ({})
 export const useMemberMap = () => ({})
 export const useProfiles = () => query([])
 export const useClub = () => query({ name: 'Ossett Town Juniors', motto: 'Where football and friendships flourish', crestUrl: null })
-export const useCurrentSeason = () => query({ id: 'season', name: '2026/27', archived: false })
-export const useSeasons = () => query([])
-export const useRegisteredPlayers = () => query([])
+/* ---- Registered players -------------------------------------------
+   The register is the one surface whose state matrix a screenshot has to
+   cover in full, so its reads answer from `state` rather than always
+   succeeding. Every branch is the screen's own: `loading` and `error` set
+   the query flags, `empty` returns no rows, `noseason` returns no seasons,
+   and `overlimit` returns a register past the server's cap of 200. */
+const state = fixtures.state
+
+export const useCurrentSeason = () => {
+  if (state === 'loading') return pendingQuery<typeof CURRENT_SEASON>()
+  if (state === 'noseason') return query(undefined as typeof CURRENT_SEASON | undefined)
+  return query(CURRENT_SEASON)
+}
+
+export const useSeasons = () => {
+  if (state === 'loading') return pendingQuery<typeof SEASONS>()
+  if (state === 'noseason') return query([] as typeof SEASONS)
+  return query(SEASONS)
+}
+
+export const useRegisteredPlayers = () => {
+  // `error` fails the register read, which is the state INSIDE the page body:
+  // the header, the season select and the counts still render, and the list
+  // region is an error with a retry. The page level gate (the seasons read)
+  // is a different screen and is not what this state shows.
+  if (state === 'loading' || state === 'rowsloading') return pendingQuery<typeof REGISTERED_PLAYERS>()
+  if (state === 'error') return failedQuery<typeof REGISTERED_PLAYERS>()
+  if (state === 'empty') return query([] as typeof REGISTERED_PLAYERS)
+  if (state === 'overlimit') return query(OVER_LIMIT_PLAYERS)
+  return query(REGISTERED_PLAYERS)
+}
+
+// The preview the bulk delete dialog opens on. `stale` is the server having
+// found fewer live players than were asked about, which is what disarms the
+// typed confirmation.
+export const useDeletePlayersPreview = (playerIds: string[], enabled: boolean) => {
+  const requested = playerIds.length
+  if (!enabled) return query(undefined as never, { isSuccess: false })
+  return query({
+    requested,
+    players: state === 'stale' ? Math.max(0, requested - 2) : requested,
+    registrations: requested + 4,
+    registrationSeasons: 2,
+    registrationsCurrent: requested,
+    registrationsArchived: 4,
+    registerEntries: requested * 3,
+    registerSessions: 6,
+    spondLinks: Math.max(0, requested - 1),
+    spondReplies: requested * 2,
+    boardTokens: 2,
+    boards: 1,
+  })
+}
+
+export const useBulkDeletePlayers = mutation
+export const isStaleBulkSelection = () => false
+export const isIndeterminateBulkOutcome = () => false
 export const usePlayers = () => query([])
 export const useSpondEvents = () => query([])
-export const useSpondMappings = () => query([])
+export const useSpondMappings = () =>
+  query([
+    {
+      id: 'map-1',
+      groupId: 'group-1',
+      subgroupId: 'subgroup-1',
+      name: 'Titans',
+      teamId: 'titans',
+      teamName: 'Titans',
+      createdAt: '2026-08-01T00:00:00Z',
+    },
+  ])
 export const useSpondLinks = () => query({ available: true, links: [] })
+export const usePlayerHistory = () => query([])
 export const useSpondEventResponseCounts = () => query({ byEvent: {}, available: false })
 export const useSpondSync = mutation
 export const useRefreshSpondPlanning = mutation

@@ -344,10 +344,18 @@ describe('the type scale is the only source of a font size', () => {
   })
 
   it('sets no font size inline in the shared vocabulary or the shell', () => {
-    // Scoped to what VISUAL-01 owns. A route still carries inline sizes and
-    // retires them with its own wave, which is the same split Part 4 applies
-    // to the fourteen control-size overrides. Widen this list as each wave
-    // lands rather than weakening it.
+    // Scoped to what the landed waves own. A route still carries inline sizes
+    // and retires them with its own wave, which is the same split Part 4
+    // applies to the fourteen control-size overrides. Widen this list as each
+    // wave lands rather than weakening it.
+    //
+    // VISUAL-01: the shared vocabulary and the shell.
+    // VISUAL-02, Registered players: the route, its filter bar and the bulk
+    // selection bar and bulk delete dialog, which is the surface Part 4 names.
+    // The six other dialogs that surface can open (add and edit a player,
+    // History, Import players, Export, Import from Spond, Renew season) are
+    // NOT in that list and still carry inline sizes; they belong to a later
+    // slice and are deliberately absent here rather than exempted.
     const OWNED = [
       'components/ui.tsx',
       'components/primitives.tsx',
@@ -356,6 +364,9 @@ describe('the type scale is the only source of a font size', () => {
       'components/BottomNav.tsx',
       'components/Crest.tsx',
       'components/UserAvatar.tsx',
+      'routes/Players.tsx',
+      'components/PlayerFilters.tsx',
+      'components/BulkDeletePlayersModal.tsx',
     ]
     const offenders: string[] = []
     for (const f of sourceFiles.filter((f) => OWNED.includes(rel(f)))) {

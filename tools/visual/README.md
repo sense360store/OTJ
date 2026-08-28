@@ -33,16 +33,25 @@ node tools/visual/contrast.mjs                       # every rendered text run, 
 ```
 
 Build and preview rather than the dev server for the screenshots: the dev
-server re-transforms two hundred modules on every page load, which turns a
-hundred and thirty six shots into half an hour.
+server re-transforms two hundred modules on every page load, which turns the
+matrix into half an hour.
 
 Query string, all optional:
 
 | Key | Values |
 |---|---|
-| `screen` | `home`, `sessions`, `login`, `more`, `dialog`, `primitives` |
-| `caps` | `coach` (default), `parent`, `viewer` |
+| `screen` | `home`, `sessions`, `login`, `players`, `more`, `dialog`, `primitives` |
+| `caps` | `coach` (default), `parent`, `viewer`, `admin` |
 | `theme` | `light` (default), `dark` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit` |
+
+`state` is read by the screens whose acceptance is a state matrix rather than a
+single render. Today that is Registered players, whose reads answer from it, so
+every state a screenshot claims is the screen's own branch: `loading` leaves the
+seasons read pending (the page level gate), `rowsloading` leaves only the
+register pending (the skeleton), `error` fails the register read, `archived`
+opens on the past season's address and `withdrawn` on `?status=all`, and `stale`
+and `overlimit` are the two refusals the bulk delete dialog can reach.
 
 `tools/visual/shoot.mjs` drives Chromium over the matrix and writes PNGs. It
 fails, rather than degrading quietly, when it cannot earn its own result: no
@@ -54,7 +63,7 @@ plausible and wrong is worse than none.
 which is the gap between the other two: the invariant test measures the token
 pairings somebody thought to name, and a screenshot shows a colour without
 judging it. It found five text runs under their threshold that forty four
-invariant tests and a hundred and thirty six screenshots had all passed. It
+invariant tests and the whole screenshot matrix had all passed. It
 runs under reduced motion, so it measures the settled paint rather than a
 transition, and it treats a gradient as one candidate ground per colour stop
 rather than measuring against the page behind it. Two categories are reported
