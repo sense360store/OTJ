@@ -506,7 +506,7 @@ export function Players() {
 
   const header = (
     <PageHeader
-      className="reg-head"
+      className="players-head"
       title="Registered players"
       sub="The club's register for a season. Read is club wide; team is a filter."
       actions={

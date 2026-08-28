@@ -1065,8 +1065,12 @@ table.reg-table td.muted-cell { color: var(--slate); }
 .reg-empty-action { margin-top: var(--space-12); }
 /* The action slot holds a labelled select beside plain buttons, so it aligns
    on the bottom edge rather than the middle: the select's label sits above it
-   and centring would leave the control sitting lower than the buttons. */
-.reg-head .page-head-acts { align-items: flex-end; }
+   and centring would leave the control sitting lower than the buttons.
+   players-head, not reg-head: every route stylesheet is bundled into one
+   global sheet, and routes/SessionRegister.css already means something else
+   by .reg-head (a sticky bar with its own ground and centred items). Which of
+   the two won on this page was import order rather than intent. */
+.players-head .page-head-acts { align-items: flex-end; }
 
 .reg-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-8); align-items: center; margin-bottom: var(--space-12); }
 .reg-filters { display: flex; flex-wrap: wrap; gap: var(--space-12); align-items: flex-end; margin-bottom: var(--space-8); }
