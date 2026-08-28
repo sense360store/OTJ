@@ -51,7 +51,7 @@ Query string, all optional:
 | `screen` | `home`, `sessions`, `login`, `players`, `more`, `dialog`, `primitives` |
 | `caps` | `coach` (default), `parent`, `viewer`, `admin` |
 | `theme` | `light` (default), `dark` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
 single render. Today that is Registered players, whose reads answer from it, so
@@ -65,7 +65,11 @@ Import from Spond is offered, so it is the fullest page header a coach can
 reach: nine actions rather than eight. It is also the one state whose proof is
 a predicate rather than a selector, because what it claims is that the address
 put the team filter on that team and no selector can ask a `select` what it is
-set to.
+set to. `archivedteam` is that address on the archived season instead, and it
+exists because `archived` alone leaves the team filter on All teams: Import
+from Spond is then absent because no mapped team is selected rather than
+because the season is not the current one, and a check asserting the archived
+gate against it cannot fail.
 
 `tools/visual/shoot.mjs` drives Chromium over the matrix and writes PNGs. It
 fails, rather than degrading quietly, when it cannot earn its own result: no

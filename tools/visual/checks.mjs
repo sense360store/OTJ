@@ -827,7 +827,13 @@ const open = async (screen, width, opts = {}) => {
       JSON.stringify(onError),
     )
 
-    const onArchived = await held('archived')
+    // archivedTEAM, not archived: the plain archived address leaves the team
+    // filter on All teams, and Import from Spond is then absent because no
+    // mapped team is selected rather than because the season is not the
+    // current one. Deleting the isCurrent and writable gates from that action
+    // would still have passed. Codex found this; the state that makes the two
+    // reasons distinguishable is the fix.
+    const onArchived = await held('archivedteam')
     check(
       'an archived season keeps Export and the template and withdraws both imports',
       onArchived.includes('Export') &&

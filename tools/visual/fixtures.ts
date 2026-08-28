@@ -71,6 +71,7 @@ export type HarnessState =
   | 'stale'
   | 'overlimit'
   | 'allactions'
+  | 'archivedteam'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 

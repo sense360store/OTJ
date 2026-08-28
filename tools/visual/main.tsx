@@ -189,6 +189,12 @@ function playersEntry(): string {
   // fullest header a coach can reach is only reachable through the address,
   // and the six the overflow is specified to hold are all present only here.
   if (harnessState === 'allactions') return `/players?team=${SPOND_TEAM_ID}`
+  // An archived season WITH the mapped team selected. `archived` alone leaves
+  // the team filter on All teams, and Import from Spond is then absent because
+  // no mapped team is selected rather than because the season is not the
+  // current one, so a check asserting the archived gate against it cannot
+  // fail. This is the address that makes the two reasons distinguishable.
+  if (harnessState === 'archivedteam') return `/players?season=${PAST_SEASON.id}&team=${SPOND_TEAM_ID}`
   return '/players'
 }
 
