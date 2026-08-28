@@ -823,6 +823,13 @@ const open = async (screen, width, opts = {}) => {
     // With the popup closed neither label is in the markup, so a static test
     // asserting their absence would pass whatever the gate did; opening it is
     // what makes these gates observable at all.
+    // The labels AND the preconditions the labels are read against. Codex,
+    // twice: an absence proves the gate it names only if the OTHER reasons
+    // that action could be absent are ruled out first. Import from Spond
+    // needs a Spond mapped team selected, so a check that reads only the
+    // labels passes for the wrong reason the moment the address, the URL
+    // parsing or the mapping fixture stops delivering one, which is the same
+    // shape as the finding that produced `archivedteam` in the first place.
     const held = async (state) => {
       const page = await open('players', 1280, { state })
       const trigger = page.getByRole('button', { name: 'More actions', exact: true })
@@ -836,11 +843,19 @@ const open = async (screen, width, opts = {}) => {
                 [...document.querySelectorAll('.players-more .menu-list > *')].map((c) => c.textContent.trim()),
               )
             })()
+      // Read from the control itself, because no selector can ask a select
+      // what it is set to and the address is exactly what might have stopped
+      // working.
+      const team = await page.evaluate(() => {
+        const el = document.querySelector('#filter-team')
+        return el ? el.value : null
+      })
       await page.close()
-      return labels
+      return { labels, team }
     }
 
-    const onError = await held('error')
+    // No Spond claim here, so this one needs no team precondition.
+    const onError = (await held('error')).labels
     check(
       'a failed register read withdraws Export and Import players, and keeps the rest',
       !onError.includes('Export') &&
@@ -859,10 +874,16 @@ const open = async (screen, width, opts = {}) => {
     const onArchived = await held('archivedteam')
     check(
       'an archived season keeps Export and the template and withdraws both imports',
-      onArchived.includes('Export') &&
-        onArchived.includes('Download template') &&
-        !onArchived.includes('Import players') &&
-        !onArchived.includes('Import from Spond'),
+      // Preconditions first: the address really did select the mapped team,
+      // and the club really does have a mapping, which is what offering
+      // Spond links at all proves. Only then does the absence of Import from
+      // Spond mean the archived gate rather than an unmapped team.
+      onArchived.team === 'titans' &&
+        onArchived.labels.includes('Spond links') &&
+        onArchived.labels.includes('Export') &&
+        onArchived.labels.includes('Download template') &&
+        !onArchived.labels.includes('Import players') &&
+        !onArchived.labels.includes('Import from Spond'),
       JSON.stringify(onArchived),
     )
   }
