@@ -975,7 +975,9 @@ summary:focus-visible,
 .reg-count .skeleton-chip { width: 112px; height: 34px; border-radius: var(--radius-pill); }
 .reg-count .showing { color: var(--slate); font-weight: 600; }
 
-/* Status badge: a coloured dot plus the word, so status is never colour alone. */
+/* The pre VISUAL-02 status badge. Registered players renders the shared Badge
+   primitive now; this stays because the season renewal dialog is still its
+   caller, and that dialog belongs to a later slice. */
 .status-badge { display: inline-flex; align-items: center; gap: var(--space-4); font-size: var(--text-xs); font-weight: 700; white-space: nowrap; }
 .status-badge .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 
