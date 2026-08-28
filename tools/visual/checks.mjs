@@ -572,7 +572,13 @@ const open = async (screen, width, opts = {}) => {
     // check that survives the mutation it exists to catch is not a check, so
     // this one compares the popup's right edge with the SLOT's, which differs
     // by 29px to 447px under that mutation at eight of these ten widths.
-    for (const state of ['default', 'allactions']) {
+    // noseason is in the list because it is the case that broke it. A club
+    // with no season at all offers a players.manage holder nothing but Spond
+    // links, so the slot holds the trigger alone at 161px, narrower than the
+    // popup it anchors, and the popup's left edge measured -13px at 360 and
+    // 390 with no scroll that could reach it. The slot carries a min-width of
+    // --menu-w now, the same token the popup's width comes from.
+    for (const state of ['default', 'allactions', 'noseason']) {
       for (const width of [360, 390, 430, 901, 1280]) {
         const page = await open('players', width, { state })
         const trigger = page.getByRole('button', { name: 'More actions', exact: true })
@@ -592,6 +598,7 @@ const open = async (screen, width, opts = {}) => {
           return {
             left: Math.round(b.left),
             right: Math.round(b.right),
+            slotLeft: Math.round(slot.left),
             slotRight: Math.round(slot.right),
             triggerRight: Math.round(btn.right),
             viewport: window.innerWidth,
@@ -604,6 +611,11 @@ const open = async (screen, width, opts = {}) => {
           `the overflow popup is anchored to the action slot at ${width} (${state})`,
           !!r &&
             Math.abs(r.right - r.slotRight) <= 1 &&
+            // The slot's LEFT edge is the content's left edge, so staying
+            // inside the slot is what keeps the popup on the page. Asserting
+            // left >= 0 alone would miss a popup clipped inside a padded
+            // content column, and it is the SLOT the anchoring rule is about.
+            r.left >= r.slotLeft - 1 &&
             r.left >= 0 &&
             r.right <= r.viewport &&
             !r.overflows &&
@@ -722,7 +734,11 @@ const open = async (screen, width, opts = {}) => {
     }
     check(
       'Tab reaches all six overflow items and every one draws the shared ring',
-      walked.length === 6 && walked.every((w) => w.inside && w.ring) && walked.some((w) => w.tag === 'A'),
+      // No length assertion: the loop always pushes six. What is claimed is
+      // that all six landed INSIDE the popup and that one of them is the
+      // anchor, which is the item that takes the ring through its own
+      // selector rather than the shared button one.
+      walked.every((w) => w.inside && w.ring) && walked.filter((w) => w.tag === 'A').length === 1,
       JSON.stringify(walked.filter((w) => !w.inside || !w.ring)),
     )
     await page.close()
@@ -730,12 +746,19 @@ const open = async (screen, width, opts = {}) => {
 
   {
     // Six 44px items is a 284px popup, which is taller than the fold on a
-    // landscape phone. It carries no max-height and no inner scroll on
-    // purpose: it is absolutely positioned in the document rather than fixed
-    // to the viewport, so the page scrolls to it, and a nested scroll area
-    // inside a 390px tall window would be a second scroll surface where one
-    // already works. That is a claim about a viewport shape nothing else here
-    // opens, so it is measured rather than asserted in a comment.
+    // landscape phone: at 844x390 the last item starts 61px BELOW the fold,
+    // and the bottom nav is fixed over the last 55px of it at z-index 50
+    // against the popup's 30. The popup carries no max-height and no inner
+    // scroll on purpose: it is absolutely positioned in the document rather
+    // than fixed to the viewport, so the page scrolls to it and the item
+    // comes out from under the nav, and a nested scroll area inside a 390px
+    // tall window would be a second scroll surface where one already works.
+    //
+    // So this scrolls first, deliberately, and what it proves is that the
+    // item is reachable AFTER the scroll a coach would make: elementFromPoint
+    // returns the item itself, which it would not if the nav were still over
+    // it. That is a claim about a viewport shape nothing else here opens, so
+    // it is measured rather than asserted in a comment.
     for (const [width, height] of [
       [844, 390],
       [740, 360],
@@ -758,7 +781,7 @@ const open = async (screen, width, opts = {}) => {
         }
       })
       check(
-        `the last overflow item is reachable at ${width}x${height}`,
+        `the last overflow item is reachable, once scrolled to, at ${width}x${height}`,
         !!r && r.onScreen && r.reachable && r.last === 'Download template',
         JSON.stringify(r),
       )

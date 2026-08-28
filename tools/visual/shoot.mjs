@@ -181,7 +181,10 @@ async function reached(page, s, theme) {
       ok = false
     } else if (!(typeof proof === 'function' ? await proof(page) : await visible(page, proof))) {
       failures++
-      console.log(`ERROR ${name(s, theme)}: ${proof} never held, so the ${s.state} state was not reached`)
+      // A predicate stringifies to its whole body, which buries the message
+      // it is attached to. It is named rather than printed.
+      const shown = typeof proof === 'function' ? `the ${s.state} predicate` : proof
+      console.log(`ERROR ${name(s, theme)}: ${shown} never held, so the ${s.state} state was not reached`)
       ok = false
     }
   }

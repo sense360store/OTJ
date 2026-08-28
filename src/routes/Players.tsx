@@ -589,6 +589,13 @@ export function Players() {
 
   // A direct action. A destination is an anchor taking the button classes
   // through buttonClass rather than being turned into a button.
+  //
+  // No action the slot holds today carries `to`, so that branch does not run:
+  // HEADER_DIRECT is add and select, and Spond links is the only destination
+  // and always overflows. It is here because ACTIONS is one description per
+  // action and either rendering has to honour the whole shape. Deleting the
+  // branch would make moving a destination into the slot render a button with
+  // no handler, which is a silent failure rather than a compile error.
   const directAction = (key: PlayerHeaderAction) => {
     const a = ACTIONS[key]
     return a.to !== undefined ? (

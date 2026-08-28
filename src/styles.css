@@ -176,6 +176,10 @@
      they are literals in the media queries below because a custom
      property cannot be read in a media query. */
   --sidebar-w: 264px;
+  /* The overflow menu popup's width. It is a token because the Registered
+     players header anchors its popup to its action slot, and the slot has to
+     be at least as wide as the thing it anchors; see .players-head. */
+  --menu-w: 190px;
 }
 
 /* ---- Dark theme ---------------------------------------------------
@@ -1046,7 +1050,7 @@ table.reg-table td.muted-cell { color: var(--slate); }
    header's More actions. */
 .menu { position: relative; display: inline-flex; }
 .menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; background: var(--card);
-  border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); min-width: 190px; padding: var(--space-4);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); min-width: var(--menu-w); padding: var(--space-4);
   display: flex; flex-direction: column; gap: var(--space-2); }
 .menu-list button, .menu-list a { text-align: left; padding: var(--space-8) var(--space-12); border-radius: var(--radius-xs); border: 0; background: none;
   color: var(--ink); font-size: var(--text-base); font-weight: 600; cursor: pointer; text-decoration: none; }
@@ -1076,22 +1080,28 @@ table.reg-table td.muted-cell { color: var(--slate); }
 /* ---- the header's More actions overflow ------------------------------
    Its popup is anchored to the ACTION SLOT rather than to its own trigger.
    .menu-list is right: 0 against .menu, which puts the popup's right edge on
-   the trigger's right edge and lets a 190px popup extend that far to the
+   the trigger's right edge and lets the popup extend its own width to the
    left. That is right for a row menu, whose trigger is the last thing in a
    right aligned cell, and wrong here, because the trigger wraps with the rest
-   of the slot and can end up at the START of a row with less than 190px to
-   its left.
+   of the slot and can end up at the START of a row with less than a popup's
+   width to its left.
 
-   Measured, so the case is not hypothetical: at 360px in the shipped
-   typeface the trigger sits second on its row and a trigger anchored popup
-   would just fit, but in the FALLBACK face, which is what a coach gets when
-   the font request does not land, the buttons are narrower, the trigger wraps
-   alone to the start of the last row and the popup's left edge computes to
-   -35px. The slot's right edge is the content's right edge at every width and
-   in every face, so anchoring there cannot leave the page in either
-   direction, and top: 100% opens the popup clear of the wrapped rows above it
+   Measured, so the case is not hypothetical: at 360px in the shipped typeface
+   the trigger sits second on its row and a trigger anchored popup would just
+   fit, but in the FALLBACK face, which is what a coach gets when the font
+   request does not land, the buttons are narrower, the trigger wraps alone to
+   the start of the last row and the popup's left edge computes to -35px.
+
+   The slot's LEFT edge is the content's left edge, which is what makes
+   anchoring to the slot safe, and the min-width is what makes that true in
+   the one case where it is not free: a club with no season at all offers a
+   players.manage holder nothing but Spond links, so the slot holds the
+   trigger alone at 161px, narrower than the 190px popup it anchors, and the
+   popup's left edge measured -13px at both 360 and 390 with nothing to
+   scroll to reach it. Both widths come from --menu-w now, so they cannot
+   drift apart. top: 100% opens the popup clear of the wrapped rows above it
    rather than over them. */
-.players-head .page-head-acts { position: relative; }
+.players-head .page-head-acts { position: relative; min-width: var(--menu-w); }
 .players-head .page-head-acts > .players-more { position: static; }
 .players-head .page-head-acts > .players-more > .menu-list { right: 0; top: calc(100% + var(--space-4)); }
 /* The header's items carry the icon their direct rendering has, and a 44px
