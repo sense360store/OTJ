@@ -271,6 +271,79 @@ export function rowActionKeys(
   return keys
 }
 
+// ---- the page header's action hierarchy -----------------------------------
+// The sibling of rowActionKeys, one level up: which of the header's actions
+// stay in the action slot and which ride in the More actions overflow. Kept
+// pure for the same reason, and shaped like components/nav.ts's bottomItemsFor
+// and moreItemsFor, which solve exactly this problem for the phone navigation.
+//
+// WHY AN OVERFLOW AT ALL, AND AT EVERY WIDTH. Measured in a real browser with
+// the full capability set, the eight actions the slot held wrapped to five rows
+// at 360px and a 371px tall header, four at 390px and 430px, and never fewer
+// than two at any desktop width; 901px, where the 264px sidebar returns and the
+// content drops to 589px, was three rows and worse than 900px. The row that
+// fits on one line does not exist at any width this product is used at, so the
+// hierarchy is one rule rather than a breakpoint: there is no width where the
+// old layout was the clean one to preserve, and a rule that changed at a
+// breakpoint would need a second implementation and would still leave 901px
+// as the worst case on the page.
+//
+// Design Read 2.10: "one primary action per page, at most. Everything else is
+// ghost, quiet, or in an overflow menu."
+export type PlayerHeaderAction =
+  | 'add'
+  | 'select'
+  | 'spond'
+  | 'links'
+  | 'renew'
+  | 'import'
+  | 'export'
+  | 'template'
+
+// One flag per action, exactly the gates the page has already derived. Written
+// as a total record rather than a bag of optional booleans so an action added
+// later cannot compile without stating when it is offered.
+export type PlayerHeaderAvailability = Record<PlayerHeaderAction, boolean>
+
+// Reading order, shared by the slot and the overflow, so the two can never
+// present the same actions in two different orders.
+const HEADER_ORDER: readonly PlayerHeaderAction[] = [
+  'add',
+  'select',
+  'spond',
+  'links',
+  'renew',
+  'import',
+  'export',
+  'template',
+]
+
+// The actions that stay in the slot beside the season select: the one primary
+// action, and entering selection mode, which is the gesture every other row
+// level action on this page is reached through. Everything else is lower
+// frequency and overflows.
+const HEADER_DIRECT: readonly PlayerHeaderAction[] = ['add', 'select']
+
+// Every action the capability set and the selected season open, in order.
+export function availableHeaderActions(av: PlayerHeaderAvailability): PlayerHeaderAction[] {
+  return HEADER_ORDER.filter((k) => av[k])
+}
+
+// The actions rendered directly in the slot.
+export function directHeaderActions(av: PlayerHeaderAvailability): PlayerHeaderAction[] {
+  return availableHeaderActions(av).filter((k) => HEADER_DIRECT.includes(k))
+}
+
+// The actions rendered in the More actions overflow: every available action the
+// slot does not carry, DERIVED rather than listed a second time. That is what
+// makes "an action is offered exactly once" a property of the partition instead
+// of a pair of lists somebody has to keep in step, and it is why an action
+// added to HEADER_ORDER and to nothing else still appears.
+export function overflowHeaderActions(av: PlayerHeaderAvailability): PlayerHeaderAction[] {
+  const direct = new Set(directHeaderActions(av))
+  return availableHeaderActions(av).filter((k) => !direct.has(k))
+}
+
 // The board eligibility selector (docs/product/registered-players-spec.md):
 // current season registered players on the selected team by default; Pending
 // only when the picker's toggle is on; Withdrawn never; Unassigned (team null)

@@ -29,6 +29,10 @@ import {
   sortRows,
   statusCounts,
   STATUS_META,
+  directHeaderActions,
+  overflowHeaderActions,
+  type PlayerHeaderAction,
+  type PlayerHeaderAvailability,
   type PlayersFilters,
   type StatusFilter,
 } from '../lib/playersView'
@@ -49,6 +53,7 @@ import { downloadTemplate } from '../lib/playersTemplate'
 import { mappingForTeam } from '../lib/spond'
 import type { RegisteredPlayer, RegistrationStatus, Team } from '../lib/data'
 import { Icon } from '../components/icons'
+import type { IconComponent } from '../components/icons'
 import { Chip, Empty, ErrorNote, Loading, LoadingRows } from '../components/ui'
 import {
   Badge,
@@ -59,6 +64,7 @@ import {
   SelectField,
   buttonClass,
   type BadgeTone,
+  type ButtonVariant,
 } from '../components/primitives'
 import { PlayerFilters } from '../components/PlayerFilters'
 import { PlayerFormModal } from '../components/PlayerFormModal'
@@ -118,19 +124,45 @@ export function StatusBadge({ status }: { status: RegistrationStatus }) {
   return <Badge tone={STATUS_TONE[status]}>{STATUS_META[status].label}</Badge>
 }
 
-// An accessible overflow disclosure (row actions on desktop, an action sheet on
-// mobile). The trigger toggles a popup of plain action buttons: they are Tab
-// reachable, Escape closes the popup and returns focus to the trigger, and a
-// click outside closes it. It is a disclosure, not an ARIA menu widget (no
-// roving arrow-key navigation), so it does not claim the menu role it would not
-// fulfil. Selecting an action first returns focus to the trigger, so the modal
-// that opens captures a still-mounted opener and can restore focus to it.
-function RowMenu({
+// An item in the overflow. Either it runs something (onClick) or it goes
+// somewhere (to), never both: a destination stays an anchor inside the popup,
+// so Spond links keeps middle click, open in a new tab and the status bar it
+// has as a header button. `icon` is optional because the row items have never
+// carried one and the header items are the same actions the slot renders, so
+// they keep the icon they had there.
+interface MenuItem {
+  key: string
+  label: string
+  icon?: IconComponent
+  onClick?: () => void
+  to?: string
+  danger?: boolean
+}
+
+// An accessible overflow disclosure, used by the row actions in the table and
+// the cards and by the header's More actions. The trigger toggles a popup of
+// plain actions: they are Tab reachable, Escape closes the popup and returns
+// focus to the trigger, and a click outside closes it. It is a disclosure, not
+// an ARIA menu widget (no roving arrow-key navigation), so it does not claim
+// the menu role it would not fulfil. Selecting an action first returns focus to
+// the trigger, so the modal that opens captures a still-mounted opener and can
+// restore focus to it.
+//
+// The trigger is an icon alone on a row, where the child's name beside it is
+// the context and a visible "More actions" on every row would be noise, and a
+// labelled button in the page header, where it is the only one on the page and
+// has to say what it opens. One component either way, so the focus contract has
+// one implementation rather than one per surface.
+function OverflowMenu({
   label,
   items,
+  trigger = 'icon',
+  className,
 }: {
   label: string
-  items: { key: string; label: string; onClick: () => void; danger?: boolean }[]
+  items: MenuItem[]
+  trigger?: 'icon' | 'labelled'
+  className?: string
 }) {
   const [open, setOpen] = useState(false)
   const btnRef = useRef<HTMLButtonElement>(null)
@@ -151,7 +183,7 @@ function RowMenu({
   if (items.length === 0) return null
   return (
     <div
-      className="menu"
+      className={['menu', className].filter(Boolean).join(' ')}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && open) {
           e.stopPropagation()
@@ -159,30 +191,44 @@ function RowMenu({
         }
       }}
     >
-      <IconButton
-        ref={btnRef}
-        label={label}
-        icon={Icon.more}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      />
+      {trigger === 'labelled' ? (
+        <Button ref={btnRef} icon={Icon.more} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          {label}
+        </Button>
+      ) : (
+        <IconButton
+          ref={btnRef}
+          label={label}
+          icon={Icon.more}
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        />
+      )}
       {open && (
         <div ref={menuRef} className="menu-list">
-          {items.map((it) => (
-            <button
-              key={it.key}
-              className={it.danger ? 'danger' : undefined}
-              onClick={() => {
-                // Return focus to the trigger (which stays mounted) before the
-                // action opens its modal, so the modal restores focus here on
-                // close rather than dropping to the document body.
-                close()
-                it.onClick()
-              }}
-            >
-              {it.label}
-            </button>
-          ))}
+          {items.map((it) =>
+            it.to !== undefined ? (
+              <Link key={it.key} to={it.to} onClick={() => close()}>
+                {it.icon && <it.icon aria-hidden="true" />}
+                {it.label}
+              </Link>
+            ) : (
+              <button
+                key={it.key}
+                className={it.danger ? 'danger' : undefined}
+                onClick={() => {
+                  // Return focus to the trigger (which stays mounted) before the
+                  // action opens its modal, so the modal restores focus here on
+                  // close rather than dropping to the document body.
+                  close()
+                  it.onClick?.()
+                }}
+              >
+                {it.icon && <it.icon aria-hidden="true" />}
+                {it.label}
+              </button>
+            ),
+          )}
         </div>
       )}
     </div>
@@ -205,7 +251,7 @@ const ROW_ACTION_LABELS: Record<
 function rowMenuItems(
   player: RegisteredPlayer,
   opts: { canManage: boolean; canDelete: boolean; writable: boolean; open: (m: ModalState) => void },
-): { key: string; label: string; onClick: () => void; danger?: boolean }[] {
+): MenuItem[] {
   // pending -> registered is offered through the Edit modal's "Mark as
   // registered" control; the menu keeps to the keys rowActionKeys returns.
   return rowActionKeys(player.status, opts).map((key) => {
@@ -439,70 +485,117 @@ export function Players() {
       </SelectField>
     ) : null
 
-  const addButton = showAdd ? (
-    <Button variant="primary" icon={Icon.plus} onClick={() => open({ kind: 'add' })}>
-      Add player
-    </Button>
-  ) : null
-
-  const spondButton = showSpond ? (
-    <Button icon={Icon.rotate} onClick={() => open({ kind: 'import' })}>
-      Import from Spond
-    </Button>
-  ) : null
-
+  // One description per header action: when it is offered, what it is called,
+  // its icon, and what it does. Written ONCE, so the slot and the overflow
+  // render the same action rather than two that can be renamed apart, and so
+  // "preserve every capability gate" is a property of this table rather than
+  // of two call sites agreeing. `available` is exactly the gate each button
+  // carried before; nothing here widens or narrows one.
+  //
   // Spond links is deliberately NOT gated on the team filter: a linking
   // affordance that appears only once a specific team is selected is one
-  // nobody finds. Any players.manage holder sees it whenever the club has
-  // at least one mapping, and the screen itself picks the team.
-  // A Link is an anchor, not a button, so it takes the button classes through
-  // buttonClass rather than being turned into one.
-  const linksButton = showSpondLinks ? (
-    <Link to="/players/spond-links" className={buttonClass('ghost')}>
-      <Icon.link />
-      Spond links
-    </Link>
-  ) : null
-
-  const renewButton = showRenew ? (
-    <Button icon={Icon.calendar} onClick={() => open({ kind: 'renew' })}>
-      Renew
-    </Button>
-  ) : null
-
-  const exportButton = showExport ? (
-    <Button icon={Icon.download} onClick={() => open({ kind: 'export' })}>
-      Export
-    </Button>
-  ) : null
-
-  const importButton = showImport ? (
-    <Button icon={Icon.upload} onClick={() => open({ kind: 'importFile' })}>
-      Import players
-    </Button>
-  ) : null
-
-  // Enters and leaves bulk selection mode. Never selects anything by itself:
-  // the mode opens with nothing selected, every time.
-  const selectButton = bulkAllowed ? (
-    <Button
-      variant={bulkActive ? 'quiet' : 'ghost'}
-      icon={Icon.check}
-      aria-pressed={bulkActive}
-      onClick={() => {
+  // nobody finds. Any players.manage holder sees it whenever the club has at
+  // least one mapping, and the screen itself picks the team. It is a
+  // destination rather than a command, so it carries `to` and stays an anchor
+  // in both renderings.
+  const ACTIONS: Record<
+    PlayerHeaderAction,
+    {
+      available: boolean
+      label: string
+      icon: IconComponent
+      variant?: ButtonVariant
+      onClick?: () => void
+      to?: string
+      /* Selection mode is a toggle, so its direct rendering says which way it
+         is set. It never overflows, so this has no rendering in the popup. */
+      pressed?: boolean
+    }
+  > = {
+    add: {
+      available: showAdd,
+      label: 'Add player',
+      icon: Icon.plus,
+      variant: 'primary',
+      onClick: () => open({ kind: 'add' }),
+    },
+    // Enters and leaves bulk selection mode. Never selects anything by itself:
+    // the mode opens with nothing selected, every time.
+    select: {
+      available: bulkAllowed,
+      label: bulkActive ? 'Done selecting' : 'Select players',
+      icon: Icon.check,
+      variant: bulkActive ? 'quiet' : 'ghost',
+      pressed: bulkActive,
+      onClick: () => {
         setSelected(clearSelection())
         setBulkMode((on) => !on)
-      }}
-    >
-      {bulkActive ? 'Done selecting' : 'Select players'}
-    </Button>
-  ) : null
+      },
+    },
+    spond: {
+      available: showSpond,
+      label: 'Import from Spond',
+      icon: Icon.rotate,
+      onClick: () => open({ kind: 'import' }),
+    },
+    links: { available: showSpondLinks, label: 'Spond links', icon: Icon.link, to: '/players/spond-links' },
+    renew: {
+      available: showRenew,
+      label: 'Renew',
+      icon: Icon.calendar,
+      onClick: () => open({ kind: 'renew' }),
+    },
+    import: {
+      available: showImport,
+      label: 'Import players',
+      icon: Icon.upload,
+      onClick: () => open({ kind: 'importFile' }),
+    },
+    export: {
+      available: showExport,
+      label: 'Export',
+      icon: Icon.download,
+      onClick: () => open({ kind: 'export' }),
+    },
+    template: {
+      available: showTemplate,
+      label: 'Download template',
+      icon: Icon.fileText,
+      variant: 'quiet',
+      onClick: () => downloadTemplate('csv'),
+    },
+  }
+  const availability: PlayerHeaderAvailability = {
+    add: ACTIONS.add.available,
+    select: ACTIONS.select.available,
+    spond: ACTIONS.spond.available,
+    links: ACTIONS.links.available,
+    renew: ACTIONS.renew.available,
+    import: ACTIONS.import.available,
+    export: ACTIONS.export.available,
+    template: ACTIONS.template.available,
+  }
 
-  const templateButton = showTemplate ? (
-    <Button variant="quiet" icon={Icon.fileText} onClick={() => downloadTemplate('csv')}>
-      Download template
-    </Button>
-  ) : null
+  // A direct action. A destination is an anchor taking the button classes
+  // through buttonClass rather than being turned into a button.
+  const directAction = (key: PlayerHeaderAction) => {
+    const a = ACTIONS[key]
+    return a.to !== undefined ? (
+      <Link key={key} to={a.to} className={buttonClass(a.variant ?? 'ghost')}>
+        <a.icon />
+        {a.label}
+      </Link>
+    ) : (
+      <Button key={key} variant={a.variant ?? 'ghost'} icon={a.icon} aria-pressed={a.pressed} onClick={a.onClick}>
+        {a.label}
+      </Button>
+    )
+  }
+
+  const overflowItems: MenuItem[] = overflowHeaderActions(availability).map((key) => {
+    const a = ACTIONS[key]
+    return { key, label: a.label, icon: a.icon, onClick: a.onClick, to: a.to }
+  })
 
   const header = (
     <PageHeader
@@ -512,14 +605,8 @@ export function Players() {
       actions={
         <>
           {seasonSelect}
-          {addButton}
-          {selectButton}
-          {spondButton}
-          {linksButton}
-          {renewButton}
-          {importButton}
-          {exportButton}
-          {templateButton}
+          {directHeaderActions(availability).map(directAction)}
+          <OverflowMenu label="More actions" items={overflowItems} trigger="labelled" className="players-more" />
         </>
       }
     />
@@ -946,7 +1033,7 @@ export function DesktopTable({
                       History
                     </button>
                   )}
-                  <RowMenu
+                  <OverflowMenu
                     label={`More actions for ${p.displayName}`}
                     items={rowMenuItems(p, { canManage, canDelete, writable, open })}
                   />
@@ -1017,7 +1104,7 @@ export function PlayerCard({
           <span>Updated {fmtRegDate(player.updatedAt)}</span>
         </div>
       </div>
-      <RowMenu label={`Actions for ${player.displayName}`} items={items} />
+      <OverflowMenu label={`Actions for ${player.displayName}`} items={items} />
     </div>
   )
 }

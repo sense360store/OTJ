@@ -76,6 +76,22 @@ const SHOTS = [
   // past the server's cap of 200.
   ...[390, 1280].map((w) => ({ screen: 'players', caps: 'coach', state: 'stale', w, open: 'delete' })),
   ...[390, 1280].map((w) => ({ screen: 'players', caps: 'coach', state: 'overlimit', w, open: 'delete' })),
+  /* The header's action hierarchy. `allactions` is the fullest header a coach
+     can reach: Import from Spond is the one action gated on the team filter,
+     so every one of the nine is offered only with a Spond mapped team
+     selected, and that is the case the hierarchy has to hold. Shot closed at
+     the three phone widths the acceptance names plus a desktop pair, and
+     open at the same widths plus the 900px changeover. The capability limited
+     variants need no entry of their own: viewer and parent are already shot
+     at every width above, and neither is offered an overflow at all. */
+  ...[360, 390, 430, 1024, 1280].map((w) => ({ screen: 'players', caps: 'coach', state: 'allactions', w })),
+  ...[360, 390, 430, 900, 1280].map((w) => ({
+    screen: 'players',
+    caps: 'coach',
+    state: 'allactions',
+    w,
+    open: 'moreactions',
+  })),
 ]
 
 const name = (s, theme) =>
@@ -83,7 +99,7 @@ const name = (s, theme) =>
 
 // An overlay is shot at the viewport rather than full page: a full page shot
 // of a dialog over a two hundred row register is a picture of the register.
-const OVERLAY = new Set(['more', 'delete'])
+const OVERLAY = new Set(['more', 'delete', 'moreactions'])
 
 
 // Every entry whose name claims a state must PROVE that state before its
@@ -99,6 +115,10 @@ const OVERLAY = new Set(['more', 'delete'])
 // state axis was the half that had no proof when it was introduced.
 const REACHED = {
   more: '.more-sheet',
+  // The header's own overflow, which is a popup rather than the bottom sheet
+  // `more` names. Scoped to .players-more so a row menu left open by another
+  // press could not stand in for it.
+  moreactions: '.players-more .menu-list',
   error: '.note-danger[role="alert"]',
   info: '.note-success[role="status"]',
   select: '.bulk-bar',
@@ -110,6 +130,13 @@ const REACHED = {
 // failure rather than a pass, so adding a state without its proof cannot go
 // quiet. Playwright's :has-text() is what separates two states that render
 // the same element with different words.
+//
+// A value may be a PREDICATE instead of a selector, for a state whose proof is
+// not "an element is on screen". `allactions` is one: what it claims is that
+// the address put the team filter on the Spond mapped team, which is what
+// makes Import from Spond available, and no selector can ask a <select> what
+// it is set to. Proving it by some element that merely happens to render
+// alongside would be the same false proof this map exists to stop.
 const REACHED_STATE = {
   loading: '.content > .loading[role="status"]',
   rowsloading: '.skeleton-list',
@@ -124,6 +151,8 @@ const REACHED_STATE = {
   noseason: '.empty:has-text("season")',
   stale: '.modal .note-danger:has-text("out of date")',
   overlimit: '.modal .note-danger:has-text("At most 200")',
+  allactions: async (page) =>
+    page.$eval('#filter-team', (el) => el.value === 'titans').catch(() => false),
 }
 
 async function visible(page, selector) {
@@ -145,14 +174,14 @@ async function reached(page, s, theme) {
     }
   }
   if (s.state && s.state !== 'default') {
-    const selector = REACHED_STATE[s.state]
-    if (!selector) {
+    const proof = REACHED_STATE[s.state]
+    if (!proof) {
       failures++
       console.log(`ERROR ${name(s, theme)}: no proof selector for state=${s.state}, so the shot claims a state nothing checked`)
       ok = false
-    } else if (!(await visible(page, selector))) {
+    } else if (!(typeof proof === 'function' ? await proof(page) : await visible(page, proof))) {
       failures++
-      console.log(`ERROR ${name(s, theme)}: ${selector} never appeared, so the ${s.state} state was not reached`)
+      console.log(`ERROR ${name(s, theme)}: ${proof} never held, so the ${s.state} state was not reached`)
       ok = false
     }
   }
@@ -257,6 +286,19 @@ for (const theme of ['light', 'dark']) {
         if (s.open === 'delete') {
           if (await press(/^Select all \d+ shown$/)) await press(/^Delete \d+ players?$/)
         }
+      }
+    }
+    if (s.open === 'moreactions') {
+      // Pressed, never faked, and named EXACTLY: every row's menu trigger is
+      // called "More actions for <child>", so a loose name matches nine
+      // controls and the first of them is a row.
+      const more = page.getByRole('button', { name: 'More actions', exact: true })
+      if ((await more.count()) === 0) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: no More actions button, so the overflow was never opened`)
+      } else {
+        await more.first().click()
+        await page.waitForTimeout(150)
       }
     }
     if (s.open === 'error' || s.open === 'info') {

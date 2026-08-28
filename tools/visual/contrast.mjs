@@ -150,7 +150,12 @@ const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players']
 // opened here rather than left to a screenshot.
 const CAPS_FOR = (screen) =>
   screen === 'home' || screen === 'sessions' || screen === 'players' ? ['coach', 'viewer', 'parent'] : ['na']
-const STATES_FOR = (screen) => (screen === 'players' ? ['default', 'error', 'archived', 'empty', 'withdrawn'] : ['default'])
+// `allactions` opens the register with the Spond mapped team selected, which
+// is the only way every header action is offered; the run below then opens the
+// More actions popup, so its labels are measured on the ground they sit on
+// rather than assumed from the token pairing.
+const STATES_FOR = (screen) =>
+  screen === 'players' ? ['default', 'error', 'archived', 'empty', 'withdrawn', 'allactions'] : ['default']
 
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
@@ -178,6 +183,15 @@ for (const screen of SCREENS) {
         if (screen === 'login') {
           await page.getByRole('button', { name: /magic link/i }).first().click().catch(() => {})
           await page.waitForTimeout(300)
+        }
+        // The header's overflow. Named exactly: every row's trigger reads
+        // "More actions for <child>", so a loose name resolves to a row.
+        if (screen === 'players' && state === 'allactions') {
+          const more = page.getByRole('button', { name: 'More actions', exact: true })
+          if (await more.count()) {
+            await more.first().click()
+            await page.waitForTimeout(250)
+          }
         }
         // The selection bar and the destructive dialog, driven through the
         // real controls, so their labels are measured on the fills they

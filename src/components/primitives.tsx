@@ -68,6 +68,11 @@ type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> & 
   block?: boolean
   icon?: IconComponent
   className?: string
+  /* Named for the same reason IconButton names it: ButtonHTMLAttributes
+     carries no ref, and a caller that has to return focus to this control
+     needs a handle on it. The first caller is the Registered players header's
+     More actions trigger, which focuses itself again when the popup closes. */
+  ref?: Ref<HTMLButtonElement>
 }
 
 export function Button({ variant = 'ghost', size = 'md', block, icon: Ico, className, children, type = 'button', ...rest }: ButtonProps) {

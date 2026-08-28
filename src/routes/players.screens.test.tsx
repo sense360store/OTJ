@@ -231,11 +231,24 @@ describe('a read that has not answered is never rendered as an empty club', () =
   })
 
   it('offers neither Export nor Import while the register is unsettled', () => {
-    state.caps = new Set(['players.view', 'players.manage', 'players.export', 'players.import'])
+    // Both are gated on a settled, non errored read, because the confirm
+    // dialog's previewed count must never read 0 while the real set is still
+    // arriving. They now ride in the overflow, so their labels are not in a
+    // closed page's markup in EITHER case and asserting their absence would
+    // pass whatever the gate did. What is still observable, and still fails
+    // when the gate goes, is whether the overflow exists at all: this
+    // capability set opens exactly one action, Export, so a settled register
+    // has a More actions trigger and an errored one has none.
+    state.caps = new Set(['players.view', 'players.export'])
+    expect(html()).toContain('More actions</button>')
     state.rowsError = true
-    const out = html()
-    expect(out).not.toContain('>Export<')
-    expect(out).not.toContain('Import players')
+    expect(html()).not.toContain('More actions</button>')
+  })
+
+  it('offers neither Export nor Import players while the register is loading', () => {
+    state.caps = new Set(['players.view', 'players.export'])
+    state.rowsLoading = true
+    expect(html()).not.toContain('More actions</button>')
   })
 })
 
@@ -290,11 +303,23 @@ describe('the archived season is read only and says why', () => {
     const out = html()
     expect(out).not.toContain('Add player')
     expect(out).not.toContain('Select players')
-    expect(out).not.toContain('Import players')
     expect(out).not.toContain('>Edit<')
     // History is a read and stays; so does the register itself.
     expect(out).toContain('>History<')
     expect(out).toContain('<table')
+  })
+
+  it('keeps the overflow, because an archived season is still exportable', () => {
+    // Export reads any season and Download template carries no season at
+    // all, so an archived register offers a More actions trigger on a screen
+    // that offers no Add player and no Select players. Import players is
+    // withdrawn here and Import from Spond is current season only; neither
+    // label is in a closed page's markup either way, so which actions the
+    // popup HOLDS is proved by opening it, in tools/visual/checks.mjs.
+    state.caps = new Set(['players.view', 'players.manage', 'players.export', 'players.import', 'audit.view'])
+    const out = html()
+    expect(out).toContain('More actions</button>')
+    expect(out).not.toContain('Add player')
   })
 })
 
@@ -312,7 +337,7 @@ describe('capability decides what is offered, and this wave moved none of it', (
     const out = html()
     expect(out).toContain('<table')
     expect(out).toContain('Aria Bexley-Thornton')
-    for (const gone of ['Add player', 'Select players', '>Edit<', 'More actions for', '>History<']) {
+    for (const gone of ['Add player', 'Select players', '>Edit<', 'More actions', '>History<']) {
       expect(out).not.toContain(gone)
     }
   })
@@ -335,9 +360,91 @@ describe('capability decides what is offered, and this wave moved none of it', (
   })
 })
 
+describe('the header offers a hierarchy rather than a wall of buttons', () => {
+  // Measured in a real browser before this change, full capability set: the
+  // action slot wrapped to five rows at 360px and four at 390px and 430px, and
+  // never fewer than two at any desktop width. tools/visual/checks.mjs is what
+  // holds those numbers now; this file holds what is offered and where.
+  //
+  // WHAT THIS CANNOT REACH. The popup's contents exist only while it is open,
+  // and this project has no DOM, so the six actions themselves, the focus
+  // return and Escape are checks.mjs's, exactly as the 44px targets and the
+  // dialog's focus contract already are. What a static render can settle is
+  // the partition's wiring: which actions the slot renders, and whether the
+  // trigger is there at all.
+  const withCaps = (...caps: string[]) => {
+    state.caps = new Set(['players.view', ...caps])
+    return html()
+  }
+  // The header's trigger is named "More actions" and every row's is named
+  // "More actions for <child>", so a bare substring finds the rows too and a
+  // test that means "the header offers no overflow" passes or fails for the
+  // wrong reason. The trigger is the only one carrying that as element TEXT,
+  // so this is what identifies it.
+  const TRIGGER = 'More actions</button>'
+
+  it('keeps the season, the one primary action and Select players in the slot', () => {
+    const out = withCaps('players.manage', 'players.delete', 'players.export', 'players.import', 'audit.view')
+    // In this order, and before the count strip. The season select is a
+    // labelled field rather than a button, so it is matched by its label.
+    expect(out).toMatch(/for="season-select"[\s\S]*Add player[\s\S]*Select players[\s\S]*More actions<\/button>/)
+    expect(out).toContain('class="btn btn-primary"')
+  })
+
+  it('leaves the six lower frequency actions out of the slot', () => {
+    const out = withCaps('players.manage', 'players.delete', 'players.export', 'players.import', 'audit.view')
+    expect(out).toContain(TRIGGER)
+    // None of them is rendered until the popup is opened, so none of them is
+    // in the header. Import from Spond needs a mapped team selected and is
+    // absent here for that reason as well.
+    for (const gone of ['Spond links', 'Renew', 'Import players', 'Export', 'Download template']) {
+      expect(out).not.toContain(gone)
+    }
+  })
+
+  it('opens closed, and says so', () => {
+    const out = withCaps('players.manage', 'players.delete', 'audit.view')
+    expect(out).toMatch(/<button type="button" class="btn btn-ghost" aria-expanded="false">[\s\S]*?More actions<\/button>/)
+  })
+
+  it('drops the trigger entirely when nothing overflows', () => {
+    // Renew is the one overflow action a manager holds by default, and it
+    // needs a second season to renew between. One season, and the trigger is
+    // gone rather than opening on an empty popup.
+    state.seasons = [CURRENT]
+    const out = withCaps('players.manage', 'players.delete', 'audit.view')
+    expect(out).toContain('Add player')
+    expect(out).not.toContain(TRIGGER)
+  })
+
+  it('offers a players.view only member no overflow either', () => {
+    const out = withCaps()
+    expect(out).toContain('<table')
+    expect(out).not.toContain(TRIGGER)
+  })
+
+  it('puts an action in the overflow only where its own capability is held', () => {
+    // players.export alone opens the overflow for a member who may not manage
+    // the register at all, and players.manage without a second season does
+    // not. The membership of the popup is playersView's to prove
+    // exhaustively; what is proved here is that this screen hands it the real
+    // gates rather than a constant.
+    state.seasons = [CURRENT]
+    expect(withCaps('players.export')).toContain(TRIGGER)
+    expect(withCaps('players.manage', 'players.delete', 'audit.view')).not.toContain(TRIGGER)
+  })
+})
+
 describe('the surface uses the shared vocabulary rather than a local copy', () => {
   it('renders its actions through the Button primitive', () => {
     const out = html()
+    // Add player is the one primary. The ghost pairing is satisfied by the
+    // two controls the slot still holds directly, Select players (ghost
+    // while selection mode is off) and the More actions trigger, and by
+    // nothing else: the row's Edit and History are btn-sm and do not match
+    // this closed class string. Named, because after the header's actions
+    // moved into the overflow this assertion would otherwise pass on
+    // whichever ghost button happened to survive.
     expect(out).toContain('class="btn btn-primary"')
     expect(out).toContain('class="btn btn-ghost"')
     // The dead class VISUAL-01 resolved by implementing IconButton. It was

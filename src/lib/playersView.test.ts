@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  availableHeaderActions,
   DEFAULT_FILTERS,
   DEFAULT_STATUS_FILTER,
+  directHeaderActions,
   deleteConfirmed,
   describeHistoryEntry,
   eligibleForBoard,
   filterRows,
   filtersAreActive,
   filtersToParams,
+  overflowHeaderActions,
   parseFilters,
   parseShirt,
   planPlayerEdit,
@@ -20,6 +23,8 @@ import {
   statusesForFilter,
   statusTransitionAllowed,
   statusTransitions,
+  type PlayerHeaderAction,
+  type PlayerHeaderAvailability,
   type PlayersFilters,
 } from './playersView'
 import type { PlayerHistoryEntry, RegisteredPlayer, RegistrationStatus } from './data'
@@ -244,6 +249,77 @@ describe('rowActionKeys', () => {
   })
   it('adds Delete only with players.delete', () => {
     expect(rowActionKeys('registered', { ...manage, canDelete: true })).toEqual(['move', 'withdraw', 'delete'])
+  })
+})
+
+describe('the page header action hierarchy', () => {
+  // The eight gates, all closed, so each test opens exactly the ones it means.
+  const NONE: PlayerHeaderAvailability = {
+    add: false,
+    select: false,
+    spond: false,
+    links: false,
+    renew: false,
+    import: false,
+    export: false,
+    template: false,
+  }
+  const ALL: PlayerHeaderAvailability = {
+    add: true,
+    select: true,
+    spond: true,
+    links: true,
+    renew: true,
+    import: true,
+    export: true,
+    template: true,
+  }
+  const KEYS = Object.keys(ALL) as PlayerHeaderAction[]
+
+  it('offers nothing to a member whose capabilities open nothing', () => {
+    expect(availableHeaderActions(NONE)).toEqual([])
+    expect(directHeaderActions(NONE)).toEqual([])
+    expect(overflowHeaderActions(NONE)).toEqual([])
+  })
+
+  it('keeps Add player and Select players in the slot, and overflows the other six', () => {
+    expect(directHeaderActions(ALL)).toEqual(['add', 'select'])
+    // The six, in the order they are read, which is the order the slot used to
+    // render them in.
+    expect(overflowHeaderActions(ALL)).toEqual(['spond', 'links', 'renew', 'import', 'export', 'template'])
+  })
+
+  it('offers every action exactly once, whichever gates are open', () => {
+    // Every one of the 256 combinations: the two lists partition the available
+    // set, so no action is offered twice and none is dropped. This is what the
+    // overflow being DERIVED buys, and it is the property a second hand written
+    // list would lose.
+    for (let mask = 0; mask < 1 << KEYS.length; mask++) {
+      const av = { ...NONE } as PlayerHeaderAvailability
+      KEYS.forEach((k, i) => {
+        if (mask & (1 << i)) av[k] = true
+      })
+      const available = availableHeaderActions(av)
+      const offered = [...directHeaderActions(av), ...overflowHeaderActions(av)]
+      expect(new Set(offered).size).toBe(offered.length)
+      expect([...offered].sort()).toEqual([...available].sort())
+    }
+  })
+
+  it('offers an action only where its own gate is open', () => {
+    // One gate at a time: nothing else appears, so no action rides in on
+    // another's capability.
+    for (const key of KEYS) {
+      const av = { ...NONE, [key]: true } as PlayerHeaderAvailability
+      expect(availableHeaderActions(av)).toEqual([key])
+      expect([...directHeaderActions(av), ...overflowHeaderActions(av)]).toEqual([key])
+    }
+  })
+
+  it('drops the whole overflow when only the slot actions are open', () => {
+    // A coach on an archived season with nothing but Add: the More actions
+    // trigger renders nothing, rather than an empty popup.
+    expect(overflowHeaderActions({ ...NONE, add: true, select: true })).toEqual([])
   })
 })
 

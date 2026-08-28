@@ -108,6 +108,15 @@ Players is deliberately in this wave only after #191, so bulk selection, depende
 
 **Acceptance.** Every surface covers normal, loading, empty, error, read-only/permission-limited and narrow-phone states where those states are reachable. Destructive flows remain unmistakably destructive and preserve their existing confirmation semantics.
 
+#### Registered Players: the next slice
+
+Registered Players was adopted in two passes, the surface itself and then its page header's action hierarchy. One piece of it is deliberately outstanding and is the next small slice on this route, not a defect in what shipped:
+
+- **The six remaining dialogs.** Add and edit player, the four player action modals (move team, withdraw, restore, delete permanently), player history, export confirm, import players and renew season were left on their own local treatment. They are not in the Design Read's Part 4 acceptance list, they carry 56 inline font sizes between them, and adopting them alongside the surface would have made one reviewable PR into two unreviewable ones. The bulk delete dialog is already adopted, so the pattern to follow is written down.
+- **The row overflow menu's item height.** `.menu-list button` is roughly 37px against the product's own `--hit: 44px`. The page header's overflow sets 44px on its own items; the row menus keep the height they shipped with, because changing them is a visual change to a surface this slice was not asked to touch.
+
+Two things about the header hierarchy that are decisions rather than omissions, so a later slice does not undo them by accident. The overflow applies at every width rather than below a breakpoint, because measurement showed the action row fits on one line at no width the product is used at and 901px, where the sidebar returns and the content column drops to 589px, was the worst case on the page; the reasoning and the numbers are in `src/lib/playersView.ts` beside the partition. And the popup is a disclosure rather than an ARIA menu, which is the same deliberate deviation from 2.13 the row menus already carry and for the same stated reason.
+
 ### VISUAL-03 — Feature-area waves
 
 **Outcome.** Feature areas whose product behaviour is still evolving are redesigned with, not immediately before, their functional work.

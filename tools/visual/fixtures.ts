@@ -70,6 +70,7 @@ export type HarnessState =
   | 'noseason'
   | 'stale'
   | 'overlimit'
+  | 'allactions'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -96,6 +97,10 @@ const session = (over: Partial<Session> & Pick<Session, 'id' | 'name'>): Session
   focus: 'Receiving on the half turn',
   ...over,
 })
+
+// The team the Spond mapping stub points at, so the harness address that opens
+// the fullest header names it once rather than repeating the id.
+export const SPOND_TEAM_ID = 'titans'
 
 export const TEAMS = [
   { id: 'titans', name: 'Titans', bibColour: 'blue' },

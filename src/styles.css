@@ -1042,14 +1042,15 @@ table.reg-table td.muted-cell { color: var(--slate); }
    cue in both layouts. */
 .player-card.withdrawn { color: var(--slate); }
 
-/* Overflow menu, reused by the desktop row and the mobile card. */
+/* Overflow menu, reused by the desktop row, the mobile card and the page
+   header's More actions. */
 .menu { position: relative; display: inline-flex; }
 .menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; background: var(--card);
   border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); min-width: 190px; padding: var(--space-4);
   display: flex; flex-direction: column; gap: var(--space-2); }
-.menu-list button { text-align: left; padding: var(--space-8) var(--space-12); border-radius: var(--radius-xs); border: 0; background: none;
-  color: var(--ink); font-size: var(--text-base); font-weight: 600; cursor: pointer; }
-.menu-list button:hover:not(:disabled) { background: var(--line-2); }
+.menu-list button, .menu-list a { text-align: left; padding: var(--space-8) var(--space-12); border-radius: var(--radius-xs); border: 0; background: none;
+  color: var(--ink); font-size: var(--text-base); font-weight: 600; cursor: pointer; text-decoration: none; }
+.menu-list button:hover:not(:disabled), .menu-list a:hover { background: var(--line-2); }
 .menu-list button:disabled { color: var(--slate-2); cursor: default; }
 .menu-list button.danger { color: var(--danger); }
 
@@ -1071,6 +1072,42 @@ table.reg-table td.muted-cell { color: var(--slate); }
    by .reg-head (a sticky bar with its own ground and centred items). Which of
    the two won on this page was import order rather than intent. */
 .players-head .page-head-acts { align-items: flex-end; }
+
+/* ---- the header's More actions overflow ------------------------------
+   Its popup is anchored to the ACTION SLOT rather than to its own trigger.
+   .menu-list is right: 0 against .menu, which puts the popup's right edge on
+   the trigger's right edge and lets a 190px popup extend that far to the
+   left. That is right for a row menu, whose trigger is the last thing in a
+   right aligned cell, and wrong here, because the trigger wraps with the rest
+   of the slot and can end up at the START of a row with less than 190px to
+   its left.
+
+   Measured, so the case is not hypothetical: at 360px in the shipped
+   typeface the trigger sits second on its row and a trigger anchored popup
+   would just fit, but in the FALLBACK face, which is what a coach gets when
+   the font request does not land, the buttons are narrower, the trigger wraps
+   alone to the start of the last row and the popup's left edge computes to
+   -35px. The slot's right edge is the content's right edge at every width and
+   in every face, so anchoring there cannot leave the page in either
+   direction, and top: 100% opens the popup clear of the wrapped rows above it
+   rather than over them. */
+.players-head .page-head-acts { position: relative; }
+.players-head .page-head-acts > .players-more { position: static; }
+.players-head .page-head-acts > .players-more > .menu-list { right: 0; top: calc(100% + var(--space-4)); }
+/* The header's items carry the icon their direct rendering has, and a 44px
+   target: this is the phone's route to six actions. The row menus are
+   unchanged, text only and their own size.
+
+   No max-height and no inner scroll, deliberately. Six 44px items is 284px,
+   which is taller than the fold on a landscape phone; the popup is absolutely
+   positioned in the document rather than fixed to the viewport, so the page
+   scrolls to it and the last item is reachable at 844x390 and 740x360, which
+   checks.mjs walks. A nested scroll area would be a second scroll surface
+   inside a 390px tall window, which is worse than the one that already
+   works. */
+.players-more .menu-list button, .players-more .menu-list a {
+  display: flex; align-items: center; gap: var(--space-8); min-height: var(--hit); }
+.players-more .menu-list svg { width: 16px; height: 16px; flex: 0 0 16px; color: var(--slate); }
 
 .reg-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-8); align-items: center; margin-bottom: var(--space-12); }
 .reg-filters { display: flex; flex-wrap: wrap; gap: var(--space-12); align-items: flex-end; margin-bottom: var(--space-8); }

@@ -475,6 +475,366 @@ const open = async (screen, width, opts = {}) => {
     await page.close()
   }
 
+  /* ---- the header's action hierarchy (VISUAL-02) -------------------
+     Design Read 2.10: one primary action, everything else ghost, quiet or in
+     an overflow. Before this, the full capability set put eight actions in
+     the slot, which wrapped to five rows at 360px and a 371px tall header,
+     four at 390px and 430px, and never fewer than two at any desktop width;
+     901px, where the sidebar returns and the content drops to 589px, was
+     three rows and worse than 900px.
+
+     `allactions` opens the register with the Spond mapped team selected,
+     which is the only way Import from Spond is offered, so this is the
+     fullest header a coach can reach: nine actions rather than eight. */
+  {
+    // The numbers, at the widths the acceptance names plus the two the
+    // measurements showed were the worst. Rows are counted by BOTTOM edge:
+    // .players-head .page-head-acts is align-items: flex-end, so the season
+    // field, which is taller than a button, shares a row with a different
+    // top and would read as a row of its own.
+    //
+    // A CEILING rather than an equality, deliberately. At 360px whether the
+    // slot takes two rows or three turns on whether the page is long enough
+    // to show a vertical scrollbar, which is a property of how many children
+    // the filter leaves rather than of the header. The old layout was five
+    // rows at 360 and four at 390 and 430, so these ceilings catch a
+    // regression towards it without failing on fifteen pixels of scrollbar.
+    const ROW_CAP = { 360: 3, 390: 2, 430: 2, 901: 2, 1024: 1, 1280: 1 }
+    for (const [width, cap] of Object.entries(ROW_CAP)) {
+      const page = await open('players', Number(width), { state: 'allactions' })
+      const r = await page.evaluate(() => {
+        const acts = document.querySelector('.page-head-acts')
+        if (!acts) return null
+        const kids = [...acts.children]
+        const bottoms = new Set(kids.map((k) => Math.round(k.getBoundingClientRect().bottom)))
+        return {
+          rows: bottoms.size,
+          slot: kids.map((k) => k.textContent.trim().slice(0, 16)),
+          headerHeight: Math.round(document.querySelector('.page-head').getBoundingClientRect().height),
+        }
+      })
+      check(
+        `the header's action slot is at most ${cap} row(s) at ${width} with every action offered`,
+        !!r && r.rows <= cap,
+        JSON.stringify(r),
+      )
+      await page.close()
+    }
+  }
+
+  {
+    // What the overflow holds, opened through the control a coach presses.
+    // Named EXACTLY: every row's trigger is "More actions for <child>", so a
+    // loose name matches the rows too and resolves to one of them first.
+    const page = await open('players', 390, { state: 'allactions' })
+    await page.getByRole('button', { name: 'More actions', exact: true }).click()
+    await page.waitForTimeout(150)
+    const r = await page.evaluate(() => {
+      const list = document.querySelector('.players-more .menu-list')
+      if (!list) return null
+      const items = [...list.children]
+      return {
+        labels: items.map((c) => c.textContent.trim()),
+        // A destination stays an anchor, so Spond links keeps middle click
+        // and open in a new tab; the rest are buttons that run something.
+        anchors: items.filter((c) => c.tagName === 'A').map((c) => `${c.textContent.trim()}→${c.getAttribute('href')}`),
+        short: items.filter((c) => Math.round(c.getBoundingClientRect().height) < 44).map((c) => c.textContent.trim()),
+      }
+    })
+    check(
+      'the overflow holds the six lower frequency actions, in reading order',
+      !!r &&
+        JSON.stringify(r.labels) ===
+          JSON.stringify(['Import from Spond', 'Spond links', 'Renew', 'Import players', 'Export', 'Download template']),
+      JSON.stringify(r),
+    )
+    check(
+      'Spond links stays an anchor to its own route rather than becoming a button',
+      !!r && JSON.stringify(r.anchors) === JSON.stringify(['Spond links→/players/spond-links']),
+      JSON.stringify(r && r.anchors),
+    )
+    check('every overflow item is a 44px target', !!r && r.short.length === 0, JSON.stringify(r && r.short))
+    await page.close()
+  }
+
+  {
+    // The popup is anchored to the ACTION SLOT, not to its own trigger, and
+    // that RULE is what is asserted, rather than a consequence of it.
+    //
+    // Asserting only "it is on screen" was not enough, and that is what this
+    // check looked like first: restoring the trigger anchoring still passed
+    // at every width, because in the shipped typeface the trigger happens to
+    // sit far enough right at all of them. The case the rule exists for is
+    // real but narrower than it first looked: in the FALLBACK face, which is
+    // what a coach gets when the font request does not land, the buttons are
+    // narrower, the trigger wraps alone to the start of the last row at
+    // 360px, and a trigger anchored popup's left edge computes to -35px. A
+    // check that survives the mutation it exists to catch is not a check, so
+    // this one compares the popup's right edge with the SLOT's, which differs
+    // by 29px to 447px under that mutation at eight of these ten widths.
+    for (const state of ['default', 'allactions']) {
+      for (const width of [360, 390, 430, 901, 1280]) {
+        const page = await open('players', width, { state })
+        const trigger = page.getByRole('button', { name: 'More actions', exact: true })
+        if ((await trigger.count()) === 0) {
+          check(`the overflow popup is anchored to the action slot at ${width} (${state})`, false, 'no trigger')
+          await page.close()
+          continue
+        }
+        await trigger.click()
+        await page.waitForTimeout(150)
+        const r = await page.evaluate(() => {
+          const list = document.querySelector('.players-more .menu-list')
+          if (!list) return null
+          const b = list.getBoundingClientRect()
+          const slot = document.querySelector('.page-head-acts').getBoundingClientRect()
+          const btn = document.querySelector('.players-more > button').getBoundingClientRect()
+          return {
+            left: Math.round(b.left),
+            right: Math.round(b.right),
+            slotRight: Math.round(slot.right),
+            triggerRight: Math.round(btn.right),
+            viewport: window.innerWidth,
+            overflows: document.documentElement.scrollWidth > window.innerWidth,
+            // It opens BELOW the whole slot rather than over the rows above it.
+            clearsSlot: b.top >= slot.bottom - 1,
+          }
+        })
+        check(
+          `the overflow popup is anchored to the action slot at ${width} (${state})`,
+          !!r &&
+            Math.abs(r.right - r.slotRight) <= 1 &&
+            r.left >= 0 &&
+            r.right <= r.viewport &&
+            !r.overflows &&
+            r.clearsSlot,
+          JSON.stringify(r),
+        )
+        await page.close()
+      }
+    }
+  }
+
+  {
+    // The focus contract, which is the disclosure's whole accessibility
+    // claim: keyboard reachable, Escape closes it, and focus comes back to
+    // the trigger rather than dropping to the document body.
+    const page = await open('players', 1280, { state: 'allactions' })
+    const trigger = page.getByRole('button', { name: 'More actions', exact: true })
+    await trigger.focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(150)
+    const opened = await page.evaluate(() => ({
+      open: !!document.querySelector('.players-more .menu-list'),
+      expanded: document.querySelector('.players-more > button').getAttribute('aria-expanded'),
+    }))
+    check(
+      'the keyboard opens the overflow, and the trigger says it is open',
+      opened.open && opened.expanded === 'true',
+      JSON.stringify(opened),
+    )
+    // Tab reaches the items: it is a disclosure, not an ARIA menu widget, so
+    // Tab is how it is walked and there is no roving arrow key navigation to
+    // claim.
+    await page.keyboard.press('Tab')
+    const first = await page.evaluate(() => {
+      const el = document.activeElement
+      return { inside: !!el.closest('.players-more .menu-list'), label: el.textContent.trim() }
+    })
+    check('Tab moves into the popup', first.inside, JSON.stringify(first))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(150)
+    const closed = await page.evaluate(() => ({
+      open: !!document.querySelector('.players-more .menu-list'),
+      expanded: document.querySelector('.players-more > button').getAttribute('aria-expanded'),
+      focused: document.activeElement === document.querySelector('.players-more > button'),
+    }))
+    check(
+      'Escape closes the overflow and returns focus to the trigger',
+      !closed.open && closed.expanded === 'false' && closed.focused,
+      JSON.stringify(closed),
+    )
+    await page.close()
+  }
+
+  {
+    // A click outside closes it, and choosing an action returns focus to the
+    // trigger BEFORE the modal opens, so the modal captures a still mounted
+    // opener and restores focus to it on close. Renew is the action used
+    // because it opens a dialog rather than navigating or downloading.
+    const page = await open('players', 1280, { state: 'allactions' })
+    await page.getByRole('button', { name: 'More actions', exact: true }).click()
+    await page.waitForTimeout(120)
+    await page.locator('h1').click()
+    await page.waitForTimeout(150)
+    check(
+      'a click outside closes the overflow',
+      await page.evaluate(() => !document.querySelector('.players-more .menu-list')),
+    )
+    await page.getByRole('button', { name: 'More actions', exact: true }).click()
+    await page.waitForTimeout(120)
+    await page.getByRole('button', { name: 'Renew', exact: true }).click()
+    await page.waitForTimeout(250)
+    check(
+      'choosing an overflow action closes the popup and opens that action',
+      await page.evaluate(() => !document.querySelector('.players-more .menu-list') && !!document.querySelector('.modal')),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    const back = await page.evaluate(() => ({
+      closed: !document.querySelector('.modal'),
+      focused: document.activeElement === document.querySelector('.players-more > button'),
+    }))
+    check(
+      'closing that dialog returns focus to the More actions trigger',
+      back.closed && back.focused,
+      JSON.stringify(back),
+    )
+    await page.close()
+  }
+
+  {
+    // Every item is keyboard reachable and rings. Walked with real Tab
+    // presses rather than element.focus(), because :focus-visible follows the
+    // interaction that moved focus: a scripted focus after a mouse click does
+    // not ring, and reading 0px from that would be a false failure. The
+    // anchor is the one worth naming, since it is the only item that is not a
+    // <button> and takes the ring through a different selector.
+    const page = await open('players', 1280, { state: 'allactions' })
+    await page.getByRole('button', { name: 'More actions', exact: true }).focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(150)
+    const walked = []
+    for (let i = 0; i < 6; i++) {
+      await page.keyboard.press('Tab')
+      walked.push(
+        await page.evaluate(() => {
+          const el = document.activeElement
+          const s = getComputedStyle(el)
+          return {
+            label: el.textContent.trim(),
+            tag: el.tagName,
+            inside: !!el.closest('.players-more .menu-list'),
+            ring: s.outlineWidth === '2px' && s.outlineColor === 'rgb(31, 67, 214)',
+          }
+        }),
+      )
+    }
+    check(
+      'Tab reaches all six overflow items and every one draws the shared ring',
+      walked.length === 6 && walked.every((w) => w.inside && w.ring) && walked.some((w) => w.tag === 'A'),
+      JSON.stringify(walked.filter((w) => !w.inside || !w.ring)),
+    )
+    await page.close()
+  }
+
+  {
+    // The gates, read from what the popup HOLDS. Export and Import players
+    // are gated on a settled, non errored register, and Import players and
+    // Import from Spond additionally on a season that can be written to.
+    // With the popup closed neither label is in the markup, so a static test
+    // asserting their absence would pass whatever the gate did; opening it is
+    // what makes these gates observable at all.
+    const held = async (state) => {
+      const page = await open('players', 1280, { state })
+      const trigger = page.getByRole('button', { name: 'More actions', exact: true })
+      const labels =
+        (await trigger.count()) === 0
+          ? []
+          : await (async () => {
+              await trigger.click()
+              await page.waitForTimeout(150)
+              return page.evaluate(() =>
+                [...document.querySelectorAll('.players-more .menu-list > *')].map((c) => c.textContent.trim()),
+              )
+            })()
+      await page.close()
+      return labels
+    }
+
+    const onError = await held('error')
+    check(
+      'a failed register read withdraws Export and Import players, and keeps the rest',
+      !onError.includes('Export') &&
+        !onError.includes('Import players') &&
+        onError.includes('Renew') &&
+        onError.includes('Download template'),
+      JSON.stringify(onError),
+    )
+
+    const onArchived = await held('archived')
+    check(
+      'an archived season keeps Export and the template and withdraws both imports',
+      onArchived.includes('Export') &&
+        onArchived.includes('Download template') &&
+        !onArchived.includes('Import players') &&
+        !onArchived.includes('Import from Spond'),
+      JSON.stringify(onArchived),
+    )
+  }
+
+  {
+    // Each action still does what its label says. The four that open a dialog
+    // are pressed and the dialog named, so a wiring mistake in the action
+    // table (the right label against the wrong handler) fails here rather
+    // than being caught by a coach.
+    const OPENS = [
+      ['Import from Spond', 'Import from Spond'],
+      ['Renew', 'Renew players'],
+      ['Import players', 'Import players'],
+      ['Export', 'Export registered players'],
+    ]
+    const wrong = []
+    for (const [item, dialog] of OPENS) {
+      const page = await open('players', 1280, { state: 'allactions' })
+      await page.getByRole('button', { name: 'More actions', exact: true }).click()
+      await page.waitForTimeout(120)
+      await page.getByRole('button', { name: item, exact: true }).click()
+      await page.waitForTimeout(300)
+      const title = await page.evaluate(() => {
+        const h = document.querySelector('.modal h3, .modal h2, .more-sheet h3')
+        return h ? h.textContent.trim() : null
+      })
+      if (title !== dialog) wrong.push(`${item} opened ${title}`)
+      await page.close()
+    }
+    check('every overflow action opens the dialog its label names', wrong.length === 0, JSON.stringify(wrong))
+
+    // The one that is not a dialog: the blank template is a file, and the
+    // press has to actually produce one.
+    const page = await open('players', 1280, { state: 'allactions' })
+    await page.getByRole('button', { name: 'More actions', exact: true }).click()
+    await page.waitForTimeout(120)
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 5000 }).catch(() => null),
+      page.getByRole('button', { name: 'Download template', exact: true }).click(),
+    ])
+    check(
+      'Download template still downloads the blank template',
+      !!download && download.suggestedFilename() === 'registered-players-template.csv',
+      download ? download.suggestedFilename() : 'no download',
+    )
+    await page.close()
+  }
+
+  {
+    // Capability limited: the overflow is offered only where the capability
+    // set opens something to put in it. A players.view only member gets no
+    // trigger at all rather than an empty popup.
+    const page = await open('players', 390, { caps: 'viewer' })
+    const r = await page.evaluate(() => ({
+      rows: document.querySelectorAll('.player-card').length,
+      trigger: !!document.querySelector('.players-more'),
+      slot: [...document.querySelectorAll('.page-head-acts > *')].map((e) => e.textContent.trim().slice(0, 16)),
+    }))
+    check(
+      'a read only member is offered no overflow, and no empty popup to open',
+      r.rows > 0 && !r.trigger,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
   // A read only member sees the register and no write affordance at all.
   {
     const page = await open('players', 1280, { caps: 'viewer' })

@@ -22,7 +22,7 @@ import { Home } from '../../src/routes/Home'
 import { Sessions } from '../../src/routes/Sessions'
 import { Login } from '../../src/routes/Login'
 import { Players } from '../../src/routes/Players'
-import { PAST_SEASON, SESSIONS, harnessState } from './fixtures'
+import { PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
 import '../../src/styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -184,6 +184,11 @@ function Harness() {
 function playersEntry(): string {
   if (harnessState === 'archived') return `/players?season=${PAST_SEASON.id}`
   if (harnessState === 'withdrawn') return '/players?status=all'
+  // Every header action at once. Import from Spond is the only one gated on
+  // the team filter (it needs a specific Spond mapped team selected), so the
+  // fullest header a coach can reach is only reachable through the address,
+  // and the six the overflow is specified to hold are all present only here.
+  if (harnessState === 'allactions') return `/players?team=${SPOND_TEAM_ID}`
   return '/players'
 }
 
