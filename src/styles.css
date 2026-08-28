@@ -983,7 +983,15 @@ summary:focus-visible,
 
 /* The first real table in the app. It scrolls inside its own container if it
    ever must, never the page body. */
-.reg-table-wrap { overflow-x: auto; }
+/* The scroll container, and a clip box wide enough for a focus ring. An
+   overflow other than visible clips at the PADDING box, and this wave moved
+   the sortable header's padding onto its button so the button's own box is a
+   44px target: the button now starts at the cell edge, so the shared ring,
+   which reaches 4px out (2px wide at a 2px offset), was cut on the top and
+   left of the first header. The padding gives the ring its 4px and the equal
+   negative margin gives it back to the layout, so the table sits exactly
+   where it did and scrollWidth still equals clientWidth. */
+.reg-table-wrap { overflow-x: auto; padding: var(--space-4); margin: calc(var(--space-4) * -1); }
 table.reg-table { width: 100%; border-collapse: collapse; font-size: var(--text-base); }
 table.reg-table caption { text-align: left; }
 table.reg-table th { text-align: left; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .04em;

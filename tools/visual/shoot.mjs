@@ -10,9 +10,11 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { assertServingCurrentBuild } from './fresh.mjs'
 
 const OUT = process.argv[2] ?? 'visual-shots'
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
+await assertServingCurrentBuild(BASE)
 const EXE = process.env.CHROMIUM ?? '/opt/pw-browsers/chromium'
 
 // The seven widths from Part 4, plus 900 where the breakpoint itself matters.

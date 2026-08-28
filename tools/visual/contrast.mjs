@@ -27,8 +27,10 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { assertServingCurrentBuild } from './fresh.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
+await assertServingCurrentBuild(BASE)
 const FONTS = path.resolve(fileURLToPath(new URL('../../node_modules/.visual-harness-fonts', import.meta.url)))
 if (!existsSync(path.join(FONTS, 'manifest.json'))) {
   console.log('NO FONT CACHE: run node tools/visual/fetch-fonts.mjs first.')

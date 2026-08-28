@@ -13,8 +13,10 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { assertServingCurrentBuild } from './fresh.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
+await assertServingCurrentBuild(BASE)
 const FONTS = path.resolve(fileURLToPath(new URL('../../node_modules/.visual-harness-fonts', import.meta.url)))
 const manifest = existsSync(path.join(FONTS, 'manifest.json'))
   ? JSON.parse(await readFile(path.join(FONTS, 'manifest.json'), 'utf8'))
@@ -46,6 +48,13 @@ const open = async (screen, width, opts = {}) => {
   if (opts.state) q.set('state', opts.state)
   await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => document.fonts.ready)
+  // domcontentloaded fires before React has rendered anything, so a check that
+  // evaluated straight after this read an empty page. Every check here asserts
+  // about rendered output, so waiting for the app to have painted belongs in
+  // ONE place rather than in each of them. Without it the error state check
+  // reported a false FAIL on roughly one run in three.
+  await page.waitForSelector('.content > *, .login', { state: 'attached', timeout: 5000 })
+  if (opts.awaitSelector) await page.waitForSelector(opts.awaitSelector, { state: 'visible', timeout: 5000 }).catch(() => {})
   return page
 }
 
@@ -304,6 +313,31 @@ const open = async (screen, width, opts = {}) => {
     })
     check('a sortable column header reaches a 44px target', header.h >= 44 && header.w >= 44, JSON.stringify(header))
 
+    // 2.15: the ring has to be VISIBLE, not merely applied. The table scrolls
+    // inside its own container, and an overflow other than visible clips at
+    // the padding box; the header button starts at the cell edge, so the ring
+    // reaching 4px out was cut on the first header's top and left until the
+    // container was given that 4px back.
+    const ring = await page.evaluate(() => {
+      const wrap = document.querySelector('.reg-table-wrap')
+      const b = document.querySelector('table.reg-table th.sort-th button')
+      b.focus()
+      const w = wrap.getBoundingClientRect(), r = b.getBoundingClientRect()
+      const cs = getComputedStyle(b)
+      const reach = parseFloat(cs.outlineOffset) + parseFloat(cs.outlineWidth)
+      return {
+        reach,
+        top: Math.round(Math.max(0, w.top - (r.top - reach))),
+        left: Math.round(Math.max(0, w.left - (r.left - reach))),
+        scrolls: wrap.scrollWidth > wrap.clientWidth,
+      }
+    })
+    check(
+      'the sortable header\'s focus ring is not clipped by the scroll container',
+      ring.reach > 0 && ring.top === 0 && ring.left === 0 && !ring.scrolls,
+      JSON.stringify(ring),
+    )
+
     await page.close()
   }
 
@@ -336,7 +370,7 @@ const open = async (screen, width, opts = {}) => {
   // rendered as a club with no children in it. The count strip is the thing
   // that would otherwise say "0 players" about a read that never landed.
   {
-    const page = await open('players', 1280, { state: 'error' })
+    const page = await open('players', 1280, { state: 'error', awaitSelector: '.state-error' })
     const r = await page.evaluate(() => ({
       alert: !!document.querySelector('.state-error[role="alert"]'),
       retry: !![...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Retry'),

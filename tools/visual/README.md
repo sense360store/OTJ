@@ -36,6 +36,14 @@ Build and preview rather than the dev server for the screenshots: the dev
 server re-transforms two hundred modules on every page load, which turns the
 matrix into half an hour.
 
+**Restart the preview after every build.** `vite build` writes with
+`emptyOutDir`, which unlinks the output directory and recreates it, and a
+preview started before that keeps serving the deleted files: it answers 200,
+every page renders, and every measurement describes a build that no longer
+exists. All three tools refuse to run when that has happened
+(`tools/visual/fresh.mjs`), because a result about the wrong build reads as
+evidence.
+
 Query string, all optional:
 
 | Key | Values |
