@@ -871,20 +871,29 @@ const open = async (screen, width, opts = {}) => {
     // current one. Deleting the isCurrent and writable gates from that action
     // would still have passed. Codex found this; the state that makes the two
     // reasons distinguishable is the fix.
+    // A POSITIVE CONTROL beside the negative one, on the same team, differing
+    // only in the season. Codex, a third time down the same chain, and right
+    // again: Spond links proves the club has SOME mapping, not that the
+    // selected team is the mapped one, so a fixture whose mapping moved to
+    // another team would leave both preconditions true while Import from
+    // Spond was absent for the unmapped team reason. Reading the mapping off
+    // the page is circular, since the only thing the page renders about it is
+    // the action under test. A control is not: Import from Spond being
+    // OFFERED on the current season with this team selected proves the team
+    // is mapped, the fixture is live, players.import is held and the address
+    // works, and the archived case then differs in exactly one variable.
+    const onCurrentTeam = await held('allactions')
     const onArchived = await held('archivedteam')
     check(
       'an archived season keeps Export and the template and withdraws both imports',
-      // Preconditions first: the address really did select the mapped team,
-      // and the club really does have a mapping, which is what offering
-      // Spond links at all proves. Only then does the absence of Import from
-      // Spond mean the archived gate rather than an unmapped team.
-      onArchived.team === 'titans' &&
-        onArchived.labels.includes('Spond links') &&
+      onCurrentTeam.team === 'titans' &&
+        onCurrentTeam.labels.includes('Import from Spond') &&
+        onArchived.team === 'titans' &&
         onArchived.labels.includes('Export') &&
         onArchived.labels.includes('Download template') &&
         !onArchived.labels.includes('Import players') &&
         !onArchived.labels.includes('Import from Spond'),
-      JSON.stringify(onArchived),
+      JSON.stringify({ control: onCurrentTeam, archived: onArchived }),
     )
   }
 
@@ -904,7 +913,18 @@ const open = async (screen, width, opts = {}) => {
       const page = await open('players', 1280, { state: 'allactions' })
       await page.getByRole('button', { name: 'More actions', exact: true }).click()
       await page.waitForTimeout(120)
-      await page.getByRole('button', { name: item, exact: true }).click()
+      // An absent item is a FAILURE of this check, not an exception that ends
+      // the whole run thirty seconds later with nothing else reported. Found
+      // by mutating the fixture's Spond mapping onto another team, which is
+      // exactly the case the archived gate check's control exists for: the
+      // run aborted here before that check could report.
+      const control = page.getByRole('button', { name: item, exact: true })
+      if ((await control.count()) === 0) {
+        wrong.push(`${item} is not in the overflow`)
+        await page.close()
+        continue
+      }
+      await control.click()
       await page.waitForTimeout(300)
       const title = await page.evaluate(() => {
         const h = document.querySelector('.modal h3, .modal h2, .more-sheet h3')
