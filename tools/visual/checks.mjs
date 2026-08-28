@@ -1115,6 +1115,29 @@ const open = async (screen, width, opts = {}) => {
 /* ---- VISUAL-02: the row overflow, and the six remaining dialog files ----
    The claims a screenshot cannot settle: a computed hit height, a focus
    contract, a dismissal contract and a wired error. */
+
+// Did focus come back to THE OPENER, rather than to some other control on the
+// page? The first version of this accepted any button or link, which is
+// satisfied by focus landing on the wrong row's trigger or on a header action
+// the coach never pressed, so it could not fail for the reason it names. The
+// entry resolves its own opener (dialogs.mjs), because the two layouts put a
+// row action in two different places, and the comparison is identity.
+const focusReturned = async (page, d) => {
+  const closed = await page.evaluate(() => !document.querySelector('.modal'))
+  const opener = await d.opener(page)
+  const count = await opener.count()
+  const active = await page.evaluate(() => {
+    const el = document.activeElement
+    return el ? `${el.tagName} ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 28)}` : null
+  })
+  if (count !== 1) return { closed, toTheOpener: false, why: `the opener resolves to ${count} controls`, active }
+  return {
+    closed,
+    toTheOpener: await opener.evaluate((el) => el === document.activeElement),
+    active,
+  }
+}
+
 {
   // 2.5: the ROW menu's items reach 44px. They shipped at roughly 37px, which
   // the page header's own overflow already set on itself; the height is the
@@ -1314,17 +1337,8 @@ const open = async (screen, width, opts = {}) => {
       })
       await page.keyboard.press('Escape')
       await page.waitForTimeout(250)
-      const after = await page.evaluate(() => {
-        const el = document.activeElement
-        return {
-          closed: !document.querySelector('.modal'),
-          // Not the body, and still a real control on the page: that is what
-          // "returned to the opener" means once the dialog has gone.
-          onControl: !!el && el !== document.body && ['BUTTON', 'A'].includes(el.tagName),
-          what: el ? `${el.tagName} ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)}` : null,
-        }
-      })
-      check(WHAT, entered.inside && after.closed && after.onControl, JSON.stringify({ entered, after }))
+      const after = await focusReturned(page, d)
+      check(WHAT, entered.inside && after.closed && after.toTheOpener, JSON.stringify({ entered, after }))
       await page.close()
     }
   }
@@ -1348,15 +1362,8 @@ const open = async (screen, width, opts = {}) => {
     }
     await dismiss(page)
     await page.waitForTimeout(250)
-    const r = await page.evaluate(() => {
-      const el = document.activeElement
-      return {
-        closed: !document.querySelector('.modal'),
-        onControl: !!el && el !== document.body && ['BUTTON', 'A'].includes(el.tagName),
-        what: el ? `${el.tagName} ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)}` : null,
-      }
-    })
-    check(WHAT, r.closed && r.onControl, JSON.stringify(r))
+    const r = await focusReturned(page, d)
+    check(WHAT, r.closed && r.toTheOpener, JSON.stringify(r))
     await page.close()
   }
 

@@ -77,6 +77,25 @@ export async function openRowMenu(page, name) {
   return click(row.getByRole('button', { name: rowMenuName(name) }))
 }
 
+// The control a row action's dialog will return focus to, which is NOT always
+// the last control the driver pressed: the overflow closes and focuses its own
+// TRIGGER before the action opens the dialog, so the trigger is what Modal
+// captures as its opener and the menu item, which has unmounted by then, is
+// not. The choice is the same one rowAction makes, so the two cannot disagree
+// about which control that is.
+export async function rowOpener(page, name, label) {
+  const row = page.locator(rowSel(name)).first()
+  const direct = row.getByRole('button', { name: label, exact: true })
+  return (await direct.count()) ? direct : row.getByRole('button', { name: rowMenuName(name) })
+}
+
+// And the header's, which is the trigger itself for a direct action and the
+// More actions trigger for anything in the overflow.
+export async function headerOpener(page, label) {
+  const direct = page.getByRole('button', { name: label, exact: true })
+  return (await direct.count()) ? direct : page.getByRole('button', { name: 'More actions', exact: true })
+}
+
 const inDialog = (page) => page.locator('.modal')
 
 async function fillField(page, label, value) {
@@ -169,6 +188,9 @@ export const IMPORT_CSV_LONG = [
             screenshot
      proof  a selector, or a predicate for a claim no selector can make, for
             the STATE the entry's name claims; see openDialog
+     opener the control Modal captures as this dialog's opener, on the entries
+            whose focus contract is checked. Resolved rather than hardcoded,
+            because the two layouts put a row action in two different places
      open   the presses a coach makes to reach it */
 export const DIALOGS = [
   /* PlayerFormModal */
@@ -179,6 +201,7 @@ export const DIALOGS = [
     note: 'normal, and its own disabled case: Add is inert until a name is typed',
     // The disabled half of that note, proved: Add is inert with no name.
     proof: async (page) => inDialog(page).getByRole('button', { name: 'Add player', exact: true }).isDisabled(),
+    opener: (page) => headerOpener(page, 'Add player'),
     open: (page) => headerAction(page, 'Add player'),
   },
   {
@@ -235,6 +258,7 @@ export const DIALOGS = [
     state: 'default',
     note: 'normal, and its own ineligible case: Move is inert while the team is unchanged',
     proof: async (page) => inDialog(page).getByRole('button', { name: 'Move', exact: true }).isDisabled(),
+    opener: (page) => rowOpener(page, DIALOG_PLAYER, 'Move team'),
     open: (page) => rowAction(page, DIALOG_PLAYER, 'Move team'),
   },
   {
@@ -297,16 +321,50 @@ export const DIALOGS = [
     open: (page) => headerAction(page, 'Import from Spond'),
   },
   {
+    key: 'spond-importing',
+    title: 'Import from Spond',
+    state: 'inflight',
+    at: 'allactions',
+    note: 'in flight: the run reports nothing until it settles, and nothing dismisses it',
+    proof: '.modal button:has-text("Importing…")',
+    open: async (page) => {
+      if (!(await headerAction(page, 'Import from Spond'))) return false
+      await pause(page)
+      return pressInDialog(page, 'Import')
+    },
+  },
+  {
     key: 'spond-result',
     title: 'Import from Spond',
     state: 'spondresult',
-    note: 'the run reported: counts, a message and the warning as its own Note',
     // The action is only offered with a Spond mapped team selected, so this
     // entry's address and its state are two different things: the address
-    // puts the team filter there, the state makes the write report.
+    // puts the team filter there, the state decides what the write reports.
     at: 'allactions',
+    note: 'the run reported: counts, a message and the warning as its own Note',
     proof: '.modal .note-warning',
-    open: (page) => headerAction(page, 'Import from Spond'),
+    // PRESSED, not answered before the dialog opens. The stub used to hand
+    // back a result the moment the hook ran, so this proof held whether or not
+    // Import did anything and the screenshot showed an outcome no coach could
+    // reach. Codex.
+    open: async (page) => {
+      if (!(await headerAction(page, 'Import from Spond'))) return false
+      await pause(page)
+      return pressInDialog(page, 'Import')
+    },
+  },
+  {
+    key: 'spond-failed',
+    title: 'Import from Spond',
+    state: 'writefails',
+    at: 'allactions',
+    note: 'a refused run: nothing was imported, said in the dialog rather than by closing it',
+    proof: '.modal [role="alert"]',
+    open: async (page) => {
+      if (!(await headerAction(page, 'Import from Spond'))) return false
+      await pause(page)
+      return pressInDialog(page, 'Import')
+    },
   },
 
   /* PlayerHistoryModal */
@@ -324,6 +382,7 @@ export const DIALOGS = [
     state: 'history',
     note: 'normal: a time beside a sentence, with no child name in any entry',
     proof: '.modal .history-list .history-item',
+    opener: (page) => rowOpener(page, DIALOG_PLAYER, 'History'),
     open: (page) => rowAction(page, DIALOG_PLAYER, 'History'),
   },
   {
@@ -350,6 +409,7 @@ export const DIALOGS = [
     state: 'allactions',
     note: 'normal: two choice groups, the handling reminder and the template offer',
     proof: '.modal .choice-group legend',
+    opener: (page) => headerOpener(page, 'Export'),
     open: (page) => headerAction(page, 'Export'),
   },
   {
@@ -372,6 +432,7 @@ export const DIALOGS = [
     state: 'allactions',
     note: 'stage 0: the dropzone, before any file is chosen',
     proof: '.modal .ip-dropzone',
+    opener: (page) => headerOpener(page, 'Import players'),
     open: (page) => headerAction(page, 'Import players'),
   },
   {
@@ -432,6 +493,7 @@ export const DIALOGS = [
     state: 'allactions',
     note: 'normal: the two season pickers and the row list, each row a Badge and a name',
     proof: '.modal .renew-list .renew-row',
+    opener: (page) => headerOpener(page, 'Renew'),
     open: (page) => headerAction(page, 'Renew'),
   },
   {

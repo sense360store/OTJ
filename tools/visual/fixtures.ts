@@ -88,11 +88,10 @@ export type HarnessState =
      layer answers, never what is drawn. */
   // Every write hangs, so pressing a confirm leaves the dialog in its real
   // in-flight state: the gerund label, the disabled controls and the frozen
-  // dismissal contract. Ten of the eleven dialogs reach it that way, through
-  // the guard. Import from Spond is the one that reads the mutation's own
-  // isPending rather than a guard's, so for that dialog alone this state is
-  // the harness answering rather than a press; no entry claims otherwise, and
-  // none of the shots names it.
+  // dismissal contract. Every one of the eleven dialogs reaches it by being
+  // pressed: ten through the guard, and Import from Spond through the stub's
+  // own phase, which moves when mutate() is called rather than answering
+  // before the dialog opens.
   | 'inflight'
   // Every write rejects, so a confirm reaches the inline ActionError rather
   // than closing.
@@ -114,7 +113,7 @@ export type HarnessState =
   | 'renewempty'
   | 'renewalldone'
   // The Spond roster import's reported outcome, including the warning it can
-  // carry. Its mid run state is `inflight` like every other write.
+  // carry. Reached by pressing Import, like its in-flight and refused states.
   | 'spondresult'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState

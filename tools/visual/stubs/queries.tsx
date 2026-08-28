@@ -4,6 +4,8 @@
 // itself and only the reads and writes are replaced.
 export * from '../../../src/lib/queries'
 
+import { useState } from 'react'
+
 import {
   CURRENT_SEASON,
   DRILLS,
@@ -58,14 +60,12 @@ const mutation = (over: Record<string, unknown> = {}) => ({
 /* A write that never settles, and a write that refuses. Both are states a
    dialog must render and neither is drawn: what the harness changes is what
    the server does, and the guard only enters them when the coach presses the
-   confirm. isPending rides along for the one dialog that reads the mutation's
-   own flag rather than a guard's (Import from Spond); see the note on
-   `inflight` in fixtures.ts. */
+   confirm. */
 const HANGS = () => new Promise<never>(() => {})
 const REFUSES = () => Promise.reject(new Error('the write was refused'))
 const writeMutation = () =>
   fixtures.state === 'inflight'
-    ? mutation({ mutateAsync: HANGS, isPending: true })
+    ? mutation({ mutateAsync: HANGS })
     : fixtures.state === 'writefails'
       ? mutation({ mutateAsync: REFUSES })
       : mutation()
@@ -178,10 +178,27 @@ export const useDeletePlayer = writeMutation
 export const useExportPlayers = writeMutation
 export const useRenewRegistrations = writeMutation
 
-// The Spond roster import is not a guarded submit: it reads isPending and data
-// off the mutation itself, so its two terminal shapes come from the stub.
-export const useSpondRosterImport = () =>
-  state === 'spondresult' ? mutation({ data: SPOND_IMPORT_RESULT, isSuccess: true }) : writeMutation()
+/* The Spond roster import is the one write that is not a guarded submit: it
+   reads isPending, isError and data off the mutation itself. So the stub is a
+   real hook with a phase, and the phase moves when mutate() is CALLED.
+
+   The first version answered with the result already set, which meant the
+   outcome rendered before the dialog opened and every proof of it held whether
+   or not pressing Import did anything. Codex. A screenshot of an outcome a
+   coach cannot reach is the same false evidence as a screenshot of a preview
+   that never parsed. */
+export const useSpondRosterImport = () => {
+  const [phase, setPhase] = useState<'idle' | 'busy' | 'failed' | 'done'>('idle')
+  return {
+    ...mutation(),
+    isPending: phase === 'busy',
+    isError: phase === 'failed',
+    isSuccess: phase === 'done',
+    error: phase === 'failed' ? new Error('Could not import from Spond. Try again.') : null,
+    data: phase === 'done' ? SPOND_IMPORT_RESULT : null,
+    mutate: () => setPhase(state === 'inflight' ? 'busy' : state === 'writefails' ? 'failed' : 'done'),
+  }
+}
 
 // The spreadsheet import commits through the guard and returns a structured
 // result rather than throwing, so the success outcome screen is reached by
