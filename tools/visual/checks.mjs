@@ -937,17 +937,29 @@ const open = async (screen, width, opts = {}) => {
 
     // The one that is not a dialog: the blank template is a file, and the
     // press has to actually produce one.
+    //
+    // The same guard as the loop above, for the same reason, and Codex found
+    // that fixing one and not the other left the hole where it was: only the
+    // waitForEvent half carried a catch, so an absent item made the click
+    // reject, Promise.all reject with it, and the whole run end before this
+    // check or any after it could report.
     const page = await open('players', 1280, { state: 'allactions' })
     await page.getByRole('button', { name: 'More actions', exact: true }).click()
     await page.waitForTimeout(120)
-    const [download] = await Promise.all([
-      page.waitForEvent('download', { timeout: 5000 }).catch(() => null),
-      page.getByRole('button', { name: 'Download template', exact: true }).click(),
-    ])
+    const template = page.getByRole('button', { name: 'Download template', exact: true })
+    const download =
+      (await template.count()) === 0
+        ? null
+        : (
+            await Promise.all([
+              page.waitForEvent('download', { timeout: 5000 }).catch(() => null),
+              template.click().catch(() => null),
+            ])
+          )[0]
     check(
       'Download template still downloads the blank template',
       !!download && download.suggestedFilename() === 'registered-players-template.csv',
-      download ? download.suggestedFilename() : 'no download',
+      download ? download.suggestedFilename() : (await template.count()) === 0 ? 'not in the overflow' : 'no download',
     )
     await page.close()
   }
