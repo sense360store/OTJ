@@ -245,7 +245,7 @@ const open = async (screen, width, opts = {}) => {
 /* ---- the Sheet's focus contract ---- */
 {
   const page = await open('home', 390)
-  await page.getByRole('button', { name: 'More', exact: true }).first().click()
+  await pressed(page.getByRole('button', { name: 'More', exact: true }), 'the sheet takes focus on open')
   await page.waitForTimeout(200)
   check(
     'the sheet takes focus on open',
@@ -415,7 +415,7 @@ const open = async (screen, width, opts = {}) => {
     [390, '.player-card .pc-select', 'the card list'],
   ]) {
     const page = await open('players', width)
-    await page.getByRole('button', { name: 'Select players', exact: true }).click()
+    await pressed(page.getByRole('button', { name: 'Select players', exact: true }), `the row checkbox reaches a 44px target in ${layout}`)
     await page.waitForTimeout(150)
     const box = await page.evaluate((s) => {
       const el = document.querySelector(s)
@@ -454,44 +454,52 @@ const open = async (screen, width, opts = {}) => {
   // behaviour PLAYERS-01 owns and this wave must not have moved: the confirm
   // button stays inert until the phrase names the count.
   {
+    const DIALOG = 'the destructive dialog opens with its confirm button inert'
     const page = await open('players', 1280)
-    await page.getByRole('button', { name: 'Select players', exact: true }).click()
-    await page.getByRole('button', { name: /^Select all \d+ shown$/ }).click()
-    await page.getByRole('button', { name: /^Delete \d+ players?$/ }).click()
-    await page.waitForTimeout(250)
-    const confirm = page.getByRole('button', { name: /permanently$/ })
-    check('the destructive dialog opens with its confirm button inert', await confirm.isDisabled())
-    check(
-      'the dialog took focus, so Escape and the Tab trap are live',
-      await page.evaluate(() => document.activeElement.classList.contains('modal')),
-    )
-    await page.getByLabel(/^To confirm, type/).fill('DELETE 7 PLAYERS')
-    await page.waitForTimeout(120)
-    check('a phrase naming the wrong count leaves it inert', await confirm.isDisabled())
-    await page.getByLabel(/^To confirm, type/).fill('DELETE 8 PLAYERS')
-    await page.waitForTimeout(120)
-    check('the phrase naming the count arms it', !(await confirm.isDisabled()))
-    const danger = await page.evaluate(() => {
-      const b = [...document.querySelectorAll('.modal button')].find((x) => /permanently$/.test(x.textContent.trim()))
-      return { cls: b.className, fill: getComputedStyle(b).backgroundColor, word: /Delete/.test(b.textContent) }
-    })
-    check(
-      'the destructive control is the danger variant and says the word, not only the colour',
-      danger.cls.includes('btn-danger') && danger.word,
-      JSON.stringify(danger),
-    )
-    await page.keyboard.press('Escape')
-    await page.waitForTimeout(200)
-    check('Escape closes it and nothing was deleted', await page.evaluate(() => !document.querySelector('.modal')))
+    // Three presses of setup, each of which every check below depends on. A
+    // failed one is reported and the block stops rather than asserting
+    // against a dialog that was never opened.
+    const opened =
+      (await pressed(page.getByRole('button', { name: 'Select players', exact: true }), DIALOG)) &&
+      (await pressed(page.getByRole('button', { name: /^Select all \d+ shown$/ }), DIALOG)) &&
+      (await pressed(page.getByRole('button', { name: /^Delete \d+ players?$/ }), DIALOG))
+    if (opened) {
+      await page.waitForTimeout(250)
+      const confirm = page.getByRole('button', { name: /permanently$/ })
+      check(DIALOG, await confirm.isDisabled())
+      check(
+        'the dialog took focus, so Escape and the Tab trap are live',
+        await page.evaluate(() => document.activeElement.classList.contains('modal')),
+      )
+      await page.getByLabel(/^To confirm, type/).fill('DELETE 7 PLAYERS')
+      await page.waitForTimeout(120)
+      check('a phrase naming the wrong count leaves it inert', await confirm.isDisabled())
+      await page.getByLabel(/^To confirm, type/).fill('DELETE 8 PLAYERS')
+      await page.waitForTimeout(120)
+      check('the phrase naming the count arms it', !(await confirm.isDisabled()))
+      const danger = await page.evaluate(() => {
+        const b = [...document.querySelectorAll('.modal button')].find((x) => /permanently$/.test(x.textContent.trim()))
+        return b ? { cls: b.className, fill: getComputedStyle(b).backgroundColor, word: /Delete/.test(b.textContent) } : null
+      })
+      check(
+        'the destructive control is the danger variant and says the word, not only the colour',
+        !!danger && danger.cls.includes('btn-danger') && danger.word,
+        JSON.stringify(danger),
+      )
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(200)
+      check('Escape closes it and nothing was deleted', await page.evaluate(() => !document.querySelector('.modal')))
+    }
     await page.close()
   }
 
   // The over limit refusal, reached with a register past the server's cap.
   {
     const page = await open('players', 1280, { state: 'overlimit' })
-    await page.getByRole('button', { name: 'Select players', exact: true }).click()
-    await page.getByRole('button', { name: /^Select all \d+ shown$/ }).click()
-    await page.getByRole('button', { name: /^Delete \d+ players?$/ }).click()
+    const OVER = 'a selection past the cap is refused in words and never arms'
+    await pressed(page.getByRole('button', { name: 'Select players', exact: true }), OVER)
+    await pressed(page.getByRole('button', { name: /^Select all \d+ shown$/ }), OVER)
+    await pressed(page.getByRole('button', { name: /^Delete \d+ players?$/ }), OVER)
     await page.waitForTimeout(250)
     const r = await page.evaluate(() => {
       const note = document.querySelector('.modal .note-danger[role="alert"]')
@@ -515,7 +523,10 @@ const open = async (screen, width, opts = {}) => {
   // at, in both shells, because the two headers are different heights.
   for (const width of [1280, 390]) {
     const page = await open('players', width, { state: 'overlimit' })
-    await page.getByRole('button', { name: 'Select players', exact: true }).click()
+    await pressed(
+      page.getByRole('button', { name: 'Select players', exact: true }),
+      `the selection bar stays reachable below the header at ${width}`,
+    )
     await page.waitForTimeout(200)
     await page.evaluate(() => window.scrollTo(0, 1500))
     await page.waitForTimeout(300)
