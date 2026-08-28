@@ -24,6 +24,12 @@ const manifest = existsSync(path.join(FONTS, 'manifest.json'))
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM ?? '/opt/pw-browsers/chromium' })
 const context = await browser.newContext()
+// Ten seconds rather than Playwright's thirty. Every wait in this file is
+// explicit and finishes in well under a second; the default only ever applies
+// when something has gone wrong, and then it is the cost of finding out. Nine
+// guarded presses against a control that has become unclickable is ninety
+// seconds of nothing rather than four and a half minutes.
+context.setDefaultTimeout(10000)
 await context.route(
   (url) => url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com',
   async (route) => {
@@ -46,22 +52,28 @@ const check = (name, ok, detail = '') => out.push(`${ok ? 'PASS' : 'FAIL'}  ${na
 // a mutation that removed an item from the overflow, and both times the run
 // ended with an unhandled timeout and nothing else reported. A missing control
 // is a recorded failure here and the caller carries on.
-const pressed = async (locator, what) => {
+//
+// The count guard is not the whole story, and a guard that catches half the
+// cases reads as one that catches all of them: a control that is PRESENT but
+// disabled, covered by another element, or still animating makes click() wait
+// and then reject on its own account, which is the same abort by another door.
+// So the action itself is caught too, and the reason Playwright gives is what
+// the failure reports.
+const acted = async (locator, what, verb, run) => {
   if ((await locator.count()) === 0) {
-    check(what, false, 'the control is not on the page')
+    check(what, false, `the control is not on the page`)
     return false
   }
-  await locator.first().click()
-  return true
-}
-const focused = async (locator, what) => {
-  if ((await locator.count()) === 0) {
-    check(what, false, 'the control is not on the page')
+  try {
+    await run(locator.first())
+    return true
+  } catch (e) {
+    check(what, false, `the control could not be ${verb}: ${String(e.message ?? e).split('\n')[0]}`)
     return false
   }
-  await locator.first().focus()
-  return true
 }
+const pressed = (locator, what) => acted(locator, what, 'clicked', (el) => el.click())
+const focused = (locator, what) => acted(locator, what, 'focused', (el) => el.focus())
 // The header's overflow trigger, named exactly: every row's is "More actions
 // for <child>", so a loose name matches ten controls and resolves to a row.
 const moreActions = (page) => page.getByRole('button', { name: 'More actions', exact: true })
@@ -310,20 +322,46 @@ const open = async (screen, width, opts = {}) => {
   }
 
   // 2.7: a badge is a tone, a dot AND a word. Never one of the three alone.
+  //
+  // The TONE half needs asserting, not just the dot's existence. This check
+  // first collected the class and never read it, and accepted any dot that was
+  // not transparent, so deleting the .badge-success and .badge-warning rules
+  // left every dot the base opaque slate and the check still passed. Codex.
+  // Two claims now: the class a status carries is the one its word means, and
+  // distinct tones are drawn in distinct colours, which is what a deleted
+  // override collapses. The colours are compared with each other rather than
+  // with hard coded hex, so moving a token stays a design decision rather than
+  // a broken check.
   {
-    const page = await open('players', 1280)
+    const page = await open('players', 1280, { state: 'withdrawn' })
+    // The whole class, not a modifier: neutral is the Badge primitive's base
+    // and carries no modifier at all, so "contains badge-neutral" would be a
+    // check for a class that has never existed.
+    const TONE = { Registered: 'badge badge-success', Pending: 'badge badge-warning', Withdrawn: 'badge' }
     const r = await page.evaluate(() => {
-      const badges = [...document.querySelectorAll('td .badge')]
-      return badges.slice(0, 3).map((b) => ({
-        cls: b.className,
-        dot: !!b.querySelector('.badge-dot'),
-        word: b.textContent.trim(),
-        dotColour: b.querySelector('.badge-dot') ? getComputedStyle(b.querySelector('.badge-dot')).backgroundColor : null,
-      }))
+      const seen = new Map()
+      for (const b of document.querySelectorAll('td .badge')) {
+        const word = b.textContent.trim()
+        if (seen.has(word)) continue
+        const dot = b.querySelector('.badge-dot')
+        seen.set(word, {
+          cls: b.className,
+          dot: !!dot,
+          word,
+          dotColour: dot ? getComputedStyle(dot).backgroundColor : null,
+        })
+      }
+      return [...seen.values()]
     })
+    const tones = new Set(r.map((b) => b.dotColour))
     check(
       'every status badge carries a dot and a word, so status is never colour alone',
-      r.length > 0 && r.every((b) => b.dot && b.word.length > 0 && b.dotColour !== 'rgba(0, 0, 0, 0)'),
+      r.length >= 2 &&
+        r.every((b) => b.dot && b.word.length > 0 && b.dotColour !== 'rgba(0, 0, 0, 0)') &&
+        // The class says what the word says.
+        r.every((b) => TONE[b.word] && b.cls.trim() === TONE[b.word]) &&
+        // And the tones are actually different from one another.
+        tones.size === r.length,
       JSON.stringify(r),
     )
     await page.close()
@@ -614,7 +652,10 @@ const open = async (screen, width, opts = {}) => {
           await page.close()
           continue
         }
-        await trigger.click()
+        if (!(await pressed(trigger, `the overflow popup is anchored to the action slot at ${width} (${state})`))) {
+          await page.close()
+          continue
+        }
         await page.waitForTimeout(150)
         const r = await page.evaluate(() => {
           const list = document.querySelector('.players-more .menu-list')
@@ -704,7 +745,7 @@ const open = async (screen, width, opts = {}) => {
     const page = await open('players', 1280, { state: 'allactions' })
     await pressed(moreActions(page), 'a click outside closes the overflow')
     await page.waitForTimeout(120)
-    await page.locator('h1').click()
+    await pressed(page.locator('h1'), 'a click outside closes the overflow')
     await page.waitForTimeout(150)
     check(
       'a click outside closes the overflow',
@@ -867,7 +908,7 @@ const open = async (screen, width, opts = {}) => {
         (await trigger.count()) === 0
           ? []
           : await (async () => {
-              await trigger.click()
+              if (!(await pressed(trigger, `the ${state} overflow could be opened`))) return []
               await page.waitForTimeout(150)
               return page.evaluate(() =>
                 [...document.querySelectorAll('.players-more .menu-list > *')].map((c) => c.textContent.trim()),
@@ -954,7 +995,13 @@ const open = async (screen, width, opts = {}) => {
         await page.close()
         continue
       }
-      await control.click()
+      try {
+        await control.click()
+      } catch (e) {
+        wrong.push(`${item} could not be pressed: ${String(e.message ?? e).split('\n')[0]}`)
+        await page.close()
+        continue
+      }
       await page.waitForTimeout(300)
       const title = await page.evaluate(() => {
         const h = document.querySelector('.modal h3, .modal h2, .more-sheet h3')
