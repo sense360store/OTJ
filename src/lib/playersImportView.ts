@@ -7,10 +7,16 @@ import type { PlanSummary, PreviewFilter, RowClass } from './playersImportPlan'
 
 // The coloured pill and word for each class, plus a colour token. The word is
 // always shown, so a class is never conveyed by colour alone (ux section 12).
+//
+// The pill's label is --on-accent on this fill, so each value is held to the
+// 4.5:1 text floor in both themes. already_present was --slate-2, which
+// measures 3.80:1 under white in the light theme; VISUAL-01 demoted that token
+// to control borders and disabled glyphs for exactly this reason, and --slate
+// is the neutral that carries text (5.34:1 light, 7.75:1 dark).
 export const PREVIEW_PILL: Record<RowClass, { word: string; color: string }> = {
   new: { word: 'Will add', color: 'var(--success)' },
   update: { word: 'Will update', color: 'var(--royal)' },
-  already_present: { word: 'Already present', color: 'var(--slate-2)' },
+  already_present: { word: 'Already present', color: 'var(--slate)' },
   needs_choice: { word: 'Needs your choice', color: 'var(--warning)' },
   invalid: { word: 'Invalid', color: 'var(--danger)' },
 }

@@ -2,7 +2,15 @@
 // here, and none of it reaches the application: nothing under src/ imports
 // this file.
 import { blankSession } from '../../src/lib/data'
-import type { Drill, MediaItem, RegisteredPlayer, Season, Session, Template } from '../../src/lib/data'
+import type {
+  Drill,
+  MediaItem,
+  PlayerHistoryEntry,
+  RegisteredPlayer,
+  Season,
+  Session,
+  Template,
+} from '../../src/lib/data'
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
 
@@ -72,6 +80,42 @@ export type HarnessState =
   | 'overlimit'
   | 'allactions'
   | 'archivedteam'
+  /* ---- the dialog states (VISUAL-02, the six remaining dialog files) ----
+     A dialog's own states are not reachable from the page's reads alone: a
+     write in flight, a write that failed, and the two reads only a dialog
+     makes. Each of these is still the DIALOG's own branch, reached through
+     the control a coach presses; what the state changes is what the data
+     layer answers, never what is drawn. */
+  // Every write hangs, so pressing a confirm leaves the dialog in its real
+  // in-flight state: the gerund label, the disabled controls and the frozen
+  // dismissal contract. Ten of the eleven dialogs reach it that way, through
+  // the guard. Import from Spond is the one that reads the mutation's own
+  // isPending rather than a guard's, so for that dialog alone this state is
+  // the harness answering rather than a press; no entry claims otherwise, and
+  // none of the shots names it.
+  | 'inflight'
+  // Every write rejects, so a confirm reaches the inline ActionError rather
+  // than closing.
+  | 'writefails'
+  // The per player History read, which answers empty by default: entries,
+  // a long trail, and a failed read.
+  | 'history'
+  | 'historylong'
+  | 'historyerror'
+  // The two Renew cases a club really reaches. The source season having
+  // nobody to bring forward, and every child in it already being in the
+  // target, which is what leaves the confirm reading 0 and inert.
+  //
+  // Renew's own "choose two different seasons" branch is deliberately NOT
+  // here: playersView gates the action itself on seasonCount >= 2, so a club
+  // with one season is never offered Renew at all and that branch is
+  // defensive rather than reachable. A state that forced it would be a
+  // screenshot of something no coach can open.
+  | 'renewempty'
+  | 'renewalldone'
+  // The Spond roster import's reported outcome, including the warning it can
+  // carry. Its mid run state is `inflight` like every other write.
+  | 'spondresult'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -244,3 +288,81 @@ export const REGISTERED_PLAYERS: RegisteredPlayer[] = [
 export const OVER_LIMIT_PLAYERS: RegisteredPlayer[] = Array.from({ length: 201 }, (_, i) =>
   reg(i + 1, `Squad Member ${i + 1}`, { teamId: i % 2 === 0 ? 'titans' : 'trojans' }),
 )
+
+/* ---- the dialogs' own reads --------------------------------------
+   The rows behind the six dialog files this slice adopts. The names are the
+   invented register names above; no real child, coach or adult appears.
+
+   The rows the DRIVERS press are named in tools/visual/dialogs.mjs, which is
+   plain JavaScript and cannot import this module. */
+
+// The previous season's register. Renew reads TWO seasons at once, so the
+// same rows answering for both would classify every child as already in the
+// target and leave the dialog with nothing to renew, which is a state no real
+// club is in. Four children carry over (the same playerId as a current row),
+// four are new to the target, and one is withdrawn, which is the row Renew
+// asks the coach to decide about.
+export const PAST_SEASON_PLAYERS: RegisteredPlayer[] = [
+  reg(4, 'Aria Bexley-Thornton', { seasonId: PAST_SEASON.id }),
+  reg(7, 'Callum Hedge', { seasonId: PAST_SEASON.id, teamId: 'trojans' }),
+  reg(9, 'Devon Marsh', { seasonId: PAST_SEASON.id }),
+  reg(11, 'Elin Rowbotham', { seasonId: PAST_SEASON.id, teamId: 'gladiators' }),
+  { ...reg(6, 'Rowan Featherstone', { seasonId: PAST_SEASON.id }), playerId: 'player-past-6' },
+  { ...reg(8, 'Sasha Ingleby', { seasonId: PAST_SEASON.id, teamId: 'trojans' }), playerId: 'player-past-8' },
+  { ...reg(12, 'Teddy Marchant', { seasonId: PAST_SEASON.id, shirtNumber: null }), playerId: 'player-past-12' },
+  { ...reg(15, 'Umi Blackwood', { seasonId: PAST_SEASON.id, teamId: 'spartans' }), playerId: 'player-past-15' },
+  {
+    ...reg(17, 'Vaughn Ledgard', { seasonId: PAST_SEASON.id, status: 'withdrawn' }),
+    playerId: 'player-past-17',
+  },
+]
+
+const historyEntry = (n: number, over: Partial<PlayerHistoryEntry> = {}): PlayerHistoryEntry => ({
+  id: `audit-${n}`,
+  occurredAt: `2026-08-${String(2 + (n % 26)).padStart(2, '0')}T09:12:00Z`,
+  actorId: 'coach-me',
+  actorName: 'Sam Coach',
+  action: 'player.updated',
+  seasonId: CURRENT_SEASON.id,
+  teamId: 'titans',
+  source: 'ui',
+  changedFields: ['shirt_number'],
+  safeChanges: { shirt_number: { old: 9, new: 4 } },
+  ...over,
+})
+
+// A short trail covering the entry shapes the describer has to render: a
+// status change, a team move, a shirt change and one with no acting adult
+// left to name.
+export const PLAYER_HISTORY: PlayerHistoryEntry[] = [
+  historyEntry(1, {
+    action: 'player.registered',
+    changedFields: ['status'],
+    safeChanges: { status: { old: 'pending', new: 'registered' } },
+  }),
+  historyEntry(2, {
+    action: 'player.team_changed',
+    changedFields: ['team_id'],
+    safeChanges: { team_id: { old: 'trojans', new: 'titans' } },
+  }),
+  historyEntry(3),
+  historyEntry(4, { actorName: null, source: 'spond-roster-import' }),
+]
+
+// A long trail, for the case where the dialog's own body has to scroll.
+export const PLAYER_HISTORY_LONG: PlayerHistoryEntry[] = Array.from({ length: 40 }, (_, i) => historyEntry(i + 5))
+
+// The Spond roster import's reported outcome, counts only, plus the warning
+// shape the dialog renders as its own Note.
+export const SPOND_IMPORT_RESULT = {
+  added: 6,
+  alreadyPresent: 11,
+  skipped: 2,
+  registeredElsewhere: 1,
+  message: 'Two Spond members had no full name recorded and were left out.',
+  warnings: ['One child is in this Spond subgroup and registered to Trojans in the Hub. Nothing was changed for them.'],
+}
+
+// The spreadsheets the import dialog parses live in tools/visual/dialogs.mjs
+// beside the driver that hands them to the file input, because a Playwright
+// tool is plain JavaScript and cannot import this file.

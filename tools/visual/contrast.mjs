@@ -28,6 +28,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
+import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -160,6 +161,22 @@ const STATES_FOR = (screen) =>
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
 
+// A surface the run could not open, reported through the same failure list as
+// a low contrast run. It is not a measurement, so it carries the zero ratio
+// its own line prints; what matters is that the run cannot come back clean
+// while a surface it names was never measured.
+const unreached = (sel, text, where) => ({
+  sel,
+  text,
+  fg: '#000000',
+  bg: '#000000',
+  size: 0,
+  weight: 0,
+  ratio: 0,
+  need: 4.5,
+  where,
+})
+
 for (const screen of SCREENS) {
   for (const theme of ['light', 'dark']) {
     for (const w of [390, 1280]) {
@@ -243,6 +260,73 @@ for (const screen of SCREENS) {
        }
       }
     }
+  }
+}
+
+/* ---- VISUAL-02: the six remaining dialog files ------------------------
+   The dialogs are an overlay over the register, so every run above sweeps
+   the page behind them and none of them sweeps a dialog. They are where the
+   inline colours lived (a 12.5px danger paragraph, a --slate-2 glyph, an
+   unflipped --gold-soft panel, three classification hexes standing in for
+   states), so measuring what they render is the point of this slice.
+
+   Both themes, phone and desktop, and the ROW overflow beside them, whose
+   items this slice brings to 44px and whose destructive item is the one text
+   run in the product painted --danger on the card. */
+for (const d of DIALOGS) {
+  for (const theme of ['light', 'dark']) {
+    for (const w of [390, 1280]) {
+      const page = await context.newPage()
+      await page.setViewportSize({ width: w, height: 1400 })
+      await page.goto(`${BASE}/?${queryFor(d, { theme })}`, { waitUntil: 'domcontentloaded' })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForTimeout(300)
+      const why = await openDialog(page, d)
+      if (why) {
+        // A surface that did not open is a failed run, not a quiet skip: the
+        // sweep would otherwise report zero findings for something it never
+        // measured, and zero findings is what a clean run looks like.
+        failed.push(unreached(`dialog:${d.key}`, why, `dialog/${d.key}/${theme}/${w}w`))
+        await page.close()
+        continue
+      }
+      const rows = await page.evaluate('(' + SWEEP + ')()')
+      for (const r of rows) {
+        if (r.ratio >= r.need) continue
+        const key = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        const row = { ...r, where: `dialog/${d.key}/${theme}/${w}w` }
+        ;(r.disabled ? exempt : r.frozen ? frozen : failed).push(row)
+      }
+      await page.close()
+    }
+  }
+}
+
+for (const theme of ['light', 'dark']) {
+  for (const w of [390, 1280]) {
+    const page = await context.newPage()
+    await page.setViewportSize({ width: w, height: 1400 })
+    await page.goto(`${BASE}/?screen=players&caps=coach&theme=${theme}&state=withdrawn`, { waitUntil: 'domcontentloaded' })
+    await page.evaluate(() => document.fonts.ready)
+    await page.waitForTimeout(300)
+    if (!(await openRowMenu(page, DIALOG_PLAYER))) {
+      failed.push(unreached('rowmenu', 'the row\'s More actions trigger is not on the page', `rowmenu/${theme}/${w}w`))
+      await page.close()
+      continue
+    }
+    await page.waitForTimeout(200)
+    const rows = await page.evaluate('(' + SWEEP + ')()')
+    for (const r of rows) {
+      if (r.ratio >= r.need) continue
+      const key = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const row = { ...r, where: `rowmenu/${theme}/${w}w` }
+      ;(r.disabled ? exempt : r.frozen ? frozen : failed).push(row)
+    }
+    await page.close()
   }
 }
 

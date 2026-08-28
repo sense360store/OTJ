@@ -228,6 +228,21 @@ describe('the semantic state roles meet their contrast floors in both themes', (
   }
 })
 
+// The eight classification values, frozen: whether the four corners hues move
+// at all is Part 5's open product decision. Module scope because two describes
+// need them, one measuring the pairing and one hunting the same value written
+// out as a literal.
+const FROZEN: Record<string, string> = {
+  '--c-technical': '#1f43d6',
+  '--c-physical': '#16a34a',
+  '--c-social': '#ef8e1b',
+  '--c-psych': '#7c4dff',
+  '--m-video': '#1f43d6',
+  '--m-youtube': '#e23b3b',
+  '--m-image': '#16a34a',
+  '--m-pdf': '#ef5a5a',
+}
+
 describe('the frozen classification hues, and the gap they leave', () => {
   // .corner-* paints the hue as its own label. In LIGHT that is
   // --c-technical 7.41:1, --c-psych 4.81:1, --c-physical 3.30:1 and
@@ -239,16 +254,6 @@ describe('the frozen classification hues, and the gap they leave', () => {
   // drifting, so the decision is made deliberately rather than by a nudge.
   // The fix belongs to the Library and Media wave, with the hue decision
   // settled; the same gap is recorded in the VISUAL-01 pull request.
-  const FROZEN: Record<string, string> = {
-    '--c-technical': '#1f43d6',
-    '--c-physical': '#16a34a',
-    '--c-social': '#ef8e1b',
-    '--c-psych': '#7c4dff',
-    '--m-video': '#1f43d6',
-    '--m-youtube': '#e23b3b',
-    '--m-image': '#16a34a',
-    '--m-pdf': '#ef5a5a',
-  }
 
   it('keeps the light classification values exactly as they were', () => {
     for (const [token, hex] of Object.entries(FROZEN)) expect(LIGHT[token], token).toBe(hex)
@@ -351,11 +356,10 @@ describe('the type scale is the only source of a font size', () => {
     //
     // VISUAL-01: the shared vocabulary and the shell.
     // VISUAL-02, Registered players: the route, its filter bar and the bulk
-    // selection bar and bulk delete dialog, which is the surface Part 4 names.
-    // The six other dialogs that surface can open (add and edit a player,
-    // History, Import players, Export, Import from Spond, Renew season) are
-    // NOT in that list and still carry inline sizes; they belong to a later
-    // slice and are deliberately absent here rather than exempted.
+    // selection bar and bulk delete dialog, which is the surface Part 4 names,
+    // and then the six remaining dialog files that surface can open. Those
+    // six carried 56 inline sizes between them and were deliberately deferred
+    // from the first slice; they are owned now, so a size cannot come back.
     const OWNED = [
       'components/ui.tsx',
       'components/primitives.tsx',
@@ -367,6 +371,12 @@ describe('the type scale is the only source of a font size', () => {
       'routes/Players.tsx',
       'components/PlayerFilters.tsx',
       'components/BulkDeletePlayersModal.tsx',
+      'components/PlayerFormModal.tsx',
+      'components/PlayerActionModals.tsx',
+      'components/PlayerHistoryModal.tsx',
+      'components/ExportConfirmModal.tsx',
+      'components/ImportPlayersModal.tsx',
+      'components/RenewSeasonModal.tsx',
     ]
     const offenders: string[] = []
     for (const f of sourceFiles.filter((f) => OWNED.includes(rel(f)))) {
@@ -415,6 +425,40 @@ describe('no classification colour stands in for a state', () => {
     const table = ui.slice(ui.indexOf('export const PHASE_COLOR'), ui.indexOf('/* ---- empty state'))
     expect(table).not.toMatch(/var\(--c-/)
     expect(table).toMatch(/var\(--phase-/)
+  })
+
+  it('keeps a frozen classification hex out of a state, even written as a literal', () => {
+    // The var(--c-*) scan above cannot see a value written out, and a value
+    // written out is exactly how this shipped: the Renew dialog said Eligible
+    // in #16a34a and Withdrawn in #ef8e1b, which ARE --c-physical and
+    // --c-social, and no test in this file could see either. They are the
+    // success and warning Badge tones now.
+    //
+    // The pattern is the QUOTED form, which is how a value reaches a style or
+    // a table; the bare hexes this comment names are therefore not findings,
+    // and a quoted one in a comment still is, which is the safe direction.
+    // bibs.ts is the one deliberate exception, because a bib names a physical
+    // garment a child is wearing, and drillDiagram.ts reads its fallback from
+    // that same table.
+    const EXEMPT = new Set(['lib/bibs.ts', 'lib/drillDiagram.ts'])
+    const pattern = new RegExp(`'(${[...new Set(Object.values(FROZEN))].join('|')})'`, 'gi')
+    const offenders: string[] = []
+    for (const f of sourceFiles.filter((x) => x.endsWith('.ts') || x.endsWith('.tsx'))) {
+      if (EXEMPT.has(rel(f))) continue
+      const src = read(f)
+      for (const m of src.matchAll(pattern)) offenders.push(`${rel(f)}: ${siteOf(src, m.index!, false)}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('leaves one status badge vocabulary, which is the Badge primitive', () => {
+    // .status-badge was the pre VISUAL-01 convention, and 2.7 named it as the
+    // model the Badge primitive should become rather than as a second way of
+    // saying the same thing. Its last caller was the season renewal dialog,
+    // whose class words were the borrowed classification hues above; with
+    // that dialog on Badge tones the class has no callers and is gone.
+    expect(styles).not.toContain('.status-badge')
+    expect(styles).toContain('.badge-dot')
   })
 
   it('leaves the bib swatches hardcoded, which is deliberate', () => {
@@ -678,6 +722,27 @@ describe('a semantic fill carries its own label colour', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it('carries every import preview pill label on its own fill, in both themes', () => {
+    // The one place in the product where a fill is chosen PER ROW from a
+    // table, so the cross-selector pair the comment above describes is the
+    // shape by construction: .ip-pill sets --on-accent and the table sets the
+    // background. Measured rather than read, because what matters is the
+    // number: already_present was --slate-2 at 3.80:1 under white in light,
+    // which is the token VISUAL-01 demoted to a non text role.
+    // Every token the module names, so the separate WARNING_COLOR the warning
+    // pill takes is measured beside the five row classes rather than being
+    // the one fill nothing looked at.
+    const fills = [
+      ...new Set([...read(join(srcDir, 'lib/playersImportView.ts')).matchAll(/'var\((--[a-z0-9-]+)\)'/g)].map((m) => m[1])),
+    ]
+    expect(fills.length, 'a fill per row class, plus the warning pill').toBeGreaterThanOrEqual(5)
+    for (const dark of [false, true]) {
+      for (const fill of fills) {
+        expect(ratio('--on-accent', fill, dark), `--on-accent on ${fill} (${dark ? 'dark' : 'light'})`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
   })
 
   it('leaves the three cross-selector pairs on their fill\'s own label', () => {

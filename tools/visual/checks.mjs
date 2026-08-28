@@ -14,6 +14,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
+import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -82,9 +83,13 @@ const open = async (screen, width, opts = {}) => {
   const page = await context.newPage()
   if (opts.reducedMotion) await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.setViewportSize({ width, height: opts.height ?? 900 })
-  const q = new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
-  if (opts.caps) q.set('caps', opts.caps)
-  if (opts.state) q.set('state', opts.state)
+  // A dialog entry owns its own query string, because its state and its
+  // address are not always the same thing.
+  const q = opts.dialog
+    ? queryFor(opts.dialog, { theme: opts.theme ?? 'light', caps: opts.caps ?? 'coach' })
+    : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
+  if (!opts.dialog && opts.caps) q.set('caps', opts.caps)
+  if (!opts.dialog && opts.state) q.set('state', opts.state)
   await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => document.fonts.ready)
   // domcontentloaded fires before React has rendered anything, so a check that
@@ -1103,6 +1108,378 @@ const open = async (screen, width, opts = {}) => {
       !r.table && !r.cards && r.h1 !== 'Registered players',
       JSON.stringify(r),
     )
+    await page.close()
+  }
+}
+
+/* ---- VISUAL-02: the row overflow, and the six remaining dialog files ----
+   The claims a screenshot cannot settle: a computed hit height, a focus
+   contract, a dismissal contract and a wired error. */
+{
+  // 2.5: the ROW menu's items reach 44px. They shipped at roughly 37px, which
+  // the page header's own overflow already set on itself; the height is the
+  // shared .menu-list rule now, so both menus take it. Measured in BOTH
+  // layouts, because above 900px the row shows Edit and History beside the
+  // trigger and below it the card holds every action in the menu: two
+  // different lists through one rule.
+  for (const [width, layout] of [
+    [1280, 'the table row'],
+    [390, 'the card'],
+  ]) {
+    const page = await open('players', width, { state: 'withdrawn' })
+    const WHAT = `every item in ${layout}'s overflow reaches a 44px target`
+    if (await openRowMenu(page, DIALOG_PLAYER)) {
+      await page.waitForTimeout(150)
+      const r = await page.evaluate(() => {
+        // NOT .players-more: that is the page header's popup, which already
+        // had the height, so reading it would pass whatever a row's did.
+        const list = document.querySelector('.menu:not(.players-more) .menu-list')
+        if (!list) return null
+        const items = [...list.children]
+        return {
+          labels: items.map((c) => c.textContent.trim()),
+          short: items
+            .filter((c) => c.getBoundingClientRect().height < 43.5)
+            .map((c) => `${c.textContent.trim()} ${Math.round(c.getBoundingClientRect().height)}px`),
+        }
+      })
+      check(WHAT, !!r && r.labels.length > 0 && r.short.length === 0, JSON.stringify(r))
+    } else {
+      check(WHAT, false, "the row's More actions trigger is not on the page")
+    }
+    await page.close()
+  }
+
+  // A 44px item a thumb cannot land on is not a 44px target. The LAST row's
+  // menu is the case: the popup extends the document's own scroll height
+  // exactly to its own bottom edge, so scrolled fully down its last item sat
+  // under the phone shell's fixed bottom navigation and elementFromPoint
+  // returned a nav item. Measured at the two landscape and portrait phone
+  // shapes, on the last row, which is the one with nothing below to scroll to.
+  //
+  // It was already true at the height the row menus shipped with; raising
+  // every item to 44px makes the popup 50px taller, so it is fixed here
+  // rather than left as something this slice made worse.
+  for (const [width, height] of [
+    [390, 844],
+    [740, 360],
+  ]) {
+    const page = await open('players', width, { height })
+    const WHAT = `the last row's overflow is reachable, once scrolled to, at ${width}x${height}`
+    const trigger = page.getByRole('button', { name: /^(More )?[Aa]ctions for / }).last()
+    if (!(await acted(trigger, WHAT, 'clicked', async (el) => {
+      await el.scrollIntoViewIfNeeded()
+      await el.click()
+    }))) {
+      await page.close()
+      continue
+    }
+    await page.waitForTimeout(200)
+    const r = await page.evaluate(() => {
+      const list = document.querySelector('.menu:not(.players-more) .menu-list')
+      if (!list) return null
+      const last = list.lastElementChild
+      last.scrollIntoView({ block: 'center' })
+      const g = last.getBoundingClientRect()
+      const hit = document.elementFromPoint(g.left + g.width / 2, g.top + g.height / 2)
+      return {
+        last: last.textContent.trim(),
+        onScreen: g.top >= 0 && g.bottom <= window.innerHeight,
+        reachable: !!hit && (last === hit || last.contains(hit)),
+        covering: hit ? `${hit.tagName}.${typeof hit.className === 'string' ? hit.className : ''}` : null,
+      }
+    })
+    check(WHAT, !!r && r.onScreen && r.reachable, JSON.stringify(r))
+    await page.close()
+  }
+
+  // 2.5 again, inside every dialog: each interactive control reaches 44px.
+  // For a checkbox or a radio the LABEL is the target, which is the rule the
+  // product already states for the register's own row checkbox, so that is
+  // what is measured rather than the 16px box inside it. Run at 390, the
+  // phone width the whole rule exists for.
+  {
+    const tooSmall = []
+    const missing = []
+    for (const d of DIALOGS) {
+      const page = await open('players', 390, { dialog: d })
+      const why = await openDialog(page, d)
+      if (why) {
+        missing.push(`${d.key}: ${why}`)
+        await page.close()
+        continue
+      }
+      const small = await page.evaluate(() => {
+        const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+        const out = []
+        for (const el of document.querySelectorAll('.modal button, .modal a, .modal select, .modal textarea, .modal input, .modal summary')) {
+          if (el.closest('.sr-only') || el.getAttribute('aria-hidden') === 'true' || el.tabIndex < 0) continue
+          const cs = getComputedStyle(el)
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue
+          const box = el.getBoundingClientRect()
+          if (box.width < 1 && box.height < 1) continue
+          const isTick = el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')
+          const target = isTick ? (el.closest('label') ?? el) : el
+          const t = target.getBoundingClientRect()
+          const a = getComputedStyle(el, '::after')
+          const h = Math.max(t.height, a.content === 'none' ? 0 : px(a.height))
+          const w = Math.max(t.width, a.content === 'none' ? 0 : px(a.width))
+          if (h < 43.5 || w < 43.5) {
+            out.push(`${(el.textContent || el.getAttribute('aria-label') || el.type || el.tagName).trim().slice(0, 20)} ${Math.round(w)}x${Math.round(h)}`)
+          }
+        }
+        return out
+      })
+      if (small.length) tooSmall.push(`${d.key}: ${small.join(', ')}`)
+      await page.close()
+    }
+    check('every dialog opened, in the state its name claims', missing.length === 0, JSON.stringify(missing))
+    check(
+      'every interactive control in every dialog reaches a 44px target',
+      tooSmall.length === 0,
+      JSON.stringify(tooSmall),
+    )
+  }
+
+  // An enlarged hit area must not steal a neighbour's clicks, INSIDE a
+  // dialog. The import preview is the case: seven filter chips wrap onto two
+  // rows an 8px gap apart, and each chip's pseudo-element reaches 5px past a
+  // 34px chip. The page level version of this check cannot see it, because
+  // nothing it opens has a wrapped chip row inside an overlay.
+  {
+    const d = DIALOGS.find((x) => x.key === 'import-preview')
+    for (const width of [390, 1280]) {
+      const page = await open('players', width, { dialog: d })
+      const why = await openDialog(page, d)
+      const WHAT = `no hit area inside the import preview overlaps a neighbouring control at ${width}`
+      if (why) {
+        check(WHAT, false, why)
+        await page.close()
+        continue
+      }
+      const r = await page.evaluate(() => {
+        const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+        const boxes = [...document.querySelectorAll('.modal .chip, .modal .btn-sm, .modal .icon-btn')].map((el) => {
+          const b = el.getBoundingClientRect()
+          const a = getComputedStyle(el, '::after')
+          const ph = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+          const pw = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+          return {
+            label: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 14),
+            hit: {
+              l: b.left - (pw - b.width) / 2,
+              r: b.right + (pw - b.width) / 2,
+              t: b.top - (ph - b.height) / 2,
+              b: b.bottom + (ph - b.height) / 2,
+            },
+            box: b,
+          }
+        })
+        const clashes = []
+        for (const a of boxes) {
+          for (const c of boxes) {
+            if (a === c) continue
+            const ox = Math.min(a.hit.r, c.box.right) - Math.max(a.hit.l, c.box.left)
+            const oy = Math.min(a.hit.b, c.box.bottom) - Math.max(a.hit.t, c.box.top)
+            if (ox > 0.5 && oy > 0.5) clashes.push(`${a.label} over ${c.label}`)
+          }
+        }
+        return { count: boxes.length, clashes: [...new Set(clashes)] }
+      })
+      check(WHAT, r.count > 0 && r.clashes.length === 0, JSON.stringify(r))
+      await page.close()
+    }
+  }
+
+  // 2.13: the Modal focus contract, which this slice must PRESERVE. Focus
+  // enters the dialog on open, Escape closes it, and focus returns to the
+  // control that opened it rather than dropping to the document body. Checked
+  // on one dialog per file, and at both widths, because a row action is a
+  // button in the table and a menu item on the card, so the opener the modal
+  // captures is a different element in each.
+  for (const width of [1280, 390]) {
+    for (const key of ['add', 'move', 'history', 'export', 'import', 'renew']) {
+      const d = DIALOGS.find((x) => x.key === key)
+      const page = await open('players', width, { dialog: d })
+      const WHAT = `${key}: focus enters the dialog, Escape closes it and focus returns to the opener at ${width}`
+      const why = await openDialog(page, d)
+      if (why) {
+        check(WHAT, false, why)
+        await page.close()
+        continue
+      }
+      const entered = await page.evaluate(() => {
+        const el = document.activeElement
+        return { inside: !!el && !!el.closest('.modal'), what: el ? el.tagName + '.' + el.className : null }
+      })
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(250)
+      const after = await page.evaluate(() => {
+        const el = document.activeElement
+        return {
+          closed: !document.querySelector('.modal'),
+          // Not the body, and still a real control on the page: that is what
+          // "returned to the opener" means once the dialog has gone.
+          onControl: !!el && el !== document.body && ['BUTTON', 'A'].includes(el.tagName),
+          what: el ? `${el.tagName} ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)}` : null,
+        }
+      })
+      check(WHAT, entered.inside && after.closed && after.onControl, JSON.stringify({ entered, after }))
+      await page.close()
+    }
+  }
+
+  // The other two dismissal routes, on a dialog that is dismissible: the X in
+  // the head and a press on the overlay. Escape is checked on six dialogs
+  // above; these two are the same contract through different controls, and
+  // both must also return focus to the opener.
+  for (const [route, dismiss] of [
+    ['the X', (page) => page.locator('.modal-head .icon-btn').click()],
+    ['a press on the overlay', (page) => page.mouse.click(5, 5)],
+  ]) {
+    const d = DIALOGS.find((x) => x.key === 'move')
+    const page = await open('players', 1280, { dialog: d })
+    const WHAT = `${route} closes a dismissible dialog and returns focus to the opener`
+    const why = await openDialog(page, d)
+    if (why) {
+      check(WHAT, false, why)
+      await page.close()
+      continue
+    }
+    await dismiss(page)
+    await page.waitForTimeout(250)
+    const r = await page.evaluate(() => {
+      const el = document.activeElement
+      return {
+        closed: !document.querySelector('.modal'),
+        onControl: !!el && el !== document.body && ['BUTTON', 'A'].includes(el.tagName),
+        what: el ? `${el.tagName} ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)}` : null,
+      }
+    })
+    check(WHAT, r.closed && r.onControl, JSON.stringify(r))
+    await page.close()
+  }
+
+  // 2.13 again, the half that must NOT move: a dialog whose write is in
+  // flight is dismissible by nothing. Escape is inert, the X is disabled and
+  // the overlay has no close handler. This is behaviour PLAYERS-01 and the
+  // Modal contract own, and presentation work is exactly where it gets lost.
+  for (const key of ['add-saving', 'delete-deleting']) {
+    const d = DIALOGS.find((x) => x.key === key)
+    const page = await open('players', 1280, { dialog: d })
+    const WHAT = `${key}: a write in flight cannot be dismissed by Escape, the X or the overlay`
+    const why = await openDialog(page, d)
+    if (why) {
+      check(WHAT, false, why)
+      await page.close()
+      continue
+    }
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    const stillOpen = await page.evaluate(() => !!document.querySelector('.modal'))
+    const closeDisabled = await page.evaluate(() => {
+      const x = document.querySelector('.modal-head .icon-btn')
+      return !!x && x.disabled
+    })
+    // The overlay: a press on the ground outside the dialog.
+    await page.mouse.click(5, 5)
+    await page.waitForTimeout(200)
+    const afterOverlay = await page.evaluate(() => !!document.querySelector('.modal'))
+    check(WHAT, stillOpen && closeDisabled && afterOverlay, JSON.stringify({ stillOpen, closeDisabled, afterOverlay }))
+    await page.close()
+  }
+
+  // 2.6: an error sets the border AND renders a message AND wires
+  // aria-invalid and aria-describedby. The shirt field used to do the last
+  // two by hand beside a paragraph of its own; it is the Field primitive's
+  // now, and what matters is that all three still hold together.
+  {
+    const d = DIALOGS.find((x) => x.key === 'add-invalid')
+    const page = await open('players', 1280, { dialog: d })
+    const WHAT = 'an invalid shirt number sets the danger border, a message and aria-describedby'
+    const why = await openDialog(page, d)
+    if (why) check(WHAT, false, why)
+    else {
+      const r = await page.evaluate(() => {
+        const el = document.querySelector('.modal input[aria-invalid="true"]')
+        if (!el) return null
+        const id = el.getAttribute('aria-describedby')
+        const msg = id && document.getElementById(id.split(' ')[0])
+        return {
+          border: getComputedStyle(el).borderTopColor,
+          message: msg ? msg.textContent.trim() : null,
+          announced: !!msg && !!msg.querySelector('[role="alert"]'),
+        }
+      })
+      check(
+        WHAT,
+        !!r && r.border === 'rgb(198, 40, 40)' && !!r.message && r.announced,
+        JSON.stringify(r),
+      )
+    }
+    await page.close()
+  }
+
+  // The typed confirmation on the single player delete, which is an
+  // irreversible action's only gate. Presentation moved the instruction into
+  // a real <label>; deleteConfirmed still decides, and the control stays
+  // inert until the name matches.
+  {
+    const d = DIALOGS.find((x) => x.key === 'delete')
+    const page = await open('players', 1280, { dialog: d })
+    const WHAT = 'the single player delete stays inert until the name is typed exactly'
+    const why = await openDialog(page, d)
+    if (why) check(WHAT, false, why)
+    else {
+      const confirm = page.locator('.modal').getByRole('button', { name: 'Delete permanently', exact: true })
+      const field = page.locator('.modal').getByLabel(/^To confirm, type/)
+      const closed = await confirm.isDisabled()
+      await field.fill('Aria Bexley')
+      await page.waitForTimeout(120)
+      const partial = await confirm.isDisabled()
+      await field.fill(DIALOG_PLAYER)
+      await page.waitForTimeout(120)
+      const armed = await confirm.isEnabled()
+      const danger = await page.evaluate(() => {
+        const b = [...document.querySelectorAll('.modal button')].find((x) => x.textContent.trim() === 'Delete permanently')
+        return b ? { cls: b.className, word: /Delete/.test(b.textContent) } : null
+      })
+      check(
+        WHAT,
+        closed && partial && armed && !!danger && danger.cls.includes('btn-danger') && danger.word,
+        JSON.stringify({ closed, partial, armed, danger }),
+      )
+    }
+    await page.close()
+  }
+
+  // The import preview's two inline controls are a pressed pair, so the
+  // choice is exposed rather than being a fill alone, and both still disable
+  // while a confirm is in flight.
+  {
+    const d = DIALOGS.find((x) => x.key === 'import-preview')
+    const page = await open('players', 1280, { dialog: d })
+    const WHAT = 'a needs-your-choice row exposes its choice with aria-pressed, not a fill alone'
+    const why = await openDialog(page, d)
+    if (why) check(WHAT, false, why)
+    else {
+      const before = await page.evaluate(() =>
+        [...document.querySelectorAll('.ip-choice button')].map((b) => `${b.textContent.trim()}=${b.getAttribute('aria-pressed')}`),
+      )
+      await pressed(page.locator('.ip-choice').getByRole('button', { name: 'Skip', exact: true }), WHAT)
+      await page.waitForTimeout(150)
+      const after = await page.evaluate(() =>
+        [...document.querySelectorAll('.ip-choice button')].map((b) => `${b.textContent.trim()}=${b.getAttribute('aria-pressed')}`),
+      )
+      check(
+        WHAT,
+        before.length === 2 &&
+          before.every((s) => s.endsWith('=false')) &&
+          after.includes('Skip=true') &&
+          after.includes('Import as new=false'),
+        JSON.stringify({ before, after }),
+      )
+    }
     await page.close()
   }
 }

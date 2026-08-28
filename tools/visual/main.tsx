@@ -181,20 +181,29 @@ function Harness() {
 // The register reads its structural filters from the URL, so the states that
 // are a filter (an archived season selected, withdrawn rows shown) are reached
 // by the address the screen opens on, exactly as a coach reaches them.
+//
+// The address is the STATE's own by default, because most of these states ARE
+// an address. `at` names it separately for the case where the two differ: the
+// Spond roster import's outcome is what the WRITE answers, but the action that
+// opens the dialog is offered only with a Spond mapped team selected, so that
+// shot needs `state=spondresult` for the reads and `at=allactions` for the
+// address. Folding one into the other would mean inventing a state per
+// combination.
 function playersEntry(): string {
-  if (harnessState === 'archived') return `/players?season=${PAST_SEASON.id}`
-  if (harnessState === 'withdrawn') return '/players?status=all'
+  const at = params.get('at') ?? harnessState
+  if (at === 'archived') return `/players?season=${PAST_SEASON.id}`
+  if (at === 'withdrawn') return '/players?status=all'
   // Every header action at once. Import from Spond is the only one gated on
   // the team filter (it needs a specific Spond mapped team selected), so the
   // fullest header a coach can reach is only reachable through the address,
   // and the six the overflow is specified to hold are all present only here.
-  if (harnessState === 'allactions') return `/players?team=${SPOND_TEAM_ID}`
+  if (at === 'allactions') return `/players?team=${SPOND_TEAM_ID}`
   // An archived season WITH the mapped team selected. `archived` alone leaves
   // the team filter on All teams, and Import from Spond is then absent because
   // no mapped team is selected rather than because the season is not the
   // current one, so a check asserting the archived gate against it cannot
   // fail. This is the address that makes the two reasons distinguishable.
-  if (harnessState === 'archivedteam') return `/players?season=${PAST_SEASON.id}&team=${SPOND_TEAM_ID}`
+  if (at === 'archivedteam') return `/players?season=${PAST_SEASON.id}&team=${SPOND_TEAM_ID}`
   return '/players'
 }
 

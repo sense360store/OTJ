@@ -798,13 +798,25 @@ summary:focus-visible,
 .field textarea[aria-invalid="true"] {
   border-color: var(--danger); }
 .field-error { display: block; margin-top: var(--space-4); font-size: var(--text-sm); font-weight: 600; color: var(--danger); }
+/* A field whose control has a known short content: two digits, or a date. A
+   full width box for a shirt number reads as though a name belongs in it.
+   The cap is on the control, so the label and any error still run full
+   width. */
+.field-narrow input { max-width: 140px; }
+.field-date input { max-width: 200px; }
+/* The last field in a dialog body or a filter row carries no trailing gap. */
+.field-flush { margin-bottom: 0; }
 
-/* Compact checkbox row: the native checkbox sits adjacent to its text inside one
-   clickable label. The higher specificity beats .field label { display: block },
-   which would otherwise stack the control above the text. */
-.check-row, .field .check-row { display: flex; align-items: center; gap: var(--space-8); margin: 0; font-size: var(--text-base); font-weight: 600; color: var(--ink); cursor: pointer; }
-.check-row input[type="checkbox"] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--royal); cursor: pointer; }
-.check-row input[type="checkbox"]:disabled { cursor: default; }
+/* Compact check row: the native checkbox or radio sits adjacent to its text
+   inside one clickable label. The higher specificity beats
+   .field label { display: block }, which would otherwise stack the control
+   above the text. The label IS the control's hit area, so it takes the 44px
+   minimum: a 16px box on a 21px row was a 21px target, and 2.5 binds every
+   control rather than only the ones on a phone-first screen. */
+.check-row, .field .check-row { display: flex; align-items: center; gap: var(--space-8); margin: 0; min-height: var(--hit);
+  font-size: var(--text-base); font-weight: 600; color: var(--ink); cursor: pointer; }
+.check-row input[type="checkbox"], .check-row input[type="radio"] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--royal); cursor: pointer; }
+.check-row input:disabled { cursor: default; }
 .total-time { display: flex; align-items: baseline; gap: var(--space-8); }
 .total-time .big { font-family: var(--display); font-size: var(--text-display); font-weight: 800; letter-spacing: -.03em; }
 
@@ -823,6 +835,34 @@ summary:focus-visible,
 .modal-body { padding: var(--space-16) var(--space-20); overflow-y: auto; }
 .modal-foot { padding: var(--space-12) var(--space-20); border-top: 1px solid var(--line);
   display: flex; justify-content: flex-end; gap: var(--space-8); flex-wrap: wrap; }
+
+/* ---- dialog prose ---------------------------------------------------
+   The sentences a dialog explains itself with. One treatment, replacing the
+   inline 14.5px/1.55 and 13.5px paragraphs the player dialogs each wrote for
+   themselves: --text-base is the body step and --text-sm the secondary one,
+   and 2.1 maps 14.5 to 14 and 13.5 to 13. Nothing here sets a size of its
+   own, and the last paragraph in a block is flush so a body does not add a
+   trailing gap above the footer. */
+.modal-copy { font-size: var(--text-base); line-height: var(--leading-body); margin: 0 0 var(--space-12); }
+.modal-copy-sm { font-size: var(--text-sm); line-height: var(--leading-body); margin: 0 0 var(--space-12); }
+.modal-copy:last-child, .modal-copy-sm:last-child { margin-bottom: 0; }
+/* A secondary block below the main one, separated by a rule rather than by a
+   second card: a card inside a dialog body would be a surface on a surface. */
+.modal-split { border-top: 1px solid var(--line); padding-top: var(--space-12); margin-top: var(--space-16); }
+
+/* ---- a set of choices -----------------------------------------------
+   A real <fieldset> and <legend> around a set of radio or checkbox rows,
+   replacing the inline styled fieldsets in the export and restore dialogs.
+   The legend takes the .field label treatment, because it is the same thing
+   one level up. Block rather than flex: a <legend> inside a flex container
+   becomes a flex item and leaves the group's own name in the row. */
+.choice-group { border: 0; padding: 0; margin: 0 0 var(--space-16); }
+.choice-group legend { padding: 0; margin-bottom: var(--space-4);
+  font-size: var(--text-sm); font-weight: 700; color: var(--slate); }
+.choice-group .check-row + .check-row { margin-top: var(--space-4); }
+/* The last group in a dialog body carries no trailing gap, for the same
+   reason .modal-copy does not: the body's own padding is the gap. */
+.choice-group:last-child { margin-bottom: 0; }
 /* At and below the phone breakpoint a form dialog becomes a bottom sheet, so
    its actions stay above the keyboard rather than under it. */
 @media (max-width: 900px) {
@@ -985,12 +1025,6 @@ summary:focus-visible,
 .reg-count .skeleton-chip { width: 112px; height: 34px; border-radius: var(--radius-pill); }
 .reg-count .showing { color: var(--slate); font-weight: 600; }
 
-/* The pre VISUAL-02 status badge. Registered players renders the shared Badge
-   primitive now; this stays because the season renewal dialog is still its
-   caller, and that dialog belongs to a later slice. */
-.status-badge { display: inline-flex; align-items: center; gap: var(--space-4); font-size: var(--text-xs); font-weight: 700; white-space: nowrap; }
-.status-badge .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
-
 /* The first real table in the app. It scrolls inside its own container if it
    ever must, never the page body. */
 /* The scroll container, and a clip box wide enough for a focus ring. An
@@ -1049,10 +1083,32 @@ table.reg-table td.muted-cell { color: var(--slate); }
 /* Overflow menu, reused by the desktop row, the mobile card and the page
    header's More actions. */
 .menu { position: relative; display: inline-flex; }
-.menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; background: var(--card);
+/* Above the phone shell's fixed bottom navigation, which is z-index 50. A
+   popup is a transient overlay opened by a control in the content, so it
+   belongs above persistent chrome, the same way the sheet (110) and the modal
+   overlay (100) do; at 30 it was drawn UNDER the nav.
+
+   Measured, on the LAST row of the register at 390x844, which is the case
+   where there is nothing below to scroll to: the popup extends the document's
+   own scroll height exactly to its own bottom edge, so scrolled fully down
+   its last 57px sat under the nav and elementFromPoint returned a nav item.
+   That was already true at the height the row menus shipped with (a 188px
+   popup); raising every item to 44px makes the popup 50px taller and makes it
+   worse, so the reachability is fixed with the height rather than left as
+   something the height made worse. checks.mjs opens the last row's menu at
+   390x844 and 740x360 and presses its last item. */
+.menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 60; background: var(--card);
   border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); min-width: var(--menu-w); padding: var(--space-4);
   display: flex; flex-direction: column; gap: var(--space-2); }
-.menu-list button, .menu-list a { text-align: left; padding: var(--space-8) var(--space-12); border-radius: var(--radius-xs); border: 0; background: none;
+/* An item is a control, so 2.5's 44px hit area binds it. It is taken as a
+   real min-height rather than a pseudo-element, because the items are stacked
+   with a 2px gap and an overhanging hit box would reach into the item above
+   and below it: that is the same overlap the numbered ListInput rows hit, and
+   in a menu the neighbour is a DIFFERENT destructive action. The header's own
+   overflow already set this on itself; it is the shared rule now, so the two
+   menus cannot drift apart again. */
+.menu-list button, .menu-list a { display: flex; align-items: center; gap: var(--space-8);
+  text-align: left; min-height: var(--hit); padding: var(--space-8) var(--space-12); border-radius: var(--radius-xs); border: 0; background: none;
   color: var(--ink); font-size: var(--text-base); font-weight: 600; cursor: pointer; text-decoration: none; }
 .menu-list button:hover:not(:disabled), .menu-list a:hover { background: var(--line-2); }
 .menu-list button:disabled { color: var(--slate-2); cursor: default; }
@@ -1104,9 +1160,10 @@ table.reg-table td.muted-cell { color: var(--slate); }
 .players-head .page-head-acts { position: relative; min-width: var(--menu-w); }
 .players-head .page-head-acts > .players-more { position: static; }
 .players-head .page-head-acts > .players-more > .menu-list { right: 0; top: calc(100% + var(--space-4)); }
-/* The header's items carry the icon their direct rendering has, and a 44px
-   target: this is the phone's route to six actions. The row menus are
-   unchanged, text only and their own size.
+/* The header's items carry the icon their direct rendering has. The layout
+   and the 44px target are the shared .menu-list rule above now, which the row
+   menus take too; what is left here is the icon's own size and colour, which
+   only this menu has.
 
    No max-height and no inner scroll, deliberately. Six 44px items is 284px,
    which is taller than the fold on a landscape phone; the popup is absolutely
@@ -1116,8 +1173,6 @@ table.reg-table td.muted-cell { color: var(--slate); }
    the one that already works. checks.mjs opens 844x390 and 740x360 and
    presses the last item, because a claim about a viewport shape nothing else
    opens is not a claim a comment should make on its own. */
-.players-more .menu-list button, .players-more .menu-list a {
-  display: flex; align-items: center; gap: var(--space-8); min-height: var(--hit); }
 .players-more .menu-list svg { width: 16px; height: 16px; flex: 0 0 16px; color: var(--slate); }
 
 .reg-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-8); align-items: center; margin-bottom: var(--space-12); }
@@ -1176,6 +1231,37 @@ table.reg-table td.col-select .cell-select { margin: calc(var(--space-8) * -1) 0
 .bulk-delete-names { margin: var(--space-8) 0 0; padding-left: var(--space-20); line-height: 1.6; max-height: 220px; overflow-y: auto; }
 .bulk-delete-confirm { margin-bottom: 0; }
 
+/* ---- the per player History dialog -----------------------------------
+   A time beside a sentence. The time column is fixed so the sentences line
+   up down the list, and it is --text-xs on --slate rather than the demoted
+   --slate-2 the rest of the product's metadata used to take. */
+.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-12); }
+.history-item { display: flex; gap: var(--space-12); align-items: flex-start; }
+.history-time { flex: 0 0 auto; min-width: 96px; font-size: var(--text-xs); color: var(--slate); }
+.history-what { flex: 1; min-width: 0; font-size: var(--text-sm); line-height: var(--leading-body); }
+.history-sep { color: var(--slate); }
+
+/* ---- the Renew season dialog -----------------------------------------
+   The two season pickers, then one scrolling list of rows. Each row is a
+   label wrapping its checkbox, so the whole row is the target and the 44px
+   minimum binds it the way it binds .check-row.
+
+   .is-muted is --slate rather than an opacity, which is the lesson the
+   withdrawn player card learned: opacity multiplies down the tree and fades
+   the text itself, so a run already on --slate ended up at 2.87:1. */
+.renew-seasons { display: flex; gap: var(--space-12); flex-wrap: wrap; margin-bottom: var(--space-12); }
+.renew-seasons .field { flex: 1; min-width: 150px; margin-bottom: 0; }
+.renew-lede { font-size: var(--text-sm); line-height: var(--leading-body); margin: 0 0 var(--space-8); }
+.renew-list { max-height: 320px; overflow-y: auto; border-top: 1px solid var(--line); }
+.renew-row { display: flex; gap: var(--space-12); align-items: flex-start; min-height: var(--hit);
+  padding: var(--space-8) var(--space-4); cursor: pointer; }
+.renew-row.is-muted { color: var(--slate); cursor: default; }
+.renew-row input[type="checkbox"] { flex: none; width: 16px; height: 16px; margin-top: var(--space-4); accent-color: var(--royal); cursor: inherit; }
+.renew-row-main { flex: 1; min-width: 0; }
+.renew-row-head { display: flex; align-items: center; gap: var(--space-8); flex-wrap: wrap; }
+.renew-row-name { font-size: var(--text-base); font-weight: 700; }
+.renew-row-detail { display: block; font-size: var(--text-xs); color: var(--slate); margin-top: var(--space-2); }
+
 /* The table renders above 900px; the card list at and below it. They never
    render together. */
 @media (min-width: 901px) { .reg-cards { display: none; } }
@@ -1232,16 +1318,18 @@ a.activity-batch:hover { text-decoration: underline; }
   .activity-time { order: -1; }
 }
 
-/* ---- Registered players import modal (preview only, PR 5) ------------- */
-/* The preview-only banner: this release validates and previews, never writes. */
-.ip-note { font-size: var(--text-sm); line-height: 1.5; background: var(--gold-soft); border-radius: var(--radius-sm);
-  padding: var(--space-8) var(--space-12); margin: 0 0 var(--space-12); }
-
+/* ---- Registered players import modal ---------------------------------- */
 /* An accessible dropzone: the "Choose file" button is the real, focusable
-   control; drag and drop is an enhancement layered over it. */
+   control; drag and drop is an enhancement layered over it. Its glyph is
+   decorative beside that button and its own copy, and it takes --slate
+   rather than the demoted --slate-2 it was drawn with inline. */
 .ip-dropzone { display: flex; flex-direction: column; align-items: center; gap: var(--space-8); text-align: center;
   border: 1.5px dashed var(--line); border-radius: var(--radius-sm); padding: var(--space-20) var(--space-16); }
 .ip-dropzone.drag { border-color: var(--royal); background: var(--bg-2); }
+.ip-dropzone > svg { width: 26px; height: 26px; color: var(--slate); }
+.ip-dropzone-lede { font-size: var(--text-base); font-weight: 700; }
+.ip-dropzone-note { font-size: var(--text-xs); color: var(--slate); }
+.ip-dropzone-acts { display: flex; gap: var(--space-8); margin-top: var(--space-4); }
 
 /* The preview row list. One bordered row per data row (no separate mobile
    variant per the spec; it reflows within the wide modal). */
@@ -1258,11 +1346,30 @@ a.activity-batch:hover { text-decoration: underline; }
 .ip-warn { color: var(--warning); }
 .ip-choice { display: flex; gap: var(--space-8); margin-top: var(--space-8); }
 
+/* The preview: the summary lines above the filter chips, and the report
+   offer below the list. */
+.ip-preview { margin-top: var(--space-12); }
+.ip-summary { font-size: var(--text-base); font-weight: 700; margin: 0 0 var(--space-4); }
+.ip-summary-note { font-size: var(--text-sm); color: var(--slate); margin: 0 0 var(--space-2); }
+.ip-filters { display: flex; flex-wrap: wrap; gap: var(--space-8); margin: var(--space-8) 0; }
+.ip-empty { font-size: var(--text-sm); color: var(--slate); padding: var(--space-8) 0; }
+.ip-report { margin-top: var(--space-12); }
+.ip-report p { font-size: var(--text-xs); color: var(--slate); margin: var(--space-8) 0 0; }
+.ip-status { font-size: var(--text-sm); color: var(--slate); margin-top: var(--space-12); }
+.ip-progress { font-size: var(--text-sm); font-weight: 700; margin-top: var(--space-12); }
+/* The reassurance about Cancel. It is the last line of the BODY now that the
+   actions have moved into the dialog's own footer, and it stays right aligned
+   with the buttons it describes, which sit directly below it. */
+.ip-foot-note { font-size: var(--text-xs); color: var(--slate); margin: var(--space-8) 0 0; text-align: right; }
+
 /* The import outcome screen (stage 3): a success disc above the count summary. */
 .ip-outcome { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding: var(--space-4) 0; }
 .ip-outcome-icon { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px;
   border-radius: var(--radius-pill); margin-bottom: var(--space-4); }
 .ip-outcome-icon.ok { background: var(--success); color: var(--success-fg); }
+.ip-outcome-line { font-size: var(--text-md); font-weight: 700; margin: var(--space-8) 0 var(--space-4); }
+.ip-outcome-note { font-size: var(--text-sm); color: var(--slate); margin: 0 0 var(--space-4); }
+.ip-outcome-ref { font-size: var(--text-xs); color: var(--slate); margin: var(--space-4) 0 0; }
 
 /* =====================================================================
    Content Sharing PR 2: the public drill page, the preview and the

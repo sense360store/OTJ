@@ -51,7 +51,8 @@ Query string, all optional:
 | `screen` | `home`, `sessions`, `login`, `players`, `more`, `dialog`, `primitives` |
 | `caps` | `coach` (default), `parent`, `viewer`, `admin` |
 | `theme` | `light` (default), `dark` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult` |
+| `at` | the address the register opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
 single render. Today that is Registered players, whose reads answer from it, so
@@ -70,6 +71,37 @@ exists because `archived` alone leaves the team filter on All teams: Import
 from Spond is then absent because no mapped team is selected rather than
 because the season is not the current one, and a check asserting the archived
 gate against it cannot fail.
+
+The last seven are the DIALOGS' own states, added with VISUAL-02's second
+Registered players slice. `inflight` makes every write hang and `writefails`
+makes every write reject, so a confirm a driver presses reaches the real
+in-flight or refused branch rather than a drawn one; `history`, `historylong`
+and `historyerror` are the per player audit read, which answers empty by
+default; `renewempty` and `renewalldone` are Renew's two reachable dead ends;
+and `spondresult` is the Spond roster import reporting its counts.
+
+`at` exists because a state and an address are two different things.
+`playersEntry` derives the address from the state, which is right for the
+states that ARE an address, and wrong for `spondresult`: what the write
+answers has nothing to do with the team filter, and Import from Spond is
+offered only with a Spond mapped team selected. `at` names the address
+separately rather than inventing a state per combination.
+
+## The dialogs
+
+`tools/visual/dialogs.mjs` is how a coach reaches each of the eleven
+Registered players dialogs, in one place, because all three tools need the
+same presses and each of them writing its own is how a matrix and a check
+drift apart until one is quietly opening something else.
+
+Every entry names the state the harness must answer with, the title the
+dialog must show, and a `proof` of the state its own name claims. Both are
+checked: an entry that opens the wrong dialog, or opens the right one in the
+wrong state, fails rather than being photographed. That second half is not
+decoration. The first version of the import entries handed the file input a
+spreadsheet with an invented header row, every row was rejected, the preview
+never rendered, and three screenshots were filed under names claiming a
+preview, because the driver reported success on the handover.
 
 `tools/visual/shoot.mjs` drives Chromium over the matrix and writes PNGs. It
 fails, rather than degrading quietly, when it cannot earn its own result: no
