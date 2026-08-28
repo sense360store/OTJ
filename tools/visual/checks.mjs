@@ -39,6 +39,33 @@ await context.route(
 const out = []
 const check = (name, ok, detail = '') => out.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`)
 
+// A press that cannot end the run. Playwright rejects a click or a focus on a
+// control that is not rendered, after its thirty second timeout, and the
+// rejection takes the process with it, so ONE regression hides every check
+// after it rather than failing its own. Found twice on this PR, both times by
+// a mutation that removed an item from the overflow, and both times the run
+// ended with an unhandled timeout and nothing else reported. A missing control
+// is a recorded failure here and the caller carries on.
+const pressed = async (locator, what) => {
+  if ((await locator.count()) === 0) {
+    check(what, false, 'the control is not on the page')
+    return false
+  }
+  await locator.first().click()
+  return true
+}
+const focused = async (locator, what) => {
+  if ((await locator.count()) === 0) {
+    check(what, false, 'the control is not on the page')
+    return false
+  }
+  await locator.first().focus()
+  return true
+}
+// The header's overflow trigger, named exactly: every row's is "More actions
+// for <child>", so a loose name matches ten controls and resolves to a row.
+const moreActions = (page) => page.getByRole('button', { name: 'More actions', exact: true })
+
 const open = async (screen, width, opts = {}) => {
   const page = await context.newPage()
   if (opts.reducedMotion) await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -527,7 +554,7 @@ const open = async (screen, width, opts = {}) => {
     // Named EXACTLY: every row's trigger is "More actions for <child>", so a
     // loose name matches the rows too and resolves to one of them first.
     const page = await open('players', 390, { state: 'allactions' })
-    await page.getByRole('button', { name: 'More actions', exact: true }).click()
+    await pressed(moreActions(page), 'the overflow holds the six lower frequency actions, in reading order')
     await page.waitForTimeout(150)
     const r = await page.evaluate(() => {
       const list = document.querySelector('.players-more .menu-list')
@@ -581,7 +608,7 @@ const open = async (screen, width, opts = {}) => {
     for (const state of ['default', 'allactions', 'noseason']) {
       for (const width of [360, 390, 430, 901, 1280]) {
         const page = await open('players', width, { state })
-        const trigger = page.getByRole('button', { name: 'More actions', exact: true })
+        const trigger = moreActions(page)
         if ((await trigger.count()) === 0) {
           check(`the overflow popup is anchored to the action slot at ${width} (${state})`, false, 'no trigger')
           await page.close()
@@ -594,13 +621,13 @@ const open = async (screen, width, opts = {}) => {
           if (!list) return null
           const b = list.getBoundingClientRect()
           const slot = document.querySelector('.page-head-acts').getBoundingClientRect()
-          const btn = document.querySelector('.players-more > button').getBoundingClientRect()
+          const btn = document.querySelector('.players-more > button')?.getBoundingClientRect() ?? null
           return {
             left: Math.round(b.left),
             right: Math.round(b.right),
             slotLeft: Math.round(slot.left),
             slotRight: Math.round(slot.right),
-            triggerRight: Math.round(btn.right),
+            triggerRight: btn ? Math.round(btn.right) : null,
             viewport: window.innerWidth,
             overflows: document.documentElement.scrollWidth > window.innerWidth,
             // It opens BELOW the whole slot rather than over the rows above it.
@@ -632,13 +659,13 @@ const open = async (screen, width, opts = {}) => {
     // claim: keyboard reachable, Escape closes it, and focus comes back to
     // the trigger rather than dropping to the document body.
     const page = await open('players', 1280, { state: 'allactions' })
-    const trigger = page.getByRole('button', { name: 'More actions', exact: true })
-    await trigger.focus()
+    const trigger = moreActions(page)
+    await focused(trigger, 'Escape closes the overflow and returns focus to the trigger')
     await page.keyboard.press('Enter')
     await page.waitForTimeout(150)
     const opened = await page.evaluate(() => ({
       open: !!document.querySelector('.players-more .menu-list'),
-      expanded: document.querySelector('.players-more > button').getAttribute('aria-expanded'),
+      expanded: document.querySelector('.players-more > button')?.getAttribute('aria-expanded') ?? null,
     }))
     check(
       'the keyboard opens the overflow, and the trigger says it is open',
@@ -658,7 +685,7 @@ const open = async (screen, width, opts = {}) => {
     await page.waitForTimeout(150)
     const closed = await page.evaluate(() => ({
       open: !!document.querySelector('.players-more .menu-list'),
-      expanded: document.querySelector('.players-more > button').getAttribute('aria-expanded'),
+      expanded: document.querySelector('.players-more > button')?.getAttribute('aria-expanded') ?? null,
       focused: document.activeElement === document.querySelector('.players-more > button'),
     }))
     check(
@@ -675,7 +702,7 @@ const open = async (screen, width, opts = {}) => {
     // opener and restores focus to it on close. Renew is the action used
     // because it opens a dialog rather than navigating or downloading.
     const page = await open('players', 1280, { state: 'allactions' })
-    await page.getByRole('button', { name: 'More actions', exact: true }).click()
+    await pressed(moreActions(page), 'a click outside closes the overflow')
     await page.waitForTimeout(120)
     await page.locator('h1').click()
     await page.waitForTimeout(150)
@@ -683,9 +710,12 @@ const open = async (screen, width, opts = {}) => {
       'a click outside closes the overflow',
       await page.evaluate(() => !document.querySelector('.players-more .menu-list')),
     )
-    await page.getByRole('button', { name: 'More actions', exact: true }).click()
+    await pressed(moreActions(page), 'choosing an overflow action closes the popup and opens that action')
     await page.waitForTimeout(120)
-    await page.getByRole('button', { name: 'Renew', exact: true }).click()
+    await pressed(
+      page.getByRole('button', { name: 'Renew', exact: true }),
+      'choosing an overflow action closes the popup and opens that action',
+    )
     await page.waitForTimeout(250)
     check(
       'choosing an overflow action closes the popup and opens that action',
@@ -713,7 +743,7 @@ const open = async (screen, width, opts = {}) => {
     // anchor is the one worth naming, since it is the only item that is not a
     // <button> and takes the ring through a different selector.
     const page = await open('players', 1280, { state: 'allactions' })
-    await page.getByRole('button', { name: 'More actions', exact: true }).focus()
+    await focused(moreActions(page), 'Tab reaches all six overflow items and every one draws the shared ring')
     await page.keyboard.press('Enter')
     await page.waitForTimeout(150)
     const walked = []
@@ -764,7 +794,7 @@ const open = async (screen, width, opts = {}) => {
       [740, 360],
     ]) {
       const page = await open('players', width, { state: 'allactions', height })
-      await page.getByRole('button', { name: 'More actions', exact: true }).click()
+      await pressed(moreActions(page), `the last overflow item is reachable, once scrolled to, at ${width}x${height}`)
       await page.waitForTimeout(150)
       const r = await page.evaluate(() => {
         const list = document.querySelector('.players-more .menu-list')
@@ -797,14 +827,14 @@ const open = async (screen, width, opts = {}) => {
     // the wrapper closes it now, and the trigger is NOT refocused, because
     // focus has deliberately moved on.
     const page = await open('players', 1280, { state: 'allactions' })
-    await page.getByRole('button', { name: 'More actions', exact: true }).focus()
+    await focused(moreActions(page), 'tabbing out of the overflow closes it and leaves focus where the Tab put it')
     await page.keyboard.press('Enter')
     await page.waitForTimeout(120)
     for (let i = 0; i < 7; i++) await page.keyboard.press('Tab')
     await page.waitForTimeout(150)
     const r = await page.evaluate(() => ({
       open: !!document.querySelector('.players-more .menu-list'),
-      expanded: document.querySelector('.players-more > button').getAttribute('aria-expanded'),
+      expanded: document.querySelector('.players-more > button')?.getAttribute('aria-expanded') ?? null,
       insidePopup: !!document.activeElement.closest('.players-more'),
       pulledBack: document.activeElement === document.querySelector('.players-more > button'),
     }))
@@ -832,7 +862,7 @@ const open = async (screen, width, opts = {}) => {
     // shape as the finding that produced `archivedteam` in the first place.
     const held = async (state) => {
       const page = await open('players', 1280, { state })
-      const trigger = page.getByRole('button', { name: 'More actions', exact: true })
+      const trigger = moreActions(page)
       const labels =
         (await trigger.count()) === 0
           ? []
@@ -911,7 +941,7 @@ const open = async (screen, width, opts = {}) => {
     const wrong = []
     for (const [item, dialog] of OPENS) {
       const page = await open('players', 1280, { state: 'allactions' })
-      await page.getByRole('button', { name: 'More actions', exact: true }).click()
+      await pressed(moreActions(page), 'every overflow action opens the dialog its label names')
       await page.waitForTimeout(120)
       // An absent item is a FAILURE of this check, not an exception that ends
       // the whole run thirty seconds later with nothing else reported. Found
@@ -944,7 +974,7 @@ const open = async (screen, width, opts = {}) => {
     // reject, Promise.all reject with it, and the whole run end before this
     // check or any after it could report.
     const page = await open('players', 1280, { state: 'allactions' })
-    await page.getByRole('button', { name: 'More actions', exact: true }).click()
+    await pressed(moreActions(page), 'Download template still downloads the blank template')
     await page.waitForTimeout(120)
     const template = page.getByRole('button', { name: 'Download template', exact: true })
     const download =
