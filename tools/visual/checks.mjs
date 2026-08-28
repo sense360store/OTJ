@@ -42,7 +42,7 @@ const check = (name, ok, detail = '') => out.push(`${ok ? 'PASS' : 'FAIL'}  ${na
 const open = async (screen, width, opts = {}) => {
   const page = await context.newPage()
   if (opts.reducedMotion) await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.setViewportSize({ width, height: 900 })
+  await page.setViewportSize({ width, height: opts.height ?? 900 })
   const q = new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
   if (opts.caps) q.set('caps', opts.caps)
   if (opts.state) q.set('state', opts.state)
@@ -724,6 +724,71 @@ const open = async (screen, width, opts = {}) => {
       'Tab reaches all six overflow items and every one draws the shared ring',
       walked.length === 6 && walked.every((w) => w.inside && w.ring) && walked.some((w) => w.tag === 'A'),
       JSON.stringify(walked.filter((w) => !w.inside || !w.ring)),
+    )
+    await page.close()
+  }
+
+  {
+    // Six 44px items is a 284px popup, which is taller than the fold on a
+    // landscape phone. It carries no max-height and no inner scroll on
+    // purpose: it is absolutely positioned in the document rather than fixed
+    // to the viewport, so the page scrolls to it, and a nested scroll area
+    // inside a 390px tall window would be a second scroll surface where one
+    // already works. That is a claim about a viewport shape nothing else here
+    // opens, so it is measured rather than asserted in a comment.
+    for (const [width, height] of [
+      [844, 390],
+      [740, 360],
+    ]) {
+      const page = await open('players', width, { state: 'allactions', height })
+      await page.getByRole('button', { name: 'More actions', exact: true }).click()
+      await page.waitForTimeout(150)
+      const r = await page.evaluate(() => {
+        const list = document.querySelector('.players-more .menu-list')
+        if (!list) return null
+        const last = list.lastElementChild
+        last.scrollIntoView({ block: 'center' })
+        const g = last.getBoundingClientRect()
+        const hit = document.elementFromPoint(g.left + g.width / 2, g.top + g.height / 2)
+        return {
+          listHeight: Math.round(list.getBoundingClientRect().height),
+          last: last.textContent.trim(),
+          onScreen: g.top >= 0 && g.bottom <= window.innerHeight,
+          reachable: !!hit && (last === hit || last.contains(hit)),
+        }
+      })
+      check(
+        `the last overflow item is reachable at ${width}x${height}`,
+        !!r && r.onScreen && r.reachable && r.last === 'Download template',
+        JSON.stringify(r),
+      )
+      await page.close()
+    }
+  }
+
+  {
+    // Escape is a React handler on the menu wrapper, so it fires only while
+    // focus is inside it. Tab past the last item and the popup stayed open,
+    // aria-expanded still true, over the page: a mouse user could click
+    // outside to dismiss it, a keyboard user had nothing left. Focus leaving
+    // the wrapper closes it now, and the trigger is NOT refocused, because
+    // focus has deliberately moved on.
+    const page = await open('players', 1280, { state: 'allactions' })
+    await page.getByRole('button', { name: 'More actions', exact: true }).focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(120)
+    for (let i = 0; i < 7; i++) await page.keyboard.press('Tab')
+    await page.waitForTimeout(150)
+    const r = await page.evaluate(() => ({
+      open: !!document.querySelector('.players-more .menu-list'),
+      expanded: document.querySelector('.players-more > button').getAttribute('aria-expanded'),
+      insidePopup: !!document.activeElement.closest('.players-more'),
+      pulledBack: document.activeElement === document.querySelector('.players-more > button'),
+    }))
+    check(
+      'tabbing out of the overflow closes it and leaves focus where the Tab put it',
+      !r.open && r.expanded === 'false' && !r.insidePopup && !r.pulledBack,
+      JSON.stringify(r),
     )
     await page.close()
   }

@@ -10,6 +10,7 @@ import {
   filterRows,
   filtersAreActive,
   filtersToParams,
+  headerAvailability,
   overflowHeaderActions,
   parseFilters,
   parseShirt,
@@ -25,6 +26,7 @@ import {
   statusTransitions,
   type PlayerHeaderAction,
   type PlayerHeaderAvailability,
+  type PlayerHeaderContext,
   type PlayersFilters,
 } from './playersView'
 import type { PlayerHistoryEntry, RegisteredPlayer, RegistrationStatus } from './data'
@@ -249,6 +251,121 @@ describe('rowActionKeys', () => {
   })
   it('adds Delete only with players.delete', () => {
     expect(rowActionKeys('registered', { ...manage, canDelete: true })).toEqual(['move', 'withdraw', 'delete'])
+  })
+})
+
+describe('headerAvailability, the seven header gates', () => {
+  // Everything closed, so each test opens exactly what it means. A manager on
+  // the current season with a settled register and one season is the base a
+  // real page starts from; each field is turned on deliberately.
+  const CTX: PlayerHeaderContext = {
+    canManage: false,
+    canExport: false,
+    canImport: false,
+    bulkAllowed: false,
+    hasSeason: true,
+    isCurrent: true,
+    writable: true,
+    archived: false,
+    seasonCount: 1,
+    hasSpondMapping: false,
+    spondLinksAvailable: true,
+    spondTeamMapped: false,
+    registerSettled: true,
+  }
+  const av = (over: Partial<PlayerHeaderContext> = {}) => headerAvailability({ ...CTX, ...over })
+
+  it('offers nothing to a member holding no write capability', () => {
+    expect(Object.values(av()).some(Boolean)).toBe(false)
+  })
+
+  it('gates Add player on players.manage and a writable current season', () => {
+    expect(av({ canManage: true }).add).toBe(true)
+    expect(av({ canManage: true, isCurrent: false }).add).toBe(false)
+    expect(av({ canManage: true, writable: false }).add).toBe(false)
+    expect(av({ canManage: false }).add).toBe(false)
+  })
+
+  it('passes selection through rather than deciding it here', () => {
+    // canBulkDelete owns that rule and has its own tests; a second copy is
+    // what this module exists to avoid.
+    expect(av({ bulkAllowed: true }).select).toBe(true)
+    expect(av({ bulkAllowed: false, canManage: true }).select).toBe(false)
+  })
+
+  it('gates Import from Spond on players.import, the current season and a mapped team', () => {
+    const on = { canImport: true, spondTeamMapped: true }
+    expect(av(on).spond).toBe(true)
+    // The team filter is the one that catches people out: with All teams
+    // selected there is no mapping to import from.
+    expect(av({ ...on, spondTeamMapped: false }).spond).toBe(false)
+    expect(av({ ...on, isCurrent: false }).spond).toBe(false)
+    expect(av({ ...on, writable: false }).spond).toBe(false)
+    expect(av({ ...on, canImport: false }).spond).toBe(false)
+  })
+
+  it('gates Spond links on players.manage and a club that has a mapping', () => {
+    // Deliberately NOT on the team filter: an affordance that appears only
+    // once a specific team is selected is one nobody finds.
+    expect(av({ canManage: true, hasSpondMapping: true }).links).toBe(true)
+    expect(av({ canManage: true, hasSpondMapping: true, spondTeamMapped: false }).links).toBe(true)
+    expect(av({ canManage: true, hasSpondMapping: false }).links).toBe(false)
+    expect(av({ canManage: true, hasSpondMapping: true, spondLinksAvailable: false }).links).toBe(false)
+    expect(av({ canManage: false, hasSpondMapping: true }).links).toBe(false)
+  })
+
+  it('gates Renew on players.manage and two seasons to renew between', () => {
+    expect(av({ canManage: true, seasonCount: 2 }).renew).toBe(true)
+    expect(av({ canManage: true, seasonCount: 1 }).renew).toBe(false)
+    // Independent of which season the page is showing: the modal picks both.
+    expect(av({ canManage: true, seasonCount: 2, archived: true, isCurrent: false }).renew).toBe(true)
+  })
+
+  it('withdraws Export and Import players while the register is unsettled', () => {
+    // The header renders before the row query resolves, and the confirm
+    // dialog's previewed count must never read 0 while the real set is still
+    // arriving or has failed.
+    expect(av({ canExport: true, canImport: true }).export).toBe(true)
+    expect(av({ canExport: true, canImport: true }).import).toBe(true)
+    expect(av({ canExport: true, canImport: true, registerSettled: false }).export).toBe(false)
+    expect(av({ canExport: true, canImport: true, registerSettled: false }).import).toBe(false)
+  })
+
+  it('exports any season and imports only a season that can be written to', () => {
+    // A past register is a legitimate export, so Export is not gated on
+    // current or writable; a spreadsheet import targets a non archived season.
+    const past = { isCurrent: false, writable: false }
+    expect(av({ canExport: true, ...past }).export).toBe(true)
+    expect(av({ canImport: true, ...past }).import).toBe(true)
+    expect(av({ canImport: true, archived: true }).import).toBe(false)
+    expect(av({ canExport: true, archived: true }).export).toBe(true)
+    expect(av({ canExport: true, hasSeason: false }).export).toBe(false)
+    expect(av({ canImport: true, hasSeason: false }).import).toBe(false)
+  })
+
+  it('offers the blank template to any importer on any season, settled or not', () => {
+    // It writes nothing and carries no child data, so nothing about the
+    // register gates it.
+    expect(av({ canImport: true }).template).toBe(true)
+    expect(av({ canImport: true, archived: true, isCurrent: false, writable: false }).template).toBe(true)
+    expect(av({ canImport: true, registerSettled: false }).template).toBe(true)
+    expect(av({ canImport: true, hasSeason: false }).template).toBe(false)
+    expect(av({ canExport: true }).template).toBe(false)
+  })
+
+  it('lets no capability open an action that belongs to another', () => {
+    // One capability at a time against the actions it must NOT open, which is
+    // the shape of the mistake worth catching: a gate widened by a copy paste
+    // to a neighbouring capability.
+    expect(av({ canExport: true }).import).toBe(false)
+    expect(av({ canExport: true }).spond).toBe(false)
+    expect(av({ canExport: true }).links).toBe(false)
+    expect(av({ canImport: true }).export).toBe(false)
+    expect(av({ canImport: true }).links).toBe(false)
+    expect(av({ canImport: true }).add).toBe(false)
+    expect(av({ canManage: true }).export).toBe(false)
+    expect(av({ canManage: true }).import).toBe(false)
+    expect(av({ canManage: true }).template).toBe(false)
   })
 })
 

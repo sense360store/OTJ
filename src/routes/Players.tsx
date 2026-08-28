@@ -30,9 +30,9 @@ import {
   statusCounts,
   STATUS_META,
   directHeaderActions,
+  headerAvailability,
   overflowHeaderActions,
   type PlayerHeaderAction,
-  type PlayerHeaderAvailability,
   type PlayersFilters,
   type StatusFilter,
 } from '../lib/playersView'
@@ -167,6 +167,7 @@ function OverflowMenu({
   const [open, setOpen] = useState(false)
   const btnRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
@@ -183,7 +184,38 @@ function OverflowMenu({
   if (items.length === 0) return null
   return (
     <div
+      ref={rootRef}
       className={['menu', className].filter(Boolean).join(' ')}
+      // Escape is a React handler on this wrapper, so it fires only while
+      // focus is inside. Tab past the last item and the popup was left open
+      // with aria-expanded true, over the page, with no keyboard way to shut
+      // it: a mouse user could click outside, a keyboard user could not. So
+      // focus leaving the wrapper closes it, WITHOUT returning focus, because
+      // focus has deliberately moved on and pulling it back would fight the
+      // Tab.
+      //
+      // relatedTarget is what decides it, the same guard Sheet uses in
+      // primitives.tsx. Reading document.activeElement instead does not work
+      // and fails in the direction that looks like nothing: at focusout the
+      // focus change has not landed, activeElement is still the body, and a
+      // microtask sees that and closes the popup on the way INTO it. Clicking
+      // an item then unmounted the button before its own click handler ran,
+      // so every action opened nothing.
+      //
+      // The deferred read is only for relatedTarget being null, which is
+      // focus going nowhere in particular: a press on a non focusable area,
+      // or the window itself losing focus. A timeout rather than a microtask,
+      // because it has to run after the focus change, and the window blur
+      // case then correctly finds focus still inside and leaves the popup up.
+      onBlur={(e) => {
+        if (!open) return
+        const next = e.relatedTarget as Node | null
+        if (next && rootRef.current?.contains(next)) return
+        setTimeout(() => {
+          const root = rootRef.current
+          if (root && root.isConnected && !root.contains(document.activeElement)) setOpen(false)
+        }, 0)
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && open) {
           e.stopPropagation()
@@ -430,31 +462,28 @@ export function Players() {
   const resolvedTeamId = filters.team !== 'all' && filters.team !== 'unassigned' ? filters.team : null
   const spondTeam: Team | null = resolvedTeamId ? (teams.find((t) => t.id === resolvedTeamId) ?? null) : null
   const spondMapping = resolvedTeamId ? mappingForTeam(mappings, resolvedTeamId) : null
-  // Import from Spond is gated on players.import (managers and admins by
-  // default), and renders only on the current season with a specific mapped
-  // team selected (Spond stays current-season only, server chosen).
-  const showSpond = canImport && isCurrent && writable && !!spondTeam && !!spondMapping
-  const showSpondLinks = canManage && mappings.length > 0 && spondLinks.data?.available !== false
-  const showAdd = canManage && isCurrent && writable
-  // Renew is a season level bulk action (players.manage), independent of the
-  // page's selected season, available whenever there is more than one season to
-  // renew between. The modal picks the source and target seasons itself.
-  const showRenew = canManage && seasons.length >= 2
-  // Export is allowed on ANY selected season (a past register is a legitimate
-  // export), so it is not gated on writable/current like the write affordances.
-  // It IS gated on a settled, non-errored register load, because the header
-  // (where the button lives) renders before body() resolves the row query, and
-  // the confirm dialog's previewed count must never read 0 while the real set
-  // is still loading or errored.
-  const showExport = canExport && !!selectedSeason && !rowsLoading && !rowsError
-  // Spreadsheet import targets any non archived season (defaulting to current),
-  // so it is gated on a non archived selected season, not on writable/current.
-  // The preview reads the current register, so it waits for a settled load.
-  const showImport = canImport && !!selectedSeason && !archived && !rowsLoading && !rowsError
-  // The blank template is season neutral and available to any players.import
-  // holder, including on an archived season (it writes nothing and carries no
-  // child data).
-  const showTemplate = canImport && !!selectedSeason
+  // Which header actions this page offers. The seven conditions live in
+  // playersView.ts, each with the reason it carries, so they are provable in
+  // the fast suite over every combination: the six lower frequency actions ride
+  // in the More actions overflow now, none of their labels is in a closed
+  // page's markup, and a rendered test asserting one is absent would pass
+  // whatever its gate did. Selection is the exception and is passed in, because
+  // canBulkDelete is already the one pure implementation of that rule.
+  const availability = headerAvailability({
+    canManage,
+    canExport,
+    canImport,
+    bulkAllowed,
+    hasSeason: !!selectedSeason,
+    isCurrent,
+    writable,
+    archived,
+    seasonCount: seasons.length,
+    hasSpondMapping: mappings.length > 0,
+    spondLinksAvailable: spondLinks.data?.available !== false,
+    spondTeamMapped: !!spondTeam && !!spondMapping,
+    registerSettled: registerKnown,
+  })
 
   // Loading and error gates. The capability read gates first so a parent (route
   // guarded anyway) never falls through to a child-data read.
@@ -501,7 +530,6 @@ export function Players() {
   const ACTIONS: Record<
     PlayerHeaderAction,
     {
-      available: boolean
       label: string
       icon: IconComponent
       variant?: ButtonVariant
@@ -513,7 +541,6 @@ export function Players() {
     }
   > = {
     add: {
-      available: showAdd,
       label: 'Add player',
       icon: Icon.plus,
       variant: 'primary',
@@ -522,7 +549,6 @@ export function Players() {
     // Enters and leaves bulk selection mode. Never selects anything by itself:
     // the mode opens with nothing selected, every time.
     select: {
-      available: bulkAllowed,
       label: bulkActive ? 'Done selecting' : 'Select players',
       icon: Icon.check,
       variant: bulkActive ? 'quiet' : 'ghost',
@@ -533,47 +559,32 @@ export function Players() {
       },
     },
     spond: {
-      available: showSpond,
       label: 'Import from Spond',
       icon: Icon.rotate,
       onClick: () => open({ kind: 'import' }),
     },
-    links: { available: showSpondLinks, label: 'Spond links', icon: Icon.link, to: '/players/spond-links' },
+    links: { label: 'Spond links', icon: Icon.link, to: '/players/spond-links' },
     renew: {
-      available: showRenew,
       label: 'Renew',
       icon: Icon.calendar,
       onClick: () => open({ kind: 'renew' }),
     },
     import: {
-      available: showImport,
       label: 'Import players',
       icon: Icon.upload,
       onClick: () => open({ kind: 'importFile' }),
     },
     export: {
-      available: showExport,
       label: 'Export',
       icon: Icon.download,
       onClick: () => open({ kind: 'export' }),
     },
     template: {
-      available: showTemplate,
       label: 'Download template',
       icon: Icon.fileText,
       variant: 'quiet',
       onClick: () => downloadTemplate('csv'),
     },
-  }
-  const availability: PlayerHeaderAvailability = {
-    add: ACTIONS.add.available,
-    select: ACTIONS.select.available,
-    spond: ACTIONS.spond.available,
-    links: ACTIONS.links.available,
-    renew: ACTIONS.renew.available,
-    import: ACTIONS.import.available,
-    export: ACTIONS.export.available,
-    template: ACTIONS.template.available,
   }
 
   // A direct action. A destination is an anchor taking the button classes

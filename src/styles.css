@@ -1101,10 +1101,11 @@ table.reg-table td.muted-cell { color: var(--slate); }
    No max-height and no inner scroll, deliberately. Six 44px items is 284px,
    which is taller than the fold on a landscape phone; the popup is absolutely
    positioned in the document rather than fixed to the viewport, so the page
-   scrolls to it and the last item is reachable at 844x390 and 740x360, which
-   checks.mjs walks. A nested scroll area would be a second scroll surface
-   inside a 390px tall window, which is worse than the one that already
-   works. */
+   scrolls to it and the last item stays reachable. A nested scroll area would
+   be a second scroll surface inside a 390px tall window, which is worse than
+   the one that already works. checks.mjs opens 844x390 and 740x360 and
+   presses the last item, because a claim about a viewport shape nothing else
+   opens is not a claim a comment should make on its own. */
 .players-more .menu-list button, .players-more .menu-list a {
   display: flex; align-items: center; gap: var(--space-8); min-height: var(--hit); }
 .players-more .menu-list svg { width: 16px; height: 16px; flex: 0 0 16px; color: var(--slate); }
