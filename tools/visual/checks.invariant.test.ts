@@ -23,7 +23,7 @@
 // the obvious thing", never "the runner cannot abort".
 // =====================================================================
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const src = readFileSync(fileURLToPath(new URL('./checks.mjs', import.meta.url)), 'utf8')
@@ -288,5 +288,25 @@ describe('every tool refuses to measure a stale build', () => {
     }
     expect(fresh, 'the drive modules are not').not.toContain("'tools/visual/account.mjs'")
     expect(fresh, 'nor the runners').not.toContain("'tools/visual/checks.mjs'")
+  })
+
+  it('counts the files the OUTPUT depends on without any source moving', () => {
+    // Vite reads target, jsx, jsxImportSource and verbatimModuleSyntax out of
+    // the TypeScript configs while it transforms, so changing one of those
+    // emits different JavaScript from unchanged source; and the dependency
+    // versions decide what is bundled with it. Codex found the configs, which
+    // is the case my own hand written list had already gone out of date on.
+    const fresh = readFileSync(fileURLToPath(new URL('./fresh.mjs', import.meta.url)), 'utf8')
+    // EVERY tsconfig at the repo root, read from disk rather than named here,
+    // because a new one appearing is how this list goes quietly out of date.
+    const root = fileURLToPath(new URL('../..', import.meta.url))
+    const configs = readdirSync(root).filter((f) => /^tsconfig.*\.json$/.test(f))
+    expect(configs.length, 'there is at least one tsconfig to check').toBeGreaterThan(0)
+    for (const config of configs) {
+      expect(fresh, `${config} is a bundle input`).toContain(`'${config}'`)
+    }
+    for (const manifest of ['package.json', 'package-lock.json']) {
+      expect(fresh, `${manifest} is a bundle input`).toContain(`'${manifest}'`)
+    }
   })
 })

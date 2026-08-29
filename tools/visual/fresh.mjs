@@ -33,7 +33,20 @@ const assetsOf = (html) => (html.match(/assets\/index-[A-Za-z0-9_-]+\.(?:js|css)
    not invalidate a build; editing a stylesheet, a screen or a fixture must.
    Listed rather than globbed for exactly that reason: a directory sweep of
    tools/visual would make every check runner its own input and the guard
-   would cry stale on every edit until it was ignored. */
+   would cry stale on every edit until it was ignored.
+
+   The three that are not source files are here because the bundle's OUTPUT
+   depends on them without any file under src/ moving. Vite reads `target`,
+   `jsx`, `jsxImportSource` and `verbatimModuleSyntax` out of the TypeScript
+   configs while it transforms, so changing one of those emits different
+   JavaScript from unchanged source; and the dependency versions decide what
+   is bundled with it. Codex found the configs. `node_modules` itself is not
+   walked: the realistic way its contents change is an install, and an install
+   rewrites the lockfile.
+
+   checks.invariant.test.ts fails the build on a `tsconfig*.json` at the repo
+   root that is not listed here, because a new one appearing is exactly how
+   this list goes quietly out of date. */
 const BUNDLE_INPUTS = [
   'src',
   'tools/visual/main.tsx',
@@ -41,6 +54,11 @@ const BUNDLE_INPUTS = [
   'tools/visual/fixtures.ts',
   'tools/visual/stubs',
   'vite.visual.config.ts',
+  'tsconfig.json',
+  'tsconfig.app.json',
+  'tsconfig.node.json',
+  'package.json',
+  'package-lock.json',
 ]
 
 // The newest modification time under a path, skipping the tests, which are
