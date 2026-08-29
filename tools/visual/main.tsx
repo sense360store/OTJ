@@ -7,7 +7,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { StrictMode, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Sidebar } from '../../src/components/Sidebar'
 import { TopBar, MobileTop } from '../../src/components/TopBar'
@@ -35,13 +35,25 @@ localStorage.setItem('otj_dark', params.get('theme') === 'dark' ? '1' : '0')
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
 function Shell({ children }: { children: React.ReactNode }) {
+  // A ROUTE WITNESS, for the checks that have to prove a redirect landed
+  // somewhere rather than merely left where it was. The harness routes in
+  // memory, so window.location says nothing about which route is rendering,
+  // and neither the page body nor the navigation can stand in for it: Home has
+  // capability variants (a member without sessions.create gets ParentHome, with
+  // no hero), and screenFromPath falls back to 'home' for any path it does not
+  // know, so both can say "Home" for a route that is not Home. Found by
+  // mutating the guard to redirect somewhere that renders nothing: the proof
+  // held. This is an attribute, so it changes no pixel of any screenshot.
+  const { pathname } = useLocation()
   return (
     <div className="app">
       <Sidebar />
       <div className="main">
         <TopBar />
         <MobileTop />
-        <div className="content">{children}</div>
+        <div className="content" data-path={pathname}>
+          {children}
+        </div>
       </div>
       <BottomNav />
     </div>

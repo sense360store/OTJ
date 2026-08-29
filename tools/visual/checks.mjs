@@ -101,7 +101,15 @@ const open = async (screen, width, opts = {}) => {
   // about rendered output, so waiting for the app to have painted belongs in
   // ONE place rather than in each of them. Without it the error state check
   // reported a false FAIL on roughly one run in three.
-  await page.waitForSelector('.content > *, .login', { state: 'attached', timeout: 5000 })
+  //
+  // The wait is caught rather than thrown, for the same reason `acted()` is
+  // caught: an unhandled rejection here takes the process with it, and
+  // `checks.mjs` prints its results only at the end, so ONE surface that
+  // renders nothing loses every result in the run rather than failing its own
+  // check. Found by mutating the route guard to redirect somewhere that
+  // renders nothing: the run reported no failures because it reported nothing.
+  // A page that never painted is now a failing check, which is what it is.
+  await page.waitForSelector('.content > *, .login', { state: 'attached', timeout: 5000 }).catch(() => {})
   if (opts.awaitSelector) await page.waitForSelector(opts.awaitSelector, { state: 'visible', timeout: 5000 }).catch(() => {})
   return page
 }
@@ -1779,34 +1787,65 @@ const focusReturned = async (page, d) => {
   // audit.view without players.view. The two are different boundaries: the
   // feed renders in full, and every player reference falls closed to a neutral
   // label with no history offered and no deletion claimed.
+  //
+  // Read from the entity CELLS, not from the page text. A body text search for
+  // "Player" is satisfied by the description "Player deleted", so it would have
+  // held with every player reference removed. Codex. What is asserted instead
+  // is an identity between the two capability sets over the same feed: every
+  // reference a holder of both sees as "Deleted player" is one the auditor
+  // sees as the neutral "Player", so the neutral count moves by exactly the
+  // deleted count and nothing else changes.
   {
-    const page = await open('activity', 1280, { caps: 'auditor', awaitSelector: '.activity-item' })
-    const r = await page.evaluate(() => ({
-      rows: document.querySelectorAll('.activity-item').length,
-      history: document.querySelectorAll('button').length && [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'View history'),
-      deleted: document.body.innerText.includes('Deleted player'),
-      player: document.body.innerText.includes('Player'),
-      name: document.body.innerText.includes('Bexley'),
-    }))
+    const cells = async (caps) => {
+      const page = await open('activity', 1280, { caps, awaitSelector: '.activity-item' })
+      const r = await page.evaluate(() => {
+        const entities = [...document.querySelectorAll('.activity-entity')].map((e) => e.textContent.trim())
+        return {
+          rows: document.querySelectorAll('.activity-item').length,
+          entities: entities.length,
+          neutral: entities.filter((t) => t === 'Player').length,
+          deleted: entities.filter((t) => t === 'Deleted player').length,
+          history: [...document.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'View history').length,
+          name: document.body.innerText.includes('Bexley'),
+        }
+      })
+      await page.close()
+      return r
+    }
+    const both = await cells('coach')
+    const audit = await cells('auditor')
     check(
       'audit.view without players.view reads the feed but names, resolves and deletes nothing',
-      r.rows === 50 && !r.history && !r.deleted && r.player && !r.name,
-      JSON.stringify(r),
+      audit.rows === both.rows && audit.entities === both.entities &&
+        both.neutral > 0 && both.deleted > 0 && both.history > 0 &&
+        audit.deleted === 0 && audit.history === 0 &&
+        audit.neutral === both.neutral + both.deleted &&
+        !audit.name && !both.name,
+      JSON.stringify({ both, audit }),
     )
-    await page.close()
   }
 
   // And without audit.view the route guard answers, not the page.
   {
     const page = await open('activity', 1280, { caps: 'viewer', state: 'guarded' })
+    // Both halves. An absence alone is satisfied by a blank shell, a redirect
+    // to the wrong route and a guard returning null, so the claim is that
+    // Activity is gone AND the redirect landed on `/`. Codex.
+    //
+    // The landing is read from the harness's route witness rather than from
+    // anything the page draws. Home has capability variants of its own (a
+    // member without sessions.create gets ParentHome, with no hero), and
+    // screenFromPath falls back to 'home' for a path it does not know, so both
+    // the body and the navigation can say Home for a route that is not.
     const r = await page.evaluate(() => ({
+      path: document.querySelector('.content')?.getAttribute('data-path') ?? '',
       heading: document.querySelector('h1')?.textContent ?? '',
       feed: !!document.querySelector('.activity-list'),
       filters: !!document.querySelector('.activity-filters-btn'),
     }))
     check(
-      'a member without audit.view is redirected off Activity entirely',
-      r.heading !== 'Activity' && !r.feed && !r.filters,
+      'a member without audit.view is redirected off Activity onto Home',
+      r.path === '/' && r.heading !== 'Activity' && !r.feed && !r.filters,
       JSON.stringify(r),
     )
     await page.close()
@@ -1894,13 +1933,31 @@ const focusReturned = async (page, d) => {
         JSON.stringify(r),
       )
     }
-    // Tab order follows the visual order of a row: the batch link inside the
-    // body, then the action beside it.
+    // Tab order follows visual order. Asserted over ONE row that carries both
+    // controls, as the exact list in document order and as geometry: an
+    // assertion that a row has at least one control passes while the two swap
+    // or one disappears, which is the regression this is named for. Codex.
     const order = await page.evaluate(() => {
-      const els = [...document.querySelectorAll('.activity-item a, .activity-item button')]
-      return els.slice(0, 4).map((e) => e.textContent.trim())
+      const row = [...document.querySelectorAll('.activity-item')].find(
+        (r) => r.querySelector('a.activity-batch') && r.querySelector('.activity-actions .btn'),
+      )
+      if (!row) return null
+      const els = [...row.querySelectorAll('a, button')]
+      const box = (el) => el.getBoundingClientRect()
+      const [first, second] = els
+      return {
+        labels: els.map((e) => e.textContent.trim()),
+        // Above it, or level with it and to its left: the two orders agree in
+        // the row layout and in the card layout alike.
+        visualFirst:
+          els.length === 2 && (box(first).top < box(second).top - 1 || box(first).left < box(second).left),
+      }
     })
-    check('a row exposes its link before its action, in document order', order.length > 0, JSON.stringify(order))
+    check(
+      'a row exposes its batch link before its action, in document order and on screen',
+      !!order && JSON.stringify(order.labels) === JSON.stringify(['Batch', 'View history']) && order.visualFirst,
+      JSON.stringify(order),
+    )
     await page.close()
   }
 

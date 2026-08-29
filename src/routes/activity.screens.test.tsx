@@ -193,20 +193,38 @@ describe('audit.view and players.view stay two different boundaries', () => {
     })
   })
 
+  // The entity CELLS, not the page text. "Player deleted" is a description and
+  // would satisfy a search of the whole markup for "Player" with every player
+  // reference removed, so the assertion below would have held while the thing
+  // it is named for had regressed. Codex.
+  const entityCells = (html: string) =>
+    [...html.matchAll(/<span class="activity-entity[^"]*">([^<]*)<\/span>/g)].map((m) => m[1])
+
   it('offers View history to a holder of both', () => {
     const html = page()
     expect(html).toContain('View history')
-    expect(html).toContain('Deleted player')
+    const cells = entityCells(html)
+    expect(cells.filter((c) => c === 'Player').length).toBeGreaterThan(0)
+    expect(cells.filter((c) => c === 'Deleted player').length).toBeGreaterThan(0)
   })
 
   it('offers no history and claims no deletion with audit.view alone', () => {
+    const both = entityCells(page())
     withReads({ caps: new Set(['audit.view']) }, () => {
       const html = page()
       expect(html).not.toContain('View history')
+      const audit = entityCells(html)
       // Fail closed: a viewer who cannot name a child is never told one was
       // deleted, because that is a fact about a child they may not resolve.
-      expect(html).not.toContain('Deleted player')
-      expect(html).toContain('Player')
+      // Stated as an identity over the same rows, so it cannot be satisfied by
+      // the references simply being gone: every cell that read "Deleted player"
+      // for a holder of both now reads the neutral "Player", and nothing else
+      // moves.
+      expect(audit).toHaveLength(both.length)
+      expect(audit.filter((c) => c === 'Deleted player')).toHaveLength(0)
+      expect(audit.filter((c) => c === 'Player')).toHaveLength(
+        both.filter((c) => c === 'Player').length + both.filter((c) => c === 'Deleted player').length,
+      )
     })
   })
 

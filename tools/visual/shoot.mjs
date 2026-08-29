@@ -248,11 +248,20 @@ const REACHED_STATE = {
   allactions: async (page) =>
     page.$eval('#filter-team', (el) => el.value === 'titans').catch(() => false),
   /* ---- the Activity feed ---- */
-  // The route guard's answer, which is an ABSENCE on this page and a presence
-  // elsewhere: Activity never mounted and the redirect landed on Home.
+  // The route guard's answer. An absence alone is not a proof of it: a blank
+  // shell, a redirect to the wrong route and a guard returning null all lack
+  // Activity's markup, and all three would be filed under a name claiming a
+  // redirect. Codex. So the claim is both halves, Activity gone AND the
+  // redirect landed on `/`, read from the harness's route witness rather than
+  // from anything the page draws: Home has capability variants and the
+  // navigation falls back to Home for a path it does not know, so both can say
+  // Home for a route that is not.
   guarded: async (page) =>
     page.evaluate(
-      () => !document.querySelector('.activity-list') && !document.querySelector('.activity-filters-btn') &&
+      () =>
+        document.querySelector('.content')?.getAttribute('data-path') === '/' &&
+        !document.querySelector('.activity-list') &&
+        !document.querySelector('.activity-filters-btn') &&
         (document.querySelector('h1')?.textContent ?? '') !== 'Activity',
     ),
   longnames: '.activity-item:has-text("Fotheringay-Wallington-Smythe")',
