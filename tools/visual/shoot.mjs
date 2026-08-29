@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, openDialog, openRowMenu, queryFor, DIALOG_PLAYER } from './dialogs.mjs'
-import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
+import { ACCOUNT_FLOWS, longValuesRendered, queryForFlow, runFlow } from './account.mjs'
 
 const OUT = process.argv[2] ?? 'visual-shots'
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
@@ -317,10 +317,10 @@ const REACHED_STATE = {
     page.evaluate(
       () => !!document.querySelector('.content > .loading[role="status"]') && !document.querySelector('.account'),
     ),
-  // The four strings the club chooses, at the length a club would really make
-  // them. Named by the club name, which is the one that wraps rather than
-  // scrolling inside its own control.
-  longvalues: '.account-fact dd:has-text("Community Football and Friendship")',
+  // ALL FOUR strings the club chooses, each compared exactly against the
+  // fixture, because a selector naming one of them is filed under a name
+  // claiming four. Codex.
+  longvalues: (page) => longValuesRendered(page),
 }
 
 async function visible(page, selector) {

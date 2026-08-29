@@ -2475,9 +2475,16 @@ const focusReturned = async (page, d) => {
      empty their own fields. A browser drops focus to the body when a focused
      control is disabled or removed, so each of these places it somewhere
      deliberate. This is the check that fails if that placement is dropped. */
-  for (const key of ['remove-ok', 'name-ok', 'password-ok', 'email-ok']) {
+  for (const [key, target] of [
+    // After a removal the only photo action left is the one that adds a new
+    // one, and it is where focus goes.
+    ['remove-ok', '.account-photo-acts button'],
+    ['name-ok', '#full-name'],
+    ['password-ok', '#new-password'],
+    ['email-ok', '#new-email'],
+  ]) {
     const flow = flowOf(key)
-    const WHAT = `focus stays on a live Account control after ${key}`
+    const WHAT = `focus lands on the intended Account control after ${key}`
     if (!flow) {
       check(WHAT, false, 'no such flow')
       continue
@@ -2489,18 +2496,23 @@ const focusReturned = async (page, d) => {
       await page.close()
       continue
     }
-    const at = await page.evaluate(() => {
+    // The NAMED control, not merely a live one somewhere on the page. A
+    // password success that focused Add photo or New email would move a coach
+    // into a different form, and "somewhere in .account, enabled and visible"
+    // accepted all of those. Codex.
+    const at = await page.evaluate((sel) => {
       const el = document.activeElement
-      if (!el || el === document.body) return null
+      if (!el || el === document.body) return { focused: null, onTarget: false }
+      const want = document.querySelector(sel)
       return {
-        id: el.id || null,
-        tag: el.tagName,
-        inAccount: !!el.closest('.account'),
+        focused: el.id || el.getAttribute('class') || el.tagName,
+        label: (el.textContent || '').trim().slice(0, 20),
+        onTarget: !!want && want === el,
         disabled: !!el.disabled,
         hidden: el.getBoundingClientRect().height === 0,
       }
-    })
-    check(WHAT, !!at && at.inAccount && !at.disabled && !at.hidden, JSON.stringify(at))
+    }, target)
+    check(WHAT, !!at && at.onTarget && !at.disabled && !at.hidden, JSON.stringify({ want: target, ...at }))
     await page.close()
   }
 

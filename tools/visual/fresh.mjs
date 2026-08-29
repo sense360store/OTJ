@@ -55,10 +55,18 @@ const BUNDLE_INPUTS = [
 // for a tool that is always run right after a build.
 async function newest(rel) {
   const full = path.join(ROOT, rel)
-  if (!existsSync(full)) return { at: 0, file: null }
+  // A listed input that is GONE is stale, not absent. Returning zero for it
+  // made deleting one invisible: nothing else moves, so the build went on
+  // looking current while the source it was built from no longer existed.
+  // Codex.
+  if (!existsSync(full)) return { at: Infinity, file: rel, missing: true }
   const info = await stat(full)
   if (!info.isDirectory()) return { at: info.mtimeMs, file: rel }
-  let best = { at: 0, file: null }
+  // A directory's OWN mtime is the seed rather than zero, because that is the
+  // only thing a deletion inside it moves: removing a file changes no
+  // surviving sibling's mtime, so a walk that looked only at the survivors
+  // could not see it. Codex.
+  let best = { at: info.mtimeMs, file: rel }
   for (const entry of await readdir(full, { withFileTypes: true })) {
     if (entry.name.includes('.test.')) continue
     const found = await newest(path.join(rel, entry.name))
@@ -83,10 +91,13 @@ export async function assertServingCurrentBuild(base) {
      the wrong thing. Found by editing a rule and watching the run pass. */
   const built = (await stat(indexPath)).mtimeMs
   for (const input of BUNDLE_INPUTS) {
-    const { at, file } = await newest(input)
+    const { at, file, missing } = await newest(input)
     if (at > built) {
+      const why = missing
+        ? `${file} is listed as a bundle input and is not on disk`
+        : `${file} was changed after the harness was last built`
       console.log(
-        `STALE BUILD: ${file} was changed after the harness was last built.\n` +
+        `STALE BUILD: ${why}.\n` +
           '  Every measurement below would describe the previous source. Rebuild and restart the\n' +
           '  preview: `npx vite build --config vite.visual.config.ts`, then restart `vite preview`.',
       )

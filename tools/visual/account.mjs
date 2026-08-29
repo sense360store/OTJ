@@ -14,6 +14,38 @@
 // what they mean on the register's dialogs, so which write is driven is
 // decided by the press rather than by a state per control.
 
+/* The four strings the `longvalues` state renders, mirrored from
+   tools/visual/fixtures.ts because this is plain JavaScript and cannot import
+   it. They are compared EXACTLY rather than by length, so a stub that stopped
+   applying one of the four fails rather than being photographed under a name
+   claiming all four; and a drift in the fixture fails here rather than going
+   unnoticed. Codex: the proof named the club name and nothing else, and the
+   overflow check deliberately exempts a form control's own value, so losing
+   the name, the email or the team was invisible in both places. */
+export const LONG_VALUES = {
+  name: 'Wilhelmina Fotheringay-Wallington-Smythe',
+  email: 'wilhelmina.fotheringay-wallington-smythe@ossett-town-juniors-football-club.example',
+  club: 'Ossett Town Juniors Community Football and Friendship Association',
+  team: 'Ossett Town Juniors Development Squad Under Nines',
+}
+
+// All four rendered, each in the place this screen puts it: the name inside
+// the field, the address inside the sentence above the email form, the club
+// in the membership facts, and the team as the Default team's chosen option.
+export async function longValuesRendered(page) {
+  return page.evaluate((want) => {
+    const select = document.querySelector('#default-team')
+    const chosen = select ? (select.selectedOptions[0]?.textContent ?? '') : ''
+    const facts = [...document.querySelectorAll('.account-fact dd')].map((d) => (d.textContent ?? '').trim())
+    return (
+      (document.querySelector('#full-name')?.value ?? '') === want.name &&
+      (document.querySelector('.account-lede b')?.textContent ?? '').trim() === want.email &&
+      facts.includes(want.club) &&
+      chosen.trim() === want.team
+    )
+  }, LONG_VALUES)
+}
+
 // Kept in step with tools/visual/fixtures.ts by value. Both are invented and
 // the address is .invalid, which can never resolve. A drift is caught rather
 // than tolerated: the entry that types this is proved by the refusal that only
