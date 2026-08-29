@@ -2327,6 +2327,40 @@ const focusReturned = async (page, d) => {
     await page.close()
   }
 
+  /* The Security forms open inert, and stay inert until BOTH halves of each
+     are typed. A submit that arms on one password would send an unconfirmed
+     one, and a screenshot of an untouched form cannot tell an inert control
+     from an active one. */
+  {
+    const page = await open('account', 1280)
+    const submit = (label) => page.getByRole('button', { name: label, exact: true })
+    const inert = async (label) => ((await submit(label).count()) ? submit(label).first().isDisabled() : null)
+    const WHAT = 'the Security submits are inert until their form is complete'
+    const steps = { emptyPassword: await inert('Change password'), emptyEmail: await inert('Change email') }
+    if (await typed(page.getByLabel('New password', { exact: true }), 'a-long-enough-passphrase', WHAT)) {
+      await page.waitForTimeout(120)
+      steps.oneOfTwo = await inert('Change password')
+      if (await typed(page.getByLabel('Confirm password', { exact: true }), 'a-long-enough-passphrase', WHAT)) {
+        await page.waitForTimeout(120)
+        steps.bothTyped = await inert('Change password')
+      }
+    }
+    if (await typed(page.getByLabel('New email', { exact: true }), 'new.coach@example.invalid', WHAT)) {
+      await page.waitForTimeout(120)
+      steps.emailTyped = await inert('Change email')
+    }
+    check(
+      WHAT,
+      steps.emptyPassword === true &&
+        steps.emptyEmail === true &&
+        steps.oneOfTwo === true &&
+        steps.bothTyped === false &&
+        steps.emailTyped === false,
+      JSON.stringify(steps),
+    )
+    await page.close()
+  }
+
   /* Two frozen behaviours on the name row, neither of which a screenshot can
      show: Enter saves, and Save is armed only by a MEANINGFUL change. Blank,
      unchanged and unchanged-with-padding all leave it inert, which is what

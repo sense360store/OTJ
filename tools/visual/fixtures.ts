@@ -614,12 +614,16 @@ export const ACTIVITY_TEAMS_FOR = (s: HarnessState): Team[] =>
 
    Nothing here is a real person. The email is a .invalid address, which can
    never resolve. */
+// Mirrored by tools/visual/account.mjs, which is plain JavaScript and cannot
+// import this module. A drift is caught rather than tolerated: the entry that
+// types this value is proved by the refusal that only appears when the typed
+// address matched the signed in one.
 export const ACCOUNT_EMAIL = 'coach@example.invalid'
 const ACCOUNT_NAME = 'Sam Whitfield'
 // The four strings this screen renders at a length the club chooses. The
 // email is the hardest of them: it is one token with no space to break at.
 const LONG_ACCOUNT_NAME = 'Wilhelmina Fotheringay-Wallington-Smythe'
-export const LONG_ACCOUNT_EMAIL =
+const LONG_ACCOUNT_EMAIL =
   'wilhelmina.fotheringay-wallington-smythe@ossett-town-juniors-football-club.example'
 const LONG_CLUB_NAME = 'Ossett Town Juniors Community Football and Friendship Association'
 const DEFAULT_CLUB_NAME = 'Ossett Town Juniors'

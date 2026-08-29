@@ -107,12 +107,20 @@ export const ACCOUNT_FLOWS = [
     // Three claims, because the note alone would hold with a screen that had
     // not moved: the confirmation, the photo, and the relabelled action.
     proof: async (page) =>
-      page.evaluate(
-        () =>
+      page.evaluate(() => {
+        const labels = [...document.querySelectorAll('.account-photo-acts button')].map((b) =>
+          (b.textContent || '').trim(),
+        )
+        return (
           !!document.querySelector('.account-photo-block .note-success') &&
           !!document.querySelector('.account-photo img.avatar') &&
-          !!document.querySelector('.account-photo-acts button:nth-of-type(2)'),
-      ),
+          // Named rather than counted: "a second button exists" would hold
+          // for any second button, and what this claims is that the photo
+          // action relabelled itself and the removal appeared beside it.
+          labels.includes('Change photo') &&
+          labels.includes('Remove photo')
+        )
+      }),
     drive: addPhoto,
   },
   {
@@ -169,7 +177,9 @@ export const ACCOUNT_FLOWS = [
     key: 'name-pending',
     state: 'inflight',
     note: 'the save in flight: the button reads Saving… and is frozen',
-    proof: 'button:has-text("Saving…")[disabled]',
+    // Scoped to the name row. The password submit carries the same gerund, so
+    // an unscoped proof would name a control this entry never pressed.
+    proof: '.account-name-block button:has-text("Saving…")[disabled]',
     drive: async (page) => {
       if (!(await fill(page, 'Full name', NEW_NAME))) return false
       await pause(page)
@@ -239,7 +249,7 @@ export const ACCOUNT_FLOWS = [
     key: 'password-mismatch',
     state: 'default',
     note: 'the client side refusal: two different values never reach the auth client',
-    proof: '.note-danger[role="alert"]:has-text("The passwords do not match.")',
+    proof: '.account-form .note-danger[role="alert"]:has-text("The passwords do not match.")',
     drive: async (page) => {
       if (!(await fill(page, 'New password', PASSWORD))) return false
       if (!(await fill(page, 'Confirm password', PASSWORD + '-typo'))) return false
@@ -250,7 +260,9 @@ export const ACCOUNT_FLOWS = [
     key: 'password-pending',
     state: 'inflight',
     note: 'the password change in flight: the button reads Saving… and is frozen',
-    proof: 'button:has-text("Saving…")[disabled]',
+    // Scoped to the password form, for the same reason the name row is: the
+    // two submits share the gerund and only the scope tells them apart.
+    proof: '.account-form button:has-text("Saving…")[disabled]',
     drive: async (page) => {
       if (!(await fill(page, 'New password', PASSWORD))) return false
       if (!(await fill(page, 'Confirm password', PASSWORD))) return false
@@ -264,7 +276,10 @@ export const ACCOUNT_FLOWS = [
     proof: async (page) =>
       page.evaluate(
         () =>
-          !!document.querySelector('.note-success') &&
+          // Named, because the email form below produces a success note too
+          // and two empty password fields is also what an untouched form
+          // looks like.
+          (document.querySelector('.account-form .note-success')?.textContent ?? '').includes('Password changed') &&
           document.querySelector('#new-password')?.value === '' &&
           document.querySelector('#confirm-password')?.value === '',
       ),
@@ -278,7 +293,7 @@ export const ACCOUNT_FLOWS = [
     key: 'password-failed',
     state: 'writefails',
     note: 'the auth client refused it: its own message, in the danger Note',
-    proof: '.note-danger[role="alert"]:has-text("Password should be at least")',
+    proof: '.account-form .note-danger[role="alert"]:has-text("Password should be at least")',
     drive: async (page) => {
       if (!(await fill(page, 'New password', PASSWORD))) return false
       if (!(await fill(page, 'Confirm password', PASSWORD))) return false

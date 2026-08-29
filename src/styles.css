@@ -1391,8 +1391,13 @@ a.activity-batch:hover { text-decoration: underline; }
 .account-form-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-8) var(--space-12); }
 .account-form-row .field { flex: 1 1 200px; min-width: 0; margin-bottom: 0; }
 .account-form-row .btn { flex: 0 0 auto; }
-/* Once the action is alone on its line, a full width button reads as the end
-   of the form rather than as a stray control. */
+/* Below 560 the row becomes a stack. Measured rather than picked: the fields
+   SHRINK before they wrap, so the widest row (two password fields beside
+   Change password) still fits on one line at 600 with each field at 168px,
+   and keeps narrowing from there. 560 is where they stop being wide enough to
+   read a value in, so the action takes the full width and pushes them onto
+   their own lines. It is a rule about this form's own content, not a
+   breakpoint the product has anywhere else. */
 @media (max-width: 560px) {
   .account-form-row .btn { flex: 1 0 100%; }
 }

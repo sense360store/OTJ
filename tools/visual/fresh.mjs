@@ -45,6 +45,14 @@ const BUNDLE_INPUTS = [
 
 // The newest modification time under a path, skipping the tests, which are
 // not bundled either.
+//
+// A make-style mtime comparison, with make's own caveat: it can say stale
+// when nothing changed (a file touched, a branch checked out and back), and
+// the cost of that is one rebuild. The direction that matters cannot go wrong
+// the other way, because writing a file always moves its mtime forward.
+// Hashing the inputs would be exact and would read every file in src/ on
+// every run; the cheap check that errs towards rebuilding is the right trade
+// for a tool that is always run right after a build.
 async function newest(rel) {
   const full = path.join(ROOT, rel)
   if (!existsSync(full)) return { at: 0, file: null }
