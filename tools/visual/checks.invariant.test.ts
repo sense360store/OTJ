@@ -125,11 +125,14 @@ describe('a missing control fails its own check rather than ending the run', () 
     // and a query bound to a name that is then used without a check. A guard
     // is `if (!x)`, `x ?`, `!!x` or `x?.`, which is every form the file uses.
     const offenders: string[] = []
-    const direct = /(document\.querySelector\([^)]*\)|\.closest\([^)]*\))\.(?!\?)[a-zA-Z]/
+    // ANY receiver, not only `document`: a query is just as likely to be
+    // scoped to an element already in hand, and `m.querySelector(…).textContent`
+    // throws exactly the same way. Codex.
+    const direct = /(\w+\.querySelector\([^)]*\)|\.closest\([^)]*\))\.(?!\?)[a-zA-Z]/
     lines.forEach((line, i) => {
       if (line.trim().startsWith('//')) return
       // The explicit ternary form guards itself: `q('x') ? q('x').y : null`.
-      if (direct.test(line) && !/\)\s*\?\s*document\.querySelector/.test(line)) {
+      if (direct.test(line) && !/\)\s*\?\s*\w+\.querySelector/.test(line)) {
         offenders.push(`${i + 1}: ${line.trim().slice(0, 90)}`)
       }
     })
