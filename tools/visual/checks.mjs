@@ -1422,9 +1422,12 @@ const focusReturned = async (page, d) => {
   // the head and a press on the overlay. Escape is checked on six dialogs
   // above; these two are the same contract through different controls, and
   // both must also return focus to the opener.
+  // Each route is a guarded action: the X is a control that can be missing,
+  // and a press on the coordinates is not. Both go through the same helper so
+  // a missing close button is a failed check rather than a run that stops.
   for (const [route, dismiss] of [
-    ['the X', (page) => page.locator('.modal-head .icon-btn').click()],
-    ['a press on the overlay', (page) => page.mouse.click(5, 5)],
+    ['the X', (page, what) => acted(page.locator('.modal-head .icon-btn'), what, 'clicked', (el) => el.click())],
+    ['a press on the overlay', (page) => page.mouse.click(5, 5).then(() => true)],
   ]) {
     const d = DIALOGS.find((x) => x.key === 'move')
     const page = await open('players', 1280, { dialog: d })
@@ -1435,10 +1438,10 @@ const focusReturned = async (page, d) => {
       await page.close()
       continue
     }
-    await dismiss(page)
+    const dismissed = await dismiss(page, WHAT)
     await page.waitForTimeout(250)
     const r = await focusReturned(page, d)
-    check(WHAT, r.closed && r.toTheOpener, JSON.stringify(r))
+    check(WHAT, dismissed && r.closed && r.toTheOpener, JSON.stringify(r))
     await page.close()
   }
 

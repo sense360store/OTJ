@@ -50,18 +50,34 @@ describe('a missing control fails its own check rather than ending the run', () 
       if (!m) return
       const name = m[1]
       let guarded = false
+      // A guard has to END at the name. `!!x` is a guard; `!!x.getAttribute(…)`
+      // is the unsafe expression itself, and \b matches immediately before the
+      // dot, so the loose form accepted the very thing it exists to reject.
+      // Codex. The lookahead is what makes the difference.
+      const end = '(?![\\w.[])'
+      const guards = new RegExp(
+        [
+          `\\bif \\(!${name}${end}`,
+          `\\bif \\(!\\w+ \\|\\| !${name}${end}`,
+          `\\b${name}${end} \\?`,
+          `!!${name}${end}`,
+          `\\b${name}\\?\\.`,
+          `\\breturn ${name}\\s*$`,
+        ].join('|'),
+      )
+      const unsafe = new RegExp(`\\b${name}\\.[a-zA-Z]`)
       for (let j = i + 1; j < Math.min(i + 15, lines.length); j++) {
         const next = lines[j]
-        // Every guard form the file uses, including the one that spans two
-        // lines: `return m` followed by `? { ... }`.
-        if (
-          new RegExp(
-            `\\bif \\(!${name}\\b|\\bif \\(![\\w]+ \\|\\| !${name}\\b|\\b${name} \\?|!!${name}|\\b${name}\\?\\.|\\breturn ${name}\\s*$`,
-          ).test(next)
-        ) {
-          guarded = true
-        }
-        if (!guarded && new RegExp(`\\b${name}\\.[a-zA-Z]`).test(next)) {
+        // POSITION matters, not merely presence. `return el ? el.value : null`
+        // guards itself because the check comes first on the line, while
+        // `return !!live.getAttribute(…)` is the unsafe expression wearing a
+        // guard's shape. Comparing indices is what separates them; testing for
+        // a guard anywhere on the line accepted the second, and testing the
+        // dereference first rejected the first.
+        const at = next.search(unsafe)
+        const guardAt = next.search(guards)
+        if (guardAt !== -1 && (at === -1 || guardAt < at)) guarded = true
+        if (!guarded && at !== -1) {
           offenders.push(`${j + 1}: ${next.trim().slice(0, 90)}`)
           break
         }
@@ -86,11 +102,13 @@ describe('a missing control fails its own check rather than ending the run', () 
       if (/\.(selectOption|fill|check|uncheck)\(/.test(line) && !/acted\(/.test(line)) {
         offenders.push(`${i + 1}: ${line.trim().slice(0, 90)}`)
       }
-      // `.click()` inside a guarded runner, a try block or a `.catch()` chain
-      // is fine; a bare one on a locator is not. The context is read from the
-      // few lines above, because the guard is rarely on the same line.
+      // `.click()` is exempt only where it is STRUCTURALLY guarded: inside an
+      // acted() call, inside a try block, or on a promise with a .catch().
+      // Exempting any nearby arrow function let a dismissal callback pass and
+      // be awaited unguarded twelve lines later. Codex.
       const context = lines.slice(Math.max(0, i - 6), i + 1).join('\n')
-      if (/\.click\(\)/.test(line) && !/catch|acted\(|try \{|=>/.test(context)) {
+      const structural = /\.catch\(/.test(line) || /acted\(/.test(context) || /\btry \{/.test(context)
+      if (/\.click\(\)/.test(line) && !structural) {
         offenders.push(`${i + 1}: ${line.trim().slice(0, 90)}`)
       }
     })
