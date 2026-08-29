@@ -107,6 +107,9 @@ const focused = (locator, what) => acted(locator, what, 'focused', (el) => el.fo
 // already failed and returned false is followed by a selection that rejects on
 // its own account, which ends the run and skips every check after it. Codex.
 const chose = (locator, value, what) => acted(locator, what, 'set', (el) => el.selectOption(value))
+// And typing into a field, which is the third action this file performs. The
+// typed confirmation on the two delete dialogs is the only caller.
+const typed = (locator, value, what) => acted(locator, what, 'typed into', (el) => el.fill(value))
 // The header's overflow trigger, named exactly: every row's is "More actions
 // for <child>", so a loose name matches ten controls and resolves to a row.
 const moreActions = (page) => page.getByRole('button', { name: 'More actions', exact: true })
@@ -290,6 +293,7 @@ const open = async (screen, width, opts = {}) => {
   const page = await open('home', 390)
   const nav = await page.evaluate(() => {
     const a = document.querySelector('.bn-item.active')
+    if (!a) return { size: null, current: null, height: 0 }
     const cs = getComputedStyle(a)
     return { size: cs.fontSize, current: a.getAttribute('aria-current'), height: Math.round(a.getBoundingClientRect().height) }
   })
@@ -301,6 +305,7 @@ const open = async (screen, width, opts = {}) => {
 
   const toggle = await page.evaluate(() => {
     const t = document.querySelector('.mobile-topbar .toggle')
+    if (!t) return { role: null, checked: null, label: null }
     return { role: t.getAttribute('role'), checked: t.getAttribute('aria-checked'), label: t.getAttribute('aria-label') }
   })
   check('the phone theme control is a labelled switch', toggle.role === 'switch' && !!toggle.label, JSON.stringify(toggle))
@@ -441,6 +446,7 @@ const open = async (screen, width, opts = {}) => {
     const page = await open('players', 1280)
     const header = await page.evaluate(() => {
       const b = document.querySelector('table.reg-table th button')
+      if (!b) return { w: 0, h: 0 }
       const r = b.getBoundingClientRect()
       return { w: Math.round(r.width), h: Math.round(r.height) }
     })
@@ -454,6 +460,7 @@ const open = async (screen, width, opts = {}) => {
     const ring = await page.evaluate(() => {
       const wrap = document.querySelector('.reg-table-wrap')
       const b = document.querySelector('table.reg-table th.sort-th button')
+      if (!wrap || !b) return null
       b.focus()
       const w = wrap.getBoundingClientRect(), r = b.getBoundingClientRect()
       const cs = getComputedStyle(b)
@@ -467,7 +474,7 @@ const open = async (screen, width, opts = {}) => {
     })
     check(
       'the sortable header\'s focus ring is not clipped by the scroll container',
-      ring.reach > 0 && ring.top === 0 && ring.left === 0 && !ring.scrolls,
+      !!ring && ring.reach > 0 && ring.top === 0 && ring.left === 0 && !ring.scrolls,
       JSON.stringify(ring),
     )
 
@@ -539,12 +546,15 @@ const open = async (screen, width, opts = {}) => {
         'the dialog took focus, so Escape and the Tab trap are live',
         await page.evaluate(() => document.activeElement.classList.contains('modal')),
       )
-      await page.getByLabel(/^To confirm, type/).fill('DELETE 7 PLAYERS')
-      await page.waitForTimeout(120)
-      check('a phrase naming the wrong count leaves it inert', await confirm.isDisabled())
-      await page.getByLabel(/^To confirm, type/).fill('DELETE 8 PLAYERS')
-      await page.waitForTimeout(120)
-      check('the phrase naming the count arms it', !(await confirm.isDisabled()))
+      const field = page.getByLabel(/^To confirm, type/)
+      if (await typed(field, 'DELETE 7 PLAYERS', 'a phrase naming the wrong count leaves it inert')) {
+        await page.waitForTimeout(120)
+        check('a phrase naming the wrong count leaves it inert', await confirm.isDisabled())
+        if (await typed(field, 'DELETE 8 PLAYERS', 'the phrase naming the count arms it')) {
+          await page.waitForTimeout(120)
+          check('the phrase naming the count arms it', !(await confirm.isDisabled()))
+        }
+      }
       const danger = await page.evaluate(() => {
         const b = [...document.querySelectorAll('.modal button')].find((x) => /permanently$/.test(x.textContent.trim()))
         return b ? { cls: b.className, fill: getComputedStyle(b).backgroundColor, word: /Delete/.test(b.textContent) } : null
@@ -654,7 +664,7 @@ const open = async (screen, width, opts = {}) => {
         return {
           rows: bottoms.size,
           slot: kids.map((k) => k.textContent.trim().slice(0, 16)),
-          headerHeight: Math.round(document.querySelector('.page-head').getBoundingClientRect().height),
+          headerHeight: Math.round(document.querySelector('.page-head')?.getBoundingClientRect().height ?? 0),
         }
       })
       check(
@@ -740,7 +750,9 @@ const open = async (screen, width, opts = {}) => {
           const list = document.querySelector('.players-more .menu-list')
           if (!list) return null
           const b = list.getBoundingClientRect()
-          const slot = document.querySelector('.page-head-acts').getBoundingClientRect()
+          const acts = document.querySelector('.page-head-acts')
+          if (!acts) return null
+          const slot = acts.getBoundingClientRect()
           const btn = document.querySelector('.players-more > button')?.getBoundingClientRect() ?? null
           return {
             left: Math.round(b.left),
@@ -1504,12 +1516,12 @@ const focusReturned = async (page, d) => {
       const confirm = page.locator('.modal').getByRole('button', { name: 'Delete permanently', exact: true })
       const field = page.locator('.modal').getByLabel(/^To confirm, type/)
       const closed = await confirm.isDisabled()
-      await field.fill('Aria Bexley')
+      const partialTyped = await typed(field, 'Aria Bexley', WHAT)
       await page.waitForTimeout(120)
       const partial = await confirm.isDisabled()
-      await field.fill(DIALOG_PLAYER)
+      const fullTyped = partialTyped && (await typed(field, DIALOG_PLAYER, WHAT))
       await page.waitForTimeout(120)
-      const armed = await confirm.isEnabled()
+      const armed = fullTyped && (await confirm.isEnabled())
       const danger = await page.evaluate(() => {
         const b = [...document.querySelectorAll('.modal button')].find((x) => x.textContent.trim() === 'Delete permanently')
         return b ? { cls: b.className, word: /Delete/.test(b.textContent) } : null
@@ -1814,7 +1826,9 @@ const focusReturned = async (page, d) => {
     const inflight = await page.evaluate(() => {
       const b = document.querySelector('.activity-more button')
       const live = document.querySelector('[aria-live="polite"]')
-      return b ? { label: b.textContent.trim(), disabled: b.disabled, busy: live.getAttribute('aria-busy') } : null
+      // Both queries are guarded, not just the first: the ternary covered the
+      // button and then dereferenced the live region regardless. Codex.
+      return b ? { label: b.textContent.trim(), disabled: b.disabled, busy: live?.getAttribute('aria-busy') ?? null } : null
     })
     check(
       'Load more disables itself and says so while a page is in flight',
