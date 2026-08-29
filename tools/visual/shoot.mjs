@@ -11,6 +11,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
+import { DIALOGS, openDialog, openRowMenu, queryFor, DIALOG_PLAYER } from './dialogs.mjs'
 
 const OUT = process.argv[2] ?? 'visual-shots'
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
@@ -92,14 +93,44 @@ const SHOTS = [
     w,
     open: 'moreactions',
   })),
+  /* A ROW's overflow, which is the surface whose item height this slice
+     brings to 44px. Shot in both layouts, because above 900px the row shows
+     Edit and History beside the trigger and below it the card holds every
+     action in the menu, so the two popups are different lists. */
+  ...[390, 1280].map((w) => ({ screen: 'players', caps: 'coach', w, open: 'rowmenu' })),
+
+  /* ---- VISUAL-02, the six remaining dialog files ----------------------
+     Eleven dialogs across six files, plus the states each one owns. Every
+     entry is opened by pressing the controls a coach presses, and proves
+     both that it is the dialog its name claims and that it is in the state
+     its name claims (tools/visual/dialogs.mjs).
+
+     390 and 1280 for all of them, which is the phone and the desktop; the
+     five that are forms are also shot at 900, where 2.13 turns a form dialog
+     into a bottom sheet and the footer has to stay above the keyboard. */
+  ...DIALOGS.flatMap((d) => [390, 1280].map((w) => ({ screen: 'players', caps: 'coach', dialog: d, w }))),
+  ...DIALOGS.filter((d) => ['add', 'edit', 'export', 'import-preview', 'renew'].includes(d.key)).map((d) => ({
+    screen: 'players',
+    caps: 'coach',
+    dialog: d,
+    w: 900,
+  })),
 ]
 
 const name = (s, theme) =>
-  [s.screen, s.caps ?? 'na', s.state ?? 'default', s.open ?? 'default', theme, `${s.w}w`].join('_') + '.png'
+  [
+    s.screen,
+    s.caps ?? 'na',
+    s.dialog ? s.dialog.state : (s.state ?? 'default'),
+    s.dialog ? `dialog-${s.dialog.key}` : (s.open ?? 'default'),
+    theme,
+    `${s.w}w`,
+  ].join('_') + '.png'
 
 // An overlay is shot at the viewport rather than full page: a full page shot
 // of a dialog over a two hundred row register is a picture of the register.
-const OVERLAY = new Set(['more', 'delete', 'moreactions'])
+const OVERLAY = new Set(['more', 'delete', 'moreactions', 'rowmenu'])
+const isOverlay = (s) => !!s.dialog || OVERLAY.has(s.open)
 
 
 // Every entry whose name claims a state must PROVE that state before its
@@ -119,6 +150,9 @@ const REACHED = {
   // `more` names. Scoped to .players-more so a row menu left open by another
   // press could not stand in for it.
   moreactions: '.players-more .menu-list',
+  // And the row's, scoped the other way for the same reason: NOT inside
+  // .players-more, so the header's popup cannot stand in for a row's.
+  rowmenu: '.menu:not(.players-more) .menu-list',
   error: '.note-danger[role="alert"]',
   info: '.note-success[role="status"]',
   select: '.bulk-bar',
@@ -251,9 +285,17 @@ for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: s.w, height: 900 })
     const errors = []
     page.on('pageerror', (e) => errors.push(e.message))
-    const q = new URLSearchParams({ screen: s.screen, theme })
-    if (s.caps) q.set('caps', s.caps)
-    if (s.state) q.set('state', s.state)
+    // A dialog entry carries its own state and address (they are not always
+    // the same thing), so its query string is built by the module that owns
+    // the entry rather than assembled again here.
+    const q = s.dialog
+      ? queryFor(s.dialog, { theme, caps: s.caps })
+      : (() => {
+          const p = new URLSearchParams({ screen: s.screen, theme })
+          if (s.caps) p.set('caps', s.caps)
+          if (s.state) p.set('state', s.state)
+          return p
+        })()
     await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
     await page.evaluate(() => document.fonts.ready)
     await verifyFonts(page)
@@ -304,14 +346,33 @@ for (const theme of ['light', 'dark']) {
         await page.waitForTimeout(150)
       }
     }
+    if (s.open === 'rowmenu') {
+      // A row's own overflow, opened on a named row so it is the same list at
+      // both widths rather than whichever row happens to be first.
+      if (!(await openRowMenu(page, DIALOG_PLAYER))) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: the row's More actions trigger is not on the page`)
+      }
+      await page.waitForTimeout(150)
+    }
     if (s.open === 'error' || s.open === 'info') {
       // The real paths: pressing the magic link button with an empty field is
       // the error, and with one filled is the confirmation. Neither is faked.
       if (s.open === 'info') await page.getByLabel('Email').fill('coach@example.invalid')
       await page.getByRole('button', { name: 'Email me a link' }).click()
     }
+    // A dialog carries its own proof, of the dialog AND of the state its name
+    // claims, so a press that quietly no-ops fails here rather than filing an
+    // ordinary dialog under a name that says otherwise.
+    if (s.dialog) {
+      const why = await openDialog(page, s.dialog)
+      if (why) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: ${why}`)
+      }
+    }
     await reached(page, s, theme)
-    await page.screenshot({ path: `${OUT}/${name(s, theme)}`, fullPage: !OVERLAY.has(s.open) })
+    await page.screenshot({ path: `${OUT}/${name(s, theme)}`, fullPage: !isOverlay(s) })
     if (errors.length) {
       failures++
       console.log(`ERROR ${name(s, theme)}: ${errors[0].slice(0, 160)}`)

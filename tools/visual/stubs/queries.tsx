@@ -4,14 +4,21 @@
 // itself and only the reads and writes are replaced.
 export * from '../../../src/lib/queries'
 
+import { useState } from 'react'
+
 import {
   CURRENT_SEASON,
   DRILLS,
   MEDIA,
   OVER_LIMIT_PLAYERS,
+  PAST_SEASON,
+  PAST_SEASON_PLAYERS,
+  PLAYER_HISTORY,
+  PLAYER_HISTORY_LONG,
   REGISTERED_PLAYERS,
   SEASONS,
   SESSIONS,
+  SPOND_IMPORT_RESULT,
   TEAMS,
   TEMPLATES,
   fixtures,
@@ -38,7 +45,7 @@ const pendingQuery = <T,>() => query(undefined as T, { isLoading: true, isPendin
 const failedQuery = <T,>() =>
   query(undefined as T, { isLoading: false, isPending: false, isSuccess: false, isError: true, error: new Error('read failed') })
 
-const mutation = () => ({
+const mutation = (over: Record<string, unknown> = {}) => ({
   mutate: () => {},
   mutateAsync: () => Promise.resolve(undefined),
   isPending: false,
@@ -47,7 +54,21 @@ const mutation = () => ({
   error: null,
   data: null,
   reset: () => {},
+  ...over,
 })
+
+/* A write that never settles, and a write that refuses. Both are states a
+   dialog must render and neither is drawn: what the harness changes is what
+   the server does, and the guard only enters them when the coach presses the
+   confirm. */
+const HANGS = () => new Promise<never>(() => {})
+const REFUSES = () => Promise.reject(new Error('the write was refused'))
+const writeMutation = () =>
+  fixtures.state === 'inflight'
+    ? mutation({ mutateAsync: HANGS })
+    : fixtures.state === 'writefails'
+      ? mutation({ mutateAsync: REFUSES })
+      : mutation()
 
 const byId = <T extends { id: string }>(rows: T[]): Record<string, T> =>
   Object.fromEntries(rows.map((r) => [r.id, r]))
@@ -92,7 +113,7 @@ export const useSeasons = () => {
   return query(SEASONS)
 }
 
-export const useRegisteredPlayers = () => {
+export const useRegisteredPlayers = (seasonId?: string | null) => {
   // `error` fails the register read, which is the state INSIDE the page body:
   // the header and the season select still render, the count strip is
   // withheld because a read that has not answered has no count, and the list
@@ -102,6 +123,18 @@ export const useRegisteredPlayers = () => {
   if (state === 'error') return failedQuery<typeof REGISTERED_PLAYERS>()
   if (state === 'empty') return query([] as typeof REGISTERED_PLAYERS)
   if (state === 'overlimit') return query(OVER_LIMIT_PLAYERS)
+  // The register is per season, and the argument is honoured because Renew
+  // reads two of them at once: one set of rows answering for both would make
+  // every child already in the target and leave the dialog nothing to renew.
+  if (seasonId === PAST_SEASON.id) {
+    // Renew's two reachable dead ends: a source season with nobody in it, and
+    // a source whose every child is already in the target. The second is the
+    // four carry over rows on their own, which is what makes the confirm read
+    // 0 and stay inert.
+    if (state === 'renewempty') return query([] as typeof PAST_SEASON_PLAYERS)
+    if (state === 'renewalldone') return query(PAST_SEASON_PLAYERS.slice(0, 4))
+    return query(PAST_SEASON_PLAYERS)
+  }
   return query(REGISTERED_PLAYERS)
 }
 
@@ -131,6 +164,77 @@ export const useBulkDeletePlayers = mutation
 export const isStaleBulkSelection = () => false
 export const isIndeterminateBulkOutcome = () => false
 export const usePlayers = () => query([])
+
+/* ---- the six dialog files -------------------------------------------
+   Every write the Registered players dialogs perform, and the two reads only
+   a dialog makes. The writes share one stub, so `inflight` and `writefails`
+   apply to all of them at once and a driver reaches a dialog's in-flight or
+   refused branch by pressing that dialog's own confirm. */
+export const useInsertPlayer = writeMutation
+export const useUpdatePlayer = writeMutation
+export const useSetRegistrationStatus = writeMutation
+export const useMovePlayerTeam = writeMutation
+export const useDeletePlayer = writeMutation
+export const useExportPlayers = writeMutation
+export const useRenewRegistrations = writeMutation
+
+/* The Spond roster import is the one write that is not a guarded submit: it
+   reads isPending, isError and data off the mutation itself. So the stub is a
+   real hook with a phase, and the phase moves when mutate() is CALLED.
+
+   The first version answered with the result already set, which meant the
+   outcome rendered before the dialog opened and every proof of it held whether
+   or not pressing Import did anything. Codex. A screenshot of an outcome a
+   coach cannot reach is the same false evidence as a screenshot of a preview
+   that never parsed. */
+export const useSpondRosterImport = () => {
+  const [phase, setPhase] = useState<'idle' | 'busy' | 'failed' | 'done'>('idle')
+  return {
+    ...mutation(),
+    isPending: phase === 'busy',
+    isError: phase === 'failed',
+    isSuccess: phase === 'done',
+    error: phase === 'failed' ? new Error('Could not import from Spond. Try again.') : null,
+    data: phase === 'done' ? SPOND_IMPORT_RESULT : null,
+    mutate: () => setPhase(state === 'inflight' ? 'busy' : state === 'writefails' ? 'failed' : 'done'),
+  }
+}
+
+// The spreadsheet import commits through the guard and returns a structured
+// result rather than throwing, so the success outcome screen is reached by
+// resolving one.
+export const useImportPlayers = () =>
+  state === 'inflight'
+    ? mutation({ mutateAsync: HANGS, isPending: true })
+    : state === 'writefails'
+      ? mutation({ mutateAsync: REFUSES })
+      : mutation({
+          mutateAsync: () =>
+            Promise.resolve({
+              outcome: 'succeeded',
+              batch_id: '3f2a91c8-abcd-4000-8000-000000000001',
+              settled_at: '2026-08-28T14:32:00Z',
+              added: 4,
+              updated: 1,
+              already_present: 1,
+              skipped: 0,
+              rejected: 1,
+            }),
+        })
+
+// The identity map the import preview checks Player ID ownership against. The
+// real read pages every identity in the club; the fixtures' register is the
+// club, so the map is built from it.
+export const useClubPlayerIdentities = () =>
+  query(new Map(REGISTERED_PLAYERS.map((p) => [p.playerId.toLowerCase(), p.displayName])))
+
+export const usePlayerHistory = () => {
+  if (state === 'historyerror') return failedQuery<typeof PLAYER_HISTORY>()
+  if (state === 'historylong') return query(PLAYER_HISTORY_LONG)
+  if (state === 'history') return query(PLAYER_HISTORY)
+  // Empty by default, which is a real state: a child added and never edited.
+  return query([] as typeof PLAYER_HISTORY)
+}
 export const useSpondEvents = () => query([])
 export const useSpondMappings = () =>
   query([
@@ -145,7 +249,6 @@ export const useSpondMappings = () =>
     },
   ])
 export const useSpondLinks = () => query({ available: true, links: [] })
-export const usePlayerHistory = () => query([])
 export const useSpondEventResponseCounts = () => query({ byEvent: {}, available: false })
 export const useSpondSync = mutation
 export const useRefreshSpondPlanning = mutation

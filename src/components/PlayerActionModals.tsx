@@ -6,6 +6,10 @@
 // X, the overlay or Escape. The edited values stay put on failure so Retry
 // resends exactly what the user chose. None of these logs or renders a child
 // name beyond the display name the caller already holds.
+//
+// Presentation is the shared VISUAL-01 system: Button for every press, the
+// Field primitives for every control, Note for a warning and the shared dialog
+// prose classes for the sentences. Nothing here sets a font size.
 import { useState } from 'react'
 import {
   useDeletePlayer,
@@ -18,32 +22,47 @@ import { deleteConfirmed } from '../lib/playersView'
 import type { RegisteredPlayer, SpondMapping, Team } from '../lib/data'
 import { Icon } from './icons'
 import { ActionError, Modal } from './ui'
+import { Button, Note, SelectField, TextField } from './primitives'
 
-// A team select shared by Move team and the form modal: Unassigned plus every
-// club team (club wide, since writes are club scoped with no team arm). The
-// empty value means Unassigned (null team).
-export function TeamSelect({
+// The team picker shared by Move team and the form modal: Unassigned plus
+// every club team (club wide, since writes are club scoped with no team arm).
+// The empty value means Unassigned (null team).
+//
+// It renders the whole field rather than a bare <select>, because both callers
+// wrapped it in the same hand written .field and label and 2.6 asks for one
+// real <label> bound to the control. The id is passed so the two dialogs keep
+// the stable ids their markup has always had.
+export function TeamField({
   value,
   teams,
   onChange,
   disabled,
   id,
+  className,
 }: {
   value: string
   teams: Team[]
   onChange: (v: string) => void
   disabled?: boolean
   id?: string
+  className?: string
 }) {
   return (
-    <select className="select" id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+    <SelectField
+      id={id}
+      label="Team"
+      className={className}
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+    >
       <option value="">Unassigned</option>
       {teams.map((t) => (
         <option key={t.id} value={t.id}>
           {t.name}
         </option>
       ))}
-    </select>
+    </SelectField>
   )
 }
 
@@ -77,21 +96,25 @@ export function MoveTeamModal({
       dismissible={!moving}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={moving}>
+          <Button onClick={onClose} disabled={moving}>
             Cancel
-          </button>
-          <button className="btn btn-primary" onClick={run} disabled={!changed || moving}>
+          </Button>
+          <Button variant="primary" onClick={run} disabled={!changed || moving}>
             {moving ? 'Moving…' : 'Move'}
-          </button>
+          </Button>
         </>
       }
     >
-      <div className="field" style={{ marginBottom: 0 }}>
-        <label htmlFor="move-team">Team</label>
-        <TeamSelect id="move-team" value={teamId} teams={teams} onChange={setTeamId} disabled={moving} />
-      </div>
+      <TeamField
+        id="move-team"
+        className="field-flush"
+        value={teamId}
+        teams={teams}
+        onChange={setTeamId}
+        disabled={moving}
+      />
       {failed && (
-        <ActionError onRetry={changed ? run : undefined} style={{ marginTop: 10 }}>
+        <ActionError onRetry={changed ? run : undefined} style={{ marginTop: 'var(--space-12)' }}>
           Could not move the player. Try again.
         </ActionError>
       )}
@@ -127,21 +150,23 @@ export function WithdrawModal({
       dismissible={!busy}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
+          <Button onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button className="btn btn-danger" onClick={run} disabled={busy}>
+          </Button>
+          {/* The danger variant, and the red is never the only cue: the label
+              carries the word Withdraw. */}
+          <Button variant="danger" onClick={run} disabled={busy}>
             {busy ? 'Withdrawing…' : 'Withdraw'}
-          </button>
+          </Button>
         </>
       }
     >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
+      <p className="modal-copy">
         This marks <b>{player.displayName}</b> as withdrawn for {seasonName}. The record keeps its team, shirt number and
         history, and can be restored later. Nothing is deleted.
       </p>
       {failed && (
-        <ActionError onRetry={run} style={{ marginTop: 10 }}>
+        <ActionError onRetry={run} style={{ marginTop: 'var(--space-12)' }}>
           Could not withdraw the player. Try again.
         </ActionError>
       )}
@@ -178,21 +203,24 @@ export function RestoreModal({
       dismissible={!busy}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
+          <Button onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button className="btn btn-primary" onClick={run} disabled={busy}>
+          </Button>
+          <Button variant="primary" onClick={run} disabled={busy}>
             {busy ? 'Restoring…' : 'Restore'}
-          </button>
+          </Button>
         </>
       }
     >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
+      <p className="modal-copy">
         Bring <b>{player.displayName}</b> back into {seasonName}.
       </p>
-      <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* A real fieldset and legend around the pair, and each row is the
+          shared .check-row, so the label is the 44px target rather than the
+          16px control inside it. */}
+      <fieldset className="choice-group">
         <legend className="sr-only">Restore as</legend>
-        <label className="row" style={{ gap: 8, fontSize: 14 }}>
+        <label className="check-row">
           <input
             type="radio"
             name="restore-status"
@@ -202,7 +230,7 @@ export function RestoreModal({
           />
           As pending
         </label>
-        <label className="row" style={{ gap: 8, fontSize: 14 }}>
+        <label className="check-row">
           <input
             type="radio"
             name="restore-status"
@@ -214,7 +242,7 @@ export function RestoreModal({
         </label>
       </fieldset>
       {failed && (
-        <ActionError onRetry={run} style={{ marginTop: 10 }}>
+        <ActionError onRetry={run} style={{ marginTop: 'var(--space-12)' }}>
           Could not restore the player. Try again.
         </ActionError>
       )}
@@ -250,38 +278,44 @@ export function DeletePlayerModal({ player, onClose }: { player: RegisteredPlaye
       dismissible={!deleting}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={deleting}>
+          <Button onClick={onClose} disabled={deleting}>
             Cancel
-          </button>
-          <button
-            className="btn btn-danger"
-            onClick={remove}
-            disabled={!confirmed || deleting}
-          >
-            <Icon.trash />
+          </Button>
+          <Button variant="danger" icon={Icon.trash} onClick={remove} disabled={!confirmed || deleting}>
             {deleting ? 'Deleting…' : 'Delete permanently'}
-          </button>
+          </Button>
         </>
       }
     >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
+      <p className="modal-copy">
         This permanently removes <b>{player.displayName}</b> and every season registration from the club's records. The
         activity history keeps a neutral Deleted player entry with no name. Any saved board disc that referenced them
         shows a number with no name. This cannot be undone. Withdraw is the normal way to remove a player from a season.
       </p>
-      <p style={{ fontSize: 13.5, lineHeight: 1.5 }}>To confirm, type the player's name below.</p>
-      <div className="field" style={{ marginBottom: 0 }}>
-        <input
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          placeholder={player.displayName}
-          aria-label="Type the player's name to confirm"
-          disabled={deleting}
-          autoFocus
-        />
-      </div>
+      {/* The typed gate, unchanged: deleteConfirmed still decides, and the
+          button is inert until it says so. What changed is the label. The
+          instruction used to be a paragraph with no relationship to the
+          control, whose only accessible name was an aria-label; 2.6 asks for
+          a real <label> bound to the control, which is what the sibling bulk
+          delete dialog already does. */}
+      <TextField
+        id="delete-player-name"
+        className="field-flush"
+        label={
+          <>
+            To confirm, type <b>{player.displayName}</b>
+          </>
+        }
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        placeholder={player.displayName}
+        autoComplete="off"
+        spellCheck={false}
+        disabled={deleting}
+        autoFocus
+      />
       {failed && (
-        <ActionError onRetry={confirmed ? remove : undefined} style={{ marginTop: 10 }}>
+        <ActionError onRetry={confirmed ? remove : undefined} style={{ marginTop: 'var(--space-12)' }}>
           Could not delete the player. Reload and try again.
         </ActionError>
       )}
@@ -326,57 +360,55 @@ export function ImportFromSpondModal({
       dismissible={!busy}
       footer={
         result ? (
-          <button className="btn btn-primary" onClick={onClose}>
+          <Button variant="primary" onClick={onClose}>
             Done
-          </button>
+          </Button>
         ) : (
           <>
-            <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
+            <Button onClick={onClose} disabled={busy}>
               Cancel
-            </button>
-            <button className="btn btn-primary" onClick={run} disabled={busy}>
-              <Icon.rotate />
+            </Button>
+            <Button variant="primary" icon={Icon.rotate} onClick={run} disabled={busy}>
               {busy ? 'Importing…' : 'Import'}
-            </button>
+            </Button>
           </>
         )
       }
     >
       {result ? (
-        <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-          <p style={{ marginTop: 0 }}>
+        <>
+          <p className="modal-copy">
             Imported into {seasonName}: {result.added} added, {result.alreadyPresent} already present, {result.skipped}{' '}
             skipped
             {result.registeredElsewhere > 0 ? `, ${result.registeredElsewhere} already registered elsewhere` : ''}.
           </p>
-          {result.message && (
-            <p className="muted" style={{ fontSize: 13.5 }}>
-              {result.message}
-            </p>
+          {result.message && <p className="modal-copy-sm muted">{result.message}</p>}
+          {/* The run's own warnings. One warning Note carrying every line,
+              rather than a stack of danger coloured muted paragraphs: a
+              warning is not a failure, and 2.14 gives it its own tone. */}
+          {result.warnings.length > 0 && (
+            <Note tone="warning">
+              {result.warnings.map((w, i) => (
+                <p key={i} className="modal-copy-sm">
+                  {w}
+                </p>
+              ))}
+            </Note>
           )}
-          {result.warnings.map((w, i) => (
-            <p key={i} className="muted" style={{ fontSize: 13, color: 'var(--danger)' }}>
-              {w}
-            </p>
-          ))}
-        </div>
+        </>
       ) : (
         <>
-          <p style={{ fontSize: 14.5, lineHeight: 1.55, marginTop: 0 }}>
+          <p className="modal-copy">
             This brings over player names from the mapped Spond group <b>{mapping.name}</b> into {seasonName} for{' '}
             <b>{team.name}</b>. Each child's full name is stored. No guardian, contact or other Spond data is imported.
             New players land as Pending.
           </p>
-          <p className="muted" style={{ fontSize: 13.5 }}>
+          <p className="modal-copy-sm muted">
             Players already registered in {seasonName} are left as they are, wherever they sit, so importing again adds
             no duplicates. A child Spond has moved to this team is reported rather than imported, so no second record is
             created for them: change who they play for on the Registered players page.
           </p>
-          {importer.isError && (
-            <p role="alert" className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
-              Nothing was imported. {importer.error.message}
-            </p>
-          )}
+          {importer.isError && <ActionError>Nothing was imported. {importer.error.message}</ActionError>}
         </>
       )}
       {/* A polite live region announces the busy state and the outcome, so a

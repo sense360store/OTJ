@@ -55,6 +55,7 @@ import { useClubPlayerIdentities, useImportPlayers } from '../lib/queries'
 import { useGuardedSubmit } from '../hooks/useGuardedSubmit'
 import { Icon } from './icons'
 import { ActionError, Chip, Modal } from './ui'
+import { Button } from './primitives'
 
 // One preview row: the class pill (and a Warning pill when a non-invalid row
 // carries warnings), the player name from the file, the detail line, and, for a
@@ -97,24 +98,27 @@ export function PreviewRow({
         ))}
       {row.class === 'needs_choice' && onChoose && (
         <div className="ip-choice" role="group" aria-label={`Resolve row ${row.rowNumber}`}>
-          <button
-            type="button"
-            className={'btn btn-sm' + (choice === 'skip' ? ' btn-primary' : ' btn-ghost')}
+          {/* Two pressed-state buttons rather than a chip pair: they run an
+              action on this row rather than filtering a list. aria-pressed is
+              what carries the choice, so it is never the fill alone. */}
+          <Button
+            variant={choice === 'skip' ? 'primary' : 'ghost'}
+            size="sm"
             aria-pressed={choice === 'skip'}
             disabled={disabled}
             onClick={() => onChoose(row.rowNumber, 'skip')}
           >
             Skip
-          </button>
-          <button
-            type="button"
-            className={'btn btn-sm' + (choice === 'new' ? ' btn-primary' : ' btn-ghost')}
+          </Button>
+          <Button
+            variant={choice === 'new' ? 'primary' : 'ghost'}
+            size="sm"
             aria-pressed={choice === 'new'}
             disabled={disabled}
             onClick={() => onChoose(row.rowNumber, 'new')}
           >
             Import as new
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -133,22 +137,16 @@ export type Outcome =
 // from safe aggregate counts and a batch reference only, never a name or a row.
 export function ImportOutcomeBody({ outcome, seasonName }: { outcome: Outcome; seasonName: string }) {
   if (outcome.kind === 'failure') {
-    return <ActionError style={{ marginTop: 8 }}>Nothing was imported. {outcome.reason}</ActionError>
+    return <ActionError style={{ marginTop: 'var(--space-8)' }}>Nothing was imported. {outcome.reason}</ActionError>
   }
   return (
     <div className="ip-outcome">
       <div className="ip-outcome-icon ok" aria-hidden="true">
         <Icon.check />
       </div>
-      <p style={{ fontSize: 15, fontWeight: 700, margin: '8px 0 4px' }}>
-        {importOutcomeSentence(outcome.counts, seasonName)}
-      </p>
-      {outcome.warnings > 0 && (
-        <p className="muted" style={{ fontSize: 13, margin: '0 0 4px' }}>
-          {outcome.warnings} of these carried warnings.
-        </p>
-      )}
-      <p className="muted mono" style={{ fontSize: 12.5, margin: '4px 0 0' }}>
+      <p className="ip-outcome-line">{importOutcomeSentence(outcome.counts, seasonName)}</p>
+      {outcome.warnings > 0 && <p className="ip-outcome-note">{outcome.warnings} of these carried warnings.</p>}
+      <p className="mono ip-outcome-ref">
         {batchReference(outcome.batchId)}
         {outcome.settledAt ? `, ${new Date(outcome.settledAt).toLocaleString()}` : ''}
       </p>
@@ -379,22 +377,47 @@ export function ImportPlayersModal({
           (outcome.warnings > 0 ? ` ${outcome.warnings} carried warnings.` : '')
         : `Nothing was imported. ${outcome.reason}`
     return (
-      <Modal title="Import players" sub={`Into ${season.name}`} onClose={onClose}>
+      <Modal
+        title="Import players"
+        sub={`Into ${season.name}`}
+        onClose={onClose}
+        footer={
+          <Button variant="primary" autoFocus onClick={onClose}>
+            Done
+          </Button>
+        }
+      >
         <div aria-live="polite" className="sr-only">
           {outcomeMsg}
         </div>
         <ImportOutcomeBody outcome={outcome} seasonName={season.name} />
-        <div className="modal-foot" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
-          <button type="button" className="btn btn-primary" autoFocus onClick={onClose}>
-            Done
-          </button>
-        </div>
       </Modal>
     )
   }
 
   return (
-    <Modal title="Import players" sub={`Into ${season.name}`} onClose={cancel} wide dismissible={!submitting}>
+    <Modal
+      title="Import players"
+      sub={`Into ${season.name}`}
+      onClose={cancel}
+      wide
+      dismissible={!submitting}
+      // The actions moved into the dialog's own footer. They used to be a
+      // .modal-foot rendered INSIDE the scrolling body, so on a phone, where
+      // 2.13 makes a form dialog a bottom sheet, Cancel and Import scrolled
+      // away under a preview of up to five hundred rows. The footer is the
+      // one part of the sheet that stays above the keyboard.
+      footer={
+        <>
+          <Button onClick={cancel} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={confirm} disabled={!confirmEnabled}>
+            {submitting ? 'Importing…' : `Import ${actionable} row${actionable === 1 ? '' : 's'}`}
+          </Button>
+        </>
+      }
+    >
       {/* Two polite live regions: the parse/preview lifecycle (derived) and a
           transient action announcement (the report download). */}
       <div aria-live="polite" className="sr-only">
@@ -433,84 +456,65 @@ export function ImportPlayersModal({
             e.target.value = ''
           }}
         />
-        <Icon.upload style={{ width: 26, height: 26, color: 'var(--slate-2)' }} />
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => inputRef.current?.click()}
-          disabled={parsing || submitting}
-        >
+        <Icon.upload />
+        <Button variant="primary" onClick={() => inputRef.current?.click()} disabled={parsing || submitting}>
           Choose file
-        </button>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Choose a CSV or XLSX file. Nothing is written until you confirm.</div>
-        <div className="muted" style={{ fontSize: 12.5 }}>The file is read on this device. It is never uploaded or stored.</div>
-        <div className="muted" style={{ fontSize: 12.5 }}>Up to 500 rows. CSV up to 1 MB, XLSX up to 2 MB.</div>
-        {fileName && !parsing && (
-          <div className="muted" style={{ fontSize: 12.5 }}>
-            Selected: {fileName}
-          </div>
-        )}
-        <div className="row" style={{ gap: 8, marginTop: 4 }}>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadTemplate('csv')} disabled={submitting}>
+        </Button>
+        <div className="ip-dropzone-lede">Choose a CSV or XLSX file. Nothing is written until you confirm.</div>
+        <div className="ip-dropzone-note">The file is read on this device. It is never uploaded or stored.</div>
+        <div className="ip-dropzone-note">Up to 500 rows. CSV up to 1 MB, XLSX up to 2 MB.</div>
+        {fileName && !parsing && <div className="ip-dropzone-note">Selected: {fileName}</div>}
+        <div className="ip-dropzone-acts">
+          <Button size="sm" onClick={() => downloadTemplate('csv')} disabled={submitting}>
             Download template (CSV)
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadTemplate('xlsx')} disabled={submitting}>
+          </Button>
+          <Button size="sm" onClick={() => downloadTemplate('xlsx')} disabled={submitting}>
             XLSX
-          </button>
+          </Button>
         </div>
       </div>
 
       {parsing && (
-        <p className="muted" role="status" style={{ fontSize: 13.5, marginTop: 12 }}>
+        <p className="ip-status" role="status">
           Reading the file…
         </p>
       )}
 
-      {parseError && <ActionError style={{ marginTop: 12 }}>{parseError}</ActionError>}
+      {parseError && <ActionError style={{ marginTop: 'var(--space-12)' }}>{parseError}</ActionError>}
 
-      {sheet && !plan && identitiesPending && (
-        <p className="muted" style={{ fontSize: 13.5, marginTop: 12 }}>
-          Checking against the current register…
-        </p>
-      )}
+      {sheet && !plan && identitiesPending && <p className="ip-status">Checking against the current register…</p>}
 
       {sheet && !plan && !identitiesPending && identitiesError && (
-        <ActionError style={{ marginTop: 12 }}>
+        <ActionError style={{ marginTop: 'var(--space-12)' }}>
           Could not check the file against the current register. Close this and try again.
         </ActionError>
       )}
 
       {/* Stage 1: preview. */}
       {plan && summary && (
-        <div style={{ marginTop: 14 }}>
-          <p style={{ fontSize: 14, fontWeight: 700, margin: '0 0 4px' }}>{summarySentence(summary)}</p>
-          {summary.warnings > 0 && (
-            <p className="muted" style={{ fontSize: 13, margin: '0 0 2px' }}>
-              {summary.warnings} of these carry warnings.
-            </p>
-          )}
+        <div className="ip-preview">
+          <p className="ip-summary">{summarySentence(summary)}</p>
+          {summary.warnings > 0 && <p className="ip-summary-note">{summary.warnings} of these carry warnings.</p>}
           {summary.unknownTeams > 0 && (
-            <p className="muted" style={{ fontSize: 13, margin: '0 0 2px' }}>
+            <p className="ip-summary-note">
               {summary.unknownTeams} row{summary.unknownTeams === 1 ? '' : 's'} name a team that does not exist yet.
             </p>
           )}
           {summary.unassignedRows > 0 && (
-            <p className="muted" style={{ fontSize: 13, margin: '0 0 2px' }}>
+            <p className="ip-summary-note">
               {summary.unassignedRows} row{summary.unassignedRows === 1 ? '' : 's'} have no team and will be Unassigned.
             </p>
           )}
           {plan.blankRows > 0 && (
-            <p className="muted" style={{ fontSize: 13, margin: '0 0 2px' }}>
+            <p className="ip-summary-note">
               {plan.blankRows} blank row{plan.blankRows === 1 ? '' : 's'} skipped.
             </p>
           )}
           {plan.ignoredHeaders.length > 0 && (
-            <p className="muted" style={{ fontSize: 13, margin: '0 0 2px' }}>
-              Unknown columns ignored: {plan.ignoredHeaders.join(', ')}.
-            </p>
+            <p className="ip-summary-note">Unknown columns ignored: {plan.ignoredHeaders.join(', ')}.</p>
           )}
 
-          <div className="row wrap" style={{ gap: 6, margin: '10px 0' }} role="group" aria-label="Filter preview rows">
+          <div className="ip-filters" role="group" aria-label="Filter preview rows">
             {FILTER_CHIPS.map((c) => (
               <Chip key={c.key} on={filter === c.key} onClick={() => setFilter(c.key)}>
                 {c.label} {chipCount(summary, c.key)}
@@ -520,9 +524,7 @@ export function ImportPlayersModal({
 
           <div className="ip-list">
             {visibleRows.length === 0 ? (
-              <p className="muted" style={{ fontSize: 13, padding: '10px 0' }}>
-                No rows in this category.
-              </p>
+              <p className="ip-empty">No rows in this category.</p>
             ) : (
               visibleRows.map((row) => (
                 <PreviewRow
@@ -537,45 +539,34 @@ export function ImportPlayersModal({
           </div>
 
           {canReport && (
-            <div style={{ marginTop: 12 }}>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={downloadReport} disabled={submitting}>
-                <Icon.download />
+            <div className="ip-report">
+              <Button size="sm" icon={Icon.download} onClick={downloadReport} disabled={submitting}>
                 Download rejected and warning rows (CSV)
-              </button>
-              <p className="muted" style={{ fontSize: 12.5, margin: '6px 0 0' }}>
-                The report contains the player names from your file so you can correct them. It stays on this device.
-              </p>
+              </Button>
+              <p>The report contains the player names from your file so you can correct them. It stays on this device.</p>
             </div>
           )}
 
           {/* The pending progress sentence: the modal cannot be closed while the
               confirm is in flight (section 7). */}
           {submitting && (
-            <p role="status" style={{ fontSize: 13.5, fontWeight: 700, marginTop: 12 }}>
+            <p className="ip-progress" role="status">
               Importing. Do not close this window.
             </p>
           )}
           {/* A transport or unexpected error is retryable: the batch id makes a
               retry idempotent, so the same actionable rows commit at most once. */}
           {failed && !submitting && (
-            <ActionError style={{ marginTop: 12 }} onRetry={confirm}>
+            <ActionError style={{ marginTop: 'var(--space-12)' }} onRetry={confirm}>
               Could not reach the server to import. Check your connection and try again.
             </ActionError>
           )}
         </div>
       )}
 
-      <div className="modal-foot" style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
-        <button type="button" className="btn btn-ghost" onClick={cancel} disabled={submitting}>
-          Cancel
-        </button>
-        <button type="button" className="btn btn-primary" onClick={confirm} disabled={!confirmEnabled}>
-          {submitting ? 'Importing…' : `Import ${actionable} row${actionable === 1 ? '' : 's'}`}
-        </button>
-      </div>
-      <p className="muted" style={{ fontSize: 12, margin: '6px 0 0', textAlign: 'right' }}>
-        Cancelling is always safe and discards everything: selecting a file never writes.
-      </p>
+      {/* The reassurance about Cancel stays in the body, beside the flow it
+          describes, now that the actions themselves are in the footer. */}
+      <p className="ip-foot-note">Cancelling is always safe and discards everything: selecting a file never writes.</p>
     </Modal>
   )
 }

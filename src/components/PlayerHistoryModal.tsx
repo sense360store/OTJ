@@ -5,11 +5,16 @@
 // name: each entry is a time, the acting adult's name (a snapshot, or a neutral
 // label once that adult is removed), and a plain-language description of what
 // changed with team names resolved by id.
+//
+// Its three non-list states are the shared ones now: a labelled Loading rather
+// than a grey "Loading…", an ErrorNote rather than a danger coloured paragraph,
+// and the empty case stated in one muted sentence. 2.14 asks a loading and an
+// error state not to look alike, which was exactly what these two did.
 import { usePlayerHistory } from '../lib/queries'
 import { describeHistoryEntry } from '../lib/playersView'
 import { fmtHistoryTime, fmtRegDate } from '../lib/playersFormat'
 import type { Team } from '../lib/data'
-import { Modal } from './ui'
+import { ErrorNote, Loading, Modal } from './ui'
 
 // Opened by id and current display name so both the Registered players page and
 // the club wide Activity page can drive it: the page passes the stable player id
@@ -34,27 +39,19 @@ export function PlayerHistoryModal({
   return (
     <Modal title="History" sub={displayName} onClose={onClose}>
       {isLoading ? (
-        <p className="muted" style={{ fontSize: 14 }}>
-          Loading…
-        </p>
+        <Loading />
       ) : isError ? (
-        <p role="alert" className="muted" style={{ fontSize: 14, color: 'var(--danger)' }}>
-          Could not load the history. Refresh to try again.
-        </p>
+        <ErrorNote>Could not load the history. Refresh to try again.</ErrorNote>
       ) : entries.length === 0 ? (
-        <p className="muted" style={{ fontSize: 14 }}>
-          No changes recorded yet.
-        </p>
+        <p className="modal-copy muted">No changes recorded yet.</p>
       ) : (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ul className="history-list">
           {entries.map((e) => (
-            <li key={e.id} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <span className="mono muted" style={{ fontSize: 12, minWidth: 96, flex: '0 0 auto', paddingTop: 1 }}>
-                {fmtHistoryTime(e.occurredAt)}
-              </span>
-              <span style={{ flex: 1, fontSize: 13.5, lineHeight: 1.5 }}>
+            <li key={e.id} className="history-item">
+              <span className="mono history-time">{fmtHistoryTime(e.occurredAt)}</span>
+              <span className="history-what">
                 <b>{e.actorName ?? 'System'}</b>
-                <span style={{ color: 'var(--slate)' }}> · </span>
+                <span className="history-sep"> · </span>
                 {describeHistoryEntry(e, { teamName, formatDate: fmtRegDate })}
               </span>
             </li>

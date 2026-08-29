@@ -108,12 +108,22 @@ Players is deliberately in this wave only after #191, so bulk selection, depende
 
 **Acceptance.** Every surface covers normal, loading, empty, error, read-only/permission-limited and narrow-phone states where those states are reachable. Destructive flows remain unmistakably destructive and preserve their existing confirmation semantics.
 
-#### Registered Players: the next slice
+#### Registered Players: complete
 
-Registered Players was adopted in two passes, the surface itself and then its page header's action hierarchy. One piece of it is deliberately outstanding and is the next small slice on this route, not a defect in what shipped:
+Registered Players was adopted in three passes: the surface itself, then its page header's action hierarchy, then the six dialog files and the row overflow's item height. Every state the Design Read's Part 4 names for this screen is covered.
 
-- **The six remaining dialog files.** `PlayerFormModal` (add and edit), `PlayerActionModals` (move team, withdraw, restore, delete permanently and import from Spond, five dialogs in one file), `PlayerHistoryModal`, `ExportConfirmModal`, `ImportPlayersModal` and `RenewSeasonModal` were left on their own local treatment. Six files, eleven dialogs; the count that matters for the slice is the files. They are not in the Design Read's Part 4 acceptance list, they carry 56 inline font sizes between them, and adopting them alongside the surface would have made one reviewable PR into two unreviewable ones. The bulk delete dialog is already adopted, so the pattern to follow is written down.
-- **The row overflow menu's item height.** `.menu-list button` is roughly 37px against the product's own `--hit: 44px`. The page header's overflow sets 44px on its own items; the row menus keep the height they shipped with, because changing them is a visual change to a surface this slice was not asked to touch.
+One screen a coach reaches from it is deliberately not in that: `/players/spond-links` is its own route with its own stylesheet, it is absent from Part 4's acceptance list, and nothing here touched it. It belongs to whichever slice reaches the Spond admin surfaces.
+
+The third pass closed both items the second one deliberately deferred:
+
+- **The six remaining dialog files.** `PlayerFormModal` (add and edit), `PlayerActionModals` (move team, withdraw, restore, delete permanently and import from Spond, five dialogs in one file), `PlayerHistoryModal`, `ExportConfirmModal`, `ImportPlayersModal` and `RenewSeasonModal` were left on their own local treatment. Six files, eleven dialogs; the count that matters for the slice is the files. They are not in the Design Read's Part 4 acceptance list, they carried 56 inline font sizes between them, and adopting them alongside the surface would have made one reviewable PR into two unreviewable ones. The bulk delete dialog was already adopted, so the pattern to follow was written down. They now use `Button`, the field primitives, `Note`, `Badge` and one shared dialog prose vocabulary; the invariant test's ownership list covers all six, so a size cannot come back.
+- **The row overflow menu's item height.** `.menu-list button` was roughly 37px against the product's own `--hit: 44px`. The 44px minimum is the shared `.menu-list` rule now, so the row menus and the page header's overflow take it from one place and cannot drift apart again. It is a real `min-height` rather than a pseudo-element, because the items stack with a 2px gap and an overhanging hit box would reach into a neighbouring destructive action.
+
+Three things the third pass found and fixed, none of them presentation alone:
+
+- The Renew preview said Eligible in `#16a34a` and Withdrawn in `#ef8e1b`, which are `--c-physical` and `--c-social` written out as literals. That is exactly the borrowing 2.2 forbids, and no scan of `var(--c-*)` could see it. They are `Badge` tones now, and a new invariant test hunts the quoted hexes.
+- The import preview's Already present pill was `--slate-2` under a white label at 3.80:1, which is the token VISUAL-01 demoted to a non text role. Every pill fill is now measured against its own label in both themes.
+- The Import players dialog rendered its Cancel and Import buttons inside the scrolling body rather than in the dialog's footer, so on a phone, where 2.13 makes a form dialog a bottom sheet, they scrolled away under a preview of up to five hundred rows.
 
 Two things about the header hierarchy that are decisions rather than omissions, so a later slice does not undo them by accident. The overflow applies at every width rather than below a breakpoint, because measurement showed the action row fits on one line at no width the product is used at and 901px, where the sidebar returns and the content column drops to 589px, was the worst case on the page; the reasoning and the numbers are in `src/lib/playersView.ts` beside the partition. And the popup is a disclosure rather than an ARIA menu, which is the same deliberate deviation from 2.13 the row menus already carry and for the same stated reason.
 

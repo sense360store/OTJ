@@ -27,11 +27,19 @@ import {
 } from '../lib/renewPlan'
 import type { Season, Team } from '../lib/data'
 import { ActionError, ErrorNote, Loading, Modal } from './ui'
+import { Badge, Button, Note, SelectField } from './primitives'
+import type { BadgeTone } from './primitives'
 
-const CLASS_LABEL: Record<RenewRow['klass'], { word: string; dot: string }> = {
-  eligible: { word: 'Eligible', dot: '#16a34a' },
-  needs_decision: { word: 'Withdrawn', dot: '#ef8e1b' },
-  already_in_target: { word: 'Already in target', dot: '#94a3b8' },
+// The class word and the tone that carries it. The tone is a SEMANTIC role
+// now: these three were hardcoded #16a34a, #ef8e1b and #94a3b8, which are the
+// four corners physical and social hues standing in for success and warning.
+// 2.2 forbids exactly that, and a literal hex is invisible to the invariant
+// test's var(--c-*) scan, so it survived. Badge renders the dot and the word
+// together, so the class is never colour alone either.
+const CLASS_LABEL: Record<RenewRow['klass'], { word: string; tone: BadgeTone }> = {
+  eligible: { word: 'Eligible', tone: 'success' },
+  needs_decision: { word: 'Withdrawn', tone: 'warning' },
+  already_in_target: { word: 'Already in target', tone: 'neutral' },
 }
 
 function flip(set: Set<string>, id: string): Set<string> {
@@ -42,9 +50,11 @@ function flip(set: Set<string>, id: string): Set<string> {
 }
 
 // One presentational row of the preview: a checkbox (disabled and unchecked for
-// an already-in-target player), the class word (never colour alone, a dot plus
-// the word), the name, and a muted detail line stating the team and shirt that
-// will carry forward. Exported and pure for the static render test.
+// an already-in-target player), the class word as a Badge (never colour alone,
+// a dot plus the word), the name, and a muted detail line stating the team and
+// shirt that will carry forward. The row is a label wrapping its checkbox, so
+// the whole 44px row is the target. Exported and pure for the static render
+// test.
 export function RenewRowView({
   row,
   teamName,
@@ -65,29 +75,20 @@ export function RenewRowView({
       ? 'Already registered in the target season.'
       : `Carries forward: ${teamName}${row.shirtNumber != null ? `, shirt ${row.shirtNumber}` : ''}. Renews as Pending.`
   return (
-    <label
-      className={'renew-row' + (selectable ? '' : ' is-muted')}
-      style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 4px' }}
-    >
+    <label className={'renew-row' + (selectable ? '' : ' is-muted')}>
       <input
         type="checkbox"
         checked={selectable && checked}
         disabled={!selectable || disabled}
         onChange={onToggle}
         aria-label={`Renew ${row.displayName}`}
-        style={{ marginTop: 3 }}
       />
-      <span style={{ flex: 1 }}>
-        <span className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <span className="status-badge">
-            <span className="dot" style={{ background: meta.dot }} />
-            {meta.word}
-          </span>
-          <b style={{ fontSize: 14 }}>{row.displayName}</b>
+      <span className="renew-row-main">
+        <span className="renew-row-head">
+          <Badge tone={meta.tone}>{meta.word}</Badge>
+          <b className="renew-row-name">{row.displayName}</b>
         </span>
-        <span className="muted" style={{ display: 'block', fontSize: 12.5, marginTop: 2 }}>
-          {detail}
-        </span>
+        <span className="renew-row-detail">{detail}</span>
       </span>
     </label>
   )
@@ -96,15 +97,15 @@ export function RenewRowView({
 // The outcome screen body: safe server derived counts only, never a name.
 export function RenewOutcomeBody({ outcome, targetName }: { outcome: RenewOutcome; targetName: string }) {
   return (
-    <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-      <p style={{ marginTop: 0 }}>
+    <>
+      <p className="modal-copy">
         Renewed into {targetName}: {outcome.renewed} renewed, {outcome.alreadyInTarget} already in target,{' '}
         {outcome.skipped} skipped.
       </p>
-      <p className="muted" style={{ fontSize: 13 }}>
+      <p className="modal-copy-sm muted">
         New registrations are Pending, with the team and shirt number carried forward and no registered date.
       </p>
-    </div>
+    </>
   )
 }
 
@@ -221,17 +222,17 @@ export function RenewSeasonModal({
       dismissible={!busy}
       footer={
         outcome ? (
-          <button className="btn btn-primary" onClick={onClose}>
+          <Button variant="primary" onClick={onClose}>
             Done
-          </button>
+          </Button>
         ) : (
           <>
-            <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
+            <Button onClick={onClose} disabled={busy}>
               Cancel
-            </button>
-            <button className="btn btn-primary" onClick={run} disabled={!canConfirm}>
+            </Button>
+            <Button variant="primary" onClick={run} disabled={!canConfirm}>
               {busy ? 'Renewing…' : `Renew ${counts.selected} player${counts.selected === 1 ? '' : 's'}`}
-            </button>
+            </Button>
           </>
         )
       }
@@ -240,65 +241,60 @@ export function RenewSeasonModal({
         <RenewOutcomeBody outcome={outcome} targetName={targetName} />
       ) : (
         <>
-          <div className="row" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-            <div className="field" style={{ marginBottom: 0, minWidth: 150, flex: 1 }}>
-              <label htmlFor="renew-source">Renew from</label>
-              <select
-                id="renew-source"
-                className="select"
-                value={sourceSeasonId}
-                disabled={busy}
-                onChange={(e) => onChooseSource(e.target.value)}
-              >
-                {sourceOptions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                    {s.isCurrent ? ' (current)' : s.archivedAt ? ' (archived)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field" style={{ marginBottom: 0, minWidth: 150, flex: 1 }}>
-              <label htmlFor="renew-target">Into</label>
-              <select
-                id="renew-target"
-                className="select"
-                value={targetSeasonId}
-                disabled={busy}
-                onChange={(e) => onChooseTarget(e.target.value)}
-              >
-                {targetOptions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                    {s.isCurrent ? ' (current)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="renew-seasons">
+            <SelectField
+              id="renew-source"
+              label="Renew from"
+              value={sourceSeasonId}
+              disabled={busy}
+              onChange={(e) => onChooseSource(e.target.value)}
+            >
+              {sourceOptions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.isCurrent ? ' (current)' : s.archivedAt ? ' (archived)' : ''}
+                </option>
+              ))}
+            </SelectField>
+            <SelectField
+              id="renew-target"
+              label="Into"
+              value={targetSeasonId}
+              disabled={busy}
+              onChange={(e) => onChooseTarget(e.target.value)}
+            >
+              {targetOptions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.isCurrent ? ' (current)' : ''}
+                </option>
+              ))}
+            </SelectField>
           </div>
 
           {sourceSeasonId === targetSeasonId ? (
-            <p role="alert" className="muted" style={{ fontSize: 13.5, color: 'var(--danger)' }}>
+            // A refusal that blocks the action, so it takes the danger tone
+            // and announces itself, rather than being a red tinted muted
+            // paragraph indistinguishable from the empty case below it.
+            <Note tone="danger" role="alert">
               Choose two different seasons to renew between.
-            </p>
+            </Note>
           ) : loadingRows ? (
             <Loading />
           ) : rowsError ? (
             <ErrorNote />
           ) : rows.length === 0 ? (
-            <p className="muted" style={{ fontSize: 14 }}>
-              {sourceName} has no registrations to renew.
-            </p>
+            <p className="modal-copy muted">{sourceName} has no registrations to renew.</p>
           ) : (
             <>
-              <p style={{ fontSize: 13.5, lineHeight: 1.5, marginTop: 0 }}>
+              <p className="renew-lede">
                 {counts.eligible} eligible, {counts.needsDecision} withdrawn (tick to include), {counts.alreadyInTarget}{' '}
                 already in {targetName}. {counts.selected} selected.
               </p>
               <div
+                className="renew-list"
                 role="group"
                 aria-label={`Players to renew from ${sourceName} into ${targetName}`}
-                style={{ maxHeight: 320, overflowY: 'auto', borderTop: '1px solid var(--line)' }}
               >
                 {rows.map((r) => (
                   <RenewRowView
@@ -315,7 +311,7 @@ export function RenewSeasonModal({
           )}
 
           {failed && (
-            <ActionError onRetry={canConfirm ? run : undefined} style={{ marginTop: 10 }}>
+            <ActionError onRetry={canConfirm ? run : undefined} style={{ marginTop: 'var(--space-12)' }}>
               Nothing was renewed. {renew.error?.message ?? 'Try again.'}
             </ActionError>
           )}

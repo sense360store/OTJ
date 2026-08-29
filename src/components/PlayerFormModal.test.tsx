@@ -56,12 +56,24 @@ describe('shared field styles keep checkboxes off the text-input sizing rule', (
     expect(sizing?.[0]).toContain(':not([type="radio"])')
   })
 
-  it('sizes the check-row checkbox as a standard control, not full width', () => {
-    const rule = styles.match(/\.check-row input\[type="checkbox"\] \{[^}]*\}/)
+  it('sizes the check-row checkbox and radio as standard controls, not full width', () => {
+    // The rule covers the radio too, because VISUAL-02 moved the export and
+    // restore dialogs' inline styled radio rows onto this same class rather
+    // than inventing a second one for them.
+    const rule = styles.match(/\.check-row input\[type="checkbox"\], \.check-row input\[type="radio"\] \{[^}]*\}/)
     expect(rule).not.toBeNull()
     expect(rule?.[0]).toContain('width: 16px')
     expect(rule?.[0]).toContain('height: 16px')
     expect(rule?.[0]).not.toContain('width: 100%')
+  })
+
+  it('gives the row itself the 44px hit area, since the label is the target', () => {
+    // The visible control stays 16px; the LABEL wrapping it is what a thumb
+    // lands on, so 2.5's minimum binds the row rather than the box. Without
+    // it the whole row was a 21px target.
+    const rule = styles.match(/\.check-row, \.field \.check-row \{[^}]*\}/)
+    expect(rule).not.toBeNull()
+    expect(rule?.[0]).toContain('min-height: var(--hit)')
   })
 
   it('keeps text inputs sized (no regression to other modals and fields)', () => {

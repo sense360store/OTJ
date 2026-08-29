@@ -24,6 +24,7 @@ import { downloadPlayersExport, type ExportFilterPayload, type ExportPlayerRow }
 import { downloadTemplate } from '../lib/playersTemplate'
 import { Icon } from './icons'
 import { ActionError, Modal } from './ui'
+import { Button, Note } from './primitives'
 
 type ExportFormat = 'csv' | 'xlsx'
 type ExportScope = 'filtered' | 'all'
@@ -113,19 +114,21 @@ export function ExportConfirmModal({
       dismissible={!generating}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={generating}>
+          <Button onClick={onClose} disabled={generating}>
             Cancel
-          </button>
-          <button className="btn btn-primary" onClick={run} disabled={generating}>
-            <Icon.download />
+          </Button>
+          <Button variant="primary" icon={Icon.download} onClick={run} disabled={generating}>
             {generating ? 'Preparing…' : `Download ${format.toUpperCase()}`}
-          </button>
+          </Button>
         </>
       }
     >
-      <fieldset className="export-choice" style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
-        <legend style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>What to export</legend>
-        <label className="row" style={{ gap: 8, fontSize: 14, marginBottom: 6 }}>
+      {/* Two real fieldsets with real legends. Each row is the shared
+          .check-row, so the label is the 44px target rather than the 16px
+          radio inside it, and neither the group nor its rows sets a size. */}
+      <fieldset className="choice-group">
+        <legend>What to export</legend>
+        <label className="check-row">
           <input
             type="radio"
             name="export-scope"
@@ -135,7 +138,7 @@ export function ExportConfirmModal({
           />
           This list ({filteredCount} player{filteredCount !== 1 ? 's' : ''})
         </label>
-        <label className="row" style={{ gap: 8, fontSize: 14 }}>
+        <label className="check-row">
           <input
             type="radio"
             name="export-scope"
@@ -147,9 +150,9 @@ export function ExportConfirmModal({
         </label>
       </fieldset>
 
-      <fieldset className="export-choice" style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
-        <legend style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>Format</legend>
-        <label className="row" style={{ gap: 8, fontSize: 14, marginBottom: 6 }}>
+      <fieldset className="choice-group">
+        <legend>Format</legend>
+        <label className="check-row">
           <input
             type="radio"
             name="export-format"
@@ -159,7 +162,7 @@ export function ExportConfirmModal({
           />
           CSV (opens everywhere)
         </label>
-        <label className="row" style={{ gap: 8, fontSize: 14 }}>
+        <label className="check-row">
           <input
             type="radio"
             name="export-format"
@@ -171,50 +174,41 @@ export function ExportConfirmModal({
         </label>
       </fieldset>
 
-      <p style={{ fontSize: 14, lineHeight: 1.55, margin: '0 0 4px' }}>
+      <p className="modal-copy">
         {shownCount} player{shownCount !== 1 ? 's' : ''} from <b>{season.name}</b> will be exported.
       </p>
       {scope === 'filtered' ? (
-        <p className="muted" style={{ fontSize: 13, margin: '0 0 12px' }}>
+        <p className="modal-copy-sm muted">
           Filters: {teamLabel}, {STATUS_FILTER_LABEL[filters.status]}
           {searchApplied ? ', a name search is applied' : ''}.
         </p>
       ) : (
-        <p className="muted" style={{ fontSize: 13, margin: '0 0 12px' }}>
+        <p className="modal-copy-sm muted">
           The current filters are ignored; every player in {season.name} you can read is included.
         </p>
       )}
 
-      <p
-        role="note"
-        style={{
-          fontSize: 13,
-          lineHeight: 1.5,
-          background: 'var(--gold-soft)',
-          borderRadius: 11,
-          padding: '9px 12px',
-          margin: '0 0 12px',
-        }}
-      >
-        Store and share this file securely. It names children.
-      </p>
+      {/* The handling reminder. A warning Note rather than an unflipped
+          --gold-soft panel: --gold-soft is a gold tint now, not the universal
+          note ground, and inherited text on it measured 1.01:1 in the dark
+          theme. The tone is warning because the sentence is a caution about
+          child data, and the icon is a second cue beside the colour. */}
+      <Note tone="warning">Store and share this file securely. It names children.</Note>
 
-      <div style={{ borderTop: '1px solid var(--line)', paddingTop: 10 }}>
-        <p className="muted" style={{ fontSize: 12.5, margin: '0 0 6px' }}>
-          Need a blank template to fill in?
-        </p>
-        <div className="row" style={{ gap: 8 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => downloadTemplate('csv')} disabled={generating}>
+      <div className="modal-split">
+        <p className="modal-copy-sm muted">Need a blank template to fill in?</p>
+        <div className="row">
+          <Button size="sm" onClick={() => downloadTemplate('csv')} disabled={generating}>
             Template (CSV)
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => downloadTemplate('xlsx')} disabled={generating}>
+          </Button>
+          <Button size="sm" onClick={() => downloadTemplate('xlsx')} disabled={generating}>
             Template (XLSX)
-          </button>
+          </Button>
         </div>
       </div>
 
       {failed && (
-        <ActionError onRetry={run} style={{ marginTop: 12 }}>
+        <ActionError onRetry={run} style={{ marginTop: 'var(--space-12)' }}>
           Could not prepare the export. Try again.
         </ActionError>
       )}

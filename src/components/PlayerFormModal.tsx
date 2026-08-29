@@ -26,7 +26,8 @@ import {
 import type { RegisteredPlayer, RegistrationStatus, Team } from '../lib/data'
 import { Icon } from './icons'
 import { ActionError, Modal } from './ui'
-import { TeamSelect } from './PlayerActionModals'
+import { Button, SelectField, TextField } from './primitives'
+import { TeamField } from './PlayerActionModals'
 
 // The per-attempt payload, computed from the live fields at click time and
 // passed through the guard so perform never reads a stale closure.
@@ -180,111 +181,94 @@ export function PlayerFormModal({
       dismissible={!busy}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
+          <Button onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button className="btn btn-primary" onClick={run} disabled={!canSubmit}>
-            <Icon.check />
+          </Button>
+          <Button variant="primary" icon={Icon.check} onClick={run} disabled={!canSubmit}>
             {busy ? 'Saving…' : isEdit ? 'Save' : 'Add player'}
-          </button>
+          </Button>
         </>
       }
     >
-      <div className="field">
-        <label htmlFor="pf-name">Name</label>
-        <input
-          id="pf-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={40}
-          placeholder="Full name"
-          disabled={busy}
-          autoFocus
-        />
-      </div>
+      <TextField
+        id="pf-name"
+        label="Name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        maxLength={40}
+        placeholder="Full name"
+        disabled={busy}
+        autoFocus
+      />
 
       {!isEdit && (
         <>
-          <div className="field">
-            <label htmlFor="pf-team">Team</label>
-            <TeamSelect id="pf-team" value={teamId} teams={teams} onChange={setTeamId} disabled={busy} />
-          </div>
-          <div className="field">
-            <label htmlFor="pf-status">Status</label>
-            <select
-              id="pf-status"
-              className="select"
-              value={status}
-              disabled={busy}
-              onChange={(e) => {
-                const next = e.target.value as 'pending' | 'registered'
-                setStatusChoice(next)
-                // A registration date is a registered-only fact, so leaving
-                // Pending clears any date already entered. Belt and braces with
-                // the field being disabled and the null the submit sends for
-                // Pending.
-                if (next === 'pending') setRegisteredDate('')
-              }}
-            >
-              <option value="pending">Pending</option>
-              <option value="registered">Registered</option>
-            </select>
-          </div>
+          <TeamField id="pf-team" value={teamId} teams={teams} onChange={setTeamId} disabled={busy} />
+          <SelectField
+            id="pf-status"
+            label="Status"
+            value={status}
+            disabled={busy}
+            onChange={(e) => {
+              const next = e.target.value as 'pending' | 'registered'
+              setStatusChoice(next)
+              // A registration date is a registered-only fact, so leaving
+              // Pending clears any date already entered. Belt and braces with
+              // the field being disabled and the null the submit sends for
+              // Pending.
+              if (next === 'pending') setRegisteredDate('')
+            }}
+          >
+            <option value="pending">Pending</option>
+            <option value="registered">Registered</option>
+          </SelectField>
         </>
       )}
 
-      <div className="field">
-        <label htmlFor="pf-shirt">Shirt number</label>
-        <input
-          id="pf-shirt"
-          value={shirt}
-          onChange={(e) => setShirt(e.target.value)}
-          inputMode="numeric"
-          placeholder="Optional"
-          aria-invalid={shirtInvalid}
-          aria-describedby={shirtInvalid ? 'pf-shirt-error' : undefined}
-          disabled={busy}
-          style={{ maxWidth: 140 }}
-        />
-        {shirtInvalid && (
-          <p
-            id="pf-shirt-error"
-            role="alert"
-            className="muted"
-            style={{ fontSize: 12.5, color: 'var(--danger)', marginTop: 6, marginBottom: 0 }}
-          >
-            Shirt number must be a whole number from 1 to 99.
-          </p>
-        )}
-      </div>
+      {/* The error is the Field primitive's own: it sets the danger border,
+          renders the message beneath the control and wires aria-invalid and
+          aria-describedby together, which is 2.6's rule. It used to be a
+          hand written 12.5px paragraph beside a hand written aria-describedby.
+          The message keeps role="alert" so it is announced the moment the
+          value becomes unparseable rather than only when the field is next
+          read. */}
+      <TextField
+        id="pf-shirt"
+        className="field-narrow"
+        label="Shirt number"
+        value={shirt}
+        onChange={(e) => setShirt(e.target.value)}
+        inputMode="numeric"
+        placeholder="Optional"
+        disabled={busy}
+        error={shirtInvalid ? <span role="alert">Shirt number must be a whole number from 1 to 99.</span> : undefined}
+      />
 
       {isEdit && player?.status === 'pending' && (
         <MarkRegisteredField checked={markRegistered} disabled={busy} onChange={setMarkRegistered} />
       )}
 
       {!isEdit && (
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label htmlFor="pf-date">Registered date</label>
-          <input
-            id="pf-date"
-            type="date"
-            value={registeredDate}
-            onChange={(e) => setRegisteredDate(e.target.value)}
-            // A Pending player carries no registration date; the field is only
-            // live once the status is Registered.
-            disabled={busy || status === 'pending'}
-            style={{ maxWidth: 200 }}
-          />
-          <p className="muted" style={{ fontSize: 12.5, marginTop: 6, marginBottom: 0 }}>
-            {status === 'pending'
+        <TextField
+          id="pf-date"
+          className="field-date field-flush"
+          label="Registered date"
+          type="date"
+          value={registeredDate}
+          onChange={(e) => setRegisteredDate(e.target.value)}
+          // A Pending player carries no registration date; the field is only
+          // live once the status is Registered.
+          disabled={busy || status === 'pending'}
+          hint={
+            status === 'pending'
               ? 'Added automatically when the player is marked registered.'
-              : 'Optional. Leave blank to use today, or set a backdated paper registration date.'}
-          </p>
-        </div>
+              : 'Optional. Leave blank to use today, or set a backdated paper registration date.'
+          }
+        />
       )}
 
       {failed && (
-        <ActionError onRetry={canSubmit ? run : undefined} style={{ marginTop: 12 }}>
+        <ActionError onRetry={canSubmit ? run : undefined} style={{ marginTop: 'var(--space-12)' }}>
           Could not save the change. Try again.
         </ActionError>
       )}
@@ -296,7 +280,8 @@ export function PlayerFormModal({
 // The label wraps the native checkbox so the whole row is clickable and the
 // accessible name comes from the adjacent text, and the check-row class keeps
 // the checkbox at its standard size (the shared .field input text-input sizing
-// is scoped to exclude checkbox and radio, so it never stretches this control).
+// is scoped to exclude checkbox and radio, so it never stretches this control)
+// while giving the label itself the 44px hit area 2.5 asks of every control.
 // Exported so the static-render regression test can pin the markup.
 export function MarkRegisteredField({
   checked,
@@ -308,7 +293,7 @@ export function MarkRegisteredField({
   onChange: (value: boolean) => void
 }) {
   return (
-    <div className="field" style={{ marginBottom: 0 }}>
+    <div className="field field-flush">
       <label className="check-row">
         <input
           type="checkbox"
