@@ -2,19 +2,23 @@
 // here, and none of it reaches the application: nothing under src/ imports
 // this file.
 import { blankSession } from '../../src/lib/data'
+import { ACTIVITY_PAGE_SIZE, activityQueryConditions } from '../../src/lib/activityView'
+import type { ActivityEvent, ActivityFilters } from '../../src/lib/activityView'
 import type {
   Drill,
   MediaItem,
+  Member,
   PlayerHistoryEntry,
   RegisteredPlayer,
   Season,
   Session,
+  Team,
   Template,
 } from '../../src/lib/data'
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
 
-export type CapSet = 'coach' | 'parent' | 'viewer' | 'admin'
+export type CapSet = 'coach' | 'parent' | 'viewer' | 'admin' | 'auditor'
 
 const CAPS: Record<CapSet, string[]> = {
   // A coach with the full club-wide set. players.delete, players.export and
@@ -43,6 +47,13 @@ const CAPS: Record<CapSet, string[]> = {
   // Registered players it is the read only variant: the register renders, and
   // every write affordance and the whole bulk flow are absent.
   viewer: ['players.view'],
+  // audit.view WITHOUT any players.* capability: the two are distinct
+  // boundaries, and this is the set that proves it. On Activity the feed
+  // renders in full and every player reference falls closed to a neutral
+  // "Player" with no history and no deletion claim, because a viewer who
+  // cannot name a child is never told one was deleted. It is a coach set
+  // minus the roster, not a parent, so the shell is a coach's.
+  auditor: ['sessions.create', 'audit.view', 'club.manage', 'teams.manage', 'shares.manage'],
   // seasons.manage on top of the coach set, which is the only way to reach the
   // "Set up the first season" call to action. It DOES add the Admin, Seasons
   // nav item, which is why it is a separate set rather than a widening of
@@ -115,6 +126,21 @@ export type HarnessState =
   // The Spond roster import's reported outcome, including the warning it can
   // carry. Reached by pressing Import, like its in-flight and refused states.
   | 'spondresult'
+  /* ---- Activity (VISUAL-02) --------------------------------------------
+     The club wide audit feed. It reuses `loading`, `empty` and `error`,
+     which mean the same thing on it as on the register, and adds three of
+     its own. */
+  // A long acting adult's name and a long team name, which are the two
+  // variable strings the feed can render. They are a STATE rather than a
+  // widening of the shared teams and profiles, so no existing shot moves.
+  | 'longnames'
+  // The next page never arrives, so pressing Load more leaves the control in
+  // its real in-flight state rather than a drawn one.
+  | 'loadingmore'
+  // The route guard's own answer: the reads all succeed and the CAPABILITY
+  // set is what refuses. Named as a state so the shot claims something a
+  // proof can check.
+  | 'guarded'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -365,3 +391,202 @@ export const SPOND_IMPORT_RESULT = {
 // The spreadsheets the import dialog parses live in tools/visual/dialogs.mjs
 // beside the driver that hands them to the file input, because a Playwright
 // tool is plain JavaScript and cannot import this file.
+
+/* ---- Activity (VISUAL-02) ------------------------------------------
+   The club wide audit feed. Two things matter about these rows.
+
+   They are SAFE FIELDS ONLY, exactly as the real query selects: no
+   metadata, no request id, no name shaped value. The feed is child name
+   free, so an event that concerns a child carries the child's id and
+   nothing else, and the harness resolves that id through the same
+   players.view gated identity map the product uses.
+
+   And they are enough rows to fill a page. The feed pages by a keyset of
+   50, so a fixture set of fewer than 51 rows would never offer Load more
+   and the control could rot unseen. */
+
+const member = (id: string, fullName: string): Member => ({
+  id,
+  fullName,
+  avatar: null,
+  avatarUrl: null,
+  role: 'coach',
+  teamId: null,
+  joined: '2026-07-01',
+  roles: [],
+  teamIds: [],
+  allTeams: false,
+})
+
+// The acting adults the Changed by filter offers. Invented, like every other
+// name here.
+const ACTIVITY_PROFILES: Member[] = [
+  member('coach-me', 'Sam Ashworth'),
+  member('coach-them', 'Priya Raghunathan'),
+  member('coach-3', 'Marguerite Ashby-Fotheringay'),
+]
+
+// The two variable strings the feed can render at any length: the acting
+// adult's name snapshot and a resolved team name. Both belong to the
+// `longnames` state rather than to the shared fixtures, so no existing
+// screenshot moves.
+const LONG_ACTOR = member('coach-long', 'Christabel Fotheringay-Wallington-Smythe')
+const LONG_TEAM: Team = {
+  id: 'team-long',
+  name: 'Ossett Town Juniors Development Squad Under Nines',
+  bibColour: null,
+}
+
+// The hardest realistic entity label: a team name a coach typed with no
+// spaces, so it carries no break opportunity at all. A spaced name breaks by
+// itself and proves nothing about the wrapping rules.
+//
+// Measured rather than assumed: forty two characters at 12px is about 230px,
+// which still fits the 278px card body at 360, so this does not overflow even
+// with the wrapping declarations removed. It is the widest thing a club could
+// really put there, not a proof that those declarations are load bearing; they
+// stay because they are correct, and the check below measures the rendered
+// result rather than the rule.
+const UNBROKEN_TEAM: Team = {
+  id: 'team-unbroken',
+  name: 'OssettTownJuniorsDevelopmentSquadUnderNines',
+  bibColour: null,
+}
+
+export const ACTIVITY_BATCH_ID = 'a1b2c3d4-0000-4000-8000-000000000001'
+const ACTIVITY_DELETE_BATCH_ID = 'a1b2c3d4-0000-4000-8000-000000000002'
+
+// A player id the identity map knows (so the row offers View history) and one
+// it does not (so the row reads "Deleted player"). The map is built from the
+// register above, so player-4 is Aria Bexley-Thornton and the feed must still
+// never say so.
+const LIVE_PLAYER = 'player-4'
+const GONE_PLAYER = 'player-deleted-77'
+
+const at = (n: number): string => new Date(Date.UTC(2026, 7, 28, 19, 40) - n * 37 * 60000).toISOString()
+
+const evt = (n: number, over: Partial<ActivityEvent>): ActivityEvent => ({
+  id: `audit-a-${n}`,
+  occurredAt: at(n),
+  actorId: 'coach-me',
+  actorName: 'Sam Ashworth',
+  action: 'player.created',
+  entityType: 'player',
+  entityId: LIVE_PLAYER,
+  seasonId: CURRENT_SEASON.id,
+  teamId: 'titans',
+  source: 'manual',
+  changedFields: null,
+  safeChanges: null,
+  batchId: null,
+  ...over,
+})
+
+// One of each row shape the renderer has to draw, cycled until the first page
+// is full. Every entity kind, every reference shape (a player with history, a
+// deleted player, a batch deep link, a season, a live team, a deleted team and
+// the neutral labels), an event with no acting adult left to name, and rows
+// carrying a batch id so the per row Batch chip renders.
+const SHAPES: Partial<ActivityEvent>[] = [
+  { action: 'player.withdrawn', changedFields: ['status'], safeChanges: { status: { old: 'registered', new: 'withdrawn' } } },
+  { action: 'player.deleted', entityId: GONE_PLAYER, actorId: 'coach-them', actorName: 'Priya Raghunathan' },
+  // The batch summary and the per identity rows beside it share the batch id,
+  // so a batch deep link shows the run AND what it did. The summary's own
+  // reference is already the batch link, which is why the row level chip is
+  // rendered for everything except these two entity types.
+  { action: 'players.import_completed', entityType: 'import_batch', entityId: ACTIVITY_BATCH_ID, source: 'csv_import', batchId: ACTIVITY_BATCH_ID },
+  { action: 'player.registration_created', source: 'csv_import', batchId: ACTIVITY_BATCH_ID },
+  { action: 'player.team_changed', safeChanges: { team_id: { old: 'trojans', new: 'titans' } }, teamId: 'titans' },
+  { action: 'season.activated', entityType: 'season', entityId: CURRENT_SEASON.id, actorId: null, actorName: null, source: 'system' },
+  { action: 'players.bulk_deleted', entityType: 'delete_batch', entityId: ACTIVITY_DELETE_BATCH_ID, source: 'manual', batchId: ACTIVITY_DELETE_BATCH_ID },
+  { action: 'player.deleted', entityId: GONE_PLAYER, batchId: ACTIVITY_DELETE_BATCH_ID },
+  { action: 'players.exported', entityType: 'export', entityId: 'export-1', source: 'manual' },
+  { action: 'team.updated', entityType: 'team', entityId: 'trojans', actorId: 'coach-3', actorName: 'Marguerite Ashby-Fotheringay' },
+  { action: 'team.deleted', entityType: 'team', entityId: 'team-gone', teamId: null },
+  { action: 'user.role_assigned', entityType: 'user', entityId: 'member-1', changedFields: ['coach'] },
+  { action: 'user.capability_granted', entityType: 'role', entityId: 'role-1', changedFields: ['players.manage'] },
+  { action: 'spond.mapping_created', entityType: 'spond_mapping', entityId: 'sg-1', source: 'edge_function' },
+  { action: 'drill.updated', entityType: 'drill', entityId: 'd1' },
+  { action: 'template.created', entityType: 'template', entityId: 't1' },
+  { action: 'programme.deleted', entityType: 'programme', entityId: 'pr1' },
+  { action: 'session.team_added', entityType: 'session', entityId: 's-1', actorId: 'coach-them', actorName: 'Priya Raghunathan' },
+  { action: 'venue.updated', entityType: 'venue', entityId: 'v1', source: 'database_trigger' },
+  { action: 'players.spond_imported', entityType: 'import_batch', entityId: ACTIVITY_BATCH_ID, source: 'spond_import' },
+  { action: 'player.updated', changedFields: ['display_name'], safeChanges: { display_name: { old: 'x', new: 'y' } } as never },
+  { action: 'player.renewed', source: 'renewal', changedFields: ['season_id'] },
+]
+
+// Sixty two rows: one full page of fifty, then twelve, so Load more is offered
+// once and the feed then says it is exhausted.
+const ACTIVITY_EVENTS: ActivityEvent[] = Array.from({ length: 62 }, (_, i) =>
+  evt(i, SHAPES[i % SHAPES.length]),
+)
+
+// The `longnames` rows, in front of the ordinary feed: a long acting adult's
+// name, a long team name as the entity reference, and a team change whose
+// description carries two of them.
+const LONG_NAME_EVENTS: ActivityEvent[] = [
+  evt(-3, { actorId: LONG_ACTOR.id, actorName: LONG_ACTOR.fullName, action: 'player.withdrawn', changedFields: ['status'], safeChanges: { status: { old: 'registered', new: 'withdrawn' } } }),
+  evt(-2, { actorId: LONG_ACTOR.id, actorName: LONG_ACTOR.fullName, action: 'team.updated', entityType: 'team', entityId: LONG_TEAM.id, teamId: LONG_TEAM.id }),
+  evt(-1, {
+    actorId: LONG_ACTOR.id,
+    actorName: LONG_ACTOR.fullName,
+    action: 'player.team_changed',
+    safeChanges: { team_id: { old: LONG_TEAM.id, new: 'team-gone' } },
+    teamId: LONG_TEAM.id,
+    batchId: ACTIVITY_BATCH_ID,
+  }),
+  evt(-4, {
+    actorId: LONG_ACTOR.id,
+    actorName: LONG_ACTOR.fullName,
+    action: 'team.updated',
+    entityType: 'team',
+    entityId: UNBROKEN_TEAM.id,
+    teamId: UNBROKEN_TEAM.id,
+  }),
+]
+
+export const ACTIVITY_PROFILES_FOR = (s: HarnessState): Member[] =>
+  s === 'longnames' ? [LONG_ACTOR, ...ACTIVITY_PROFILES] : ACTIVITY_PROFILES
+
+export const ACTIVITY_TEAMS_FOR = (s: HarnessState): Team[] =>
+  s === 'longnames' ? [...TEAMS, LONG_TEAM, UNBROKEN_TEAM] : TEAMS
+
+// Every column a filter predicate can name, so the harness applies the REAL
+// predicates (activityQueryConditions) rather than a second filter rule
+// written out here. A state a screenshot claims is then reached the way a
+// coach reaches it: by selecting the filter.
+const COLUMN_OF: Record<string, (e: ActivityEvent) => string | null> = {
+  occurred_at: (e) => e.occurredAt,
+  actor_id: (e) => e.actorId,
+  entity_type: (e) => e.entityType,
+  action: (e) => e.action,
+  team_id: (e) => e.teamId,
+  season_id: (e) => e.seasonId,
+  source: (e) => e.source,
+  batch_id: (e) => e.batchId,
+}
+
+export function activityRowsFor(filters: ActivityFilters, s: HarnessState): ActivityEvent[] {
+  if (s === 'empty') return []
+  const rows = s === 'longnames' ? [...LONG_NAME_EVENTS, ...ACTIVITY_EVENTS] : ACTIVITY_EVENTS
+  const conditions = activityQueryConditions(filters)
+  return rows.filter((e) =>
+    conditions.every((c) => {
+      const v = COLUMN_OF[c.column]?.(e) ?? null
+      if (v === null) return false
+      if (c.op === 'eq') return v === c.value
+      return c.op === 'gte' ? v >= c.value : v < c.value
+    }),
+  )
+}
+
+// The pages a keyset read would have handed back. hasNextPage is derived the
+// way the real hook derives it, from a FULL last page rather than from a total,
+// so the harness offers Load more exactly when the product does.
+export function activityPages(rows: ActivityEvent[], pageCount: number): ActivityEvent[][] {
+  return Array.from({ length: pageCount }, (_, i) => rows.slice(i * ACTIVITY_PAGE_SIZE, (i + 1) * ACTIVITY_PAGE_SIZE))
+}
+
+export const activityHasNext = (pages: ActivityEvent[][]): boolean =>
+  (pages[pages.length - 1]?.length ?? 0) === ACTIVITY_PAGE_SIZE

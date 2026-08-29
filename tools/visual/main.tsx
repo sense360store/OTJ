@@ -7,7 +7,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { StrictMode, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Sidebar } from '../../src/components/Sidebar'
 import { TopBar, MobileTop } from '../../src/components/TopBar'
@@ -22,7 +22,8 @@ import { Home } from '../../src/routes/Home'
 import { Sessions } from '../../src/routes/Sessions'
 import { Login } from '../../src/routes/Login'
 import { Players } from '../../src/routes/Players'
-import { PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
+import { Activity } from '../../src/routes/Activity'
+import { ACTIVITY_BATCH_ID, PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
 import '../../src/styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -34,13 +35,25 @@ localStorage.setItem('otj_dark', params.get('theme') === 'dark' ? '1' : '0')
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
 function Shell({ children }: { children: React.ReactNode }) {
+  // A ROUTE WITNESS, for the checks that have to prove a redirect landed
+  // somewhere rather than merely left where it was. The harness routes in
+  // memory, so window.location says nothing about which route is rendering,
+  // and neither the page body nor the navigation can stand in for it: Home has
+  // capability variants (a member without sessions.create gets ParentHome, with
+  // no hero), and screenFromPath falls back to 'home' for any path it does not
+  // know, so both can say "Home" for a route that is not Home. Found by
+  // mutating the guard to redirect somewhere that renders nothing: the proof
+  // held. This is an attribute, so it changes no pixel of any screenshot.
+  const { pathname } = useLocation()
   return (
     <div className="app">
       <Sidebar />
       <div className="main">
         <TopBar />
         <MobileTop />
-        <div className="content">{children}</div>
+        <div className="content" data-path={pathname}>
+          {children}
+        </div>
       </div>
       <BottomNav />
     </div>
@@ -173,6 +186,13 @@ function Harness() {
         <Route element={<RequireCap cap="players.view" />}>
           <Route path="/players" element={<Players />} />
         </Route>
+        {/* Behind the real audit.view guard, so the capability variant with
+            no access shows what a member actually gets (a redirect to Home)
+            rather than an empty content frame. audit.view and players.view
+            are two different boundaries and the harness keeps them apart. */}
+        <Route element={<RequireCap cap="audit.view" />}>
+          <Route path="/activity" element={<Activity />} />
+        </Route>
       </Routes>
     </Shell>
   )
@@ -207,9 +227,18 @@ function playersEntry(): string {
   return '/players'
 }
 
+// The Activity feed's one URL persisted filter is the batch deep link, so the
+// state that IS an address is reached by opening that address, exactly as a
+// coach reaches it from a batch chip. Everything else it filters by is page
+// state and is reached by driving the controls.
+function activityEntry(): string {
+  return params.get('at') === 'batch' ? `/activity?batch=${ACTIVITY_BATCH_ID}` : '/activity'
+}
+
 const ENTRY: Record<string, string> = {
   sessions: '/sessions',
   players: playersEntry(),
+  activity: activityEntry(),
 }
 
 createRoot(document.getElementById('root')!).render(

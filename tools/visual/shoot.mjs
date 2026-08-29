@@ -115,13 +115,52 @@ const SHOTS = [
     dialog: d,
     w: 900,
   })),
+
+  /* ---- VISUAL-02, the club wide Activity feed ------------------------
+     Part 4 names the CSS only row to card reflow at 900, the inline filters
+     against the phone filter dialog, Load more, the empty states and long
+     names. So the feed is shot at every width plus BOTH sides of the 900px
+     boundary, in every capability variant it renders: a holder of audit.view
+     and players.view, a holder of audit.view alone (where every player
+     reference falls closed), and a member with neither, whom the route guard
+     sends to Home. */
+  ...['coach', 'auditor'].flatMap((caps) => [...WIDTHS, 900, 901].map((w) => ({ screen: 'activity', caps, w }))),
+  ...WIDTHS.map((w) => ({ screen: 'activity', caps: 'viewer', state: 'guarded', w })),
+  ...[390, 1280].map((w) => ({ screen: 'activity', caps: 'parent', state: 'guarded', w })),
+  // The state matrix, at one phone width and one desktop width each. Every
+  // one is the screen's own branch: `loading` and `error` are the feed read's
+  // own flags, `empty` returns no rows, and `longnames` is a long acting
+  // adult's name beside a long team name, which are the two strings the feed
+  // can render at any length.
+  ...['loading', 'error', 'empty', 'longnames'].flatMap((state) =>
+    [390, 1280].map((w) => ({ screen: 'activity', caps: 'coach', state, w })),
+  ),
+  // The batch deep link, which is the one URL persisted filter, with rows and
+  // with none. Reached by opening the address a batch chip links to.
+  ...[360, 390, 900, 1280].map((w) => ({ screen: 'activity', caps: 'coach', at: 'batch', w })),
+  ...[390, 1280].map((w) => ({ screen: 'activity', caps: 'coach', state: 'empty', at: 'batch', w })),
+  // The phone filter overlay, at every width it can be opened at, and once
+  // with a filter already applied so its Clear filters footer is shown.
+  ...[360, 390, 430, 900].map((w) => ({ screen: 'activity', caps: 'coach', w, open: 'filters' })),
+  ...[390].map((w) => ({ screen: 'activity', caps: 'coach', at: 'batch', w, open: 'filters' })),
+  // More than one filter at once, driven through the controls a coach uses:
+  // the dialog under the breakpoint, the inline bar above it.
+  ...[390, 1280].map((w) => ({ screen: 'activity', caps: 'coach', w, open: 'multifilter' })),
+  // Load more, pressed, in both of its states.
+  ...[390, 1280].map((w) => ({ screen: 'activity', caps: 'coach', w, open: 'loadmore' })),
+  ...[390, 1280].map((w) => ({ screen: 'activity', caps: 'coach', state: 'loadingmore', w, open: 'loadmorebusy' })),
+  // The gated History dialog, which is the ONE place a child's name appears.
+  ...[390, 1280].map((w) => ({ screen: 'activity', caps: 'coach', state: 'history', w, open: 'history' })),
 ]
 
+// A state and an ADDRESS are two different things, and two shots that differ
+// only by the address would otherwise share a filename and overwrite each
+// other. The address rides in the state slot, so no existing name moves.
 const name = (s, theme) =>
   [
     s.screen,
     s.caps ?? 'na',
-    s.dialog ? s.dialog.state : (s.state ?? 'default'),
+    s.dialog ? s.dialog.state : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
     s.dialog ? `dialog-${s.dialog.key}` : (s.open ?? 'default'),
     theme,
     `${s.w}w`,
@@ -129,7 +168,7 @@ const name = (s, theme) =>
 
 // An overlay is shot at the viewport rather than full page: a full page shot
 // of a dialog over a two hundred row register is a picture of the register.
-const OVERLAY = new Set(['more', 'delete', 'moreactions', 'rowmenu'])
+const OVERLAY = new Set(['more', 'delete', 'moreactions', 'rowmenu', 'filters', 'history'])
 const isOverlay = (s) => !!s.dialog || OVERLAY.has(s.open)
 
 
@@ -157,6 +196,21 @@ const REACHED = {
   info: '.note-success[role="status"]',
   select: '.bulk-bar',
   delete: '.modal',
+  /* ---- the Activity feed's own driven states ---- */
+  // The phone filter overlay, named by its title so the History dialog cannot
+  // stand in for it.
+  filters: '.modal:has-text("Filters")',
+  history: '.modal:has-text("History")',
+  // The next page ARRIVED: a fifty first row exists, which cannot happen
+  // without the press.
+  loadmore: '.activity-list li:nth-child(51)',
+  // And the press that never settles: the control disabled and saying so.
+  loadmorebusy: '.activity-more button[disabled]',
+  // Two filters at once. A predicate, because at 1280 the counted control is
+  // display:none (the inline bar is what a coach uses there) and a visibility
+  // wait would fail on a state that is correctly reached.
+  multifilter: async (page) =>
+    page.$eval('.activity-filters-btn', (el) => el.getAttribute('aria-label') === 'Filters, 2 active').catch(() => false),
 }
 
 // What each named state actually renders. `default` claims nothing, so it
@@ -172,7 +226,13 @@ const REACHED = {
 // it is set to. Proving it by some element that merely happens to render
 // alongside would be the same false proof this map exists to stop.
 const REACHED_STATE = {
-  loading: '.content > .loading[role="status"]',
+  // A state is one thing; what a SCREEN renders for it is another. "The read
+  // has not answered" is the register's page level gate and the Activity
+  // feed's skeleton rows, because 2.14 asks for a skeleton where the shape is
+  // known. A predicate takes the shot as well as the page, so each screen's
+  // proof stays exact rather than one being widened to cover the other.
+  loading: async (page, s) =>
+    s.screen === 'activity' ? visible(page, '.skeleton-list') : visible(page, '.content > .loading[role="status"]'),
   rowsloading: '.skeleton-list',
   empty: '.empty',
   error: '.state-error[role="alert"]',
@@ -187,6 +247,31 @@ const REACHED_STATE = {
   overlimit: '.modal .note-danger:has-text("At most 200")',
   allactions: async (page) =>
     page.$eval('#filter-team', (el) => el.value === 'titans').catch(() => false),
+  /* ---- the Activity feed ---- */
+  // The route guard's answer. An absence alone is not a proof of it: a blank
+  // shell, a redirect to the wrong route and a guard returning null all lack
+  // Activity's markup, and all three would be filed under a name claiming a
+  // redirect. Codex. So the claim is both halves, Activity gone AND the
+  // redirect landed on `/`, read from the harness's route witness rather than
+  // from anything the page draws: Home has capability variants and the
+  // navigation falls back to Home for a path it does not know, so both can say
+  // Home for a route that is not.
+  guarded: async (page) =>
+    page.evaluate(
+      () =>
+        document.querySelector('.content')?.getAttribute('data-path') === '/' &&
+        !document.querySelector('.activity-list') &&
+        !document.querySelector('.activity-filters-btn') &&
+        (document.querySelector('h1')?.textContent ?? '') !== 'Activity',
+    ),
+  longnames: '.activity-item:has-text("Fotheringay-Wallington-Smythe")',
+  history: '.modal .history-item',
+  // What this state alone produces: the press was made and NOTHING arrived.
+  // The ordinary feed answers the same press with twelve more rows, so this
+  // separates the state from the control that `loadmorebusy` proves.
+  loadingmore: async (page) =>
+    page.evaluate(() => document.querySelectorAll('.activity-item').length === 50 &&
+      !!document.querySelector('.activity-more button[disabled]')),
 }
 
 async function visible(page, selector) {
@@ -196,14 +281,19 @@ async function visible(page, selector) {
 async function reached(page, s, theme) {
   let ok = true
   if (s.open) {
-    const selector = REACHED[s.open]
-    if (!selector) {
+    // A selector, or a PREDICATE where the proof is not "an element is on
+    // screen": the filter count rides on a control that is display:none above
+    // the breakpoint, and a visibility wait would fail a state that is
+    // correctly reached.
+    const proof = REACHED[s.open]
+    if (!proof) {
       failures++
       console.log(`ERROR ${name(s, theme)}: no proof selector for open=${s.open}, so the shot claims a state nothing checked`)
       ok = false
-    } else if (!(await visible(page, selector))) {
+    } else if (!(typeof proof === 'function' ? await proof(page, s) : await visible(page, proof))) {
       failures++
-      console.log(`ERROR ${name(s, theme)}: ${selector} never appeared, so the ${s.open} state was not reached`)
+      const shown = typeof proof === 'function' ? `the ${s.open} predicate` : proof
+      console.log(`ERROR ${name(s, theme)}: ${shown} never held, so the ${s.open} state was not reached`)
       ok = false
     }
   }
@@ -213,7 +303,7 @@ async function reached(page, s, theme) {
       failures++
       console.log(`ERROR ${name(s, theme)}: no proof selector for state=${s.state}, so the shot claims a state nothing checked`)
       ok = false
-    } else if (!(typeof proof === 'function' ? await proof(page) : await visible(page, proof))) {
+    } else if (!(typeof proof === 'function' ? await proof(page, s) : await visible(page, proof))) {
       failures++
       // A predicate stringifies to its whole body, which buries the message
       // it is attached to. It is named rather than printed.
@@ -294,6 +384,7 @@ for (const theme of ['light', 'dark']) {
           const p = new URLSearchParams({ screen: s.screen, theme })
           if (s.caps) p.set('caps', s.caps)
           if (s.state) p.set('state', s.state)
+          if (s.at) p.set('at', s.at)
           return p
         })()
     await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
@@ -354,6 +445,41 @@ for (const theme of ['light', 'dark']) {
         console.log(`ERROR ${name(s, theme)}: the row's More actions trigger is not on the page`)
       }
       await page.waitForTimeout(150)
+    }
+    /* ---- the Activity feed, driven through the controls a coach presses --
+       Nothing here is faked: the overlay is opened by its own button, the
+       filters are chosen in whichever of the two mount points that width
+       shows, Load more is pressed, and View history is pressed on a row. A
+       control that stops rendering fails the run rather than producing a
+       plausible shot, because reached() then finds no proof. */
+    if (s.screen === 'activity' && s.open) {
+      const press = async (nameRe, exact) => {
+        const b = page.getByRole('button', exact ? { name: nameRe, exact: true } : { name: nameRe })
+        if ((await b.count()) === 0) {
+          failures++
+          console.log(`ERROR ${name(s, theme)}: no ${nameRe} button, so the ${s.open} state was never reached`)
+          return false
+        }
+        await b.first().click()
+        await page.waitForTimeout(200)
+        return true
+      }
+      if (s.open === 'filters') await press(/^Filters/)
+      if (s.open === 'multifilter') {
+        // Below the breakpoint the filters live in the overlay; above it they
+        // are the inline bar. The count is the same page state either way,
+        // which is the thing worth photographing.
+        const phone = s.w <= 900
+        if (!phone || (await press(/^Filters/))) {
+          const root = phone ? page.locator('.modal') : page.locator('.activity-filters')
+          await root.getByLabel('Filter by entity type').selectOption('player')
+          await root.getByLabel('Filter by source').selectOption('csv_import')
+          await page.waitForTimeout(200)
+          if (phone) await press(/^Done$/, true)
+        }
+      }
+      if (s.open === 'loadmore' || s.open === 'loadmorebusy') await press(/^Load more$/, true)
+      if (s.open === 'history') await press(/^View history$/, true)
     }
     if (s.open === 'error' || s.open === 'info') {
       // The real paths: pressing the magic link button with an empty field is

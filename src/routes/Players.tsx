@@ -639,7 +639,7 @@ export function Players() {
         {canManageSeasons ? (
           <Empty icon={Icon.calendar} title="Set up the first season">
             Players are registered against a season. Create and activate a season to open the register.{' '}
-            <Link to="/admin/seasons" className={buttonClass('primary', 'md', { className: 'reg-empty-action' })}>
+            <Link to="/admin/seasons" className={buttonClass('primary', 'md', { className: 'empty-action' })}>
               Set up season
             </Link>
           </Empty>
@@ -680,7 +680,7 @@ export function Players() {
         <Empty icon={Icon.search} title="Nothing matches">
           Try clearing a filter or searching a shorter name.{' '}
           <Button
-            className="reg-empty-action"
+            className="empty-action"
             onClick={() => patch({ team: 'all', status: DEFAULT_STATUS_FILTER, q: '' })}
           >
             Clear filters

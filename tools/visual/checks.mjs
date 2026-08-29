@@ -44,7 +44,34 @@ await context.route(
 )
 
 const out = []
-const check = (name, ok, detail = '') => out.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`)
+// Each result is printed AS IT IS RECORDED, not collected and printed at the
+// end. A run that ends unexpectedly used to report nothing at all, because the
+// only print was the last statement in the file: fifteen lines of stack trace,
+// zero results, and a non zero exit that looks the same as a clean failure.
+// Codex. Printing here means an abort loses only the checks after it, and the
+// summary at the end says how many ran.
+const check = (name, ok, detail = '') => {
+  const line = `${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`
+  out.push(line)
+  console.log(line)
+}
+
+// And an abort is a NAMED failure rather than a stack trace. A rejected top
+// level await prints a stack and exits non zero, which reads like a check that
+// failed rather than like a run that stopped early; this says which it was and
+// how far it got.
+//
+// BOTH events, because they are not interchangeable: a rejected top level await
+// reaches Node as an uncaught exception, not as an unhandled rejection, so a
+// handler for the second alone never fires and the abort is a stack trace
+// again. Found by mutating a surface to render nothing.
+const aborted = (e) => {
+  check('the run completed', false, `it aborted: ${String(e?.message ?? e).split('\n')[0]}`)
+  console.log(`${out.length - 1} checks ran before the abort`)
+  process.exit(1)
+}
+process.on('unhandledRejection', aborted)
+process.on('uncaughtException', aborted)
 
 // A press that cannot end the run. Playwright rejects a click or a focus on a
 // control that is not rendered, after its thirty second timeout, and the
@@ -75,6 +102,14 @@ const acted = async (locator, what, verb, run) => {
 }
 const pressed = (locator, what) => acted(locator, what, 'clicked', (el) => el.click())
 const focused = (locator, what) => acted(locator, what, 'focused', (el) => el.focus())
+// Choosing a value is an action like any other and rejects the same way on a
+// control that is not there. It needs the same guard: without it a press that
+// already failed and returned false is followed by a selection that rejects on
+// its own account, which ends the run and skips every check after it. Codex.
+const chose = (locator, value, what) => acted(locator, what, 'set', (el) => el.selectOption(value))
+// And typing into a field, which is the third action this file performs. The
+// typed confirmation on the two delete dialogs is the only caller.
+const typed = (locator, value, what) => acted(locator, what, 'typed into', (el) => el.fill(value))
 // The header's overflow trigger, named exactly: every row's is "More actions
 // for <child>", so a loose name matches ten controls and resolves to a row.
 const moreActions = (page) => page.getByRole('button', { name: 'More actions', exact: true })
@@ -90,6 +125,10 @@ const open = async (screen, width, opts = {}) => {
     : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
   if (!opts.dialog && opts.caps) q.set('caps', opts.caps)
   if (!opts.dialog && opts.state) q.set('state', opts.state)
+  // A state and an address are two different things: the Activity feed's one
+  // URL persisted filter is the batch deep link, and it is reached by opening
+  // that address rather than by a state the reads answer with.
+  if (!opts.dialog && opts.at) q.set('at', opts.at)
   await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => document.fonts.ready)
   // domcontentloaded fires before React has rendered anything, so a check that
@@ -97,7 +136,21 @@ const open = async (screen, width, opts = {}) => {
   // about rendered output, so waiting for the app to have painted belongs in
   // ONE place rather than in each of them. Without it the error state check
   // reported a false FAIL on roughly one run in three.
-  await page.waitForSelector('.content > *, .login', { state: 'attached', timeout: 5000 })
+  //
+  // A surface that never painted is RECORDED as a failure here and marked, so
+  // the checks that follow can skip the operations that would reject on a
+  // missing control. Catching the wait alone was not enough: the caller went
+  // on to scroll to a control that was not there, which rejects on its own
+  // account and aborts the run just the same. Codex.
+  //
+  // `blank` is a property on the page rather than a second return value,
+  // because forty call sites destructure nothing and a signal none of them
+  // reads is not a signal.
+  const painted = await page
+    .waitForSelector('.content > *, .login', { state: 'attached', timeout: 5000 })
+    .then(() => true, () => false)
+  page.blank = !painted
+  if (!painted) check(`${screen} at ${width} renders something`, false, 'the surface never painted')
   if (opts.awaitSelector) await page.waitForSelector(opts.awaitSelector, { state: 'visible', timeout: 5000 }).catch(() => {})
   return page
 }
@@ -112,7 +165,10 @@ const open = async (screen, width, opts = {}) => {
   // much smaller the visible box is, which is how the first version of this
   // check reported three false failures.
   const hit = async (sel) => {
-    await page.locator(sel).first().scrollIntoViewIfNeeded()
+    if (page.blank) return null
+    // Guarded for the same reason every press here is: a control that is not
+    // on the page rejects this after its timeout and takes the run with it.
+    await page.locator(sel).first().scrollIntoViewIfNeeded().catch(() => {})
     return page.evaluate((s) => {
       const el = document.querySelector(s)
       if (!el) return null
@@ -151,15 +207,18 @@ const open = async (screen, width, opts = {}) => {
     JSON.stringify(invalid),
   )
 
+  // Guarded like the two above it: a missing control makes this a failing
+  // check rather than a thrown TypeError that ends the run.
   const ring = await page.evaluate(() => {
     const el = document.querySelector('.btn-primary')
+    if (!el) return null
     el.focus()
     const cs = getComputedStyle(el)
     return { width: cs.outlineWidth, colour: cs.outlineColor, offset: cs.outlineOffset }
   })
   check(
     'a focused button draws the shared ring',
-    ring.width === '2px' && ring.colour === 'rgb(31, 67, 214)' && ring.offset === '2px',
+    !!ring && ring.width === '2px' && ring.colour === 'rgb(31, 67, 214)' && ring.offset === '2px',
     JSON.stringify(ring),
   )
   await page.close()
@@ -177,6 +236,13 @@ const open = async (screen, width, opts = {}) => {
     ['players', 390],
     ['players', 1024],
     ['players', 1280],
+    // Activity's card layout stacks a link carrying a pseudo hit area directly
+    // above a button carrying one, which is the arrangement this check exists
+    // for. 900 is the card layout's widest, 1280 the row's.
+    ['activity', 360],
+    ['activity', 390],
+    ['activity', 900],
+    ['activity', 1280],
   ]) {
     const page = await open(screen, width)
     const r = await page.evaluate(() => {
@@ -184,7 +250,7 @@ const open = async (screen, width, opts = {}) => {
       // reach into a NEIGHBOURING control's own visible box? Two chips on
       // wrapped rows are the case worth checking, since each pseudo extends
       // five pixels past a 34px chip into the row gap.
-      const els = [...document.querySelectorAll('.chip, .btn-sm, .icon-btn, .toggle')]
+      const els = [...document.querySelectorAll('.chip, .btn-sm, .icon-btn, .toggle, a.activity-batch')]
       const boxes = els.map((el) => {
         const b = el.getBoundingClientRect()
         const a = getComputedStyle(el, '::after')
@@ -227,6 +293,7 @@ const open = async (screen, width, opts = {}) => {
   const page = await open('home', 390)
   const nav = await page.evaluate(() => {
     const a = document.querySelector('.bn-item.active')
+    if (!a) return { size: null, current: null, height: 0 }
     const cs = getComputedStyle(a)
     return { size: cs.fontSize, current: a.getAttribute('aria-current'), height: Math.round(a.getBoundingClientRect().height) }
   })
@@ -238,6 +305,7 @@ const open = async (screen, width, opts = {}) => {
 
   const toggle = await page.evaluate(() => {
     const t = document.querySelector('.mobile-topbar .toggle')
+    if (!t) return { role: null, checked: null, label: null }
     return { role: t.getAttribute('role'), checked: t.getAttribute('aria-checked'), label: t.getAttribute('aria-label') }
   })
   check('the phone theme control is a labelled switch', toggle.role === 'switch' && !!toggle.label, JSON.stringify(toggle))
@@ -378,6 +446,7 @@ const open = async (screen, width, opts = {}) => {
     const page = await open('players', 1280)
     const header = await page.evaluate(() => {
       const b = document.querySelector('table.reg-table th button')
+      if (!b) return { w: 0, h: 0 }
       const r = b.getBoundingClientRect()
       return { w: Math.round(r.width), h: Math.round(r.height) }
     })
@@ -391,6 +460,7 @@ const open = async (screen, width, opts = {}) => {
     const ring = await page.evaluate(() => {
       const wrap = document.querySelector('.reg-table-wrap')
       const b = document.querySelector('table.reg-table th.sort-th button')
+      if (!wrap || !b) return null
       b.focus()
       const w = wrap.getBoundingClientRect(), r = b.getBoundingClientRect()
       const cs = getComputedStyle(b)
@@ -404,7 +474,7 @@ const open = async (screen, width, opts = {}) => {
     })
     check(
       'the sortable header\'s focus ring is not clipped by the scroll container',
-      ring.reach > 0 && ring.top === 0 && ring.left === 0 && !ring.scrolls,
+      !!ring && ring.reach > 0 && ring.top === 0 && ring.left === 0 && !ring.scrolls,
       JSON.stringify(ring),
     )
 
@@ -476,12 +546,15 @@ const open = async (screen, width, opts = {}) => {
         'the dialog took focus, so Escape and the Tab trap are live',
         await page.evaluate(() => document.activeElement.classList.contains('modal')),
       )
-      await page.getByLabel(/^To confirm, type/).fill('DELETE 7 PLAYERS')
-      await page.waitForTimeout(120)
-      check('a phrase naming the wrong count leaves it inert', await confirm.isDisabled())
-      await page.getByLabel(/^To confirm, type/).fill('DELETE 8 PLAYERS')
-      await page.waitForTimeout(120)
-      check('the phrase naming the count arms it', !(await confirm.isDisabled()))
+      const field = page.getByLabel(/^To confirm, type/)
+      if (await typed(field, 'DELETE 7 PLAYERS', 'a phrase naming the wrong count leaves it inert')) {
+        await page.waitForTimeout(120)
+        check('a phrase naming the wrong count leaves it inert', await confirm.isDisabled())
+        if (await typed(field, 'DELETE 8 PLAYERS', 'the phrase naming the count arms it')) {
+          await page.waitForTimeout(120)
+          check('the phrase naming the count arms it', !(await confirm.isDisabled()))
+        }
+      }
       const danger = await page.evaluate(() => {
         const b = [...document.querySelectorAll('.modal button')].find((x) => /permanently$/.test(x.textContent.trim()))
         return b ? { cls: b.className, fill: getComputedStyle(b).backgroundColor, word: /Delete/.test(b.textContent) } : null
@@ -591,7 +664,7 @@ const open = async (screen, width, opts = {}) => {
         return {
           rows: bottoms.size,
           slot: kids.map((k) => k.textContent.trim().slice(0, 16)),
-          headerHeight: Math.round(document.querySelector('.page-head').getBoundingClientRect().height),
+          headerHeight: Math.round(document.querySelector('.page-head')?.getBoundingClientRect().height ?? 0),
         }
       })
       check(
@@ -677,7 +750,9 @@ const open = async (screen, width, opts = {}) => {
           const list = document.querySelector('.players-more .menu-list')
           if (!list) return null
           const b = list.getBoundingClientRect()
-          const slot = document.querySelector('.page-head-acts').getBoundingClientRect()
+          const acts = document.querySelector('.page-head-acts')
+          if (!acts) return null
+          const slot = acts.getBoundingClientRect()
           const btn = document.querySelector('.players-more > button')?.getBoundingClientRect() ?? null
           return {
             left: Math.round(b.left),
@@ -1347,9 +1422,12 @@ const focusReturned = async (page, d) => {
   // the head and a press on the overlay. Escape is checked on six dialogs
   // above; these two are the same contract through different controls, and
   // both must also return focus to the opener.
+  // Each route is a guarded action: the X is a control that can be missing,
+  // and a press on the coordinates is not. Both go through the same helper so
+  // a missing close button is a failed check rather than a run that stops.
   for (const [route, dismiss] of [
-    ['the X', (page) => page.locator('.modal-head .icon-btn').click()],
-    ['a press on the overlay', (page) => page.mouse.click(5, 5)],
+    ['the X', (page, what) => acted(page.locator('.modal-head .icon-btn'), what, 'clicked', (el) => el.click())],
+    ['a press on the overlay', (page) => page.mouse.click(5, 5).then(() => true)],
   ]) {
     const d = DIALOGS.find((x) => x.key === 'move')
     const page = await open('players', 1280, { dialog: d })
@@ -1360,10 +1438,10 @@ const focusReturned = async (page, d) => {
       await page.close()
       continue
     }
-    await dismiss(page)
+    const dismissed = await dismiss(page, WHAT)
     await page.waitForTimeout(250)
     const r = await focusReturned(page, d)
-    check(WHAT, r.closed && r.toTheOpener, JSON.stringify(r))
+    check(WHAT, dismissed && r.closed && r.toTheOpener, JSON.stringify(r))
     await page.close()
   }
 
@@ -1441,12 +1519,12 @@ const focusReturned = async (page, d) => {
       const confirm = page.locator('.modal').getByRole('button', { name: 'Delete permanently', exact: true })
       const field = page.locator('.modal').getByLabel(/^To confirm, type/)
       const closed = await confirm.isDisabled()
-      await field.fill('Aria Bexley')
+      const partialTyped = await typed(field, 'Aria Bexley', WHAT)
       await page.waitForTimeout(120)
       const partial = await confirm.isDisabled()
-      await field.fill(DIALOG_PLAYER)
+      const fullTyped = partialTyped && (await typed(field, DIALOG_PLAYER, WHAT))
       await page.waitForTimeout(120)
-      const armed = await confirm.isEnabled()
+      const armed = fullTyped && (await confirm.isEnabled())
       const danger = await page.evaluate(() => {
         const b = [...document.querySelectorAll('.modal button')].find((x) => x.textContent.trim() === 'Delete permanently')
         return b ? { cls: b.className, word: /Delete/.test(b.textContent) } : null
@@ -1491,16 +1569,639 @@ const focusReturned = async (page, d) => {
   }
 }
 
+/* ---- VISUAL-02: the club wide Activity feed --------------------------
+   Its acceptance is the CSS only row to card reflow, the desktop inline
+   filters against the phone filter dialog, Load more, the empty states and
+   long names. Every one of those is a computed style or a live interaction,
+   which is why they are here rather than in a static test.
+
+   The privacy boundary is checked here too, and deliberately in the browser:
+   the identity map the page holds is what the History dialog's title is built
+   from, so the only way to prove a name reaches the dialog and NOT the feed is
+   to open the dialog and read both. */
+{
+  // The whole point of the reflow: one list, two presentations, the same
+  // information and the same actions at every width.
+  {
+    const rowAt = async (width) => {
+      const page = await open('activity', width, { awaitSelector: '.activity-item' })
+      const r = await page.evaluate(() => {
+        // Every read is guarded. getComputedStyle throws on null, so a missing
+        // control here ends the run rather than failing this check, which is
+        // the shape that keeps coming back in this file.
+        const style = (sel) => {
+          const el = document.querySelector(sel)
+          return el ? getComputedStyle(el) : null
+        }
+        const item = document.querySelector('.activity-item')
+        const cs = item ? getComputedStyle(item) : null
+        return {
+          columns: cs ? cs.gridTemplateColumns.split(' ').length : 0,
+          card: cs ? parseFloat(cs.borderTopWidth) > 0 : false,
+          inlineFilters: style('.activity-filters')?.display ?? null,
+          filtersButton: style('.activity-filters-btn')?.display ?? null,
+          // What the row SAYS and what it OFFERS, so the two presentations can
+          // be compared rather than assumed equivalent.
+          text: item ? item.innerText.replace(/\s+/g, ' ').trim() : '',
+          controls: item ? [...item.querySelectorAll('button, a')].map((e) => e.textContent.trim()).join('|') : '',
+          fields: document.querySelectorAll('.activity-filters .field').length,
+        }
+      })
+      await page.close()
+      return r
+    }
+    const wide = await rowAt(901)
+    const narrow = await rowAt(900)
+    check(
+      'the row becomes a card at 900 and back to a row at 901, by CSS alone',
+      wide.columns === 3 && !wide.card && narrow.columns === 1 && narrow.card,
+      JSON.stringify({ wide: [wide.columns, wide.card], narrow: [narrow.columns, narrow.card] }),
+    )
+    check(
+      'the inline filters and the Filters button swap at the same boundary, never both',
+      wide.inlineFilters !== 'none' && wide.filtersButton === 'none' &&
+        narrow.inlineFilters === 'none' && narrow.filtersButton !== 'none',
+      JSON.stringify({ wide: [wide.inlineFilters, wide.filtersButton], narrow: [narrow.inlineFilters, narrow.filtersButton] }),
+    )
+    check(
+      'the card carries the same words and the same actions as the row',
+      wide.text === narrow.text && wide.controls === narrow.controls && wide.controls.length > 0,
+      JSON.stringify({ wide: wide.text, narrow: narrow.text, controls: wide.controls }),
+    )
+    check('the desktop bar offers all eight filters', wide.fields === 8, String(wide.fields))
+  }
+
+  // The phone filter dialog: the same controls, the same state, and the shared
+  // Modal's focus contract. A second set of controls that did not drive the
+  // page's own filters would look identical in a screenshot.
+  {
+    const page = await open('activity', 390, { awaitSelector: '.activity-item' })
+    const opener = page.getByRole('button', { name: /^Filters/ })
+    const openedIt = await pressed(opener, 'the phone Filters button opens a dialog')
+    await page.waitForTimeout(200)
+    const opened = await page.evaluate(() => {
+      const m = document.querySelector('.modal')
+      return m
+        ? {
+            role: m.getAttribute('role'),
+            focusInside: m.contains(document.activeElement),
+            fields: m.querySelectorAll('.field').length,
+            title: m.querySelector('h3, h2')?.textContent,
+          }
+        : null
+    })
+    check(
+      'the phone Filters dialog is the shared Modal, holds all eight filters and takes focus',
+      !!opened && opened.role === 'dialog' && opened.fields === 8 && opened.focusInside,
+      JSON.stringify(opened),
+    )
+
+    // Driving a control in the dialog moves the PAGE's filter state. Every
+    // action from here is guarded and conditional on the one before it: a
+    // press that failed leaves a control that a later action would wait for
+    // and then reject on, which ends the run rather than failing its own
+    // check.
+    const before = await page.$$eval('.activity-item', (e) => e.length)
+    const set = openedIt &&
+      (await chose(
+        page.locator('.modal').getByLabel('Filter by entity type'),
+        'season',
+        'a filter chosen in the dialog narrows the feed and is counted on the opener',
+      ))
+    await page.waitForTimeout(250)
+    const narrowed = await page.$$eval('.activity-item', (e) => e.length)
+    if (set) {
+      await pressed(page.locator('.modal').getByRole('button', { name: 'Done', exact: true }), 'Done closes the filter dialog')
+    }
+    await page.waitForTimeout(250)
+    const after = await page.evaluate(() => ({
+      open: !!document.querySelector('.modal'),
+      label: document.querySelector('.activity-filters-btn')?.getAttribute('aria-label'),
+      text: document.querySelector('.activity-filters-btn')?.textContent,
+      rows: document.querySelectorAll('.activity-item').length,
+      // Capped, and never the whole document: when nothing is focused the
+      // active element is <body>, and printing its text buries the failure
+      // it is attached to under the entire page.
+      focused: (document.activeElement.textContent ?? '').trim().slice(0, 40),
+    }))
+    check(
+      'a filter chosen in the dialog narrows the feed and is counted on the opener',
+      set && narrowed > 0 && narrowed < before && !after.open && after.rows === narrowed &&
+        after.label === 'Filters, 1 active' && after.text.includes('(1)'),
+      JSON.stringify({ before, narrowed, after }),
+    )
+    check('Done returns focus to the Filters button', after.focused.startsWith('Filters'), after.focused)
+    await page.close()
+  }
+
+  // Escape closes it and returns focus, and Tab is trapped inside it. All
+  // three are the Modal contract the page inherits rather than reimplements,
+  // and all three are the reason the overlay is a Modal rather than a second
+  // panel that happens to look like one.
+  {
+    const page = await open('activity', 390, { awaitSelector: '.activity-item' })
+    await pressed(page.getByRole('button', { name: /^Filters/ }), 'Tab is trapped inside the filter dialog')
+    await page.waitForTimeout(200)
+    // Enough presses to run past the dialog's own controls twice over: the
+    // close button, eight fields and the footer. If the trap is missing, focus
+    // walks out into the page behind it.
+    const escaped = []
+    for (let i = 0; i < 16; i++) {
+      await page.keyboard.press('Tab')
+      const inside = await page.evaluate(() => {
+        const m = document.querySelector('.modal')
+        return !!m && m.contains(document.activeElement)
+      })
+      if (!inside) escaped.push(await page.evaluate(() => document.activeElement.outerHTML.slice(0, 60)))
+    }
+    check('Tab is trapped inside the filter dialog', escaped.length === 0, JSON.stringify(escaped.slice(0, 2)))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    const closed = await page.evaluate(() => ({
+      gone: !document.querySelector('.modal'),
+      // Capped, and never the whole document: when nothing is focused the
+      // active element is <body>, and printing its text buries the failure
+      // it is attached to under the entire page.
+      focused: (document.activeElement.textContent ?? '').trim().slice(0, 40),
+    }))
+    check(
+      'Escape closes the filter dialog and focus returns to the opener',
+      closed.gone && closed.focused.startsWith('Filters'),
+      JSON.stringify(closed),
+    )
+    await page.close()
+  }
+
+  // Every filter control has an accessible name and a real label bound to it,
+  // in BOTH mount points at once, which is the arrangement that made this hard
+  // before: the same component renders in the inline bar and in the overlay,
+  // and both are in the document below the breakpoint.
+  {
+    const page = await open('activity', 390, { awaitSelector: '.activity-item' })
+    await pressed(page.getByRole('button', { name: /^Filters/ }), 'every filter control is labelled in both mount points')
+    await page.waitForTimeout(250)
+    const r = await page.evaluate(() => {
+      const controls = [...document.querySelectorAll('.activity-filter-grid input, .activity-filter-grid select')]
+      const ids = controls.map((c) => c.id)
+      const unlabelled = controls.filter((c) => {
+        const bound = c.id && document.querySelector(`label[for="${CSS.escape(c.id)}"]`)
+        const named = c.getAttribute('aria-label') || (bound && bound.textContent.trim())
+        return !bound || !named
+      })
+      return {
+        count: controls.length,
+        unique: new Set(ids).size,
+        blank: ids.filter((i) => !i).length,
+        unlabelled: unlabelled.map((c) => c.outerHTML.slice(0, 50)),
+      }
+    })
+    check(
+      'both copies of the filters are fully labelled, with ids that do not collide',
+      r.count === 16 && r.unique === 16 && r.blank === 0 && r.unlabelled.length === 0,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  // Clear filters from the phone overlay has to clear BOTH halves of the
+  // filter state: the page state and the URL persisted batch. Clearing only
+  // the half the dialog can see would leave the feed narrowed with nothing
+  // saying so.
+  {
+    const WHAT = 'Clear filters in the overlay clears the page state AND the URL batch'
+    const page = await open('activity', 390, { at: 'batch', awaitSelector: '.activity-item' })
+    // Read through evaluate rather than off a locator: a locator's
+    // getAttribute waits for an element that may not be there and rejects,
+    // where a query inside the page answers null and the check fails.
+    const state = () =>
+      page.evaluate(() => ({
+        open: !!document.querySelector('.modal'),
+        rows: document.querySelectorAll('.activity-item').length,
+        note: !!document.querySelector('.activity-filter-note'),
+        label: document.querySelector('.activity-filters-btn')?.getAttribute('aria-label') ?? null,
+      }))
+    const start = await state()
+    const openedIt = await pressed(page.getByRole('button', { name: /^Filters/ }), WHAT)
+    await page.waitForTimeout(200)
+    const set = openedIt && (await chose(page.locator('.modal').getByLabel('Filter by source'), 'csv_import', WHAT))
+    await page.waitForTimeout(200)
+    const two = (await state()).label
+    if (set) {
+      await pressed(page.locator('.modal').getByRole('button', { name: 'Clear filters', exact: true }), WHAT)
+    }
+    await page.waitForTimeout(300)
+    const end = await state()
+    check(
+      'the batch deep link narrows the feed, is counted, and is announced as a Note',
+      start.note && start.rows > 0 && start.rows < 50 && start.label === 'Filters, 1 active',
+      JSON.stringify(start),
+    )
+    check('a second filter beside the batch link is counted with it', two === 'Filters, 2 active', String(two))
+    check(
+      WHAT,
+      set && !end.open && !end.note && end.label === 'Filters' && end.rows === 50,
+      JSON.stringify(end),
+    )
+    await page.close()
+  }
+
+  // Load more, in both of its states, pressed rather than drawn.
+  {
+    const page = await open('activity', 1280, { awaitSelector: '.activity-item' })
+    const first = await page.$$eval('.activity-item', (e) => e.length)
+    await pressed(page.getByRole('button', { name: 'Load more', exact: true }), 'Load more appends the next page')
+    await page.waitForTimeout(300)
+    const second = await page.evaluate(() => ({
+      rows: document.querySelectorAll('.activity-item').length,
+      more: !!document.querySelector('.activity-more'),
+    }))
+    check(
+      'Load more appends the next page and then stops offering itself',
+      first === 50 && second.rows === 62 && !second.more,
+      JSON.stringify({ first, second }),
+    )
+    await page.close()
+  }
+  {
+    const page = await open('activity', 1280, { state: 'loadingmore', awaitSelector: '.activity-item' })
+    await pressed(page.getByRole('button', { name: 'Load more', exact: true }), 'Load more disables itself while a page is in flight')
+    await page.waitForTimeout(300)
+    const inflight = await page.evaluate(() => {
+      const b = document.querySelector('.activity-more button')
+      const live = document.querySelector('[aria-live="polite"]')
+      // Both queries are guarded, not just the first: the ternary covered the
+      // button and then dereferenced the live region regardless. Codex.
+      return b ? { label: b.textContent.trim(), disabled: b.disabled, busy: live?.getAttribute('aria-busy') ?? null } : null
+    })
+    check(
+      'Load more disables itself and says so while a page is in flight',
+      !!inflight && inflight.disabled && inflight.label === 'Loading…' && inflight.busy === 'true',
+      JSON.stringify(inflight),
+    )
+    await page.close()
+  }
+
+  /* ---- the information boundary, in the browser ---- */
+  // The page holds ONE child name, for the History dialog's title. It must
+  // reach the dialog and nothing else. A static test can assert the feed is
+  // clean; only a driven browser can assert that the name a coach CAN see is
+  // reachable exactly where it is meant to be.
+  {
+    const page = await open('activity', 1280, { state: 'history', awaitSelector: '.activity-item' })
+    const feed = await page.evaluate(() => document.body.innerText)
+    await pressed(page.getByRole('button', { name: 'View history', exact: true }).first(), 'View history opens the gated dialog')
+    await page.waitForTimeout(300)
+    const opened = await page.evaluate(() => {
+      const m = document.querySelector('.modal')
+      return m
+        ? {
+            title: m.querySelector('.modal-head h3')?.textContent,
+            sub: m.querySelector('.modal-head p')?.textContent,
+            rows: m.querySelectorAll('.history-item').length,
+          }
+        : null
+    })
+    check(
+      'the feed names no child, and View history opens the dialog that does',
+      !feed.includes('Bexley') && !!opened && opened.title === 'History' &&
+        opened.sub === 'Aria Bexley-Thornton' && opened.rows > 0,
+      JSON.stringify({ feedHadName: feed.includes('Bexley'), opened }),
+    )
+    await page.close()
+  }
+
+  // audit.view without players.view. The two are different boundaries: the
+  // feed renders in full, and every player reference falls closed to a neutral
+  // label with no history offered and no deletion claimed.
+  //
+  // Read from the entity CELLS, not from the page text. A body text search for
+  // "Player" is satisfied by the description "Player deleted", so it would have
+  // held with every player reference removed. Codex.
+  //
+  // And compared ROW BY ROW, not as totals. Aggregate counts are unchanged by a
+  // regression that labels a live child deleted and the deleted child live, so
+  // the totals would match while the coach's feed named the wrong row. Codex
+  // again. The identity is per cell: a reference a holder of both capabilities
+  // sees as "Player" or "Deleted player" is the neutral "Player" for the
+  // auditor, and every other reference is the same string for both.
+  {
+    const cells = async (caps) => {
+      const page = await open('activity', 1280, { caps, awaitSelector: '.activity-item' })
+      const r = await page.evaluate(() => ({
+        rows: document.querySelectorAll('.activity-item').length,
+        // Per ROW, so a cell is compared against the cell of the same event
+        // rather than against the same position in a flat list. An event with
+        // no reference contributes an empty string, which keeps the rows
+        // aligned when one of them stops rendering a cell at all.
+        entities: [...document.querySelectorAll('.activity-item')].map(
+          (item) => item.querySelector('.activity-entity')?.textContent.trim() ?? '',
+        ),
+        history: [...document.querySelectorAll('.activity-item')].map(
+          (item) => (item.querySelector('.activity-actions .btn')?.textContent.trim() ?? ''),
+        ),
+        name: document.body.innerText.includes('Bexley'),
+      }))
+      await page.close()
+      return r
+    }
+    const both = await cells('coach')
+    const audit = await cells('auditor')
+    const PLAYER = new Set(['Player', 'Deleted player'])
+    const wrong = both.entities
+      .map((label, i) => {
+        const seen = audit.entities[i]
+        const want = PLAYER.has(label) ? 'Player' : label
+        return seen === want ? null : `row ${i}: ${label} -> ${seen}, wanted ${want}`
+      })
+      .filter(Boolean)
+    // The identity above collapses "Player" and "Deleted player" into one
+    // answer, which is correct and is exactly why it cannot see the two swap
+    // places. So the COACH's own row is asserted as a pair: the row that offers
+    // View history is the row whose reference is the neutral "Player", and a
+    // row that says a child was deleted offers nothing to open.
+    const mispaired = both.entities
+      .map((label, i) => {
+        const history = both.history[i] === 'View history'
+        if (history && label !== 'Player') return `row ${i}: View history beside "${label}"`
+        if (label === 'Deleted player' && history) return `row ${i}: a deleted player with a history button`
+        return null
+      })
+      .filter(Boolean)
+    check(
+      'audit.view without players.view reads the feed but names, resolves and deletes nothing',
+      audit.rows === both.rows && audit.entities.length === both.entities.length &&
+        // The coach's feed really does carry both kinds, or the identity below
+        // would hold over a feed that has nothing to fall closed.
+        both.entities.includes('Player') && both.entities.includes('Deleted player') &&
+        both.history.includes('View history') &&
+        wrong.length === 0 && mispaired.length === 0 &&
+        audit.history.every((label) => label === '') &&
+        !audit.name && !both.name,
+      JSON.stringify({
+        rows: both.rows,
+        wrong: wrong.slice(0, 3),
+        mispaired: mispaired.slice(0, 3),
+        auditHistory: audit.history.filter(Boolean).length,
+      }),
+    )
+  }
+
+  // And without audit.view the route guard answers, not the page.
+  {
+    const page = await open('activity', 1280, { caps: 'viewer', state: 'guarded' })
+    // Both halves. An absence alone is satisfied by a blank shell, a redirect
+    // to the wrong route and a guard returning null, so the claim is that
+    // Activity is gone AND the redirect landed on `/`. Codex.
+    //
+    // The landing is read from the harness's route witness rather than from
+    // anything the page draws. Home has capability variants of its own (a
+    // member without sessions.create gets ParentHome, with no hero), and
+    // screenFromPath falls back to 'home' for a path it does not know, so both
+    // the body and the navigation can say Home for a route that is not.
+    const r = await page.evaluate(() => ({
+      path: document.querySelector('.content')?.getAttribute('data-path') ?? '',
+      heading: document.querySelector('h1')?.textContent ?? '',
+      feed: !!document.querySelector('.activity-list'),
+      filters: !!document.querySelector('.activity-filters-btn'),
+    }))
+    check(
+      'a member without audit.view is redirected off Activity onto Home',
+      r.path === '/' && r.heading !== 'Activity' && !r.feed && !r.filters,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* ---- long names, the narrow phone, and the focus ring ---- */
+  {
+    for (const width of [360, 390, 1280]) {
+      const page = await open('activity', width, { state: 'longnames', awaitSelector: '.activity-item' })
+      const r = await page.evaluate(() => {
+        const doc = document.documentElement
+        // A run of text wider than the box that paints it is a clip, whether
+        // the overflow is hidden or simply painted outside the card.
+        const clipped = []
+        for (const el of document.querySelectorAll('.activity-item *')) {
+          if (el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) clipped.push(el.className + ' ' + el.scrollWidth + '>' + el.clientWidth)
+        }
+        // Guarded: a feed with no rows makes this a failing check rather than
+        // a throw inside evaluate, which ends the run.
+        const first = document.querySelector('.activity-item')
+        const card = first ? first.getBoundingClientRect() : null
+        const overflowing = card
+          ? [...document.querySelectorAll('.activity-item *')]
+              .filter((el) => el.getBoundingClientRect().right > card.right + 1)
+              .map((el) => el.className)
+          : ['no rows']
+        return {
+          page: doc.scrollWidth - doc.clientWidth,
+          clipped: clipped.slice(0, 4),
+          overflowing: overflowing.slice(0, 4),
+          longActor: document.body.innerText.includes('Fotheringay-Wallington-Smythe'),
+          longTeam: document.body.innerText.includes('Development Squad Under Nines'),
+          // The one that actually exercises the wrapping rules: a name with
+          // no space in it has no break opportunity, so it is the only string
+          // that can push a reference past the card that holds it.
+          unbroken: document.body.innerText.includes('OssettTownJuniorsDevelopmentSquadUnderNines'),
+        }
+      })
+      check(
+        `a long actor and a long entity name wrap rather than clip or overflow at ${width}`,
+        r.page === 0 && r.clipped.length === 0 && r.overflowing.length === 0 && r.longActor && r.longTeam && r.unbroken,
+        JSON.stringify(r),
+      )
+      await page.close()
+    }
+  }
+
+  // Every control the feed offers reaches 44 by 44, including the batch link,
+  // whose visible pill is 18px tall and whose hit area is a pseudo-element.
+  // The unfiltered feed, because it is the only view that offers Load more.
+  {
+    const page = await open('activity', 390, { awaitSelector: '.activity-more' })
+    const r = await page.evaluate(() => {
+      const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+      const measure = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return { sel, missing: true }
+        const b = el.getBoundingClientRect()
+        const a = getComputedStyle(el, '::after')
+        const h = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+        const w = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+        return { sel, w: Math.round(w), h: Math.round(h) }
+      }
+      return ['a.activity-batch', '.activity-actions .btn', '.activity-more .btn', '.activity-filters-btn'].map(measure)
+    })
+    check(
+      'every control the feed offers reaches a 44px hit area',
+      r.every((x) => !x.missing && x.w >= 44 && x.h >= 44),
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  // Keyboard order and a visible ring on the two controls a row offers.
+  {
+    const page = await open('activity', 1280, { at: 'batch', awaitSelector: '.activity-item' })
+    const ring = async (sel) => {
+      await focused(page.locator(sel).first(), `${sel} shows a focus ring`)
+      return page.evaluate((s) => {
+        const el = document.querySelector(s)
+        if (!el) return { width: '0px', style: 'none', colour: '', focused: false }
+        const cs = getComputedStyle(el)
+        return { width: cs.outlineWidth, style: cs.outlineStyle, colour: cs.outlineColor, focused: document.activeElement === el }
+      }, sel)
+    }
+    for (const sel of ['a.activity-batch', '.activity-actions .btn', '.activity-filters .field select']) {
+      const r = await ring(sel)
+      check(
+        `${sel} draws the shared focus ring`,
+        r.focused && r.style === 'solid' && parseFloat(r.width) >= 2,
+        JSON.stringify(r),
+      )
+    }
+    // Tab order follows visual order. Asserted over ONE row that carries both
+    // controls, as the exact list in document order and as geometry: an
+    // assertion that a row has at least one control passes while the two swap
+    // or one disappears, which is the regression this is named for. Codex.
+    const order = await page.evaluate(() => {
+      const row = [...document.querySelectorAll('.activity-item')].find(
+        (r) => r.querySelector('a.activity-batch') && r.querySelector('.activity-actions .btn'),
+      )
+      if (!row) return null
+      const els = [...row.querySelectorAll('a, button')]
+      if (els.length !== 2) return { labels: els.map((e) => e.textContent.trim()), visualFirst: false }
+      const [a, b] = els.map((e) => e.getBoundingClientRect())
+      // Reading order: entirely above, OR sharing a line and to the left. The
+      // left comparison has to be CONDITIONAL on sharing a line, or a control
+      // painted lower down but further left still counts as first. Codex.
+      const sharesALine = a.top < b.bottom && b.top < a.bottom
+      return {
+        labels: els.map((e) => e.textContent.trim()),
+        visualFirst: a.bottom <= b.top + 1 || (sharesALine && a.left < b.left),
+        boxes: [a, b].map((r) => [Math.round(r.top), Math.round(r.left), Math.round(r.bottom)]),
+      }
+    })
+    check(
+      'a row exposes its batch link before its action, in document order and on screen',
+      !!order && JSON.stringify(order.labels) === JSON.stringify(['Batch', 'View history']) && order.visualFirst,
+      JSON.stringify(order),
+    )
+    await page.close()
+  }
+
+  // The empty states are two different screens, and only one offers a way out.
+  {
+    const bare = await open('activity', 390, { state: 'empty', awaitSelector: '.empty' })
+    const b = await bare.evaluate(() => ({
+      title: document.querySelector('.empty h3')?.textContent ?? null,
+      action: !!document.querySelector('.empty .btn'),
+    }))
+    await bare.close()
+    const filtered = await open('activity', 390, { state: 'empty', at: 'batch', awaitSelector: '.empty' })
+    const f = await filtered.evaluate(() => ({
+      title: document.querySelector('.empty h3')?.textContent ?? null,
+      action: document.querySelector('.empty .btn')?.textContent.trim(),
+      note: !!document.querySelector('.activity-filter-note'),
+    }))
+    check(
+      'the two empty states differ, and only the filtered one offers Clear filters',
+      b.title === 'No activity yet.' && !b.action &&
+        f.title === 'No activity in this range.' && f.action === 'Clear filters' && f.note,
+      JSON.stringify({ b, f }),
+    )
+    // And pressing it inside the empty state clears the URL batch too.
+    await pressed(filtered.getByRole('button', { name: 'Clear filters', exact: true }), 'the empty state clears the URL batch')
+    await filtered.waitForTimeout(300)
+    const cleared = await filtered.evaluate(() => ({
+      note: !!document.querySelector('.activity-filter-note'),
+      label: document.querySelector('.activity-filters-btn')?.getAttribute('aria-label') ?? null,
+    }))
+    check(
+      'Clear filters in the empty state clears the URL batch as well',
+      !cleared.note && cleared.label === 'Filters',
+      JSON.stringify(cleared),
+    )
+    await filtered.close()
+  }
+
+  // The narrow phone, on the ordinary feed rather than only on the long name
+  // case: no page level horizontal scroll, and nothing painted outside the
+  // card that contains it. 360 is the width SessionRegister.css already
+  // designs for and the rest of the product did not.
+  {
+    for (const [width, at] of [
+      [360, undefined],
+      [390, undefined],
+      [360, 'batch'],
+      [430, undefined],
+    ]) {
+      const page = await open('activity', width, { at, awaitSelector: '.activity-item' })
+      const r = await page.evaluate(() => {
+        const doc = document.documentElement
+        const out = []
+        for (const item of document.querySelectorAll('.activity-item')) {
+          const box = item.getBoundingClientRect()
+          for (const el of item.querySelectorAll('*')) {
+            const b = el.getBoundingClientRect()
+            if (b.width === 0) continue
+            if (b.right > box.right + 1 || b.left < box.left - 1) out.push(el.className || el.tagName)
+            if (el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) out.push('clipped:' + (el.className || el.tagName))
+          }
+        }
+        return { page: doc.scrollWidth - doc.clientWidth, out: [...new Set(out)].slice(0, 4) }
+      })
+      check(
+        `the feed neither scrolls the page nor paints outside a card at ${width}${at ? ' (' + at + ')' : ''}`,
+        r.page === 0 && r.out.length === 0,
+        JSON.stringify(r),
+      )
+      await page.close()
+    }
+  }
+
+  // Loading, error and empty must not look alike. Measured rather than read:
+  // this is the regression 2.14 exists to stop.
+  {
+    const shape = async (state) => {
+      const page = await open('activity', 1280, { state })
+      const r = await page.evaluate(() => ({
+        skeleton: !!document.querySelector('.skeleton-list'),
+        error: !!document.querySelector('.state-error[role="alert"]'),
+        empty: !!document.querySelector('.empty'),
+        retry: [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Retry'),
+      }))
+      await page.close()
+      return r
+    }
+    const loading = await shape('loading')
+    const failed = await shape('error')
+    const empty = await shape('empty')
+    check(
+      'loading, error and empty are three different treatments',
+      loading.skeleton && !loading.error && !loading.empty &&
+        failed.error && failed.retry && !failed.skeleton && !failed.empty &&
+        empty.empty && !empty.skeleton && !empty.error,
+      JSON.stringify({ loading, failed, empty }),
+    )
+  }
+}
+
 /* ---- reduced motion ---- */
 {
   const page = await open('dialog', 1280, { reducedMotion: true })
   await page.waitForTimeout(200)
-  const name = await page.evaluate(() => getComputedStyle(document.querySelector('.modal')).animationName)
+  const name = await page.evaluate(() => {
+    const m = document.querySelector('.modal')
+    return m ? getComputedStyle(m).animationName : 'no dialog'
+  })
   check('reduced motion removes the dialog entry animation', name === 'none', name)
   await page.close()
 }
 
-console.log(out.join('\n'))
+// Every line was printed as it was recorded, so this is the summary rather
+// than the results.
+console.log(`${out.length} checks ran, ${out.filter((l) => l.startsWith('FAIL')).length} failed`)
 await context.close()
 await browser.close()
 if (out.some((line) => line.startsWith('FAIL'))) process.exitCode = 1

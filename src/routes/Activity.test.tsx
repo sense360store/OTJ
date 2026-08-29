@@ -310,8 +310,9 @@ describe('ActivityFilterControls', () => {
 
   it('labels the person filter "Changed by" and exposes no "Actor" copy on the page', () => {
     const h = html()
-    // The visible label is the plain-language "Changed by".
-    expect(h).toContain('>Changed by</span>')
+    // The visible label is the plain-language "Changed by", and since VISUAL-02
+    // it is a real <label> bound to the control rather than a styled span.
+    expect(h).toContain('>Changed by</label>')
     // The control stays programmatically labelled for assistive technology.
     expect(h).toContain('aria-label="Filter by who changed"')
     // No user-facing "Actor" label survives anywhere in the filter markup

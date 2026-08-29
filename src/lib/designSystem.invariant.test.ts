@@ -360,6 +360,8 @@ describe('the type scale is the only source of a font size', () => {
     // and then the six remaining dialog files that surface can open. Those
     // six carried 56 inline sizes between them and were deliberately deferred
     // from the first slice; they are owned now, so a size cannot come back.
+    // VISUAL-02, Activity: the club wide audit feed, whose one remaining
+    // inline size was the batch filter note at 13.5px.
     const OWNED = [
       'components/ui.tsx',
       'components/primitives.tsx',
@@ -377,6 +379,7 @@ describe('the type scale is the only source of a font size', () => {
       'components/ExportConfirmModal.tsx',
       'components/ImportPlayersModal.tsx',
       'components/RenewSeasonModal.tsx',
+      'routes/Activity.tsx',
     ]
     const offenders: string[] = []
     for (const f of sourceFiles.filter((f) => OWNED.includes(rel(f)))) {

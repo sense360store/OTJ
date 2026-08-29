@@ -8,6 +8,11 @@
 // to "View history" (existing) or a neutral "Deleted player"; the child's name
 // appears only inside the gated History modal, never in the feed. REVIEW: this
 // page renders the audit boundary; the safe field discipline is the review gate.
+//
+// VISUAL-02 brought it onto the shared system: the PageHeader, the Button, the
+// Field primitives, the Note and the shape-known loading state. Nothing about
+// the filter model, the pagination, the descriptions or the capability
+// boundaries moved; what changed is which vocabulary draws them.
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuditActivity, useClubPlayerIdentities, useMyCapabilities, useProfiles, useSeasons, useTeams } from '../lib/queries'
@@ -32,7 +37,8 @@ import {
 import { fmtActivityTime, fmtRegDate } from '../lib/playersFormat'
 import type { Member, Season, Team } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
+import { Empty, ErrorNote, LoadingRows, Modal } from '../components/ui'
+import { Button, Note, PageHeader, SelectField, TextField } from '../components/primitives'
 import { PlayerHistoryModal } from '../components/PlayerHistoryModal'
 
 // The resolvers an ActivityItem needs, threaded from the page's cached reads.
@@ -76,10 +82,12 @@ export function ActivityItem({ event, ctx }: { event: ActivityEvent; ctx: Activi
           <span className="activity-chip">{sourceLabel(event.source)}</span>
           {/* The per row batch link, when the event belongs to an import or
               renewal batch and is not itself the batch summary (whose entity
-              reference is already the batch link). */}
+              reference is already the batch link). The two are mutually
+              exclusive, so a row carries at most one of them, and the 44px hit
+              area the stylesheet gives it cannot overhang a second link. */}
           {event.batchId && event.entityType !== 'import_batch' && event.entityType !== 'delete_batch' && (
             <Link className="activity-chip activity-batch" to={activityBatchHref(event.batchId)}>
-              <Icon.layers style={{ width: 12, height: 12 }} />
+              <Icon.layers aria-hidden="true" />
               Batch
             </Link>
           )}
@@ -87,9 +95,9 @@ export function ActivityItem({ event, ctx }: { event: ActivityEvent; ctx: Activi
       </div>
       <div className="activity-actions">
         {ref.kind === 'player-history' && (
-          <button className="btn btn-ghost btn-sm" onClick={() => ctx.onViewHistory(ref.playerId)}>
+          <Button size="sm" onClick={() => ctx.onViewHistory(ref.playerId)}>
             View history
-          </button>
+          </Button>
         )}
       </div>
     </li>
@@ -122,7 +130,7 @@ function EntityRefView({ refr }: { refr: EntityRef }) {
     case 'batch':
       return (
         <Link className="activity-entity activity-batch" to={activityBatchHref(refr.batchId)}>
-          <Icon.layers style={{ width: 12, height: 12 }} />
+          <Icon.layers aria-hidden="true" />
           {refr.label}
         </Link>
       )
@@ -135,9 +143,12 @@ function EntityRefView({ refr }: { refr: EntityRef }) {
 }
 
 // The filter controls, shared by the desktop inline bar and the mobile filter
-// sheet. Every control carries a visible label and a programmatic one
-// (aria-label), and no control uses an id/htmlFor pair, so the two mount points
-// never collide. Selecting a value is a partial filter patch the page folds in.
+// sheet. Each control is the shared Field primitive, so its label is a real
+// <label> bound to it rather than a styled span beside it; the id comes from
+// useId, so the two mount points cannot collide even while both are in the
+// document. The aria-label on each control is unchanged, and stays the
+// accessible name. Selecting a value is a partial filter patch the page folds
+// in.
 export function ActivityFilterControls({
   filters,
   onChange,
@@ -153,122 +164,100 @@ export function ActivityFilterControls({
 }) {
   return (
     <div className="activity-filter-grid">
-      <label className="field">
-        <span className="filter-label">From date</span>
-        <input
-          type="date"
-          className="select"
-          value={filters.from}
-          onChange={(e) => onChange({ from: e.target.value })}
-          aria-label="Filter from date"
-        />
-      </label>
-      <label className="field">
-        <span className="filter-label">To date</span>
-        <input
-          type="date"
-          className="select"
-          value={filters.to}
-          onChange={(e) => onChange({ to: e.target.value })}
-          aria-label="Filter to date"
-        />
-      </label>
-      <label className="field">
-        <span className="filter-label">Changed by</span>
-        <select
-          className="select"
-          value={filters.actorId}
-          onChange={(e) => onChange({ actorId: e.target.value })}
-          aria-label="Filter by who changed"
-        >
-          <option value="">Anyone</option>
-          {actors.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.fullName}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span className="filter-label">Entity</span>
-        <select
-          className="select"
-          value={filters.entity}
-          onChange={(e) => onChange({ entity: e.target.value as ActivityFilters['entity'] })}
-          aria-label="Filter by entity type"
-        >
-          <option value="">Any type</option>
-          {ENTITY_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span className="filter-label">Action</span>
-        <select
-          className="select"
-          value={filters.action}
-          onChange={(e) => onChange({ action: e.target.value })}
-          aria-label="Filter by action"
-        >
-          <option value="">Any action</option>
-          {ACTION_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span className="filter-label">Team</span>
-        <select
-          className="select"
-          value={filters.teamId}
-          onChange={(e) => onChange({ teamId: e.target.value })}
-          aria-label="Filter by team"
-        >
-          <option value="">Any team</option>
-          {teams.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span className="filter-label">Season</span>
-        <select
-          className="select"
-          value={filters.seasonId}
-          onChange={(e) => onChange({ seasonId: e.target.value })}
-          aria-label="Filter by season"
-        >
-          <option value="">Any season</option>
-          {seasons.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span className="filter-label">Source</span>
-        <select
-          className="select"
-          value={filters.source}
-          onChange={(e) => onChange({ source: e.target.value as ActivityFilters['source'] })}
-          aria-label="Filter by source"
-        >
-          <option value="">Any source</option>
-          {SOURCE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <TextField
+        className="field-date"
+        label="From date"
+        type="date"
+        value={filters.from}
+        onChange={(e) => onChange({ from: e.target.value })}
+        aria-label="Filter from date"
+      />
+      <TextField
+        className="field-date"
+        label="To date"
+        type="date"
+        value={filters.to}
+        onChange={(e) => onChange({ to: e.target.value })}
+        aria-label="Filter to date"
+      />
+      <SelectField
+        label="Changed by"
+        value={filters.actorId}
+        onChange={(e) => onChange({ actorId: e.target.value })}
+        aria-label="Filter by who changed"
+      >
+        <option value="">Anyone</option>
+        {actors.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.fullName}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField
+        label="Entity"
+        value={filters.entity}
+        onChange={(e) => onChange({ entity: e.target.value as ActivityFilters['entity'] })}
+        aria-label="Filter by entity type"
+      >
+        <option value="">Any type</option>
+        {ENTITY_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField
+        label="Action"
+        value={filters.action}
+        onChange={(e) => onChange({ action: e.target.value })}
+        aria-label="Filter by action"
+      >
+        <option value="">Any action</option>
+        {ACTION_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField
+        label="Team"
+        value={filters.teamId}
+        onChange={(e) => onChange({ teamId: e.target.value })}
+        aria-label="Filter by team"
+      >
+        <option value="">Any team</option>
+        {teams.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField
+        label="Season"
+        value={filters.seasonId}
+        onChange={(e) => onChange({ seasonId: e.target.value })}
+        aria-label="Filter by season"
+      >
+        <option value="">Any season</option>
+        {seasons.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField
+        label="Source"
+        value={filters.source}
+        onChange={(e) => onChange({ source: e.target.value as ActivityFilters['source'] })}
+        aria-label="Filter by source"
+      >
+        <option value="">Any source</option>
+        {SOURCE_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </SelectField>
     </div>
   )
 }
@@ -281,9 +270,9 @@ export function ActivityEmpty({ active, onClear }: { active: boolean; onClear: (
   return active ? (
     <Empty icon={Icon.search} title="No activity in this range.">
       Nothing matches the current filters.{' '}
-      <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={onClear}>
+      <Button className="empty-action" onClick={onClear}>
         Clear filters
-      </button>
+      </Button>
     </Empty>
   ) : (
     <Empty icon={Icon.clock} title="No activity yet.">
@@ -326,6 +315,7 @@ export function Activity() {
     data,
     isLoading,
     isError,
+    refetch,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -381,8 +371,19 @@ export function Activity() {
   )
 
   const results = () => {
-    if (isLoading) return <Loading />
-    if (isError) return <ErrorNote />
+    // The feed's shape IS known: a list of rows. So the load is skeleton rows
+    // rather than a spinner (2.14), and the label is what announces it, since
+    // the bars themselves are decoration.
+    if (isLoading) return <LoadingRows rows={6} label="Loading the club's activity…" />
+    // Retrying is meaningful: the feed is one paginated read and this button
+    // re-runs exactly what failed, with the filters unchanged.
+    if (isError) {
+      return (
+        <ErrorNote onRetry={() => void refetch()}>
+          The activity feed could not be loaded, so no events are shown. Nothing has been changed.
+        </ErrorNote>
+      )
+    }
     if (events.length === 0) return <ActivityEmpty active={active} onClear={clearFilters} />
     return (
       <>
@@ -393,9 +394,9 @@ export function Activity() {
         </ul>
         {hasNextPage && (
           <div className="activity-more">
-            <button className="btn btn-ghost" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+            <Button onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
               {isFetchingNextPage ? 'Loading…' : 'Load more'}
-            </button>
+            </Button>
           </div>
         )}
       </>
@@ -404,37 +405,35 @@ export function Activity() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Activity</h1>
-          <div className="sub">Who changed what, across the club.</div>
-        </div>
-        <button
-          className="btn btn-ghost activity-filters-btn"
-          aria-label={count > 0 ? `Filters, ${count} active` : 'Filters'}
-          aria-haspopup="dialog"
-          onClick={() => setModal({ kind: 'filters' })}
-        >
-          <Icon.filter />
-          Filters{count > 0 ? ` (${count})` : ''}
-        </button>
-      </div>
+      <PageHeader
+        title="Activity"
+        sub="Who changed what, across the club."
+        actions={
+          <Button
+            className="activity-filters-btn"
+            icon={Icon.filter}
+            aria-label={count > 0 ? `Filters, ${count} active` : 'Filters'}
+            aria-haspopup="dialog"
+            onClick={() => setModal({ kind: 'filters' })}
+          >
+            Filters{count > 0 ? ` (${count})` : ''}
+          </Button>
+        }
+      />
 
       {/* Desktop inline filters. Hidden below 900px, where the Filters button
           opens the same controls in a dialog (the shared Modal). */}
       <div className="activity-filters">
         {filterControls}
         {active && (
-          <button className="btn btn-ghost activity-clear" onClick={clearFilters}>
-            Clear filters
-          </button>
+          <Button onClick={clearFilters}>Clear filters</Button>
         )}
       </div>
 
       {active && urlBatch && (
-        <p className="muted activity-filter-note" style={{ fontSize: 13.5, marginBottom: 12 }}>
+        <Note tone="info" className="activity-filter-note">
           Filtered to one batch.
-        </p>
+        </Note>
       )}
 
       {/* Announce loading, error and empty transitions politely for assistive
@@ -448,19 +447,18 @@ export function Activity() {
           footer={
             <>
               {active && (
-                <button
-                  className="btn btn-ghost"
+                <Button
                   onClick={() => {
                     clearFilters()
                     setModal(null)
                   }}
                 >
                   Clear filters
-                </button>
+                </Button>
               )}
-              <button className="btn btn-primary" onClick={() => setModal(null)}>
+              <Button variant="primary" onClick={() => setModal(null)}>
                 Done
-              </button>
+              </Button>
             </>
           }
         >
