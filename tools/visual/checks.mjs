@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
+import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -120,15 +121,20 @@ const open = async (screen, width, opts = {}) => {
   await page.setViewportSize({ width, height: opts.height ?? 900 })
   // A dialog entry owns its own query string, because its state and its
   // address are not always the same thing.
+  // An Account flow owns its own query string for the same reason a dialog
+  // does: the write phase it needs is part of the entry, not of the caller.
   const q = opts.dialog
     ? queryFor(opts.dialog, { theme: opts.theme ?? 'light', caps: opts.caps ?? 'coach' })
-    : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
-  if (!opts.dialog && opts.caps) q.set('caps', opts.caps)
-  if (!opts.dialog && opts.state) q.set('state', opts.state)
+    : opts.flow
+      ? queryForFlow(opts.flow, { theme: opts.theme ?? 'light', caps: opts.caps ?? 'coach' })
+      : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
+  const plain = !opts.dialog && !opts.flow
+  if (plain && opts.caps) q.set('caps', opts.caps)
+  if (plain && opts.state) q.set('state', opts.state)
   // A state and an address are two different things: the Activity feed's one
   // URL persisted filter is the batch deep link, and it is reached by opening
   // that address rather than by a state the reads answer with.
-  if (!opts.dialog && opts.at) q.set('at', opts.at)
+  if (plain && opts.at) q.set('at', opts.at)
   await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => document.fonts.ready)
   // domcontentloaded fires before React has rendered anything, so a check that
@@ -2184,6 +2190,396 @@ const focusReturned = async (page, d) => {
         empty.empty && !empty.skeleton && !empty.error,
       JSON.stringify({ loading, failed, empty }),
     )
+  }
+}
+
+/* ---- VISUAL-02: the Account screen ------------------------------------
+   The self service surface. Its acceptance is forms, avatar upload and the
+   success and error outcomes, so what is measured here is what a screenshot
+   cannot settle: the hit areas, the label bindings, the keyboard order, and
+   where FOCUS ends up when a successful write removes or disables the control
+   that had it. That last one is the defect this slice found: three of the
+   four successes on this page emptied a field or unmounted a button while the
+   coach's focus was on it, which drops focus to the document body.
+
+   Every outcome here is DRIVEN through tools/visual/account.mjs, the same
+   entries shoot.mjs photographs, so a control that stops rendering fails the
+   run rather than producing a plausible measurement. */
+{
+  const flowOf = (key) => ACCOUNT_FLOWS.find((f) => f.key === key)
+
+  // Every control a coach can press, at the narrowest width and the widest.
+  // The admin set is used because it renders the most controls: four
+  // destination rows rather than three, and one of those rows was 39px tall
+  // before this slice.
+  for (const width of [360, 1280]) {
+    const page = await open('account', width, { caps: 'clubadmin' })
+    const r = page.blank
+      ? null
+      : await page.evaluate(() => {
+          const short = []
+          const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+          const controls = [
+            ...document.querySelectorAll('.account button, .account select, .account input:not([type="file"])'),
+          ]
+          for (const el of controls) {
+            const b = el.getBoundingClientRect()
+            // The hidden file picker has no box at all; it is reached through
+            // its visible button, which is measured like every other control.
+            if (b.width === 0 && b.height === 0) continue
+            const a = getComputedStyle(el, '::after')
+            const h = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+            const w = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+            if (h < 44 || w < 44) {
+              const name = (el.textContent || el.getAttribute('aria-label') || el.id || el.tagName).trim()
+              short.push(`${name.slice(0, 24)} ${Math.round(w)}x${Math.round(h)}`)
+            }
+          }
+          return { count: controls.length, short }
+        })
+    check(
+      `every Account control reaches a 44px target at ${width}`,
+      !!r && r.count > 0 && r.short.length === 0,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  // The narrow phone, including the state where every string the club chooses
+  // is as long as a club would really make it. No page level horizontal
+  // scroll, and nothing painted outside the card that contains it.
+  for (const [width, state] of [
+    [360, undefined],
+    [390, undefined],
+    [430, undefined],
+    [900, undefined],
+    [360, 'longvalues'],
+    [390, 'longvalues'],
+    [1280, 'longvalues'],
+  ]) {
+    for (const theme of ['light', 'dark']) {
+      const page = await open('account', width, { state, theme, caps: 'clubadmin' })
+      const r = page.blank
+        ? null
+        : await page.evaluate(() => {
+            const doc = document.documentElement
+            const out = []
+            for (const card of document.querySelectorAll('.account-section')) {
+              const box = card.getBoundingClientRect()
+              for (const el of card.querySelectorAll('*')) {
+                const b = el.getBoundingClientRect()
+                if (b.width === 0) continue
+                if (b.right > box.right + 1 || b.left < box.left - 1) out.push(el.className || el.tagName)
+                // A form control scrolls or truncates its own value by
+                // specification: a select ellipsises a long option and a text
+                // field scrolls a value longer than its box. Neither is copy
+                // the layout failed to fit. Everything else that scrolls
+                // inside itself is.
+                const owns = el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+                if (!owns && el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) {
+                  out.push('clipped:' + (el.className || el.tagName))
+                }
+              }
+            }
+            return { page: doc.scrollWidth - doc.clientWidth, out: [...new Set(out)].slice(0, 4) }
+          })
+      check(
+        `Account neither scrolls the page nor paints outside a card at ${width}${state ? ' (' + state + ')' : ''}, ${theme}`,
+        !!r && r.page === 0 && r.out.length === 0,
+        JSON.stringify(r),
+      )
+      await page.close()
+    }
+  }
+
+  // Every visible label is bound to a control that exists, and every control
+  // is named by one. A styled span beside a field is what this catches, and
+  // it is the shape the Activity filters shipped with.
+  {
+    const page = await open('account', 1280, { caps: 'clubadmin' })
+    const r = page.blank
+      ? null
+      : await page.evaluate(() => {
+          const orphans = []
+          for (const label of document.querySelectorAll('.account label')) {
+            const to = label.getAttribute('for')
+            const target = to ? document.getElementById(to) : null
+            if (!target) orphans.push((label.textContent || '').trim())
+          }
+          const unnamed = []
+          for (const el of document.querySelectorAll('.account input:not([type="file"]), .account select')) {
+            const lab = el.id ? document.querySelector(`label[for="${el.id}"]`) : null
+            const named = (lab ? (lab.textContent || '').trim() : '') || el.getAttribute('aria-label') || ''
+            if (!named) unnamed.push(el.id || el.tagName)
+          }
+          // The picker is opened by a button and is never a control on its
+          // own, so it must be out of the tab order rather than an unlabelled
+          // field a keyboard lands on.
+          const picker = document.querySelector('.account input[type="file"]')
+          const reachable = picker ? picker.getBoundingClientRect().height > 0 : false
+          return { orphans, unnamed, reachable, labels: document.querySelectorAll('.account label').length }
+        })
+    check(
+      'every Account label is bound to a control, every control is named, and the file picker is not in the tab order',
+      !!r && r.labels >= 5 && r.orphans.length === 0 && r.unnamed.length === 0 && !r.reachable,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* Two frozen behaviours on the name row, neither of which a screenshot can
+     show: Enter saves, and Save is armed only by a MEANINGFUL change. Blank,
+     unchanged and unchanged-with-padding all leave it inert, which is what
+     stops a coach clearing their own name by pressing a button. */
+  {
+    const page = await open('account', 1280)
+    const field = page.getByLabel('Full name', { exact: true })
+    const save = page.getByRole('button', { name: 'Save', exact: true })
+    // Guarded: a control that is not there rejects isEnabled() on its own
+    // account, which ends the run rather than failing this check.
+    const armed = async () => ((await save.count()) ? save.first().isEnabled() : null)
+    const WHAT = 'Save is armed only by a meaningful changed name'
+    const arm = async (value) => {
+      if (!(await typed(field, value, WHAT))) return 'unreachable'
+      await page.waitForTimeout(120)
+      return armed()
+    }
+    const states = {
+      untouched: await armed(),
+      blank: await arm('   '),
+      unchanged: await arm('Sam Whitfield'),
+      padded: await arm('  Sam Whitfield  '),
+      changed: await arm('Sam Whitfield-Ashby'),
+    }
+    check(
+      WHAT,
+      states.untouched === false &&
+        states.blank === false &&
+        states.unchanged === false &&
+        states.padded === false &&
+        states.changed === true,
+      JSON.stringify(states),
+    )
+
+    // And Enter, from the field the coach is typing in, with the name left
+    // changed by the block above. The save is proved by the confirmation AND
+    // by the name the shell now shows, so a note rendered without a write
+    // would fail here.
+    const ENTER = 'Enter in the name field saves it'
+    if (await focused(field, ENTER)) {
+      await page.keyboard.press('Enter')
+      await page.waitForTimeout(300)
+      const r = await page.evaluate(() => ({
+        note: !!document.querySelector('.account-name-block .note-success'),
+        shell: document.querySelector('.coach-chip b')?.textContent ?? null,
+      }))
+      check(ENTER, r.note && r.shell === 'Sam Whitfield-Ashby', JSON.stringify(r))
+    }
+    await page.close()
+  }
+
+  /* The autocomplete a password manager reads, taken off the live element
+     rather than out of the markup. The static test can only see the JSX
+     spelling; this is the property the browser resolved, which is what a
+     manager acts on. Frozen behaviour: both password fields are
+     new-password (never current-password, which would offer the wrong
+     credential) and the address field is email. */
+  {
+    const page = await open('account', 1280)
+    const r = page.blank
+      ? null
+      : await page.evaluate(() =>
+          ['new-password', 'confirm-password', 'new-email'].map((id) => {
+            const el = document.getElementById(id)
+            return el ? `${id}:${el.autocomplete}:${el.type}` : `${id}:missing`
+          }),
+        )
+    check(
+      'the Security fields carry the autocomplete a password manager reads',
+      !!r &&
+        JSON.stringify(r) ===
+          JSON.stringify([
+            'new-password:new-password:password',
+            'confirm-password:new-password:password',
+            'new-email:email:email',
+          ]),
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  // Keyboard order follows visual order. The forms lay a field beside its
+  // action at desktop width and stack them on a phone, and the DOM order is
+  // what a keyboard follows in both.
+  for (const width of [360, 1280]) {
+    const page = await open('account', width, { caps: 'clubadmin' })
+    const r = page.blank
+      ? null
+      : await page.evaluate(() => {
+          const els = [
+            ...document.querySelectorAll('.account button, .account select, .account input:not([type="file"])'),
+          ].filter((el) => !el.disabled && el.getBoundingClientRect().height > 0)
+          const out = []
+          for (let i = 1; i < els.length; i++) {
+            const a = els[i - 1].getBoundingClientRect()
+            const b = els[i].getBoundingClientRect()
+            // Same visual row when their tops are within half a control, in
+            // which case the later one must be to the right.
+            const sameRow = Math.abs(a.top - b.top) < 22
+            const ok = sameRow ? b.left >= a.left - 1 : b.top >= a.top - 1
+            if (!ok) out.push(`${els[i - 1].id || els[i - 1].textContent.trim().slice(0, 12)} → ${els[i].id || els[i].textContent.trim().slice(0, 12)}`)
+          }
+          return { count: els.length, out }
+        })
+    check(`the Account tab order follows the visual order at ${width}`, !!r && r.count > 5 && r.out.length === 0, JSON.stringify(r))
+    await page.close()
+  }
+
+  /* Focus after an outcome. Four successes each take away the control that
+     had focus: Remove photo unmounts with the photo, Save goes inert because
+     the name now matches, and the two Security submits go inert because they
+     empty their own fields. A browser drops focus to the body when a focused
+     control is disabled or removed, so each of these places it somewhere
+     deliberate. This is the check that fails if that placement is dropped. */
+  for (const key of ['remove-ok', 'name-ok', 'password-ok', 'email-ok']) {
+    const flow = flowOf(key)
+    const WHAT = `focus stays on a live Account control after ${key}`
+    if (!flow) {
+      check(WHAT, false, 'no such flow')
+      continue
+    }
+    const page = await open('account', 1280, { flow })
+    const why = await runFlow(page, flow)
+    if (why) {
+      check(WHAT, false, why)
+      await page.close()
+      continue
+    }
+    const at = await page.evaluate(() => {
+      const el = document.activeElement
+      if (!el || el === document.body) return null
+      return {
+        id: el.id || null,
+        tag: el.tagName,
+        inAccount: !!el.closest('.account'),
+        disabled: !!el.disabled,
+        hidden: el.getBoundingClientRect().height === 0,
+      }
+    })
+    check(WHAT, !!at && at.inAccount && !at.disabled && !at.hidden, JSON.stringify(at))
+    await page.close()
+  }
+
+  /* Every outcome carries an icon and a live region, in both themes. Colour
+     alone is what this page used to say success and failure with, and colour
+     alone is what 2.4 and 2.14 forbid. */
+  for (const [key, tone, role] of [
+    ['name-ok', 'note-success', 'status'],
+    ['name-failed', 'note-danger', 'alert'],
+    ['password-mismatch', 'note-danger', 'alert'],
+    ['email-ok', 'note-success', 'status'],
+  ]) {
+    for (const theme of ['light', 'dark']) {
+      const flow = flowOf(key)
+      const WHAT = `${key} is announced and carries a glyph, not colour alone (${theme})`
+      if (!flow) {
+        check(WHAT, false, 'no such flow')
+        continue
+      }
+      const page = await open('account', 1280, { flow, theme })
+      const why = await runFlow(page, flow)
+      if (why) {
+        check(WHAT, false, why)
+        await page.close()
+        continue
+      }
+      const r = await page.evaluate(() => {
+        const n = document.querySelector('.account .note')
+        if (!n) return null
+        return {
+          role: n.getAttribute('role'),
+          glyph: !!n.querySelector('svg[aria-hidden="true"]'),
+          tone: [...n.classList].find((c) => c.startsWith('note-') && c !== 'note-body') ?? null,
+          words: (n.textContent || '').trim().length,
+        }
+      })
+      check(WHAT, !!r && r.role === role && r.glyph && r.tone === tone && r.words > 8, JSON.stringify(r))
+      await page.close()
+    }
+  }
+
+  // A write in flight says so and offers no outcome yet. A success note drawn
+  // before the server answered is the failure this rules out.
+  for (const key of ['upload-pending', 'remove-pending', 'name-pending', 'team-pending', 'password-pending', 'email-pending']) {
+    const flow = flowOf(key)
+    const WHAT = `${key} shows no outcome while it is still in flight`
+    if (!flow) {
+      check(WHAT, false, 'no such flow')
+      continue
+    }
+    const page = await open('account', 1280, { flow })
+    const why = await runFlow(page, flow)
+    if (why) {
+      check(WHAT, false, why)
+      await page.close()
+      continue
+    }
+    const notes = await page.evaluate(() => document.querySelectorAll('.account .note').length)
+    check(WHAT, notes === 0, `${notes} notes`)
+    await page.close()
+  }
+
+  /* The capability boundary, read from what the page renders. Default team
+     follows sessions.create and each destination row follows the capability
+     the sidebar's own ITEM_CAP map names, so a set that holds three of the
+     four gets three rows. `coach` and `admin` are that partial case: neither
+     holds users.manage, so neither is offered Users. */
+  for (const [caps, team, rows] of [
+    ['planner', true, []],
+    ['parent', false, []],
+    ['viewer', false, []],
+    ['coach', true, ['Club', 'Teams', 'Spond']],
+    ['clubadmin', true, ['Club', 'Users', 'Teams', 'Spond']],
+  ]) {
+    const page = await open('account', 1280, { caps })
+    const r = page.blank
+      ? null
+      : await page.evaluate(() => {
+          const cards = [...document.querySelectorAll('.account-section')]
+          const admin = cards.find((c) => (c.querySelector('h2')?.textContent ?? '') === 'Admin')
+          return {
+            team: !!document.querySelector('#default-team'),
+            adminManaged: [...document.querySelectorAll('.account-team-admin')].length,
+            rows: admin ? [...admin.querySelectorAll('.account-link-text b')].map((b) => (b.textContent || '').trim()) : [],
+            // The Feedback row is open to every role and is deliberately NOT
+            // in the Admin card, so a set with no admin capability still has
+            // exactly one destination row.
+            feedback: [...document.querySelectorAll('.account-link-text b')].some((b) => b.textContent === 'Feedback log'),
+          }
+        })
+    check(
+      `${caps} is offered exactly the Account controls its capabilities open`,
+      !!r &&
+        r.team === team &&
+        r.adminManaged === (team ? 0 : 1) &&
+        JSON.stringify(r.rows) === JSON.stringify(rows) &&
+        r.feedback,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  // The page level gate is a different screen from the loaded one, and says
+  // it is loading rather than looking like an account with nothing in it.
+  {
+    const page = await open('account', 1280, { state: 'profileloading' })
+    const r = await page.evaluate(() => ({
+      loading: !!document.querySelector('.content > .loading[role="status"]'),
+      account: !!document.querySelector('.account'),
+      label: (document.querySelector('.content > .loading')?.textContent ?? '').trim(),
+    }))
+    check('the profile gate is a labelled load rather than an empty account', r.loading && !r.account && r.label.length > 3, JSON.stringify(r))
+    await page.close()
   }
 }
 

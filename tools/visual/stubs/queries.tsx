@@ -7,6 +7,7 @@ export * from '../../../src/lib/queries'
 import { useState } from 'react'
 
 import {
+  ACCOUNT_CLUB_NAME,
   ACTIVITY_PROFILES_FOR,
   ACTIVITY_TEAMS_FOR,
   CURRENT_SEASON,
@@ -21,8 +22,11 @@ import {
   SEASONS,
   SESSIONS,
   SPOND_IMPORT_RESULT,
+  AVATAR_DATA_URL,
+  AVATAR_PATH,
   TEAMS,
   TEMPLATES,
+  profileEdits,
   activityHasNext,
   activityPages,
   activityRowsFor,
@@ -104,7 +108,8 @@ export const useMemberMap = () => ({})
 // The acting adults the Activity feed names and its Changed by filter offers.
 // No other screen in the harness reads this, so filling it moves no shot.
 export const useProfiles = () => query(ACTIVITY_PROFILES_FOR(fixtures.state))
-export const useClub = () => query({ name: 'Ossett Town Juniors', motto: 'Where football and friendships flourish', crestUrl: null })
+export const useClub = () =>
+  query({ name: ACCOUNT_CLUB_NAME, motto: 'Where football and friendships flourish', crestUrl: null })
 /* ---- Registered players -------------------------------------------
    The register is the one surface whose state matrix a screenshot has to
    cover in full, so its reads answer from `state` rather than always
@@ -274,7 +279,12 @@ export const useSpondSync = mutation
 export const useRefreshSpondPlanning = mutation
 export const useLinkSessionSpondEvent = mutation
 export const useEventKindContext = () => ({ spondEvents: {}, teamNames: TEAMS.map((t) => t.name) })
-export const useSignedMediaUrl = () => query(null)
+// The one object the harness signs: an uploaded profile photo, answered with
+// the inline SVG in fixtures.ts so the avatar renders as a photo rather than
+// falling back to initials under a name claiming one. Every other path still
+// answers null, so no existing screenshot moves.
+export const useSignedMediaUrl = (path?: string | null) =>
+  query(path === AVATAR_PATH ? AVATAR_DATA_URL : null)
 export const useMediaSrc = () => ({ src: null, isLoading: false, isError: false })
 export const useBoards = () => query([])
 export const useFeedback = () => query([])
@@ -318,5 +328,70 @@ export const useAuditActivity = (filters: ActivityFilters) => {
 }
 export const useImportFA = mutation
 export const useUploadMedia = mutation
+
+/* ---- Account (VISUAL-02) --------------------------------------------
+   The self service screen drives its writes through mutate(vars, { onSuccess,
+   onError }) rather than through an awaited guard, so a static mutation
+   object can reach none of its outcomes: the callbacks are never called and
+   isPending never moves. These are real hooks with a phase, for the same
+   reason the Spond roster import stub is one.
+
+   The phase is the SHARED write state, so `inflight` hangs and `writefails`
+   refuses here exactly as they do on the register's dialogs, and which write
+   is being driven is decided by which control the driver presses rather than
+   by a state per control. `photoinflight` and `photofails` are the same two
+   phases with a photo already uploaded, which is the only way the removal
+   controls exist to be pressed at all.
+
+   A success APPLIES the edit to the harness's profile store, so the screen
+   moves the way it moves in the product once refreshProfile has run: the name
+   in the sidebar updates, Save goes back to disabled, and an uploaded photo
+   replaces the initials. Without that a shot named for a success would show a
+   screen that had not changed, and every proof of it would hold whether or
+   not the press did anything. */
+type WriteCallbacks = { onSuccess?: () => void; onError?: (e: Error) => void }
+
+const WRITE_HANGS = state === 'inflight' || state === 'photoinflight'
+const WRITE_FAILS = state === 'writefails' || state === 'photofails'
+
+function useCallbackWrite<V>(message: string, apply?: (vars: V) => void) {
+  const [pending, setPending] = useState(false)
+  return {
+    ...mutation(),
+    isPending: pending,
+    mutate: (vars: V, opts: WriteCallbacks = {}) => {
+      // Hangs: neither callback is called and the control stays in flight,
+      // which is the state itself rather than a drawn one.
+      if (WRITE_HANGS) {
+        setPending(true)
+        return
+      }
+      if (WRITE_FAILS) {
+        opts.onError?.(new Error(message))
+        return
+      }
+      apply?.(vars)
+      opts.onSuccess?.()
+    },
+  }
+}
+
+export const useUploadAvatar = () =>
+  useCallbackWrite<{ file: File }>('Could not upload the photo. Try again.', () =>
+    profileEdits.write({ avatarPath: AVATAR_PATH }),
+  )
+
+export const useRemoveAvatar = () =>
+  useCallbackWrite<void>('Could not remove the photo. Try again.', () => profileEdits.write({ avatarPath: null }))
+
+// One hook, two callers: the name row writes fullName and the team row writes
+// teamId. Each mounts its own instance, so a press on one leaves the other
+// alone, exactly as it does in the product.
+export const useUpdateMyProfile = () =>
+  useCallbackWrite<{ fullName?: string; teamId?: string | null }>('Could not save your profile. Try again.', (vars) => {
+    if (vars.fullName !== undefined) profileEdits.write({ fullName: vars.fullName })
+    if (vars.teamId !== undefined) profileEdits.write({ teamId: vars.teamId })
+  })
+
 export const useInsertDrill = mutation
 export const useUpdateDrill = mutation

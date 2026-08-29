@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
+import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -144,7 +145,7 @@ const SWEEP = `() => {
   return rows
 }`
 
-const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players', 'activity']
+const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players', 'activity', 'account']
 // Which capability variants a screen renders, and which of its own states are
 // worth measuring. Registered players carries the destructive dialog, whose
 // confirm button label is the pairing VISUAL-00 measured at 3.34:1, so it is
@@ -154,9 +155,14 @@ const CAPS_FOR = (screen) =>
     ? // audit.view with and without players.view, then a member with neither,
       // whose redirect is a different screen and is measured as one.
       ['coach', 'auditor', 'viewer']
-    : screen === 'home' || screen === 'sessions' || screen === 'players'
-      ? ['coach', 'viewer', 'parent']
-      : ['na']
+    : screen === 'account'
+      ? // The full administrative set, which is the one that renders every
+        // destination row, and a member with no coaching write, whose Default
+        // team control is replaced by a line of muted text.
+        ['clubadmin', 'parent']
+      : screen === 'home' || screen === 'sessions' || screen === 'players'
+        ? ['coach', 'viewer', 'parent']
+        : ['na']
 // `allactions` opens the register with the Spond mapped team selected, which
 // is the only way every header action is offered; the run below then opens the
 // More actions popup, so its labels are measured on the ground they sit on
@@ -168,7 +174,13 @@ const STATES_FOR = (screen) =>
       ? // The feed's four state families plus the long name case, which is
         // where a run wraps onto a second line and can land on a new ground.
         ['default', 'loading', 'error', 'empty', 'longnames']
-      : ['default']
+      : screen === 'account'
+        ? // The loaded page, the page level gate, and the long strings, which
+          // is where a value wraps onto a second line and can land on a new
+          // ground. The outcome notes are their own run below, because a
+          // sweep of the page never reaches a message nobody produced.
+          ['default', 'profileloading', 'longvalues']
+        : ['default']
 
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
@@ -196,7 +208,10 @@ for (const screen of SCREENS) {
        for (const state of STATES_FOR(screen)) {
         // The states only vary what a coach sees; a member with no write and
         // a member with no access render the same thing in every one of them.
-        if (state !== 'default' && caps !== 'coach') continue
+        // Account's fullest variant is the administrative one rather than
+        // `coach`, so the state runs belong to that set there.
+        const stateCaps = screen === 'account' ? 'clubadmin' : 'coach'
+        if (state !== 'default' && caps !== stateCaps) continue
         const page = await context.newPage()
         await page.setViewportSize({ width: w, height: 1400 })
         const q = new URLSearchParams({ screen, theme })
@@ -382,6 +397,51 @@ for (const [what, at, width, opener] of [
       ;(r.disabled ? exempt : r.frozen ? frozen : failed).push(row)
     }
     await page.close()
+  }
+}
+
+/* ---- VISUAL-02: the Account screen's outcomes -------------------------
+   A sweep of the page never reaches a message nobody produced, and every
+   message on this screen is the result of a write. These are the runs that
+   paint the semantic surfaces: a success Note, a danger Note, and the
+   disabled-to-active flip on the submit beside them. Each is DRIVEN through
+   the same entries shoot.mjs photographs, and a flow that did not reach its
+   own outcome is a failed run rather than a quiet skip: an unmeasured surface
+   reports zero findings, and zero findings is what a clean run looks like.
+
+   Not every flow: the four here are the two tones on the two grounds this
+   page paints them on (inside a form row and under a photo), which is every
+   distinct pairing. The rest render the same two classes. */
+for (const key of ['name-ok', 'name-failed', 'upload-failed', 'email-ok']) {
+  const flow = ACCOUNT_FLOWS.find((f) => f.key === key)
+  for (const theme of ['light', 'dark']) {
+    for (const w of [390, 1280]) {
+      const where = `account-${key}/${theme}/${w}w`
+      if (!flow) {
+        failed.push(unreached(`account:${key}`, 'no such flow', where))
+        continue
+      }
+      const page = await context.newPage()
+      await page.setViewportSize({ width: w, height: 1400 })
+      await page.goto(`${BASE}/?${queryForFlow(flow, { theme })}`, { waitUntil: 'domcontentloaded' })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForTimeout(300)
+      const why = await runFlow(page, flow)
+      if (why) {
+        failed.push(unreached(`account:${key}`, why, where))
+        await page.close()
+        continue
+      }
+      const rows = await page.evaluate('(' + SWEEP + ')()')
+      for (const r of rows) {
+        if (r.ratio >= r.need) continue
+        const k = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+        if (seen.has(k)) continue
+        seen.add(k)
+        ;(r.disabled ? exempt : r.frozen ? frozen : failed).push({ ...r, where })
+      }
+      await page.close()
+    }
   }
 }
 

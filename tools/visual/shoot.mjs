@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, openDialog, openRowMenu, queryFor, DIALOG_PLAYER } from './dialogs.mjs'
+import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
 
 const OUT = process.argv[2] ?? 'visual-shots'
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
@@ -151,6 +152,34 @@ const SHOTS = [
   ...[390, 1280].map((w) => ({ screen: 'activity', caps: 'coach', state: 'loadingmore', w, open: 'loadmorebusy' })),
   // The gated History dialog, which is the ONE place a child's name appears.
   ...[390, 1280].map((w) => ({ screen: 'activity', caps: 'coach', state: 'history', w, open: 'history' })),
+
+  /* ---- VISUAL-02, the Account screen ---------------------------------
+     Part 4 names forms, avatar upload and the success and error outcomes.
+     The coach variant is shot at every width plus the 900px boundary, since
+     the shell changes there and this page's own rows wrap on the way down.
+     The other three capability variants are shot at the two phone widths,
+     the boundary and desktop: they differ from the coach only in whether the
+     Default team control and the Admin card are there, which is a presence
+     rather than a layout, and shooting each of them seven times says the
+     same thing four more times. */
+  ...[...WIDTHS, 900].map((w) => ({ screen: 'account', caps: 'coach', w })),
+  ...['planner', 'parent', 'clubadmin'].flatMap((caps) =>
+    [360, 390, 900, 1280].map((w) => ({ screen: 'account', caps, w })),
+  ),
+  // The states the reads answer with: a coach who has uploaded a photo, the
+  // page level gate, and every string the club chooses at the length a club
+  // would really make it.
+  ...['photo', 'profileloading', 'longvalues'].flatMap((state) =>
+    [390, 1280].map((w) => ({ screen: 'account', caps: 'coach', state, w })),
+  ),
+  /* Every outcome, driven through the controls a coach uses
+     (tools/visual/account.mjs). Each entry proves the state its own name
+     claims before its screenshot is filed, so a press that quietly no-ops
+     fails the run rather than filing an untouched form under a name that
+     says otherwise. A phone width and a desktop width each, in both themes,
+     because the semantic Note is the thing these shots exist to show and its
+     surface, border and glyph all flip. */
+  ...ACCOUNT_FLOWS.flatMap((flow) => [390, 1280].map((w) => ({ screen: 'account', caps: 'coach', flow, w }))),
 ]
 
 // A state and an ADDRESS are two different things, and two shots that differ
@@ -160,8 +189,8 @@ const name = (s, theme) =>
   [
     s.screen,
     s.caps ?? 'na',
-    s.dialog ? s.dialog.state : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
-    s.dialog ? `dialog-${s.dialog.key}` : (s.open ?? 'default'),
+    s.dialog ? s.dialog.state : s.flow ? s.flow.state : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
+    s.dialog ? `dialog-${s.dialog.key}` : s.flow ? `flow-${s.flow.key}` : (s.open ?? 'default'),
     theme,
     `${s.w}w`,
   ].join('_') + '.png'
@@ -272,6 +301,26 @@ const REACHED_STATE = {
   loadingmore: async (page) =>
     page.evaluate(() => document.querySelectorAll('.activity-item').length === 50 &&
       !!document.querySelector('.activity-more button[disabled]')),
+  /* ---- the Account screen ---- */
+  // A photo really rendered, rather than the initials fallback under a name
+  // claiming one, AND the removal offered, which only a photo offers.
+  photo: async (page) =>
+    page.evaluate(
+      () =>
+        !!document.querySelector('.account-photo img.avatar') &&
+        [...document.querySelectorAll('.account-photo-acts button')].some((b) =>
+          (b.textContent || '').includes('Remove photo'),
+        ),
+    ),
+  // The page level gate: a labelled load and no account behind it.
+  profileloading: async (page) =>
+    page.evaluate(
+      () => !!document.querySelector('.content > .loading[role="status"]') && !document.querySelector('.account'),
+    ),
+  // The four strings the club chooses, at the length a club would really make
+  // them. Named by the club name, which is the one that wraps rather than
+  // scrolling inside its own control.
+  longvalues: '.account-fact dd:has-text("Community Football and Friendship")',
 }
 
 async function visible(page, selector) {
@@ -380,6 +429,8 @@ for (const theme of ['light', 'dark']) {
     // the entry rather than assembled again here.
     const q = s.dialog
       ? queryFor(s.dialog, { theme, caps: s.caps })
+      : s.flow
+      ? queryForFlow(s.flow, { theme, caps: s.caps })
       : (() => {
           const p = new URLSearchParams({ screen: s.screen, theme })
           if (s.caps) p.set('caps', s.caps)
@@ -486,6 +537,17 @@ for (const theme of ['light', 'dark']) {
       // the error, and with one filled is the confirmation. Neither is faked.
       if (s.open === 'info') await page.getByLabel('Email').fill('coach@example.invalid')
       await page.getByRole('button', { name: 'Email me a link' }).click()
+    }
+    // An Account outcome carries its own proof, for the same reason: it is
+    // reached by typing into the fields and pressing the control a coach
+    // presses, and a press that quietly no-ops leaves an untouched form under
+    // a name claiming an outcome.
+    if (s.flow) {
+      const why = await runFlow(page, s.flow)
+      if (why) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: ${why}`)
+      }
     }
     // A dialog carries its own proof, of the dialog AND of the state its name
     // claims, so a press that quietly no-ops fails here rather than filing an

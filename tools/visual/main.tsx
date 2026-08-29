@@ -23,6 +23,7 @@ import { Sessions } from '../../src/routes/Sessions'
 import { Login } from '../../src/routes/Login'
 import { Players } from '../../src/routes/Players'
 import { Activity } from '../../src/routes/Activity'
+import { Account } from '../../src/routes/Account'
 import { ACTIVITY_BATCH_ID, PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
 import '../../src/styles.css'
 
@@ -193,6 +194,9 @@ function Harness() {
         <Route element={<RequireCap cap="audit.view" />}>
           <Route path="/activity" element={<Activity />} />
         </Route>
+        {/* Account is open to every role, parents included, so it carries no
+            guard here for the same reason App.tsx gives it none. */}
+        <Route path="/account" element={<Account />} />
       </Routes>
     </Shell>
   )
@@ -239,6 +243,7 @@ const ENTRY: Record<string, string> = {
   sessions: '/sessions',
   players: playersEntry(),
   activity: activityEntry(),
+  account: '/account',
 }
 
 createRoot(document.getElementById('root')!).render(

@@ -4,6 +4,13 @@
 // auth client on the signed-in session. Role and club render read-only:
 // changing them, and removing an account, stays with club admins.
 // REVIEW: part of the auth flow (signed-in password and email updates).
+//
+// VISUAL-02 brought it onto the shared system: PageHeader, Card, Button, the
+// field primitives and the Note. Nothing about what it writes moved. What
+// changed is which vocabulary draws it, and two accessibility repairs that
+// belong to a visual pass: an outcome is a Note with an icon and a live
+// region rather than coloured text, and focus is placed deliberately where a
+// successful write removes or disables the control that had it.
 import { useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -15,34 +22,47 @@ import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { UserAvatar } from '../components/UserAvatar'
 import { Loading } from '../components/ui'
+import { Button, Card, Note, PageHeader, SelectField, TextField } from '../components/primitives'
 
 function joinedLabel(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
-type Note = { kind: 'ok' | 'error'; text: string } | null
+// The outcome of one write, in the two kinds this screen can report. Named
+// Outcome rather than Note so the shared primitive keeps its own name here.
+type Outcome = { kind: 'ok' | 'error'; text: string } | null
 
-function NoteLine({ note }: { note: Note }) {
-  if (!note) return null
+// Every message on this page, in one treatment. It was plain coloured text,
+// which carried its meaning by colour alone and announced nothing; it is the
+// shared Note now, so success and failure each carry an icon and a border as
+// well as a hue, and each is a live region of the right urgency. Keyed by
+// kind so a success replaced by a failure is a fresh insertion rather than a
+// text swap inside a region already announced.
+function OutcomeNote({ outcome }: { outcome: Outcome }) {
+  if (!outcome) return null
+  const error = outcome.kind === 'error'
   return (
-    <p
-      className="muted"
-      style={{ fontSize: 13.5, marginTop: 10, marginBottom: 0, color: note.kind === 'error' ? 'var(--danger)' : 'var(--success)' }}
+    <Note
+      key={outcome.kind}
+      className="account-note"
+      tone={error ? 'danger' : 'success'}
+      role={error ? 'alert' : 'status'}
     >
-      {note.text}
-    </p>
+      {outcome.text}
+    </Note>
   )
 }
 
+// One contained section. The heading is an h2 under the page's single h1, so
+// the page has a real outline; the title and its line of context take the
+// shared type scale rather than two inline sizes.
 function SectionCard({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
   return (
-    <div className="card" style={{ padding: 18, marginBottom: 18 }}>
-      <h3 style={{ fontSize: 17, marginBottom: 4 }}>{title}</h3>
-      <p className="muted" style={{ fontSize: 13.5, marginBottom: 14, marginTop: 0 }}>
-        {sub}
-      </p>
+    <Card className="account-section">
+      <h2 className="account-section-title">{title}</h2>
+      <p className="account-section-sub">{sub}</p>
       {children}
-    </div>
+    </Card>
   )
 }
 
@@ -51,59 +71,67 @@ function PhotoRow() {
   const upload = useUploadAvatar()
   const remove = useRemoveAvatar()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [note, setNote] = useState<Note>(null)
+  // The visible action, which is where focus goes when Remove photo succeeds:
+  // that button unmounts with the photo it removed, and focus would otherwise
+  // fall to the document body.
+  const pickRef = useRef<HTMLButtonElement>(null)
+  const [outcome, setOutcome] = useState<Outcome>(null)
   const busy = upload.isPending || remove.isPending
 
   const pick = (file: File | null) => {
     if (!file) return
-    setNote(null)
+    setOutcome(null)
     upload.mutate(
       { file },
       {
-        onSuccess: () => setNote({ kind: 'ok', text: 'Photo updated.' }),
-        onError: (e) => setNote({ kind: 'error', text: e.message }),
+        onSuccess: () => setOutcome({ kind: 'ok', text: 'Photo updated.' }),
+        onError: (e) => setOutcome({ kind: 'error', text: e.message }),
       },
     )
   }
 
   return (
-    <div style={{ marginBottom: 16 }}>
-      <div className="row" style={{ gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+    <div className="account-photo-block">
+      <div className="account-photo">
         <UserAvatar name={profile?.full_name} fallbackText={profile?.avatar} path={profile?.avatar_url} size={72} />
-        <div className="row wrap" style={{ gap: 9 }}>
+        <div className="account-photo-acts">
+          {/* The real control is the button; the input is the file picker it
+              opens and is never reached on its own. */}
           <input
             ref={inputRef}
             type="file"
             accept="image/*"
-            style={{ display: 'none' }}
+            hidden
             onChange={(e) => {
               pick(e.target.files?.[0] ?? null)
               e.target.value = ''
             }}
           />
-          <button className="btn btn-ghost" disabled={busy} onClick={() => inputRef.current?.click()}>
-            <Icon.upload />
+          <Button ref={pickRef} icon={Icon.upload} disabled={busy} onClick={() => inputRef.current?.click()}>
             {upload.isPending ? 'Uploading…' : profile?.avatar_url ? 'Change photo' : 'Add photo'}
-          </button>
+          </Button>
           {profile?.avatar_url && (
-            <button
-              className="btn btn-quiet"
+            <Button
+              variant="quiet"
+              icon={Icon.x}
               disabled={busy}
               onClick={() => {
-                setNote(null)
+                setOutcome(null)
                 remove.mutate(undefined, {
-                  onSuccess: () => setNote({ kind: 'ok', text: 'Photo removed. Your initials show instead.' }),
-                  onError: (e) => setNote({ kind: 'error', text: e.message }),
+                  onSuccess: () => {
+                    setOutcome({ kind: 'ok', text: 'Photo removed. Your initials show instead.' })
+                    pickRef.current?.focus()
+                  },
+                  onError: (e) => setOutcome({ kind: 'error', text: e.message }),
                 })
               }}
             >
-              <Icon.x />
-              Remove photo
-            </button>
+              {remove.isPending ? 'Removing…' : 'Remove photo'}
+            </Button>
           )}
         </div>
       </div>
-      <NoteLine note={note} />
+      <OutcomeNote outcome={outcome} />
     </div>
   )
 }
@@ -112,39 +140,44 @@ function NameRow() {
   const { profile } = useAuth()
   const update = useUpdateMyProfile()
   const [draft, setDraft] = useState(profile?.full_name ?? '')
-  const [note, setNote] = useState<Note>(null)
+  const [outcome, setOutcome] = useState<Outcome>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const changed = draft.trim() !== '' && draft.trim() !== (profile?.full_name ?? '')
 
   const save = () => {
-    setNote(null)
+    setOutcome(null)
     update.mutate(
       { fullName: draft.trim() },
       {
-        onSuccess: () => setNote({ kind: 'ok', text: 'Name updated.' }),
-        onError: (e) => setNote({ kind: 'error', text: e.message }),
+        onSuccess: () => {
+          setOutcome({ kind: 'ok', text: 'Name updated.' })
+          // Saving makes the name unchanged, which disables Save. Focus was on
+          // it whenever the coach clicked rather than pressed Enter, so it
+          // returns to the field they were editing.
+          inputRef.current?.focus()
+        },
+        onError: (e) => setOutcome({ kind: 'error', text: e.message }),
       },
     )
   }
 
   return (
-    <div style={{ marginBottom: 4 }}>
-      <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
-        <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-          <label htmlFor="full-name">Full name</label>
-          <input
-            id="full-name"
-            value={draft}
-            placeholder="First and last name"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && changed && save()}
-          />
-        </div>
-        <button className="btn btn-primary" disabled={!changed || update.isPending} onClick={save}>
-          <Icon.check />
+    <div className="account-name-block">
+      <div className="account-form-row">
+        <TextField
+          id="full-name"
+          ref={inputRef}
+          label="Full name"
+          value={draft}
+          placeholder="First and last name"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && changed && save()}
+        />
+        <Button variant="primary" icon={Icon.check} disabled={!changed || update.isPending} onClick={save}>
           {update.isPending ? 'Saving…' : 'Save'}
-        </button>
+        </Button>
       </div>
-      <NoteLine note={note} />
+      <OutcomeNote outcome={outcome} />
     </div>
   )
 }
@@ -153,39 +186,36 @@ function TeamRow() {
   const { profile } = useAuth()
   const { data: teams = [] } = useTeams()
   const update = useUpdateMyProfile()
-  const [note, setNote] = useState<Note>(null)
+  const [outcome, setOutcome] = useState<Outcome>(null)
 
   return (
-    <div style={{ marginTop: 14 }}>
-      <div className="field" style={{ marginBottom: 0, maxWidth: 280 }}>
-        <label htmlFor="default-team">Default team</label>
-        <select
-          id="default-team"
-          value={profile?.team_id ?? ''}
-          disabled={update.isPending}
-          onChange={(e) => {
-            setNote(null)
-            update.mutate(
-              { teamId: e.target.value || null },
-              {
-                onSuccess: () => setNote({ kind: 'ok', text: 'Default team updated.' }),
-                onError: (err) => setNote({ kind: 'error', text: err.message }),
-              },
-            )
-          }}
-        >
-          <option value="">No team</option>
-          {teams.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      <p className="muted" style={{ fontSize: 12.5, marginTop: 6, marginBottom: 0 }}>
-        New sessions you plan start on this team. It never limits what you can see.
-      </p>
-      <NoteLine note={note} />
+    <div className="account-team-block">
+      <SelectField
+        id="default-team"
+        className="account-team"
+        label="Default team"
+        hint="New sessions you plan start on this team. It never limits what you can see."
+        value={profile?.team_id ?? ''}
+        disabled={update.isPending}
+        onChange={(e) => {
+          setOutcome(null)
+          update.mutate(
+            { teamId: e.target.value || null },
+            {
+              onSuccess: () => setOutcome({ kind: 'ok', text: 'Default team updated.' }),
+              onError: (err) => setOutcome({ kind: 'error', text: err.message }),
+            },
+          )
+        }}
+      >
+        <option value="">No team</option>
+        {teams.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </SelectField>
+      <OutcomeNote outcome={outcome} />
     </div>
   )
 }
@@ -198,70 +228,66 @@ function TeamRow() {
 // as HomeSwitch; canPlan is sessions.create, the test the Home dispatch uses.
 export function TeamSetting({ canPlan, control }: { canPlan: boolean; control: ReactNode }) {
   if (canPlan) return <>{control}</>
-  return (
-    <p className="muted" style={{ fontSize: 13.5, marginTop: 14, marginBottom: 0 }}>
-      Your team is set by a club admin.
-    </p>
-  )
+  return <p className="account-team-admin">Your team is set by a club admin.</p>
 }
 
 function PasswordForm() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [note, setNote] = useState<Note>(null)
+  const [outcome, setOutcome] = useState<Outcome>(null)
   const [busy, setBusy] = useState(false)
+  const firstRef = useRef<HTMLInputElement>(null)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    setNote(null)
+    setOutcome(null)
     if (password !== confirm) {
-      setNote({ kind: 'error', text: 'The passwords do not match.' })
+      setOutcome({ kind: 'error', text: 'The passwords do not match.' })
       return
     }
     setBusy(true)
     const { error } = await supabase.auth.updateUser({ password })
     setBusy(false)
     if (error) {
-      setNote({ kind: 'error', text: error.message })
+      setOutcome({ kind: 'error', text: error.message })
       return
     }
     setPassword('')
     setConfirm('')
-    setNote({ kind: 'ok', text: 'Password changed. Use it next time you sign in.' })
+    setOutcome({ kind: 'ok', text: 'Password changed. Use it next time you sign in.' })
+    // Both fields are empty again, which disables the submit that had focus.
+    firstRef.current?.focus()
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} style={{ marginBottom: 18 }}>
-      <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
-        <div className="field" style={{ flex: 1, minWidth: 180, marginBottom: 0 }}>
-          <label htmlFor="new-password">New password</label>
-          <input
-            id="new-password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            placeholder="Choose a password"
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
-        <div className="field" style={{ flex: 1, minWidth: 180, marginBottom: 0 }}>
-          <label htmlFor="confirm-password">Confirm password</label>
-          <input
-            id="confirm-password"
-            type="password"
-            autoComplete="new-password"
-            value={confirm}
-            placeholder="Type it again"
-            onChange={(e) => setConfirm(e.target.value)}
-            required
-          />
-        </div>
-        <button className="btn btn-primary" type="submit" disabled={busy || !password || !confirm}>
+    <form className="account-form" onSubmit={(e) => void submit(e)}>
+      <div className="account-form-row">
+        <TextField
+          id="new-password"
+          ref={firstRef}
+          label="New password"
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          placeholder="Choose a password"
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+        <TextField
+          id="confirm-password"
+          label="Confirm password"
+          type="password"
+          autoComplete="new-password"
+          value={confirm}
+          placeholder="Type it again"
+          onChange={(e) => setConfirm(e.target.value)}
+          required
+        />
+        <Button variant="primary" type="submit" disabled={busy || !password || !confirm}>
           {busy ? 'Saving…' : 'Change password'}
-        </button>
+        </Button>
       </div>
-      <NoteLine note={note} />
+      <OutcomeNote outcome={outcome} />
     </form>
   )
 }
@@ -269,56 +295,75 @@ function PasswordForm() {
 function EmailForm() {
   const { user } = useAuth()
   const [email, setEmail] = useState('')
-  const [note, setNote] = useState<Note>(null)
+  const [outcome, setOutcome] = useState<Outcome>(null)
   const [busy, setBusy] = useState(false)
+  const fieldRef = useRef<HTMLInputElement>(null)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    setNote(null)
+    setOutcome(null)
     const next = email.trim()
     if (next.toLowerCase() === (user?.email ?? '').toLowerCase()) {
-      setNote({ kind: 'error', text: 'That is already your sign in email.' })
+      setOutcome({ kind: 'error', text: 'That is already your sign in email.' })
       return
     }
     setBusy(true)
     const { error } = await supabase.auth.updateUser({ email: next })
     setBusy(false)
     if (error) {
-      setNote({ kind: 'error', text: error.message })
+      setOutcome({ kind: 'error', text: error.message })
       return
     }
     setEmail('')
-    setNote({
+    setOutcome({
       kind: 'ok',
       text: `A confirmation email is on its way to ${next}. Your sign in email changes only once you confirm it from there.`,
     })
+    // The field is empty again, which disables the submit that had focus.
+    fieldRef.current?.focus()
   }
 
   return (
     <form onSubmit={(e) => void submit(e)}>
-      <p className="muted" style={{ fontSize: 13.5, marginTop: 0, marginBottom: 10 }}>
-        You sign in as <b style={{ color: 'var(--ink)' }}>{user?.email}</b>. Changing it sends a confirmation email to
-        the new address; the change completes only when it is confirmed.
+      <p className="account-lede">
+        You sign in as <b>{user?.email}</b>. Changing it sends a confirmation email to the new address; the change
+        completes only when it is confirmed.
       </p>
-      <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
-        <div className="field" style={{ flex: 1, minWidth: 220, marginBottom: 0 }}>
-          <label htmlFor="new-email">New email</label>
-          <input
-            id="new-email"
-            type="email"
-            autoComplete="email"
-            value={email}
-            placeholder="you@club.com"
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
-        <button className="btn btn-primary" type="submit" disabled={busy || !email.trim()}>
+      <div className="account-form-row">
+        <TextField
+          id="new-email"
+          ref={fieldRef}
+          label="New email"
+          type="email"
+          autoComplete="email"
+          value={email}
+          placeholder="you@club.com"
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <Button variant="primary" type="submit" disabled={busy || !email.trim()}>
           {busy ? 'Sending…' : 'Change email'}
-        </button>
+        </Button>
       </div>
-      <NoteLine note={note} />
+      <OutcomeNote outcome={outcome} />
     </form>
+  )
+}
+
+// One destination row, shared by the Feedback entry point and the admin
+// links, which were the same fifteen inline declarations written twice. The
+// class owns the row, its 44px minimum and its glyph sizes.
+function NavRow({ icon: Ico, label, sub, to }: { icon: IconComponent; label: string; sub: string; to: string }) {
+  const navigate = useNavigate()
+  return (
+    <button type="button" className="account-link" onClick={() => navigate(to)}>
+      <Ico className="account-link-icon" aria-hidden="true" />
+      <span className="account-link-text">
+        <b>{label}</b>
+        <span>{sub}</span>
+      </span>
+      <Icon.chevR className="account-link-chev" aria-hidden="true" />
+    </button>
   )
 }
 
@@ -335,39 +380,12 @@ const ADMIN_LINKS: { cap: string; label: string; sub: string; icon: IconComponen
 ]
 
 export function AdminSection({ caps }: { caps: Set<string> }) {
-  const navigate = useNavigate()
   const links = ADMIN_LINKS.filter((l) => caps.has(l.cap))
   if (links.length === 0) return null
   return (
     <SectionCard title="Admin" sub="Club management screens your capabilities open.">
       {links.map((l) => (
-        <button
-          key={l.to}
-          className="row"
-          onClick={() => navigate(l.to)}
-          style={{
-            gap: 12,
-            alignItems: 'center',
-            width: '100%',
-            padding: '10px 0',
-            background: 'none',
-            border: 0,
-            borderTop: '1px solid var(--line)',
-            textAlign: 'left',
-            color: 'inherit',
-            font: 'inherit',
-            cursor: 'pointer',
-          }}
-        >
-          <l.icon style={{ width: 18, height: 18, color: 'var(--royal)', flex: '0 0 auto' }} />
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <b style={{ display: 'block', fontSize: 14.5, fontWeight: 600 }}>{l.label}</b>
-            <span className="muted" style={{ fontSize: 12.5 }}>
-              {l.sub}
-            </span>
-          </span>
-          <Icon.chevR style={{ width: 16, height: 16, flex: '0 0 auto' }} className="muted" />
-        </button>
+        <NavRow key={l.to} icon={l.icon} label={l.label} sub={l.sub} to={l.to} />
       ))}
     </SectionCard>
   )
@@ -375,48 +393,28 @@ export function AdminSection({ caps }: { caps: Set<string> }) {
 
 // The feedback log's entry point, open to every role: it lives here rather
 // than in the nav because it is an occasional surface, not a daily one. The
-// row mirrors the admin rows above so the page reads as one list style.
+// row is the same NavRow as the admin rows above, so the page reads as one
+// list style by construction rather than by two copies agreeing.
 function FeedbackSection() {
-  const navigate = useNavigate()
   return (
     <SectionCard title="Feedback" sub="Help shape the Hub. The log is club wide, so check it before filing.">
-      <button
-        className="row"
-        onClick={() => navigate('/feedback')}
-        style={{
-          gap: 12,
-          alignItems: 'center',
-          width: '100%',
-          padding: '10px 0',
-          background: 'none',
-          border: 0,
-          borderTop: '1px solid var(--line)',
-          textAlign: 'left',
-          color: 'inherit',
-          font: 'inherit',
-          cursor: 'pointer',
-        }}
-      >
-        <Icon.note style={{ width: 18, height: 18, color: 'var(--royal)', flex: '0 0 auto' }} />
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <b style={{ display: 'block', fontSize: 14.5, fontWeight: 600 }}>Feedback log</b>
-          <span className="muted" style={{ fontSize: 12.5 }}>
-            Feature requests, bugs and where they stand
-          </span>
-        </span>
-        <Icon.chevR style={{ width: 16, height: 16, flex: '0 0 auto' }} className="muted" />
-      </button>
+      <NavRow
+        icon={Icon.note}
+        label="Feedback log"
+        sub="Feature requests, bugs and where they stand"
+        to="/feedback"
+      />
     </SectionCard>
   )
 }
 
+// Role, club and joined date: read only facts, so a description list rather
+// than a row of spans. Each value can be club data of any length and wraps.
 function FactRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="row" style={{ gap: 12, padding: '9px 0', borderTop: '1px solid var(--line)' }}>
-      <span className="muted" style={{ fontSize: 13, fontWeight: 700, width: 90, flex: '0 0 90px' }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 14.5, fontWeight: 600 }}>{value}</span>
+    <div className="account-fact">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
     </div>
   )
 }
@@ -433,13 +431,8 @@ export function Account() {
   if (profileLoading) return <Loading />
 
   return (
-    <div style={{ maxWidth: 680 }}>
-      <div className="page-head">
-        <div>
-          <h1>Account</h1>
-          <div className="sub">Your details, how you sign in, and your club membership.</div>
-        </div>
-      </div>
+    <div className="account">
+      <PageHeader title="Account" sub="Your details, how you sign in, and your club membership." />
 
       <SectionCard title="Profile" sub="How you appear across the club. Changes show everywhere at once.">
         <PhotoRow />
@@ -453,12 +446,12 @@ export function Account() {
       </SectionCard>
 
       <SectionCard title="Membership" sub="Set by your club admins; shown here for reference.">
-        <div style={{ marginBottom: 10 }}>
+        <dl className="account-facts">
           <FactRow label="Role" value={role ? ROLE_LABELS[role] : '—'} />
           <FactRow label="Club" value={club?.name ?? 'Ossett Town Juniors'} />
           <FactRow label="Joined" value={profile?.created_at ? joinedLabel(profile.created_at) : '—'} />
-        </div>
-        <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
+        </dl>
+        <p className="account-section-note">
           Roles and club membership are managed by admins, and so is removing an account. Ask a club admin if you need
           either changed.
         </p>

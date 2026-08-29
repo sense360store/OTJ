@@ -1360,6 +1360,91 @@ a.activity-batch:hover { text-decoration: underline; }
   .activity-time { order: -1; }
 }
 
+/* ---- Account ----------------------------------------------------------
+   The self service screen: a narrow reading column of contained sections,
+   each a Card, each holding one or more form rows. Everything here was
+   inline: five card paddings, sixteen font sizes, two semantic colours and
+   two copies of a fifteen declaration list row. The rules below are the
+   ones that belong to this screen's layout; the type, the surfaces, the
+   controls and the notices come from the shared vocabulary. */
+.account { max-width: 680px; }
+.account-section { margin-bottom: var(--space-16); }
+.account-section-title { font-size: var(--text-lg); font-weight: 800; margin: 0 0 var(--space-4); }
+.account-section-sub { color: var(--slate); font-size: var(--text-sm); margin: 0 0 var(--space-16);
+  line-height: var(--leading-body); }
+.account-section-note { color: var(--slate); font-size: var(--text-xs); margin: 0;
+  line-height: var(--leading-body); }
+/* Every outcome on the page sits the same distance under the control that
+   produced it, whichever section it is in. */
+.account-note { margin-top: var(--space-12); }
+
+/* The photo and its actions. Both wrap, so at 360 the buttons drop under the
+   avatar rather than squeezing beside it. */
+.account-photo-block { margin-bottom: var(--space-16); }
+.account-photo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-12) var(--space-16); }
+.account-photo-acts { display: flex; flex-wrap: wrap; gap: var(--space-8); }
+
+/* A field (or two) beside the action that commits it. The fields wrap before
+   they become unreadable: a 200px basis means two of them share a desktop row
+   and stack on a phone, and the action follows onto its own line. This is
+   composition and belongs to the screen; no primitive should own it. */
+.account-form-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-8) var(--space-12); }
+.account-form-row .field { flex: 1 1 200px; min-width: 0; margin-bottom: 0; }
+.account-form-row .btn { flex: 0 0 auto; }
+/* Once the action is alone on its line, a full width button reads as the end
+   of the form rather than as a stray control. */
+@media (max-width: 560px) {
+  .account-form-row .btn { flex: 1 0 100%; }
+}
+.account-name-block { margin-bottom: var(--space-4); }
+.account-team-block { margin-top: var(--space-16); }
+/* The control is narrow because a team name is short; its hint is a sentence
+   and keeps the card's width. */
+.account-team select { max-width: 280px; }
+.account-team-admin { color: var(--slate); font-size: var(--text-sm); margin: var(--space-16) 0 0;
+  line-height: var(--leading-body); }
+.account-form { margin-bottom: var(--space-16); }
+.account-lede { color: var(--slate); font-size: var(--text-sm); margin: 0 0 var(--space-12);
+  line-height: var(--leading-body); }
+/* The address a coach signs in with, inside the sentence that explains what
+   changing it does. It can be long and has no spaces to break at. */
+.account-lede b { color: var(--ink); overflow-wrap: anywhere; }
+
+/* Membership: read only facts, so a description list. The label column is
+   fixed and the value wraps, because a club name and a team name are club
+   data of no fixed length. */
+.account-facts { margin: 0 0 var(--space-12); }
+.account-fact { display: flex; align-items: baseline; gap: var(--space-12);
+  padding: var(--space-8) 0; border-top: 1px solid var(--line); }
+.account-fact dt { flex: 0 0 90px; font-size: var(--text-sm); font-weight: 700; color: var(--slate); }
+.account-fact dd { flex: 1; min-width: 0; margin: 0; font-size: var(--text-md); font-weight: 600;
+  overflow-wrap: anywhere; }
+
+/* A destination row: the Feedback entry point and each admin link. One rule
+   for both, so the page reads as one list style by construction, rather than
+   the fifteen inline declarations this was, written out twice.
+
+   The 44px minimum is the shared --hit, and it is a FLOOR rather than a fix:
+   measured at 390, these rows are 57px and the Feedback one is 78px, because
+   each carries a label over a line of context. It is here for the row that
+   one day carries only a label, and because a target size stated by a rule
+   cannot drift; checks.mjs measures the rendered height either way. */
+.account-link { display: flex; align-items: center; gap: var(--space-12); width: 100%;
+  min-height: var(--hit); padding: var(--space-8) var(--space-4);
+  background: none; border: 0; border-top: 1px solid var(--line);
+  border-radius: 0; text-align: left; color: var(--ink); font: inherit; }
+.account-link:hover { background: var(--bg-2); }
+/* Inset, because the row is full bleed inside the card and an outset ring
+   would be clipped by the card's own edge. */
+.account-link:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px;
+  border-radius: var(--radius-sm); }
+.account-link-icon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--royal); }
+.account-link-chev { width: 16px; height: 16px; flex: 0 0 auto; color: var(--slate); }
+.account-link-text { flex: 1; min-width: 0; }
+.account-link-text b { display: block; font-size: var(--text-md); font-weight: 600;
+  line-height: var(--leading-tight); overflow-wrap: anywhere; }
+.account-link-text span { font-size: var(--text-xs); color: var(--slate); overflow-wrap: anywhere; }
+
 /* ---- Registered players import modal ---------------------------------- */
 /* An accessible dropzone: the "Choose file" button is the real, focusable
    control; drag and drop is an enhancement layered over it. Its glyph is

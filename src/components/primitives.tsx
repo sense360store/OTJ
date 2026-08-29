@@ -255,7 +255,19 @@ function FieldShell({
   )
 }
 
-export function TextField({ label, hint, error, id, className, ...rest }: FieldShared & InputHTMLAttributes<HTMLInputElement>) {
+/* `ref` is named, for the same reason Button and IconButton name theirs:
+   InputHTMLAttributes carries none, and a caller that has to place focus on
+   the field needs a handle on it. The first callers are the Account screen's
+   name, password and email forms, where a successful write empties the field
+   and disables the submit that had focus. */
+export function TextField({
+  label,
+  hint,
+  error,
+  id,
+  className,
+  ...rest
+}: FieldShared & InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
     <FieldShell {...{ controlId, label, hint, hintId, error, errorId, className }}>
