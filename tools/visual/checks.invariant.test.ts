@@ -29,6 +29,71 @@ import { fileURLToPath } from 'node:url'
 const src = readFileSync(fileURLToPath(new URL('./checks.mjs', import.meta.url)), 'utf8')
 const lines = src.split('\n')
 
+// Comments, strings, template literals and regex literals blanked to spaces,
+// so the delimiter walk below counts code rather than punctuation inside a
+// selector. Offsets are preserved, so a position still maps to its own line.
+function blanked(text: string): string {
+  const out = text.split('')
+  let i = 0
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (out[k] !== '\n') out[k] = ' '
+  }
+  while (i < text.length) {
+    const c = text[i]
+    const two = text.slice(i, i + 2)
+    if (two === '//') {
+      const end = text.indexOf('\n', i)
+      blank(i, end === -1 ? text.length : end)
+      i = end === -1 ? text.length : end
+    } else if (two === '/*') {
+      const end = text.indexOf('*/', i + 2)
+      blank(i, end === -1 ? text.length : end + 2)
+      i = end === -1 ? text.length : end + 2
+    } else if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1
+      while (j < text.length && text[j] !== c) j += text[j] === '\\' ? 2 : 1
+      blank(i, Math.min(j + 1, text.length))
+      i = j + 1
+    } else if (c === '/' && /[=(,:[!&|?{;\n]\s*$/.test(text.slice(Math.max(0, i - 12), i))) {
+      // A regex literal, distinguished from division by what precedes it.
+      let j = i + 1
+      while (j < text.length && text[j] !== '/' && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1
+      if (text[j] === '/') {
+        blank(i, j + 1)
+        i = j + 1
+      } else i++
+    } else i++
+  }
+  return out.join('')
+}
+
+// Which lines are LEXICALLY inside a `try { … }` block or an `acted( … )`
+// call, by walking the delimiters rather than by looking a few lines up. A
+// window accepted a click that followed a try block which had already closed.
+// Codex.
+const guardedLines = (() => {
+  const code = blanked(src)
+  const marked = new Set<number>()
+  const stack: boolean[] = []
+  let line = 0
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i]
+    if (c === '\n') {
+      line++
+      if (stack.some(Boolean)) marked.add(line)
+      continue
+    }
+    if (c === '{' || c === '(' || c === '[') {
+      const before = code.slice(Math.max(0, i - 8), i)
+      stack.push((c === '{' && /\btry\s*$/.test(before)) || (c === '(' && /\bacted$/.test(before)))
+      if (stack.some(Boolean)) marked.add(line)
+    } else if (c === '}' || c === ')' || c === ']') {
+      stack.pop()
+    }
+  }
+  return marked
+})()
+
 describe('a missing control fails its own check rather than ending the run', () => {
   it('dereferences no query result without guarding it first', () => {
     // The two shapes that actually shipped: a query dereferenced on the spot,
@@ -57,8 +122,11 @@ describe('a missing control fails its own check rather than ending the run', () 
       const end = '(?![\\w.[])'
       const guards = new RegExp(
         [
-          `\\bif \\(!${name}${end}`,
-          `\\bif \\(!\\w+ \\|\\| !${name}${end}`,
+          // An `if (!x)` branch is only a guard when it PREVENTS what follows.
+          // `if (!live) check('missing', false)` records a failure and then
+          // falls through to the dereference, which still ends the run. Codex.
+          // The condition may name others beside it, in either order.
+          `\\bif \\([^)]*!${name}${end}[^)]*\\)\\s*(?:return|throw|continue|break)\\b`,
           `\\b${name}${end} \\?`,
           `!!${name}${end}`,
           `\\b${name}\\?\\.`,
@@ -102,12 +170,11 @@ describe('a missing control fails its own check rather than ending the run', () 
       if (/\.(selectOption|fill|check|uncheck)\(/.test(line) && !/acted\(/.test(line)) {
         offenders.push(`${i + 1}: ${line.trim().slice(0, 90)}`)
       }
-      // `.click()` is exempt only where it is STRUCTURALLY guarded: inside an
-      // acted() call, inside a try block, or on a promise with a .catch().
-      // Exempting any nearby arrow function let a dismissal callback pass and
-      // be awaited unguarded twelve lines later. Codex.
-      const context = lines.slice(Math.max(0, i - 6), i + 1).join('\n')
-      const structural = /\.catch\(/.test(line) || /acted\(/.test(context) || /\btry \{/.test(context)
+      // `.click()` is exempt only where it is LEXICALLY inside an acted()
+      // call or an open try block, or where it carries its own .catch(). A
+      // six line window exempted a click that merely followed a closed try
+      // block or an unrelated acted() call. Codex.
+      const structural = /\.catch\(/.test(line) || guardedLines.has(i)
       if (/\.click\(\)/.test(line) && !structural) {
         offenders.push(`${i + 1}: ${line.trim().slice(0, 90)}`)
       }
