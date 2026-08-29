@@ -193,19 +193,30 @@ describe('audit.view and players.view stay two different boundaries', () => {
     })
   })
 
-  // The entity CELLS, not the page text. "Player deleted" is a description and
+  // The entity CELLS, not the page text: "Player deleted" is a description and
   // would satisfy a search of the whole markup for "Player" with every player
-  // reference removed, so the assertion below would have held while the thing
-  // it is named for had regressed. Codex.
-  const entityCells = (html: string) =>
-    [...html.matchAll(/<span class="activity-entity[^"]*">([^<]*)<\/span>/g)].map((m) => m[1])
+  // reference removed. And PER ROW, not as totals: a regression that labels a
+  // live child deleted and the deleted child live leaves every total unchanged
+  // while the feed names the wrong row. Both Codex.
+  const rowsOf = (html: string) =>
+    [...html.matchAll(/<li class="activity-item">[\s\S]*?<\/li>/g)].map((row) => ({
+      cell: /<span class="activity-entity[^"]*">([^<]*)<\/span>/.exec(row[0])?.[1] ?? '',
+      history: row[0].includes('View history'),
+    }))
+  const entityCells = (html: string) => rowsOf(html).map((r) => r.cell)
 
-  it('offers View history to a holder of both', () => {
-    const html = page()
-    expect(html).toContain('View history')
-    const cells = entityCells(html)
-    expect(cells.filter((c) => c === 'Player').length).toBeGreaterThan(0)
-    expect(cells.filter((c) => c === 'Deleted player').length).toBeGreaterThan(0)
+  it('offers View history to a holder of both, on the row the reference is neutral for', () => {
+    const rows = rowsOf(page())
+    expect(rows.map((r) => r.cell)).toContain('Player')
+    expect(rows.map((r) => r.cell)).toContain('Deleted player')
+    expect(rows.some((r) => r.history)).toBe(true)
+    // The two halves of one row, paired. Asserting the labels and the buttons
+    // separately leaves the swap invisible: a live child labelled deleted and
+    // a deleted one labelled live changes no count and no total. Codex.
+    for (const r of rows) {
+      if (r.history) expect(r.cell).toBe('Player')
+      if (r.cell === 'Deleted player') expect(r.history).toBe(false)
+    }
   })
 
   it('offers no history and claims no deletion with audit.view alone', () => {
@@ -216,15 +227,13 @@ describe('audit.view and players.view stay two different boundaries', () => {
       const audit = entityCells(html)
       // Fail closed: a viewer who cannot name a child is never told one was
       // deleted, because that is a fact about a child they may not resolve.
-      // Stated as an identity over the same rows, so it cannot be satisfied by
-      // the references simply being gone: every cell that read "Deleted player"
-      // for a holder of both now reads the neutral "Player", and nothing else
-      // moves.
+      // Stated as a per row identity, so it cannot be satisfied by the
+      // references being gone NOR by two rows swapping labels: the cell of
+      // each event that read "Player" or "Deleted player" reads the neutral
+      // "Player", and every other cell is the string it was.
       expect(audit).toHaveLength(both.length)
-      expect(audit.filter((c) => c === 'Deleted player')).toHaveLength(0)
-      expect(audit.filter((c) => c === 'Player')).toHaveLength(
-        both.filter((c) => c === 'Player').length + both.filter((c) => c === 'Deleted player').length,
-      )
+      const PLAYER = new Set(['Player', 'Deleted player'])
+      expect(audit).toEqual(both.map((label) => (PLAYER.has(label) ? 'Player' : label)))
     })
   })
 

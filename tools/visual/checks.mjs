@@ -44,7 +44,34 @@ await context.route(
 )
 
 const out = []
-const check = (name, ok, detail = '') => out.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`)
+// Each result is printed AS IT IS RECORDED, not collected and printed at the
+// end. A run that ends unexpectedly used to report nothing at all, because the
+// only print was the last statement in the file: fifteen lines of stack trace,
+// zero results, and a non zero exit that looks the same as a clean failure.
+// Codex. Printing here means an abort loses only the checks after it, and the
+// summary at the end says how many ran.
+const check = (name, ok, detail = '') => {
+  const line = `${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`
+  out.push(line)
+  console.log(line)
+}
+
+// And an abort is a NAMED failure rather than a stack trace. A rejected top
+// level await prints a stack and exits non zero, which reads like a check that
+// failed rather than like a run that stopped early; this says which it was and
+// how far it got.
+//
+// BOTH events, because they are not interchangeable: a rejected top level await
+// reaches Node as an uncaught exception, not as an unhandled rejection, so a
+// handler for the second alone never fires and the abort is a stack trace
+// again. Found by mutating a surface to render nothing.
+const aborted = (e) => {
+  check('the run completed', false, `it aborted: ${String(e?.message ?? e).split('\n')[0]}`)
+  console.log(`${out.length - 1} checks ran before the abort`)
+  process.exit(1)
+}
+process.on('unhandledRejection', aborted)
+process.on('uncaughtException', aborted)
 
 // A press that cannot end the run. Playwright rejects a click or a focus on a
 // control that is not rendered, after its thirty second timeout, and the
@@ -102,14 +129,20 @@ const open = async (screen, width, opts = {}) => {
   // ONE place rather than in each of them. Without it the error state check
   // reported a false FAIL on roughly one run in three.
   //
-  // The wait is caught rather than thrown, for the same reason `acted()` is
-  // caught: an unhandled rejection here takes the process with it, and
-  // `checks.mjs` prints its results only at the end, so ONE surface that
-  // renders nothing loses every result in the run rather than failing its own
-  // check. Found by mutating the route guard to redirect somewhere that
-  // renders nothing: the run reported no failures because it reported nothing.
-  // A page that never painted is now a failing check, which is what it is.
-  await page.waitForSelector('.content > *, .login', { state: 'attached', timeout: 5000 }).catch(() => {})
+  // A surface that never painted is RECORDED as a failure here and marked, so
+  // the checks that follow can skip the operations that would reject on a
+  // missing control. Catching the wait alone was not enough: the caller went
+  // on to scroll to a control that was not there, which rejects on its own
+  // account and aborts the run just the same. Codex.
+  //
+  // `blank` is a property on the page rather than a second return value,
+  // because forty call sites destructure nothing and a signal none of them
+  // reads is not a signal.
+  const painted = await page
+    .waitForSelector('.content > *, .login', { state: 'attached', timeout: 5000 })
+    .then(() => true, () => false)
+  page.blank = !painted
+  if (!painted) check(`${screen} at ${width} renders something`, false, 'the surface never painted')
   if (opts.awaitSelector) await page.waitForSelector(opts.awaitSelector, { state: 'visible', timeout: 5000 }).catch(() => {})
   return page
 }
@@ -124,7 +157,10 @@ const open = async (screen, width, opts = {}) => {
   // much smaller the visible box is, which is how the first version of this
   // check reported three false failures.
   const hit = async (sel) => {
-    await page.locator(sel).first().scrollIntoViewIfNeeded()
+    if (page.blank) return null
+    // Guarded for the same reason every press here is: a control that is not
+    // on the page rejects this after its timeout and takes the run with it.
+    await page.locator(sel).first().scrollIntoViewIfNeeded().catch(() => {})
     return page.evaluate((s) => {
       const el = document.querySelector(s)
       if (!el) return null
@@ -163,15 +199,18 @@ const open = async (screen, width, opts = {}) => {
     JSON.stringify(invalid),
   )
 
+  // Guarded like the two above it: a missing control makes this a failing
+  // check rather than a thrown TypeError that ends the run.
   const ring = await page.evaluate(() => {
     const el = document.querySelector('.btn-primary')
+    if (!el) return null
     el.focus()
     const cs = getComputedStyle(el)
     return { width: cs.outlineWidth, colour: cs.outlineColor, offset: cs.outlineOffset }
   })
   check(
     'a focused button draws the shared ring',
-    ring.width === '2px' && ring.colour === 'rgb(31, 67, 214)' && ring.offset === '2px',
+    !!ring && ring.width === '2px' && ring.colour === 'rgb(31, 67, 214)' && ring.offset === '2px',
     JSON.stringify(ring),
   )
   await page.close()
@@ -1790,38 +1829,73 @@ const focusReturned = async (page, d) => {
   //
   // Read from the entity CELLS, not from the page text. A body text search for
   // "Player" is satisfied by the description "Player deleted", so it would have
-  // held with every player reference removed. Codex. What is asserted instead
-  // is an identity between the two capability sets over the same feed: every
-  // reference a holder of both sees as "Deleted player" is one the auditor
-  // sees as the neutral "Player", so the neutral count moves by exactly the
-  // deleted count and nothing else changes.
+  // held with every player reference removed. Codex.
+  //
+  // And compared ROW BY ROW, not as totals. Aggregate counts are unchanged by a
+  // regression that labels a live child deleted and the deleted child live, so
+  // the totals would match while the coach's feed named the wrong row. Codex
+  // again. The identity is per cell: a reference a holder of both capabilities
+  // sees as "Player" or "Deleted player" is the neutral "Player" for the
+  // auditor, and every other reference is the same string for both.
   {
     const cells = async (caps) => {
       const page = await open('activity', 1280, { caps, awaitSelector: '.activity-item' })
-      const r = await page.evaluate(() => {
-        const entities = [...document.querySelectorAll('.activity-entity')].map((e) => e.textContent.trim())
-        return {
-          rows: document.querySelectorAll('.activity-item').length,
-          entities: entities.length,
-          neutral: entities.filter((t) => t === 'Player').length,
-          deleted: entities.filter((t) => t === 'Deleted player').length,
-          history: [...document.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'View history').length,
-          name: document.body.innerText.includes('Bexley'),
-        }
-      })
+      const r = await page.evaluate(() => ({
+        rows: document.querySelectorAll('.activity-item').length,
+        // Per ROW, so a cell is compared against the cell of the same event
+        // rather than against the same position in a flat list. An event with
+        // no reference contributes an empty string, which keeps the rows
+        // aligned when one of them stops rendering a cell at all.
+        entities: [...document.querySelectorAll('.activity-item')].map(
+          (item) => item.querySelector('.activity-entity')?.textContent.trim() ?? '',
+        ),
+        history: [...document.querySelectorAll('.activity-item')].map(
+          (item) => (item.querySelector('.activity-actions .btn')?.textContent.trim() ?? ''),
+        ),
+        name: document.body.innerText.includes('Bexley'),
+      }))
       await page.close()
       return r
     }
     const both = await cells('coach')
     const audit = await cells('auditor')
+    const PLAYER = new Set(['Player', 'Deleted player'])
+    const wrong = both.entities
+      .map((label, i) => {
+        const seen = audit.entities[i]
+        const want = PLAYER.has(label) ? 'Player' : label
+        return seen === want ? null : `row ${i}: ${label} -> ${seen}, wanted ${want}`
+      })
+      .filter(Boolean)
+    // The identity above collapses "Player" and "Deleted player" into one
+    // answer, which is correct and is exactly why it cannot see the two swap
+    // places. So the COACH's own row is asserted as a pair: the row that offers
+    // View history is the row whose reference is the neutral "Player", and a
+    // row that says a child was deleted offers nothing to open.
+    const mispaired = both.entities
+      .map((label, i) => {
+        const history = both.history[i] === 'View history'
+        if (history && label !== 'Player') return `row ${i}: View history beside "${label}"`
+        if (label === 'Deleted player' && history) return `row ${i}: a deleted player with a history button`
+        return null
+      })
+      .filter(Boolean)
     check(
       'audit.view without players.view reads the feed but names, resolves and deletes nothing',
-      audit.rows === both.rows && audit.entities === both.entities &&
-        both.neutral > 0 && both.deleted > 0 && both.history > 0 &&
-        audit.deleted === 0 && audit.history === 0 &&
-        audit.neutral === both.neutral + both.deleted &&
+      audit.rows === both.rows && audit.entities.length === both.entities.length &&
+        // The coach's feed really does carry both kinds, or the identity below
+        // would hold over a feed that has nothing to fall closed.
+        both.entities.includes('Player') && both.entities.includes('Deleted player') &&
+        both.history.includes('View history') &&
+        wrong.length === 0 && mispaired.length === 0 &&
+        audit.history.every((label) => label === '') &&
         !audit.name && !both.name,
-      JSON.stringify({ both, audit }),
+      JSON.stringify({
+        rows: both.rows,
+        wrong: wrong.slice(0, 3),
+        mispaired: mispaired.slice(0, 3),
+        auditHistory: audit.history.filter(Boolean).length,
+      }),
     )
   }
 
@@ -1943,14 +2017,16 @@ const focusReturned = async (page, d) => {
       )
       if (!row) return null
       const els = [...row.querySelectorAll('a, button')]
-      const box = (el) => el.getBoundingClientRect()
-      const [first, second] = els
+      if (els.length !== 2) return { labels: els.map((e) => e.textContent.trim()), visualFirst: false }
+      const [a, b] = els.map((e) => e.getBoundingClientRect())
+      // Reading order: entirely above, OR sharing a line and to the left. The
+      // left comparison has to be CONDITIONAL on sharing a line, or a control
+      // painted lower down but further left still counts as first. Codex.
+      const sharesALine = a.top < b.bottom && b.top < a.bottom
       return {
         labels: els.map((e) => e.textContent.trim()),
-        // Above it, or level with it and to its left: the two orders agree in
-        // the row layout and in the card layout alike.
-        visualFirst:
-          els.length === 2 && (box(first).top < box(second).top - 1 || box(first).left < box(second).left),
+        visualFirst: a.bottom <= b.top + 1 || (sharesALine && a.left < b.left),
+        boxes: [a, b].map((r) => [Math.round(r.top), Math.round(r.left), Math.round(r.bottom)]),
       }
     })
     check(
@@ -2067,7 +2143,9 @@ const focusReturned = async (page, d) => {
   await page.close()
 }
 
-console.log(out.join('\n'))
+// Every line was printed as it was recorded, so this is the summary rather
+// than the results.
+console.log(`${out.length} checks ran, ${out.filter((l) => l.startsWith('FAIL')).length} failed`)
 await context.close()
 await browser.close()
 if (out.some((line) => line.startsWith('FAIL'))) process.exitCode = 1
