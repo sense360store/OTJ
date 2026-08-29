@@ -35,7 +35,7 @@ const assetsOf = (html) => (html.match(/assets\/index-[A-Za-z0-9_-]+\.(?:js|css)
    tools/visual would make every check runner its own input and the guard
    would cry stale on every edit until it was ignored.
 
-   The three that are not source files are here because the bundle's OUTPUT
+   The five that are not source files are here because the bundle's OUTPUT
    depends on them without any file under src/ moving. Vite reads `target`,
    `jsx`, `jsxImportSource` and `verbatimModuleSyntax` out of the TypeScript
    configs while it transforms, so changing one of those emits different
@@ -43,6 +43,14 @@ const assetsOf = (html) => (html.match(/assets\/index-[A-Za-z0-9_-]+\.(?:js|css)
    is bundled with it. Codex found the configs. `node_modules` itself is not
    walked: the realistic way its contents change is an install, and an install
    rewrites the lockfile.
+
+   The BUILD ENVIRONMENT is deliberately not on this list, and does not need
+   to be: no module in the harness bundle reads `import.meta.env` any more,
+   and the built assets are byte identical across three different values of
+   VITE_SUPABASE_URL. Codex found that gap; the answer was to remove the
+   dependency rather than to track it, since nothing the harness measures
+   depends on those values. That is enforced rather than assumed, by a rule
+   checks.invariant.test.ts derives from source.
 
    checks.invariant.test.ts fails the build on a `tsconfig*.json` at the repo
    root that is not listed here, because a new one appearing is exactly how
@@ -60,6 +68,13 @@ const BUNDLE_INPUTS = [
   'package.json',
   'package-lock.json',
 ]
+
+/* Inputs WHEN THEY EXIST. `.env` is gitignored and a checkout has none, so it
+   cannot be required the way the list above is; the case it covers is a
+   developer who has one and edits it between a build and a run. It is a net
+   rather than the fix, for the reason stated above: nothing in these files
+   reaches the page today. It is here for the reader that one day does. */
+const OPTIONAL_INPUTS = ['.env', '.env.local', '.env.development', '.env.development.local']
 
 // The newest modification time under a path, skipping the tests, which are
 // not bundled either.
@@ -108,7 +123,8 @@ export async function assertServingCurrentBuild(base) {
      the previous rule, which is a result that is present, plausible and about
      the wrong thing. Found by editing a rule and watching the run pass. */
   const built = (await stat(indexPath)).mtimeMs
-  for (const input of BUNDLE_INPUTS) {
+  const present = OPTIONAL_INPUTS.filter((f) => existsSync(path.join(ROOT, f)))
+  for (const input of [...BUNDLE_INPUTS, ...present]) {
     const { at, file, missing } = await newest(input)
     if (at > built) {
       const why = missing

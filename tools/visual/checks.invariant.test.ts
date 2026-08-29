@@ -25,6 +25,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { join, relative, sep } from 'node:path'
 
 const src = readFileSync(fileURLToPath(new URL('./checks.mjs', import.meta.url)), 'utf8')
 const lines = src.split('\n')
@@ -288,6 +289,40 @@ describe('every tool refuses to measure a stale build', () => {
     }
     expect(fresh, 'the drive modules are not').not.toContain("'tools/visual/account.mjs'")
     expect(fresh, 'nor the runners').not.toContain("'tools/visual/checks.mjs'")
+  })
+
+  it('leaves no module in the harness bundle reading the build environment', () => {
+    // The freshness guard tracks FILES, and the environment is not one: a
+    // build made with a different VITE_SUPABASE_URL is a different bundle
+    // with no file's mtime moved. Codex found that gap, and the answer is to
+    // remove the dependency rather than to track it, because nothing the
+    // harness measures depends on those values.
+    //
+    // DERIVED rather than restated: every file under src/ that reads
+    // import.meta.env must be stubbed, so a future reader has to be stubbed
+    // or this fails. Measured after the fix, the built assets are byte
+    // identical across three different environments.
+    const root = fileURLToPath(new URL('../..', import.meta.url))
+    const config = readFileSync(join(root, 'vite.visual.config.ts'), 'utf8')
+    const readers: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          walk(full)
+          continue
+        }
+        if (!/\.(ts|tsx)$/.test(entry.name) || entry.name.includes('.test.')) continue
+        if (readFileSync(full, 'utf8').includes('import.meta.env')) {
+          readers.push(relative(root, full).split(sep).join('/'))
+        }
+      }
+    }
+    walk(join(root, 'src'))
+    expect(readers.length, 'there is at least one env reader to check').toBeGreaterThan(0)
+    for (const reader of readers) {
+      expect(config, `${reader} is stubbed in the harness`).toContain(`'${reader}':`)
+    }
   })
 
   it('counts the files the OUTPUT depends on without any source moving', () => {

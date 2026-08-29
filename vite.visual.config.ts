@@ -12,9 +12,19 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 
 // The modules that reach Supabase, and only those. Everything else the
 // screens import is the real thing.
+//
+// storageUpload reaches it through an XMLHttpRequest rather than through the
+// SDK client, which is why it was missed: it posts to the storage REST
+// endpoint with the project URL and anon key read from import.meta.env. It
+// was the last module in the bundle that read the environment at all, so the
+// built page's content hash moved with VITE_SUPABASE_URL. Stubbing it removes
+// that dependency rather than tracking it, and
+// tools/visual/checks.invariant.test.ts derives the rule from source: any
+// file under src/ that reads import.meta.env must be stubbed here.
 const STUBS: Record<string, string> = {
   'src/lib/queries.ts': 'tools/visual/stubs/queries.tsx',
   'src/lib/supabase.ts': 'tools/visual/stubs/supabase.ts',
+  'src/lib/storageUpload.ts': 'tools/visual/stubs/storageUpload.ts',
   'src/hooks/useAuth.tsx': 'tools/visual/stubs/useAuth.tsx',
   'src/hooks/useClubBranding.ts': 'tools/visual/stubs/useClubBranding.ts',
 }
