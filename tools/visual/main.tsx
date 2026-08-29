@@ -22,7 +22,8 @@ import { Home } from '../../src/routes/Home'
 import { Sessions } from '../../src/routes/Sessions'
 import { Login } from '../../src/routes/Login'
 import { Players } from '../../src/routes/Players'
-import { PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
+import { Activity } from '../../src/routes/Activity'
+import { ACTIVITY_BATCH_ID, PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
 import '../../src/styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -173,6 +174,13 @@ function Harness() {
         <Route element={<RequireCap cap="players.view" />}>
           <Route path="/players" element={<Players />} />
         </Route>
+        {/* Behind the real audit.view guard, so the capability variant with
+            no access shows what a member actually gets (a redirect to Home)
+            rather than an empty content frame. audit.view and players.view
+            are two different boundaries and the harness keeps them apart. */}
+        <Route element={<RequireCap cap="audit.view" />}>
+          <Route path="/activity" element={<Activity />} />
+        </Route>
       </Routes>
     </Shell>
   )
@@ -207,9 +215,18 @@ function playersEntry(): string {
   return '/players'
 }
 
+// The Activity feed's one URL persisted filter is the batch deep link, so the
+// state that IS an address is reached by opening that address, exactly as a
+// coach reaches it from a batch chip. Everything else it filters by is page
+// state and is reached by driving the controls.
+function activityEntry(): string {
+  return params.get('at') === 'batch' ? `/activity?batch=${ACTIVITY_BATCH_ID}` : '/activity'
+}
+
 const ENTRY: Record<string, string> = {
   sessions: '/sessions',
   players: playersEntry(),
+  activity: activityEntry(),
 }
 
 createRoot(document.getElementById('root')!).render(

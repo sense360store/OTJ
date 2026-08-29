@@ -942,6 +942,10 @@ summary:focus-visible,
 .empty { text-align: center; padding: var(--space-48) var(--space-20); color: var(--slate); }
 .empty svg { width: 46px; height: 46px; color: var(--slate); margin-bottom: var(--space-12); }
 .empty h3 { font-size: var(--text-lg); margin-bottom: var(--space-4); }
+/* An empty state's call to action, clear of the sentence above it. Shared:
+   two screens had reached the same rule and only one of them had a name for
+   it. */
+.empty-action { margin-top: var(--space-12); }
 
 .loading { display: flex; align-items: center; justify-content: center; gap: var(--space-12);
   padding: var(--space-48) var(--space-20); color: var(--slate); font-weight: 600; font-size: var(--text-base); }
@@ -1122,8 +1126,6 @@ table.reg-table td.muted-cell { color: var(--slate); }
    margin would push it out of line with the buttons beside it, and the cap
    keeps a long season name from taking the whole row. */
 .reg-season-field { margin-bottom: 0; max-width: 260px; }
-/* An Empty's call to action, clear of the sentence above it. */
-.reg-empty-action { margin-top: var(--space-12); }
 /* The action slot holds a labelled select beside plain buttons, so it aligns
    on the bottom edge rather than the middle: the select's label sits above it
    and centring would leave the control sitting lower than the buttons.
@@ -1275,14 +1277,24 @@ table.reg-table td.col-select .cell-select { margin: calc(var(--space-8) * -1) 0
 
 /* ---- Club wide Activity feed (PR 7) ---------------------------------- */
 /* Desktop inline filters; the mobile Filters button opens the same controls in
-   a dialog. The two never show together (media queries below). */
+   a dialog. The two never show together (media queries below).
+
+   Every control here is the shared Field primitive, so this file states only
+   how the screen ARRANGES them: a wrapping row of equal minimums with no
+   trailing gap. Nothing about a control's own height, radius, border, focus or
+   label typography is restated. */
 .activity-filters { display: flex; flex-wrap: wrap; gap: var(--space-12); align-items: flex-end; margin-bottom: var(--space-12); }
-.activity-filters .activity-clear { margin-bottom: 0; }
-.activity-filter-grid { display: flex; flex-wrap: wrap; gap: var(--space-12); align-items: flex-end; }
-.activity-filter-grid .field { margin-bottom: 0; min-width: 150px; }
-.activity-filter-grid .field .select { width: 100%; }
+/* A real grid, so eight controls line up in columns of one width instead of
+   each taking the width of its own longest option. auto-fill rather than
+   auto-fit: an auto-fit track collapses when it is empty, which stretches the
+   last row's controls to a width nothing else on the row has. */
+.activity-filter-grid { flex: 1 1 320px; min-width: 0; display: grid; align-items: end;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-12); }
+.activity-filter-grid .field { margin-bottom: 0; min-width: 0; }
 .activity-filters-btn { display: none; }
-.activity-filter-note { color: var(--slate); }
+/* The batch deep link's own notice: a Note, so the one thing that narrows the
+   whole feed from the address bar reads as a notice rather than as grey text. */
+.activity-filter-note { margin-bottom: var(--space-12); }
 
 /* One list, reflowing from a desktop row to a mobile card by CSS alone. There
    is no separate desktop table, so there is never a second layout on mobile and
@@ -1298,11 +1310,32 @@ table.reg-table td.col-select .cell-select { margin: calc(var(--space-8) * -1) 0
 .activity-sep { color: var(--slate-2); }
 .activity-desc { color: var(--ink); }
 .activity-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); margin-top: var(--space-4); }
-.activity-entity { font-size: var(--text-xs); font-weight: 600; color: var(--ink); }
+/* A team or season name is club data and can be any length, so the reference
+   is allowed to break inside a word rather than set a floor the meta row
+   cannot shrink below. Defensive rather than load bearing at the lengths a
+   club really uses: measured at 360, a forty two character team name with no
+   space in it still fits the card without this. */
+.activity-entity { font-size: var(--text-xs); font-weight: 600; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .activity-entity.muted-cell { color: var(--slate); }
 .activity-chip { display: inline-flex; align-items: center; gap: var(--space-4); font-size: var(--text-xs); font-weight: 700;
   color: var(--slate); background: var(--line-2); border-radius: var(--radius-pill); padding: var(--space-2) var(--space-8); }
-a.activity-batch { color: var(--royal); text-decoration: none; }
+/* The one interactive control inside the meta row, in its two forms: the
+   entity reference of a batch event, and the per row chip on a member of one.
+   Both carry a glyph, so both are sized here rather than by an inline style on
+   one of them; an unsized inline SVG has no intrinsic size and lays out at the
+   line's width.
+
+   Its visible pill stays small and the 44px hit area comes from a
+   pseudo-element, exactly as .btn-sm does. It can only ever overhang non
+   interactive text: a row carries at most one batch link, because the entity
+   reference IS the link for a batch event and the per row chip is rendered
+   only for the events whose reference is not, and the card layout below keeps
+   a full step under the meta row. */
+a.activity-batch { position: relative; display: inline-flex; align-items: center; gap: var(--space-4);
+  color: var(--royal); text-decoration: none; }
+a.activity-batch svg { width: 14px; height: 14px; flex: 0 0 auto; }
+a.activity-batch::after { content: ""; position: absolute; left: 0; right: 0; top: 50%;
+  transform: translateY(-50%); height: var(--hit); min-width: var(--hit); }
 a.activity-batch:hover { text-decoration: underline; }
 .activity-actions { display: flex; justify-content: flex-end; align-items: center; }
 .activity-more { display: flex; justify-content: center; padding: var(--space-16) 0 var(--space-4); }
@@ -1314,7 +1347,16 @@ a.activity-batch:hover { text-decoration: underline; }
   .activity-filters-btn { display: inline-flex; }
   .activity-item { grid-template-columns: 1fr; gap: var(--space-4); border: 1px solid var(--line);
     border-radius: var(--radius-md); padding: var(--space-12) var(--space-12); margin-bottom: var(--space-8); }
-  .activity-actions { justify-content: flex-start; margin-top: var(--space-2); }
+  /* A full step rather than the 2px hairline this had: the action is a
+     different group from the metadata above it, and 2.3's rule is that the gap
+     between groups is larger than the gap within one. It also keeps the button
+     clear of the batch link's 44px hit area, which extends past its own pill.
+     That second reason is insurance rather than a fix: measured, the two never
+     overlap horizontally either way, because a row that offers View history
+     always carries the short neutral "Player" reference and its meta line
+     therefore never wraps at 360. The privacy boundary is doing that, not this
+     rule, so a future label that is not short would land on this gap alone. */
+  .activity-actions { justify-content: flex-start; margin-top: var(--space-16); }
   .activity-time { order: -1; }
 }
 

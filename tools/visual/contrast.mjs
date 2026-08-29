@@ -144,19 +144,31 @@ const SWEEP = `() => {
   return rows
 }`
 
-const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players']
+const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players', 'activity']
 // Which capability variants a screen renders, and which of its own states are
 // worth measuring. Registered players carries the destructive dialog, whose
 // confirm button label is the pairing VISUAL-00 measured at 3.34:1, so it is
 // opened here rather than left to a screenshot.
 const CAPS_FOR = (screen) =>
-  screen === 'home' || screen === 'sessions' || screen === 'players' ? ['coach', 'viewer', 'parent'] : ['na']
+  screen === 'activity'
+    ? // audit.view with and without players.view, then a member with neither,
+      // whose redirect is a different screen and is measured as one.
+      ['coach', 'auditor', 'viewer']
+    : screen === 'home' || screen === 'sessions' || screen === 'players'
+      ? ['coach', 'viewer', 'parent']
+      : ['na']
 // `allactions` opens the register with the Spond mapped team selected, which
 // is the only way every header action is offered; the run below then opens the
 // More actions popup, so its labels are measured on the ground they sit on
 // rather than assumed from the token pairing.
 const STATES_FOR = (screen) =>
-  screen === 'players' ? ['default', 'error', 'archived', 'empty', 'withdrawn', 'allactions'] : ['default']
+  screen === 'players'
+    ? ['default', 'error', 'archived', 'empty', 'withdrawn', 'allactions']
+    : screen === 'activity'
+      ? // The feed's four state families plus the long name case, which is
+        // where a run wraps onto a second line and can land on a new ground.
+        ['default', 'loading', 'error', 'empty', 'longnames']
+      : ['default']
 
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
@@ -324,6 +336,49 @@ for (const theme of ['light', 'dark']) {
       if (seen.has(key)) continue
       seen.add(key)
       const row = { ...r, where: `rowmenu/${theme}/${w}w` }
+      ;(r.disabled ? exempt : r.frozen ? frozen : failed).push(row)
+    }
+    await page.close()
+  }
+}
+
+/* ---- VISUAL-02: the Activity feed's two overlays ----------------------
+   The sweep above measures the page behind an overlay, never the overlay, so
+   the filter dialog and the gated History dialog need a run of their own.
+   Both are opened by pressing the control a coach presses, and a press that
+   did not open anything is a failed run rather than a quiet skip: an
+   unmeasured surface would otherwise report zero findings, and zero findings
+   is what a clean run looks like. */
+for (const [what, at, width, opener] of [
+  ['activity-filters', '/?screen=activity&caps=coach&at=batch', 390, /^Filters/],
+  ['activity-history', '/?screen=activity&caps=coach&state=history', 1280, /^View history$/],
+]) {
+  for (const theme of ['light', 'dark']) {
+    const page = await context.newPage()
+    await page.setViewportSize({ width, height: 1400 })
+    await page.goto(`${BASE}${at}&theme=${theme}`, { waitUntil: 'domcontentloaded' })
+    await page.evaluate(() => document.fonts.ready)
+    await page.waitForSelector('.activity-item', { timeout: 5000 }).catch(() => {})
+    const button = page.getByRole('button', { name: opener })
+    if ((await button.count()) === 0) {
+      failed.push(unreached(what, 'the opener is not on the page', `${what}/${theme}/${width}w`))
+      await page.close()
+      continue
+    }
+    await button.first().click()
+    await page.waitForTimeout(300)
+    if (!(await page.$('.modal'))) {
+      failed.push(unreached(what, 'the dialog never opened', `${what}/${theme}/${width}w`))
+      await page.close()
+      continue
+    }
+    const rows = await page.evaluate('(' + SWEEP + ')()')
+    for (const r of rows) {
+      if (r.ratio >= r.need) continue
+      const key = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const row = { ...r, where: `${what}/${theme}/${width}w` }
       ;(r.disabled ? exempt : r.frozen ? frozen : failed).push(row)
     }
     await page.close()

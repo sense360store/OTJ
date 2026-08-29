@@ -7,6 +7,8 @@ export * from '../../../src/lib/queries'
 import { useState } from 'react'
 
 import {
+  ACTIVITY_PROFILES_FOR,
+  ACTIVITY_TEAMS_FOR,
   CURRENT_SEASON,
   DRILLS,
   MEDIA,
@@ -21,8 +23,12 @@ import {
   SPOND_IMPORT_RESULT,
   TEAMS,
   TEMPLATES,
+  activityHasNext,
+  activityPages,
+  activityRowsFor,
   fixtures,
 } from '../fixtures'
+import type { ActivityFilters } from '../../../src/lib/activityView'
 
 const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
   data,
@@ -85,13 +91,19 @@ export const useMedia = () => query(MEDIA)
 export const useMediaMap = () => byId(MEDIA)
 export const useTemplates = () => query(TEMPLATES)
 export const useProgrammes = () => query([])
-export const useTeams = () => query(TEAMS)
-export const useTeamMap = () => byId(TEAMS)
+// `longnames` widens the club by two long named teams, which is the entity
+// label the Activity feed can render at any length. It is a state rather than
+// a shared fixture so no other screen's shot moves, and the map answers from
+// the same list as the list, so the two cannot disagree about the club.
+export const useTeams = () => query(ACTIVITY_TEAMS_FOR(fixtures.state))
+export const useTeamMap = () => byId(ACTIVITY_TEAMS_FOR(fixtures.state))
 export const useMyTeams = () => query({ teamIds: TEAMS.map((t) => t.id), allTeams: true })
 export const useVenues = () => query([])
 export const useVenueMap = () => ({})
 export const useMemberMap = () => ({})
-export const useProfiles = () => query([])
+// The acting adults the Activity feed names and its Changed by filter offers.
+// No other screen in the harness reads this, so filling it moves no shot.
+export const useProfiles = () => query(ACTIVITY_PROFILES_FOR(fixtures.state))
 export const useClub = () => query({ name: 'Ossett Town Juniors', motto: 'Where football and friendships flourish', crestUrl: null })
 /* ---- Registered players -------------------------------------------
    The register is the one surface whose state matrix a screenshot has to
@@ -222,11 +234,19 @@ export const useImportPlayers = () =>
             }),
         })
 
-// The identity map the import preview checks Player ID ownership against. The
-// real read pages every identity in the club; the fixtures' register is the
-// club, so the map is built from it.
-export const useClubPlayerIdentities = () =>
-  query(new Map(REGISTERED_PLAYERS.map((p) => [p.playerId.toLowerCase(), p.displayName])))
+// The identity map the import preview checks Player ID ownership against, and
+// the map the Activity feed resolves a player reference through. The real read
+// pages every identity in the club; the fixtures' register is the club, so the
+// map is built from it.
+//
+// The `enabled` flag is honoured rather than ignored, because it IS the
+// players.view boundary at this seam: Activity passes `canView && canSeeNames`,
+// and a viewer holding audit.view alone must get an unanswered read, which is
+// what makes every player reference fall closed to a neutral label.
+export const useClubPlayerIdentities = (enabled = true) =>
+  enabled
+    ? query(new Map(REGISTERED_PLAYERS.map((p) => [p.playerId.toLowerCase(), p.displayName])))
+    : query(undefined as Map<string, string> | undefined, { isSuccess: false })
 
 export const usePlayerHistory = () => {
   if (state === 'historyerror') return failedQuery<typeof PLAYER_HISTORY>()
@@ -260,7 +280,42 @@ export const useBoards = () => query([])
 export const useFeedback = () => query([])
 export const useFeedbackCommentCounts = () => query({})
 export const useContentShareStatus = () => query(null)
-export const useAuditActivity = () => query({ pages: [], rows: [] })
+/* ---- the club wide Activity feed ------------------------------------
+   A real hook with real state, for the same reason the Spond roster import
+   stub is one: Load more is PRESSED, and the second page arrives because
+   the stub paginates the fixture rows the way the keyset does. A stub that
+   answered with both pages already in hand would make every screenshot of
+   the control hold whether or not pressing it did anything.
+
+   The FILTERS are applied through activityQueryConditions, the product's
+   own predicate builder, so a batch deep link or a selected Entity really
+   narrows the feed and an empty-under-a-filter shot is the screen's own
+   branch rather than a drawn one. */
+export const useAuditActivity = (filters: ActivityFilters) => {
+  const [pageCount, setPageCount] = useState(1)
+  const [fetchingNext, setFetchingNext] = useState(false)
+  const idle = {
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    refetch: () => {},
+    hasNextPage: false,
+    fetchNextPage: () => {},
+    isFetchingNextPage: false,
+  }
+  if (state === 'loading') return { ...idle, isLoading: true }
+  if (state === 'error') return { ...idle, isError: true }
+  const pages = activityPages(activityRowsFor(filters, state), pageCount)
+  return {
+    ...idle,
+    data: { pages },
+    hasNextPage: activityHasNext(pages),
+    // `loadingmore` never settles, so the control stays in its real
+    // in-flight state; otherwise the next page arrives.
+    fetchNextPage: () => (state === 'loadingmore' ? setFetchingNext(true) : setPageCount((n) => n + 1)),
+    isFetchingNextPage: fetchingNext,
+  }
+}
 export const useImportFA = mutation
 export const useUploadMedia = mutation
 export const useInsertDrill = mutation

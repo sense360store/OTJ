@@ -48,11 +48,11 @@ Query string, all optional:
 
 | Key | Values |
 |---|---|
-| `screen` | `home`, `sessions`, `login`, `players`, `more`, `dialog`, `primitives` |
-| `caps` | `coach` (default), `parent`, `viewer`, `admin` |
+| `screen` | `home`, `sessions`, `login`, `players`, `activity`, `more`, `dialog`, `primitives` |
+| `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin` |
 | `theme` | `light` (default), `dark` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult` |
-| `at` | the address the register opens on, when it differs from `state` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded` |
+| `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
 single render. Today that is Registered players, whose reads answer from it, so
@@ -85,7 +85,40 @@ and `spondresult` is the Spond roster import reporting its counts.
 states that ARE an address, and wrong for `spondresult`: what the write
 answers has nothing to do with the team filter, and Import from Spond is
 offered only with a Spond mapped team selected. `at` names the address
-separately rather than inventing a state per combination.
+separately rather than inventing a state per combination. The Activity feed
+uses it for the same reason and only for that: `at=batch` opens the batch deep
+link, which is the one filter that lives in the URL, and every other filter it
+has is page state reached by driving a control.
+
+## The Activity feed
+
+Three of its states are its own. `longnames` is a long acting adult's name
+beside a long team name, which are the two strings the feed can render at any
+length; it is a STATE rather than a widening of the shared teams and profiles,
+so no existing screenshot moves. `loadingmore` makes the next page never
+settle, so pressing Load more leaves the control in its real in-flight state.
+`guarded` names what the ROUTE GUARD does when the capability set has no
+`audit.view`: the reads all succeed and the page never mounts, so the shot
+claims something a proof can check rather than being a picture of Home under a
+name that says Activity.
+
+`auditor` is a capability set rather than a state: `audit.view` with no
+`players.*` at all. It is the variant that proves the two are different
+boundaries, because the feed renders in full and every player reference falls
+closed to a neutral label with no history offered and no deletion claimed.
+
+The feed's rows are safe fields only, exactly as the real query selects them,
+and the harness resolves a player reference through the same `players.view`
+gated identity map the product uses. The one child name the page holds is the
+History dialog's title, and `checks.mjs` opens that dialog to prove the name
+reaches it and reaches nothing else.
+
+`useAuditActivity` in the stub is a real hook with real state, for the same
+reason the Spond roster import stub is: Load more is PRESSED, and the second
+page arrives because the stub paginates the fixture rows the way the keyset
+does. It applies the filters through `activityQueryConditions`, the product's
+own predicate builder, so a batch deep link or a chosen Entity really narrows
+the feed and an empty-under-a-filter shot is the screen's own branch.
 
 ## The dialogs
 

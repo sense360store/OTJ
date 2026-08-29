@@ -127,6 +127,23 @@ Three things the third pass found and fixed, none of them presentation alone:
 
 Two things about the header hierarchy that are decisions rather than omissions, so a later slice does not undo them by accident. The overflow applies at every width rather than below a breakpoint, because measurement showed the action row fits on one line at no width the product is used at and 901px, where the sidebar returns and the content column drops to 589px, was the worst case on the page; the reasoning and the numbers are in `src/lib/playersView.ts` beside the partition. And the popup is a disclosure rather than an ARIA menu, which is the same deliberate deviation from 2.13 the row menus already carry and for the same stated reason.
 
+#### Activity: complete
+
+The club wide audit feed now uses the shared system. Every state the Design Read's Part 4 names for this screen is covered: the CSS only row to card reflow at 900px, the desktop inline filters against the phone filter dialog, Load more, both empty states, and long actor and entity names. The general VISUAL-02 state requirement is covered too: normal, loading, empty, error, permission limited and narrow phone.
+
+What the slice adopted: `PageHeader` for the heading and its one action, `Button` for the six hand written class strings, the `TextField` and `SelectField` primitives for the eight filters, `Note` for the batch deep link's own notice, `LoadingRows` for the load, and `ErrorNote` with a retry for the failure. The one remaining inline font size on the page (the batch note at 13.5px) is gone, so `routes/Activity.tsx` joins the design system invariant's ownership list and a size cannot come back.
+
+Two things it deliberately did not do. It wrapped nothing new in a `Card`, because containment needs a reason and the feed's rows already become bordered cards at the breakpoint. And it changed no filter semantics: `batchId` is still the one URL persisted dimension, the other seven are still page state, a batch link still composes with whatever else is applied, and Clear filters still clears both halves.
+
+Four things worth recording, none of them presentation alone:
+
+- **The batch link had no touch target.** It is the one interactive control inside a row's meta line and its visible pill is 18px tall. It takes its 44px hit area from a pseudo-element now, exactly as `.btn-sm` does, and the card layout gained a full spacing step under the meta row so that box cannot reach the View history button beneath it. `checks.mjs` measures both, and the existing neighbour overlap check now covers the feed.
+- **Its glyph had no size once the inline style went.** The batch reference and the per row batch chip are two different elements and only one of them was a `.activity-chip`, so a rule scoped to that class sized one and left the other laying out at the line's width. Found by measuring in the browser, not by reading the diff.
+- **The filter controls now have real labels bound to them.** They were a styled span beside each control, with no `id`, because the same component mounts twice (the inline bar and the dialog) and both are in the document at once below 900px. `useId` makes the two sets disjoint, which is what makes a real `<label for>` safe here; a test renders both copies together and compares the id sets.
+- **The information boundary is asserted rather than assumed.** The feed is child name free by design, and a visual pass is exactly the kind of change that could leak a name by resolving one for a label. `src/routes/activity.screens.test.tsx` renders the page in eight states with the identity map populated and asserts the name is absent from every one, and `checks.mjs` opens the gated History dialog in a browser to prove the name reaches that dialog and nothing else. `audit.view` and `players.view` stay two boundaries: the `auditor` capability set in the harness holds the first without the second, and every player reference falls closed to a neutral label with no history offered and no deletion claimed.
+
+One class moved rather than being copied: `.reg-empty-action` became the shared `.empty-action`, because Activity's filtered empty state had reached the same rule and a second name for it is the problem the programme exists to remove.
+
 ### VISUAL-03 — Feature-area waves
 
 **Outcome.** Feature areas whose product behaviour is still evolving are redesigned with, not immediately before, their functional work.

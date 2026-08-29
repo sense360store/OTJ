@@ -90,6 +90,10 @@ const open = async (screen, width, opts = {}) => {
     : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
   if (!opts.dialog && opts.caps) q.set('caps', opts.caps)
   if (!opts.dialog && opts.state) q.set('state', opts.state)
+  // A state and an address are two different things: the Activity feed's one
+  // URL persisted filter is the batch deep link, and it is reached by opening
+  // that address rather than by a state the reads answer with.
+  if (!opts.dialog && opts.at) q.set('at', opts.at)
   await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => document.fonts.ready)
   // domcontentloaded fires before React has rendered anything, so a check that
@@ -177,6 +181,13 @@ const open = async (screen, width, opts = {}) => {
     ['players', 390],
     ['players', 1024],
     ['players', 1280],
+    // Activity's card layout stacks a link carrying a pseudo hit area directly
+    // above a button carrying one, which is the arrangement this check exists
+    // for. 900 is the card layout's widest, 1280 the row's.
+    ['activity', 360],
+    ['activity', 390],
+    ['activity', 900],
+    ['activity', 1280],
   ]) {
     const page = await open(screen, width)
     const r = await page.evaluate(() => {
@@ -184,7 +195,7 @@ const open = async (screen, width, opts = {}) => {
       // reach into a NEIGHBOURING control's own visible box? Two chips on
       // wrapped rows are the case worth checking, since each pseudo extends
       // five pixels past a 34px chip into the row gap.
-      const els = [...document.querySelectorAll('.chip, .btn-sm, .icon-btn, .toggle')]
+      const els = [...document.querySelectorAll('.chip, .btn-sm, .icon-btn, .toggle, a.activity-batch')]
       const boxes = els.map((el) => {
         const b = el.getBoundingClientRect()
         const a = getComputedStyle(el, '::after')
@@ -1488,6 +1499,505 @@ const focusReturned = async (page, d) => {
       )
     }
     await page.close()
+  }
+}
+
+/* ---- VISUAL-02: the club wide Activity feed --------------------------
+   Its acceptance is the CSS only row to card reflow, the desktop inline
+   filters against the phone filter dialog, Load more, the empty states and
+   long names. Every one of those is a computed style or a live interaction,
+   which is why they are here rather than in a static test.
+
+   The privacy boundary is checked here too, and deliberately in the browser:
+   the identity map the page holds is what the History dialog's title is built
+   from, so the only way to prove a name reaches the dialog and NOT the feed is
+   to open the dialog and read both. */
+{
+  // The whole point of the reflow: one list, two presentations, the same
+  // information and the same actions at every width.
+  {
+    const rowAt = async (width) => {
+      const page = await open('activity', width, { awaitSelector: '.activity-item' })
+      const r = await page.evaluate(() => {
+        const item = document.querySelector('.activity-item')
+        const cs = getComputedStyle(item)
+        return {
+          columns: cs.gridTemplateColumns.split(' ').length,
+          card: parseFloat(cs.borderTopWidth) > 0,
+          inlineFilters: getComputedStyle(document.querySelector('.activity-filters')).display,
+          filtersButton: getComputedStyle(document.querySelector('.activity-filters-btn')).display,
+          // What the row SAYS and what it OFFERS, so the two presentations can
+          // be compared rather than assumed equivalent.
+          text: item.innerText.replace(/\s+/g, ' ').trim(),
+          controls: [...item.querySelectorAll('button, a')].map((e) => e.textContent.trim()).join('|'),
+          fields: document.querySelectorAll('.activity-filters .field').length,
+        }
+      })
+      await page.close()
+      return r
+    }
+    const wide = await rowAt(901)
+    const narrow = await rowAt(900)
+    check(
+      'the row becomes a card at 900 and back to a row at 901, by CSS alone',
+      wide.columns === 3 && !wide.card && narrow.columns === 1 && narrow.card,
+      JSON.stringify({ wide: [wide.columns, wide.card], narrow: [narrow.columns, narrow.card] }),
+    )
+    check(
+      'the inline filters and the Filters button swap at the same boundary, never both',
+      wide.inlineFilters !== 'none' && wide.filtersButton === 'none' &&
+        narrow.inlineFilters === 'none' && narrow.filtersButton !== 'none',
+      JSON.stringify({ wide: [wide.inlineFilters, wide.filtersButton], narrow: [narrow.inlineFilters, narrow.filtersButton] }),
+    )
+    check(
+      'the card carries the same words and the same actions as the row',
+      wide.text === narrow.text && wide.controls === narrow.controls && wide.controls.length > 0,
+      JSON.stringify({ wide: wide.text, narrow: narrow.text, controls: wide.controls }),
+    )
+    check('the desktop bar offers all eight filters', wide.fields === 8, String(wide.fields))
+  }
+
+  // The phone filter dialog: the same controls, the same state, and the shared
+  // Modal's focus contract. A second set of controls that did not drive the
+  // page's own filters would look identical in a screenshot.
+  {
+    const page = await open('activity', 390, { awaitSelector: '.activity-item' })
+    const opener = page.getByRole('button', { name: /^Filters/ })
+    await pressed(opener, 'the phone Filters button opens a dialog')
+    await page.waitForTimeout(200)
+    const opened = await page.evaluate(() => {
+      const m = document.querySelector('.modal')
+      return m
+        ? {
+            role: m.getAttribute('role'),
+            focusInside: m.contains(document.activeElement),
+            fields: m.querySelectorAll('.field').length,
+            title: m.querySelector('h3, h2')?.textContent,
+          }
+        : null
+    })
+    check(
+      'the phone Filters dialog is the shared Modal, holds all eight filters and takes focus',
+      !!opened && opened.role === 'dialog' && opened.fields === 8 && opened.focusInside,
+      JSON.stringify(opened),
+    )
+
+    // Driving a control in the dialog moves the PAGE's filter state.
+    const before = await page.$$eval('.activity-item', (e) => e.length)
+    await page.locator('.modal').getByLabel('Filter by entity type').selectOption('season')
+    await page.waitForTimeout(250)
+    const narrowed = await page.$$eval('.activity-item', (e) => e.length)
+    await pressed(page.locator('.modal').getByRole('button', { name: 'Done', exact: true }), 'Done closes the filter dialog')
+    await page.waitForTimeout(250)
+    const after = await page.evaluate(() => ({
+      open: !!document.querySelector('.modal'),
+      label: document.querySelector('.activity-filters-btn')?.getAttribute('aria-label'),
+      text: document.querySelector('.activity-filters-btn')?.textContent,
+      rows: document.querySelectorAll('.activity-item').length,
+      focused: document.activeElement.textContent.trim(),
+    }))
+    check(
+      'a filter chosen in the dialog narrows the feed and is counted on the opener',
+      narrowed > 0 && narrowed < before && !after.open && after.rows === narrowed &&
+        after.label === 'Filters, 1 active' && after.text.includes('(1)'),
+      JSON.stringify({ before, narrowed, after }),
+    )
+    check('Done returns focus to the Filters button', after.focused.startsWith('Filters'), after.focused)
+    await page.close()
+  }
+
+  // Escape closes it and returns focus, and Tab is trapped inside it. All
+  // three are the Modal contract the page inherits rather than reimplements,
+  // and all three are the reason the overlay is a Modal rather than a second
+  // panel that happens to look like one.
+  {
+    const page = await open('activity', 390, { awaitSelector: '.activity-item' })
+    await pressed(page.getByRole('button', { name: /^Filters/ }), 'Tab is trapped inside the filter dialog')
+    await page.waitForTimeout(200)
+    // Enough presses to run past the dialog's own controls twice over: the
+    // close button, eight fields and the footer. If the trap is missing, focus
+    // walks out into the page behind it.
+    const escaped = []
+    for (let i = 0; i < 16; i++) {
+      await page.keyboard.press('Tab')
+      const inside = await page.evaluate(() => {
+        const m = document.querySelector('.modal')
+        return !!m && m.contains(document.activeElement)
+      })
+      if (!inside) escaped.push(await page.evaluate(() => document.activeElement.outerHTML.slice(0, 60)))
+    }
+    check('Tab is trapped inside the filter dialog', escaped.length === 0, JSON.stringify(escaped.slice(0, 2)))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    const closed = await page.evaluate(() => ({
+      gone: !document.querySelector('.modal'),
+      focused: document.activeElement.textContent.trim(),
+    }))
+    check(
+      'Escape closes the filter dialog and focus returns to the opener',
+      closed.gone && closed.focused.startsWith('Filters'),
+      JSON.stringify(closed),
+    )
+    await page.close()
+  }
+
+  // Every filter control has an accessible name and a real label bound to it,
+  // in BOTH mount points at once, which is the arrangement that made this hard
+  // before: the same component renders in the inline bar and in the overlay,
+  // and both are in the document below the breakpoint.
+  {
+    const page = await open('activity', 390, { awaitSelector: '.activity-item' })
+    await pressed(page.getByRole('button', { name: /^Filters/ }), 'every filter control is labelled in both mount points')
+    await page.waitForTimeout(250)
+    const r = await page.evaluate(() => {
+      const controls = [...document.querySelectorAll('.activity-filter-grid input, .activity-filter-grid select')]
+      const ids = controls.map((c) => c.id)
+      const unlabelled = controls.filter((c) => {
+        const bound = c.id && document.querySelector(`label[for="${CSS.escape(c.id)}"]`)
+        const named = c.getAttribute('aria-label') || (bound && bound.textContent.trim())
+        return !bound || !named
+      })
+      return {
+        count: controls.length,
+        unique: new Set(ids).size,
+        blank: ids.filter((i) => !i).length,
+        unlabelled: unlabelled.map((c) => c.outerHTML.slice(0, 50)),
+      }
+    })
+    check(
+      'both copies of the filters are fully labelled, with ids that do not collide',
+      r.count === 16 && r.unique === 16 && r.blank === 0 && r.unlabelled.length === 0,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  // Clear filters from the phone overlay has to clear BOTH halves of the
+  // filter state: the page state and the URL persisted batch. Clearing only
+  // the half the dialog can see would leave the feed narrowed with nothing
+  // saying so.
+  {
+    const page = await open('activity', 390, { at: 'batch', awaitSelector: '.activity-item' })
+    const start = await page.evaluate(() => ({
+      rows: document.querySelectorAll('.activity-item').length,
+      note: !!document.querySelector('.activity-filter-note'),
+      label: document.querySelector('.activity-filters-btn').getAttribute('aria-label'),
+    }))
+    await pressed(page.getByRole('button', { name: /^Filters/ }), 'the phone overlay clears both halves of the filter state')
+    await page.waitForTimeout(200)
+    await page.locator('.modal').getByLabel('Filter by source').selectOption('csv_import')
+    await page.waitForTimeout(200)
+    const two = await page.locator('.activity-filters-btn').getAttribute('aria-label')
+    await pressed(
+      page.locator('.modal').getByRole('button', { name: 'Clear filters', exact: true }),
+      'the phone overlay clears both halves of the filter state',
+    )
+    await page.waitForTimeout(300)
+    const end = await page.evaluate(() => ({
+      open: !!document.querySelector('.modal'),
+      rows: document.querySelectorAll('.activity-item').length,
+      note: !!document.querySelector('.activity-filter-note'),
+      label: document.querySelector('.activity-filters-btn').getAttribute('aria-label'),
+    }))
+    check(
+      'the batch deep link narrows the feed, is counted, and is announced as a Note',
+      start.note && start.rows > 0 && start.rows < 50 && start.label === 'Filters, 1 active',
+      JSON.stringify(start),
+    )
+    check('a second filter beside the batch link is counted with it', two === 'Filters, 2 active', String(two))
+    check(
+      'Clear filters in the overlay clears the page state AND the URL batch',
+      !end.open && !end.note && end.label === 'Filters' && end.rows === 50,
+      JSON.stringify(end),
+    )
+    await page.close()
+  }
+
+  // Load more, in both of its states, pressed rather than drawn.
+  {
+    const page = await open('activity', 1280, { awaitSelector: '.activity-item' })
+    const first = await page.$$eval('.activity-item', (e) => e.length)
+    await pressed(page.getByRole('button', { name: 'Load more', exact: true }), 'Load more appends the next page')
+    await page.waitForTimeout(300)
+    const second = await page.evaluate(() => ({
+      rows: document.querySelectorAll('.activity-item').length,
+      more: !!document.querySelector('.activity-more'),
+    }))
+    check(
+      'Load more appends the next page and then stops offering itself',
+      first === 50 && second.rows === 62 && !second.more,
+      JSON.stringify({ first, second }),
+    )
+    await page.close()
+  }
+  {
+    const page = await open('activity', 1280, { state: 'loadingmore', awaitSelector: '.activity-item' })
+    await pressed(page.getByRole('button', { name: 'Load more', exact: true }), 'Load more disables itself while a page is in flight')
+    await page.waitForTimeout(300)
+    const inflight = await page.evaluate(() => {
+      const b = document.querySelector('.activity-more button')
+      const live = document.querySelector('[aria-live="polite"]')
+      return b ? { label: b.textContent.trim(), disabled: b.disabled, busy: live.getAttribute('aria-busy') } : null
+    })
+    check(
+      'Load more disables itself and says so while a page is in flight',
+      !!inflight && inflight.disabled && inflight.label === 'Loading…' && inflight.busy === 'true',
+      JSON.stringify(inflight),
+    )
+    await page.close()
+  }
+
+  /* ---- the information boundary, in the browser ---- */
+  // The page holds ONE child name, for the History dialog's title. It must
+  // reach the dialog and nothing else. A static test can assert the feed is
+  // clean; only a driven browser can assert that the name a coach CAN see is
+  // reachable exactly where it is meant to be.
+  {
+    const page = await open('activity', 1280, { state: 'history', awaitSelector: '.activity-item' })
+    const feed = await page.evaluate(() => document.body.innerText)
+    await pressed(page.getByRole('button', { name: 'View history', exact: true }).first(), 'View history opens the gated dialog')
+    await page.waitForTimeout(300)
+    const opened = await page.evaluate(() => {
+      const m = document.querySelector('.modal')
+      return m
+        ? {
+            title: m.querySelector('.modal-head h3')?.textContent,
+            sub: m.querySelector('.modal-head p')?.textContent,
+            rows: m.querySelectorAll('.history-item').length,
+          }
+        : null
+    })
+    check(
+      'the feed names no child, and View history opens the dialog that does',
+      !feed.includes('Bexley') && !!opened && opened.title === 'History' &&
+        opened.sub === 'Aria Bexley-Thornton' && opened.rows > 0,
+      JSON.stringify({ feedHadName: feed.includes('Bexley'), opened }),
+    )
+    await page.close()
+  }
+
+  // audit.view without players.view. The two are different boundaries: the
+  // feed renders in full, and every player reference falls closed to a neutral
+  // label with no history offered and no deletion claimed.
+  {
+    const page = await open('activity', 1280, { caps: 'auditor', awaitSelector: '.activity-item' })
+    const r = await page.evaluate(() => ({
+      rows: document.querySelectorAll('.activity-item').length,
+      history: document.querySelectorAll('button').length && [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'View history'),
+      deleted: document.body.innerText.includes('Deleted player'),
+      player: document.body.innerText.includes('Player'),
+      name: document.body.innerText.includes('Bexley'),
+    }))
+    check(
+      'audit.view without players.view reads the feed but names, resolves and deletes nothing',
+      r.rows === 50 && !r.history && !r.deleted && r.player && !r.name,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  // And without audit.view the route guard answers, not the page.
+  {
+    const page = await open('activity', 1280, { caps: 'viewer', state: 'guarded' })
+    const r = await page.evaluate(() => ({
+      heading: document.querySelector('h1')?.textContent ?? '',
+      feed: !!document.querySelector('.activity-list'),
+      filters: !!document.querySelector('.activity-filters-btn'),
+    }))
+    check(
+      'a member without audit.view is redirected off Activity entirely',
+      r.heading !== 'Activity' && !r.feed && !r.filters,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* ---- long names, the narrow phone, and the focus ring ---- */
+  {
+    for (const width of [360, 390, 1280]) {
+      const page = await open('activity', width, { state: 'longnames', awaitSelector: '.activity-item' })
+      const r = await page.evaluate(() => {
+        const doc = document.documentElement
+        // A run of text wider than the box that paints it is a clip, whether
+        // the overflow is hidden or simply painted outside the card.
+        const clipped = []
+        for (const el of document.querySelectorAll('.activity-item *')) {
+          if (el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) clipped.push(el.className + ' ' + el.scrollWidth + '>' + el.clientWidth)
+        }
+        const card = document.querySelector('.activity-item').getBoundingClientRect()
+        const overflowing = [...document.querySelectorAll('.activity-item *')]
+          .filter((el) => el.getBoundingClientRect().right > card.right + 1)
+          .map((el) => el.className)
+        return {
+          page: doc.scrollWidth - doc.clientWidth,
+          clipped: clipped.slice(0, 4),
+          overflowing: overflowing.slice(0, 4),
+          longActor: document.body.innerText.includes('Fotheringay-Wallington-Smythe'),
+          longTeam: document.body.innerText.includes('Development Squad Under Nines'),
+          // The one that actually exercises the wrapping rules: a name with
+          // no space in it has no break opportunity, so it is the only string
+          // that can push a reference past the card that holds it.
+          unbroken: document.body.innerText.includes('OssettTownJuniorsDevelopmentSquadUnderNines'),
+        }
+      })
+      check(
+        `a long actor and a long entity name wrap rather than clip or overflow at ${width}`,
+        r.page === 0 && r.clipped.length === 0 && r.overflowing.length === 0 && r.longActor && r.longTeam && r.unbroken,
+        JSON.stringify(r),
+      )
+      await page.close()
+    }
+  }
+
+  // Every control the feed offers reaches 44 by 44, including the batch link,
+  // whose visible pill is 18px tall and whose hit area is a pseudo-element.
+  // The unfiltered feed, because it is the only view that offers Load more.
+  {
+    const page = await open('activity', 390, { awaitSelector: '.activity-more' })
+    const r = await page.evaluate(() => {
+      const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+      const measure = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return { sel, missing: true }
+        const b = el.getBoundingClientRect()
+        const a = getComputedStyle(el, '::after')
+        const h = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+        const w = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+        return { sel, w: Math.round(w), h: Math.round(h) }
+      }
+      return ['a.activity-batch', '.activity-actions .btn', '.activity-more .btn', '.activity-filters-btn'].map(measure)
+    })
+    check(
+      'every control the feed offers reaches a 44px hit area',
+      r.every((x) => !x.missing && x.w >= 44 && x.h >= 44),
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  // Keyboard order and a visible ring on the two controls a row offers.
+  {
+    const page = await open('activity', 1280, { at: 'batch', awaitSelector: '.activity-item' })
+    const ring = async (sel) => {
+      await focused(page.locator(sel).first(), `${sel} shows a focus ring`)
+      return page.evaluate((s) => {
+        const el = document.querySelector(s)
+        const cs = getComputedStyle(el)
+        return { width: cs.outlineWidth, style: cs.outlineStyle, colour: cs.outlineColor, focused: document.activeElement === el }
+      }, sel)
+    }
+    for (const sel of ['a.activity-batch', '.activity-actions .btn', '.activity-filters .field select']) {
+      const r = await ring(sel)
+      check(
+        `${sel} draws the shared focus ring`,
+        r.focused && r.style === 'solid' && parseFloat(r.width) >= 2,
+        JSON.stringify(r),
+      )
+    }
+    // Tab order follows the visual order of a row: the batch link inside the
+    // body, then the action beside it.
+    const order = await page.evaluate(() => {
+      const els = [...document.querySelectorAll('.activity-item a, .activity-item button')]
+      return els.slice(0, 4).map((e) => e.textContent.trim())
+    })
+    check('a row exposes its link before its action, in document order', order.length > 0, JSON.stringify(order))
+    await page.close()
+  }
+
+  // The empty states are two different screens, and only one offers a way out.
+  {
+    const bare = await open('activity', 390, { state: 'empty', awaitSelector: '.empty' })
+    const b = await bare.evaluate(() => ({
+      title: document.querySelector('.empty h3').textContent,
+      action: !!document.querySelector('.empty .btn'),
+    }))
+    await bare.close()
+    const filtered = await open('activity', 390, { state: 'empty', at: 'batch', awaitSelector: '.empty' })
+    const f = await filtered.evaluate(() => ({
+      title: document.querySelector('.empty h3').textContent,
+      action: document.querySelector('.empty .btn')?.textContent.trim(),
+      note: !!document.querySelector('.activity-filter-note'),
+    }))
+    check(
+      'the two empty states differ, and only the filtered one offers Clear filters',
+      b.title === 'No activity yet.' && !b.action &&
+        f.title === 'No activity in this range.' && f.action === 'Clear filters' && f.note,
+      JSON.stringify({ b, f }),
+    )
+    // And pressing it inside the empty state clears the URL batch too.
+    await pressed(filtered.getByRole('button', { name: 'Clear filters', exact: true }), 'the empty state clears the URL batch')
+    await filtered.waitForTimeout(300)
+    const cleared = await filtered.evaluate(() => ({
+      note: !!document.querySelector('.activity-filter-note'),
+      label: document.querySelector('.activity-filters-btn').getAttribute('aria-label'),
+    }))
+    check(
+      'Clear filters in the empty state clears the URL batch as well',
+      !cleared.note && cleared.label === 'Filters',
+      JSON.stringify(cleared),
+    )
+    await filtered.close()
+  }
+
+  // The narrow phone, on the ordinary feed rather than only on the long name
+  // case: no page level horizontal scroll, and nothing painted outside the
+  // card that contains it. 360 is the width SessionRegister.css already
+  // designs for and the rest of the product did not.
+  {
+    for (const [width, at] of [
+      [360, undefined],
+      [390, undefined],
+      [360, 'batch'],
+      [430, undefined],
+    ]) {
+      const page = await open('activity', width, { at, awaitSelector: '.activity-item' })
+      const r = await page.evaluate(() => {
+        const doc = document.documentElement
+        const out = []
+        for (const item of document.querySelectorAll('.activity-item')) {
+          const box = item.getBoundingClientRect()
+          for (const el of item.querySelectorAll('*')) {
+            const b = el.getBoundingClientRect()
+            if (b.width === 0) continue
+            if (b.right > box.right + 1 || b.left < box.left - 1) out.push(el.className || el.tagName)
+            if (el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) out.push('clipped:' + (el.className || el.tagName))
+          }
+        }
+        return { page: doc.scrollWidth - doc.clientWidth, out: [...new Set(out)].slice(0, 4) }
+      })
+      check(
+        `the feed neither scrolls the page nor paints outside a card at ${width}${at ? ' (' + at + ')' : ''}`,
+        r.page === 0 && r.out.length === 0,
+        JSON.stringify(r),
+      )
+      await page.close()
+    }
+  }
+
+  // Loading, error and empty must not look alike. Measured rather than read:
+  // this is the regression 2.14 exists to stop.
+  {
+    const shape = async (state) => {
+      const page = await open('activity', 1280, { state })
+      const r = await page.evaluate(() => ({
+        skeleton: !!document.querySelector('.skeleton-list'),
+        error: !!document.querySelector('.state-error[role="alert"]'),
+        empty: !!document.querySelector('.empty'),
+        retry: [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Retry'),
+      }))
+      await page.close()
+      return r
+    }
+    const loading = await shape('loading')
+    const failed = await shape('error')
+    const empty = await shape('empty')
+    check(
+      'loading, error and empty are three different treatments',
+      loading.skeleton && !loading.error && !loading.empty &&
+        failed.error && failed.retry && !failed.skeleton && !failed.empty &&
+        empty.empty && !empty.skeleton && !empty.error,
+      JSON.stringify({ loading, failed, empty }),
+    )
   }
 }
 
