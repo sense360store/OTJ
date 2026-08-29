@@ -32,6 +32,22 @@ const lines = src.split('\n')
 // Comments, strings, template literals and regex literals blanked to spaces,
 // so the delimiter walk below counts code rather than punctuation inside a
 // selector. Offsets are preserved, so a position still maps to its own line.
+// Is the `/` at this offset the start of a regex literal rather than a
+// division? Decided by the token before it: an operator, an opening
+// delimiter, a line start, `=>`, or a keyword that can only be followed by an
+// expression. The first version listed punctuation alone, so a regex after
+// `=>` or `return` was read as division and its brackets were counted as
+// structure. Codex.
+const EXPRESSION_KEYWORDS = /\b(return|typeof|instanceof|in|of|case|do|else|yield|await|new|delete|void|throw)$/
+function regexPosition(text: string, at: number): boolean {
+  let k = at - 1
+  while (k >= 0 && (text[k] === ' ' || text[k] === '\t')) k--
+  if (k < 0) return true
+  const c = text[k]
+  if ('=(,:[!&|?{};+-*%<>~^'.includes(c) || c === '\n') return true
+  return EXPRESSION_KEYWORDS.test(text.slice(Math.max(0, k - 12), k + 1))
+}
+
 function blanked(text: string): string {
   const out = text.split('')
   let i = 0
@@ -54,10 +70,19 @@ function blanked(text: string): string {
       while (j < text.length && text[j] !== c) j += text[j] === '\\' ? 2 : 1
       blank(i, Math.min(j + 1, text.length))
       i = j + 1
-    } else if (c === '/' && /[=(,:[!&|?{;\n]\s*$/.test(text.slice(Math.max(0, i - 12), i))) {
-      // A regex literal, distinguished from division by what precedes it.
+    } else if (c === '/' && regexPosition(text, i)) {
+      // A regex literal, scanned properly: a `/` inside a character class does
+      // not close it, so `/[/]/` and `/[(]/` are one token rather than two
+      // delimiters left on the stack. Codex.
       let j = i + 1
-      while (j < text.length && text[j] !== '/' && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1
+      let inClass = false
+      while (j < text.length && text[j] !== '\n') {
+        if (text[j] === '\\') { j += 2; continue }
+        if (text[j] === '[') inClass = true
+        else if (text[j] === ']') inClass = false
+        else if (text[j] === '/' && !inClass) break
+        j++
+      }
       if (text[j] === '/') {
         blank(i, j + 1)
         i = j + 1
@@ -122,11 +147,9 @@ describe('a missing control fails its own check rather than ending the run', () 
       const end = '(?![\\w.[])'
       const guards = new RegExp(
         [
-          // An `if (!x)` branch is only a guard when it PREVENTS what follows.
-          // `if (!live) check('missing', false)` records a failure and then
-          // falls through to the dereference, which still ends the run. Codex.
-          // The condition may name others beside it, in either order.
-          `\\bif \\([^)]*!${name}${end}[^)]*\\)\\s*(?:return|throw|continue|break)\\b`,
+          // The `if (…) return` form is decided by `exits()` below rather
+          // than here: whether it guards depends on how the condition is
+          // JOINED, and a regex cannot say that.
           `\\b${name}${end} \\?`,
           `!!${name}${end}`,
           `\\b${name}\\?\\.`,
@@ -134,6 +157,19 @@ describe('a missing control fails its own check rather than ending the run', () 
         ].join('|'),
       )
       const unsafe = new RegExp(`\\b${name}\\.[a-zA-Z]`)
+
+      // An `if (…) return` branch guards the name only when the condition is a
+      // DISJUNCTION of bare negations that includes it. `if (!a || !b) return`
+      // leaves both present afterwards; `if (!a && !b) return` leaves b
+      // possibly null whenever a is present, and a pattern that merely finds
+      // `!b` inside the condition accepts it. Codex. So the condition is split
+      // and every term has to be a bare `!ident`.
+      const exits = (text: string): boolean => {
+        const m = /\bif \((.*)\)\s*(?:return|throw|continue|break)\b/.exec(text)
+        if (!m) return false
+        const terms = m[1].split('||')
+        return terms.every((t) => /^\s*!\w+\s*$/.test(t)) && terms.some((t) => t.trim() === `!${name}`)
+      }
       for (let j = i + 1; j < Math.min(i + 15, lines.length); j++) {
         const next = lines[j]
         // POSITION matters, not merely presence. `return el ? el.value : null`
@@ -143,7 +179,7 @@ describe('a missing control fails its own check rather than ending the run', () 
         // a guard anywhere on the line accepted the second, and testing the
         // dereference first rejected the first.
         const at = next.search(unsafe)
-        const guardAt = next.search(guards)
+        const guardAt = exits(next) ? next.indexOf('if (') : next.search(guards)
         if (guardAt !== -1 && (at === -1 || guardAt < at)) guarded = true
         if (!guarded && at !== -1) {
           offenders.push(`${j + 1}: ${next.trim().slice(0, 90)}`)
