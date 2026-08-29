@@ -102,6 +102,11 @@ const acted = async (locator, what, verb, run) => {
 }
 const pressed = (locator, what) => acted(locator, what, 'clicked', (el) => el.click())
 const focused = (locator, what) => acted(locator, what, 'focused', (el) => el.focus())
+// Choosing a value is an action like any other and rejects the same way on a
+// control that is not there. It needs the same guard: without it a press that
+// already failed and returned false is followed by a selection that rejects on
+// its own account, which ends the run and skips every check after it. Codex.
+const chose = (locator, value, what) => acted(locator, what, 'set', (el) => el.selectOption(value))
 // The header's overflow trigger, named exactly: every row's is "More actions
 // for <child>", so a loose name matches ten controls and resolves to a row.
 const moreActions = (page) => page.getByRole('button', { name: 'More actions', exact: true })
@@ -1566,17 +1571,24 @@ const focusReturned = async (page, d) => {
     const rowAt = async (width) => {
       const page = await open('activity', width, { awaitSelector: '.activity-item' })
       const r = await page.evaluate(() => {
+        // Every read is guarded. getComputedStyle throws on null, so a missing
+        // control here ends the run rather than failing this check, which is
+        // the shape that keeps coming back in this file.
+        const style = (sel) => {
+          const el = document.querySelector(sel)
+          return el ? getComputedStyle(el) : null
+        }
         const item = document.querySelector('.activity-item')
-        const cs = getComputedStyle(item)
+        const cs = item ? getComputedStyle(item) : null
         return {
-          columns: cs.gridTemplateColumns.split(' ').length,
-          card: parseFloat(cs.borderTopWidth) > 0,
-          inlineFilters: getComputedStyle(document.querySelector('.activity-filters')).display,
-          filtersButton: getComputedStyle(document.querySelector('.activity-filters-btn')).display,
+          columns: cs ? cs.gridTemplateColumns.split(' ').length : 0,
+          card: cs ? parseFloat(cs.borderTopWidth) > 0 : false,
+          inlineFilters: style('.activity-filters')?.display ?? null,
+          filtersButton: style('.activity-filters-btn')?.display ?? null,
           // What the row SAYS and what it OFFERS, so the two presentations can
           // be compared rather than assumed equivalent.
-          text: item.innerText.replace(/\s+/g, ' ').trim(),
-          controls: [...item.querySelectorAll('button, a')].map((e) => e.textContent.trim()).join('|'),
+          text: item ? item.innerText.replace(/\s+/g, ' ').trim() : '',
+          controls: item ? [...item.querySelectorAll('button, a')].map((e) => e.textContent.trim()).join('|') : '',
           fields: document.querySelectorAll('.activity-filters .field').length,
         }
       })
@@ -1610,7 +1622,7 @@ const focusReturned = async (page, d) => {
   {
     const page = await open('activity', 390, { awaitSelector: '.activity-item' })
     const opener = page.getByRole('button', { name: /^Filters/ })
-    await pressed(opener, 'the phone Filters button opens a dialog')
+    const openedIt = await pressed(opener, 'the phone Filters button opens a dialog')
     await page.waitForTimeout(200)
     const opened = await page.evaluate(() => {
       const m = document.querySelector('.modal')
@@ -1629,23 +1641,37 @@ const focusReturned = async (page, d) => {
       JSON.stringify(opened),
     )
 
-    // Driving a control in the dialog moves the PAGE's filter state.
+    // Driving a control in the dialog moves the PAGE's filter state. Every
+    // action from here is guarded and conditional on the one before it: a
+    // press that failed leaves a control that a later action would wait for
+    // and then reject on, which ends the run rather than failing its own
+    // check.
     const before = await page.$$eval('.activity-item', (e) => e.length)
-    await page.locator('.modal').getByLabel('Filter by entity type').selectOption('season')
+    const set = openedIt &&
+      (await chose(
+        page.locator('.modal').getByLabel('Filter by entity type'),
+        'season',
+        'a filter chosen in the dialog narrows the feed and is counted on the opener',
+      ))
     await page.waitForTimeout(250)
     const narrowed = await page.$$eval('.activity-item', (e) => e.length)
-    await pressed(page.locator('.modal').getByRole('button', { name: 'Done', exact: true }), 'Done closes the filter dialog')
+    if (set) {
+      await pressed(page.locator('.modal').getByRole('button', { name: 'Done', exact: true }), 'Done closes the filter dialog')
+    }
     await page.waitForTimeout(250)
     const after = await page.evaluate(() => ({
       open: !!document.querySelector('.modal'),
       label: document.querySelector('.activity-filters-btn')?.getAttribute('aria-label'),
       text: document.querySelector('.activity-filters-btn')?.textContent,
       rows: document.querySelectorAll('.activity-item').length,
-      focused: document.activeElement.textContent.trim(),
+      // Capped, and never the whole document: when nothing is focused the
+      // active element is <body>, and printing its text buries the failure
+      // it is attached to under the entire page.
+      focused: (document.activeElement.textContent ?? '').trim().slice(0, 40),
     }))
     check(
       'a filter chosen in the dialog narrows the feed and is counted on the opener',
-      narrowed > 0 && narrowed < before && !after.open && after.rows === narrowed &&
+      set && narrowed > 0 && narrowed < before && !after.open && after.rows === narrowed &&
         after.label === 'Filters, 1 active' && after.text.includes('(1)'),
       JSON.stringify({ before, narrowed, after }),
     )
@@ -1678,7 +1704,10 @@ const focusReturned = async (page, d) => {
     await page.waitForTimeout(200)
     const closed = await page.evaluate(() => ({
       gone: !document.querySelector('.modal'),
-      focused: document.activeElement.textContent.trim(),
+      // Capped, and never the whole document: when nothing is focused the
+      // active element is <body>, and printing its text buries the failure
+      // it is attached to under the entire page.
+      focused: (document.activeElement.textContent ?? '').trim().slice(0, 40),
     }))
     check(
       'Escape closes the filter dialog and focus returns to the opener',
@@ -1724,28 +1753,29 @@ const focusReturned = async (page, d) => {
   // the half the dialog can see would leave the feed narrowed with nothing
   // saying so.
   {
+    const WHAT = 'Clear filters in the overlay clears the page state AND the URL batch'
     const page = await open('activity', 390, { at: 'batch', awaitSelector: '.activity-item' })
-    const start = await page.evaluate(() => ({
-      rows: document.querySelectorAll('.activity-item').length,
-      note: !!document.querySelector('.activity-filter-note'),
-      label: document.querySelector('.activity-filters-btn').getAttribute('aria-label'),
-    }))
-    await pressed(page.getByRole('button', { name: /^Filters/ }), 'the phone overlay clears both halves of the filter state')
+    // Read through evaluate rather than off a locator: a locator's
+    // getAttribute waits for an element that may not be there and rejects,
+    // where a query inside the page answers null and the check fails.
+    const state = () =>
+      page.evaluate(() => ({
+        open: !!document.querySelector('.modal'),
+        rows: document.querySelectorAll('.activity-item').length,
+        note: !!document.querySelector('.activity-filter-note'),
+        label: document.querySelector('.activity-filters-btn')?.getAttribute('aria-label') ?? null,
+      }))
+    const start = await state()
+    const openedIt = await pressed(page.getByRole('button', { name: /^Filters/ }), WHAT)
     await page.waitForTimeout(200)
-    await page.locator('.modal').getByLabel('Filter by source').selectOption('csv_import')
+    const set = openedIt && (await chose(page.locator('.modal').getByLabel('Filter by source'), 'csv_import', WHAT))
     await page.waitForTimeout(200)
-    const two = await page.locator('.activity-filters-btn').getAttribute('aria-label')
-    await pressed(
-      page.locator('.modal').getByRole('button', { name: 'Clear filters', exact: true }),
-      'the phone overlay clears both halves of the filter state',
-    )
+    const two = (await state()).label
+    if (set) {
+      await pressed(page.locator('.modal').getByRole('button', { name: 'Clear filters', exact: true }), WHAT)
+    }
     await page.waitForTimeout(300)
-    const end = await page.evaluate(() => ({
-      open: !!document.querySelector('.modal'),
-      rows: document.querySelectorAll('.activity-item').length,
-      note: !!document.querySelector('.activity-filter-note'),
-      label: document.querySelector('.activity-filters-btn').getAttribute('aria-label'),
-    }))
+    const end = await state()
     check(
       'the batch deep link narrows the feed, is counted, and is announced as a Note',
       start.note && start.rows > 0 && start.rows < 50 && start.label === 'Filters, 1 active',
@@ -1753,8 +1783,8 @@ const focusReturned = async (page, d) => {
     )
     check('a second filter beside the batch link is counted with it', two === 'Filters, 2 active', String(two))
     check(
-      'Clear filters in the overlay clears the page state AND the URL batch',
-      !end.open && !end.note && end.label === 'Filters' && end.rows === 50,
+      WHAT,
+      set && !end.open && !end.note && end.label === 'Filters' && end.rows === 50,
       JSON.stringify(end),
     )
     await page.close()
@@ -1937,10 +1967,15 @@ const focusReturned = async (page, d) => {
         for (const el of document.querySelectorAll('.activity-item *')) {
           if (el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) clipped.push(el.className + ' ' + el.scrollWidth + '>' + el.clientWidth)
         }
-        const card = document.querySelector('.activity-item').getBoundingClientRect()
-        const overflowing = [...document.querySelectorAll('.activity-item *')]
-          .filter((el) => el.getBoundingClientRect().right > card.right + 1)
-          .map((el) => el.className)
+        // Guarded: a feed with no rows makes this a failing check rather than
+        // a throw inside evaluate, which ends the run.
+        const first = document.querySelector('.activity-item')
+        const card = first ? first.getBoundingClientRect() : null
+        const overflowing = card
+          ? [...document.querySelectorAll('.activity-item *')]
+              .filter((el) => el.getBoundingClientRect().right > card.right + 1)
+              .map((el) => el.className)
+          : ['no rows']
         return {
           page: doc.scrollWidth - doc.clientWidth,
           clipped: clipped.slice(0, 4),
@@ -1995,6 +2030,7 @@ const focusReturned = async (page, d) => {
       await focused(page.locator(sel).first(), `${sel} shows a focus ring`)
       return page.evaluate((s) => {
         const el = document.querySelector(s)
+        if (!el) return { width: '0px', style: 'none', colour: '', focused: false }
         const cs = getComputedStyle(el)
         return { width: cs.outlineWidth, style: cs.outlineStyle, colour: cs.outlineColor, focused: document.activeElement === el }
       }, sel)
@@ -2041,13 +2077,13 @@ const focusReturned = async (page, d) => {
   {
     const bare = await open('activity', 390, { state: 'empty', awaitSelector: '.empty' })
     const b = await bare.evaluate(() => ({
-      title: document.querySelector('.empty h3').textContent,
+      title: document.querySelector('.empty h3')?.textContent ?? null,
       action: !!document.querySelector('.empty .btn'),
     }))
     await bare.close()
     const filtered = await open('activity', 390, { state: 'empty', at: 'batch', awaitSelector: '.empty' })
     const f = await filtered.evaluate(() => ({
-      title: document.querySelector('.empty h3').textContent,
+      title: document.querySelector('.empty h3')?.textContent ?? null,
       action: document.querySelector('.empty .btn')?.textContent.trim(),
       note: !!document.querySelector('.activity-filter-note'),
     }))
@@ -2062,7 +2098,7 @@ const focusReturned = async (page, d) => {
     await filtered.waitForTimeout(300)
     const cleared = await filtered.evaluate(() => ({
       note: !!document.querySelector('.activity-filter-note'),
-      label: document.querySelector('.activity-filters-btn').getAttribute('aria-label'),
+      label: document.querySelector('.activity-filters-btn')?.getAttribute('aria-label') ?? null,
     }))
     check(
       'Clear filters in the empty state clears the URL batch as well',
@@ -2138,7 +2174,10 @@ const focusReturned = async (page, d) => {
 {
   const page = await open('dialog', 1280, { reducedMotion: true })
   await page.waitForTimeout(200)
-  const name = await page.evaluate(() => getComputedStyle(document.querySelector('.modal')).animationName)
+  const name = await page.evaluate(() => {
+    const m = document.querySelector('.modal')
+    return m ? getComputedStyle(m).animationName : 'no dialog'
+  })
   check('reduced motion removes the dialog entry animation', name === 'none', name)
   await page.close()
 }
