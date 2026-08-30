@@ -18,9 +18,9 @@ import { ListInput, Modal } from '../../src/components/ui'
 import { Badge, Button, Card, IconButton, Note, PageHeader, TextField, Toggle } from '../../src/components/primitives'
 import { Icon } from '../../src/components/icons'
 import { RequireCap } from '../../src/components/RequireCap'
+import { App } from '../../src/App'
 import { Home } from '../../src/routes/Home'
 import { Sessions } from '../../src/routes/Sessions'
-import { Login } from '../../src/routes/Login'
 import { Players } from '../../src/routes/Players'
 import { Activity } from '../../src/routes/Activity'
 import { Account } from '../../src/routes/Account'
@@ -172,8 +172,47 @@ function Primitives() {
   )
 }
 
+/* A ROUTE WITNESS for the surfaces that mount the whole application, which is
+   every auth surface. `Shell` carries one on `.content`, and the auth screens
+   have no `.content` to carry it: the login card, the set password card and
+   the auth guard's own splash all render OUTSIDE the shell, and a redirect
+   between them is exactly the thing that has to be proved. It reads the real
+   router rather than anything a page draws, because an absence is not a
+   redirect: a blank shell, a guard returning null and a redirect to the wrong
+   route all lack the markup the check is looking for.
+
+   It is rendered only on the auth screens, so no existing surface gains a
+   node. `hidden` keeps it out of every screenshot and out of the contrast
+   sweep, which measures rendered text runs.
+
+   `data-route` is deliberately a different attribute from the `data-path` on
+   `Shell`'s `.content` above, because they are witnesses to two different
+   things and neither can stand in for the other. `data-path` belongs to the
+   HARNESS's own shell, which the auth screens never mount: there the real
+   App renders its own, so an auth check that reached for `.content[data-path]`
+   would find nothing whatever the guard had decided. One name for both would
+   hide that rather than fix it. */
+function RouteWitness() {
+  const { pathname } = useLocation()
+  return <div data-route={pathname} hidden />
+}
+
+/* The auth surfaces mount the REAL App, so the guard a check names is the
+   guard the product runs: `/login` goes through LoginGate, a protected
+   address goes through RequireAuth, and an invited member's Set Password is
+   the one RequireAuth renders in place of the application. Mounting `Login`
+   on its own would prove the screen and nothing about the boundary in front
+   of it, and a fixture that answered for the guard would be a picture of a
+   redirect that never happened. */
 function Harness() {
-  if (screen === 'login') return <Login />
+  if (screen === 'login' || screen === 'auth') {
+    return (
+      <>
+        <RouteWitness />
+        <App />
+      </>
+    )
+  }
   if (screen === 'dialog') return <DialogDemo />
   if (screen === 'primitives') return <Primitives />
   return (
@@ -239,11 +278,27 @@ function activityEntry(): string {
   return params.get('at') === 'batch' ? `/activity?batch=${ACTIVITY_BATCH_ID}` : '/activity'
 }
 
+/* The address an auth surface opens on. Named rather than written as a path,
+   for the reason `at` exists everywhere else in the harness: what a case
+   claims is "an anonymous visitor who asked for a protected page", not
+   "/players", and the particular protected page is an implementation detail
+   of the claim. `/players` is the one used because it is behind BOTH
+   RequireAuth and a capability guard, so a case that reached it proves the
+   outer guard let it through rather than that no guard was there. */
+function authEntry(): string {
+  const at = params.get('at')
+  if (at === 'login') return '/login'
+  if (at === 'protected') return '/players'
+  return '/'
+}
+
 const ENTRY: Record<string, string> = {
   sessions: '/sessions',
   players: playersEntry(),
   activity: activityEntry(),
   account: '/account',
+  login: '/login',
+  auth: authEntry(),
 }
 
 createRoot(document.getElementById('root')!).render(
@@ -251,6 +306,12 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={client}>
       <ThemeProvider>
       <MemoryRouter initialEntries={[ENTRY[screen] ?? '/']}>
+        {/* The auth screens mount the real App, whose RequireAuth wraps a
+            SessionsProvider of its own, so a signed in auth render nests two.
+            Harmless: the inner one wins for everything below it and both read
+            the same stubbed query. Left rather than made conditional, because
+            a provider that is present on some screens and not others is a
+            second thing to reason about on every screen. */}
         <SessionsProvider>
           <Harness />
         </SessionsProvider>

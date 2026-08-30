@@ -1,30 +1,77 @@
 // The front door. Email and password sign-in with a magic-link option and a
 // password reset link. Sign-up is invite-only, so there is no registration
 // form. REVIEW: part of the auth flow.
-import { useState } from 'react'
+//
+// VISUAL-02 brought it onto the shared system: the AuthCard both signed out
+// screens wear, the field and Button primitives, and the Note for every
+// message. Nothing about what it CALLS moved, and no message string changed:
+// the three auth calls, their options, their refusals and their
+// confirmations are exactly what they were. What changed is the vocabulary
+// that draws them, plus two accessibility repairs a visual pass owns.
+//
+// The first repair: one busy flag drew three controls, so pressing Email me a
+// link left the SIGN IN button reading "Signing in…" while the control that
+// was actually working said nothing. `pending` names which call is running,
+// so each control speaks for itself; all three are still disabled while any
+// one of them is in flight, which is the behaviour rather than the wording.
+//
+// The second: pressing any of the three disables it, the browser blurs a
+// disabled control, and focus was still on the document body when the outcome
+// arrived. Somebody who clicked rather than pressed Enter had to tab from the
+// top of the page to reach the control again, with an alert on screen telling
+// them to try. Driven and measured in a browser first (tools/visual/auth.mjs)
+// rather than reasoned about, which is the lesson #215 left. Focus lands on
+// the OUTCOME MESSAGE rather than back on the control, which is the error
+// summary pattern: see components/AuthCard.tsx for why.
+import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { Crest } from '../components/Crest'
+import { AuthCard, AuthOutcome } from '../components/AuthCard'
 import { Icon } from '../components/icons'
-import { Note } from '../components/primitives'
-import { useClubBranding } from '../hooks/useClubBranding'
-import './Login.css'
+import { Button, Note, TextField } from '../components/primitives'
+import { useFocusRestore } from '../hooks/useFocusRestore'
+
+// Which of the three calls is running. `null` is idle; the screen is busy
+// whenever it is not null, which is the single disabled rule the screen has
+// always had.
+type Pending = 'signin' | 'link' | 'reset' | null
 
 export function Login() {
-  const { name, motto } = useClubBranding()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<Pending>(null)
+  const busy = pending !== null
+
+  // Where focus goes when the browser takes it away. Pressing any of the three
+  // disables it, and a disabled control cannot hold focus, so the browser drops
+  // it to the document body. The hook moves it to the outcome message, and ONLY
+  // if it is still on the body when the call settles: pressing Enter in a field
+  // disables nothing, focus never moves, and nothing here touches it.
+  //
+  // The wrapper is rendered only while there is a message, so on the one path
+  // that ends without one (a successful sign in, which navigates away) the ref
+  // is null and the hook does nothing rather than focusing an empty box.
+  const outcomeRef = useRef<HTMLDivElement>(null)
+  const restoreFocus = useFocusRestore(!busy, outcomeRef)
+
+  // Every call starts the same way: clear whatever the last one said, name the
+  // control that is working, and ask for focus if the browser takes it away.
+  // Clearing the stale error and info first is the existing behaviour and is
+  // deliberately unchanged.
+  const start = (what: Exclude<Pending, null>) => {
+    setError(null)
+    setInfo(null)
+    setPending(what)
+    restoreFocus()
+  }
 
   const signIn = async (e: FormEvent) => {
     e.preventDefault()
-    setError(null)
-    setInfo(null)
-    setBusy(true)
+    start('signin')
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    setBusy(false)
+    setPending(null)
     if (error) setError(error.message)
   }
 
@@ -33,9 +80,7 @@ export function Login() {
       setError('Enter your email first, then request a link.')
       return
     }
-    setError(null)
-    setInfo(null)
-    setBusy(true)
+    start('link')
     // shouldCreateUser stays off: the magic link signs in existing invited
     // members only. Without it, this button would register a fresh auth user
     // for any email address while the project accepts signups.
@@ -43,7 +88,7 @@ export function Login() {
       email,
       options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
     })
-    setBusy(false)
+    setPending(null)
     if (error) setError(error.message)
     else setInfo('Check your email for a sign-in link.')
   }
@@ -53,85 +98,103 @@ export function Login() {
       setError('Enter your email first, then reset your password.')
       return
     }
-    setError(null)
-    setInfo(null)
-    setBusy(true)
+    start('reset')
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: window.location.origin,
     })
-    setBusy(false)
+    setPending(null)
     if (error) setError(error.message)
     else setInfo('Check your email to reset your password.')
   }
 
   return (
-    <div className="login-bg">
-      <form className="login-card" onSubmit={signIn}>
-        <div className="login-head">
-          <Crest />
-          <div>
-            <h1>Training Hub</h1>
-            <p>{name ?? 'Ossett Town Juniors'}</p>
-            <em className="login-motto">"{motto ?? 'Where football and friendships flourish'}"</em>
-          </div>
-        </div>
-
-        {/* The error is the danger Note; the confirmation is the success
-            treatment. Both used to borrow a classification colour, the PDF
-            media red and the physical corner green, to mean a state. */}
-        {error && (
-          <Note tone="danger" role="alert" className="login-note-slot">
-            {error}
-          </Note>
-        )}
-        {info && (
-          <Note tone="success" role="status" className="login-note-slot">
-            {info}
-          </Note>
-        )}
-
-        <div className="field">
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@club.com"
-            required
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Your password"
-          />
-        </div>
-
-        <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={busy}>
-          {busy ? 'Signing in…' : 'Sign in'}
-        </button>
-
-        <div className="login-divider">or</div>
-
-        <button className="btn btn-ghost btn-block" type="button" onClick={magicLink} disabled={busy}>
-          <Icon.bolt />
-          Email me a link
-        </button>
-
-        <div className="login-foot">
-          <button className="login-link" type="button" onClick={forgot} disabled={busy}>
-            Forgot password?
+    <AuthCard
+      title="Training Hub"
+      onSubmit={(e) => void signIn(e)}
+      foot={
+        <>
+          {/* A text link rather than a third button, and deliberately so: two
+              full width buttons already carry the two ways in, and a third
+              would read as a third way in. No shared primitive owns a text
+              link, so this class stays; it takes the shared focus ring from
+              the element rule and carries its own 44px minimum. */}
+          <button className="login-link" type="button" onClick={() => void forgot()} disabled={busy}>
+            {pending === 'reset' ? 'Sending a reset link…' : 'Forgot password?'}
           </button>
-          <p style={{ marginTop: 14 }}>Accounts are created by invite. Ask a club admin to add you.</p>
-        </div>
-      </form>
-    </div>
+          <p className="login-invite">Accounts are created by invite. Ask a club admin to add you.</p>
+        </>
+      }
+    >
+      {/* The error is the danger Note; the confirmation is the success
+          treatment. Both used to borrow a classification colour, the PDF
+          media red and the physical corner green, to mean a state.
+
+          Two separate slots rather than one element with a tone, which is
+          what makes a refusal replacing a confirmation a fresh insertion into
+          a live region rather than a text swap inside one that has already
+          been announced: React reconciles children by position, so these are
+          different elements without needing a key to say so.
+
+          BOTH CAN BE UP AT ONCE, and the slots are two because of it rather
+          than in spite of it. A call clears both before it starts, but the
+          two client side refusals below return BEFORE that, so pressing Email
+          me a link with an address and then Forgot password? without one
+          leaves the confirmation of the first standing above the refusal of
+          the second. That is the behaviour this slice was asked to freeze and
+          it is unchanged; it is written down here because the first version
+          of this comment claimed the opposite, and a comment claiming an
+          invariant the code does not hold is what stops the next reader
+          fixing it.
+
+          The wrapper around them is where focus lands after an outcome, and
+          it is rendered only when one of the two is up. Both being up at once
+          is the case above, and it is reached only by a client side refusal,
+          which disables nothing and therefore asks for no focus move at all. */}
+      {(error || info) && (
+        <AuthOutcome ref={outcomeRef}>
+          {error && (
+            <Note tone="danger" role="alert" className="login-note-slot">
+              {error}
+            </Note>
+          )}
+          {info && (
+            <Note tone="success" role="status" className="login-note-slot">
+              {info}
+            </Note>
+          )}
+        </AuthOutcome>
+      )}
+
+      <TextField
+        id="email"
+        label="Email"
+        type="email"
+        autoComplete="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="you@club.com"
+        required
+      />
+      <TextField
+        id="password"
+        label="Password"
+        type="password"
+        autoComplete="current-password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Your password"
+      />
+
+      <Button variant="primary" size="lg" block type="submit" disabled={busy}>
+        {pending === 'signin' ? 'Signing in…' : 'Sign in'}
+      </Button>
+
+      <div className="login-divider">or</div>
+
+      <Button variant="ghost" block icon={Icon.bolt} onClick={() => void magicLink()} disabled={busy}>
+        {pending === 'link' ? 'Sending a link…' : 'Email me a link'}
+      </Button>
+
+    </AuthCard>
   )
 }

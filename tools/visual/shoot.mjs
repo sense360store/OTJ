@@ -13,6 +13,7 @@ import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, openDialog, openRowMenu, queryFor, DIALOG_PLAYER } from './dialogs.mjs'
 import { ACCOUNT_FLOWS, longValuesRendered, queryForFlow, runFlow } from './account.mjs'
+import { AUTH_FLOWS, BRAND, GUARD_CASES, brandRendered, runAuthFlow, urlForAuth } from './auth.mjs'
 
 const OUT = process.argv[2] ?? 'visual-shots'
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
@@ -23,6 +24,15 @@ const EXE = process.env.CHROMIUM ?? '/opt/pw-browsers/chromium'
 const WIDTHS = [360, 390, 430, 768, 1024, 1280, 1600]
 const PHONE = [360, 390, 430, 768, 900]
 
+// An auth entry by key. A missing key is a thrown error at load rather than a
+// silently absent shot, because a shot that is not taken is not a shot that
+// failed: nothing in the run would mention it.
+const authFlow = (key) => {
+  const found = AUTH_FLOWS.find((f) => f.key === key)
+  if (!found) throw new Error(`no auth flow named ${key}`)
+  return found
+}
+
 const SHOTS = [
   // Home and Sessions in every capability variant they render.
   ...['home', 'sessions'].flatMap((screen) =>
@@ -30,16 +40,11 @@ const SHOTS = [
       WIDTHS.map((w) => ({ screen, caps, w })),
     ),
   ),
-  // Login is outside the shell, so it has no capability variant. Its error
-  // and info states are the Note primitive and the success treatment, and
-  // they are driven rather than faked: pressing the magic link button with an
-  // empty field is the real error path, and pressing it with one filled is
-  // the real confirmation.
+  // Login is outside the shell, so it has no capability variant. Every state
+  // it can be driven into is in the VISUAL-02 block at the end of this list,
+  // beside Set Password's, because the two screens are one family and one
+  // driver reaches both.
   ...WIDTHS.map((w) => ({ screen: 'login', w })),
-  ...[390, 1280].flatMap((w) => [
-    { screen: 'login', w, open: 'error' },
-    { screen: 'login', w, open: 'info' },
-  ]),
   // The More sheet only exists under the phone breakpoint, and only for a
   // member whose capability set fills the overflow.
   ...PHONE.map((w) => ({ screen: 'home', caps: 'coach', w, open: 'more' })),
@@ -180,6 +185,40 @@ const SHOTS = [
      because the semantic Note is the thing these shots exist to show and its
      surface, border and glyph all flip. */
   ...ACCOUNT_FLOWS.flatMap((flow) => [390, 1280].map((w) => ({ screen: 'account', caps: 'coach', flow, w }))),
+
+  /* ---- VISUAL-02, Login and Set Password ------------------------------
+     The product outside the shell, and the one family it forms. Part 4 names
+     Login at all seven widths, so Set Password is shot at all seven beside
+     it: it wears the same card, and a family that is only checked at one
+     width is a family by assertion.
+
+     Everything else is DRIVEN through tools/visual/auth.mjs, the same entries
+     checks.mjs measures and contrast.mjs sweeps, and every one of them proves
+     the state its own name claims before its screenshot is filed. Nothing is
+     faked: the harness varies what the server answers and who the guard is
+     told is signed in, never what is drawn. */
+  ...WIDTHS.map((w) => ({ authEntry: authFlow('sp-empty'), w })),
+  // Every other state either screen can be driven into, at a phone width and
+  // a desktop width, in both themes: the semantic Note is what most of these
+  // shots exist to show and its surface, border and glyph all flip.
+  ...AUTH_FLOWS.filter((f) => f.key !== 'sp-empty').flatMap((f) =>
+    [390, 1280].map((w) => ({ authEntry: f, w })),
+  ),
+  /* And at 360, the three states that add a note ABOVE the form, which is the
+     narrowest case where the card grows and the identity block, the note and
+     the two full width buttons have to share 312px. The other driven states
+     change a label or a disabled flag and lay out identically to the ones
+     already shot at 360, so shooting all eighteen here would file fifteen
+     pictures of the same layout. */
+  ...['signin-failed', 'link-ok', 'sp-mismatch'].map((key) => ({ authEntry: authFlow(key), w: 360 })),
+  // The two strings the CLUB chooses, each at a length a committee would
+  // really produce, at the narrowest phone and a desktop.
+  ...['longclub', 'longmotto'].flatMap((state) =>
+    [360, 390, 1280].map((w) => ({ screen: 'login', state, w })),
+  ),
+  // What the auth guard does, at each address, for each auth condition. These
+  // mount the real App, so the redirect in a shot is the product's own.
+  ...GUARD_CASES.flatMap((g) => [390, 1280].map((w) => ({ authEntry: g, w }))),
 ]
 
 // A state and an ADDRESS are two different things, and two shots that differ
@@ -187,10 +226,30 @@ const SHOTS = [
 // other. The address rides in the state slot, so no existing name moves.
 const name = (s, theme) =>
   [
-    s.screen,
+    // An auth entry names the surface it mounts rather than the query key,
+    // so a Set Password shot is filed under `auth` and a Login one under
+    // `login` exactly as the browser opened them.
+    s.authEntry ? (s.authEntry.screen ?? 'auth') : s.screen,
     s.caps ?? 'na',
-    s.dialog ? s.dialog.state : s.flow ? s.flow.state : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
-    s.dialog ? `dialog-${s.dialog.key}` : s.flow ? `flow-${s.flow.key}` : (s.open ?? 'default'),
+    // A guard case has no state; what varies is the AUTH CONDITION, so that
+    // is what rides in the state slot for it. Not to avoid a collision, which
+    // the entry's own key in the next slot already rules out: it is so the
+    // filename says which auth state produced the screen, which is the whole
+    // of what a guard case claims.
+    s.authEntry
+      ? (s.authEntry.state ?? s.authEntry.auth ?? 'default') + (s.authEntry.at ? `-at-${s.authEntry.at}` : '')
+      : s.dialog
+        ? s.dialog.state
+        : s.flow
+          ? s.flow.state
+          : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
+    s.authEntry
+      ? `auth-${s.authEntry.key}`
+      : s.dialog
+        ? `dialog-${s.dialog.key}`
+        : s.flow
+          ? `flow-${s.flow.key}`
+          : (s.open ?? 'default'),
     theme,
     `${s.w}w`,
   ].join('_') + '.png'
@@ -221,8 +280,6 @@ const REACHED = {
   // And the row's, scoped the other way for the same reason: NOT inside
   // .players-more, so the header's popup cannot stand in for a row's.
   rowmenu: '.menu:not(.players-more) .menu-list',
-  error: '.note-danger[role="alert"]',
-  info: '.note-success[role="status"]',
   select: '.bulk-bar',
   delete: '.modal',
   /* ---- the Activity feed's own driven states ---- */
@@ -321,6 +378,13 @@ const REACHED_STATE = {
   // fixture, because a selector naming one of them is filed under a name
   // claiming four. Codex.
   longvalues: (page) => longValuesRendered(page),
+  /* ---- Login ---- */
+  // Each names which of the two club strings it is claiming AND that the
+  // other is still ordinary, so a state that quietly made both long could not
+  // pass under either name. Compared exactly against the fixture rather than
+  // by length. */
+  longclub: (page) => brandRendered(page, { name: BRAND.longClub, motto: BRAND.motto }),
+  longmotto: (page) => brandRendered(page, { name: BRAND.club, motto: BRAND.longMotto }),
 }
 
 async function visible(page, selector) {
@@ -427,6 +491,11 @@ for (const theme of ['light', 'dark']) {
     // A dialog entry carries its own state and address (they are not always
     // the same thing), so its query string is built by the module that owns
     // the entry rather than assembled again here.
+    // An auth entry owns its whole ADDRESS rather than only its query string,
+    // because one of them reproduces an arrival that is defined by its URL
+    // fragment: an expired invite or recovery link lands with an error hash
+    // and no session, and a case that dropped the fragment would be a case
+    // about something else.
     const q = s.dialog
       ? queryFor(s.dialog, { theme, caps: s.caps })
       : s.flow
@@ -438,7 +507,8 @@ for (const theme of ['light', 'dark']) {
           if (s.at) p.set('at', s.at)
           return p
         })()
-    await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
+    const url = s.authEntry ? urlForAuth(BASE, s.authEntry, { theme }) : `${BASE}/?${q}`
+    await page.goto(url, { waitUntil: 'domcontentloaded' })
     await page.evaluate(() => document.fonts.ready)
     await verifyFonts(page)
     await page.waitForTimeout(250)
@@ -532,18 +602,23 @@ for (const theme of ['light', 'dark']) {
       if (s.open === 'loadmore' || s.open === 'loadmorebusy') await press(/^Load more$/, true)
       if (s.open === 'history') await press(/^View history$/, true)
     }
-    if (s.open === 'error' || s.open === 'info') {
-      // The real paths: pressing the magic link button with an empty field is
-      // the error, and with one filled is the confirmation. Neither is faked.
-      if (s.open === 'info') await page.getByLabel('Email').fill('coach@example.invalid')
-      await page.getByRole('button', { name: 'Email me a link' }).click()
-    }
     // An Account outcome carries its own proof, for the same reason: it is
     // reached by typing into the fields and pressing the control a coach
     // presses, and a press that quietly no-ops leaves an untouched form under
     // a name claiming an outcome.
     if (s.flow) {
       const why = await runFlow(page, s.flow)
+      if (why) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: ${why}`)
+      }
+    }
+    // An auth entry carries its own proof for the same reason, and a guard
+    // case carries one with nothing to drive: what it claims is what the
+    // product's own guard did at that address, which is a state to prove
+    // rather than a control to press.
+    if (s.authEntry) {
+      const why = await runAuthFlow(page, s.authEntry)
       if (why) {
         failures++
         console.log(`ERROR ${name(s, theme)}: ${why}`)

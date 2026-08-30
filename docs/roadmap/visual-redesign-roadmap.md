@@ -163,6 +163,245 @@ Five things worth recording, none of them presentation alone:
 
 Two capability sets were added to the harness rather than widening existing ones, because `users.manage` adds a sidebar item and a widening moves every shot the set already takes. `planner` is `sessions.create` alone, the variant with the Default team control and no Admin card. `clubadmin` holds `users.manage`, which neither `coach` nor `admin` does: those two are the partial administrative case that is offered Club, Teams and Spond and not Users, and it is the case a capability gated list is most likely to get wrong.
 
+#### Login and Set Password: complete
+
+The two signed out screens now use the shared system. Part 4 names Login at all
+seven widths and carves out its `error` and `info` states for VISUAL-01, which
+checked them to prove the Note primitive and the success treatment; this slice
+adopts both screens in full and covers the rest of the state matrix. The general
+VISUAL-02 requirement is covered too: normal, in flight, error, success, narrow
+phone and both themes.
+
+What the slice adopted: `TextField` for the four raw `.field` blocks, `Button`
+for the three hand written class strings, `Note` for every message, and one
+shared card. `components/AuthCard.tsx` is that card, and it is the substance of
+"Login and Set Password should feel like the same family": the brand ground,
+the crest led identity block and the compact form were the same markup written
+twice, and are one component now. It is also the sole importer of
+`routes/Login.css`, which keeps its name because both routes and the Design
+Read refer to it there; the Design Read's Part 1 census, which lists that
+stylesheet under the two routes, is a snapshot of `434f67f` and is left as one
+rather than amended. `routes/Login.tsx`, `routes/SetPassword.tsx`
+and `components/AuthCard.tsx` join the design system invariant's ownership
+list, so a size cannot come back.
+
+It is deliberately NOT the shared `Card`. Part 3 names the brand gradient as
+the product's one signature surface and asks for it to stay rare and intact;
+`Card` contains a section inside the shell, on the page ground, and turning the
+login shell into one would take that away. `.login-link` stays too, for a
+stated reason rather than by omission: it is a text link beneath two full width
+buttons, no shared primitive owns that shape, and a third button would read as
+a third way in. It carries the shared focus ring from the element level rule
+and its own 44px minimum.
+
+What it deliberately did not do: no auth call, option, refusal or confirmation
+moved. `signInWithPassword`, `signInWithOtp` with `shouldCreateUser: false`,
+`resetPasswordForEmail`, `updateUser({ password })`, both redirect targets, the
+invite only policy, the mismatch refusal, the four messages and the rule that
+`clearNeedsPassword` runs only after a successful update are all unchanged and
+are now pinned in `src/routes/login.screens.test.tsx`, which is the first test
+in this repository to reference either screen or the auth guard at all.
+
+**Every user visible change, in full**, because "no behaviour moved" is a
+claim about CALLS and a reader will reasonably ask what a member sees
+differently. There are eight and no message string is among them. Three are
+words:
+
+- Set Password shows the club motto. It showed the club name alone; both
+  screens wear one card now, and the motto is half of what Part 3 names as the
+  club identity block.
+- Email me a link reads `Sending a link…` while its own call is in flight, and
+  Forgot password? reads `Sending a reset link…`. Both are new strings, and
+  both are the second half of the first repair below: a control that is
+  working now says so.
+- Sign in reads `Signing in…` only for its own call. It used to read it
+  whichever of the three was pressed.
+
+Five are presentation, and they are here because the claim is exhaustive
+rather than about copy. Four are on the two controls the slice touched without
+replacing:
+
+- The closing sentence under the form loses the browser's default bottom
+  margin, which the inline style it replaced left in place, so the card's
+  bottom padding matches its top; its top margin moves from that inline 14px
+  to the scale's 12px, which is the value the inline style existed for.
+- Forgot password? gains horizontal padding, so its box and the focus ring
+  around it are wider than the words.
+- Its disabled cursor becomes `not-allowed` rather than the default, which is
+  what every other disabled control in the product uses.
+- And it stops underlining on hover while disabled, which it did before.
+
+The fifth is the outcome message. A member who activates one of the four
+controls WITH THE KEYBOARD and is refused now sees the shared focus ring drawn
+around the message, because focus moves there and `:focus-visible` matches a
+keyboard activation. A mouse press moves focus to the same place and draws no
+ring, which is the same rule every control on the screen already follows.
+
+Four things worth recording, none of them presentation alone:
+
+- **The busy label named the wrong control.** One `busy` flag drew all three
+  controls, so pressing Email me a link left the SIGN IN button reading
+  "Signing in…" while the control that was actually working said nothing.
+  `pending` names which call is running, so each control speaks for itself. All
+  three are still disabled while any one of them is in flight, which is the
+  behaviour rather than the wording.
+- **Every outcome dropped focus onto the document body.** Pressing any of the
+  four controls across the two screens disables it, and a browser blurs a
+  disabled control, so a member who clicked rather than pressing Enter had to
+  tab from the top of the page to reach it again, with an alert on screen
+  telling them to try. Reproduced in a browser BEFORE the product was changed,
+  which is the lesson #215 left, and fixed with the same
+  `useFocusRestore(settled, ref)` rule Account discovered. That hook moved to
+  `src/hooks/useFocusRestore.ts`; Account's call sites and semantics are
+  unchanged, and a new invariant fails the build on a second implementation,
+  because the reasoning is subtle in two places at once and a second copy is a
+  second chance to get one of them wrong.
+- **Focus lands on the MESSAGE, not back on the control, which is the error
+  summary pattern.** The first version of the repair put focus back where the
+  member pressed, and wrote down the cost: the message and the focus move land
+  in the same commit, a screen reader flushes its speech queue on a focus
+  change, and an announcement made through a live region in that commit can be
+  cut short. Codex weighed it and answered that the announcement outweighs the
+  focus position on a screen whose whole content is one short form. Taken.
+  `AuthOutcome` in `src/components/AuthCard.tsx` is a `tabIndex={-1}` wrapper
+  rendered ONLY while there is something to say, so a settled call with no
+  message leaves the ref null and moves nothing rather than focusing an empty
+  box; the live region roles stay on the Notes inside it, because focus is not
+  always lost. It is lost whenever the activated control is the one the handler
+  disables, a mouse click and a keyboard activation of the button alike, and it
+  is NOT lost when somebody presses Enter inside a field, where the live region
+  is the only thing that announces the outcome. The cost, stated: a member who
+  wants to retry straight away had focus on the control they pressed and now
+  has it at least three Tab presses below the message. It takes the shared focus
+  ring from the element level rule, which `:focus-visible` gives to the
+  keyboard activation and withholds from the mouse one, and both sides of the
+  trade stay written down in `src/hooks/useFocusRestore.ts` rather than the
+  losing one being deleted.
+- **Three states claimed a call never happened, and proved it from what was
+  drawn.** The Set Password mismatch and Login's two "enter your email first"
+  refusals are made by the SCREEN, before the auth client is reached, and a
+  browser cannot see a call that never happened. The mismatch proof read "the
+  card is still up, and accepting an update would have handed the screen to the
+  application", which is two behaviours standing in for one fact and would hold
+  just as well if the call were made and its answer discarded. Codex. The
+  harness stub now counts every call on the auth client and each of the three
+  asserts a zero; an absent counter fails rather than passes, and each zero is
+  paired with a flow that makes the same call and asserts one, because a zero
+  on its own is also what a deleted counter looks like.
+- **The contrast sweep had never measured this screen.** `contrast.mjs` opened
+  Login and clicked a button matched by `/magic link/i`. No control on that
+  screen has ever carried those words, the press was wrapped in a `.catch()`,
+  and every login sweep since waited thirty seconds, measured an untouched form
+  and reported it clean. Both Notes were unmeasured the whole time.
+- **`checks.mjs` could not see the screen either.** Its paint wait was
+  `'.content > *, .login'`, and `.login` matches nothing: the card has always
+  been `.login-bg` wrapping `.login-card`. Nothing caught it because no check
+  had opened Login until now, which is what a selector nobody exercises looks
+  like.
+
+**Two states Part 4 names for Login are not states, and the slice records that
+rather than inventing them.**
+
+- **Expired link.** An expired or already used invite, magic link or recovery
+  link redirects to a bare origin carrying an error fragment and no session.
+  The rule in `useAuth` that recognises an arrival to set a password matches
+  `type=invite` or `type=recovery` and nothing else, so it does not fire; the
+  Supabase client recognises the fragment, creates no session and puts the
+  error only in its own initialize promise, which this product never reads. It
+  does emit one event, `INITIAL_SESSION` with a null session, which `useAuth`
+  subscribes to and which carries no error, so nothing about the failed link
+  reaches the product through it either. `RequireAuth` finds no user and
+  redirects to `/login`, which
+  strips the fragment on the way. The member reads the ordinary sign in screen
+  with nothing said about the link that failed. The guard's ordering makes that
+  the answer either way: a session is checked before the flag, so even a
+  fragment that did carry a type would end at the same screen. It is asymmetric
+  in one further way worth knowing: a device that already holds a session is
+  let straight into the application by the same dead link. Both arrivals are
+  driven in the harness and the rule is proved against the real module. Giving
+  either of them a message is a product decision and a change to a gated file,
+  so it is deferred rather than slipped into a visual slice.
+- **Permission limited.** Neither screen reads a role, a profile or a
+  capability, and neither can be wrapped by `RequireCap`: `/login` is a sibling
+  of the guarded tree and Set Password is not a route at all, since
+  `RequireAuth` returns it in place of the `Outlet`. There is no
+  permission limited variant to adopt. The nearest real thing is `LoginGate`
+  turning a signed in visitor away, which is a guard answer rather than a
+  limited rendering, and it is covered as a guard case.
+
+**The harness now mounts the real `App` for both surfaces**, so `LoginGate` and
+`RequireAuth` are the ones that ship rather than a fixture standing in for
+them, and a route witness reads the real router. `tools/visual/auth.mjs` owns
+the presses for all three tools, which is what `dialogs.mjs` and `account.mjs`
+exist for and what the `/magic link/i` defect shows the cost of skipping.
+
+Two claims the slice made about its own work were wrong and are corrected,
+because a comment that names the wrong mechanism is how the right one gets
+deleted:
+
+- **`.login-identity` carried a `min-width: 0` that does nothing**, under a
+  comment calling it the fix and `overflow-wrap: anywhere` the net. The
+  automatic minimum size applies on a flex container's MAIN axis and
+  `.login-head` is a column, so that declaration already computed to zero. The
+  over wide card comes from one level up: `.login-card` is a GRID item, a grid
+  item's `min-width: auto` is content based, and a club name with no space to
+  break at sets it. `overflow-wrap` is the whole of the fix, and it is now
+  guarded rather than merely present: the long club name fixture is a single
+  unbroken token, which is the case it exists for, and removing the rule takes
+  the card from 312px to 400px inside a 360px phone with 78px of page scroll.
+  The spaced phrase the fixture used before wraps under any rule at all.
+- **The ownership list pins font sizes, and the entry claimed it pinned a
+  margin.** The rule that reads that list scans for `fontSize`; the off scale
+  step rule reads `src/styles.css` alone and sees neither a route stylesheet
+  nor a piece of JSX. A second rule now covers the four files this wave owns,
+  for inline spacing in JSX and for literal steps in `Login.css`. It is a
+  separate, narrower list on purpose: widened to the files earlier waves own
+  it fails on two of the twenty one, `components/ui.tsx` and
+  `components/Sidebar.tsx`, and retiring those is their work rather than a
+  reason to weaken the rule.
+
+**What is deferred, and why each one is.** All of these were found by an
+adversarial pass over the slice; none is fixed here, and each says what would
+have to be true to fix it.
+
+- **`Splash`, the guard's loading branch**, is bare centred grey text, which is
+  what 2.14 replaces. It lives in `App.tsx`, is shared by both guards and the
+  public share route's Suspense fallback, and that file is review gated as the
+  auth guard; changing it here would put a presentational edit into the gated
+  file and move a surface this slice does not own. Its behaviour is proved as
+  it stands, at both addresses.
+- **No screen reader has been run over either screen.** The harness drives a
+  browser, so everything it proves about announcement is structural: which role
+  a Note carries, that focus lands on the element holding the message, that the
+  wrapper is out of the tab order. The error summary pattern removes the
+  speech-queue race by construction rather than by measurement, and what an
+  actual reader says in each of the eighteen states is unverified here. The
+  reasoning on both sides of the choice is in `src/hooks/useFocusRestore.ts`.
+- **The in flight state is visual only.** A label change on a disabled,
+  just blurred button fires no live region event, so "Sending a link…" is
+  announced to nobody and the whole request window is silent. The slice makes
+  the label name the right control, which is a visual repair; making it
+  programmatically determinable needs a status live region, which is new
+  content on a screen whose copy is frozen, and it cannot be verified here
+  either.
+- **Two client side refusals leave a stale confirmation standing.** Pressing
+  Email me a link with an address and then Forgot password? without one shows
+  the refusal above the earlier confirmation. It is the frozen behaviour and is
+  unchanged; what this slice fixed is a comment in `Login.tsx` that claimed the
+  opposite, which is the thing that would have stopped somebody fixing it.
+- **A repeat press producing the identical message announces nothing**, because
+  React bails out and no DOM mutation means no live region event. Pre-existing
+  and unchanged.
+- **Set Password's only submit is disabled on open**, so it is out of the tab
+  order, Enter is inert, and nothing states that both fields are needed. The
+  brief freezes the disabled semantics; the fix that keeps them
+  (`aria-disabled` plus a field hint) is new content and new interaction.
+- **The two field level refusals are not bound to the field they are about.**
+  `TextField` supports it, but passing `error` would render the message a
+  second time under the input beside the Note that already carries it, and
+  binding without duplicating needs an `id` on the shared `Note`, which is
+  VISUAL-01's primitive rather than this slice's.
+
 ### VISUAL-03 — Feature-area waves
 
 **Outcome.** Feature areas whose product behaviour is still evolving are redesigned with, not immediately before, their functional work.

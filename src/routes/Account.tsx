@@ -11,11 +11,12 @@
 // belong to a visual pass: an outcome is a Note with an icon and a live
 // region rather than coloured text, and focus is placed deliberately where a
 // successful write removes or disables the control that had it.
-import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, ReactNode, RefObject } from 'react'
+import { useRef, useState } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
+import { useFocusRestore } from '../hooks/useFocusRestore'
 import { useClub, useMyCapabilities, useRemoveAvatar, useTeams, useUpdateMyProfile, useUploadAvatar } from '../lib/queries'
 import { ROLE_LABELS } from '../lib/data'
 import { Icon } from '../components/icons'
@@ -51,41 +52,6 @@ function OutcomeNote({ outcome }: { outcome: Outcome }) {
       {outcome.text}
     </Note>
   )
-}
-
-/* Focus is RESTORED, never stolen.
-
-   A successful write can take away the control that had focus: a button that
-   unmounts with the thing it removed, or one the settled render disables
-   because there is nothing left to submit. The browser drops focus to the
-   document body when that happens, and that is the ONLY case this moves focus
-   in. A coach who moved into another field while the write was in flight
-   keeps their place: only the photo actions are disabled during a removal, so
-   every other control on the page is still theirs to use. Codex.
-
-   It has to be an effect rather than the success callback, and for both
-   halves of the same reason. TanStack runs a per-call onSuccess inside its
-   notify batch BEFORE it notifies its listeners, so React has not re-rendered
-   when it fires: the control is neither disabled nor unmounted yet, which
-   makes "did focus get lost" unanswerable, and focusing a control that the
-   settling render is about to disable is a no-op. Codex again, one round
-   apart, which is why both halves are written down here. */
-// The ref stays with the component that renders the control, and this takes
-// it: a hook that MADE the ref and handed it back through an object reads as
-// a ref accessed during render, which it is not, but the shape is worth
-// avoiding either way. What it returns is the request.
-function useFocusRestore(settled: boolean, target: RefObject<HTMLElement | null>) {
-  const wanted = useRef(false)
-  useEffect(() => {
-    if (!settled || !wanted.current) return
-    wanted.current = false
-    // The body (or nothing) is what the browser leaves behind when a focused
-    // control is disabled or removed. Anywhere else is where the coach went.
-    const active = document.activeElement
-    if (active !== null && active !== document.body) return
-    target.current?.focus()
-  }, [settled, target])
-  return () => void (wanted.current = true)
 }
 
 // One contained section. The heading is an h2 under the page's single h1, so

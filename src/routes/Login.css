@@ -1,4 +1,10 @@
-/* Login screen. Uses the shared design tokens from styles.css. */
+/* The signed out card, shared by Login and Set Password through
+   components/AuthCard.tsx, which is what imports this file. Every value here
+   is a token from styles.css; what is left is composition, which is the only
+   thing a screen's own stylesheet should hold.
+
+   It keeps the Login.css name because both routes and the design read already
+   refer to it there. */
 .login-bg {
   min-height: 100vh;
   display: grid;
@@ -23,6 +29,24 @@
   text-align: center;
   gap: var(--space-12);
   margin-bottom: var(--space-20);
+}
+/* The club name and the motto are the two strings the CLUB chooses, and a
+   committee can make either of them long. `overflow-wrap: anywhere` is the
+   whole of what keeps them inside the card, and it is load bearing rather
+   than a net: `.login-card` is a GRID item of `.login-bg`, a grid item's
+   `min-width: auto` is content based, and a name with no space to break at
+   therefore sets the card's minimum width and pushes it past the viewport.
+   Measured without this rule: 399px of card inside a 360px phone, and the
+   document scrolls.
+
+   It does NOT need a `min-width: 0` beside it, which an earlier version of
+   this rule carried on the wrong reasoning. The automatic minimum size
+   applies on a flex container's MAIN axis, and `.login-head` is a column, so
+   `min-width: auto` on this item already computes to zero. A declaration that
+   does nothing, under a comment saying it is what works, is how the
+   declaration that does work gets deleted by the next person tidying up. */
+.login-identity {
+  overflow-wrap: anywhere;
 }
 .login-head .crest,
 .login-head .crest-fallback {
@@ -55,6 +79,27 @@
 .login-note-slot {
   margin-bottom: var(--space-12);
 }
+/* The wrapper the outcome messages sit in, and where FOCUS lands after a call
+   settles (components/AuthCard.tsx carries the reasoning). It holds no spacing
+   of its own: the Note inside keeps the margin above, so nothing about the
+   layout moved when this was introduced.
+
+   The radius is the one thing it needs and it is not decoration. `tabindex`
+   takes the shared focus ring from the element level rule in styles.css, and
+   an outline follows its own element's border box, so without this a ring
+   drawn around a rounded Note would be square. It matches the Note's radius so
+   the ring hugs the message.
+
+   It deliberately does NOT take `.modal`'s `outline: none` treatment. That is
+   for a container which takes focus purely to announce itself while the thing
+   a person is looking at is drawn inside it. This one moves focus BACKWARDS,
+   above the form, so somebody who activated a button with the keyboard needs
+   to see where their next Tab starts from. :focus-visible gives that for free
+   and gives it to the right people: a key press before the move matches it, a
+   mouse click does not. Both measured in tools/visual/checks.mjs. */
+.login-outcome {
+  border-radius: var(--radius-sm);
+}
 .login-divider {
   display: flex;
   align-items: center;
@@ -79,6 +124,18 @@
   font-size: var(--text-sm);
   color: var(--slate);
 }
+/* The closing sentence under the form. It was an inline 14px margin, which is
+   not a step on the scale and was written out on each of the two screens. */
+.login-invite {
+  margin: var(--space-12) 0 0;
+  overflow-wrap: anywhere;
+}
+/* A text link, and the one control on these screens no shared primitive owns:
+   a link shaped action beneath two full width buttons, where a third button
+   would read as a third way in. It takes the shared focus ring from the
+   element level rule in styles.css rather than drawing its own, and carries
+   the 44px minimum as a real height because it sits above a paragraph rather
+   than beside another control. */
 .login-link {
   color: var(--royal);
   font-weight: 700;
@@ -88,11 +145,12 @@
   font-size: var(--text-sm);
   font-family: inherit;
   min-height: var(--hit);
+  padding: 0 var(--space-12);
 }
-.login-link:hover {
+.login-link:hover:not(:disabled) {
   text-decoration: underline;
 }
 .login-link:disabled {
   opacity: 0.5;
-  cursor: default;
+  cursor: not-allowed;
 }

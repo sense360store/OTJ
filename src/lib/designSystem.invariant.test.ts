@@ -39,6 +39,36 @@ const sourceFiles = walk(srcDir).filter(
 const read = (f: string) => readFileSync(f, 'utf8')
 const rel = (f: string) => f.slice(srcDir.length)
 
+/* The files each landed wave OWNS: what it brought onto the shared system
+   and is therefore answerable for keeping there. Read by the type scale rule
+   and by the spacing rule below, which are two different questions about the
+   same list; it lives here so neither can drift from the other. Widen it as
+   each wave lands rather than weakening either rule. */
+const OWNED_FILES = [
+  'components/ui.tsx',
+  'components/primitives.tsx',
+  'components/Sidebar.tsx',
+  'components/TopBar.tsx',
+  'components/BottomNav.tsx',
+  'components/Crest.tsx',
+  'components/UserAvatar.tsx',
+  'routes/Players.tsx',
+  'components/PlayerFilters.tsx',
+  'components/BulkDeletePlayersModal.tsx',
+  'components/PlayerFormModal.tsx',
+  'components/PlayerActionModals.tsx',
+  'components/PlayerHistoryModal.tsx',
+  'components/ExportConfirmModal.tsx',
+  'components/ImportPlayersModal.tsx',
+  'components/RenewSeasonModal.tsx',
+  'routes/Activity.tsx',
+  'routes/Account.tsx',
+  'components/AuthCard.tsx',
+  'routes/Login.tsx',
+  'routes/SetPassword.tsx',
+]
+
+
 
 // JSX opening tags cannot be matched with `<button[^>]*>`: an arrow function
 // in onClick contains a `>` and truncates the match, which silently drops
@@ -364,26 +394,11 @@ describe('the type scale is the only source of a font size', () => {
     // inline size was the batch filter note at 13.5px.
     // VISUAL-02, Account: the self service screen, which carried sixteen
     // inline sizes across five cards and two copies of one list row.
-    const OWNED = [
-      'components/ui.tsx',
-      'components/primitives.tsx',
-      'components/Sidebar.tsx',
-      'components/TopBar.tsx',
-      'components/BottomNav.tsx',
-      'components/Crest.tsx',
-      'components/UserAvatar.tsx',
-      'routes/Players.tsx',
-      'components/PlayerFilters.tsx',
-      'components/BulkDeletePlayersModal.tsx',
-      'components/PlayerFormModal.tsx',
-      'components/PlayerActionModals.tsx',
-      'components/PlayerHistoryModal.tsx',
-      'components/ExportConfirmModal.tsx',
-      'components/ImportPlayersModal.tsx',
-      'components/RenewSeasonModal.tsx',
-      'routes/Activity.tsx',
-      'routes/Account.tsx',
-    ]
+    // VISUAL-02, Login and Set Password: the two signed out screens and the
+    // card they share. Their one inline value was a MARGIN rather than a size,
+    // which this rule cannot see; the spacing rule below owns that, and the
+    // two are separate because they read different things.
+    const OWNED = OWNED_FILES
     const offenders: string[] = []
     for (const f of sourceFiles.filter((f) => OWNED.includes(rel(f)))) {
       // The value is captured and then tested, rather than excluded with a
@@ -401,6 +416,73 @@ describe('the type scale is the only source of a font size', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+})
+
+describe('a wave that owns a file owns its spacing too, not only its type', () => {
+  /* WHY THIS EXISTS. `OWNED_FILES` is consumed by ONE rule, which scans for
+     `fontSize`. So adding a file to it pins the type scale on that file and
+     nothing else, and the entry for Login and Set Password named a 14px
+     MARGIN as the value it was added for: a claim the list could not keep.
+     The off scale step rule that does police spacing reads `src/styles.css`
+     alone, so it sees neither a route stylesheet nor a piece of JSX.
+
+     This is the missing half. It is a SEPARATE list, narrower than the type
+     one, for the reason the type list is itself narrower than the product: a
+     rule widened to files an earlier wave landed fails on their spacing, and
+     retiring that is those waves' work rather than a licence for this one to
+     weaken the rule. Counted rather than guessed: of the 21 files owned for
+     their type, two still carry an inline step off the scale, `components/
+     ui.tsx` with nine and `components/Sidebar.tsx` with one. Widen this list
+     as each wave reaches them; the two converge when the last one does. */
+  const SPACING_OWNED = [
+    'components/AuthCard.tsx',
+    'routes/Login.tsx',
+    'routes/SetPassword.tsx',
+    'routes/Login.css',
+  ]
+
+  it('writes no inline margin, padding or gap outside the spacing scale', () => {
+    const offenders: string[] = []
+    // JSX only: the stylesheet in the list is read by the rule below, whose
+    // grammar is CSS rather than an object literal.
+    for (const f of sourceFiles.filter((f) => SPACING_OWNED.includes(rel(f)) && f.endsWith('.tsx'))) {
+      for (const m of read(f).matchAll(/\b(margin|padding|gap)[A-Za-z]*: *([^,}\n]+)/g)) {
+        const v = m[2].trim()
+        if (v.startsWith("'var(--space-")) continue
+        // Not a step: zero in either form, and auto.
+        if (/^'?0('|px')?$/.test(v)) continue
+        if (v === "'auto'") continue
+        offenders.push(`${rel(f)}: ${m[1]}: ${v}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('leaves no off scale step in the stylesheet this wave brought onto it', () => {
+    // The same shape as the shared stylesheet's own rule, applied to the one
+    // route stylesheet this wave owns. A literal is allowed only where it is
+    // not a step: zero, a hairline, and a percentage or auto.
+    const css = read(sourceFiles.find((f) => rel(f) === 'routes/Login.css')!)
+    const offenders: string[] = []
+    for (const m of css.matchAll(/(margin|padding|gap)[a-z-]*: *([^;]+);/g)) {
+      for (const value of m[2].trim().split(/\s+/)) {
+        if (/^var\(--space-/.test(value)) continue
+        if (/^(0|auto|inherit|initial)$/.test(value)) continue
+        if (/^\d+%$/.test(value)) continue
+        offenders.push(`${m[1]}: ${value}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('covers every file this wave owns, so the list cannot quietly shrink', () => {
+    // The wave's own four, named here rather than derived, because the point
+    // of the list is that somebody chose to put a file on it.
+    for (const f of ['components/AuthCard.tsx', 'routes/Login.tsx', 'routes/SetPassword.tsx', 'routes/Login.css']) {
+      expect(SPACING_OWNED, `${f} is covered`).toContain(f)
+      expect(sourceFiles.map(rel), `${f} exists`).toContain(f)
+    }
   })
 })
 
@@ -756,6 +838,62 @@ describe('a semantic fill carries its own label colour', () => {
     expect(read(join(srcDir, 'routes/SessionRegister.css'))).toContain('color: var(--success-fg)')
     expect(read(join(srcDir, 'routes/SessionDay.css'))).toContain('color: var(--success-fg)')
     expect(styles).toMatch(/\.ip-pill \{[^}]*color: var\(--on-accent\)/)
+  })
+})
+
+/* ---- one focus restore, not one per screen ---------------------- */
+
+describe('a control the browser blurs is restored from one place', () => {
+  /* WHY THIS RULE EXISTS. Disabling a focused control blurs it, so every
+     screen with a submit that freezes while a call is in flight meets the
+     same defect, and every one of them is tempted to write the same effect
+     again. Account met it first (#215), Login and Set Password met it next,
+     and the reasoning is subtle in two places at once: it has to be an
+     effect rather than a callback, because a per-call onSuccess runs before
+     React re-renders; and it has to refuse to act unless focus is on the
+     body, or it takes focus back off somebody who moved away while the call
+     was running. A second copy is a second chance to get one of those two
+     halves wrong.
+
+     src/hooks/useFocusRestore.ts says out loud that this test enforces it,
+     so the two have to agree or the comment is a claim with nothing behind
+     it. This is that enforcement. */
+  const HOOK = 'hooks/useFocusRestore.ts'
+
+  it('defines the hook exactly once, in the shared module', () => {
+    const definitions = sourceFiles.filter((f) => /function useFocusRestore\b/.test(read(f))).map(rel)
+    expect(definitions).toEqual([HOOK])
+  })
+
+  it('reaches it by import everywhere else', () => {
+    // A caller names the hook; only the module may define it. Anything that
+    // uses the name without importing it has written its own.
+    const offenders: string[] = []
+    for (const f of sourceFiles.filter((f) => f.endsWith('.tsx') || f.endsWith('.ts'))) {
+      if (rel(f) === HOOK) continue
+      const src = read(f)
+      if (!src.includes('useFocusRestore')) continue
+      if (!/import \{[^}]*useFocusRestore[^}]*\} from '[^']*hooks\/useFocusRestore'/.test(src)) {
+        offenders.push(rel(f))
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps the guard that makes it a restore rather than a steal, and gates on it', () => {
+    /* The one rule that separates the two. Without it the hook moves focus on
+       every settled write, including one somebody carried on working through.
+
+       Checked as a GATE rather than as a presence: the rule is a named
+       function and the effect has to return early on it, which is the shape
+       an inverted or ignored guard breaks. What the rule ANSWERS is driven in
+       src/hooks/focusRestore.test.ts; presence alone would hold for a hook
+       that computed it and threw it away. */
+    const src = read(sourceFiles.find((f) => rel(f) === HOOK)!)
+    expect(src).toContain('export function focusWasLost(')
+    expect(src).toMatch(/if \(!focusWasLost\(document\.activeElement, document\.body\)\) return/)
+    // And the focus call comes after that return, not before it.
+    expect(src.indexOf('focusWasLost(document.activeElement')).toBeLessThan(src.indexOf('target.current?.focus()'))
   })
 })
 

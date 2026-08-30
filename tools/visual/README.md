@@ -52,10 +52,11 @@ Query string, all optional:
 
 | Key | Values |
 |---|---|
-| `screen` | `home`, `sessions`, `login`, `players`, `activity`, `account`, `more`, `dialog`, `primitives` |
+| `screen` | `home`, `sessions`, `login`, `auth`, `players`, `activity`, `account`, `more`, `dialog`, `primitives` |
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin` |
 | `theme` | `light` (default), `dark` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow` |
+| `auth` | `signedin` (default), `signedout` (the default for `screen=login`), `needspassword`, `authloading` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -183,6 +184,95 @@ those two are the partial administrative case, offered Club, Teams and Spond
 and not Users, and `clubadmin` is the one offered all four. Adding
 `users.manage` to an existing set would have added a sidebar item and moved
 every shot that set already takes.
+
+## Login and Set Password
+
+These two are the product with no shell around it, and the only surfaces
+whose acceptance is partly about the BOUNDARY in front of them rather than
+about the screen. So `screen=login` and `screen=auth` mount the **real
+`App`**: `/login` goes through the product's own `LoginGate`, a protected
+address goes through its `RequireAuth`, and an invited member's Set Password
+is the one `RequireAuth` renders in place of the application. Mounting
+`Login` on its own, which is what the harness used to do, proves the screen
+and nothing about the guard, and a fixture that answered for the guard would
+be a picture of a redirect that never happened.
+
+`auth` is a KEY OF ITS OWN rather than a `state`, because the two are
+orthogonal and one slot cannot hold both: "this member arrived through an
+invite and has to set a password" and "the write hangs" are both true of Set
+Password in flight. Its default is derived from the screen, so `screen=login`
+opens signed out (a signed in visitor is redirected off `/login` by the real
+guard, and a screenshot of that is not a Login screenshot) and every other
+screen opens signed in exactly as it always has. No existing shot moves.
+
+`at` names the address rather than spelling it: `login` is `/login`,
+`protected` is `/players`, which is behind BOTH `RequireAuth` and a
+capability guard so a case that reached it proves the outer guard let it
+through, and the default is `/`.
+
+`tools/visual/auth.mjs` owns the presses, for the reason `dialogs.mjs` and
+`account.mjs` do: all three tools need the same ones. It had already gone
+wrong here in the way those modules exist to prevent. `contrast.mjs` used to
+open the login screen and click a button matched by `/magic link/i`; no
+control on that screen has ever carried those words; the press was wrapped in
+a `.catch()`; and every login contrast sweep since has waited thirty seconds,
+measured an untouched form and reported it clean.
+
+The auth calls need no state of their own. `inflight` hangs them,
+`writefails` refuses them and `writeslow` settles them after a beat, which is
+what those three already mean everywhere else, so WHICH call is driven is
+decided by the press. `writeslowfails` is the fourth combination and it exists
+for one check: a call that settles slowly AND refuses. `writeslow` settles
+successfully, and a successful call on these two screens says nothing, so the
+outcome message focus would move to is not on screen at all. Under it, "focus
+stayed where the member put it" is true of a screen with no repair whatever,
+which is precisely how the no-steal check would have gone vacuous when the
+repair was retargeted from the pressed control to the message. Both are driven
+now, and each names what it proves.
+
+**Three of these states are refusals the SCREEN makes**, before the auth
+client is reached: a Set Password mismatch, and each of Login's two "enter
+your email first" sentences. Their whole claim is a negative, and a browser
+cannot see a call that never happened. They used to be inferred from what WAS
+drawn: the mismatch read "the Set Password card is still up, and accepting an
+update would have handed the screen to the application", which is two
+behaviours standing in for one fact and would hold just as well if the call
+were made and its answer thrown away. So the stub COUNTS every call on the
+auth client, on `window.__authCalls`, and each of the three asserts a zero. An
+absent counter fails rather than passes, because it means the page is not
+running the stub the proof was written against. And each zero is paired with a
+flow that DOES make the same call and asserts one, since a zero on its own is
+also what a deleted `record()` line looks like. `longclub` and `longmotto` are the two strings the
+**club** chooses, each at a length a committee would really produce; they are
+separate states so a shot named for one is not also carrying the other, and
+each entry asserts the other string is still ordinary.
+
+**Two states named in the design read are not states**, and the harness says
+so rather than photographing something under their names:
+
+- **Expired link.** An expired invite, magic link or recovery link redirects
+  to a bare origin with an error fragment and no session, so the member
+  arrives anonymous, `RequireAuth` sends them to `/login`, and the ordinary
+  sign in screen renders with nothing said about the link that failed. The
+  redirect strips the fragment on the way, so even the URL evidence is gone.
+  The `expired-link` guard case drives that arrival and proves what is
+  actually there; `expired-link-signedin` drives the same dead link on a
+  device that already holds a session, which is let straight through. The
+  RULE behind it, that the fragment is not read as an arrival to set a
+  password, cannot be tested here at all, because `useAuth` is one of the
+  modules this harness stubs; it is proved against the real module in
+  `src/routes/login.screens.test.tsx`.
+- **Permission limited.** Neither screen reads a role, a profile or a
+  capability, and neither can be wrapped by `RequireCap`: `/login` is a
+  sibling of the guarded tree, and Set Password is not a route at all. The
+  nearest real thing is `LoginGate` turning a signed in visitor away, which
+  is a guard answer and is covered as the `signedin-login` guard case.
+
+The route witness is `[data-route]`, rendered only on these two screens.
+It is not the same thing as the `data-path` attribute on `.content`, which is
+the harness `Shell`'s own witness and does not exist on an auth surface at
+all: the real `App` renders its own shell. A check about an auth surface
+reads `[data-route]`.
 
 ## The dialogs
 
