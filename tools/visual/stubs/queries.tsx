@@ -353,6 +353,9 @@ type WriteCallbacks = { onSuccess?: () => void; onError?: (e: Error) => void }
 
 const WRITE_HANGS = state === 'inflight' || state === 'photoinflight'
 const WRITE_FAILS = state === 'writefails' || state === 'photofails'
+/* Long enough for a driver to move focus during the write and short enough
+   not to slow the matrix. Every other state settles on the next task. */
+const WRITE_DELAY = state === 'writeslow' || state === 'photoslow' ? 1200 : 0
 
 /* THE TIMING IS PART OF THE STUB, and the first version got it wrong in a way
    that made a check pass on a repair that did not work in production. Codex.
@@ -390,7 +393,7 @@ function useCallbackWrite<V>(message: string, apply?: (vars: V) => void) {
           opts.onSuccess?.()
         }
         setPending(false)
-      }, 0)
+      }, WRITE_DELAY)
     },
   }
 }

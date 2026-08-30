@@ -55,7 +55,7 @@ Query string, all optional:
 | `screen` | `home`, `sessions`, `login`, `players`, `activity`, `account`, `more`, `dialog`, `primitives` |
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin` |
 | `theme` | `light` (default), `dark` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `profileloading`, `longvalues` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -143,6 +143,23 @@ photo to remove and a state cannot be two things at once. `photo` is a coach
 who has uploaded one, and `photoinflight` and `photofails` are that crossed
 with the two write phases. The DEFAULT is still a coach with no photo, which
 is what the fixture has always been, so no existing screenshot moves.
+
+`writeslow` and `photoslow` are a write that SETTLES rather than hangs, which
+`inflight` cannot be: nothing under `inflight` ever finishes, so nothing it
+did could ever be undone. They exist for one question, which is the second
+half of the focus claim. Only the photo actions are disabled during a removal,
+so a coach can carry on using the rest of the page while a write is in flight;
+a repair that moves focus on success must leave it where they put it. The
+driver starts the write, moves focus, and watches the write finish.
+
+The stub's TIMING is part of what it models, and the first version of it got
+that wrong in a way that made a check pass on a repair that did not work.
+TanStack invokes a per-call callback inside its notify batch BEFORE it
+notifies its listeners, so when `onSuccess` runs React has not re-rendered and
+the DOM still shows the in-flight paint: a control the pending render disabled
+is still disabled, and focusing it is a no-op. `useCallbackWrite` goes through
+the pending render first, on a timeout rather than a microtask, because what
+has to have happened is React's commit.
 
 `profileloading` is the page level gate (the profile read has not answered),
 and `longvalues` is a long name, a long sign in email, a long club name and a

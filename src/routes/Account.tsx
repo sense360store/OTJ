@@ -12,7 +12,7 @@
 // region rather than coloured text, and focus is placed deliberately where a
 // successful write removes or disables the control that had it.
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent, ReactNode, RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
@@ -53,6 +53,41 @@ function OutcomeNote({ outcome }: { outcome: Outcome }) {
   )
 }
 
+/* Focus is RESTORED, never stolen.
+
+   A successful write can take away the control that had focus: a button that
+   unmounts with the thing it removed, or one the settled render disables
+   because there is nothing left to submit. The browser drops focus to the
+   document body when that happens, and that is the ONLY case this moves focus
+   in. A coach who moved into another field while the write was in flight
+   keeps their place: only the photo actions are disabled during a removal, so
+   every other control on the page is still theirs to use. Codex.
+
+   It has to be an effect rather than the success callback, and for both
+   halves of the same reason. TanStack runs a per-call onSuccess inside its
+   notify batch BEFORE it notifies its listeners, so React has not re-rendered
+   when it fires: the control is neither disabled nor unmounted yet, which
+   makes "did focus get lost" unanswerable, and focusing a control that the
+   settling render is about to disable is a no-op. Codex again, one round
+   apart, which is why both halves are written down here. */
+// The ref stays with the component that renders the control, and this takes
+// it: a hook that MADE the ref and handed it back through an object reads as
+// a ref accessed during render, which it is not, but the shape is worth
+// avoiding either way. What it returns is the request.
+function useFocusRestore(settled: boolean, target: RefObject<HTMLElement | null>) {
+  const wanted = useRef(false)
+  useEffect(() => {
+    if (!settled || !wanted.current) return
+    wanted.current = false
+    // The body (or nothing) is what the browser leaves behind when a focused
+    // control is disabled or removed. Anywhere else is where the coach went.
+    const active = document.activeElement
+    if (active !== null && active !== document.body) return
+    target.current?.focus()
+  }, [settled, target])
+  return () => void (wanted.current = true)
+}
+
 // One contained section. The heading is an h2 under the page's single h1, so
 // the page has a real outline; the title and its line of context take the
 // shared type scale rather than two inline sizes.
@@ -71,27 +106,13 @@ function PhotoRow() {
   const upload = useUploadAvatar()
   const remove = useRemoveAvatar()
   const inputRef = useRef<HTMLInputElement>(null)
-  // The visible action, which is where focus goes when Remove photo succeeds:
-  // that button unmounts with the photo it removed, and focus would otherwise
-  // fall to the document body.
-  const pickRef = useRef<HTMLButtonElement>(null)
   const [outcome, setOutcome] = useState<Outcome>(null)
-  // A request rather than state, so placing the focus renders nothing.
-  const wantsFocus = useRef(false)
   const busy = upload.isPending || remove.isPending
-
-  /* Focus is REQUESTED in the success callback and PLACED here, on the render
-     where the button is enabled again. It cannot be placed in the callback
-     itself: TanStack runs a per-call onSuccess inside its notify batch before
-     it notifies its listeners, so React has not re-rendered yet and the
-     button still carries the `disabled` the in-flight render gave it.
-     Focusing a disabled control is a no-op, so the repair silently did
-     nothing and focus landed on the document body anyway. Codex. */
-  useEffect(() => {
-    if (busy || !wantsFocus.current) return
-    wantsFocus.current = false
-    pickRef.current?.focus()
-  }, [busy])
+  // Remove photo unmounts with the photo it removed, so a successful removal
+  // takes away the control that had focus. The visible photo action is what
+  // is left, and what focus returns to.
+  const pickRef = useRef<HTMLButtonElement>(null)
+  const restorePhotoFocus = useFocusRestore(!busy, pickRef)
 
   const pick = (file: File | null) => {
     if (!file) return
@@ -135,7 +156,7 @@ function PhotoRow() {
                 remove.mutate(undefined, {
                   onSuccess: () => {
                     setOutcome({ kind: 'ok', text: 'Photo removed. Your initials show instead.' })
-                    wantsFocus.current = true
+                    restorePhotoFocus()
                   },
                   onError: (e) => setOutcome({ kind: 'error', text: e.message }),
                 })
@@ -156,7 +177,11 @@ function NameRow() {
   const update = useUpdateMyProfile()
   const [draft, setDraft] = useState(profile?.full_name ?? '')
   const [outcome, setOutcome] = useState<Outcome>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  // Saving makes the name unchanged, which disables Save. A coach who clicked
+  // it rather than pressing Enter loses focus with it, and gets it back on
+  // the field they were editing.
+  const nameRef = useRef<HTMLInputElement>(null)
+  const restoreNameFocus = useFocusRestore(!update.isPending, nameRef)
   const changed = draft.trim() !== '' && draft.trim() !== (profile?.full_name ?? '')
 
   const save = () => {
@@ -166,10 +191,7 @@ function NameRow() {
       {
         onSuccess: () => {
           setOutcome({ kind: 'ok', text: 'Name updated.' })
-          // Saving makes the name unchanged, which disables Save. Focus was on
-          // it whenever the coach clicked rather than pressed Enter, so it
-          // returns to the field they were editing.
-          inputRef.current?.focus()
+          restoreNameFocus()
         },
         onError: (e) => setOutcome({ kind: 'error', text: e.message }),
       },
@@ -181,7 +203,7 @@ function NameRow() {
       <div className="account-form-row">
         <TextField
           id="full-name"
-          ref={inputRef}
+          ref={nameRef}
           label="Full name"
           value={draft}
           placeholder="First and last name"
@@ -251,7 +273,10 @@ function PasswordForm() {
   const [confirm, setConfirm] = useState('')
   const [outcome, setOutcome] = useState<Outcome>(null)
   const [busy, setBusy] = useState(false)
+  // Both fields empty again disables the submit, so a coach who clicked it
+  // loses focus with it and gets it back on the first field.
   const firstRef = useRef<HTMLInputElement>(null)
+  const restorePasswordFocus = useFocusRestore(!busy, firstRef)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -270,8 +295,7 @@ function PasswordForm() {
     setPassword('')
     setConfirm('')
     setOutcome({ kind: 'ok', text: 'Password changed. Use it next time you sign in.' })
-    // Both fields are empty again, which disables the submit that had focus.
-    firstRef.current?.focus()
+    restorePasswordFocus()
   }
 
   return (
@@ -312,7 +336,9 @@ function EmailForm() {
   const [email, setEmail] = useState('')
   const [outcome, setOutcome] = useState<Outcome>(null)
   const [busy, setBusy] = useState(false)
-  const fieldRef = useRef<HTMLInputElement>(null)
+  // The field empty again disables the submit, as above.
+  const emailRef = useRef<HTMLInputElement>(null)
+  const restoreEmailFocus = useFocusRestore(!busy, emailRef)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -334,8 +360,7 @@ function EmailForm() {
       kind: 'ok',
       text: `A confirmation email is on its way to ${next}. Your sign in email changes only once you confirm it from there.`,
     })
-    // The field is empty again, which disables the submit that had focus.
-    fieldRef.current?.focus()
+    restoreEmailFocus()
   }
 
   return (
@@ -347,7 +372,7 @@ function EmailForm() {
       <div className="account-form-row">
         <TextField
           id="new-email"
-          ref={fieldRef}
+          ref={emailRef}
           label="New email"
           type="email"
           autoComplete="email"

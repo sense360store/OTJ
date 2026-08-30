@@ -25,6 +25,11 @@ const AUTH_ERRORS: Record<'password' | 'email', string> = {
 function updateUser(attrs: { password?: string; email?: string }) {
   const state = fixtures.state
   if (state === 'inflight' || state === 'photoinflight') return HANGS()
+  // A write that settles, slowly, so a driver can move focus during it. See
+  // the `writeslow` note in tools/visual/fixtures.ts.
+  if (state === 'writeslow') {
+    return new Promise((resolve) => setTimeout(() => resolve({ data: null, error: null }), 1200))
+  }
   if (state === 'writefails' || state === 'photofails') {
     const field = attrs && 'password' in attrs ? 'password' : 'email'
     return Promise.resolve({ data: null, error: { message: AUTH_ERRORS[field] } })

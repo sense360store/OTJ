@@ -2516,6 +2516,68 @@ const focusReturned = async (page, d) => {
     await page.close()
   }
 
+  /* Focus is RESTORED, never STOLEN, which is the other half of the same
+     claim and the one a check for the first half cannot make. Only the photo
+     actions are disabled during a removal, so a coach can carry on using the
+     rest of the page while a write is in flight; a repair that moves focus on
+     success must leave it where they put it. Codex.
+
+     Reached through `writeslow`, a write that settles rather than hanging, so
+     the driver can start it, move focus, and see the write finish. `inflight`
+     cannot answer this: nothing ever settles, so nothing would ever be stolen
+     and the check would pass on a screen that steals. */
+  for (const [key, start, moveTo, slowState] of [
+    // The removal needs a photo to remove, so it takes the photo axis crossed
+    // with the slow write, exactly as its other states do.
+    ['remove-ok', 'Remove photo', '#full-name', 'photoslow'],
+    ['name-ok', 'Save', '#new-email', 'writeslow'],
+    ['password-ok', 'Change password', '#full-name', 'writeslow'],
+    ['email-ok', 'Change email', '#full-name', 'writeslow'],
+  ]) {
+    const WHAT = `a successful ${key} leaves focus where the coach moved it`
+    const page = await open('account', 1280, { state: slowState })
+    // The presses each write needs before it can be started, typed rather than
+    // assumed: an empty form's submit is inert.
+    const typedOk =
+      key === 'name-ok'
+        ? await typed(page.getByLabel('Full name', { exact: true }), 'Sam Whitfield-Ashby', WHAT)
+        : key === 'password-ok'
+          ? (await typed(page.getByLabel('New password', { exact: true }), 'a-long-enough-passphrase', WHAT)) &&
+            (await typed(page.getByLabel('Confirm password', { exact: true }), 'a-long-enough-passphrase', WHAT))
+          : key === 'email-ok'
+            ? await typed(page.getByLabel('New email', { exact: true }), 'new.coach@example.invalid', WHAT)
+            : true
+    if (!typedOk) {
+      await page.close()
+      continue
+    }
+    if (!(await pressed(page.getByRole('button', { name: start, exact: true }), WHAT))) {
+      await page.close()
+      continue
+    }
+    // The coach carries on: focus a control in a different section while the
+    // write is still in flight.
+    if (!(await focused(page.locator(moveTo), WHAT))) {
+      await page.close()
+      continue
+    }
+    const moved = await page.evaluate((sel) => document.activeElement === document.querySelector(sel), moveTo)
+    await page.waitForTimeout(2000)
+    const after = await page.evaluate(
+      (sel) => {
+        const el = document.activeElement
+        return {
+          stillThere: !!el && el === document.querySelector(sel),
+          now: el ? el.id || el.getAttribute('class') || el.tagName : null,
+          settled: !!document.querySelector('.account .note-success'),
+        }
+      },
+      moveTo,
+    )
+    check(WHAT, moved && after.settled && after.stillThere, JSON.stringify({ moved, ...after }))
+    await page.close()
+  }
+
   /* Every outcome carries an icon and a live region, in both themes. Colour
      alone is what this page used to say success and failure with, and colour
      alone is what 2.4 and 2.14 forbid. */

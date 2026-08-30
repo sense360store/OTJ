@@ -189,6 +189,17 @@ export type HarnessState =
   // which are the four strings this screen renders at a length the club
   // chooses. A state of its own, so no existing screenshot moves.
   | 'longvalues'
+  /* Every write settles, but SLOWLY. `inflight` hangs for ever, which is the
+     right shape for photographing an in-flight control and the wrong one for
+     the question "what happens to focus while the coach carries on using the
+     page": that needs a write a driver can act during AND see settle. Only
+     the photo actions are disabled during a removal, so every other control
+     is still theirs, and a repair that moves focus on success must not take
+     it back from wherever they went. Codex. */
+  | 'writeslow'
+  // The same, with a photo already uploaded, because the removal is the one
+  // write whose control the coach cannot be left on: it unmounts.
+  | 'photoslow'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -643,7 +654,11 @@ export const AVATAR_DATA_URL =
   )
 
 const LONG_VALUES = harnessState === 'longvalues'
-const WITH_PHOTO = harnessState === 'photo' || harnessState === 'photoinflight' || harnessState === 'photofails'
+const WITH_PHOTO =
+  harnessState === 'photo' ||
+  harnessState === 'photoinflight' ||
+  harnessState === 'photofails' ||
+  harnessState === 'photoslow'
 
 export const ACCOUNT_SIGNIN_EMAIL = LONG_VALUES ? LONG_ACCOUNT_EMAIL : ACCOUNT_EMAIL
 export const ACCOUNT_CLUB_NAME = LONG_VALUES ? LONG_CLUB_NAME : DEFAULT_CLUB_NAME
