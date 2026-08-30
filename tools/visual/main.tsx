@@ -24,6 +24,7 @@ import { Sessions } from '../../src/routes/Sessions'
 import { Players } from '../../src/routes/Players'
 import { Activity } from '../../src/routes/Activity'
 import { Account } from '../../src/routes/Account'
+import { Feedback } from '../../src/routes/Feedback'
 import { ACTIVITY_BATCH_ID, PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
 import '../../src/styles.css'
 
@@ -236,6 +237,12 @@ function Harness() {
         {/* Account is open to every role, parents included, so it carries no
             guard here for the same reason App.tsx gives it none. */}
         <Route path="/account" element={<Account />} />
+        {/* Feedback carries no guard for the same reason: App.tsx gives it
+            none, because the log is the one surface every member of the club
+            reads AND writes, parents included. A capability variant of this
+            screen is a variant of what it SURFACES (the status select, the
+            promote action), never of whether it renders. */}
+        <Route path="/feedback" element={<Feedback />} />
       </Routes>
     </Shell>
   )
@@ -297,6 +304,7 @@ const ENTRY: Record<string, string> = {
   players: playersEntry(),
   activity: activityEntry(),
   account: '/account',
+  feedback: '/feedback',
   login: '/login',
   auth: authEntry(),
 }

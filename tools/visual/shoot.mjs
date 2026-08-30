@@ -14,6 +14,7 @@ import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, openDialog, openRowMenu, queryFor, DIALOG_PLAYER } from './dialogs.mjs'
 import { ACCOUNT_FLOWS, longValuesRendered, queryForFlow, runFlow } from './account.mjs'
 import { AUTH_FLOWS, BRAND, GUARD_CASES, brandRendered, runAuthFlow, urlForAuth } from './auth.mjs'
+import { FEEDBACK_ENTRIES, queryForFeedback, runFeedbackFlow } from './feedback.mjs'
 
 const OUT = process.argv[2] ?? 'visual-shots'
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
@@ -30,6 +31,14 @@ const PHONE = [360, 390, 430, 768, 900]
 const authFlow = (key) => {
   const found = AUTH_FLOWS.find((f) => f.key === key)
   if (!found) throw new Error(`no auth flow named ${key}`)
+  return found
+}
+
+// The same, for the feedback entries, and for the same reason: a missing key
+// is a thrown error at load rather than a silently absent shot.
+const feedbackEntry = (key) => {
+  const found = FEEDBACK_ENTRIES.find((f) => f.key === key)
+  if (!found) throw new Error(`no feedback entry named ${key}`)
   return found
 }
 
@@ -219,6 +228,45 @@ const SHOTS = [
   // What the auth guard does, at each address, for each auth condition. These
   // mount the real App, so the redirect in a shot is the product's own.
   ...GUARD_CASES.flatMap((g) => [390, 1280].map((w) => ({ authEntry: g, w }))),
+
+  /* ---- VISUAL-02, the club feedback log -------------------------------
+     Part 4 names create, list, status change as an admin, and the read only
+     variant. The list itself is shot at all seven widths in the three
+     capability variants it renders: a club.manage holder, an ordinary member
+     who filed two of the rows, and the lowest capability member the product
+     has. One list carries every axis at once, so an owner's row and a
+     stranger's, a promoted item and an unpromoted one, and a row with
+     comments beside rows with none are all in every shot. */
+  ...['coach', 'viewer', 'parent'].flatMap((caps) =>
+    WIDTHS.map((w) => ({ screen: 'feedback', caps, w })),
+  ),
+  // The page's own state matrix, at one phone width and one desktop width
+  // each. Every one is the screen's own branch, reached through the query's
+  // own flags or through the rows the read answers with.
+  ...['loading', 'error', 'empty', 'longnames'].flatMap((state) =>
+    [390, 1280].map((w) => ({ screen: 'feedback', caps: 'coach', state, w })),
+  ),
+  /* Everything else is DRIVEN through tools/visual/feedback.mjs, the same
+     entries checks.mjs measures and contrast.mjs sweeps, and every one of
+     them proves the state its own name claims before its screenshot is
+     filed. 390 and 1280, in both themes: most of these shots exist to show a
+     semantic Note or a Badge, and the surface, border and glyph of each flip
+     with the theme. */
+  ...FEEDBACK_ENTRIES.flatMap((f) => [390, 1280].map((w) => ({ feedbackEntry: f, w }))),
+  /* And at 900 for the six that are a FORM DIALOG, where 2.13 turns one into
+     a bottom sheet and the footer has to stay above the keyboard. */
+  ...['create-open', 'create-valid', 'edit-open', 'comment-edit-open', 'promote-open', 'delete-open'].map((key) => ({
+    feedbackEntry: feedbackEntry(key),
+    w: 900,
+  })),
+  /* And at 360, the states that put an expanded thread or a wrapped action
+     cluster in the narrowest card the product designs for. The other driven
+     states change a label or a disabled flag and lay out identically to what
+     is already shot at 390. */
+  ...['expanded-thread', 'comment-moderation', 'role-member', 'status-pending'].map((key) => ({
+    feedbackEntry: feedbackEntry(key),
+    w: 360,
+  })),
 ]
 
 // A state and an ADDRESS are two different things, and two shots that differ
@@ -229,8 +277,10 @@ const name = (s, theme) =>
     // An auth entry names the surface it mounts rather than the query key,
     // so a Set Password shot is filed under `auth` and a Login one under
     // `login` exactly as the browser opened them.
-    s.authEntry ? (s.authEntry.screen ?? 'auth') : s.screen,
-    s.caps ?? 'na',
+    s.authEntry ? (s.authEntry.screen ?? 'auth') : s.feedbackEntry ? 'feedback' : s.screen,
+    // A feedback entry carries its own capability set, so the name says which
+    // member the shot is of rather than defaulting to `na`.
+    s.feedbackEntry ? (s.feedbackEntry.caps ?? 'coach') : (s.caps ?? 'na'),
     // A guard case has no state; what varies is the AUTH CONDITION, so that
     // is what rides in the state slot for it. Not to avoid a collision, which
     // the entry's own key in the next slot already rules out: it is so the
@@ -242,14 +292,18 @@ const name = (s, theme) =>
         ? s.dialog.state
         : s.flow
           ? s.flow.state
-          : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
+          : s.feedbackEntry
+            ? (s.feedbackEntry.state ?? 'default')
+            : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
     s.authEntry
       ? `auth-${s.authEntry.key}`
       : s.dialog
         ? `dialog-${s.dialog.key}`
         : s.flow
           ? `flow-${s.flow.key}`
-          : (s.open ?? 'default'),
+          : s.feedbackEntry
+            ? `fb-${s.feedbackEntry.key}`
+            : (s.open ?? 'default'),
     theme,
     `${s.w}w`,
   ].join('_') + '.png'
@@ -257,7 +311,9 @@ const name = (s, theme) =>
 // An overlay is shot at the viewport rather than full page: a full page shot
 // of a dialog over a two hundred row register is a picture of the register.
 const OVERLAY = new Set(['more', 'delete', 'moreactions', 'rowmenu', 'filters', 'history'])
-const isOverlay = (s) => !!s.dialog || OVERLAY.has(s.open)
+// A feedback entry says whether it leaves a dialog up, because several of them
+// close one on the way to the outcome they claim and those ARE page shots.
+const isOverlay = (s) => !!s.dialog || !!s.feedbackEntry?.overlay || OVERLAY.has(s.open)
 
 
 // Every entry whose name claims a state must PROVE that state before its
@@ -318,7 +374,9 @@ const REACHED_STATE = {
   // known. A predicate takes the shot as well as the page, so each screen's
   // proof stays exact rather than one being widened to cover the other.
   loading: async (page, s) =>
-    s.screen === 'activity' ? visible(page, '.skeleton-list') : visible(page, '.content > .loading[role="status"]'),
+    s.screen === 'activity' || s.screen === 'feedback'
+      ? visible(page, '.skeleton-list')
+      : visible(page, '.content > .loading[role="status"]'),
   rowsloading: '.skeleton-list',
   empty: '.empty',
   error: '.state-error[role="alert"]',
@@ -350,7 +408,14 @@ const REACHED_STATE = {
         !document.querySelector('.activity-filters-btn') &&
         (document.querySelector('h1')?.textContent ?? '') !== 'Activity',
     ),
-  longnames: '.activity-item:has-text("Fotheringay-Wallington-Smythe")',
+  // The same state name on two screens, and each proves its OWN long string:
+  // the feed's is a long acting adult, the log's is a long title beside a
+  // long author. A selector naming one would pass on the screen that renders
+  // neither.
+  longnames: async (page, s) =>
+    s.screen === 'feedback'
+      ? visible(page, '.fb-title:has-text("Sessionplannerrecalculates")')
+      : visible(page, '.activity-item:has-text("Fotheringay-Wallington-Smythe")'),
   history: '.modal .history-item',
   // What this state alone produces: the press was made and NOTHING arrived.
   // The ordinary feed answers the same press with twelve more rows, so this
@@ -500,6 +565,8 @@ for (const theme of ['light', 'dark']) {
       ? queryFor(s.dialog, { theme, caps: s.caps })
       : s.flow
       ? queryForFlow(s.flow, { theme, caps: s.caps })
+      : s.feedbackEntry
+      ? queryForFeedback(s.feedbackEntry, { theme })
       : (() => {
           const p = new URLSearchParams({ screen: s.screen, theme })
           if (s.caps) p.set('caps', s.caps)
@@ -619,6 +686,16 @@ for (const theme of ['light', 'dark']) {
     // rather than a control to press.
     if (s.authEntry) {
       const why = await runAuthFlow(page, s.authEntry)
+      if (why) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: ${why}`)
+      }
+    }
+    // A feedback entry carries its own proof for the same reason: several of
+    // its states ARE a change to the log, and a press that quietly no-ops
+    // leaves an untouched list under a name claiming an outcome.
+    if (s.feedbackEntry) {
+      const why = await runFeedbackFlow(page, s.feedbackEntry)
       if (why) {
         failures++
         console.log(`ERROR ${name(s, theme)}: ${why}`)

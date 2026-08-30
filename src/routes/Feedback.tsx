@@ -4,9 +4,16 @@
 // deletes their own items; holders of club.manage move status through the
 // select on each row. The feedback RLS plus the status guard trigger are the
 // enforcement; the UI only decides what to surface.
-import { useEffect, useRef, useState } from 'react'
+//
+// VISUAL-02 brought it onto the shared system: PageHeader, Card, Button and
+// IconButton, the field primitives, Note, Badge and the shared state
+// families. Nothing about the queries, the capability gates, the ownership
+// rules, the status vocabulary, the GitHub promotion or what it posts moved;
+// what changed is which vocabulary draws them.
+import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { useFocusRestore } from '../hooks/useFocusRestore'
 import {
   useAddFeedbackComment,
   useDeleteFeedback,
@@ -27,33 +34,44 @@ import type { FeedbackInput } from '../lib/queries'
 import { FEEDBACK_KIND_LABELS, FEEDBACK_KINDS, FEEDBACK_STATUS_LABELS, FEEDBACK_STATUSES } from '../lib/data'
 import type { FeedbackComment, FeedbackItem, FeedbackKind, FeedbackStatus } from '../lib/data'
 import { Icon } from '../components/icons'
-import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
+import { Empty, ErrorNote, LoadingRows, Modal } from '../components/ui'
+import {
+  Badge,
+  Button,
+  Card,
+  IconButton,
+  Note,
+  PageHeader,
+  SelectField,
+  TextAreaField,
+  TextField,
+  buttonClass,
+} from '../components/primitives'
+import type { BadgeTone } from '../components/primitives'
 
-// Badge colours lean on existing tokens, the MatchBadge pattern: a tinted
-// background with the full strength colour as text.
-const KIND_COLOR: Record<FeedbackKind, string> = {
-  feature: 'var(--royal)',
-  bug: 'var(--danger)',
-  general: 'var(--warning)',
-}
+/* STATUS IS A STATE, SO IT TAKES THE SEMANTIC TONES. Where an item stands is
+   exactly what the Badge primitive is for, and this mapping is the colours
+   the screen already carried, said in the shared vocabulary rather than in a
+   local color-mix: slate, royal, warning, success and danger become neutral,
+   info, warning, success and danger. Every one of them is a dot AND a word,
+   so the state is never carried by colour alone.
 
-const STATUS_COLOR: Record<FeedbackStatus, string> = {
-  new: 'var(--slate)',
-  planned: 'var(--royal)',
-  in_progress: 'var(--warning)',
-  done: 'var(--success)',
-  declined: 'var(--danger)',
-}
-
-function TagBadge({ color, children }: { color: string; children: ReactNode }) {
-  return (
-    <span
-      className="tag"
-      style={{ background: `color-mix(in srgb, ${color} 14%, transparent)`, color, whiteSpace: 'nowrap' }}
-    >
-      {children}
-    </span>
-  )
+   KIND IS A CLASSIFICATION AND DELIBERATELY TAKES NONE. It used to be painted
+   --royal, --danger and --warning, which is a state palette standing in for a
+   category: a General item is not a warning, and a Bug report is not an error
+   the screen has just had. 2.2 keeps classification and state apart, and the
+   product has no classification palette for feedback kinds (--c-* is the four
+   corners and --m-* is media type, and neither may be borrowed). Inventing a
+   third one is a token decision rather than an adoption, so the kind is a
+   neutral Badge and the WORD is what tells the three apart. The cost is
+   stated: a coach can no longer pick the bugs out of a list by hue, and what
+   carries hue now is the status, which is the thing they scan for. */
+const STATUS_TONE: Record<FeedbackStatus, BadgeTone> = {
+  new: 'neutral',
+  planned: 'info',
+  in_progress: 'warning',
+  done: 'success',
+  declined: 'danger',
 }
 
 // The filed date as a coarse age: "just now", "3 days ago". Past a month the
@@ -71,10 +89,36 @@ function filedAgo(createdAt: string, now: Date = new Date()): string {
   return new Date(createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+const commentLabel = (n: number) => `${n} ${n === 1 ? 'comment' : 'comments'}`
+
+/* WHAT THIS SCREEN'S DIALOGS DO ABOUT FOCUS, AND WHY IT IS NOT HERE.
+
+   Every dialog on this screen freezes its submit while its write is in
+   flight, and this is where the six local repairs for that used to sit. They
+   are gone, and the reason is worth keeping: measured in a browser, Chrome
+   fires NO blur when the focused element is DISABLED, so `Modal`'s own
+   focusout recovery never ran for the one case it was written for, and both a
+   refused write and a write in flight left `document.activeElement` on the
+   document body. That leaves the dialog's Escape handling and its Tab trap
+   dead, because both are bound to the dialog element and only fire while
+   focus is inside it.
+
+   That is `Modal`'s gap rather than this screen's, and it was true of every
+   dialog in the product, so it is fixed in `Modal` (src/components/ui.tsx)
+   rather than six times here. A local repair would also have been dead code
+   the day the primitive was fixed: child effects run before parent ones, so
+   `Modal` reaches the lost focus first and a caller's own restore then finds
+   focus already inside the dialog and correctly does nothing.
+
+   What IS repaired here is the three outcomes that are not inside a dialog at
+   all: the status select, the reply box and a deleted row. Each is measured
+   and driven in tools/visual/checks.mjs. */
+
 // One row of the log, presentational so the test can pin who sees the status
-// select and the owner affordances without a query client. Tapping the text
-// expands the details; members without club.manage see the status as a
-// badge, holders see the select in its place.
+// select and the owner affordances without a query client. Tapping the title
+// expands the details. Members without club.manage read the status as a Badge
+// on the meta line, which is where the row's facts are; a holder edits it as
+// a select in the action cluster, which is where its controls are.
 export function FeedbackCard({
   item,
   authorName,
@@ -103,126 +147,132 @@ export function FeedbackCard({
   thread?: ReactNode
 }) {
   const [expanded, setExpanded] = useState(false)
+  const panelId = useId()
+  /* A select the settling render disables is blurred by the browser, so a
+     manager who changed the status with the keyboard was left on the document
+     body with the list behind them. useFocusRestore only acts when focus was
+     actually lost, so a manager who moved on while the write was running
+     keeps their place. */
+  const statusRef = useRef<HTMLSelectElement>(null)
+  const restoreStatusFocus = useFocusRestore(!statusBusy, statusRef)
+
   return (
-    <div style={{ padding: '12px 0', borderTop: '1px solid var(--line)' }}>
-      <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
-        <button
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            textAlign: 'left',
-            background: 'none',
-            border: 0,
-            padding: 0,
-            color: 'inherit',
-            font: 'inherit',
-            cursor: 'pointer',
-          }}
-        >
-          <span className="row wrap" style={{ gap: 8 }}>
-            <TagBadge color={KIND_COLOR[item.kind]}>{FEEDBACK_KIND_LABELS[item.kind]}</TagBadge>
-            <b style={{ fontSize: 14.5 }}>{item.title}</b>
+    <li className="fb-item">
+      <div className="fb-head">
+        <div className="fb-main">
+          <button
+            type="button"
+            className="fb-toggle"
+            aria-expanded={expanded}
+            aria-controls={panelId}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            <Icon.chevDown className="fb-caret" aria-hidden="true" />
+            <span className="fb-title">{item.title}</span>
+          </button>
+          <div className="fb-meta">
+            <Badge>{FEEDBACK_KIND_LABELS[item.kind]}</Badge>
+            {/* The status where it is read only. It is here rather than in
+                the action cluster, and in exactly one of the two: the meta
+                line holds the row's FACTS and the cluster holds its CONTROLS,
+                which is why a club.manage holder finds the same status as a
+                select over there instead. */}
+            {!canManage && <Badge tone={STATUS_TONE[item.status]}>{FEEDBACK_STATUS_LABELS[item.status]}</Badge>}
+            <span className="fb-by">
+              {authorName} · {filedAgo(item.createdAt)}
+            </span>
             {commentCount > 0 && (
-              <span
-                className="row mono"
-                aria-label={commentCount + (commentCount === 1 ? ' comment' : ' comments')}
-                title={commentCount + (commentCount === 1 ? ' comment' : ' comments')}
-                style={{ gap: 3, alignItems: 'center', color: 'var(--slate)', fontSize: 12 }}
-              >
-                <Icon.comment width={14} height={14} />
+              <span className="fb-comments mono" aria-label={commentLabel(commentCount)}>
+                <Icon.comment aria-hidden="true" />
                 {commentCount}
               </span>
             )}
-          </span>
-          <span className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginTop: 3 }}>
-            {authorName} · {filedAgo(item.createdAt)}
-          </span>
-        </button>
-        {canManage ? (
-          <select
-            className="select"
-            aria-label={'Status of ' + item.title}
-            value={item.status}
-            disabled={statusBusy}
-            onChange={(e) => onStatus(e.target.value as FeedbackStatus)}
-            style={{ height: 34, borderRadius: 9, padding: '0 10px', fontSize: 12.5 }}
-          >
-            {FEEDBACK_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {FEEDBACK_STATUS_LABELS[s]}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <TagBadge color={STATUS_COLOR[item.status]}>{FEEDBACK_STATUS_LABELS[item.status]}</TagBadge>
-        )}
-        {item.githubIssueNumber != null && item.githubIssueUrl ? (
-          // Shown club wide once the item is promoted: the public issue's own
-          // link. Replaces the promote action; an item is promoted once.
-          <a
-            className="tag"
-            href={item.githubIssueUrl}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={'GitHub issue #' + item.githubIssueNumber}
-            style={{ gap: 4, alignItems: 'center', whiteSpace: 'nowrap', textDecoration: 'none' }}
-          >
-            <Icon.external width={13} height={13} />
-            Issue #{item.githubIssueNumber}
-          </a>
-        ) : (
-          canManage &&
-          onPromote && (
-            // Admin only: a coach never holds club.manage and never sees this.
-            // Opens the panel that makes the public nature explicit.
-            <button
-              className="btn btn-ghost btn-sm"
-              aria-label={'Promote ' + item.title + ' to a GitHub issue'}
-              onClick={onPromote}
-              style={{ whiteSpace: 'nowrap' }}
+          </div>
+        </div>
+        <div className="fb-acts">
+          {canManage && (
+            <>
+              <select
+                className="select fb-status"
+                ref={statusRef}
+                aria-label={'Status of ' + item.title}
+                value={item.status}
+                disabled={statusBusy}
+                onChange={(e) => {
+                  restoreStatusFocus()
+                  onStatus(e.target.value as FeedbackStatus)
+                }}
+              >
+                {FEEDBACK_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {FEEDBACK_STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+              {/* The write in flight, said in words rather than left to the
+                  disabled control's opacity. role="status" so it is announced
+                  as well as shown. */}
+              {statusBusy && (
+                <span className="fb-status-busy" role="status">
+                  Saving…
+                </span>
+              )}
+            </>
+          )}
+          {item.githubIssueNumber != null && item.githubIssueUrl ? (
+            // Shown club wide once the item is promoted: the public issue's own
+            // link. Replaces the promote action; an item is promoted once.
+            <a
+              className={buttonClass('ghost', 'sm')}
+              href={item.githubIssueUrl}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={'GitHub issue #' + item.githubIssueNumber}
             >
-              <Icon.external />
-              Promote to GitHub
-            </button>
-          )
-        )}
-        {isOwner && (
+              <Icon.external aria-hidden="true" />
+              Issue #{item.githubIssueNumber}
+            </a>
+          ) : (
+            canManage &&
+            onPromote && (
+              // Admin only: a coach never holds club.manage and never sees this.
+              // Opens the panel that makes the public nature explicit.
+              <Button
+                size="sm"
+                icon={Icon.external}
+                aria-label={'Promote ' + item.title + ' to a GitHub issue'}
+                onClick={onPromote}
+              >
+                Promote to GitHub
+              </Button>
+            )
+          )}
+          {isOwner && (
+            <>
+              <IconButton label={'Edit ' + item.title} icon={Icon.edit} onClick={onEdit} />
+              <IconButton label={'Delete ' + item.title} icon={Icon.trash} onClick={onDelete} />
+            </>
+          )}
+        </div>
+      </div>
+      {statusError && (
+        <Note tone="danger" role="alert" className="fb-note">
+          {statusError}
+        </Note>
+      )}
+      {/* Rendered whether or not it is open, so aria-controls names an element
+          that exists. Its CONTENT is mounted only while it is open, which is
+          what keeps the comment read lazy: FeedbackThread is the only caller
+          of useFeedbackComments, so a closed row fetches nothing. */}
+      <div id={panelId} className="fb-panel" hidden={!expanded}>
+        {expanded && (
           <>
-            <button
-              className="btn btn-ghost btn-sm icon-only"
-              style={{ width: 36, padding: 0 }}
-              aria-label={'Edit ' + item.title}
-              onClick={onEdit}
-            >
-              <Icon.edit />
-            </button>
-            <button
-              className="btn btn-ghost btn-sm icon-only"
-              style={{ width: 36, padding: 0 }}
-              aria-label={'Delete ' + item.title}
-              onClick={onDelete}
-            >
-              <Icon.trash />
-            </button>
+            {item.body && <p className="fb-body">{item.body}</p>}
+            {thread}
           </>
         )}
       </div>
-      {expanded && (
-        <>
-          {item.body && (
-            <p style={{ fontSize: 14, lineHeight: 1.55, margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{item.body}</p>
-          )}
-          {thread}
-        </>
-      )}
-      {statusError && (
-        <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', margin: '6px 0 0' }}>
-          {statusError}
-        </p>
-      )}
-    </div>
+    </li>
   )
 }
 
@@ -263,55 +313,46 @@ export function FeedbackFormModal({
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
+          <Button onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button
-            className="btn btn-primary"
+          </Button>
+          <Button
+            variant="primary"
+            icon={Icon.check}
             onClick={() => onSubmit({ kind, title: titleDraft, body })}
             disabled={!ready || busy}
           >
-            <Icon.check />
             {busy ? busyLabel : submitLabel}
-          </button>
+          </Button>
         </>
       }
     >
-      <div className="field">
-        <label htmlFor="feedback-kind">Kind</label>
-        <select id="feedback-kind" value={kind} onChange={(e) => setKind(e.target.value as FeedbackKind)}>
-          {FEEDBACK_KINDS.map((k) => (
-            <option key={k} value={k}>
-              {FEEDBACK_KIND_LABELS[k]}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="field">
-        <label htmlFor="feedback-title">Title</label>
-        <input
-          id="feedback-title"
-          value={titleDraft}
-          maxLength={120}
-          placeholder="A short summary, at least 3 characters"
-          onChange={(e) => setTitleDraft(e.target.value)}
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="feedback-body">Details</label>
-        <textarea
-          id="feedback-body"
-          rows={5}
-          maxLength={2000}
-          value={body}
-          placeholder="What happened, or what would help. Optional."
-          onChange={(e) => setBody(e.target.value)}
-        />
-      </div>
+      <SelectField label="Kind" value={kind} onChange={(e) => setKind(e.target.value as FeedbackKind)}>
+        {FEEDBACK_KINDS.map((k) => (
+          <option key={k} value={k}>
+            {FEEDBACK_KIND_LABELS[k]}
+          </option>
+        ))}
+      </SelectField>
+      <TextField
+        label="Title"
+        value={titleDraft}
+        maxLength={120}
+        placeholder="A short summary, at least 3 characters"
+        onChange={(e) => setTitleDraft(e.target.value)}
+      />
+      <TextAreaField
+        label="Details"
+        rows={5}
+        maxLength={2000}
+        value={body}
+        placeholder="What happened, or what would help. Optional."
+        onChange={(e) => setBody(e.target.value)}
+      />
       {error && (
-        <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
+        <Note tone="danger" role="alert">
           {error}
-        </p>
+        </Note>
       )}
     </Modal>
   )
@@ -350,7 +391,15 @@ function EditFeedbackModal({ item, onClose }: { item: FeedbackItem; onClose: () 
   )
 }
 
-function DeleteFeedbackModal({ item, onClose }: { item: FeedbackItem; onClose: () => void }) {
+function DeleteFeedbackModal({
+  item,
+  onClose,
+  onDeleted,
+}: {
+  item: FeedbackItem
+  onClose: () => void
+  onDeleted: () => void
+}) {
   const del = useDeleteFeedback()
   return (
     <Modal
@@ -359,28 +408,30 @@ function DeleteFeedbackModal({ item, onClose }: { item: FeedbackItem; onClose: (
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+          <Button onClick={onClose} disabled={del.isPending}>
             Cancel
-          </button>
-          <button
-            className="btn btn-danger"
-            onClick={() => del.mutate({ id: item.id }, { onSuccess: onClose })}
+          </Button>
+          {/* The destructive control. Red is never the only cue: the label
+              carries the word Delete and the dialog names the item. */}
+          <Button
+            variant="danger"
+            icon={Icon.trash}
+            onClick={() => del.mutate({ id: item.id }, { onSuccess: onDeleted })}
             disabled={del.isPending}
           >
-            <Icon.trash />
             {del.isPending ? 'Deleting…' : 'Delete'}
-          </button>
+          </Button>
         </>
       }
     >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+      <p className="modal-copy">
         This removes the item and its status history from the club's log. If it was declined or done, leaving it
         visible keeps the record straight.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
+        <Note tone="danger" role="alert">
           {del.error.message}
-        </p>
+        </Note>
       )}
     </Modal>
   )
@@ -411,80 +462,75 @@ function PromoteToGithubModal({ item, onClose }: { item: FeedbackItem; onClose: 
       title="Promote to GitHub issue"
       sub="Opens a public issue on the project repository."
       onClose={onClose}
+      // The dialog replaces its own body in place when the issue is created,
+      // so focus is pulled back to the container and the new title announced.
+      focusKey={done ? 'done' : 'form'}
       footer={
         done ? (
-          <button className="btn btn-primary" onClick={onClose}>
-            <Icon.check />
+          <Button variant="primary" icon={Icon.check} onClick={onClose}>
             Done
-          </button>
+          </Button>
         ) : (
           <>
-            <button className="btn btn-ghost" onClick={onClose} disabled={promote.isPending}>
+            <Button onClick={onClose} disabled={promote.isPending}>
               Cancel
-            </button>
-            <button className="btn btn-primary" onClick={submit} disabled={!ready || promote.isPending}>
-              <Icon.external />
+            </Button>
+            <Button variant="primary" icon={Icon.external} onClick={submit} disabled={!ready || promote.isPending}>
               {promote.isPending ? 'Creating…' : 'Create issue'}
-            </button>
+            </Button>
           </>
         )
       }
     >
       {done ? (
         <>
-          <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>The issue was created.</p>
-          <p>
-            <a className="btn btn-ghost btn-sm" href={done.url} target="_blank" rel="noreferrer">
-              <Icon.external />
+          <Note tone="success" role="status">
+            The issue was created.
+          </Note>
+          <p className="fb-issue-link">
+            <a className={buttonClass('ghost', 'sm')} href={done.url} target="_blank" rel="noreferrer">
+              <Icon.external aria-hidden="true" />
               {done.number != null ? `Issue #${done.number}` : 'View issue'}
             </a>
           </p>
+          {/* The issue exists either way; what this says is that writing the
+              link back to the club's own row did not settle. A warning rather
+              than an error, because the public half succeeded. */}
           {done.warning && (
-            <p className="muted" style={{ fontSize: 13, color: 'var(--danger)' }}>
+            <Note tone="warning" role="alert">
               {done.warning}
-            </p>
+            </Note>
           )}
         </>
       ) : (
         <>
-          <p
-            style={{
-              fontSize: 13.5,
-              lineHeight: 1.55,
-              background: 'color-mix(in srgb, var(--danger) 12%, transparent)',
-              color: 'var(--danger)',
-              padding: '10px 12px',
-              borderRadius: 11,
-              margin: '0 0 12px',
-            }}
-          >
+          {/* DELIBERATELY THE DANGER TONE, not the warning one. This is the
+              notice that stands between a child's name and a public
+              repository, and a visual slice does not soften it. The words are
+              unchanged; what it gains is the glyph, the full contrast ink and
+              a border, in place of 13.5px --danger text on a color-mix tint. */}
+          <Note tone="danger" className="fb-promote-warning">
             The repository is public, so this issue is world readable. Do not include any name, child's name, email,
             contact or private detail. Only the title and details below are posted.
-          </p>
-          <div className="field">
-            <label htmlFor="promote-title">Issue title</label>
-            <input
-              id="promote-title"
-              value={title}
-              maxLength={256}
-              placeholder="A short summary, at least 3 characters"
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="promote-body">Issue details</label>
-            <textarea
-              id="promote-body"
-              rows={6}
-              value={body}
-              placeholder="What the issue is. This text is posted publicly."
-              onChange={(e) => setBody(e.target.value)}
-            />
-          </div>
+          </Note>
+          <TextField
+            label="Issue title"
+            value={title}
+            maxLength={256}
+            placeholder="A short summary, at least 3 characters"
+            onChange={(e) => setTitle(e.target.value)}
+          />
+          <TextAreaField
+            label="Issue details"
+            rows={6}
+            value={body}
+            placeholder="What the issue is. This text is posted publicly."
+            onChange={(e) => setBody(e.target.value)}
+          />
           {promote.isError && (
-            <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
+            <Note tone="danger" role="alert">
               {promote.error.message}
-            </p>
+            </Note>
           )}
         </>
       )}
@@ -512,35 +558,21 @@ export function CommentRow({
 }) {
   const edited = comment.updatedAt && comment.updatedAt !== comment.createdAt
   return (
-    <div className="row" style={{ gap: 10, alignItems: 'flex-start', padding: '8px 0' }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <span className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>
+    <li className="fb-comment">
+      <div className="fb-comment-main">
+        <span className="fb-by">
           {authorName} · {filedAgo(comment.createdAt)}
           {edited ? ' · edited' : ''}
         </span>
-        <p style={{ fontSize: 14, lineHeight: 1.55, margin: '3px 0 0', whiteSpace: 'pre-wrap' }}>{comment.body}</p>
+        <p className="fb-comment-body">{comment.body}</p>
       </div>
-      {isOwner && (
-        <button
-          className="btn btn-ghost btn-sm icon-only"
-          style={{ width: 32, padding: 0 }}
-          aria-label={'Edit comment by ' + authorName}
-          onClick={onEdit}
-        >
-          <Icon.edit />
-        </button>
-      )}
-      {(isOwner || canManage) && (
-        <button
-          className="btn btn-ghost btn-sm icon-only"
-          style={{ width: 32, padding: 0 }}
-          aria-label={'Delete comment by ' + authorName}
-          onClick={onDelete}
-        >
-          <Icon.trash />
-        </button>
-      )}
-    </div>
+      <div className="fb-comment-acts">
+        {isOwner && <IconButton label={'Edit comment by ' + authorName} icon={Icon.edit} onClick={onEdit} />}
+        {(isOwner || canManage) && (
+          <IconButton label={'Delete comment by ' + authorName} icon={Icon.trash} onClick={onDelete} />
+        )}
+      </div>
+    </li>
   )
 }
 
@@ -563,14 +595,10 @@ export function CommentThread({
   onDelete: (comment: FeedbackComment) => void
 }) {
   if (comments.length === 0) {
-    return (
-      <p className="muted" style={{ fontSize: 13, margin: '8px 0 0' }}>
-        No comments yet. Start the conversation below.
-      </p>
-    )
+    return <p className="fb-thread-empty">No comments yet. Start the conversation below.</p>
   }
   return (
-    <div style={{ marginTop: 8 }}>
+    <ul className="fb-comment-list">
       {comments.map((comment) => (
         <CommentRow
           key={comment.id}
@@ -582,7 +610,7 @@ export function CommentThread({
           onDelete={() => onDelete(comment)}
         />
       ))}
-    </div>
+    </ul>
   )
 }
 
@@ -598,34 +626,31 @@ function EditCommentModal({ comment, onClose }: { comment: FeedbackComment; onCl
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={edit.isPending}>
+          <Button onClick={onClose} disabled={edit.isPending}>
             Cancel
-          </button>
-          <button
-            className="btn btn-primary"
+          </Button>
+          <Button
+            variant="primary"
+            icon={Icon.check}
             onClick={() => edit.mutate({ id: comment.id, body }, { onSuccess: onClose })}
             disabled={!ready || edit.isPending}
           >
-            <Icon.check />
             {edit.isPending ? 'Saving…' : 'Save changes'}
-          </button>
+          </Button>
         </>
       }
     >
-      <div className="field">
-        <label htmlFor="comment-edit-body">Comment</label>
-        <textarea
-          id="comment-edit-body"
-          rows={4}
-          maxLength={2000}
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-        />
-      </div>
+      <TextAreaField
+        label="Comment"
+        rows={4}
+        maxLength={2000}
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+      />
       {edit.isError && (
-        <p className="muted" style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 0 }}>
+        <Note tone="danger" role="alert">
           {edit.error.message}
-        </p>
+        </Note>
       )}
     </Modal>
   )
@@ -641,25 +666,25 @@ function DeleteCommentModal({ comment, onClose }: { comment: FeedbackComment; on
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+          <Button onClick={onClose} disabled={del.isPending}>
             Cancel
-          </button>
-          <button
-            className="btn btn-danger"
+          </Button>
+          <Button
+            variant="danger"
+            icon={Icon.trash}
             onClick={() => del.mutate({ id: comment.id }, { onSuccess: onClose })}
             disabled={del.isPending}
           >
-            <Icon.trash />
             {del.isPending ? 'Deleting…' : 'Delete'}
-          </button>
+          </Button>
         </>
       }
     >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>This removes the comment from the thread for the whole club.</p>
+      <p className="modal-copy">This removes the comment from the thread for the whole club.</p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
+        <Note tone="danger" role="alert">
           {del.error.message}
-        </p>
+        </Note>
       )}
     </Modal>
   )
@@ -670,25 +695,33 @@ function DeleteCommentModal({ comment, onClose }: { comment: FeedbackComment; on
 // closed row fetches nothing.
 function FeedbackThread({ feedbackId, canManage }: { feedbackId: string; canManage: boolean }) {
   const { user } = useAuth()
-  const { data: comments = [], isLoading, isError } = useFeedbackComments(feedbackId)
+  const { data: comments = [], isLoading, isError, refetch } = useFeedbackComments(feedbackId)
   const memberById = useMemberMap()
   const add = useAddFeedbackComment()
   const [reply, setReply] = useState('')
   const [editing, setEditing] = useState<FeedbackComment | null>(null)
   const [deleting, setDeleting] = useState<FeedbackComment | null>(null)
   const ready = reply.trim().length >= 1
+  /* Posting disables the button that had focus, and a successful post empties
+     the box so it stays disabled. Either way the browser leaves focus on the
+     document body. The reply box is the right place to land in both outcomes:
+     it is where the next thing a member does happens, and on a refusal their
+     text is still in it. */
+  const replyRef = useRef<HTMLTextAreaElement>(null)
+  const restoreReplyFocus = useFocusRestore(!add.isPending, replyRef)
 
   const post = () => {
     if (!ready) return
+    restoreReplyFocus()
     add.mutate({ feedbackId, body: reply }, { onSuccess: () => setReply('') })
   }
 
   return (
-    <div style={{ marginTop: 10, paddingTop: 4 }}>
+    <div className="fb-thread">
       {isLoading ? (
-        <Loading />
+        <LoadingRows rows={2} label="Loading comments…" />
       ) : isError ? (
-        <ErrorNote />
+        <ErrorNote onRetry={() => refetch()} />
       ) : (
         <CommentThread
           comments={comments}
@@ -699,27 +732,25 @@ function FeedbackThread({ feedbackId, canManage }: { feedbackId: string; canMana
           onDelete={setDeleting}
         />
       )}
-      <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
-        <label htmlFor={'reply-' + feedbackId}>Reply</label>
-        <textarea
-          id={'reply-' + feedbackId}
-          rows={2}
-          maxLength={2000}
-          value={reply}
-          placeholder="Add a comment, visible to the whole club."
-          onChange={(e) => setReply(e.target.value)}
-        />
-      </div>
-      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-        <button className="btn btn-primary btn-sm" onClick={post} disabled={!ready || add.isPending}>
-          <Icon.check />
+      <TextAreaField
+        className="fb-reply"
+        label="Reply"
+        ref={replyRef}
+        rows={2}
+        maxLength={2000}
+        value={reply}
+        placeholder="Add a comment, visible to the whole club."
+        onChange={(e) => setReply(e.target.value)}
+      />
+      <div className="fb-thread-acts">
+        <Button variant="primary" size="sm" icon={Icon.check} onClick={post} disabled={!ready || add.isPending}>
           {add.isPending ? 'Posting…' : 'Post comment'}
-        </button>
+        </Button>
       </div>
       {add.isError && (
-        <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', margin: '6px 0 0' }}>
+        <Note tone="danger" role="alert" className="fb-note">
           {add.error.message}
-        </p>
+        </Note>
       )}
       {editing && <EditCommentModal comment={editing} onClose={() => setEditing(null)} />}
       {deleting && <DeleteCommentModal comment={deleting} onClose={() => setDeleting(null)} />}
@@ -735,12 +766,14 @@ function FeedbackRow({
   isOwner,
   canManage,
   commentCount,
+  onDeleted,
 }: {
   item: FeedbackItem
   authorName: string
   isOwner: boolean
   canManage: boolean
   commentCount: number
+  onDeleted: () => void
 }) {
   const setStatus = useSetFeedbackStatus()
   const [editing, setEditing] = useState(false)
@@ -763,7 +796,16 @@ function FeedbackRow({
         thread={<FeedbackThread feedbackId={item.id} canManage={canManage} />}
       />
       {editing && <EditFeedbackModal item={item} onClose={() => setEditing(false)} />}
-      {deleting && <DeleteFeedbackModal item={item} onClose={() => setDeleting(false)} />}
+      {deleting && (
+        <DeleteFeedbackModal
+          item={item}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => {
+            setDeleting(false)
+            onDeleted()
+          }}
+        />
+      )}
       {promoting && <PromoteToGithubModal item={item} onClose={() => setPromoting(false)} />}
     </>
   )
@@ -772,11 +814,27 @@ function FeedbackRow({
 export function Feedback() {
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
-  const { data: items = [], isLoading, isError } = useFeedback()
+  const { data: items = [], isLoading, isError, refetch } = useFeedback()
   const memberById = useMemberMap()
   const { data: commentCounts = {} } = useFeedbackCommentCounts()
   const [creating, setCreating] = useState(false)
   const canManage = caps.has('club.manage')
+  /* A successful delete takes the row, and with it the icon button the dialog
+     would restore focus to, so the browser drops focus onto the document
+     body. The page's one primary action is the stable place to land: it is
+     the first control in the reading order after the heading, and Tab from it
+     reaches the list.
+
+     WHAT IS WAITED FOR IS THE ROW LEAVING THE LIST, not the write settling,
+     and the two are a network round trip apart. Modal restores focus to its
+     opener while the row is still listed, because the refetch has not
+     answered yet; the row then unmounts under the focused button and the
+     browser drops focus again. A settled-write flag would have moved focus
+     before that second loss and left the member on the body anyway. */
+  const newRef = useRef<HTMLButtonElement>(null)
+  const [deletedId, setDeletedId] = useState<string | null>(null)
+  const rowGone = deletedId !== null && !items.some((i) => i.id === deletedId)
+  const restoreAfterDelete = useFocusRestore(rowGone, newRef)
 
   // Issue #83, the issue-state-flows-back half: when an admin opens this
   // screen, refresh promoted items from their GitHub issues so any item whose
@@ -795,39 +853,44 @@ export function Feedback() {
   }, [canManage, refreshFromGithub])
 
   return (
-    <div style={{ maxWidth: 760 }}>
-      <div className="page-head">
-        <div>
-          <h1>Feedback</h1>
-          <div className="sub">Feature requests, bugs and general feedback, club wide so nothing is filed twice.</div>
-        </div>
-        <button className="btn btn-primary" onClick={() => setCreating(true)}>
-          <Icon.plus />
-          New feedback
-        </button>
-      </div>
-      <div className="card" style={{ padding: 18 }}>
+    <div className="feedback">
+      <PageHeader
+        title="Feedback"
+        sub="Feature requests, bugs and general feedback, club wide so nothing is filed twice."
+        actions={
+          <Button variant="primary" icon={Icon.plus} ref={newRef} onClick={() => setCreating(true)}>
+            New feedback
+          </Button>
+        }
+      />
+      <Card>
         {isLoading ? (
-          <Loading />
+          <LoadingRows rows={4} label="Loading feedback…" />
         ) : isError ? (
-          <ErrorNote />
+          <ErrorNote onRetry={() => refetch()} />
         ) : items.length === 0 ? (
           <Empty icon={Icon.note} title="No feedback yet">
             File the first item above. The whole club sees the log and where each item stands.
           </Empty>
         ) : (
-          items.map((item) => (
-            <FeedbackRow
-              key={item.id}
-              item={item}
-              authorName={memberById[item.createdBy]?.fullName || '—'}
-              isOwner={item.createdBy === user?.id}
-              canManage={canManage}
-              commentCount={commentCounts[item.id] ?? 0}
-            />
-          ))
+          <ul className="fb-list">
+            {items.map((item) => (
+              <FeedbackRow
+                key={item.id}
+                item={item}
+                authorName={memberById[item.createdBy]?.fullName || '—'}
+                isOwner={item.createdBy === user?.id}
+                canManage={canManage}
+                commentCount={commentCounts[item.id] ?? 0}
+                onDeleted={() => {
+                  restoreAfterDelete()
+                  setDeletedId(item.id)
+                }}
+              />
+            ))}
+          </ul>
         )}
-      </div>
+      </Card>
       {creating && <NewFeedbackModal onClose={() => setCreating(false)} />}
     </div>
   )

@@ -296,7 +296,13 @@ export function SelectField({
 }
 
 /* A textarea is multiline: 44px is its floor, not its height. Its size comes
-   from `rows`, and it stays resizable vertically. */
+   from `rows`, and it stays resizable vertically.
+
+   `ref` is named for the same reason TextField names its own: a caller that
+   has to place focus on the control needs a handle on it, and
+   TextareaHTMLAttributes carries none. The first caller is the Feedback
+   thread's reply box, where posting disables the button that had focus and
+   empties the box, so the browser leaves focus on the document body. */
 export function TextAreaField({
   label,
   hint,
@@ -305,7 +311,7 @@ export function TextAreaField({
   className,
   rows = 3,
   ...rest
-}: FieldShared & TextareaHTMLAttributes<HTMLTextAreaElement>) {
+}: FieldShared & TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
     <FieldShell {...{ controlId, label, hint, hintId, error, errorId, className }}>

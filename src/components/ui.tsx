@@ -11,6 +11,10 @@ import type {
 } from 'react'
 import { Icon } from './icons'
 import { focusableElements, trapTabIndex } from '../lib/modalFocus'
+// The predicate that separates focus being LOST from a member moving away.
+// Shared with useFocusRestore rather than restated, because a second copy of
+// that one line rule is a second chance to invert it.
+import { focusWasLost } from '../hooks/useFocusRestore'
 import type { IconComponent } from './icons'
 import { CORNERS, cornerClass, youtubeThumb } from '../lib/data'
 import type { CornerKey, Drill, MediaItem, MediaType, Phase } from '../lib/data'
@@ -502,14 +506,38 @@ export function Modal({
     if (dialog && !dialog.contains(document.activeElement)) dialog.focus()
   }, [focusKey])
 
+  /* THE BLUR EVENT DOES NOT FIRE FOR THE CASE THIS WAS WRITTEN FOR, which is
+     why there are two recoveries rather than one. Chrome fires no blur or
+     focusout when the focused element is DISABLED, so the handler below never
+     ran for a write in flight freezing every control at once; measured in a
+     browser on the feedback dialogs, where pressing a submit the handler then
+     disables left document.activeElement on <body>. With focus outside, the
+     Escape handling and the Tab trap on the dialog element are both dead: a
+     dismissible dialog stopped closing on Escape, and Tab walked the page
+     behind an aria-modal dialog.
+
+     So focus is also checked on every RENDER, which is exactly when a control
+     is disabled. It moves focus only when focus was LOST, meaning the body or
+     nothing, which is the same rule useFocusRestore uses and the same reason:
+     anywhere else is where the person went. And only while the document itself
+     has focus, so a member who has moved to the browser's own chrome is not
+     pulled back into the page by an unrelated re render.
+
+     A caller that wants focus somewhere more useful than the container can
+     still ask: child effects run before parent ones, so a caller's own
+     restore runs after this and finds focus already inside the dialog. */
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog || dialog.contains(document.activeElement)) return
+    if (!focusWasLost(document.activeElement, document.body) || !document.hasFocus()) return
+    dialog.focus()
+  })
+
   // Keep focus inside the dialog. Escape and the Tab trap below are handled on
-  // the dialog element, so they only fire while focus is within it. That breaks
-  // when a write is in flight: every control (the footer buttons and the X) is
-  // disabled at once, so activating the focused button by keyboard blurs it to
-  // document.body, outside the dialog, and the key handling goes dead. When
-  // focus lands outside, pull it back to the dialog container (tabIndex -1),
-  // which keeps Escape and the trap live and stops Tab leaking to the page
-  // behind an aria-modal dialog. Deferred to a microtask and guarded on
+  // the dialog element, so they only fire while focus is within it. This is the
+  // recovery for focus LEAVING by an ordinary route (a click, a Tab out of the
+  // last control); the effect above is the one that catches a control being
+  // disabled under it. Deferred to a microtask and guarded on
   // isConnected so it never fights the close path, which unmounts the dialog and
   // restores focus to the opener.
   const onBlur = (e: ReactFocusEvent<HTMLDivElement>) => {

@@ -1450,6 +1450,107 @@ a.activity-batch:hover { text-decoration: underline; }
   line-height: var(--leading-tight); overflow-wrap: anywhere; }
 .account-link-text span { font-size: var(--text-xs); color: var(--slate); overflow-wrap: anywhere; }
 
+/* ---- Feedback ---------------------------------------------------------
+   The club's request and bug log: one card holding a list of items, each of
+   which expands in place to show its details and its comment thread.
+
+   This block states only how the screen ARRANGES the shared vocabulary. The
+   badges, the buttons, the icon buttons, the fields, the notices and the
+   dialog prose are the primitives, so nothing here restates a control's
+   height, radius, border, focus ring or type step. What it replaces is 24
+   inline font sizes, two hand rolled badges built out of color-mix, a hand
+   built warning panel and four icon-only buttons at 32 and 36px carrying a
+   class that is defined in no stylesheet. */
+.feedback { max-width: 760px; }
+
+/* One list, and one layout: the head is a wrapping row, so the action
+   cluster sits beside the title while it fits and drops beneath it when it
+   does not. There is no second mobile markup. */
+.fb-list { list-style: none; margin: 0; padding: 0; }
+.fb-item { padding: var(--space-12) 0; }
+/* A WITHIN group separator (2.4), so the rows read as one list rather than as
+   a stack of cards inside a card. The first row has none: the card's own
+   padding is the gap above it. */
+.fb-item + .fb-item { border-top: 1px solid var(--line-2); }
+.fb-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-8) var(--space-12); }
+.fb-main { flex: 1 1 260px; min-width: 0; }
+.fb-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); }
+
+/* The expander carries the TITLE ALONE. The badges and the byline sit outside
+   it, because a button whose content is the whole meta line has the whole
+   meta line as its accessible name. Its 44px minimum is a real box rather
+   than an overhanging pseudo element: the action cluster wraps directly
+   beneath it at narrow widths, and a hit area that reached into that would
+   put a stray press on Delete. */
+.fb-toggle { display: flex; align-items: center; gap: var(--space-8); width: 100%;
+  min-height: var(--hit); padding: var(--space-4) 0; border: 0; border-radius: var(--radius-xs);
+  background: none; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+/* 16px, so the caret and the 8px gap beside it come to exactly the 24px step
+   the meta line and the panel are indented by. An 18px glyph left them two
+   pixels out of line with the title above them. */
+.fb-caret { width: 16px; height: 16px; flex: 0 0 auto; color: var(--slate);
+  transition: transform var(--dur-fast) ease; }
+.fb-toggle[aria-expanded="true"] .fb-caret { transform: rotate(180deg); }
+.fb-title { flex: 1; min-width: 0; font-size: var(--text-md); font-weight: 700;
+  line-height: var(--leading-tight); overflow-wrap: anywhere; }
+
+/* The meta line under the title: the kind, the status where it is read only,
+   who filed it and when, and the comment count. Indented to the title's own
+   left edge, past the caret, so an item reads as one block. */
+.fb-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-8);
+  padding-left: var(--space-24); }
+.fb-by { font-size: var(--text-xs); font-weight: 600; color: var(--slate); overflow-wrap: anywhere; }
+.fb-comments { display: inline-flex; align-items: center; gap: var(--space-4);
+  font-size: var(--text-xs); color: var(--slate); }
+.fb-comments svg { width: 14px; height: 14px; flex: 0 0 auto; }
+
+/* The status a club.manage holder edits in place, and the word beside it
+   while a change is saving. A status name is short, so the control is capped
+   rather than stretched across a desktop row. */
+.fb-status { max-width: 170px; }
+.fb-status-busy { font-size: var(--text-xs); font-weight: 700; color: var(--slate); }
+.fb-note { margin-top: var(--space-8); }
+
+/* The details and the thread, on the title's left edge for the same reason
+   the meta line is. */
+.fb-panel { padding-left: var(--space-24); }
+.fb-body { font-size: var(--text-base); line-height: var(--leading-body);
+  margin: var(--space-8) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The thread is SUBORDINATE to the item it hangs off, and says so with a rule
+   rather than with a card: a card inside a card is a surface on a surface,
+   and the conversation is part of the item rather than a second thing beside
+   it. The rule survives the 560px breakpoint below, where the panel's own
+   indent goes, so a phone still reads the thread as nested. */
+.fb-thread { margin-top: var(--space-16); padding-left: var(--space-12); border-left: 2px solid var(--line); }
+.fb-thread-empty { font-size: var(--text-sm); color: var(--slate); margin: var(--space-8) 0 0; }
+.fb-comment-list { list-style: none; margin: var(--space-8) 0 0; padding: 0; }
+.fb-comment { display: flex; align-items: flex-start; gap: var(--space-8); padding: var(--space-8) 0; }
+.fb-comment + .fb-comment { border-top: 1px solid var(--line-2); }
+.fb-comment-main { flex: 1; min-width: 0; }
+.fb-comment-body { font-size: var(--text-base); line-height: var(--leading-body);
+  margin: var(--space-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fb-comment-acts { display: flex; align-items: center; gap: var(--space-8); flex: 0 0 auto; }
+.fb-reply { margin-top: var(--space-12); margin-bottom: 0; }
+.fb-thread-acts { display: flex; justify-content: flex-end; margin-top: var(--space-8); }
+
+/* The issue link on the promote dialog's success screen. The link itself is
+   the small ghost button, so the one control that leaves the product for a
+   public page carries the shared focus ring and the shared 44px hit area
+   rather than being a coloured word. */
+.fb-issue-link { margin: var(--space-8) 0 0; }
+/* The public repository caution sits above the two fields it governs, so it
+   carries the gap a field would have carried. */
+.fb-promote-warning { margin-bottom: var(--space-16); }
+
+/* At 560 the indent is worth more as reading width than as alignment: the
+   card body is about 300px at a 360px viewport and the meta line wraps to
+   three rows with it. Measured on this screen's own content rather than
+   borrowed from the shell's 900px breakpoint, the same way the Account
+   form row's 560 is. */
+@media (max-width: 560px) {
+  .fb-meta, .fb-panel { padding-left: 0; }
+}
+
 /* ---- Registered players import modal ---------------------------------- */
 /* An accessible dropzone: the "Choose file" button is the real, focusable
    control; drag and drop is an enhancement layered over it. Its glyph is

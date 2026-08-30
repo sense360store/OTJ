@@ -52,11 +52,11 @@ Query string, all optional:
 
 | Key | Values |
 |---|---|
-| `screen` | `home`, `sessions`, `login`, `auth`, `players`, `activity`, `account`, `more`, `dialog`, `primitives` |
+| `screen` | `home`, `sessions`, `login`, `auth`, `players`, `activity`, `account`, `feedback`, `more`, `dialog`, `primitives` |
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin` |
 | `theme` | `light` (default), `dark` |
 | `auth` | `signedin` (default), `signedout` (the default for `screen=login`), `needspassword`, `authloading` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -273,6 +273,58 @@ It is not the same thing as the `data-path` attribute on `.content`, which is
 the harness `Shell`'s own witness and does not exist on an auth surface at
 all: the real `App` renders its own shell. A check about an auth surface
 reads `[data-route]`.
+
+## The Feedback log
+
+The one surface every member of the club both READS and WRITES, parents
+included, so its acceptance is a capability matrix as much as a state matrix.
+`tools/visual/feedback.mjs` owns the presses for all three tools, for the
+reason `dialogs.mjs`, `account.mjs` and `auth.mjs` do.
+
+The list is deliberately ONE list carrying every axis at once, rather than a
+state per axis: an item the signed in member filed sits beside items somebody
+else filed, an item already promoted to a GitHub issue beside items that are
+not, a thread of three comments beside rows with one and rows with none, and
+all three kinds beside all five statuses. So a single render is the ownership
+matrix, the promotion matrix and the badge matrix, and a shot of it in a
+capability variant is the role matrix too.
+
+Three states are its own. `commentsloading` and `commentserror` are the
+per item THREAD read, which is a second read that only runs once a row is
+opened, so it cannot ride on `loading` and `error`: those answer the page
+level read, and a page that never rendered a row has no thread to open.
+`promotewarning` is the promotion that succeeded AND carried a warning, which
+is neither of the other two outcomes: the public issue exists and writing its
+number back to the club's own row did not settle. Everything else reuses the
+shared states, and `longnames` carries this screen's long title, body, author
+and comment beside the Activity feed's long actor and team.
+
+**Three of its claims are about a call that must NOT happen**, and a browser
+cannot see one of those. An ordinary member never triggers the admin GitHub
+refresh; a collapsed row never reads its comments; and a form with an
+unfinished title never sends anything. So the stub counts every write on
+`window.__feedbackCalls`, and the thread reads are recorded as a LIST of
+feedback ids rather than a count, because what is claimed is which rows
+fetched. An absent counter fails rather than passes, and every zero is paired
+with an entry that makes the same call and asserts one.
+
+**A success is applied to the fixture store rather than merely reported.** A
+deleted row leaves, a status sticks in its controlled select, a filed item
+appears at the top of the log and a posted comment joins the thread and moves
+the row's own badge. Without that, every proof of an outcome would hold
+whether or not the press did anything, which is the defect the Registered
+players Spond import stub was fixed for.
+
+**What the focus checks found, and why one of them is in a primitive.** Three
+outcomes on this page take away the control that had focus: a status change
+disables its select, a posted comment disables the button and empties the box
+it was in, and a deleted item takes its row. All three left focus on the
+document body, driven and recorded before anything was repaired, which is what
+#215 and #216 asked for. So did a REFUSED write in any of the six dialogs, and
+that one turned out to be `Modal`'s: Chrome fires no blur when the focused
+element is disabled, so the focusout recovery written for exactly that case
+never ran, and with focus outside the dialog its Escape handling and its Tab
+trap were both dead. It is fixed in `Modal` rather than six times here.
 
 ## The dialogs
 

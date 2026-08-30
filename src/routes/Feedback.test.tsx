@@ -25,13 +25,23 @@ const item: FeedbackItem = {
 
 const noop = () => {}
 
-function renderCard(flags: { isOwner?: boolean; canManage?: boolean; override?: Partial<FeedbackItem> } = {}): string {
+function renderCard(
+  flags: {
+    isOwner?: boolean
+    canManage?: boolean
+    override?: Partial<FeedbackItem>
+    statusBusy?: boolean
+    statusError?: string
+  } = {},
+): string {
   return renderToStaticMarkup(
     <FeedbackCard
       item={{ ...item, ...flags.override }}
       authorName="Sam Coach"
       isOwner={flags.isOwner ?? false}
       canManage={flags.canManage ?? false}
+      statusBusy={flags.statusBusy}
+      statusError={flags.statusError}
       onEdit={noop}
       onDelete={noop}
       onStatus={noop}
@@ -65,6 +75,48 @@ describe('FeedbackCard', () => {
     const others = renderCard()
     expect(others).not.toContain('aria-label="Edit')
     expect(others).not.toContain('aria-label="Delete')
+  })
+})
+
+describe('FeedbackCard status write states', () => {
+  // VISUAL-02. Both used to be invisible or unannounced: the write in flight
+  // was a disabled select at half opacity and nothing else, and the refusal
+  // was a muted paragraph painted --danger with no role at all.
+  it('says a status write is in flight, in words and through a live region', () => {
+    const html = renderCard({ canManage: true, statusBusy: true })
+    expect(html).toContain('role="status"')
+    expect(html).toContain('Saving…')
+    expect(html).toContain('disabled')
+  })
+
+  it('reports a refused status write as an alert rather than as coloured text', () => {
+    const html = renderCard({ canManage: true, statusError: 'Only a holder of club.manage can change feedback status.' })
+    expect(html).toContain('note note-danger')
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Only a holder of club.manage can change feedback status.')
+  })
+
+  it('says neither when there is nothing to say', () => {
+    const html = renderCard({ canManage: true })
+    expect(html).not.toContain('Saving…')
+    expect(html).not.toContain('note-danger')
+  })
+})
+
+describe('FeedbackCard expander', () => {
+  // The expander's accessible NAME is the title alone. It used to wrap the
+  // kind badge, the byline and the comment count, so a screen reader read the
+  // whole meta line as the button's name.
+  it('names itself with the title and controls a panel that exists while collapsed', () => {
+    const html = renderCard()
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('aria-controls=')
+    expect(html).toContain('class="fb-panel"')
+    // The title is inside the button; the byline is not.
+    const button = html.slice(html.indexOf('<button'), html.indexOf('</button>'))
+    expect(button).toContain('Timer drifts on the live screen')
+    expect(button).not.toContain('Sam Coach')
+    expect(button).not.toContain('badge')
   })
 })
 
