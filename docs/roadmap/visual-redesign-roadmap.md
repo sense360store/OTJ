@@ -266,8 +266,13 @@ Four things worth recording, none of them presentation alone:
   `AuthOutcome` in `src/components/AuthCard.tsx` is a `tabIndex={-1}` wrapper
   rendered ONLY while there is something to say, so a settled call with no
   message leaves the ref null and moves nothing rather than focusing an empty
-  box; the live region roles stay on the Notes inside it, because the keyboard
-  path never loses focus and is what they are for. It takes the shared focus
+  box; the live region roles stay on the Notes inside it, because focus is not
+  always lost. It is lost whenever the activated control is the one the handler
+  disables, a mouse click and a keyboard activation of the button alike, and it
+  is NOT lost when somebody presses Enter inside a field, where the live region
+  is the only thing that announces the outcome. The cost, stated: a member who
+  wants to retry straight away had focus on the control they pressed and now
+  has it at least three Tab presses below the message. It takes the shared focus
   ring from the element level rule, which `:focus-visible` gives to the
   keyboard activation and withholds from the mouse one, and both sides of the
   trade stay written down in `src/hooks/useFocusRestore.ts` rather than the

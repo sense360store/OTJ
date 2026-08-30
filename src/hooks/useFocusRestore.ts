@@ -55,9 +55,12 @@
    choosing a different target unmeasured is the same mistake in the other
    direction. Codex weighed it and answered: the announcement outweighs the
    focus position on a screen whose whole content is one short form, where the
-   controls are two Tab presses from the message either way. Taken, and the
-   reasoning kept rather than deleted, because what makes it defensible is that
-   both sides of it are written down.
+   message sits above every control and tabbing forward from it reaches all of
+   them. What that costs is a member who wants to retry immediately: focus was
+   on the control they pressed and is now at least three Tab presses below the
+   message. Taken,
+   with the cost written down, and the reasoning kept rather than deleted,
+   because what makes it defensible is that both sides of it are here.
 
    The measured defect is fixed under either target: a member who clicked
    rather than pressing Enter no longer tabs from the top of the page with an
