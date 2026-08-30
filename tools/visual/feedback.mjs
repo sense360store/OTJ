@@ -31,7 +31,8 @@ export const ROWS = {
   other: 'Directions for the away venues',
   // Filed by the signed in member AND already promoted, which is the pair
   // that proves the issue link replaces the promote action rather than the
-  // owner actions.
+  // owner actions. It is also the one row filed with NO details, which is the
+  // optional field this screen can be missing.
   ownPromoted: 'Show the bib colour on the group view',
 }
 
@@ -192,6 +193,15 @@ export const FEEDBACK_FLOWS = [
       (await row(page, ROWS.own).locator('.fb-thread-empty').count()) === 1 &&
       (await row(page, ROWS.own).locator('.fb-comment').count()) === 0,
     drive: (page) => expandRow(page, ROWS.own),
+  },
+  {
+    key: 'expanded-no-details',
+    note: 'an item filed with no details at all: the panel is the thread alone, rather than a gap where a body would be',
+    proof: async (page) =>
+      (await row(page, ROWS.ownPromoted).locator('.fb-body').count()) === 0 &&
+      (await row(page, ROWS.ownPromoted).locator('.fb-thread').count()) === 1 &&
+      (await row(page, ROWS.ownPromoted).locator('.fb-thread-empty').count()) === 1,
+    drive: (page) => expandRow(page, ROWS.ownPromoted),
   },
   {
     key: 'comments-loading',
