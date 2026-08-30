@@ -20,11 +20,13 @@
 // arrived. Somebody who clicked rather than pressed Enter had to tab from the
 // top of the page to reach the control again, with an alert on screen telling
 // them to try. Driven and measured in a browser first (tools/visual/auth.mjs)
-// rather than reasoned about, which is the lesson #215 left.
+// rather than reasoned about, which is the lesson #215 left. Focus lands on
+// the OUTCOME MESSAGE rather than back on the control, which is the error
+// summary pattern: see components/AuthCard.tsx for why.
 import { useRef, useState } from 'react'
-import type { FormEvent, RefObject } from 'react'
+import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { AuthCard } from '../components/AuthCard'
+import { AuthCard, AuthOutcome } from '../components/AuthCard'
 import { Icon } from '../components/icons'
 import { Button, Note, TextField } from '../components/primitives'
 import { useFocusRestore } from '../hooks/useFocusRestore'
@@ -42,32 +44,32 @@ export function Login() {
   const [pending, setPending] = useState<Pending>(null)
   const busy = pending !== null
 
-  // The control the person actually pressed, captured when the call starts.
-  // Which one it was cannot be read off the DOM afterwards, because by then
-  // the browser has already moved focus to the body. The hook places it back
-  // ONLY if focus is still there when the call settles, so pressing Enter in
-  // a field (where nothing is disabled and focus never moves) is untouched.
-  const signInRef = useRef<HTMLButtonElement>(null)
-  const linkRef = useRef<HTMLButtonElement>(null)
-  const resetRef = useRef<HTMLButtonElement>(null)
-  const pressed = useRef<HTMLElement | null>(null)
-  const restoreFocus = useFocusRestore(!busy, pressed)
+  // Where focus goes when the browser takes it away. Pressing any of the three
+  // disables it, and a disabled control cannot hold focus, so the browser drops
+  // it to the document body. The hook moves it to the outcome message, and ONLY
+  // if it is still on the body when the call settles: pressing Enter in a field
+  // disables nothing, focus never moves, and nothing here touches it.
+  //
+  // The wrapper is rendered only while there is a message, so on the one path
+  // that ends without one (a successful sign in, which navigates away) the ref
+  // is null and the hook does nothing rather than focusing an empty box.
+  const outcomeRef = useRef<HTMLDivElement>(null)
+  const restoreFocus = useFocusRestore(!busy, outcomeRef)
 
-  // Every call starts the same way: clear whatever the last one said, note
-  // which control is working, and ask for focus back if the browser takes it.
+  // Every call starts the same way: clear whatever the last one said, name the
+  // control that is working, and ask for focus if the browser takes it away.
   // Clearing the stale error and info first is the existing behaviour and is
   // deliberately unchanged.
-  const start = (what: Exclude<Pending, null>, from: RefObject<HTMLButtonElement | null>) => {
+  const start = (what: Exclude<Pending, null>) => {
     setError(null)
     setInfo(null)
-    pressed.current = from.current
     setPending(what)
     restoreFocus()
   }
 
   const signIn = async (e: FormEvent) => {
     e.preventDefault()
-    start('signin', signInRef)
+    start('signin')
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     setPending(null)
     if (error) setError(error.message)
@@ -78,7 +80,7 @@ export function Login() {
       setError('Enter your email first, then request a link.')
       return
     }
-    start('link', linkRef)
+    start('link')
     // shouldCreateUser stays off: the magic link signs in existing invited
     // members only. Without it, this button would register a fresh auth user
     // for any email address while the project accepts signups.
@@ -96,7 +98,7 @@ export function Login() {
       setError('Enter your email first, then reset your password.')
       return
     }
-    start('reset', resetRef)
+    start('reset')
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: window.location.origin,
     })
@@ -116,7 +118,7 @@ export function Login() {
               would read as a third way in. No shared primitive owns a text
               link, so this class stays; it takes the shared focus ring from
               the element rule and carries its own 44px minimum. */}
-          <button ref={resetRef} className="login-link" type="button" onClick={() => void forgot()} disabled={busy}>
+          <button className="login-link" type="button" onClick={() => void forgot()} disabled={busy}>
             {pending === 'reset' ? 'Sending a reset link…' : 'Forgot password?'}
           </button>
           <p className="login-invite">Accounts are created by invite. Ask a club admin to add you.</p>
@@ -142,16 +144,25 @@ export function Login() {
           it is unchanged; it is written down here because the first version
           of this comment claimed the opposite, and a comment claiming an
           invariant the code does not hold is what stops the next reader
-          fixing it. */}
-      {error && (
-        <Note tone="danger" role="alert" className="login-note-slot">
-          {error}
-        </Note>
-      )}
-      {info && (
-        <Note tone="success" role="status" className="login-note-slot">
-          {info}
-        </Note>
+          fixing it.
+
+          The wrapper around them is where focus lands after an outcome, and
+          it is rendered only when one of the two is up. Both being up at once
+          is the case above, and it is reached only by a client side refusal,
+          which disables nothing and therefore asks for no focus move at all. */}
+      {(error || info) && (
+        <AuthOutcome ref={outcomeRef}>
+          {error && (
+            <Note tone="danger" role="alert" className="login-note-slot">
+              {error}
+            </Note>
+          )}
+          {info && (
+            <Note tone="success" role="status" className="login-note-slot">
+              {info}
+            </Note>
+          )}
+        </AuthOutcome>
       )}
 
       <TextField
@@ -174,13 +185,13 @@ export function Login() {
         placeholder="Your password"
       />
 
-      <Button ref={signInRef} variant="primary" size="lg" block type="submit" disabled={busy}>
+      <Button variant="primary" size="lg" block type="submit" disabled={busy}>
         {pending === 'signin' ? 'Signing in…' : 'Sign in'}
       </Button>
 
       <div className="login-divider">or</div>
 
-      <Button ref={linkRef} variant="ghost" block icon={Icon.bolt} onClick={() => void magicLink()} disabled={busy}>
+      <Button variant="ghost" block icon={Icon.bolt} onClick={() => void magicLink()} disabled={busy}>
         {pending === 'link' ? 'Sending a link…' : 'Email me a link'}
       </Button>
 

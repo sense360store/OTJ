@@ -79,6 +79,27 @@
 .login-note-slot {
   margin-bottom: var(--space-12);
 }
+/* The wrapper the outcome messages sit in, and where FOCUS lands after a call
+   settles (components/AuthCard.tsx carries the reasoning). It holds no spacing
+   of its own: the Note inside keeps the margin above, so nothing about the
+   layout moved when this was introduced.
+
+   The radius is the one thing it needs and it is not decoration. `tabindex`
+   takes the shared focus ring from the element level rule in styles.css, and
+   an outline follows its own element's border box, so without this a ring
+   drawn around a rounded Note would be square. It matches the Note's radius so
+   the ring hugs the message.
+
+   It deliberately does NOT take `.modal`'s `outline: none` treatment. That is
+   for a container which takes focus purely to announce itself while the thing
+   a person is looking at is drawn inside it. This one moves focus BACKWARDS,
+   above the form, so somebody who activated a button with the keyboard needs
+   to see where their next Tab starts from. :focus-visible gives that for free
+   and gives it to the right people: a key press before the move matches it, a
+   mouse click does not. Both measured in tools/visual/checks.mjs. */
+.login-outcome {
+  border-radius: var(--radius-sm);
+}
 .login-divider {
   display: flex;
   align-items: center;

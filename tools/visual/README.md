@@ -56,7 +56,7 @@ Query string, all optional:
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin` |
 | `theme` | `light` (default), `dark` |
 | `auth` | `signedin` (default), `signedout` (the default for `screen=login`), `needspassword`, `authloading` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `longclub`, `longmotto` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -221,7 +221,28 @@ measured an untouched form and reported it clean.
 The auth calls need no state of their own. `inflight` hangs them,
 `writefails` refuses them and `writeslow` settles them after a beat, which is
 what those three already mean everywhere else, so WHICH call is driven is
-decided by the press. `longclub` and `longmotto` are the two strings the
+decided by the press. `writeslowfails` is the fourth combination and it exists
+for one check: a call that settles slowly AND refuses. `writeslow` settles
+successfully, and a successful call on these two screens says nothing, so the
+outcome message focus would move to is not on screen at all. Under it, "focus
+stayed where the member put it" is true of a screen with no repair whatever,
+which is precisely how the no-steal check would have gone vacuous when the
+repair was retargeted from the pressed control to the message. Both are driven
+now, and each names what it proves.
+
+**Three of these states are refusals the SCREEN makes**, before the auth
+client is reached: a Set Password mismatch, and each of Login's two "enter
+your email first" sentences. Their whole claim is a negative, and a browser
+cannot see a call that never happened. They used to be inferred from what WAS
+drawn: the mismatch read "the Set Password card is still up, and accepting an
+update would have handed the screen to the application", which is two
+behaviours standing in for one fact and would hold just as well if the call
+were made and its answer thrown away. So the stub COUNTS every call on the
+auth client, on `window.__authCalls`, and each of the three asserts a zero. An
+absent counter fails rather than passes, because it means the page is not
+running the stub the proof was written against. And each zero is paired with a
+flow that DOES make the same call and asserts one, since a zero on its own is
+also what a deleted `record()` line looks like. `longclub` and `longmotto` are the two strings the
 **club** chooses, each at a length a committee would really produce; they are
 separate states so a shot named for one is not also carrying the other, and
 each entry asserts the other string is still ordinary.

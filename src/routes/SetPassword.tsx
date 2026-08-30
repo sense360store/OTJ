@@ -13,13 +13,14 @@
 // after a successful update, and still prints the server's own message
 // unchanged. The one repair is the focus one Login shares: pressing Save
 // disables it, the browser blurs a disabled control, and a refusal used to
-// arrive with focus on the document body.
+// arrive with focus on the document body. Focus goes to the MESSAGE, which is
+// the error summary pattern; components/AuthCard.tsx carries the reasoning.
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { useFocusRestore } from '../hooks/useFocusRestore'
-import { AuthCard } from '../components/AuthCard'
+import { AuthCard, AuthOutcome } from '../components/AuthCard'
 import { Button, Note, TextField } from '../components/primitives'
 
 export function SetPassword() {
@@ -28,8 +29,10 @@ export function SetPassword() {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const saveRef = useRef<HTMLButtonElement>(null)
-  const restoreFocus = useFocusRestore(!busy, saveRef)
+  // Rendered only while there is a message, so the ref is null on the path
+  // that ends without one and the hook does nothing. See Login for the rest.
+  const outcomeRef = useRef<HTMLDivElement>(null)
+  const restoreFocus = useFocusRestore(!busy, outcomeRef)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -40,8 +43,8 @@ export function SetPassword() {
     }
     setBusy(true)
     // Asked for before the call rather than after it, so it covers the
-    // refusal as well as the success. On a success there is nothing left to
-    // restore focus to: clearing the flag hands the whole screen over to the
+    // refusal as well as the success. On a success there is no message and so
+    // no target: clearing the flag hands the whole screen over to the
     // application, and the hook's target has left the document by then.
     restoreFocus()
     const { error } = await supabase.auth.updateUser({ password })
@@ -59,10 +62,14 @@ export function SetPassword() {
       onSubmit={(e) => void submit(e)}
       foot={<p className="login-invite">You can change it later with the reset link on the sign in screen.</p>}
     >
+      {/* One slot rather than Login's two: this screen has nothing to confirm,
+          because a successful update hands the screen to the application. */}
       {error && (
-        <Note tone="danger" role="alert" className="login-note-slot">
-          {error}
-        </Note>
+        <AuthOutcome ref={outcomeRef}>
+          <Note tone="danger" role="alert" className="login-note-slot">
+            {error}
+          </Note>
+        </AuthOutcome>
       )}
 
       <TextField
@@ -86,7 +93,7 @@ export function SetPassword() {
         required
       />
 
-      <Button ref={saveRef} variant="primary" size="lg" block type="submit" disabled={busy || !password || !confirm}>
+      <Button variant="primary" size="lg" block type="submit" disabled={busy || !password || !confirm}>
         {busy ? 'Saving…' : 'Save password'}
       </Button>
     </AuthCard>

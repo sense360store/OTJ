@@ -51,6 +51,7 @@ const source = (name: string) => readFileSync(fileURLToPath(new URL(name, import
 const LOGIN_SRC = source('./Login.tsx')
 const SETPASSWORD_SRC = source('./SetPassword.tsx')
 const APP_SRC = source('../App.tsx')
+const AUTHCARD_SRC = source('../components/AuthCard.tsx')
 const AUTH_SRC = source('../hooks/useAuth.tsx')
 
 /* ---- the auth state the guard is given -------------------------------
@@ -162,8 +163,8 @@ describe('Login renders on the shared system', () => {
 
   it('uses the Button primitive rather than a hand written class string', () => {
     // The two ways in are the primary and the ghost button, both full width.
-    expect(LOGIN_SRC).toContain('<Button ref={signInRef} variant="primary" size="lg" block type="submit"')
-    expect(LOGIN_SRC).toContain('<Button ref={linkRef} variant="ghost" block icon={Icon.bolt}')
+    expect(LOGIN_SRC).toContain('<Button variant="primary" size="lg" block type="submit"')
+    expect(LOGIN_SRC).toContain('<Button variant="ghost" block icon={Icon.bolt}')
     // And no hand written .btn string is left anywhere in the file.
     expect(LOGIN_SRC).not.toMatch(/className="btn[ "]/)
   })
@@ -206,7 +207,7 @@ describe('Set Password renders as the same family', () => {
   })
 
   it('uses the Button primitive rather than a hand written class string', () => {
-    expect(SETPASSWORD_SRC).toContain('<Button ref={saveRef} variant="primary" size="lg" block type="submit"')
+    expect(SETPASSWORD_SRC).toContain('<Button variant="primary" size="lg" block type="submit"')
     expect(SETPASSWORD_SRC).not.toMatch(/className="btn[ "]/)
   })
 })
@@ -282,7 +283,45 @@ describe('the auth calls are exactly what they were', () => {
     // themes, against the tone and the live region role it must carry.
     expect(LOGIN_SRC).toMatch(/\{error && \(\s*<Note tone="danger" role="alert"/)
     expect(LOGIN_SRC).toMatch(/\{info && \(\s*<Note tone="success" role="status"/)
-    expect(SETPASSWORD_SRC).toMatch(/\{error && \(\s*<Note tone="danger" role="alert"/)
+    // Set Password's one slot is inside the wrapper rather than beside it, so
+    // the chain is asserted whole: the condition, the wrapper it guards, and
+    // the tone and role of the Note within.
+    expect(SETPASSWORD_SRC).toMatch(
+      /\{error && \(\s*<AuthOutcome ref=\{outcomeRef\}>\s*<Note tone="danger" role="alert"/,
+    )
+  })
+
+  it('renders the outcome wrapper only while there is something to say', () => {
+    /* Where focus goes after a call settles, and the reason it is CONDITIONAL
+       is the whole of what stops it becoming a focus steal onto an empty box:
+       a settled call with no message leaves the ref null and the hook moves
+       nothing. A wrapper rendered unconditionally would satisfy every browser
+       check in tools/visual/checks.mjs that looks for focus on the message,
+       and would silently move focus onto a blank element after a successful
+       sign in, so the condition is asserted rather than the element.
+
+       Login guards on EITHER slot, because both of its messages live in the
+       one wrapper; Set Password has only the refusal. */
+    expect(LOGIN_SRC).toMatch(/\{\(error \|\| info\) && \(\s*<AuthOutcome ref=\{outcomeRef\}>/)
+    expect(SETPASSWORD_SRC).toMatch(/\{error && \(\s*<AuthOutcome ref=\{outcomeRef\}>/)
+    // And the hook is aimed at that wrapper on both screens, rather than at a
+    // control. Retargeting it back would leave the wrapper above in place and
+    // unfocused, which is a change no other assertion here would notice.
+    for (const src of [LOGIN_SRC, SETPASSWORD_SRC]) {
+      expect(src).toContain('useFocusRestore(!busy, outcomeRef)')
+    }
+  })
+
+  it('keeps the outcome wrapper out of the tab order and gives it no role', () => {
+    // tabIndex -1 is what makes it focusable by script and not by Tab, so a
+    // member's next Tab from the message reaches the first field rather than
+    // passing back through a stop that is not a control.
+    //
+    // And the live region roles stay on the Notes INSIDE it. Moving one onto
+    // the wrapper would announce the message twice on the path where focus
+    // never moves, which is Enter pressed inside a field.
+    expect(AUTHCARD_SRC).toMatch(/<div ref=\{ref\} tabIndex=\{-1\} className="login-outcome">/)
+    expect(AUTHCARD_SRC).not.toMatch(/role=/)
   })
 
   it('keeps every refusal and confirmation word for word', () => {
@@ -313,7 +352,7 @@ describe('the auth calls are exactly what they were', () => {
     expect(startBody).toContain('setPending(what)')
     // And all three actions go through it. Without this the scope above still
     // says nothing about the two that could stop calling it.
-    for (const call of ["start('signin', signInRef)", "start('link', linkRef)", "start('reset', resetRef)"]) {
+    for (const call of ["start('signin')", "start('link')", "start('reset')"]) {
       expect(LOGIN_SRC, call).toContain(call)
     }
     expect(LOGIN_SRC).toContain('const busy = pending !== null')

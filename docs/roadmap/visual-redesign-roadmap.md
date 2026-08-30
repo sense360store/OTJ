@@ -204,7 +204,7 @@ in this repository to reference either screen or the auth guard at all.
 
 **Every user visible change, in full**, because "no behaviour moved" is a
 claim about CALLS and a reader will reasonably ask what a member sees
-differently. There are seven and no message string is among them. Three are
+differently. There are eight and no message string is among them. Three are
 words:
 
 - Set Password shows the club motto. It showed the club name alone; both
@@ -217,9 +217,9 @@ words:
 - Sign in reads `Signing in…` only for its own call. It used to read it
   whichever of the three was pressed.
 
-Four are presentation, and they are here because the claim is exhaustive
-rather than about copy. All four are on the two controls the slice touched
-without replacing:
+Five are presentation, and they are here because the claim is exhaustive
+rather than about copy. Four are on the two controls the slice touched without
+replacing:
 
 - The closing sentence under the form loses the browser's default bottom
   margin, which the inline style it replaced left in place, so the card's
@@ -230,6 +230,12 @@ without replacing:
 - Its disabled cursor becomes `not-allowed` rather than the default, which is
   what every other disabled control in the product uses.
 - And it stops underlining on hover while disabled, which it did before.
+
+The fifth is the outcome message. A member who activates one of the four
+controls WITH THE KEYBOARD and is refused now sees the shared focus ring drawn
+around the message, because focus moves there and `:focus-visible` matches a
+keyboard activation. A mouse press moves focus to the same place and draws no
+ring, which is the same rule every control on the screen already follows.
 
 Four things worth recording, none of them presentation alone:
 
@@ -250,6 +256,33 @@ Four things worth recording, none of them presentation alone:
   unchanged, and a new invariant fails the build on a second implementation,
   because the reasoning is subtle in two places at once and a second copy is a
   second chance to get one of them wrong.
+- **Focus lands on the MESSAGE, not back on the control, which is the error
+  summary pattern.** The first version of the repair put focus back where the
+  member pressed, and wrote down the cost: the message and the focus move land
+  in the same commit, a screen reader flushes its speech queue on a focus
+  change, and an announcement made through a live region in that commit can be
+  cut short. Codex weighed it and answered that the announcement outweighs the
+  focus position on a screen whose whole content is one short form. Taken.
+  `AuthOutcome` in `src/components/AuthCard.tsx` is a `tabIndex={-1}` wrapper
+  rendered ONLY while there is something to say, so a settled call with no
+  message leaves the ref null and moves nothing rather than focusing an empty
+  box; the live region roles stay on the Notes inside it, because the keyboard
+  path never loses focus and is what they are for. It takes the shared focus
+  ring from the element level rule, which `:focus-visible` gives to the
+  keyboard activation and withholds from the mouse one, and both sides of the
+  trade stay written down in `src/hooks/useFocusRestore.ts` rather than the
+  losing one being deleted.
+- **Three states claimed a call never happened, and proved it from what was
+  drawn.** The Set Password mismatch and Login's two "enter your email first"
+  refusals are made by the SCREEN, before the auth client is reached, and a
+  browser cannot see a call that never happened. The mismatch proof read "the
+  card is still up, and accepting an update would have handed the screen to the
+  application", which is two behaviours standing in for one fact and would hold
+  just as well if the call were made and its answer discarded. Codex. The
+  harness stub now counts every call on the auth client and each of the three
+  asserts a zero; an absent counter fails rather than passes, and each zero is
+  paired with a flow that makes the same call and asserts one, because a zero
+  on its own is also what a deleted counter looks like.
 - **The contrast sweep had never measured this screen.** `contrast.mjs` opened
   Login and clicked a button matched by `/magic link/i`. No control on that
   screen has ever carried those words, the press was wrapped in a `.catch()`,
@@ -332,14 +365,13 @@ have to be true to fix it.
   auth guard; changing it here would put a presentational edit into the gated
   file and move a surface this slice does not own. Its behaviour is proved as
   it stands, at both addresses.
-- **The focus restore can interrupt the message it accompanies.** The outcome
-  message and the focus move land in the same commit, and a screen reader
-  interrupts its speech queue on a focus change. The defect the restore fixes
-  is measured; this cost is not, because the harness drives a browser and no
-  screen reader, and #215 established that focus here is not changed on
-  reasoning alone. The reasoning and the alternative worth measuring (the error
-  summary pattern: focus the Note rather than the control) are written down in
-  `src/hooks/useFocusRestore.ts`.
+- **No screen reader has been run over either screen.** The harness drives a
+  browser, so everything it proves about announcement is structural: which role
+  a Note carries, that focus lands on the element holding the message, that the
+  wrapper is out of the tab order. The error summary pattern removes the
+  speech-queue race by construction rather than by measurement, and what an
+  actual reader says in each of the eighteen states is unverified here. The
+  reasoning on both sides of the choice is in `src/hooks/useFocusRestore.ts`.
 - **The in flight state is visual only.** A label change on a disabled,
   just blurred button fires no live region event, so "Sending a link…" is
   announced to nobody and the whole request window is silent. The slice makes

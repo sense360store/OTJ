@@ -2945,22 +2945,24 @@ const focusReturned = async (page, d) => {
     await page.close()
   }
 
-  /* Focus is RESTORED after every outcome. Pressing any of these disables it,
-     the browser blurs a disabled control, and before this slice the outcome
-     arrived with focus on the document body: a member who clicked rather than
-     pressing Enter had to tab from the top of the page to reach the control
-     again, with an alert on screen telling them to try.
+  /* Focus lands on the OUTCOME MESSAGE after every refusal. Pressing any of
+     these disables it, the browser blurs a disabled control, and before this
+     slice the outcome arrived with focus on the document body: a member who
+     clicked rather than pressing Enter had to tab from the top of the page to
+     reach the control again, with an alert on screen telling them to try.
+
+     The message rather than the control, which is the error summary pattern
+     and Codex's answer to the question the first version of this left open: a
+     screen reader flushes its speech queue on a focus change, so a message
+     announced through a live region in the same commit as a focus move to
+     something else can be cut short. Focusing the message removes that race.
+     src/hooks/useFocusRestore.ts carries both sides of it.
 
      Driven and measured here rather than reasoned about, which is the lesson
      #215 left: the first attempt at that repair on Account was a callback
      that fired before React had re-rendered and did nothing at all. */
-  for (const [key, target] of [
-    ['signin-failed', '.login-card button[type="submit"]'],
-    ['link-failed', '.login-card .btn-ghost'],
-    ['reset-failed', '.login-card .login-link'],
-    ['sp-failed', '.login-card button[type="submit"]'],
-  ]) {
-    const WHAT = `${key} leaves focus on the control that was pressed`
+  for (const key of ['signin-failed', 'link-failed', 'reset-failed', 'sp-failed']) {
+    const WHAT = `${key} moves focus to the outcome message`
     const flow = flowOf(key)
     if (!flow) {
       check(WHAT, false, 'no such flow')
@@ -2973,20 +2975,89 @@ const focusReturned = async (page, d) => {
       await page.close()
       continue
     }
-    // The NAMED control, not merely a live one somewhere on the card. A
-    // refusal that focused the email field would also be "focus somewhere
-    // sensible", and it is not where the member was.
-    const at = await page.evaluate((sel) => {
+    /* The wrapper itself, and the wrapper WITH THE MESSAGE IN IT. Element
+       identity alone would be satisfied by an empty box that happened to
+       carry the class, which is the shape this repair must never take, so the
+       danger Note is required to be inside the focused element rather than
+       merely somewhere on the card.
+
+       tabIndex is checked too: -1 is what keeps it out of the tab order, so a
+       member's next Tab from the message reaches the first field rather than
+       having to pass back through a stop that is not a control. */
+    const at = await page.evaluate(() => {
       const el = document.activeElement
       if (!el || el === document.body) return { focused: null, onTarget: false }
-      const want = document.querySelector(sel)
+      const want = document.querySelector('.login-card .login-outcome')
       return {
-        focused: (el.textContent || el.id || el.tagName).trim().slice(0, 24),
+        focused: (el.className || el.id || el.tagName).trim().slice(0, 32),
         onTarget: !!want && want === el,
-        disabled: !!el.disabled,
+        holdsTheMessage: !!want && want === el && !!el.querySelector('.note-danger .note-body'),
+        outOfTabOrder: el.tabIndex === -1,
       }
-    }, target)
-    check(WHAT, !!at && at.onTarget && !at.disabled, JSON.stringify({ want: target, ...at }))
+    })
+    check(
+      WHAT,
+      !!at && at.onTarget && at.holdsTheMessage && at.outOfTabOrder,
+      JSON.stringify(at),
+    )
+    await page.close()
+  }
+
+  /* The ring around the message, which is the one thing a SIGHTED member sees
+     differently after this repair and is therefore claimed in Login.css and in
+     the roadmap. Measured rather than reasoned about, because both halves of
+     it rest on a browser heuristic: `:focus-visible` matches a scripted focus
+     when the element focus came FROM matched it, so a keyboard activation
+     carries the ring onto the message and a mouse press does not.
+
+     That is the behaviour every control on the screen already has, and it is
+     the right one here: focus moves BACKWARDS, above the form, so somebody who
+     activated a button with the keyboard needs to see where their next Tab
+     starts from, while somebody who clicked is looking at their pointer. Both
+     activations are driven, because a rule that only ever draws or only ever
+     hides is a different rule from this one. */
+  for (const how of ['keyboard', 'mouse']) {
+    const WHAT = `the outcome message draws the shared ring for a ${how} activation${how === 'mouse' ? ': it does not' : ''}`
+    const page = await open('login', 1280, { state: 'writefails' })
+    let ready = !page.blank
+    if (ready) ready = await typed(page.getByLabel('Email', { exact: true }), LOGIN_EMAIL, WHAT)
+    if (ready) ready = await typed(page.getByLabel('Password', { exact: true }), LOGIN_PASSWORD, WHAT)
+    const submit = page.getByRole('button', { name: 'Sign in', exact: true })
+    if (ready) {
+      ready =
+        how === 'keyboard'
+          ? (await focused(submit, WHAT)) && (await acted(page.locator('body'), WHAT, 'pressed Enter', () => page.keyboard.press('Enter')))
+          : await pressed(submit, WHAT)
+    }
+    if (!ready) {
+      await page.close()
+      continue
+    }
+    const r = await page.evaluate(() => {
+      const el = document.querySelector('.login-outcome')
+      if (!el) return null
+      const cs = getComputedStyle(el)
+      return {
+        // Proved first: focus really is on the message, so what follows is a
+        // measurement of THIS repair rather than of an element nobody focused.
+        focused: document.activeElement === el,
+        visible: el.matches(':focus-visible'),
+        style: cs.outlineStyle,
+        width: parseFloat(cs.outlineWidth),
+        // The ring hugs the Note rather than boxing it, which is what the
+        // wrapper's own radius is for.
+        radius: cs.borderTopLeftRadius,
+      }
+    })
+    const wantRing = how === 'keyboard'
+    check(
+      WHAT,
+      !!r &&
+        r.focused &&
+        r.visible === wantRing &&
+        (wantRing ? r.style === 'solid' && r.width >= 2 && r.radius === '12px' : r.style === 'none'),
+      JSON.stringify({ how, wantRing, ...r }),
+    )
     await page.close()
   }
 
@@ -2995,13 +3066,25 @@ const focusReturned = async (page, d) => {
      is in flight, so a member can carry on typing; a repair that moves focus
      when the call settles must leave it where they put it.
 
-     Reached through `writeslow`, a call that settles rather than hanging, so
-     the driver can start it, move focus, and see it finish. `inflight` cannot
-     answer this: nothing ever settles, so nothing could ever be stolen and
-     the check would pass on a screen that steals. */
-  {
-    const WHAT = 'a settled sign in leaves focus where the member moved it'
-    const page = await open('login', 1280, { state: 'writeslow' })
+     Both settling calls are driven, and the pair is the point. A REFUSED one
+     puts an outcome message on screen, so the thing focus would move to is
+     really there and declining to move is a decision the guard made. An
+     ACCEPTED one renders no message at all, so the target is absent and the
+     hook has nothing to aim at; that is the path a successful sign in takes
+     and it is worth pinning, but on its own it would be true of a screen with
+     no focus repair whatsoever. Running only the accepted case is exactly how
+     this check would have gone quietly vacuous when the repair was retargeted
+     from the control to the message.
+
+     Both settle rather than hanging, so the driver can start the call, move
+     focus, and see it finish. `inflight` cannot answer this: nothing ever
+     settles, so nothing could ever be stolen. */
+  for (const [state, wantNote] of [
+    ['writeslowfails', true],
+    ['writeslow', false],
+  ]) {
+    const WHAT = `a settled sign in that ${wantNote ? 'was refused' : 'said nothing'} leaves focus where the member moved it`
+    const page = await open('login', 1280, { state })
     let ready = !page.blank
     if (ready) ready = await typed(page.getByLabel('Email', { exact: true }), LOGIN_EMAIL, WHAT)
     if (ready) ready = await typed(page.getByLabel('Password', { exact: true }), LOGIN_PASSWORD, WHAT)
@@ -3010,21 +3093,28 @@ const focusReturned = async (page, d) => {
     if (ready) ready = await focused(page.locator('#email'), WHAT)
     if (!ready) {
       await page.close()
-    } else {
-      const moved = await page.evaluate(() => document.activeElement === document.querySelector('#email'))
-      await page.waitForTimeout(2000)
-      const after = await page.evaluate(() => {
-        const el = document.activeElement
-        return {
-          stillThere: !!el && el === document.querySelector('#email'),
-          now: el ? (el.textContent || el.id || el.tagName).trim().slice(0, 24) : null,
-          // The call really finished: the submit is live again.
-          settled: document.querySelector('.login-card button[type="submit"]')?.disabled === false,
-        }
-      })
-      check(WHAT, moved && after.settled && after.stillThere, JSON.stringify({ moved, ...after }))
-      await page.close()
+      continue
     }
+    const moved = await page.evaluate(() => document.activeElement === document.querySelector('#email'))
+    await page.waitForTimeout(2000)
+    const after = await page.evaluate(() => {
+      const el = document.activeElement
+      return {
+        stillThere: !!el && el === document.querySelector('#email'),
+        now: el ? (el.className || el.id || el.tagName).trim().slice(0, 32) : null,
+        // The call really finished: the submit is live again.
+        settled: document.querySelector('.login-card button[type="submit"]')?.disabled === false,
+        // And whether there was anywhere to steal focus TO, which is what
+        // separates the two cases from each other.
+        target: !!document.querySelector('.login-card .login-outcome'),
+      }
+    })
+    check(
+      WHAT,
+      moved && after.settled && after.stillThere && after.target === wantNote,
+      JSON.stringify({ state, moved, wantNote, ...after }),
+    )
+    await page.close()
   }
 
   /* The two strings the CLUB chooses, at a length a committee would really

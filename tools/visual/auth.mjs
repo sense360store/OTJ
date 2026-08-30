@@ -157,6 +157,32 @@ const busyIs = (which, label) => (page) =>
     { which, label, card: CARD },
   )
 
+/* How many times a named call on the auth client was made, straight from the
+   harness stub's counter (tools/visual/stubs/supabase.ts). Three of the states
+   below are refusals the SCREEN makes before the client is reached, and that
+   is a negative a browser cannot see: nothing is drawn by a call that never
+   happened. They used to be inferred from what WAS drawn, which is a different
+   claim and one that would still hold if the call were made and its answer
+   discarded. Codex.
+
+   An ABSENT counter fails. It means the page is not running the stub this
+   proof was written against, so the claim is unproved rather than true, and a
+   missing global reading as zero is exactly how a negative proof goes quietly
+   vacuous.
+
+   Every `calls(name, 0)` below is paired with a `calls(name, 1)` on a flow
+   that does make the same call, because a zero on its own is also what a
+   deleted record() line looks like. */
+const calls = (name, want) => (page) =>
+  page.evaluate(
+    ({ name, want }) => {
+      const counter = window.__authCalls
+      if (!counter || typeof counter !== 'object') return false
+      return (counter[name] ?? 0) === want
+    },
+    { name, want },
+  )
+
 // The three controls, named by what makes each of them unique in the card.
 const SUBMIT = `${CARD} button[type="submit"]`
 const MAGIC_LINK = `${CARD} .btn-ghost`
@@ -233,7 +259,9 @@ export const LOGIN_FLOWS = [
     key: 'link-noemail',
     state: 'default',
     note: 'the client side refusal: an empty address never reaches the auth client',
-    proof: noteIs('danger', 'alert', 'Enter your email first, then request a link.'),
+    proof: async (page) =>
+      (await noteIs('danger', 'alert', 'Enter your email first, then request a link.')(page)) &&
+      (await calls('signInWithOtp', 0)(page)),
     drive: (page) => press(page, 'Email me a link'),
   },
   {
@@ -260,7 +288,12 @@ export const LOGIN_FLOWS = [
     key: 'link-failed',
     state: 'writefails',
     note: 'the server refused the link: what shouldCreateUser false answers for an address with no account',
-    proof: noteIs('danger', 'alert', 'Signups not allowed for otp'),
+    // The second half is what makes link-noemail's zero worth having: this
+    // flow reaches the same call, so a counter that stopped recording would
+    // fail here rather than turning the negative green.
+    proof: async (page) =>
+      (await noteIs('danger', 'alert', 'Signups not allowed for otp')(page)) &&
+      (await calls('signInWithOtp', 1)(page)),
     drive: async (page) => {
       if (!(await fill(page, 'Email', LOGIN_EMAIL))) return false
       return press(page, 'Email me a link')
@@ -270,7 +303,9 @@ export const LOGIN_FLOWS = [
     key: 'reset-noemail',
     state: 'default',
     note: 'the client side refusal on the reset: a different sentence from the link’s, and it is unchanged',
-    proof: noteIs('danger', 'alert', 'Enter your email first, then reset your password.'),
+    proof: async (page) =>
+      (await noteIs('danger', 'alert', 'Enter your email first, then reset your password.')(page)) &&
+      (await calls('resetPasswordForEmail', 0)(page)),
     drive: (page) => press(page, 'Forgot password?'),
   },
   {
@@ -297,7 +332,10 @@ export const LOGIN_FLOWS = [
     key: 'reset-failed',
     state: 'writefails',
     note: 'the server refused the reset: its rate limit, printed unchanged',
-    proof: noteIs('danger', 'alert', 'For security purposes, you can only request this after 47 seconds.'),
+    // And the positive control for reset-noemail's zero.
+    proof: async (page) =>
+      (await noteIs('danger', 'alert', 'For security purposes, you can only request this after 47 seconds.')(page)) &&
+      (await calls('resetPasswordForEmail', 1)(page)),
     drive: async (page) => {
       if (!(await fill(page, 'Email', LOGIN_EMAIL))) return false
       return press(page, 'Forgot password?')
@@ -369,13 +407,19 @@ export const SETPASSWORD_FLOWS = [
   {
     key: 'sp-mismatch',
     state: 'default',
-    // The second half is the real claim and it is free here: under `default`
-    // the stub ACCEPTS an update, and accepting one clears the flag and hands
-    // the screen to the application. So a Set Password card still on screen
-    // beside the refusal is proof that the auth client was never reached.
+    // The second half is the real claim, and it is COUNTED rather than
+    // inferred. It used to rest on the card still being on screen: under
+    // `default` the stub accepts an update, and accepting one clears the flag
+    // and hands the screen to the application, so a card still there meant no
+    // call was made. That is two behaviours standing in for one fact, and it
+    // would hold just as well if the call were made and its answer thrown
+    // away. Codex. The card check stays, because the screen staying put is
+    // its own claim and a member's actual experience of the refusal.
     note: 'the client side refusal: two different values never reach the auth client, and the screen stays',
     proof: async (page) =>
-      (await noteIs('danger', 'alert', 'The passwords do not match.')(page)) && (await setPasswordCard(page)),
+      (await noteIs('danger', 'alert', 'The passwords do not match.')(page)) &&
+      (await setPasswordCard(page)) &&
+      (await calls('updateUser', 0)(page)),
     drive: async (page) => {
       if (!(await fill(page, 'New password', NEW_PASSWORD))) return false
       if (!(await fill(page, 'Confirm password', NEW_PASSWORD + '-typo'))) return false
@@ -397,9 +441,11 @@ export const SETPASSWORD_FLOWS = [
     key: 'sp-failed',
     state: 'writefails',
     note: 'the auth client refused it: its own message in the danger Note, and the screen still there to retry on',
+    // And the positive control for sp-mismatch's zero: the same call, made.
     proof: async (page) =>
       (await noteIs('danger', 'alert', 'Password should be at least 6 characters.')(page)) &&
-      (await setPasswordCard(page)),
+      (await setPasswordCard(page)) &&
+      (await calls('updateUser', 1)(page)),
     drive: async (page) => {
       if (!(await fill(page, 'New password', NEW_PASSWORD))) return false
       if (!(await fill(page, 'Confirm password', NEW_PASSWORD))) return false

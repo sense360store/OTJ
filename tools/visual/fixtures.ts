@@ -219,6 +219,15 @@ export type HarnessState =
   // The same, with a photo already uploaded, because the removal is the one
   // write whose control the coach cannot be left on: it unmounts.
   | 'photoslow'
+  /* A write that REFUSES, slowly. `writeslow` settles successfully, and on the
+     signed out screens a successful call has nothing to say: no message is
+     rendered, so the thing focus would move to is not there, and "focus stayed
+     where the member put it" is true of a screen with no focus repair at all.
+     That makes the no-steal proof vacuous on exactly the target it is meant to
+     be checking. This settles slowly AND refuses, so the outcome message is on
+     screen when the call lands and declining to move focus is a decision the
+     guard made rather than an absence. Used by checks.mjs only. */
+  | 'writeslowfails'
   /* ---- Login and Set Password (VISUAL-02) -----------------------------
      The two strings the CLUB chooses on the signed out screens, each at a
      length a club would really make it. They are separate states rather than

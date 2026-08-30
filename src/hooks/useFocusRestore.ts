@@ -17,10 +17,12 @@
    settling render is about to disable is a no-op. Codex again, one round
    apart, which is why both halves are written down here.
 
-   The ref stays with the component that renders the control, and this takes
+   The ref stays with the component that renders the target, and this takes
    it: a hook that MADE the ref and handed it back through an object reads as
    a ref accessed during render, which it is not, but the shape is worth
-   avoiding either way. What it returns is the request.
+   avoiding either way. What it returns is the request. A ref whose element is
+   not on screen when the call settles reads as null and moves nothing, which
+   is a case the auth screens use deliberately (below) rather than a hole.
 
    ONE implementation, shared. It arrived on the Account screen, and Login and
    Set Password meet the same browser behaviour for the same reason: pressing
@@ -33,26 +35,37 @@
    implementation, which is what every other invariant in that file says about
    itself too.
 
-   WHAT THIS TRADES, stated rather than left for somebody to discover. On the
-   two signed out screens the outcome message and the focus move land
-   together: one render inserts the Note and re-enables the control, and this
-   effect then focuses it. A screen reader interrupts its speech queue on a
-   focus change, so the announcement of a message inserted in that same commit
-   can be cut short or dropped, which is a cost the version that left focus on
-   the body did not have.
+   WHERE IT PUTS FOCUS is the caller's decision, and the two callers make it
+   differently for a stated reason rather than by accident.
 
-   It is kept, and NOT quietly: the defect it fixes is measured (a member who
-   clicked rather than pressing Enter tabs from the top of the page to reach
-   the control again, with an alert on screen telling them to try), and the
-   cost is not, because this project's harness drives a browser and no screen
-   reader. #215 established that focus behaviour here is not to be changed on
-   reasoning alone, and choosing a different target on reasoning alone is the
-   same mistake in the other direction. The alternative worth weighing when
-   somebody can measure it is the error summary pattern: give the Note
-   tabIndex={-1} and move focus to the message rather than to the control, so
-   the focus event carries the announcement instead of interrupting it. That
-   is a decision about where focus goes after an auth outcome, which is more
-   than a visual slice should settle unmeasured. */
+   Account puts it back on a NAMED CONTROL, because each of its four outcomes
+   removes or disables the control that had focus while leaving the rest of the
+   screen live, and the useful next thing is another control.
+
+   Login and Set Password put it on the OUTCOME MESSAGE, which is the error
+   summary pattern. Their outcome and their focus move land in the same commit:
+   one render inserts the Note and re-enables the control. A screen reader
+   flushes its speech queue on a focus change, so a message announced through a
+   live region in that commit can be cut short by a focus move to something
+   else. Focusing the message removes the race, because the thing being
+   announced is the thing receiving focus.
+
+   That was written here as the alternative to weigh, on the reasoning that
+   #215 established focus behaviour is not to be changed unmeasured and that
+   choosing a different target unmeasured is the same mistake in the other
+   direction. Codex weighed it and answered: the announcement outweighs the
+   focus position on a screen whose whole content is one short form, where the
+   controls are two Tab presses from the message either way. Taken, and the
+   reasoning kept rather than deleted, because what makes it defensible is that
+   both sides of it are written down.
+
+   The measured defect is fixed under either target: a member who clicked
+   rather than pressing Enter no longer tabs from the top of the page with an
+   alert on screen telling them to try. What the callers must NOT do is aim it
+   at something that is not there: the auth screens render the message wrapper
+   only while there is a message, so a settled call with nothing to say leaves
+   the ref null and this does nothing, rather than moving focus to an empty
+   box. */
 import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 

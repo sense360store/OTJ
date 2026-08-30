@@ -14,7 +14,7 @@
 // is what it draws. It keeps that name because both routes and the design
 // read already refer to it there, and renaming a file is churn a visual slice
 // should not spend a reviewer's attention on.
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent, ReactNode, Ref } from 'react'
 import { Crest } from './Crest'
 import { useClubBranding } from '../hooks/useClubBranding'
 import '../routes/Login.css'
@@ -25,6 +25,41 @@ import '../routes/Login.css'
 // name is a better fallback than an empty line.
 const FALLBACK_NAME = 'Ossett Town Juniors'
 const FALLBACK_MOTTO = 'Where football and friendships flourish'
+
+/* Where an outcome message goes, and where FOCUS goes with it.
+
+   Both screens disable the control that was pressed while the call runs, the
+   browser blurs a disabled control, and the outcome then arrives with focus on
+   the document body. The repair used to put focus back on the control. It now
+   puts focus HERE, on the message, which is the error summary pattern: the
+   focus change is what carries the announcement instead of interrupting it.
+
+   A screen reader flushes its speech queue on a focus change, so a message
+   inserted into a live region in the same commit as a focus move can be cut
+   short. Focusing the message itself has no such race, because the thing being
+   announced is the thing receiving focus. Codex, on the measured version of
+   this that focused the control; the trade was written down there as the
+   alternative to weigh, and this is taking it.
+
+   `tabIndex={-1}` makes it focusable programmatically and leaves it out of the
+   tab order, so nothing about tabbing through the form changes. The screens
+   render it ONLY when there is something to say, which is what makes "focus
+   was lost and there is no message" a no-op rather than a focus move onto an
+   empty box: the hook's target is null and it does nothing.
+
+   role stays on the Note inside rather than moving here, because focus is not
+   always lost. It is lost whenever the ACTIVATED CONTROL is the one the handler
+   disables, which is a mouse click and a keyboard activation of the button
+   alike. It is NOT lost when somebody presses Enter inside a field: no field is
+   disabled during a call, so focus never leaves it, nothing moves, and the live
+   region is the only thing that announces the outcome on that path. */
+export function AuthOutcome({ children, ref }: { children: ReactNode; ref?: Ref<HTMLDivElement> }) {
+  return (
+    <div ref={ref} tabIndex={-1} className="login-outcome">
+      {children}
+    </div>
+  )
+}
 
 export function AuthCard({
   title,

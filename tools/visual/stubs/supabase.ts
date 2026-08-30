@@ -27,7 +27,8 @@ const AUTH_ERRORS: Record<'password' | 'email', string> = {
 /* One phase rule for every call on the auth client, because the three write
    phases mean the same thing here as everywhere else in the harness:
    `inflight` hangs, `writefails` refuses, `writeslow` settles slowly so a
-   driver can act while a call is still running. Which CALL is driven is
+   driver can act while a call is still running, and `writeslowfails` does both
+   at once. Which CALL is driven is
    decided by the press, never by a state per control, exactly as the Account
    screen's writes are.
 
@@ -43,12 +44,47 @@ function phased(message: string, data: unknown = null) {
   if (state === 'writefails' || state === 'photofails') {
     return Promise.resolve({ data: null, error: { message } })
   }
+  // Slow AND refused, which is the one combination the three phases above
+  // cannot express and the only one that puts an outcome message on screen
+  // while a driver still has time to move focus. See fixtures.ts.
+  if (state === 'writeslowfails') {
+    return new Promise((resolve) => setTimeout(() => resolve({ data: null, error: { message } }), 1200))
+  }
   return Promise.resolve({ data, error: null })
+}
+
+/* ---- what the harness can prove about a call that must NOT happen ----
+   Three states on these two screens are refusals the SCREEN makes, before the
+   auth client is reached: a Set Password mismatch, and each of Login's two
+   "enter your email first" sentences. Their whole claim is a negative, and a
+   browser cannot see a call that was never made.
+
+   Inferring it from what is drawn is not the same claim. The mismatch proof
+   used to read "the Set Password card is still up, and accepting an update
+   would have handed the screen to the application, so the client was never
+   reached", which is a chain of two behaviours standing in for one fact and
+   would still hold if the call were made and its result thrown away. Codex.
+
+   So the calls are counted. The counter lives on the window because a browser
+   check reads it from outside the module graph, and it is the harness stub
+   rather than the product: nothing under src/ knows it exists.
+
+   A proof reading this must FAIL when the counter is absent, never pass: an
+   absent counter means the page is not running this stub, which makes the
+   claim unproved rather than true. And a zero is only worth having beside a
+   one, so each of the three negatives is paired with a flow that DOES make the
+   same call and asserts the count is 1. Without that pair, deleting the
+   record() line below would turn all three negatives green. */
+const authCalls: Record<string, number> = Object.create(null)
+;(globalThis as unknown as { __authCalls?: Record<string, number> }).__authCalls = authCalls
+const record = <T>(name: string, answer: T): T => {
+  authCalls[name] = (authCalls[name] ?? 0) + 1
+  return answer
 }
 
 function updateUser(attrs: { password?: string; email?: string }) {
   const field = attrs && 'password' in attrs ? 'password' : 'email'
-  return phased(AUTH_ERRORS[field])
+  return record('updateUser', phased(AUTH_ERRORS[field]))
 }
 
 /* ---- the login screen's three calls -----------------------------------
@@ -62,11 +98,11 @@ function updateUser(attrs: { password?: string; email?: string }) {
    redirect a real sign in causes is proved as a route witness rather than as
    a side effect of a press. */
 const SESSION_DATA = { user: null, session: null }
-const signInWithPassword = () => phased('Invalid login credentials', SESSION_DATA)
+const signInWithPassword = () => record('signInWithPassword', phased('Invalid login credentials', SESSION_DATA))
 // What shouldCreateUser: false answers for an address that has no account.
-const signInWithOtp = () => phased('Signups not allowed for otp', SESSION_DATA)
+const signInWithOtp = () => record('signInWithOtp', phased('Signups not allowed for otp', SESSION_DATA))
 const resetPasswordForEmail = () =>
-  phased('For security purposes, you can only request this after 47 seconds.', {})
+  record('resetPasswordForEmail', phased('For security purposes, you can only request this after 47 seconds.', {}))
 
 function table() {
   const chain: Record<string, unknown> = {}
