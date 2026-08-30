@@ -52,6 +52,19 @@
 import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 
+/* The rule that separates a restore from a steal, as a function rather than a
+   condition inside the effect. It is the whole of the difference between this
+   hook and one that takes focus off somebody, and an effect cannot be run at
+   all in this project's test environment, which has no DOM. Naming it makes
+   the rule itself testable: src/hooks/focusRestore.test.ts drives every case
+   the browser can leave behind.
+
+   `body` is passed in rather than read, so the predicate holds no reference to
+   a global and a test needs no document. */
+export function focusWasLost(active: Element | null, body: Element | null): boolean {
+  return active === null || active === body
+}
+
 export function useFocusRestore(settled: boolean, target: RefObject<HTMLElement | null>) {
   const wanted = useRef(false)
   useEffect(() => {
@@ -59,8 +72,7 @@ export function useFocusRestore(settled: boolean, target: RefObject<HTMLElement 
     wanted.current = false
     // The body (or nothing) is what the browser leaves behind when a focused
     // control is disabled or removed. Anywhere else is where the person went.
-    const active = document.activeElement
-    if (active !== null && active !== document.body) return
+    if (!focusWasLost(document.activeElement, document.body)) return
     target.current?.focus()
   }, [settled, target])
   return () => void (wanted.current = true)

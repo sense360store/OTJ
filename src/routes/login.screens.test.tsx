@@ -217,8 +217,19 @@ describe('Set Password renders as the same family', () => {
    produce are driven in a browser by tools/visual/auth.mjs; this is what
    stops the call itself being edited. */
 describe('the auth calls are exactly what they were', () => {
-  it('signs in with email and password', () => {
+  it('signs in with email and password, from the form', () => {
     expect(LOGIN_SRC).toContain('supabase.auth.signInWithPassword({ email, password })')
+    // Wired to something. A call expression sitting in a handler nothing
+    // invokes is dead code that every text assertion here would still pass,
+    // and a static render cannot see an event binding. This is as far as the
+    // source goes; that the control actually reaches the call is driven in a
+    // browser by tools/visual/auth.mjs.
+    expect(LOGIN_SRC).toContain('onSubmit={(e) => void signIn(e)}')
+  })
+
+  it('reaches the magic link and the reset from their own controls', () => {
+    expect(LOGIN_SRC).toContain('onClick={() => void magicLink()}')
+    expect(LOGIN_SRC).toContain('onClick={() => void forgot()}')
   })
 
   it('keeps shouldCreateUser off on the magic link, so it registers nobody', () => {
@@ -243,11 +254,35 @@ describe('the auth calls are exactly what they were', () => {
     expect(SETPASSWORD_SRC.slice(refusal, cleared)).toContain('return')
   })
 
-  it('refuses a mismatch before the auth client is reached', () => {
+  it('refuses a mismatch before the auth client is reached, and returns', () => {
     const check = SETPASSWORD_SRC.indexOf('if (password !== confirm)')
     const call = SETPASSWORD_SRC.indexOf('supabase.auth.updateUser')
     expect(check).toBeGreaterThan(-1)
     expect(call).toBeGreaterThan(check)
+    // Order alone is not a refusal: a branch that sets the message and falls
+    // through reaches the auth client anyway. The same shape the test above
+    // uses for clearNeedsPassword.
+    expect(SETPASSWORD_SRC.slice(check, call)).toContain('return')
+  })
+
+  it('keeps Set Password inert until both halves are typed', () => {
+    // Login's equivalent is pinned three lines up; this is the counterpart,
+    // and without it "existing disabled/busy semantics" was asserted for one
+    // of the two screens. The rendered check below is satisfied by the empty
+    // field rule on its own, so it cannot stand in for this.
+    expect(SETPASSWORD_SRC).toContain('disabled={busy || !password || !confirm}')
+  })
+
+  it('renders both outcome slots, so a message has somewhere to appear', () => {
+    // The sentences below are pinned as text in the handlers. Both Note slots
+    // could be deleted from the JSX and every one of those assertions would
+    // still hold, because no outcome is reachable under a static render. This
+    // is the structural half; the rendered half is driven in a browser by
+    // tools/visual/auth.mjs, which compares each message exactly, in both
+    // themes, against the tone and the live region role it must carry.
+    expect(LOGIN_SRC).toMatch(/\{error && \(\s*<Note tone="danger" role="alert"/)
+    expect(LOGIN_SRC).toMatch(/\{info && \(\s*<Note tone="success" role="status"/)
+    expect(SETPASSWORD_SRC).toMatch(/\{error && \(\s*<Note tone="danger" role="alert"/)
   })
 
   it('keeps every refusal and confirmation word for word', () => {
@@ -266,7 +301,21 @@ describe('the auth calls are exactly what they were', () => {
     // One busy flag drew three controls before this slice, so the sign in
     // button claimed to be working whichever was pressed. `pending` names the
     // call; `busy` is still the single disabled rule, which is the behaviour.
-    expect(LOGIN_SRC).toMatch(/const start = [^]*setError\(null\)[^]*setInfo\(null\)/)
+    //
+    // Scoped to the BODY of `start`, not to the file: an unanchored `[^]*`
+    // spans every line after the declaration, so it held while only one
+    // action cleared anything. The body ends at the first line that closes a
+    // top level block.
+    const body = LOGIN_SRC.slice(LOGIN_SRC.indexOf('const start = '))
+    const startBody = body.slice(0, body.indexOf('\n  }\n'))
+    expect(startBody).toContain('setError(null)')
+    expect(startBody).toContain('setInfo(null)')
+    expect(startBody).toContain('setPending(what)')
+    // And all three actions go through it. Without this the scope above still
+    // says nothing about the two that could stop calling it.
+    for (const call of ["start('signin', signInRef)", "start('link', linkRef)", "start('reset', resetRef)"]) {
+      expect(LOGIN_SRC, call).toContain(call)
+    }
     expect(LOGIN_SRC).toContain('const busy = pending !== null')
     expect((LOGIN_SRC.match(/disabled=\{busy\}/g) ?? []).length).toBe(3)
   })
@@ -299,8 +348,11 @@ describe('the auth guard decides which of the three screens renders', () => {
     anonymous()
     const refused = at('/')
     expect(refused).not.toContain('class="app"')
-    // And it is not showing the protected page's content under another name.
-    expect(refused).not.toContain('Welcome back')
+    // Nothing here asserts the absence of Home's own copy, because a static
+    // render resolves no query and Home shows its loading state for a signed
+    // in member too: such an assertion would hold on both sides and read as
+    // coverage of something this environment cannot render. The shell is the
+    // one thing that differs, and it is what is compared.
   })
 
   it('renders Set Password instead of the application while a password is needed', () => {

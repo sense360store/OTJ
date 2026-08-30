@@ -877,12 +877,20 @@ describe('a control the browser blurs is restored from one place', () => {
     expect(offenders).toEqual([])
   })
 
-  it('keeps the guard that makes it a restore rather than a steal', () => {
-    // The one line that separates the two. Without it the hook moves focus on
-    // every settled write, including one somebody carried on working through.
+  it('keeps the guard that makes it a restore rather than a steal, and gates on it', () => {
+    /* The one rule that separates the two. Without it the hook moves focus on
+       every settled write, including one somebody carried on working through.
+
+       Checked as a GATE rather than as a presence: the rule is a named
+       function and the effect has to return early on it, which is the shape
+       an inverted or ignored guard breaks. What the rule ANSWERS is driven in
+       src/hooks/focusRestore.test.ts; presence alone would hold for a hook
+       that computed it and threw it away. */
     const src = read(sourceFiles.find((f) => rel(f) === HOOK)!)
-    expect(src).toContain('document.activeElement')
-    expect(src).toMatch(/active !== null && active !== document\.body/)
+    expect(src).toContain('export function focusWasLost(')
+    expect(src).toMatch(/if \(!focusWasLost\(document\.activeElement, document\.body\)\) return/)
+    // And the focus call comes after that return, not before it.
+    expect(src.indexOf('focusWasLost(document.activeElement')).toBeLessThan(src.indexOf('target.current?.focus()'))
   })
 })
 
