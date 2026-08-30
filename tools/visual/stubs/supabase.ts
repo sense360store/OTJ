@@ -1,7 +1,41 @@
 // A Supabase client that answers nothing. The harness overrides every hook
 // that reads, so this exists only so the modules that import the client can
 // load. It makes no network call.
+import { fixtures } from '../fixtures'
+
 const answer = () => Promise.resolve({ data: null, error: null })
+
+/* ---- the auth client's one write ------------------------------------
+   The Account screen's password and email changes do not go through a query
+   hook: they await supabase.auth.updateUser directly and read its error. So
+   this is the one call on the stub that answers from the harness state, in
+   the same two phases the write hooks use. `inflight` never settles, which is
+   what leaves the submit reading Saving… or Sending…, and `writefails`
+   answers with an error in the shape the auth client returns.
+
+   The message depends on WHICH field is being written, because the two are
+   different failures and a screenshot of each should say what the server
+   would say. */
+const HANGS = () => new Promise<never>(() => {})
+const AUTH_ERRORS: Record<'password' | 'email', string> = {
+  password: 'Password should be at least 6 characters.',
+  email: 'Unable to validate email address: invalid format',
+}
+
+function updateUser(attrs: { password?: string; email?: string }) {
+  const state = fixtures.state
+  if (state === 'inflight' || state === 'photoinflight') return HANGS()
+  // A write that settles, slowly, so a driver can move focus during it. See
+  // the `writeslow` note in tools/visual/fixtures.ts.
+  if (state === 'writeslow') {
+    return new Promise((resolve) => setTimeout(() => resolve({ data: null, error: null }), 1200))
+  }
+  if (state === 'writefails' || state === 'photofails') {
+    const field = attrs && 'password' in attrs ? 'password' : 'email'
+    return Promise.resolve({ data: null, error: { message: AUTH_ERRORS[field] } })
+  }
+  return answer()
+}
 
 function table() {
   const chain: Record<string, unknown> = {}
@@ -28,7 +62,7 @@ export const supabase = {
     signInWithOtp: answer,
     resetPasswordForEmail: answer,
     signOut: answer,
-    updateUser: answer,
+    updateUser,
   },
   storage: { from: () => ({ createSignedUrl: answer, upload: answer, remove: answer }) },
   channel: () => ({ on: () => ({ subscribe: () => ({}) }), subscribe: () => ({}), unsubscribe() {} }),

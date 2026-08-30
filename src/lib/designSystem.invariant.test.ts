@@ -362,6 +362,8 @@ describe('the type scale is the only source of a font size', () => {
     // from the first slice; they are owned now, so a size cannot come back.
     // VISUAL-02, Activity: the club wide audit feed, whose one remaining
     // inline size was the batch filter note at 13.5px.
+    // VISUAL-02, Account: the self service screen, which carried sixteen
+    // inline sizes across five cards and two copies of one list row.
     const OWNED = [
       'components/ui.tsx',
       'components/primitives.tsx',
@@ -380,6 +382,7 @@ describe('the type scale is the only source of a font size', () => {
       'components/ImportPlayersModal.tsx',
       'components/RenewSeasonModal.tsx',
       'routes/Activity.tsx',
+      'routes/Account.tsx',
     ]
     const offenders: string[] = []
     for (const f of sourceFiles.filter((f) => OWNED.includes(rel(f)))) {

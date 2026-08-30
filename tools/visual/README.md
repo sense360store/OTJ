@@ -36,11 +36,15 @@ Build and preview rather than the dev server for the screenshots: the dev
 server re-transforms two hundred modules on every page load, which turns the
 matrix into half an hour.
 
-**Restart the preview after every build.** `vite build` writes with
-`emptyOutDir`, which unlinks the output directory and recreates it, and a
-preview started before that keeps serving the deleted files: it answers 200,
-every page renders, and every measurement describes a build that no longer
-exists. All three tools refuse to run when that has happened
+**Rebuild after every source change, and restart the preview after every
+build.** Two different staleness failures, and both of them look like a clean
+run. `vite build` writes with `emptyOutDir`, which unlinks the output
+directory and recreates it, so a preview started before that keeps serving the
+deleted files: it answers 200, every page renders, and every measurement
+describes a build that no longer exists. And a build older than the source is
+the same defect one level up: edit a rule in `styles.css`, run a tool without
+rebuilding, and it measures the previous rule and reports it clean. All three
+tools refuse both cases before they launch a browser
 (`tools/visual/fresh.mjs`), because a result about the wrong build reads as
 evidence.
 
@@ -48,10 +52,10 @@ Query string, all optional:
 
 | Key | Values |
 |---|---|
-| `screen` | `home`, `sessions`, `login`, `players`, `activity`, `more`, `dialog`, `primitives` |
-| `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin` |
+| `screen` | `home`, `sessions`, `login`, `players`, `activity`, `account`, `more`, `dialog`, `primitives` |
+| `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin` |
 | `theme` | `light` (default), `dark` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -119,6 +123,66 @@ page arrives because the stub paginates the fixture rows the way the keyset
 does. It applies the filters through `activityQueryConditions`, the product's
 own predicate builder, so a batch deep link or a chosen Entity really narrows
 the feed and an empty-under-a-filter shot is the screen's own branch.
+
+## The Account screen
+
+Its acceptance is forms, avatar upload and the success and error outcomes,
+and every one of those outcomes is the result of a WRITE. None of them can be
+reached by inventing rows, so `tools/visual/account.mjs` drives each one
+through the fields a coach types into and the control a coach presses, in one
+place, for the same reason `dialogs.mjs` exists: shoot, checks and contrast
+all need the same presses.
+
+The write phases are the SHARED `inflight` and `writefails`, which mean here
+exactly what they mean on the register's dialogs: every write hangs, and every
+write refuses. There is no state per control, because which write is driven is
+decided by the press rather than by the query string.
+
+The photo is the one axis those two cannot carry, since a removal needs a
+photo to remove and a state cannot be two things at once. `photo` is a coach
+who has uploaded one, and `photoinflight` and `photofails` are that crossed
+with the two write phases. The DEFAULT is still a coach with no photo, which
+is what the fixture has always been, so no existing screenshot moves.
+
+`writeslow` and `photoslow` are a write that SETTLES rather than hangs, which
+`inflight` cannot be: nothing under `inflight` ever finishes, so nothing it
+did could ever be undone. They exist for one question, which is the second
+half of the focus claim. Only the photo actions are disabled during a removal,
+so a coach can carry on using the rest of the page while a write is in flight;
+a repair that moves focus on success must leave it where they put it. The
+driver starts the write, moves focus, and watches the write finish.
+
+The stub's TIMING is part of what it models, and the first version of it got
+that wrong in a way that made a check pass on a repair that did not work.
+TanStack invokes a per-call callback inside its notify batch BEFORE it
+notifies its listeners, so when `onSuccess` runs React has not re-rendered and
+the DOM still shows the in-flight paint: a control the pending render disabled
+is still disabled, and focusing it is a no-op. `useCallbackWrite` goes through
+the pending render first, on a timeout rather than a microtask, because what
+has to have happened is React's commit.
+
+`profileloading` is the page level gate (the profile read has not answered),
+and `longvalues` is a long name, a long sign in email, a long club name and a
+long team name, which are the four strings this screen renders at a length the
+club chooses. Both are states of their own for the same reason `longnames` is:
+the shell renders the coach's name and the club's on every other screen.
+
+A success does not merely print a message: the harness holds the three
+editable profile fields in a small store, and a successful upload, name save
+or team change writes to it. So the screen moves the way it moves in the
+product once `refreshProfile` has run, and a shot named for a success shows a
+name that changed, a photo that replaced the initials, and a Save that has
+gone back to inert. Without it every proof of a success would hold whether or
+not the press did anything.
+
+`planner` and `clubadmin` are two capability sets rather than a widening of
+the existing ones. `planner` is `sessions.create` and nothing administrative,
+which is the variant that gets the Default team control and no Admin card at
+all. `clubadmin` adds `users.manage`, which neither `coach` nor `admin` holds:
+those two are the partial administrative case, offered Club, Teams and Spond
+and not Users, and `clubadmin` is the one offered all four. Adding
+`users.manage` to an existing set would have added a sidebar item and moved
+every shot that set already takes.
 
 ## The dialogs
 

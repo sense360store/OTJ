@@ -10,17 +10,103 @@
 // down: a result that is present, plausible and about the wrong thing is worse
 // than no result, because it reads as evidence. So each tool asserts, before
 // it measures anything, that the asset the server hands out is the asset the
-// last build wrote.
+// last build wrote, AND that the last build is of the source on disk.
 //
-// The fix when this fails is always the same: restart the preview server.
-import { readFile, stat } from 'node:fs/promises'
+// Both halves matter and only one of them was here first. A preview older
+// than the build serves unlinked files; a build older than the source
+// measures the previous rule. The second is the easier one to cause, because
+// nothing about it needs a mistake: editing a stylesheet and running a tool
+// is enough.
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+const ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const OUT = path.resolve(fileURLToPath(new URL('../../node_modules/.visual-harness', import.meta.url)))
 
 const assetsOf = (html) => (html.match(/assets\/index-[A-Za-z0-9_-]+\.(?:js|css)/g) ?? []).sort()
+
+/* Everything the harness BUNDLE is built from, and nothing else. The three
+   Playwright tools, this file and the two drive modules are read by node at
+   run time rather than compiled into the page, so editing one of them must
+   not invalidate a build; editing a stylesheet, a screen or a fixture must.
+   Listed rather than globbed for exactly that reason: a directory sweep of
+   tools/visual would make every check runner its own input and the guard
+   would cry stale on every edit until it was ignored.
+
+   The five that are not source files are here because the bundle's OUTPUT
+   depends on them without any file under src/ moving. Vite reads `target`,
+   `jsx`, `jsxImportSource` and `verbatimModuleSyntax` out of the TypeScript
+   configs while it transforms, so changing one of those emits different
+   JavaScript from unchanged source; and the dependency versions decide what
+   is bundled with it. Codex found the configs. `node_modules` itself is not
+   walked: the realistic way its contents change is an install, and an install
+   rewrites the lockfile.
+
+   The BUILD ENVIRONMENT is deliberately not on this list, and does not need
+   to be: no module in the harness bundle reads `import.meta.env` any more,
+   and the built assets are byte identical across three different values of
+   VITE_SUPABASE_URL. Codex found that gap; the answer was to remove the
+   dependency rather than to track it, since nothing the harness measures
+   depends on those values. That is enforced rather than assumed, by a rule
+   checks.invariant.test.ts derives from source.
+
+   checks.invariant.test.ts fails the build on a `tsconfig*.json` at the repo
+   root that is not listed here, because a new one appearing is exactly how
+   this list goes quietly out of date. */
+const BUNDLE_INPUTS = [
+  'src',
+  'tools/visual/main.tsx',
+  'tools/visual/index.html',
+  'tools/visual/fixtures.ts',
+  'tools/visual/stubs',
+  'vite.visual.config.ts',
+  'tsconfig.json',
+  'tsconfig.app.json',
+  'tsconfig.node.json',
+  'package.json',
+  'package-lock.json',
+]
+
+/* Inputs WHEN THEY EXIST. `.env` is gitignored and a checkout has none, so it
+   cannot be required the way the list above is; the case it covers is a
+   developer who has one and edits it between a build and a run. It is a net
+   rather than the fix, for the reason stated above: nothing in these files
+   reaches the page today. It is here for the reader that one day does. */
+const OPTIONAL_INPUTS = ['.env', '.env.local', '.env.development', '.env.development.local']
+
+// The newest modification time under a path, skipping the tests, which are
+// not bundled either.
+//
+// A make-style mtime comparison, with make's own caveat: it can say stale
+// when nothing changed (a file touched, a branch checked out and back), and
+// the cost of that is one rebuild. The direction that matters cannot go wrong
+// the other way, because writing a file always moves its mtime forward.
+// Hashing the inputs would be exact and would read every file in src/ on
+// every run; the cheap check that errs towards rebuilding is the right trade
+// for a tool that is always run right after a build.
+async function newest(rel) {
+  const full = path.join(ROOT, rel)
+  // A listed input that is GONE is stale, not absent. Returning zero for it
+  // made deleting one invisible: nothing else moves, so the build went on
+  // looking current while the source it was built from no longer existed.
+  // Codex.
+  if (!existsSync(full)) return { at: Infinity, file: rel, missing: true }
+  const info = await stat(full)
+  if (!info.isDirectory()) return { at: info.mtimeMs, file: rel }
+  // A directory's OWN mtime is the seed rather than zero, because that is the
+  // only thing a deletion inside it moves: removing a file changes no
+  // surviving sibling's mtime, so a walk that looked only at the survivors
+  // could not see it. Codex.
+  let best = { at: info.mtimeMs, file: rel }
+  for (const entry of await readdir(full, { withFileTypes: true })) {
+    if (entry.name.includes('.test.')) continue
+    const found = await newest(path.join(rel, entry.name))
+    if (found.at > best.at) best = found
+  }
+  return best
+}
 
 export async function assertServingCurrentBuild(base) {
   const indexPath = path.join(OUT, 'index.html')
@@ -28,6 +114,31 @@ export async function assertServingCurrentBuild(base) {
     console.log(`NO BUILD at ${OUT}: run \`npx vite build --config vite.visual.config.ts\` first.`)
     process.exit(1)
   }
+
+  /* A build older than the source it was built from is the same failure as a
+     preview older than the build, one level further up, and it is the one the
+     first version of this file could not see: it compared the SERVER against
+     the BUILD and said nothing about whether the build was of the current
+     source. A stylesheet edited and not rebuilt then measures clean against
+     the previous rule, which is a result that is present, plausible and about
+     the wrong thing. Found by editing a rule and watching the run pass. */
+  const built = (await stat(indexPath)).mtimeMs
+  const present = OPTIONAL_INPUTS.filter((f) => existsSync(path.join(ROOT, f)))
+  for (const input of [...BUNDLE_INPUTS, ...present]) {
+    const { at, file, missing } = await newest(input)
+    if (at > built) {
+      const why = missing
+        ? `${file} is listed as a bundle input and is not on disk`
+        : `${file} was changed after the harness was last built`
+      console.log(
+        `STALE BUILD: ${why}.\n` +
+          '  Every measurement below would describe the previous source. Rebuild and restart the\n' +
+          '  preview: `npx vite build --config vite.visual.config.ts`, then restart `vite preview`.',
+      )
+      process.exit(1)
+    }
+  }
+
   const onDisk = assetsOf(await readFile(indexPath, 'utf8'))
 
   let served

@@ -23,8 +23,9 @@
 // the obvious thing", never "the runner cannot abort".
 // =====================================================================
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { join, relative, sep } from 'node:path'
 
 const src = readFileSync(fileURLToPath(new URL('./checks.mjs', import.meta.url)), 'utf8')
 const lines = src.split('\n')
@@ -206,7 +207,11 @@ describe('a missing control fails its own check rather than ending the run', () 
       // The helpers themselves, and the two drivers this file imports, are
       // where the raw calls legitimately live.
       if (/const (pressed|focused|chose|acted) =/.test(line)) return
-      if (/\.(selectOption|fill|check|uncheck)\(/.test(line) && !/acted\(/.test(line)) {
+      // setInputFiles is the fourth: it is how a file reaches a picker and it
+      // rejects on a missing input exactly like the rest. It has no caller in
+      // this file today; it is listed for the same reason check and uncheck
+      // are, so the first one written has to go through a helper.
+      if (/\.(selectOption|fill|check|uncheck|setInputFiles)\(/.test(line) && !/acted\(/.test(line)) {
         offenders.push(`${i + 1}: ${line.trim().slice(0, 90)}`)
       }
       // `.click()` is exempt only where it is LEXICALLY inside an acted()
@@ -239,5 +244,104 @@ describe('a missing control fails its own check rather than ending the run', () 
   it('records a surface that never painted, and marks the page so later reads skip it', () => {
     expect(src).toContain('page.blank = !painted')
     expect(src).toContain('if (page.blank) return null')
+  })
+})
+
+// =====================================================================
+// The three tools measure the build on disk, and the build is of the
+// source on disk.
+//
+// A measurement about the wrong build is the same class of defect as a
+// screenshot filed under a state it never reached: present, plausible and
+// evidence for nothing. `fresh.mjs` refuses both cases, and a tool that
+// stopped calling it would report a clean run against whatever the preview
+// happened to be serving.
+// =====================================================================
+describe('every tool refuses to measure a stale build', () => {
+  const tools = ['checks.mjs', 'shoot.mjs', 'contrast.mjs'] as const
+
+  for (const tool of tools) {
+    it(`${tool} asserts the served build before it measures anything`, () => {
+      const text = readFileSync(fileURLToPath(new URL(`./${tool}`, import.meta.url)), 'utf8')
+      expect(text).toContain("from './fresh.mjs'")
+      const call = text.indexOf('assertServingCurrentBuild(BASE)')
+      expect(call, 'the guard is called').toBeGreaterThan(-1)
+      // Before the browser launches, so a stale run costs nothing and cannot
+      // half-finish.
+      expect(call).toBeLessThan(text.indexOf('chromium.launch('))
+    })
+  }
+
+  it('checks the build against its source, not only against the server', () => {
+    // Two different staleness failures, and only the second was here first.
+    // A preview started before a build serves unlinked files; a build older
+    // than the source measures the previous rule, which needs no mistake at
+    // all to cause. Both halves are asserted so neither can be dropped as
+    // redundant.
+    const fresh = readFileSync(fileURLToPath(new URL('./fresh.mjs', import.meta.url)), 'utf8')
+    expect(fresh).toContain('STALE SERVER')
+    expect(fresh).toContain('STALE BUILD')
+    // The bundle's inputs, listed rather than globbed: a sweep of
+    // tools/visual would make every check runner its own input and the guard
+    // would cry stale on every edit until somebody deleted it.
+    for (const input of ['src', 'tools/visual/main.tsx', 'tools/visual/fixtures.ts', 'tools/visual/stubs']) {
+      expect(fresh, `${input} is a bundle input`).toContain(`'${input}'`)
+    }
+    expect(fresh, 'the drive modules are not').not.toContain("'tools/visual/account.mjs'")
+    expect(fresh, 'nor the runners').not.toContain("'tools/visual/checks.mjs'")
+  })
+
+  it('leaves no module in the harness bundle reading the build environment', () => {
+    // The freshness guard tracks FILES, and the environment is not one: a
+    // build made with a different VITE_SUPABASE_URL is a different bundle
+    // with no file's mtime moved. Codex found that gap, and the answer is to
+    // remove the dependency rather than to track it, because nothing the
+    // harness measures depends on those values.
+    //
+    // DERIVED rather than restated: every file under src/ that reads
+    // import.meta.env must be stubbed, so a future reader has to be stubbed
+    // or this fails. Measured after the fix, the built assets are byte
+    // identical across three different environments.
+    const root = fileURLToPath(new URL('../..', import.meta.url))
+    const config = readFileSync(join(root, 'vite.visual.config.ts'), 'utf8')
+    const readers: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          walk(full)
+          continue
+        }
+        if (!/\.(ts|tsx)$/.test(entry.name) || entry.name.includes('.test.')) continue
+        if (readFileSync(full, 'utf8').includes('import.meta.env')) {
+          readers.push(relative(root, full).split(sep).join('/'))
+        }
+      }
+    }
+    walk(join(root, 'src'))
+    expect(readers.length, 'there is at least one env reader to check').toBeGreaterThan(0)
+    for (const reader of readers) {
+      expect(config, `${reader} is stubbed in the harness`).toContain(`'${reader}':`)
+    }
+  })
+
+  it('counts the files the OUTPUT depends on without any source moving', () => {
+    // Vite reads target, jsx, jsxImportSource and verbatimModuleSyntax out of
+    // the TypeScript configs while it transforms, so changing one of those
+    // emits different JavaScript from unchanged source; and the dependency
+    // versions decide what is bundled with it. Codex found the configs, which
+    // is the case my own hand written list had already gone out of date on.
+    const fresh = readFileSync(fileURLToPath(new URL('./fresh.mjs', import.meta.url)), 'utf8')
+    // EVERY tsconfig at the repo root, read from disk rather than named here,
+    // because a new one appearing is how this list goes quietly out of date.
+    const root = fileURLToPath(new URL('../..', import.meta.url))
+    const configs = readdirSync(root).filter((f) => /^tsconfig.*\.json$/.test(f))
+    expect(configs.length, 'there is at least one tsconfig to check').toBeGreaterThan(0)
+    for (const config of configs) {
+      expect(fresh, `${config} is a bundle input`).toContain(`'${config}'`)
+    }
+    for (const manifest of ['package.json', 'package-lock.json']) {
+      expect(fresh, `${manifest} is a bundle input`).toContain(`'${manifest}'`)
+    }
   })
 })

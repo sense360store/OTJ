@@ -18,7 +18,7 @@ import type {
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
 
-export type CapSet = 'coach' | 'parent' | 'viewer' | 'admin' | 'auditor'
+export type CapSet = 'coach' | 'parent' | 'viewer' | 'admin' | 'auditor' | 'planner' | 'clubadmin'
 
 const CAPS: Record<CapSet, string[]> = {
   // A coach with the full club-wide set. players.delete, players.export and
@@ -54,6 +54,30 @@ const CAPS: Record<CapSet, string[]> = {
   // cannot name a child is never told one was deleted. It is a coach set
   // minus the roster, not a parent, so the shell is a coach's.
   auditor: ['sessions.create', 'audit.view', 'club.manage', 'teams.manage', 'shares.manage'],
+  // A coach with the coaching write and NOTHING administrative: the Account
+  // variant that gets the Default team control and no Admin section at all.
+  // It is a separate set rather than a narrowing of `coach` because widening
+  // an existing one moves every shot that already uses it.
+  planner: ['sessions.create'],
+  // The full administrative set, users.manage included. `coach` and `admin`
+  // both hold club.manage and teams.manage and NEITHER holds users.manage, so
+  // they are the partial admin case: Account offers Club, Teams and Spond and
+  // withholds Users. This set is the one that offers all four, and it is
+  // separate because users.manage adds the Admin, Users sidebar item.
+  clubadmin: [
+    'sessions.create',
+    'players.view',
+    'players.manage',
+    'players.delete',
+    'players.export',
+    'players.import',
+    'seasons.manage',
+    'users.manage',
+    'club.manage',
+    'teams.manage',
+    'audit.view',
+    'shares.manage',
+  ],
   // seasons.manage on top of the coach set, which is the only way to reach the
   // "Set up the first season" call to action. It DOES add the Admin, Seasons
   // nav item, which is why it is a separate set rather than a widening of
@@ -141,6 +165,41 @@ export type HarnessState =
   // set is what refuses. Named as a state so the shot claims something a
   // proof can check.
   | 'guarded'
+  /* ---- Account (VISUAL-02) ---------------------------------------------
+     The self service screen. Its write states are the SHARED `inflight` and
+     `writefails`, which mean here exactly what they mean on the Registered
+     players dialogs: every write hangs, and every write refuses. That is why
+     there is no state per control; which write is driven is decided by which
+     control the driver presses.
+
+     The photo is the one axis those two cannot carry, because a removal needs
+     a photo to remove and a state cannot be two things at once. So the three
+     states below are the photo axis crossed with the same two write phases,
+     rather than a new query key. The default stays what it has always been, a
+     coach with no photo, so no existing screenshot moves. */
+  // The signed in coach has uploaded a photo: Change photo and Remove photo.
+  | 'photo'
+  // A photo, and every write hangs: Removing… and Uploading… are its own.
+  | 'photoinflight'
+  // A photo, and every write refuses.
+  | 'photofails'
+  // The page level gate: the profile read has not answered.
+  | 'profileloading'
+  // A long name, a long sign in email, a long club name and a long team name,
+  // which are the four strings this screen renders at a length the club
+  // chooses. A state of its own, so no existing screenshot moves.
+  | 'longvalues'
+  /* Every write settles, but SLOWLY. `inflight` hangs for ever, which is the
+     right shape for photographing an in-flight control and the wrong one for
+     the question "what happens to focus while the coach carries on using the
+     page": that needs a write a driver can act during AND see settle. Only
+     the photo actions are disabled during a removal, so every other control
+     is still theirs, and a repair that moves focus on success must not take
+     it back from wherever they went. Codex. */
+  | 'writeslow'
+  // The same, with a photo already uploaded, because the removal is the one
+  // write whose control the coach cannot be left on: it unmounts.
+  | 'photoslow'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -549,8 +608,89 @@ const LONG_NAME_EVENTS: ActivityEvent[] = [
 export const ACTIVITY_PROFILES_FOR = (s: HarnessState): Member[] =>
   s === 'longnames' ? [LONG_ACTOR, ...ACTIVITY_PROFILES] : ACTIVITY_PROFILES
 
+// The Account screen's Default team select renders a team name too, and the
+// long one has to be OFFERED there before the profile can be set to it, so
+// `longvalues` widens the club the same way `longnames` does.
 export const ACTIVITY_TEAMS_FOR = (s: HarnessState): Team[] =>
-  s === 'longnames' ? [...TEAMS, LONG_TEAM, UNBROKEN_TEAM] : TEAMS
+  s === 'longnames' || s === 'longvalues' ? [...TEAMS, LONG_TEAM, UNBROKEN_TEAM] : TEAMS
+
+/* ---- Account (VISUAL-02) ----------------------------------------------
+   The signed in coach, as the Account screen writes them. Three of their
+   fields are EDITABLE from that screen, so the harness holds them in a small
+   store rather than as constants: a successful upload, name save or team
+   change writes to it, every subscriber re-renders, and the screen then shows
+   what the product shows after refreshProfile. Without it the stub answered
+   with the old value, Save stayed enabled after a save, and a screenshot
+   named for a success showed a screen that had not moved.
+
+   Nothing here is a real person. The email is a .invalid address, which can
+   never resolve. */
+// Mirrored by tools/visual/account.mjs, which is plain JavaScript and cannot
+// import this module. A drift is caught rather than tolerated: the entry that
+// types this value is proved by the refusal that only appears when the typed
+// address matched the signed in one.
+export const ACCOUNT_EMAIL = 'coach@example.invalid'
+const ACCOUNT_NAME = 'Sam Whitfield'
+// The four strings this screen renders at a length the club chooses. The
+// email is the hardest of them: it is one token with no space to break at.
+const LONG_ACCOUNT_NAME = 'Wilhelmina Fotheringay-Wallington-Smythe'
+const LONG_ACCOUNT_EMAIL =
+  'wilhelmina.fotheringay-wallington-smythe@ossett-town-juniors-football-club.example'
+const LONG_CLUB_NAME = 'Ossett Town Juniors Community Football and Friendship Association'
+const DEFAULT_CLUB_NAME = 'Ossett Town Juniors'
+
+// The stored path of an uploaded photo, and what the signed URL read answers
+// with for it. An inline SVG rather than a file, so the harness makes no
+// request and no real photograph of anybody exists in this repository.
+export const AVATAR_PATH = 'avatars/coach-me/photo.png'
+export const AVATAR_DATA_URL =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">' +
+      '<rect width="144" height="144" fill="#1f43d6"/>' +
+      '<circle cx="72" cy="56" r="26" fill="#f4c020"/>' +
+      '<path d="M16 144c0-31 25-52 56-52s56 21 56 52z" fill="#f4c020"/>' +
+      '</svg>',
+  )
+
+const LONG_VALUES = harnessState === 'longvalues'
+const WITH_PHOTO =
+  harnessState === 'photo' ||
+  harnessState === 'photoinflight' ||
+  harnessState === 'photofails' ||
+  harnessState === 'photoslow'
+
+export const ACCOUNT_SIGNIN_EMAIL = LONG_VALUES ? LONG_ACCOUNT_EMAIL : ACCOUNT_EMAIL
+export const ACCOUNT_CLUB_NAME = LONG_VALUES ? LONG_CLUB_NAME : DEFAULT_CLUB_NAME
+
+export interface ProfileEdits {
+  fullName: string
+  avatarPath: string | null
+  teamId: string | null
+}
+
+let editsNow: ProfileEdits = {
+  fullName: LONG_VALUES ? LONG_ACCOUNT_NAME : ACCOUNT_NAME,
+  avatarPath: WITH_PHOTO ? AVATAR_PATH : null,
+  teamId: LONG_VALUES ? LONG_TEAM.id : 'titans',
+}
+const editListeners = new Set<() => void>()
+
+export const profileEdits = {
+  // A stable reference between writes, which is what useSyncExternalStore
+  // requires: a fresh object every read is an infinite render loop.
+  read: (): ProfileEdits => editsNow,
+  write(patch: Partial<ProfileEdits>) {
+    editsNow = { ...editsNow, ...patch }
+    for (const l of editListeners) l()
+  },
+  subscribe(l: () => void): () => void {
+    editListeners.add(l)
+    return () => {
+      editListeners.delete(l)
+    }
+  },
+}
 
 // Every column a filter predicate can name, so the harness applies the REAL
 // predicates (activityQueryConditions) rather than a second filter rule
