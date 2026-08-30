@@ -364,6 +364,9 @@ describe('the type scale is the only source of a font size', () => {
     // inline size was the batch filter note at 13.5px.
     // VISUAL-02, Account: the self service screen, which carried sixteen
     // inline sizes across five cards and two copies of one list row.
+    // VISUAL-02, Login and Set Password: the two signed out screens and the
+    // card they share, whose one inline value was a 14px margin that is not a
+    // step on the spacing scale.
     const OWNED = [
       'components/ui.tsx',
       'components/primitives.tsx',
@@ -383,6 +386,9 @@ describe('the type scale is the only source of a font size', () => {
       'components/RenewSeasonModal.tsx',
       'routes/Activity.tsx',
       'routes/Account.tsx',
+      'components/AuthCard.tsx',
+      'routes/Login.tsx',
+      'routes/SetPassword.tsx',
     ]
     const offenders: string[] = []
     for (const f of sourceFiles.filter((f) => OWNED.includes(rel(f)))) {
@@ -756,6 +762,54 @@ describe('a semantic fill carries its own label colour', () => {
     expect(read(join(srcDir, 'routes/SessionRegister.css'))).toContain('color: var(--success-fg)')
     expect(read(join(srcDir, 'routes/SessionDay.css'))).toContain('color: var(--success-fg)')
     expect(styles).toMatch(/\.ip-pill \{[^}]*color: var\(--on-accent\)/)
+  })
+})
+
+/* ---- one focus restore, not one per screen ---------------------- */
+
+describe('a control the browser blurs is restored from one place', () => {
+  /* WHY THIS RULE EXISTS. Disabling a focused control blurs it, so every
+     screen with a submit that freezes while a call is in flight meets the
+     same defect, and every one of them is tempted to write the same effect
+     again. Account met it first (#215), Login and Set Password met it next,
+     and the reasoning is subtle in two places at once: it has to be an
+     effect rather than a callback, because a per-call onSuccess runs before
+     React re-renders; and it has to refuse to act unless focus is on the
+     body, or it takes focus back off somebody who moved away while the call
+     was running. A second copy is a second chance to get one of those two
+     halves wrong.
+
+     src/hooks/useFocusRestore.ts says out loud that this test enforces it,
+     so the two have to agree or the comment is a claim with nothing behind
+     it. This is that enforcement. */
+  const HOOK = 'hooks/useFocusRestore.ts'
+
+  it('defines the hook exactly once, in the shared module', () => {
+    const definitions = sourceFiles.filter((f) => /function useFocusRestore\b/.test(read(f))).map(rel)
+    expect(definitions).toEqual([HOOK])
+  })
+
+  it('reaches it by import everywhere else', () => {
+    // A caller names the hook; only the module may define it. Anything that
+    // uses the name without importing it has written its own.
+    const offenders: string[] = []
+    for (const f of sourceFiles.filter((f) => f.endsWith('.tsx') || f.endsWith('.ts'))) {
+      if (rel(f) === HOOK) continue
+      const src = read(f)
+      if (!src.includes('useFocusRestore')) continue
+      if (!/import \{[^}]*useFocusRestore[^}]*\} from '[^']*hooks\/useFocusRestore'/.test(src)) {
+        offenders.push(rel(f))
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps the guard that makes it a restore rather than a steal', () => {
+    // The one line that separates the two. Without it the hook moves focus on
+    // every settled write, including one somebody carried on working through.
+    const src = read(sourceFiles.find((f) => rel(f) === HOOK)!)
+    expect(src).toContain('document.activeElement')
+    expect(src).toMatch(/active !== null && active !== document\.body/)
   })
 })
 

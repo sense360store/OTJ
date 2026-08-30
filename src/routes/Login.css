@@ -1,4 +1,10 @@
-/* Login screen. Uses the shared design tokens from styles.css. */
+/* The signed out card, shared by Login and Set Password through
+   components/AuthCard.tsx, which is what imports this file. Every value here
+   is a token from styles.css; what is left is composition, which is the only
+   thing a screen's own stylesheet should hold.
+
+   It keeps the Login.css name because both routes and the design read already
+   refer to it there. */
 .login-bg {
   min-height: 100vh;
   display: grid;
@@ -23,6 +29,16 @@
   text-align: center;
   gap: var(--space-12);
   margin-bottom: var(--space-20);
+}
+/* The club name and the motto are the two strings the CLUB chooses, and a
+   committee can make either of them long. A flex item defaults to a minimum
+   size of its content, so without this the identity block refuses to shrink
+   and pushes the card wider than the 360px phone it is being read on. The
+   break rule is the net under the wrap: a name with no space in it to break
+   at breaks anyway rather than running out through the border. */
+.login-identity {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .login-head .crest,
 .login-head .crest-fallback {
@@ -79,6 +95,18 @@
   font-size: var(--text-sm);
   color: var(--slate);
 }
+/* The closing sentence under the form. It was an inline 14px margin, which is
+   not a step on the scale and was written out on each of the two screens. */
+.login-invite {
+  margin: var(--space-12) 0 0;
+  overflow-wrap: anywhere;
+}
+/* A text link, and the one control on these screens no shared primitive owns:
+   a link shaped action beneath two full width buttons, where a third button
+   would read as a third way in. It takes the shared focus ring from the
+   element level rule in styles.css rather than drawing its own, and carries
+   the 44px minimum as a real height because it sits above a paragraph rather
+   than beside another control. */
 .login-link {
   color: var(--royal);
   font-weight: 700;
@@ -88,11 +116,12 @@
   font-size: var(--text-sm);
   font-family: inherit;
   min-height: var(--hit);
+  padding: 0 var(--space-12);
 }
-.login-link:hover {
+.login-link:hover:not(:disabled) {
   text-decoration: underline;
 }
 .login-link:disabled {
   opacity: 0.5;
-  cursor: default;
+  cursor: not-allowed;
 }

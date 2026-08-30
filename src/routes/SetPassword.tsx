@@ -2,22 +2,34 @@
 // link signs them in; this sets the password on that session so they can sign
 // in normally next time. The reset emails themselves still come from the
 // existing flow on the login screen. REVIEW: part of the auth flow.
-import { useState } from 'react'
+//
+// VISUAL-02 brought it onto the shared system alongside Login, which it now
+// shares a card with (components/AuthCard.tsx): same brand ground, same crest
+// led identity, same compact form. It was already the same markup written a
+// second time; it is the same component now.
+//
+// Nothing it writes moved. It still refuses a mismatch before the auth client
+// is reached, still calls updateUser({ password }), still clears the flag only
+// after a successful update, and still prints the server's own message
+// unchanged. The one repair is the focus one Login shares: pressing Save
+// disables it, the browser blurs a disabled control, and a refusal used to
+// arrive with focus on the document body.
+import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { Crest } from '../components/Crest'
-import { Note } from '../components/primitives'
-import { useClubBranding } from '../hooks/useClubBranding'
-import './Login.css'
+import { useFocusRestore } from '../hooks/useFocusRestore'
+import { AuthCard } from '../components/AuthCard'
+import { Button, Note, TextField } from '../components/primitives'
 
 export function SetPassword() {
   const { clearNeedsPassword } = useAuth()
-  const { name } = useClubBranding()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const saveRef = useRef<HTMLButtonElement>(null)
+  const restoreFocus = useFocusRestore(!busy, saveRef)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -27,6 +39,11 @@ export function SetPassword() {
       return
     }
     setBusy(true)
+    // Asked for before the call rather than after it, so it covers the
+    // refusal as well as the success. On a success there is nothing left to
+    // restore focus to: clearing the flag hands the whole screen over to the
+    // application, and the hook's target has left the document by then.
+    restoreFocus()
     const { error } = await supabase.auth.updateUser({ password })
     setBusy(false)
     if (error) {
@@ -37,55 +54,41 @@ export function SetPassword() {
   }
 
   return (
-    <div className="login-bg">
-      <form className="login-card" onSubmit={submit}>
-        <div className="login-head">
-          <Crest />
-          <div>
-            <h1>Set your password</h1>
-            <p>{name ?? 'Ossett Town Juniors'}</p>
-          </div>
-        </div>
+    <AuthCard
+      title="Set your password"
+      onSubmit={(e) => void submit(e)}
+      foot={<p className="login-invite">You can change it later with the reset link on the sign in screen.</p>}
+    >
+      {error && (
+        <Note tone="danger" role="alert" className="login-note-slot">
+          {error}
+        </Note>
+      )}
 
-        {error && (
-          <Note tone="danger" role="alert" className="login-note-slot">
-            {error}
-          </Note>
-        )}
+      <TextField
+        id="new-password"
+        label="New password"
+        type="password"
+        autoComplete="new-password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Choose a password"
+        required
+      />
+      <TextField
+        id="confirm-password"
+        label="Confirm password"
+        type="password"
+        autoComplete="new-password"
+        value={confirm}
+        onChange={(e) => setConfirm(e.target.value)}
+        placeholder="Type it again"
+        required
+      />
 
-        <div className="field">
-          <label htmlFor="new-password">New password</label>
-          <input
-            id="new-password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Choose a password"
-            required
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="confirm-password">Confirm password</label>
-          <input
-            id="confirm-password"
-            type="password"
-            autoComplete="new-password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            placeholder="Type it again"
-            required
-          />
-        </div>
-
-        <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={busy || !password || !confirm}>
-          {busy ? 'Saving…' : 'Save password'}
-        </button>
-
-        <div className="login-foot">
-          <p style={{ marginTop: 14 }}>You can change it later with the reset link on the sign in screen.</p>
-        </div>
-      </form>
-    </div>
+      <Button ref={saveRef} variant="primary" size="lg" block type="submit" disabled={busy || !password || !confirm}>
+        {busy ? 'Saving…' : 'Save password'}
+      </Button>
+    </AuthCard>
   )
 }

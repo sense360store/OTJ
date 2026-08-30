@@ -16,6 +16,7 @@ import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
 import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
+import { AUTH_FLOWS, GUARD_CASES, LOGIN_EMAIL, LOGIN_PASSWORD, queryForAuth, runAuthFlow, urlForAuth } from './auth.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -123,19 +124,30 @@ const open = async (screen, width, opts = {}) => {
   // address are not always the same thing.
   // An Account flow owns its own query string for the same reason a dialog
   // does: the write phase it needs is part of the entry, not of the caller.
+  // An auth entry owns its query string for the same reason, and its whole
+  // ADDRESS as well: one of them reproduces an arrival defined by its URL
+  // fragment.
   const q = opts.dialog
     ? queryFor(opts.dialog, { theme: opts.theme ?? 'light', caps: opts.caps ?? 'coach' })
     : opts.flow
       ? queryForFlow(opts.flow, { theme: opts.theme ?? 'light', caps: opts.caps ?? 'coach' })
-      : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
-  const plain = !opts.dialog && !opts.flow
+      : opts.authEntry
+        ? queryForAuth(opts.authEntry, { theme: opts.theme ?? 'light' })
+        : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
+  const plain = !opts.dialog && !opts.flow && !opts.authEntry
+  // The auth condition the guard is given, for a plain open of an auth
+  // surface. It is a key of its own rather than a state, because "has to set
+  // a password" and "the write hangs" are both true of one screen at once.
+  if (plain && opts.auth) q.set('auth', opts.auth)
   if (plain && opts.caps) q.set('caps', opts.caps)
   if (plain && opts.state) q.set('state', opts.state)
   // A state and an address are two different things: the Activity feed's one
   // URL persisted filter is the batch deep link, and it is reached by opening
   // that address rather than by a state the reads answer with.
   if (plain && opts.at) q.set('at', opts.at)
-  await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
+  await page.goto(opts.authEntry ? urlForAuth(BASE, opts.authEntry, { theme: opts.theme ?? 'light' }) : `${BASE}/?${q}`, {
+    waitUntil: 'domcontentloaded',
+  })
   await page.evaluate(() => document.fonts.ready)
   // domcontentloaded fires before React has rendered anything, so a check that
   // evaluated straight after this read an empty page. Every check here asserts
@@ -152,9 +164,21 @@ const open = async (screen, width, opts = {}) => {
   // `blank` is a property on the page rather than a second return value,
   // because forty call sites destructure nothing and a signal none of them
   // reads is not a signal.
-  const painted = await page
-    .waitForSelector('.content > *, .login', { state: 'attached', timeout: 5000 })
-    .then(() => true, () => false)
+  /* `.login` matched NOTHING. The signed out card has always been
+     `.login-bg` wrapping `.login-card`, so every open of that surface waited
+     the full five seconds, recorded "the surface never painted" and marked
+     the page blank. Nothing caught it because no check opened login until
+     this slice; a selector nobody exercises is a selector nobody notices.
+
+     The auth surfaces need a third alternative because the guard's own
+     loading branch renders a splash with no class at all. The route witness
+     is the honest signal there: it is a sibling of the real App, so it is
+     attached exactly when the auth tree mounted, whichever of the three
+     things that tree decided to render. */
+  const paint = opts.authEntry
+    ? '.content > *, .login-card, [data-route]'
+    : '.content > *, .login-card'
+  const painted = await page.waitForSelector(paint, { state: 'attached', timeout: 5000 }).then(() => true, () => false)
   page.blank = !painted
   if (!painted) check(`${screen} at ${width} renders something`, false, 'the surface never painted')
   if (opts.awaitSelector) await page.waitForSelector(opts.awaitSelector, { state: 'visible', timeout: 5000 }).catch(() => {})
@@ -2688,6 +2712,368 @@ const focusReturned = async (page, d) => {
     }))
     check('the profile gate is a labelled load rather than an empty account', r.loading && !r.account && r.label.length > 3, JSON.stringify(r))
     await page.close()
+  }
+}
+
+/* ---- VISUAL-02: Login and Set Password --------------------------------
+   The product with no shell around it, and the one family the two screens
+   form. What is measured here is what a screenshot cannot settle: the hit
+   areas, the label bindings, the autocomplete a password manager reads, the
+   keyboard order, where FOCUS ends up when an outcome takes away the control
+   that had it, and what the auth guard actually does at each address.
+
+   Every state is DRIVEN through tools/visual/auth.mjs, the same entries
+   shoot.mjs photographs and contrast.mjs sweeps, so a control that stops
+   rendering fails the run rather than producing a plausible measurement. */
+{
+  const flowOf = (key) => AUTH_FLOWS.find((f) => f.key === key)
+
+  /* Every entry reaches the state its own name claims. This is the backbone:
+     the screenshots and the contrast sweep both file results under these
+     names, and a name that nothing proves is the failure the whole proof
+     apparatus exists to stop. Both themes, because half of these entries are
+     a semantic Note and its surface, border and glyph all flip. */
+  for (const entry of [...AUTH_FLOWS, ...GUARD_CASES]) {
+    for (const theme of ['light', 'dark']) {
+      const page = await open(entry.screen ?? 'auth', 1280, { authEntry: entry, theme })
+      const why = page.blank ? 'the surface never painted' : await runAuthFlow(page, entry)
+      check(`${entry.key} (${theme}): ${entry.note}`, !why, why ?? '')
+      await page.close()
+    }
+  }
+
+  /* Every control a member can press, at the narrowest width and the widest,
+     on both screens. The text link is the one this exists for: it is the only
+     control on either screen that is not a .btn, so it takes no hit area from
+     the button rule and had to be given one. */
+  for (const [what, screen, opts] of [
+    ['Login', 'login', {}],
+    ['Set Password', 'auth', { auth: 'needspassword' }],
+  ]) {
+    for (const width of [360, 1280]) {
+      const page = await open(screen, width, opts)
+      const r = page.blank
+        ? null
+        : await page.evaluate(() => {
+            const short = []
+            const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+            const controls = [...document.querySelectorAll('.login-card button, .login-card input')]
+            for (const el of controls) {
+              const b = el.getBoundingClientRect()
+              if (b.width === 0 && b.height === 0) continue
+              const a = getComputedStyle(el, '::after')
+              const h = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+              const w = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+              if (h < 44 || w < 44) {
+                const label = (el.textContent || el.id || el.tagName).trim()
+                short.push(`${label.slice(0, 24)} ${Math.round(w)}x${Math.round(h)}`)
+              }
+            }
+            return { count: controls.length, short }
+          })
+      check(
+        `every ${what} control reaches a 44px target at ${width}`,
+        !!r && r.count >= 3 && r.short.length === 0,
+        JSON.stringify(r),
+      )
+      await page.close()
+    }
+  }
+
+  /* The shared focus ring, on every control of both screens, in both themes.
+     The card is the surface --focus was hardest to satisfy on: it is not the
+     page ground, and the brand gradient behind it is fixed in both themes.
+
+     Set Password is ARMED first. Its submit is inert until both fields are
+     typed, and a disabled control cannot be focused, so measuring the screen
+     as it opens would silently skip the one control on it whose ring
+     matters. The expected count is per screen and is checked, so a screen
+     that stopped rendering a control fails here rather than passing with
+     fewer measurements. */
+  for (const [what, screen, opts, controls, arm] of [
+    ['Login', 'login', {}, 5, null],
+    ['Set Password', 'auth', { auth: 'needspassword' }, 3, ['New password', 'Confirm password']],
+  ]) {
+    for (const theme of ['light', 'dark']) {
+      const page = await open(screen, 1280, { ...opts, theme })
+      let ready = !page.blank
+      for (const field of arm ?? []) {
+        if (!ready) break
+        ready = await typed(page.getByLabel(field, { exact: true }), 'a-long-enough-passphrase', `${what} focus ring (${theme})`)
+      }
+      const rings = !ready
+        ? null
+        : await page.evaluate(() => {
+            const out = []
+            for (const el of document.querySelectorAll('.login-card button, .login-card input')) {
+              if (el.disabled) continue
+              el.focus()
+              const cs = getComputedStyle(el)
+              out.push({
+                what: (el.textContent || el.id || el.tagName).trim().slice(0, 20),
+                width: cs.outlineWidth,
+                style: cs.outlineStyle,
+                offset: cs.outlineOffset,
+                focused: document.activeElement === el,
+              })
+            }
+            return out
+          })
+      const bad = (rings ?? []).filter(
+        (r) => !r.focused || r.width !== '2px' || r.style !== 'solid' || r.offset !== '2px',
+      )
+      check(
+        `every ${what} control draws the shared focus ring (${theme})`,
+        !!rings && rings.length === controls && bad.length === 0,
+        JSON.stringify(bad.length ? bad : { checked: rings?.length, want: controls }),
+      )
+      await page.close()
+    }
+  }
+
+  /* One h1 per screen, every field bound to a real label, and the
+     autocomplete a password manager reads still on it. The autocomplete
+     values are BEHAVIOUR, not presentation: dropping one is how a visual pass
+     quietly stops a member's password manager offering to fill the form. */
+  for (const [what, screen, opts, heading, wanted] of [
+    ['Login', 'login', {}, 'Training Hub', { email: 'email', password: 'current-password' }],
+    [
+      'Set Password',
+      'auth',
+      { auth: 'needspassword' },
+      'Set your password',
+      { 'new-password': 'new-password', 'confirm-password': 'new-password' },
+    ],
+  ]) {
+    const page = await open(screen, 1280, opts)
+    const r = page.blank
+      ? null
+      : await page.evaluate((wanted) => {
+          const h1 = [...document.querySelectorAll('h1')].map((e) => (e.textContent || '').trim())
+          const orphans = []
+          for (const label of document.querySelectorAll('.login-card label')) {
+            const to = label.getAttribute('for')
+            const target = to ? document.getElementById(to) : null
+            if (!target) orphans.push((label.textContent || '').trim())
+          }
+          const unnamed = []
+          const autocomplete = {}
+          for (const el of document.querySelectorAll('.login-card input')) {
+            const lab = el.id ? document.querySelector(`label[for="${el.id}"]`) : null
+            const named = (lab ? (lab.textContent || '').trim() : '') || el.getAttribute('aria-label') || ''
+            if (!named) unnamed.push(el.id || el.tagName)
+            autocomplete[el.id] = el.getAttribute('autocomplete')
+          }
+          const wrong = Object.entries(wanted).filter(([id, value]) => autocomplete[id] !== value)
+          return { h1, orphans, unnamed, wrong, fields: Object.keys(autocomplete).length }
+        }, wanted)
+    check(
+      `${what} has one h1, every field bound to a label, and its autocomplete intact`,
+      !!r &&
+        r.h1.length === 1 &&
+        r.h1[0] === heading &&
+        r.orphans.length === 0 &&
+        r.unnamed.length === 0 &&
+        r.wrong.length === 0 &&
+        r.fields === Object.keys(wanted).length,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* Keyboard order follows visual order. Driven with real Tab presses rather
+     than read off the DOM, because tabindex, a portal or an absolutely
+     positioned control would all make the two disagree and only the browser
+     knows which. Compared against the order the controls are PAINTED in, top
+     to bottom, rather than against a list written out here. */
+  for (const [what, screen, opts] of [
+    ['Login', 'login', {}],
+    ['Set Password', 'auth', { auth: 'needspassword' }],
+  ]) {
+    const WHAT = `${what} tab order follows visual order`
+    const page = await open(screen, 1280, opts)
+    const visual = page.blank
+      ? []
+      : await page.evaluate(() =>
+          [...document.querySelectorAll('.login-card button, .login-card input')]
+            .filter((el) => !el.disabled)
+            .map((el) => ({ label: (el.textContent || el.id || '').trim().slice(0, 24), top: el.getBoundingClientRect().top }))
+            .sort((a, b) => a.top - b.top)
+            .map((e) => e.label),
+        )
+    const seq = []
+    if (visual.length && (await focused(page.locator('.login-card').first(), WHAT))) {
+      for (let i = 0; i < visual.length; i++) {
+        await page.keyboard.press('Tab')
+        seq.push(
+          await page.evaluate(() => {
+            const el = document.activeElement
+            if (!el || el === document.body) return 'BODY'
+            return (el.textContent || el.id || el.tagName).trim().slice(0, 24)
+          }),
+        )
+      }
+    }
+    check(WHAT, visual.length > 0 && JSON.stringify(seq) === JSON.stringify(visual), JSON.stringify({ visual, seq }))
+    await page.close()
+  }
+
+  /* Focus is RESTORED after every outcome. Pressing any of these disables it,
+     the browser blurs a disabled control, and before this slice the outcome
+     arrived with focus on the document body: a member who clicked rather than
+     pressing Enter had to tab from the top of the page to reach the control
+     again, with an alert on screen telling them to try.
+
+     Driven and measured here rather than reasoned about, which is the lesson
+     #215 left: the first attempt at that repair on Account was a callback
+     that fired before React had re-rendered and did nothing at all. */
+  for (const [key, target] of [
+    ['signin-failed', '.login-card button[type="submit"]'],
+    ['link-failed', '.login-card .btn-ghost'],
+    ['reset-failed', '.login-card .login-link'],
+    ['sp-failed', '.login-card button[type="submit"]'],
+  ]) {
+    const WHAT = `${key} leaves focus on the control that was pressed`
+    const flow = flowOf(key)
+    if (!flow) {
+      check(WHAT, false, 'no such flow')
+      continue
+    }
+    const page = await open(flow.screen ?? 'auth', 1280, { authEntry: flow })
+    const why = page.blank ? 'the surface never painted' : await runAuthFlow(page, flow)
+    if (why) {
+      check(WHAT, false, why)
+      await page.close()
+      continue
+    }
+    // The NAMED control, not merely a live one somewhere on the card. A
+    // refusal that focused the email field would also be "focus somewhere
+    // sensible", and it is not where the member was.
+    const at = await page.evaluate((sel) => {
+      const el = document.activeElement
+      if (!el || el === document.body) return { focused: null, onTarget: false }
+      const want = document.querySelector(sel)
+      return {
+        focused: (el.textContent || el.id || el.tagName).trim().slice(0, 24),
+        onTarget: !!want && want === el,
+        disabled: !!el.disabled,
+      }
+    }, target)
+    check(WHAT, !!at && at.onTarget && !at.disabled, JSON.stringify({ want: target, ...at }))
+    await page.close()
+  }
+
+  /* And never STOLEN, which is the other half of the same claim and the one a
+     check for the first half cannot make. The fields stay live while a call
+     is in flight, so a member can carry on typing; a repair that moves focus
+     when the call settles must leave it where they put it.
+
+     Reached through `writeslow`, a call that settles rather than hanging, so
+     the driver can start it, move focus, and see it finish. `inflight` cannot
+     answer this: nothing ever settles, so nothing could ever be stolen and
+     the check would pass on a screen that steals. */
+  {
+    const WHAT = 'a settled sign in leaves focus where the member moved it'
+    const page = await open('login', 1280, { state: 'writeslow' })
+    let ready = !page.blank
+    if (ready) ready = await typed(page.getByLabel('Email', { exact: true }), LOGIN_EMAIL, WHAT)
+    if (ready) ready = await typed(page.getByLabel('Password', { exact: true }), LOGIN_PASSWORD, WHAT)
+    if (ready) ready = await pressed(page.getByRole('button', { name: 'Sign in', exact: true }), WHAT)
+    // The member carries on: back into the email field while the call runs.
+    if (ready) ready = await focused(page.locator('#email'), WHAT)
+    if (!ready) {
+      await page.close()
+    } else {
+      const moved = await page.evaluate(() => document.activeElement === document.querySelector('#email'))
+      await page.waitForTimeout(2000)
+      const after = await page.evaluate(() => {
+        const el = document.activeElement
+        return {
+          stillThere: !!el && el === document.querySelector('#email'),
+          now: el ? (el.textContent || el.id || el.tagName).trim().slice(0, 24) : null,
+          // The call really finished: the submit is live again.
+          settled: document.querySelector('.login-card button[type="submit"]')?.disabled === false,
+        }
+      })
+      check(WHAT, moved && after.settled && after.stillThere, JSON.stringify({ moved, ...after }))
+      await page.close()
+    }
+  }
+
+  /* The two strings the CLUB chooses, at a length a committee would really
+     produce. Neither may scroll the page nor paint outside the card that
+     contains it. The narrow phone widths are where this fails first: at 360
+     the card's content column is 264px. */
+  for (const state of ['longclub', 'longmotto']) {
+    for (const width of [360, 390, 430]) {
+      for (const theme of ['light', 'dark']) {
+        const page = await open('login', width, { state, theme })
+        const r = page.blank
+          ? null
+          : await page.evaluate(() => {
+              const doc = document.documentElement
+              const card = document.querySelector('.login-card')
+              if (!card) return null
+              const box = card.getBoundingClientRect()
+              const out = []
+              for (const el of card.querySelectorAll('*')) {
+                const b = el.getBoundingClientRect()
+                if (b.width === 0) continue
+                if (b.right > box.right + 1 || b.left < box.left - 1) out.push(el.className || el.tagName)
+                // A text field scrolls its own value by specification; that is
+                // not copy the layout failed to fit. Anything else that
+                // scrolls inside itself is.
+                const owns = el.tagName === 'INPUT'
+                if (!owns && el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) {
+                  out.push('clipped:' + (el.className || el.tagName))
+                }
+              }
+              return { page: doc.scrollWidth - doc.clientWidth, out: [...new Set(out)].slice(0, 4) }
+            })
+        check(
+          `a ${state === 'longclub' ? 'long club name' : 'long motto'} neither scrolls the page nor breaks the card at ${width}, ${theme}`,
+          !!r && r.page === 0 && r.out.length === 0,
+          JSON.stringify(r),
+        )
+        await page.close()
+      }
+    }
+  }
+
+  /* The third string a member can make long is the one they TYPE. A club
+     address with a hyphenated surname in it is one token with no space to
+     break at, which is the hardest case the Account screen has; here it goes
+     into a field, and a field scrolls its own value by specification. That is
+     the claim: it scrolls INSIDE ITSELF and does not widen the card around
+     it. Measured rather than assumed, because a field that lost `min-width:
+     0` or gained an intrinsic width would push the card open instead. */
+  {
+    const LONG_EMAIL = 'wilhelmina.fotheringay-wallington-smythe@ossett-town-juniors-football-club.example'
+    for (const width of [360, 1280]) {
+      const WHAT = `a long typed address stays inside the field at ${width}`
+      const page = await open('login', width)
+      if (page.blank || !(await typed(page.getByLabel('Email', { exact: true }), LONG_EMAIL, WHAT))) {
+        await page.close()
+        continue
+      }
+      const r = await page.evaluate(() => {
+        const doc = document.documentElement
+        const card = document.querySelector('.login-card')
+        const field = document.querySelector('#email')
+        if (!card || !field) return null
+        const box = card.getBoundingClientRect()
+        const b = field.getBoundingClientRect()
+        return {
+          page: doc.scrollWidth - doc.clientWidth,
+          inside: b.right <= box.right + 1 && b.left >= box.left - 1,
+          // The value really is longer than the box, so the case is the one
+          // its name claims rather than a short string that happened to fit.
+          overflows: field.scrollWidth > field.clientWidth + 1,
+        }
+      })
+      check(WHAT, !!r && r.page === 0 && r.inside && r.overflows, JSON.stringify(r))
+      await page.close()
+    }
   }
 }
 

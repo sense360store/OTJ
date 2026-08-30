@@ -30,6 +30,7 @@ import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
 import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
+import { AUTH_FLOWS, GUARD_CASES, runAuthFlow, urlForAuth } from './auth.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -180,7 +181,13 @@ const STATES_FOR = (screen) =>
           // ground. The outcome notes are their own run below, because a
           // sweep of the page never reaches a message nobody produced.
           ['default', 'profileloading', 'longvalues']
-        : ['default']
+        : screen === 'login'
+          ? // The card as it opens, and the two strings the CLUB chooses at a
+            // length that wraps them onto a second and third line, which is
+            // where a run can land on a new ground. Its driven states are
+            // their own run below, for the same reason Account's are.
+            ['default', 'longclub', 'longmotto']
+          : ['default']
 
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
@@ -223,10 +230,6 @@ for (const screen of SCREENS) {
         if (screen === 'home' && w === 390 && caps === 'coach') {
           const more = page.locator('button', { hasText: /^More$/ })
           if (await more.count()) { await more.first().click(); await page.waitForTimeout(300) }
-        }
-        if (screen === 'login') {
-          await page.getByRole('button', { name: /magic link/i }).first().click().catch(() => {})
-          await page.waitForTimeout(300)
         }
         // The header's overflow. Named exactly: every row's trigger reads
         // "More actions for <child>", so a loose name resolves to a row.
@@ -429,6 +432,56 @@ for (const key of ['name-ok', 'name-failed', 'upload-failed', 'email-ok']) {
       const why = await runFlow(page, flow)
       if (why) {
         failed.push(unreached(`account:${key}`, why, where))
+        await page.close()
+        continue
+      }
+      const rows = await page.evaluate('(' + SWEEP + ')()')
+      for (const r of rows) {
+        if (r.ratio >= r.need) continue
+        const k = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+        if (seen.has(k)) continue
+        seen.add(k)
+        ;(r.disabled ? exempt : r.frozen ? frozen : failed).push({ ...r, where })
+      }
+      await page.close()
+    }
+  }
+}
+
+/* ---- VISUAL-02: Login and Set Password ---------------------------------
+   The product outside the shell, on the one ground the theme does not flip:
+   the brand gradient is fixed in both themes and the card sits on it, so a
+   token that reads on the page ground says nothing about how it reads here.
+
+   A sweep of the card never reaches a message nobody produced, and every
+   message on these two screens is the result of an auth call or a refusal.
+   So they are DRIVEN through the same entries shoot.mjs photographs, and an
+   entry that did not reach its own state is a failed run rather than a quiet
+   skip: an unmeasured surface reports zero findings, and zero findings is
+   what a clean run looks like.
+
+   That is not hypothetical here. The previous sweep of this screen pressed a
+   button matched by /magic link/i, no control on it has ever carried those
+   words, the press was wrapped in a catch, and every login run since has
+   measured an untouched form and reported it clean.
+
+   Every entry, rather than a chosen few: there are sixteen, they are the
+   whole state matrix of two screens, and the two gerund labels and the text
+   link's disabled state each paint a run nothing else does. The guard cases
+   come with them, because the splash and the redirect are text runs on this
+   ground too. */
+for (const entry of [...AUTH_FLOWS, ...GUARD_CASES]) {
+  for (const theme of ['light', 'dark']) {
+    for (const w of [390, 1280]) {
+      const where = `auth-${entry.key}/${theme}/${w}w`
+      const page = await context.newPage()
+      await page.setViewportSize({ width: w, height: 1400 })
+      await page.goto(urlForAuth(BASE, entry, { theme }), { waitUntil: 'domcontentloaded' })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForTimeout(300)
+      const why = await runAuthFlow(page, entry)
+      if (why) {
+        failed.push(unreached(`auth:${entry.key}`, why, where))
         await page.close()
         continue
       }

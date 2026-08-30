@@ -99,6 +99,25 @@ const CAPS: Record<CapSet, string[]> = {
 
 const capSet = (params.get('caps') ?? 'coach') as CapSet
 
+/* ---- the auth condition (VISUAL-02, Login and Set Password) -----------
+   Which state the REAL auth guard is given. It is an axis of its own rather
+   than a HarnessState, because the two are orthogonal and a single slot
+   cannot hold two things at once: "this member arrived through an invite and
+   has to set a password" and "the write hangs" are both true of the Set
+   Password screen in flight. `caps` and `state` already sit beside each other
+   for the same reason.
+
+   The DEFAULT is derived from the screen rather than fixed. `screen=login`
+   opens signed out, because a signed in visitor is redirected off /login by
+   the product's own guard and a Login screenshot of a redirect is not a Login
+   screenshot; every other screen opens signed in exactly as it always has, so
+   no existing shot moves. */
+export type HarnessAuth = 'signedin' | 'signedout' | 'needspassword' | 'authloading'
+
+const screenParam = params.get('screen') ?? 'home'
+export const harnessAuth = (params.get('auth') ??
+  (screenParam === 'login' ? 'signedout' : 'signedin')) as HarnessAuth
+
 // A named variant of the data a screen reads, so a state a screenshot claims
 // is REACHED through the real code path rather than drawn. The screens that
 // take no `state` ignore it.
@@ -200,6 +219,16 @@ export type HarnessState =
   // The same, with a photo already uploaded, because the removal is the one
   // write whose control the coach cannot be left on: it unmounts.
   | 'photoslow'
+  /* ---- Login and Set Password (VISUAL-02) -----------------------------
+     The two strings the CLUB chooses on the signed out screens, each at a
+     length a club would really make it. They are separate states rather than
+     one, so a shot named for a long club name is not also carrying a long
+     motto and neither claim rests on the other. The auth calls themselves
+     need no state of their own: `inflight` hangs them, `writefails` refuses
+     them and `writeslow` settles them, which is what those three already mean
+     everywhere else, so which call is driven is decided by the press. */
+  | 'longclub'
+  | 'longmotto'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -639,6 +668,24 @@ const LONG_ACCOUNT_EMAIL =
 const LONG_CLUB_NAME = 'Ossett Town Juniors Community Football and Friendship Association'
 const DEFAULT_CLUB_NAME = 'Ossett Town Juniors'
 
+/* ---- the club identity the signed out screens render -------------------
+   Login and Set Password have no session, so they show the last cached club
+   identity rather than reading the club row. Both strings are the club's own
+   and both can be as long as a committee makes them, which is the case the
+   card has to survive: the name wraps, and the motto is a quoted italic line
+   that used to be assumed short.
+
+   Mirrored by tools/visual/auth.mjs, which is plain JavaScript and cannot
+   import this module. The entries that claim them compare EXACTLY rather than
+   by length, so a stub that stopped applying one fails rather than being
+   photographed under a name claiming it. */
+export const DEFAULT_MOTTO = 'Where football and friendships flourish'
+export const LONG_MOTTO =
+  'Where football and friendships flourish, every child plays every week and nobody stands on the touchline alone'
+
+export const LOGIN_CLUB_NAME = harnessState === 'longclub' ? LONG_CLUB_NAME : DEFAULT_CLUB_NAME
+export const LOGIN_MOTTO = harnessState === 'longmotto' ? LONG_MOTTO : DEFAULT_MOTTO
+
 // The stored path of an uploaded photo, and what the signed URL read answers
 // with for it. An inline SVG rather than a file, so the harness makes no
 // request and no real photograph of anybody exists in this repository.
@@ -688,6 +735,35 @@ export const profileEdits = {
     editListeners.add(l)
     return () => {
       editListeners.delete(l)
+    }
+  },
+}
+
+/* ---- the one auth flag a press can change ------------------------------
+   Set Password's success is not a message: it calls clearNeedsPassword, the
+   guard stops rendering it and the application appears. That hand off is the
+   whole point of the screen, so the harness has to be able to make it happen
+   rather than draw it. A tiny store, for the same reason profileEdits is one:
+   without it the press would report success while the screen stayed exactly
+   where it was, and every proof of the hand off would hold whether or not the
+   press did anything.
+
+   The boolean is the snapshot, so it is stable by value and
+   useSyncExternalStore has nothing to loop on. */
+let needsPasswordNow = harnessAuth === 'needspassword'
+const authListeners = new Set<() => void>()
+
+export const authFlags = {
+  read: (): boolean => needsPasswordNow,
+  clearNeedsPassword() {
+    if (!needsPasswordNow) return
+    needsPasswordNow = false
+    for (const l of authListeners) l()
+  },
+  subscribe(l: () => void): () => void {
+    authListeners.add(l)
+    return () => {
+      authListeners.delete(l)
     }
   },
 }

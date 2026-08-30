@@ -163,6 +163,115 @@ Five things worth recording, none of them presentation alone:
 
 Two capability sets were added to the harness rather than widening existing ones, because `users.manage` adds a sidebar item and a widening moves every shot the set already takes. `planner` is `sessions.create` alone, the variant with the Default team control and no Admin card. `clubadmin` holds `users.manage`, which neither `coach` nor `admin` does: those two are the partial administrative case that is offered Club, Teams and Spond and not Users, and it is the case a capability gated list is most likely to get wrong.
 
+#### Login and Set Password: complete
+
+The two signed out screens now use the shared system. Part 4 names Login at all
+seven widths and carves out its `error` and `info` states for VISUAL-01, which
+checked them to prove the Note primitive and the success treatment; this slice
+adopts both screens in full and covers the rest of the state matrix. The general
+VISUAL-02 requirement is covered too: normal, in flight, error, success, narrow
+phone and both themes.
+
+What the slice adopted: `TextField` for the four raw `.field` blocks, `Button`
+for the three hand written class strings, `Note` for every message, and one
+shared card. `components/AuthCard.tsx` is that card, and it is the substance of
+"Login and Set Password should feel like the same family": the brand ground,
+the crest led identity block and the compact form were the same markup written
+twice, and are one component now. It is also the sole importer of
+`routes/Login.css`, which keeps its name because both routes and the Design
+Read refer to it there; the Design Read's Part 1 census, which lists that
+stylesheet under the two routes, is a snapshot of `434f67f` and is left as one
+rather than amended. `routes/Login.tsx`, `routes/SetPassword.tsx`
+and `components/AuthCard.tsx` join the design system invariant's ownership
+list, so a size cannot come back.
+
+It is deliberately NOT the shared `Card`. Part 3 names the brand gradient as
+the product's one signature surface and asks for it to stay rare and intact;
+`Card` contains a section inside the shell, on the page ground, and turning the
+login shell into one would take that away. `.login-link` stays too, for a
+stated reason rather than by omission: it is a text link beneath two full width
+buttons, no shared primitive owns that shape, and a third button would read as
+a third way in. It carries the shared focus ring from the element level rule
+and its own 44px minimum.
+
+What it deliberately did not do: no auth call, option, refusal or confirmation
+moved. `signInWithPassword`, `signInWithOtp` with `shouldCreateUser: false`,
+`resetPasswordForEmail`, `updateUser({ password })`, both redirect targets, the
+invite only policy, the mismatch refusal, the four messages and the rule that
+`clearNeedsPassword` runs only after a successful update are all unchanged and
+are now pinned in `src/routes/login.screens.test.tsx`, which is the first test
+in this repository to reference either screen or the auth guard at all.
+
+Four things worth recording, none of them presentation alone:
+
+- **The busy label named the wrong control.** One `busy` flag drew all three
+  controls, so pressing Email me a link left the SIGN IN button reading
+  "Signing in…" while the control that was actually working said nothing.
+  `pending` names which call is running, so each control speaks for itself. All
+  three are still disabled while any one of them is in flight, which is the
+  behaviour rather than the wording.
+- **Every outcome dropped focus onto the document body.** Pressing any of the
+  four controls across the two screens disables it, and a browser blurs a
+  disabled control, so a member who clicked rather than pressing Enter had to
+  tab from the top of the page to reach it again, with an alert on screen
+  telling them to try. Reproduced in a browser BEFORE the product was changed,
+  which is the lesson #215 left, and fixed with the same
+  `useFocusRestore(settled, ref)` rule Account discovered. That hook moved to
+  `src/hooks/useFocusRestore.ts`; Account's call sites and semantics are
+  unchanged, and a new invariant fails the build on a second implementation,
+  because the reasoning is subtle in two places at once and a second copy is a
+  second chance to get one of them wrong.
+- **The contrast sweep had never measured this screen.** `contrast.mjs` opened
+  Login and clicked a button matched by `/magic link/i`. No control on that
+  screen has ever carried those words, the press was wrapped in a `.catch()`,
+  and every login sweep since waited thirty seconds, measured an untouched form
+  and reported it clean. Both Notes were unmeasured the whole time.
+- **`checks.mjs` could not see the screen either.** Its paint wait was
+  `'.content > *, .login'`, and `.login` matches nothing: the card has always
+  been `.login-bg` wrapping `.login-card`. Nothing caught it because no check
+  had opened Login until now, which is what a selector nobody exercises looks
+  like.
+
+**Two states Part 4 names for Login are not states, and the slice records that
+rather than inventing them.**
+
+- **Expired link.** An expired or already used invite, magic link or recovery
+  link redirects to a bare origin carrying an error fragment and no session.
+  The rule in `useAuth` that recognises an arrival to set a password matches
+  `type=invite` or `type=recovery` and nothing else, so it does not fire; the
+  Supabase client recognises the fragment, creates no session, emits no event
+  and puts the error only in its own initialize promise, which this product
+  never reads; `RequireAuth` finds no user and redirects to `/login`, which
+  strips the fragment on the way. The member reads the ordinary sign in screen
+  with nothing said about the link that failed. The guard's ordering makes that
+  the answer either way: a session is checked before the flag, so even a
+  fragment that did carry a type would end at the same screen. It is asymmetric
+  in one further way worth knowing: a device that already holds a session is
+  let straight into the application by the same dead link. Both arrivals are
+  driven in the harness and the rule is proved against the real module. Giving
+  either of them a message is a product decision and a change to a gated file,
+  so it is deferred rather than slipped into a visual slice.
+- **Permission limited.** Neither screen reads a role, a profile or a
+  capability, and neither can be wrapped by `RequireCap`: `/login` is a sibling
+  of the guarded tree and Set Password is not a route at all, since
+  `RequireAuth` returns it in place of the `Outlet`. There is no
+  permission limited variant to adopt. The nearest real thing is `LoginGate`
+  turning a signed in visitor away, which is a guard answer rather than a
+  limited rendering, and it is covered as a guard case.
+
+**The harness now mounts the real `App` for both surfaces**, so `LoginGate` and
+`RequireAuth` are the ones that ship rather than a fixture standing in for
+them, and a route witness reads the real router. `tools/visual/auth.mjs` owns
+the presses for all three tools, which is what `dialogs.mjs` and `account.mjs`
+exist for and what the `/magic link/i` defect shows the cost of skipping.
+
+One deliberate deferral. `Splash`, the guard's loading branch, is bare centred
+grey text, which is what 2.14 replaces. It lives in `App.tsx`, is shared by both
+guards and the public share route's Suspense fallback, and that file is review
+gated as the auth guard; changing it here would put a presentational edit into
+the gated file and move a surface this slice does not own. Its behaviour is
+proved as it stands.
+
 ### VISUAL-03 — Feature-area waves
 
 **Outcome.** Feature areas whose product behaviour is still evolving are redesigned with, not immediately before, their functional work.
