@@ -2885,14 +2885,32 @@ const focusReturned = async (page, d) => {
      than read off the DOM, because tabindex, a portal or an absolutely
      positioned control would all make the two disagree and only the browser
      knows which. Compared against the order the controls are PAINTED in, top
-     to bottom, rather than against a list written out here. */
-  for (const [what, screen, opts] of [
-    ['Login', 'login', {}],
-    ['Set Password', 'auth', { auth: 'needspassword' }],
+     to bottom, rather than against a list written out here.
+
+     Set Password is armed first, for the reason its focus ring check is: its
+     submit is inert until both fields are typed, and a disabled control is
+     out of the tab order entirely, so the unarmed screen would prove the
+     order of two fields and say nothing about the control that ends the flow.
+     Typing leaves focus in the last field, so it is dropped before the walk
+     starts and every Tab is counted from the same place. */
+  for (const [what, screen, opts, arm] of [
+    ['Login', 'login', {}, null],
+    ['Set Password', 'auth', { auth: 'needspassword' }, ['New password', 'Confirm password']],
   ]) {
     const WHAT = `${what} tab order follows visual order`
     const page = await open(screen, 1280, opts)
-    const visual = page.blank
+    let ready = !page.blank
+    for (const field of arm ?? []) {
+      if (!ready) break
+      ready = await typed(page.getByLabel(field, { exact: true }), 'a-long-enough-passphrase', WHAT)
+    }
+    if (ready) {
+      await page.evaluate(() => {
+        const el = document.activeElement
+        if (el && el !== document.body && typeof el.blur === 'function') el.blur()
+      })
+    }
+    const visual = !ready
       ? []
       : await page.evaluate(() =>
           [...document.querySelectorAll('.login-card button, .login-card input')]
@@ -2902,19 +2920,23 @@ const focusReturned = async (page, d) => {
             .map((e) => e.label),
         )
     const seq = []
-    if (visual.length && (await focused(page.locator('.login-card').first(), WHAT))) {
-      for (let i = 0; i < visual.length; i++) {
-        await page.keyboard.press('Tab')
-        seq.push(
-          await page.evaluate(() => {
-            const el = document.activeElement
-            if (!el || el === document.body) return 'BODY'
-            return (el.textContent || el.id || el.tagName).trim().slice(0, 24)
-          }),
-        )
-      }
+    for (let i = 0; i < visual.length; i++) {
+      await page.keyboard.press('Tab')
+      seq.push(
+        await page.evaluate(() => {
+          const el = document.activeElement
+          if (!el || el === document.body) return 'BODY'
+          return (el.textContent || el.id || el.tagName).trim().slice(0, 24)
+        }),
+      )
     }
-    check(WHAT, visual.length > 0 && JSON.stringify(seq) === JSON.stringify(visual), JSON.stringify({ visual, seq }))
+    // The count is checked as well as the order: a screen that lost a control
+    // would otherwise agree with itself on a shorter list.
+    check(
+      WHAT,
+      visual.length === (arm ? 3 : 5) && JSON.stringify(seq) === JSON.stringify(visual),
+      JSON.stringify({ visual, seq }),
+    )
     await page.close()
   }
 
