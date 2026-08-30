@@ -11,7 +11,7 @@
 // belong to a visual pass: an outcome is a Note with an icon and a live
 // region rather than coloured text, and focus is placed deliberately where a
 // successful write removes or disables the control that had it.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -76,7 +76,22 @@ function PhotoRow() {
   // fall to the document body.
   const pickRef = useRef<HTMLButtonElement>(null)
   const [outcome, setOutcome] = useState<Outcome>(null)
+  // A request rather than state, so placing the focus renders nothing.
+  const wantsFocus = useRef(false)
   const busy = upload.isPending || remove.isPending
+
+  /* Focus is REQUESTED in the success callback and PLACED here, on the render
+     where the button is enabled again. It cannot be placed in the callback
+     itself: TanStack runs a per-call onSuccess inside its notify batch before
+     it notifies its listeners, so React has not re-rendered yet and the
+     button still carries the `disabled` the in-flight render gave it.
+     Focusing a disabled control is a no-op, so the repair silently did
+     nothing and focus landed on the document body anyway. Codex. */
+  useEffect(() => {
+    if (busy || !wantsFocus.current) return
+    wantsFocus.current = false
+    pickRef.current?.focus()
+  }, [busy])
 
   const pick = (file: File | null) => {
     if (!file) return
@@ -120,7 +135,7 @@ function PhotoRow() {
                 remove.mutate(undefined, {
                   onSuccess: () => {
                     setOutcome({ kind: 'ok', text: 'Photo removed. Your initials show instead.' })
-                    pickRef.current?.focus()
+                    wantsFocus.current = true
                   },
                   onError: (e) => setOutcome({ kind: 'error', text: e.message }),
                 })

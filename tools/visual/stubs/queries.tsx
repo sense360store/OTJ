@@ -354,6 +354,21 @@ type WriteCallbacks = { onSuccess?: () => void; onError?: (e: Error) => void }
 const WRITE_HANGS = state === 'inflight' || state === 'photoinflight'
 const WRITE_FAILS = state === 'writefails' || state === 'photofails'
 
+/* THE TIMING IS PART OF THE STUB, and the first version got it wrong in a way
+   that made a check pass on a repair that did not work in production. Codex.
+
+   TanStack invokes a per-call callback inside MutationObserver's notify batch
+   BEFORE it notifies its listeners, so when `onSuccess` runs React has not
+   re-rendered and the DOM still shows the in-flight paint: a control the
+   pending render disabled is still disabled, and focusing it is a no-op. The
+   first version called `onSuccess` with `isPending` never set at all, so
+   every control was enabled and the focus check could not see it.
+
+   So the success and refusal paths go through the pending render first. The
+   callback fires while the control is still disabled, exactly as it does in
+   the product, and the phase clears afterwards. A timeout rather than a
+   microtask, because what has to have happened first is React's COMMIT, not
+   merely the end of the current task's microtask queue. */
 function useCallbackWrite<V>(message: string, apply?: (vars: V) => void) {
   const [pending, setPending] = useState(false)
   return {
@@ -366,12 +381,16 @@ function useCallbackWrite<V>(message: string, apply?: (vars: V) => void) {
         setPending(true)
         return
       }
-      if (WRITE_FAILS) {
-        opts.onError?.(new Error(message))
-        return
-      }
-      apply?.(vars)
-      opts.onSuccess?.()
+      setPending(true)
+      setTimeout(() => {
+        if (WRITE_FAILS) {
+          opts.onError?.(new Error(message))
+        } else {
+          apply?.(vars)
+          opts.onSuccess?.()
+        }
+        setPending(false)
+      }, 0)
     },
   }
 }
