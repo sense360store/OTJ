@@ -27,7 +27,28 @@
    a control that the handler then disables blurs it. A second copy of this
    reasoning is exactly what the visual programme exists to remove, so
    src/lib/designSystem.invariant.test.ts fails the build on a file under src/
-   that writes its own. */
+   that writes its own.
+
+   WHAT THIS TRADES, stated rather than left for somebody to discover. On the
+   two signed out screens the outcome message and the focus move land
+   together: one render inserts the Note and re-enables the control, and this
+   effect then focuses it. A screen reader interrupts its speech queue on a
+   focus change, so the announcement of a message inserted in that same commit
+   can be cut short or dropped, which is a cost the version that left focus on
+   the body did not have.
+
+   It is kept, and NOT quietly: the defect it fixes is measured (a member who
+   clicked rather than pressing Enter tabs from the top of the page to reach
+   the control again, with an alert on screen telling them to try), and the
+   cost is not, because this project's harness drives a browser and no screen
+   reader. #215 established that focus behaviour here is not to be changed on
+   reasoning alone, and choosing a different target on reasoning alone is the
+   same mistake in the other direction. The alternative worth weighing when
+   somebody can measure it is the error summary pattern: give the Note
+   tabIndex={-1} and move focus to the message rather than to the control, so
+   the focus event carries the announcement instead of interrupting it. That
+   is a decision about where focus goes after an auth outcome, which is more
+   than a visual slice should settle unmeasured. */
 import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 

@@ -131,8 +131,18 @@ export function Login() {
           what makes a refusal replacing a confirmation a fresh insertion into
           a live region rather than a text swap inside one that has already
           been announced: React reconciles children by position, so these are
-          different elements without needing a key to say so. Every action
-          clears both before it starts, so at most one is ever up. */}
+          different elements without needing a key to say so.
+
+          BOTH CAN BE UP AT ONCE, and the slots are two because of it rather
+          than in spite of it. A call clears both before it starts, but the
+          two client side refusals below return BEFORE that, so pressing Email
+          me a link with an address and then Forgot password? without one
+          leaves the confirmation of the first standing above the refusal of
+          the second. That is the behaviour this slice was asked to freeze and
+          it is unchanged; it is written down here because the first version
+          of this comment claimed the opposite, and a comment claiming an
+          invariant the code does not hold is what stops the next reader
+          fixing it. */}
       {error && (
         <Note tone="danger" role="alert" className="login-note-slot">
           {error}

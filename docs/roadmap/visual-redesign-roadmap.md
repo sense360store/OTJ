@@ -282,12 +282,48 @@ them, and a route witness reads the real router. `tools/visual/auth.mjs` owns
 the presses for all three tools, which is what `dialogs.mjs` and `account.mjs`
 exist for and what the `/magic link/i` defect shows the cost of skipping.
 
-One deliberate deferral. `Splash`, the guard's loading branch, is bare centred
-grey text, which is what 2.14 replaces. It lives in `App.tsx`, is shared by both
-guards and the public share route's Suspense fallback, and that file is review
-gated as the auth guard; changing it here would put a presentational edit into
-the gated file and move a surface this slice does not own. Its behaviour is
-proved as it stands.
+**What is deferred, and why each one is.** All of these were found by an
+adversarial pass over the slice; none is fixed here, and each says what would
+have to be true to fix it.
+
+- **`Splash`, the guard's loading branch**, is bare centred grey text, which is
+  what 2.14 replaces. It lives in `App.tsx`, is shared by both guards and the
+  public share route's Suspense fallback, and that file is review gated as the
+  auth guard; changing it here would put a presentational edit into the gated
+  file and move a surface this slice does not own. Its behaviour is proved as
+  it stands, at both addresses.
+- **The focus restore can interrupt the message it accompanies.** The outcome
+  message and the focus move land in the same commit, and a screen reader
+  interrupts its speech queue on a focus change. The defect the restore fixes
+  is measured; this cost is not, because the harness drives a browser and no
+  screen reader, and #215 established that focus here is not changed on
+  reasoning alone. The reasoning and the alternative worth measuring (the error
+  summary pattern: focus the Note rather than the control) are written down in
+  `src/hooks/useFocusRestore.ts`.
+- **The in flight state is visual only.** A label change on a disabled,
+  just blurred button fires no live region event, so "Sending a link…" is
+  announced to nobody and the whole request window is silent. The slice makes
+  the label name the right control, which is a visual repair; making it
+  programmatically determinable needs a status live region, which is new
+  content on a screen whose copy is frozen, and it cannot be verified here
+  either.
+- **Two client side refusals leave a stale confirmation standing.** Pressing
+  Email me a link with an address and then Forgot password? without one shows
+  the refusal above the earlier confirmation. It is the frozen behaviour and is
+  unchanged; what this slice fixed is a comment in `Login.tsx` that claimed the
+  opposite, which is the thing that would have stopped somebody fixing it.
+- **A repeat press producing the identical message announces nothing**, because
+  React bails out and no DOM mutation means no live region event. Pre-existing
+  and unchanged.
+- **Set Password's only submit is disabled on open**, so it is out of the tab
+  order, Enter is inert, and nothing states that both fields are needed. The
+  brief freezes the disabled semantics; the fix that keeps them
+  (`aria-disabled` plus a field hint) is new content and new interaction.
+- **The two field level refusals are not bound to the field they are about.**
+  `TextField` supports it, but passing `error` would render the message a
+  second time under the input beside the Note that already carries it, and
+  binding without duplicating needs an `id` on the shared `Note`, which is
+  VISUAL-01's primitive rather than this slice's.
 
 ### VISUAL-03 — Feature-area waves
 
