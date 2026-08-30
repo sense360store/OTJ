@@ -3691,6 +3691,39 @@ const focusReturned = async (page, d) => {
     await page.close()
   }
 
+  /* A form dialog on a phone is a bottom sheet, so its actions stay above the
+     keyboard rather than under it, and the longest body this screen has (the
+     public repository caution above two fields) still leaves them on screen.
+     Measured rather than assumed: the sheet's own max-height is what keeps
+     the footer inside the viewport, and a body that grew past it would push
+     the footer out with nothing else saying so. */
+  for (const [what, opener] of [
+    ['New feedback', 'New feedback'],
+    ['Promote to GitHub issue', `Promote ${ROWS.own} to a GitHub issue`],
+  ]) {
+    const WHAT = `the ${what} dialog is a bottom sheet at 390 with its actions on screen`
+    const page = await open('feedback', 390)
+    if (!page.blank && (await pressed(page.getByRole('button', { name: opener, exact: true }), WHAT))) {
+      await page.waitForTimeout(300)
+      const r = await page.evaluate(() => {
+        const modal = document.querySelector('.modal')
+        const foot = document.querySelector('.modal-foot')
+        if (!modal || !foot) return null
+        const m = modal.getBoundingClientRect()
+        const f = foot.getBoundingClientRect()
+        return {
+          // Anchored to the bottom of the viewport, which is what the sheet
+          // treatment does at and below 900.
+          bottom: Math.round(window.innerHeight - m.bottom),
+          footerVisible: f.bottom <= window.innerHeight + 1 && f.top >= 0,
+          radius: getComputedStyle(modal).borderBottomLeftRadius,
+        }
+      })
+      check(WHAT, !!r && r.bottom === 0 && r.footerVisible && r.radius === '0px', JSON.stringify(r))
+    }
+    await page.close()
+  }
+
   /* The row's status control keeps a coach's own choice while the write is in
      flight rather than snapping back to the stored value, which is what a
      controlled select does if the screen forgets to hold the pending value.

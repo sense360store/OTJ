@@ -263,7 +263,7 @@ const SHOTS = [
      cluster in the narrowest card the product designs for. The other driven
      states change a label or a disabled flag and lay out identically to what
      is already shot at 390. */
-  ...['expanded-thread', 'comment-moderation', 'role-member', 'status-pending'].map((key) => ({
+  ...['expanded-thread', 'comment-moderation', 'role-member', 'status-pending', 'promote-open'].map((key) => ({
     feedbackEntry: feedbackEntry(key),
     w: 360,
   })),
