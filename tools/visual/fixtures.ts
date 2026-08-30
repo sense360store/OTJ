@@ -683,7 +683,19 @@ export const DEFAULT_MOTTO = 'Where football and friendships flourish'
 export const LONG_MOTTO =
   'Where football and friendships flourish, every child plays every week and nobody stands on the touchline alone'
 
-export const LOGIN_CLUB_NAME = harnessState === 'longclub' ? LONG_CLUB_NAME : DEFAULT_CLUB_NAME
+/* The signed out screens get their OWN long club name rather than sharing the
+   Account screen's, and it is a single unbroken token on purpose. Account's
+   is a long phrase with spaces to break at, which wraps under any rule at
+   all; the case this card actually fails on is a name with no break
+   opportunity, which sets the grid item's content based minimum and pushes
+   the card past a 360px viewport. That is what `.login-identity`'s
+   `overflow-wrap: anywhere` is for, and a fixture that never produced the
+   case would leave that rule guarded by nothing. Account's own `longvalues`
+   makes the same point about the email: it is the hardest of its four because
+   it is one token with no space in it. */
+const LONG_LOGIN_CLUB_NAME = 'Ossettownjuniorscommunityfootballandfriendshipassociation'
+
+export const LOGIN_CLUB_NAME = harnessState === 'longclub' ? LONG_LOGIN_CLUB_NAME : DEFAULT_CLUB_NAME
 export const LOGIN_MOTTO = harnessState === 'longmotto' ? LONG_MOTTO : DEFAULT_MOTTO
 
 // The stored path of an uploaded photo, and what the signed URL read answers

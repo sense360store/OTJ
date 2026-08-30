@@ -34,7 +34,9 @@ export const LOGIN_PASSWORD = 'a-long-enough-passphrase'
 export const BRAND = {
   club: 'Ossett Town Juniors',
   motto: 'Where football and friendships flourish',
-  longClub: 'Ossett Town Juniors Community Football and Friendship Association',
+  // A single unbroken token, which is the case the card fails on without
+  // .login-identity's overflow-wrap. See the note in tools/visual/fixtures.ts.
+  longClub: 'Ossettownjuniorscommunityfootballandfriendshipassociation',
   longMotto:
     'Where football and friendships flourish, every child plays every week and nobody stands on the touchline alone',
 }

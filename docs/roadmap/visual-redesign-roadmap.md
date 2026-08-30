@@ -282,6 +282,30 @@ them, and a route witness reads the real router. `tools/visual/auth.mjs` owns
 the presses for all three tools, which is what `dialogs.mjs` and `account.mjs`
 exist for and what the `/magic link/i` defect shows the cost of skipping.
 
+Two claims the slice made about its own work were wrong and are corrected,
+because a comment that names the wrong mechanism is how the right one gets
+deleted:
+
+- **`.login-identity` carried a `min-width: 0` that does nothing**, under a
+  comment calling it the fix and `overflow-wrap: anywhere` the net. The
+  automatic minimum size applies on a flex container's MAIN axis and
+  `.login-head` is a column, so that declaration already computed to zero. The
+  over wide card comes from one level up: `.login-card` is a GRID item, a grid
+  item's `min-width: auto` is content based, and a club name with no space to
+  break at sets it. `overflow-wrap` is the whole of the fix, and it is now
+  guarded rather than merely present: the long club name fixture is a single
+  unbroken token, which is the case it exists for, and removing the rule takes
+  the card from 312px to 400px inside a 360px phone with 78px of page scroll.
+  The spaced phrase the fixture used before wraps under any rule at all.
+- **The ownership list pins font sizes, and the entry claimed it pinned a
+  margin.** The rule that reads that list scans for `fontSize`; the off scale
+  step rule reads `src/styles.css` alone and sees neither a route stylesheet
+  nor a piece of JSX. A second rule now covers the four files this wave owns,
+  for inline spacing in JSX and for literal steps in `Login.css`. It is a
+  separate, narrower list on purpose: widened to the files earlier waves own,
+  it fails on six of them, and retiring those is their work rather than a
+  reason to weaken the rule.
+
 **What is deferred, and why each one is.** All of these were found by an
 adversarial pass over the slice; none is fixed here, and each says what would
 have to be true to fix it.

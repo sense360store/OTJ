@@ -31,13 +31,21 @@
   margin-bottom: var(--space-20);
 }
 /* The club name and the motto are the two strings the CLUB chooses, and a
-   committee can make either of them long. A flex item defaults to a minimum
-   size of its content, so without this the identity block refuses to shrink
-   and pushes the card wider than the 360px phone it is being read on. The
-   break rule is the net under the wrap: a name with no space in it to break
-   at breaks anyway rather than running out through the border. */
+   committee can make either of them long. `overflow-wrap: anywhere` is the
+   whole of what keeps them inside the card, and it is load bearing rather
+   than a net: `.login-card` is a GRID item of `.login-bg`, a grid item's
+   `min-width: auto` is content based, and a name with no space to break at
+   therefore sets the card's minimum width and pushes it past the viewport.
+   Measured without this rule: 399px of card inside a 360px phone, and the
+   document scrolls.
+
+   It does NOT need a `min-width: 0` beside it, which an earlier version of
+   this rule carried on the wrong reasoning. The automatic minimum size
+   applies on a flex container's MAIN axis, and `.login-head` is a column, so
+   `min-width: auto` on this item already computes to zero. A declaration that
+   does nothing, under a comment saying it is what works, is how the
+   declaration that does work gets deleted by the next person tidying up. */
 .login-identity {
-  min-width: 0;
   overflow-wrap: anywhere;
 }
 .login-head .crest,
