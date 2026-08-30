@@ -202,6 +202,23 @@ invite only policy, the mismatch refusal, the four messages and the rule that
 are now pinned in `src/routes/login.screens.test.tsx`, which is the first test
 in this repository to reference either screen or the auth guard at all.
 
+**Every user visible content change, in full**, because "no behaviour moved"
+is a claim about calls and a reader will reasonably ask what a member sees
+differently. There are four, and no message string is among them:
+
+- Set Password shows the club motto. It showed the club name alone; both
+  screens wear one card now, and the motto is half of what Part 3 names as the
+  club identity block.
+- Email me a link reads `Sending a link…` while its own call is in flight, and
+  Forgot password? reads `Sending a reset link…`. Both are new strings, and
+  both are the second half of the first repair below: a control that is
+  working now says so.
+- Sign in reads `Signing in…` only for its own call. It used to read it
+  whichever of the three was pressed.
+- The closing sentence under the form loses the browser's default bottom
+  margin, which the inline style it replaced left in place, so the card's
+  bottom padding matches its top.
+
 Four things worth recording, none of them presentation alone:
 
 - **The busy label named the wrong control.** One `busy` flag drew all three

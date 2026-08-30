@@ -213,11 +213,22 @@ for (const screen of SCREENS) {
     for (const w of [390, 1280]) {
       for (const caps of CAPS_FOR(screen)) {
        for (const state of STATES_FOR(screen)) {
-        // The states only vary what a coach sees; a member with no write and
-        // a member with no access render the same thing in every one of them.
-        // Account's fullest variant is the administrative one rather than
-        // `coach`, so the state runs belong to that set there.
-        const stateCaps = screen === 'account' ? 'clubadmin' : 'coach'
+        /* The states only vary what a coach sees; a member with no write and
+           a member with no access render the same thing in every one of them.
+           So a state runs once, against the screen's FULLEST capability
+           variant, which is the first one CAPS_FOR lists.
+
+           DERIVED from that list rather than written out, because a screen
+           whose variants do not include the name written here runs none of
+           its states at all and says nothing about it. That is not
+           hypothetical: `login` renders outside the shell and has no
+           capability variant, so CAPS_FOR gives it `['na']`, and against a
+           hardcoded 'coach' both of its new states were skipped on every
+           theme and every width while the run reported clean. Reading the
+           first entry reproduces every previous choice exactly (coach for the
+           register and the feed, clubadmin for the account) and cannot go out
+           of step with the list again. */
+        const stateCaps = CAPS_FOR(screen)[0]
         if (state !== 'default' && caps !== stateCaps) continue
         const page = await context.newPage()
         await page.setViewportSize({ width: w, height: 1400 })

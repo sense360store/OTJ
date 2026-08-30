@@ -16,7 +16,7 @@ import { chromium } from 'playwright-core'
 import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
 import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
-import { AUTH_FLOWS, GUARD_CASES, LOGIN_EMAIL, LOGIN_PASSWORD, queryForAuth, runAuthFlow, urlForAuth } from './auth.mjs'
+import { AUTH_FLOWS, BRAND, GUARD_CASES, LOGIN_EMAIL, LOGIN_PASSWORD, brandRendered, queryForAuth, runAuthFlow, urlForAuth } from './auth.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -2891,8 +2891,15 @@ const focusReturned = async (page, d) => {
      submit is inert until both fields are typed, and a disabled control is
      out of the tab order entirely, so the unarmed screen would prove the
      order of two fields and say nothing about the control that ends the flow.
-     Typing leaves focus in the last field, so it is dropped before the walk
-     starts and every Tab is counted from the same place. */
+
+     Typing leaves focus in the last field, so the walk has to be started from
+     the top, and blurring is NOT how: calling blur() clears
+     document.activeElement but leaves the browser's sequential focus
+     NAVIGATION STARTING POINT on the element it blurred, so the next Tab
+     carries on from there. Measured: the walk began at Save password, went
+     out of the document, and wrapped round to the first field. Clicking the
+     identity block moves the starting point to the top of the card, which is
+     what a person tabbing from the beginning of the page actually does. */
   for (const [what, screen, opts, arm] of [
     ['Login', 'login', {}, null],
     ['Set Password', 'auth', { auth: 'needspassword' }, ['New password', 'Confirm password']],
@@ -2904,12 +2911,10 @@ const focusReturned = async (page, d) => {
       if (!ready) break
       ready = await typed(page.getByLabel(field, { exact: true }), 'a-long-enough-passphrase', WHAT)
     }
-    if (ready) {
-      await page.evaluate(() => {
-        const el = document.activeElement
-        if (el && el !== document.body && typeof el.blur === 'function') el.blur()
-      })
-    }
+    // The identity block: the first thing in the card and not a control, so
+    // clicking it takes focus off whatever the arming left it on AND moves
+    // the sequential navigation starting point above every control.
+    if (ready) ready = await pressed(page.locator('.login-head'), WHAT)
     const visual = !ready
       ? []
       : await page.evaluate(() =>
@@ -3026,10 +3031,21 @@ const focusReturned = async (page, d) => {
      produce. Neither may scroll the page nor paint outside the card that
      contains it. The narrow phone widths are where this fails first: at 360
      the card's content column is 264px. */
-  for (const state of ['longclub', 'longmotto']) {
+  for (const [state, want] of [
+    ['longclub', { name: BRAND.longClub, motto: BRAND.motto }],
+    ['longmotto', { name: BRAND.club, motto: BRAND.longMotto }],
+  ]) {
     for (const width of [360, 390, 430]) {
       for (const theme of ['light', 'dark']) {
         const page = await open('login', width, { state, theme })
+        /* The state is proved before the layout is measured, and it is the
+           half that was missing: "nothing painted outside the card" is true
+           of the ORDINARY card too, so a fixture that stopped applying the
+           long string would have passed all twelve of these while measuring
+           a short one. Compared exactly against the fixture, and the entry
+           names the other string as still ordinary, so a state that quietly
+           made both long could not pass under either name. */
+        const rendered = page.blank ? false : await brandRendered(page, want)
         const r = page.blank
           ? null
           : await page.evaluate(() => {
@@ -3053,9 +3069,9 @@ const focusReturned = async (page, d) => {
               return { page: doc.scrollWidth - doc.clientWidth, out: [...new Set(out)].slice(0, 4) }
             })
         check(
-          `a ${state === 'longclub' ? 'long club name' : 'long motto'} neither scrolls the page nor breaks the card at ${width}, ${theme}`,
-          !!r && r.page === 0 && r.out.length === 0,
-          JSON.stringify(r),
+          `a ${state === 'longclub' ? 'long club name' : 'long motto'} really renders and neither scrolls the page nor breaks the card at ${width}, ${theme}`,
+          rendered && !!r && r.page === 0 && r.out.length === 0,
+          JSON.stringify({ rendered, ...(r ?? {}) }),
         )
         await page.close()
       }

@@ -39,20 +39,34 @@ export const BRAND = {
     'Where football and friendships flourish, every child plays every week and nobody stands on the touchline alone',
 }
 
-/* What GoTrue puts in the URL fragment when an invite, a magic link or a
-   recovery link has expired or has already been used. It carries no
-   `type=invite` and no `type=recovery`, which is the whole of why this
-   product has no expired link screen: the rule in src/hooks/useAuth.tsx that
-   decides "this arrival is here to set a password" matches on that parameter
-   and nothing else, and no session is created either, so the guard sees an
-   anonymous visitor and sends them to Login.
+/* WHAT THE TWO EXPIRED LINK CASES CAN AND CANNOT SHOW, because the difference
+   is easy to lose and a case that claims the wrong half is the defect this
+   whole file exists to prevent.
 
-   The half of that a browser can show is what the member ends up looking at,
-   which is what the entry below drives. The RULE is proved against the real
-   module in src/routes/login.screens.test.tsx, because useAuth is stubbed
-   here and a harness cannot test the thing it replaced. */
-export const EXPIRED_LINK_HASH =
-  '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'
+   An expired or already used invite, magic link or recovery link redirects to
+   a BARE ORIGIN carrying an error fragment. Two facts follow, and they are
+   proved in two different places:
+
+   1. The fragment leaves the member ANONYMOUS. GoTrue writes no session for
+      it, and the rule in src/hooks/useAuth.tsx that decides "this arrival is
+      here to set a password" matches `type=invite` or `type=recovery` and
+      nothing else, which an error fragment carries neither of. That is a fact
+      about a module this harness REPLACES, so it cannot be shown here at all;
+      it is proved against the real module in
+      src/routes/login.screens.test.tsx.
+   2. Given that state, at that address, this is the screen. THAT is what the
+      cases below drive, and it is not covered by any other case: `/` is
+      where these emails actually land (both flows pass
+      window.location.origin, and invite-user passes APP_ORIGIN), so
+      RequireAuth is the guard that meets the arrival and the redirect to
+      /login is part of what is being shown rather than its setup.
+
+   The fragment itself is deliberately NOT put on the harness URL. It would
+   reach nothing: the harness routes in memory from the `at` key and the one
+   production reader of window.location.hash is the stubbed module. A URL that
+   carried it would imply the case was driving something it was not, and the
+   same case would pass unchanged with a WORKING invite fragment in its place,
+   which is the opposite arrival. */
 
 const pause = (page) => page.waitForTimeout(200)
 
@@ -512,17 +526,16 @@ export const GUARD_CASES = [
     // is at `/`, RequireAuth is the guard that meets it, and the redirect to
     // /login is part of what this case reproduces rather than its setup.
     at: 'home',
-    hash: EXPIRED_LINK_HASH,
-    /* THE HONEST FINDING, driven rather than asserted. An expired invite,
-       magic link or recovery link lands with an error fragment and no
-       session, so the member arrives anonymous and reads the ordinary login
-       screen with NOTHING said about the link that failed. There is no
-       expired link presentation in this product to photograph; this is what
-       is actually there, and the shot is filed under a name that says so.
+    /* THE HONEST FINDING, driven rather than asserted. There is no expired
+       link presentation in this product to photograph: the member reads the
+       ordinary login screen with NOTHING said about the link that failed, and
+       the redirect strips the fragment on the way, so even the URL evidence
+       is gone. This is what is actually there, and the shot is filed under a
+       name that says so.
 
        A visual slice is not the place to invent one. What it can do is stop
        the absence being a surprise, which is what naming it here does. */
-    note: 'an expired invite or recovery link: redirected to the ordinary login screen, which says nothing about it',
+    note: 'the state an expired invite or recovery link leaves, at the address it lands on: redirected to the ordinary login screen, which says nothing about it',
     proof: async (page) =>
       (await noNote(page)) &&
       page.evaluate(
@@ -539,7 +552,6 @@ export const GUARD_CASES = [
     key: 'expired-link-signedin',
     auth: 'signedin',
     at: 'home',
-    hash: EXPIRED_LINK_HASH,
     /* The other half of the same arrival, and the reason the absence above is
        not simply a missing screen. The client writes no session for an error
        fragment, but it does not clear one either, so a member whose device
@@ -580,10 +592,10 @@ export function queryForAuth(entry, extra = {}) {
   return q
 }
 
-// The whole address, fragment included. A guard case that carries a `hash`
-// is reproducing an arrival, and the fragment is what makes it that arrival.
-export const urlForAuth = (base, entry, extra = {}) =>
-  `${base}/?${queryForAuth(entry, extra)}${entry.hash ?? ''}`
+// The whole address, in one place, so the three tools cannot open an entry
+// two different ways. There is no fragment: see the note above the guard
+// cases for why an expired link's is deliberately not put on this URL.
+export const urlForAuth = (base, entry, extra = {}) => `${base}/?${queryForAuth(entry, extra)}`
 
 /* Drives an entry and proves the state its name claims. Returns the reason it
    failed, or null on success.
