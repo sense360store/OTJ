@@ -3691,6 +3691,45 @@ const focusReturned = async (page, d) => {
     await page.close()
   }
 
+  /* THE LIST STAYS A LIST WITH A DIALOG OPEN. Each row wires its own edit,
+     delete and promote dialogs, and a Modal renders its own overlay, so a row
+     that returned its <li> and its overlays side by side put a <div> among the
+     <ul>'s children. Measured before it was fixed: the children read
+     LI, DIV, LI, LI, LI, LI, and the separator on the row AFTER the open
+     dialog went from 1px to 0, because `.fb-item + .fb-item` is an adjacency
+     rule and the <div> broke it. Codex found it; this is what would have.
+
+     Both halves are asserted, because either alone would pass a fix that
+     addressed the other: the markup is what assistive technology reads, and
+     the border is what a coach sees. */
+  {
+    const WHAT = 'an open row dialog leaves the list a list, and the next row keeps its separator'
+    const page = await open('feedback', 1280)
+    const read = () =>
+      page.evaluate(() => ({
+        children: [...(document.querySelector('.fb-list')?.children ?? [])].map((c) => c.tagName),
+        borders: [...document.querySelectorAll('.fb-item')].map((el) => getComputedStyle(el).borderTopWidth),
+      }))
+    const before = page.blank ? null : await read()
+    if (
+      before &&
+      (await pressed(row(page, ROWS.own).getByRole('button', { name: `Delete ${ROWS.own}`, exact: true }), WHAT))
+    ) {
+      await page.waitForTimeout(300)
+      const after = await read()
+      const allRows = (r) => r.children.length === 5 && r.children.every((t) => t === 'LI')
+      // The first row carries none by design (the card's own padding is the
+      // gap above it); every row after it carries one, dialog or no dialog.
+      const separated = (r) => r.borders.length === 5 && r.borders[0] === '0px' && r.borders.slice(1).every((b) => b === '1px')
+      check(
+        WHAT,
+        allRows(before) && separated(before) && allRows(after) && separated(after),
+        JSON.stringify({ before, after }),
+      )
+    }
+    await page.close()
+  }
+
   /* A form dialog on a phone is a bottom sheet, so its actions stay above the
      keyboard rather than under it, and the longest body this screen has (the
      public repository caution above two fields) still leaves them on screen.

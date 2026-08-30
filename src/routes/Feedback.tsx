@@ -114,11 +114,18 @@ const commentLabel = (n: number) => `${n} ${n === 1 ? 'comment' : 'comments'}`
    all: the status select, the reply box and a deleted row. Each is measured
    and driven in tools/visual/checks.mjs. */
 
-// One row of the log, presentational so the test can pin who sees the status
-// select and the owner affordances without a query client. Tapping the title
-// expands the details. Members without club.manage read the status as a Badge
-// on the meta line, which is where the row's facts are; a holder edits it as
-// a select in the action cluster, which is where its controls are.
+/* One row's CONTENT, presentational so the test can pin who sees the status
+   select and the owner affordances without a query client. Tapping the title
+   expands the details. Members without club.manage read the status as a Badge
+   on the meta line, which is where the row's facts are; a holder edits it as
+   a select in the action cluster, which is where its controls are.
+
+   The <li> belongs to FeedbackRow rather than here, because the row's DIALOGS
+   have to sit inside it: a Modal renders its own overlay, and a row that
+   returned its <li> and its overlays side by side put a <div> among the <ul>'s
+   children. Measured: invalid list markup for assistive technology, and the
+   `.fb-item + .fb-item` separator on the row AFTER the open dialog went from
+   1px to 0. Codex. */
 export function FeedbackCard({
   item,
   authorName,
@@ -157,7 +164,7 @@ export function FeedbackCard({
   const restoreStatusFocus = useFocusRestore(!statusBusy, statusRef)
 
   return (
-    <li className="fb-item">
+    <>
       <div className="fb-head">
         <div className="fb-main">
           <button
@@ -272,7 +279,7 @@ export function FeedbackCard({
           </>
         )}
       </div>
-    </li>
+    </>
   )
 }
 
@@ -780,7 +787,9 @@ function FeedbackRow({
   const [deleting, setDeleting] = useState(false)
   const [promoting, setPromoting] = useState(false)
   return (
-    <>
+    // The dialogs are inside the row's own <li>, not beside it: an overlay
+    // rendered as a sibling would be a <div> among the list's <li> children.
+    <li className="fb-item">
       <FeedbackCard
         item={item}
         authorName={authorName}
@@ -807,7 +816,7 @@ function FeedbackRow({
         />
       )}
       {promoting && <PromoteToGithubModal item={item} onClose={() => setPromoting(false)} />}
-    </>
+    </li>
   )
 }
 
