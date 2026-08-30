@@ -64,11 +64,14 @@ export const BRAND = {
       /login is part of what is being shown rather than its setup.
 
    The fragment itself is deliberately NOT put on the harness URL. It would
-   reach nothing: the harness routes in memory from the `at` key and the one
-   production reader of window.location.hash is the stubbed module. A URL that
-   carried it would imply the case was driving something it was not, and the
-   same case would pass unchanged with a WORKING invite fragment in its place,
-   which is the opposite arrival. */
+   reach nothing: the harness routes in memory from the `at` key, and the
+   module that reads window.location.hash on THIS path is the one the harness
+   stubs. (It is not the only reader in the product: PublicShare reads it for
+   the anonymous share secret and is not stubbed, but it mounts only at
+   /share/:shareId, which no auth case opens.) A URL that carried the fragment
+   would imply the case was driving something it was not, and the same case
+   would pass unchanged with a WORKING invite fragment in its place, which is
+   the opposite arrival. */
 
 const pause = (page) => page.waitForTimeout(200)
 

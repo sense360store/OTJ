@@ -431,9 +431,10 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
      one, for the reason the type list is itself narrower than the product: a
      rule widened to files an earlier wave landed fails on their spacing, and
      retiring that is those waves' work rather than a licence for this one to
-     weaken the rule. Six files owned for their type still carry inline gaps
-     and paddings. Widen this list as each wave reaches them; the two converge
-     when the last one does. */
+     weaken the rule. Counted rather than guessed: of the 21 files owned for
+     their type, two still carry an inline step off the scale, `components/
+     ui.tsx` with nine and `components/Sidebar.tsx` with one. Widen this list
+     as each wave reaches them; the two converge when the last one does. */
   const SPACING_OWNED = [
     'components/AuthCard.tsx',
     'routes/Login.tsx',
@@ -449,7 +450,9 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
       for (const m of read(f).matchAll(/\b(margin|padding|gap)[A-Za-z]*: *([^,}\n]+)/g)) {
         const v = m[2].trim()
         if (v.startsWith("'var(--space-")) continue
-        if (v.startsWith("'0")) continue
+        // Not a step: zero in either form, and auto.
+        if (/^'?0('|px')?$/.test(v)) continue
+        if (v === "'auto'") continue
         offenders.push(`${rel(f)}: ${m[1]}: ${v}`)
       }
     }

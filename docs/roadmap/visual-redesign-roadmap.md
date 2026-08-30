@@ -202,9 +202,10 @@ invite only policy, the mismatch refusal, the four messages and the rule that
 are now pinned in `src/routes/login.screens.test.tsx`, which is the first test
 in this repository to reference either screen or the auth guard at all.
 
-**Every user visible content change, in full**, because "no behaviour moved"
-is a claim about calls and a reader will reasonably ask what a member sees
-differently. There are four, and no message string is among them:
+**Every user visible change, in full**, because "no behaviour moved" is a
+claim about CALLS and a reader will reasonably ask what a member sees
+differently. There are seven and no message string is among them. Three are
+words:
 
 - Set Password shows the club motto. It showed the club name alone; both
   screens wear one card now, and the motto is half of what Part 3 names as the
@@ -215,9 +216,20 @@ differently. There are four, and no message string is among them:
   working now says so.
 - Sign in reads `Signing in…` only for its own call. It used to read it
   whichever of the three was pressed.
+
+Four are presentation, and they are here because the claim is exhaustive
+rather than about copy. All four are on the two controls the slice touched
+without replacing:
+
 - The closing sentence under the form loses the browser's default bottom
   margin, which the inline style it replaced left in place, so the card's
-  bottom padding matches its top.
+  bottom padding matches its top; its top margin moves from that inline 14px
+  to the scale's 12px, which is the value the inline style existed for.
+- Forgot password? gains horizontal padding, so its box and the focus ring
+  around it are wider than the words.
+- Its disabled cursor becomes `not-allowed` rather than the default, which is
+  what every other disabled control in the product uses.
+- And it stops underlining on hover while disabled, which it did before.
 
 Four things worth recording, none of them presentation alone:
 
@@ -256,9 +268,12 @@ rather than inventing them.**
   link redirects to a bare origin carrying an error fragment and no session.
   The rule in `useAuth` that recognises an arrival to set a password matches
   `type=invite` or `type=recovery` and nothing else, so it does not fire; the
-  Supabase client recognises the fragment, creates no session, emits no event
-  and puts the error only in its own initialize promise, which this product
-  never reads; `RequireAuth` finds no user and redirects to `/login`, which
+  Supabase client recognises the fragment, creates no session and puts the
+  error only in its own initialize promise, which this product never reads. It
+  does emit one event, `INITIAL_SESSION` with a null session, which `useAuth`
+  subscribes to and which carries no error, so nothing about the failed link
+  reaches the product through it either. `RequireAuth` finds no user and
+  redirects to `/login`, which
   strips the fragment on the way. The member reads the ordinary sign in screen
   with nothing said about the link that failed. The guard's ordering makes that
   the answer either way: a session is checked before the flag, so even a
@@ -302,8 +317,9 @@ deleted:
   step rule reads `src/styles.css` alone and sees neither a route stylesheet
   nor a piece of JSX. A second rule now covers the four files this wave owns,
   for inline spacing in JSX and for literal steps in `Login.css`. It is a
-  separate, narrower list on purpose: widened to the files earlier waves own,
-  it fails on six of them, and retiring those is their work rather than a
+  separate, narrower list on purpose: widened to the files earlier waves own
+  it fails on two of the twenty one, `components/ui.tsx` and
+  `components/Sidebar.tsx`, and retiring those is their work rather than a
   reason to weaken the rule.
 
 **What is deferred, and why each one is.** All of these were found by an

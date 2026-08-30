@@ -476,9 +476,10 @@ for (const key of ['name-ok', 'name-failed', 'upload-failed', 'email-ok']) {
    words, the press was wrapped in a catch, and every login run since has
    measured an untouched form and reported it clean.
 
-   Every entry, rather than a chosen few: there are sixteen, they are the
-   whole state matrix of two screens, and the two gerund labels and the text
-   link's disabled state each paint a run nothing else does. The guard cases
+   Every entry, rather than a chosen few: there are eighteen, eleven on Login
+   and seven on Set Password, they are the whole state matrix of two screens,
+   and the two gerund labels and the text link's disabled state each paint a
+   run nothing else does. The guard cases
    come with them, because the splash and the redirect are text runs on this
    ground too. */
 for (const entry of [...AUTH_FLOWS, ...GUARD_CASES]) {

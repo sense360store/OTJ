@@ -208,7 +208,7 @@ const SHOTS = [
      narrowest case where the card grows and the identity block, the note and
      the two full width buttons have to share 312px. The other driven states
      change a label or a disabled flag and lay out identically to the ones
-     already shot at 360, so shooting all sixteen here would file thirteen
+     already shot at 360, so shooting all eighteen here would file fifteen
      pictures of the same layout. */
   ...['signin-failed', 'link-ok', 'sp-mismatch'].map((key) => ({ authEntry: authFlow(key), w: 360 })),
   // The two strings the CLUB chooses, each at a length a committee would
@@ -232,8 +232,10 @@ const name = (s, theme) =>
     s.authEntry ? (s.authEntry.screen ?? 'auth') : s.screen,
     s.caps ?? 'na',
     // A guard case has no state; what varies is the AUTH CONDITION, so that
-    // is what rides in the state slot for it. Two guard cases at one address
-    // differ by condition and would otherwise share a filename.
+    // is what rides in the state slot for it. Not to avoid a collision, which
+    // the entry's own key in the next slot already rules out: it is so the
+    // filename says which auth state produced the screen, which is the whole
+    // of what a guard case claims.
     s.authEntry
       ? (s.authEntry.state ?? s.authEntry.auth ?? 'default') + (s.authEntry.at ? `-at-${s.authEntry.at}` : '')
       : s.dialog

@@ -27,7 +27,11 @@
    a control that the handler then disables blurs it. A second copy of this
    reasoning is exactly what the visual programme exists to remove, so
    src/lib/designSystem.invariant.test.ts fails the build on a file under src/
-   that writes its own.
+   that writes its own. That check reads source text and keys on this NAME, so
+   it catches a copy that reuses it and not one called useRestoreFocus; it is
+   a tripwire against the obvious mistake rather than a proof there is one
+   implementation, which is what every other invariant in that file says about
+   itself too.
 
    WHAT THIS TRADES, stated rather than left for somebody to discover. On the
    two signed out screens the outcome message and the focus move land
