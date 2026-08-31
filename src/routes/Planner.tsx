@@ -20,7 +20,7 @@ import { type ActivityRole, applyRole, setNotRunning } from '../lib/activityRole
 import { blankSession, embedSrc, isSampleMedia, sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
-import { soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
+import { newSessionCoverage, soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
 import {
@@ -577,7 +577,11 @@ function PlannerEditor({
   newDefaults,
 }: {
   existing: Session | null
-  newDefaults?: { coachId: string; teamId: string | null }
+  // Who owns a new session, and nothing else. It used to carry the coach's
+  // profile team as well, which seeded coverage before the coach had seen
+  // the chips; the team is gone from the prop rather than defaulted, so it
+  // cannot come back by a caller passing it again.
+  newDefaults?: { coachId: string }
 }) {
   const nav = useNav()
   const { user } = useAuth()
@@ -598,19 +602,35 @@ function PlannerEditor({
   const [session, setSession] = useState<Session>(() =>
     existing
       ? (JSON.parse(JSON.stringify(existing)) as Session)
-      : blankSession(newDefaults?.coachId ?? '', newDefaults?.teamId ?? null),
+      : blankSession(newDefaults?.coachId ?? ''),
   )
 
-  // A new session whose coach has no team on their profile starts covering
-  // the whole club, seeded once the team list arrives. Seeding here rather
-  // than at save time means the chips show what will be written; nothing is
-  // invented later. An existing session, and a draft a coach has already
-  // touched, are left alone.
-  const coverageSeeded = useRef(!!existing || !!newDefaults?.teamId)
+  // EVERY new session starts covering the whole club, seeded once the team
+  // list arrives. Seeding here rather than at save time means the chips
+  // show what will be written; nothing is invented later.
+  //
+  // It used to run only for a coach whose profile named no team, because
+  // blankSession had already seeded the others with that team. So a coach
+  // whose profile said Trojans opened New Session and found Trojans
+  // already ticked, and a club wide Tuesday saved as a Trojans session
+  // with nothing on screen saying a choice had been made for them. The
+  // profile team is a personal default about the coach; coverage is a
+  // statement about the night. newSessionCoverage in ../lib/sessionTeams
+  // is the one rule now, shared with the two paths that save before the
+  // coach sees anything.
+  //
+  // ONCE, and only into a draft nobody has touched. The ref is set the
+  // first time the team list answers, so a later refetch, a team added or
+  // a team deleted cannot rewrite a draft the coach has since edited, and
+  // the emptiness check means a coach who has cleared every team keeps an
+  // empty selection. An existing session never seeds at all: its stored
+  // coverage is the answer, and a one team session must never widen for
+  // being opened.
+  const coverageSeeded = useRef(!!existing)
   useEffect(() => {
     if (coverageSeeded.current || teams.length === 0) return
     coverageSeeded.current = true
-    setSession((s) => (s.teamIds.length > 0 ? s : { ...s, teamIds: teams.map((t) => t.id) }))
+    setSession((s) => (s.teamIds.length > 0 ? s : { ...s, teamIds: newSessionCoverage(teams.map((t) => t.id)) }))
   }, [teams])
   const [addOpen, setAddOpen] = useState(false)
   const [boardPickerOpen, setBoardPickerOpen] = useState(false)
@@ -1010,21 +1030,20 @@ function PlannerEditor({
 
 export function Planner() {
   const [searchParams] = useSearchParams()
-  const { user, profile } = useAuth()
+  const { user } = useAuth()
   const editId = searchParams.get('sessionId')
   // Editing reads the one session by id; a new session has none to read and so
   // renders straight away. The key remounts the editor with fresh state
-  // whenever the URL selects a different session, and for a new session also
-  // when the profile arrives, so the coach's default team applies.
+  // whenever the URL selects a different session.
+  //
+  // A new session's key is CONSTANT. It used to change when the profile
+  // arrived, so the draft was thrown away and rebuilt around the coach's
+  // team. Nothing about a new draft depends on the profile any more, and
+  // remounting on a late read would now discard whatever the coach had
+  // already typed and unticked.
   const { data: existing, isLoading, isError } = useSession(editId ?? undefined)
   if (editId && isLoading) return <Loading />
   if (editId && isError) return <ErrorNote />
   if (editId && existing) return <PlannerEditor key={editId} existing={existing} />
-  return (
-    <PlannerEditor
-      key={'new-' + (profile?.id ?? 'loading')}
-      existing={null}
-      newDefaults={{ coachId: user?.id ?? '', teamId: profile?.team_id ?? null }}
-    />
-  )
+  return <PlannerEditor key="new" existing={null} newDefaults={{ coachId: user?.id ?? '' }} />
 }

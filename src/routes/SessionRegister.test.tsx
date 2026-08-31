@@ -69,6 +69,7 @@ const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) => 
       linkNote=""
       unlinkedNote=""
       audienceNote=""
+      playersNote=""
       refreshing={false}
       refreshFailed={false}
       unset={false}
@@ -499,6 +500,7 @@ describe('no filter or selection writes anything', () => {
         linkNote=""
         unlinkedNote=""
         audienceNote=""
+        playersNote=""
         refreshing={false}
         refreshFailed={false}
         unset={false}

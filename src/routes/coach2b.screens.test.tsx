@@ -96,7 +96,7 @@ function weekPlanRow(activities: Activity[], index = 0): string {
 // The planner's side card, which carries the minute total and the
 // structure summary.
 function sideCard(activities: Activity[]): string {
-  const session: Session = { ...blankSession('coach-1', null), activities }
+  const session: Session = { ...blankSession('coach-1'), activities }
   return renderToStaticMarkup(
     <MemoryRouter>
       <SessionFieldsView

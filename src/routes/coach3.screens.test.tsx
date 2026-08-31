@@ -129,6 +129,7 @@ function screen(
       linkNote=""
       unlinkedNote=""
       audienceNote=""
+      playersNote=""
       refreshing={false}
       refreshFailed={false}
       unset={opts.unset ?? false}

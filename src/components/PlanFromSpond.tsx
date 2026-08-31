@@ -24,7 +24,7 @@ import {
   useRefreshSpondPlanning,
   useEventKindContext,
   useSpondEvents,
-  useTeamMap,
+  useTeams,
   useVenues,
 } from '../lib/queries'
 import { memberTeamIds } from '../lib/data'
@@ -47,6 +47,11 @@ import { Icon } from './icons'
 import { CancelledBadge, MatchBadge } from './SpondAttendance'
 import { ActionError, Chip } from './ui'
 
+// What a failed read of the synced events says. Named so the default and
+// the teams wording beside it are the same kind of thing.
+const EVENTS_ERROR = 'Could not load the synced events. Try again.'
+const TEAMS_ERROR = 'Could not load the club’s teams, so a session cannot be given the ones it covers. Try again.'
+
 // Presentational, so the static renderer covers the rows and toggles without a
 // query client, the same style as the rest of the suite. The container
 // resolves scope, filters and the create handler and feeds plain props in.
@@ -63,6 +68,7 @@ export function PlanFromSpondView({
   onPlan,
   loading,
   error,
+  errorText = EVENTS_ERROR,
   planPendingId = null,
   planFailed = false,
   planFailedText = SESSION_CREATE_ERROR,
@@ -86,6 +92,13 @@ export function PlanFromSpondView({
   onPlan: (event: SpondEvent) => void
   loading: boolean
   error: boolean
+  // What to say about that failure. Defaults to the events wording, which
+  // is right for the read this card is mostly about. The club's teams are
+  // read here too, and failing to read them is a different problem with a
+  // different consequence: not "no suggestions" but "a session could not
+  // be given the teams it covers", which is worth saying rather than
+  // reporting as a missing event list.
+  errorText?: string
   // The event whose session create is in flight; every Plan this control
   // disables while one runs, so a second event cannot be planned in parallel.
   planPendingId?: string | null
@@ -135,7 +148,7 @@ export function PlanFromSpondView({
         </p>
       ) : error ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
-          Could not load the synced events. Try again.
+          {errorText}
         </p>
       ) : rows.length === 0 ? (
         <p className="muted" style={{ fontSize: 13.5 }}>
@@ -207,12 +220,26 @@ export function PlanFromSpond({
 }) {
   const nav = useNav()
   const refreshPlanning = useRefreshSpondPlanning()
-  const { user, profile } = useAuth()
+  const { user } = useAuth()
   const { caps } = useMyCapabilities()
   const { sessions, upsertSession } = useSessions()
   const { data: events = [], isLoading, isError } = useSpondEvents()
   const { data: myTeams } = useMyTeams()
-  const teamById = useTeamMap()
+  // The club's teams, read as a QUERY rather than as the derived map,
+  // because whether this read has answered decides whether Plan this may
+  // run at all. A club event covers every team the club has, and the
+  // session is saved before the coach sees it into a planner that will not
+  // re-seed a stored row, so planning one over an unanswered read would
+  // write a session covering nobody with no later repair. The map cannot
+  // say: a pending read, a failed read and a club with no teams all arrive
+  // at it as {}.
+  //
+  // Wider than the venue wait beside it, and deliberately so. An unmatched
+  // venue leaves one field for the coach to fill in a moment later; an
+  // empty covered set leaves a register listing nobody and no field
+  // saying why.
+  const teamsQuery = useTeams()
+  const allTeamIds = (teamsQuery.data ?? []).map((t) => t.id)
   // The club's venues, so a new session can default to the one the event's
   // location names. A club wide read the planner already holds, so on the
   // screen this surface usually sits on it costs nothing.
@@ -280,7 +307,7 @@ export function PlanFromSpond({
   if (!caps.has('sessions.create')) return null
 
   const scope = myTeams ?? { teamIds: [], allTeams: false }
-  const scopeTeamIds = memberTeamIds(scope, Object.keys(teamById))
+  const scopeTeamIds = memberTeamIds(scope, allTeamIds)
   // The toggle widens to every team's events. It earns its place only when the
   // coach's own teams are a specific subset: the all teams flag already shows
   // everything, and with no team there is nothing but club events to narrow.
@@ -324,9 +351,14 @@ export function PlanFromSpond({
   const anythingToSuggest = suggest('all', 'upcoming').length > 0 || suggest('all', 'past').length > 0
   if (hideWhenEmpty && !isLoading && !isError && !anythingToSuggest) return null
 
+  // Coverage comes from the event: its own team, or every team the club
+  // has when the sync matched it through more than one mapping and stored
+  // it as a club event. The tapping coach's profile team is no longer an
+  // input, and used to be the fallback for a club event, which arranged
+  // the whole club's Tuesday as one team's session.
   const plan = (event: SpondEvent) => {
     const session = {
-      ...sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null, Object.keys(teamById), venues),
+      ...sessionFromSpondEvent(event, user?.id ?? '', allTeamIds, venues),
       id: stableCreateId(ids.current, event.id),
     }
     void submit(session)
@@ -344,8 +376,9 @@ export function PlanFromSpond({
       onShowAll={setShowAll}
       showAllToggle={showAllToggle}
       onPlan={plan}
-      loading={isLoading || venuesLoading}
-      error={isError}
+      loading={isLoading || venuesLoading || teamsQuery.isLoading}
+      error={isError || teamsQuery.isError}
+      errorText={!isError && teamsQuery.isError ? TEAMS_ERROR : EVENTS_ERROR}
       planPendingId={planPendingId}
       planFailed={planFailed}
       planFailedText={linkTaken ? SESSION_SPOND_LINK_TAKEN_ERROR : SESSION_CREATE_ERROR}

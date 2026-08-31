@@ -106,6 +106,7 @@ function screen(rows: TonightRow[], draft: TonightDraft): string {
       linkNote=""
       unlinkedNote=""
       audienceNote=""
+      playersNote=""
       refreshing={false}
       refreshFailed={false}
       unset={false}

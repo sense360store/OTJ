@@ -15,6 +15,7 @@ function TemplateCard({
   t,
   onUse,
   usePendingId,
+  useBlocked,
   onEdit,
   onDelete,
 }: {
@@ -23,6 +24,11 @@ function TemplateCard({
   // in flight disables all Use buttons, not only its own.
   onUse: (t: Template) => void
   usePendingId: string | null
+  // The club's teams are not known yet, so a session built now could not
+  // be given the ones it covers. A sub second state in practice, and the
+  // one press it stops is the one that would save a session covering
+  // nobody with no later repair.
+  useBlocked: boolean
   onEdit: ((t: Template) => void) | null
   onDelete: ((t: Template) => void) | null
 }) {
@@ -70,7 +76,7 @@ function TemplateCard({
       {(coaching || onEdit || onDelete) && (
         <div className="row" style={{ gap: 9 }}>
           {coaching && (
-            <button className="btn btn-primary" style={{ flex: 1 }} disabled={usePendingId !== null} onClick={() => onUse(t)}>
+            <button className="btn btn-primary" style={{ flex: 1 }} disabled={usePendingId !== null || useBlocked} onClick={() => onUse(t)}>
               <Icon.copy />
               {usePendingId === t.id ? 'Creating…' : 'Use template'}
             </button>
@@ -137,7 +143,12 @@ export function Templates() {
   const nav = useNav()
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
-  const { start: startFromTemplate, pendingTemplateId, failed: createFailed } = useStartFromTemplate()
+  const {
+    start: startFromTemplate,
+    pendingTemplateId,
+    failed: createFailed,
+    ready: teamsReady,
+  } = useStartFromTemplate()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Template | null>(null)
@@ -214,6 +225,7 @@ export function Templates() {
             t={t}
             onUse={startFromTemplate}
             usePendingId={pendingTemplateId}
+            useBlocked={!teamsReady}
             onEdit={canManage(t) ? setEditing : null}
             onDelete={canManage(t) ? setDeleting : null}
           />

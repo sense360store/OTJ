@@ -393,10 +393,15 @@
   align-items: center;
   gap: 6px;
 }
-/* The Spond event's own aggregate, over everybody it invited. Quieter than
-   the link coverage beside it because it is context about the event rather
-   than about the squad the coach is organising. */
-.tn-audience {
+/* The two populations, as a stacked pair. Each takes a whole row of the
+   wrapping flex line so they sit directly one under the other whatever the
+   width: the comparison IS the point, and a sentence that wrapped in
+   beside the coverage note read as one more loose fact. Quieter than the
+   link coverage above them because both are context for the chips rather
+   than the squad the coach is organising. */
+.tn-audience,
+.tn-players {
+  flex: 0 0 100%;
   color: var(--slate);
 }
 /* Which teams hold the unlinked players. It answers the coverage line

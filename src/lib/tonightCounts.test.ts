@@ -37,6 +37,7 @@ import {
   responsesKnownFromRead,
   tonightCounts,
   tonightLinkNote,
+  tonightPlayersNote,
   tonightUnlinkedNote,
   unlinkedByTeam,
   visibleRows,
@@ -47,7 +48,7 @@ import {
   type TonightDraft,
   type TonightRow,
 } from './tonight'
-import { spondAudience, spondAudienceNote, SPOND_AUDIENCE_CAPTION } from './spond'
+import { spondAudience, spondAudienceNote, spondAudienceReplyNote, SPOND_AUDIENCE_CAPTION } from './spond'
 import type { RegisterEntry } from './register'
 import type { SpondEvent } from './data'
 import type { RsvpStatus } from './spondRsvp'
@@ -271,6 +272,91 @@ describe('the Spond event aggregate never drives a Tonight count', () => {
   it('captions the aggregate so a reader knows who it counted', () => {
     expect(SPOND_AUDIENCE_CAPTION).toMatch(/invited/i)
     expect(SPOND_AUDIENCE_CAPTION).toMatch(/Spond event/i)
+  })
+})
+
+
+// ---- 5b. The two populations, side by side ----------------------------
+//
+// Naming the aggregate's population fixed half the report and left the
+// other half in place. A coach opens Spond, reads 21 going, opens Players
+// & groups, reads Going 11, and a headcount of 50 answers neither: it is
+// a third number, and the one they came in holding is now missing from
+// the product entirely. So the going figure returns on that one screen,
+// inside its own sentence, directly above the same sentence about covered
+// players. Read together they are two facts. Read apart, either one is
+// the defect this file exists for.
+
+describe('the event sentence and the players sentence, as a pair', () => {
+  const { rows, linkedIds } = squad()
+  const counts = tonightCounts(rows, EMPTY, linkedIds)
+
+  it('states the audience, then its reply, in one sentence', () => {
+    expect(spondAudienceReplyNote(event())).toBe('Spond audience: 50 people invited · 21 of them going')
+  })
+
+  it('states the covered squad, then its reply, in the same shape', () => {
+    expect(tonightPlayersNote(counts, true)).toBe('Players this session covers: 40 · 11 of them going')
+  })
+
+  it('reads as two populations rather than one contradiction', () => {
+    // The whole point, in one assertion: both sentences name who they
+    // counted BEFORE they name a reply, and the two headline figures are
+    // different sizes, which is what makes 21 and 11 obviously not the
+    // same measurement.
+    const ev = spondAudienceReplyNote(event())
+    const players = tonightPlayersNote(counts, true)
+    expect(ev.indexOf('invited')).toBeLessThan(ev.indexOf('going'))
+    expect(players.indexOf('covers')).toBeLessThan(players.indexOf('going'))
+    expect(spondAudience(event())).not.toBe(counts.covered)
+  })
+
+  it('never lets the event sentence carry an API reply word', () => {
+    // "accepted" is Spond's word and it is the one that reads as a
+    // measurement. The product's own word is Going, and it is used here
+    // only against a population the sentence has already named.
+    const note = spondAudienceReplyNote(event())
+    for (const word of ['accepted', 'declined', 'unanswered', 'waiting']) {
+      expect(note.toLowerCase()).not.toContain(word)
+    }
+    // Exactly two figures, the audience and its going count. Not four.
+    expect(note.match(/\d+/g)).toEqual(['50', '21'])
+  })
+
+  it('leaves the plain headcount sentence untouched for every other surface', () => {
+    // The picker, the planner card and the admin mirror keep the shorter
+    // sentence, because none of them prints a player figure to set a
+    // reply against.
+    expect(spondAudienceNote(event())).toBe('Spond audience: 50 people invited')
+  })
+
+  it('withholds the players reply until the reply read has answered', () => {
+    // Unknown is never zero. A read in flight, a failed read and one that
+    // never dispatched all leave every row without a response, which
+    // counts identically to a night nobody replied to. The covered figure
+    // survives, because the rows are in hand either way.
+    const note = tonightPlayersNote(counts, false)
+    expect(note).toBe('Players this session covers: 40')
+    expect(note.toLowerCase()).not.toContain('going')
+  })
+
+  it('says nothing at all when coverage was never set', () => {
+    // "0 players" would read as a squad that turned up empty. The screen's
+    // own empty state already says the session has no teams yet.
+    const none = tonightCounts([], EMPTY, new Set())
+    expect(tonightPlayersNote(none, true)).toBe('')
+    expect(tonightPlayersNote(none, false)).toBe('')
+  })
+
+  it('counts players and never the aggregate, whatever the event said', () => {
+    // Structural: tonightPlayersNote takes counts and a boolean. There is
+    // no parameter an event could arrive through, which is the same
+    // refusal tonightCounts makes one level down. So an event whose
+    // audience is enormous cannot move this sentence by a single figure.
+    expect(tonightPlayersNote.length).toBe(2)
+    const huge = event({ accepted: 900, declined: 900, unanswered: 900, waiting: 900 })
+    expect(spondAudience(huge)).toBe(3600)
+    expect(tonightPlayersNote(counts, true)).toBe('Players this session covers: 40 · 11 of them going')
   })
 })
 

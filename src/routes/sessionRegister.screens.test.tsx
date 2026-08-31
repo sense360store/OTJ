@@ -228,6 +228,39 @@ describe('the rendered screen over answered reads', () => {
     expect(out).toContain('Not linked: Trojans 2')
   })
 
+  it('shows both populations, each naming itself, so neither reads as the other', () => {
+    // THE REPORTED DEFECT, at the surface it was reported from. The coach
+    // arrives holding the event's going figure (20 here, from an audience
+    // of 49) and meets a Going chip of 1, and until both sentences were on
+    // one screen the product offered nothing that reconciled them: the
+    // headcount alone is a third number, not an answer.
+    //
+    // Rendered rather than composed, because the container silently
+    // dropping one half is exactly the regression this file exists for,
+    // and one half alone is worse than neither.
+    const out = html()
+    expect(out).toContain('Spond audience: 49 people invited · 20 of them going')
+    expect(out).toContain('Players this session covers: 4 · 1 of them going')
+    // Order matters: the figure the coach came in with, then the one this
+    // screen is actually about.
+    expect(out.indexOf('49 people invited')).toBeLessThan(out.indexOf('Players this session covers'))
+  })
+
+  it('keeps the aggregate out of every chip even now that its figure is on screen', () => {
+    // The rule that did not change. 20, 18 and 11 may appear in the
+    // labelled sentence and nowhere else, and the chips still count
+    // covered Hub players.
+    const out = html()
+    expect(chip(out, 'Going')).toBe(1)
+    expect(out).not.toContain('>Going 20</button>')
+    expect(out).not.toContain('>Not going 18</button>')
+    expect(out).not.toContain('>No reply 11</button>')
+    // Spond's own words never reach the screen, only the product's.
+    for (const word of ['accepted', 'declined', 'unanswered']) {
+      expect(out.toLowerCase()).not.toContain(word)
+    }
+  })
+
   it('never says tonight anywhere on it, groups included', () => {
     const out = html()
     // The groups section must actually be in the checked markup: the
@@ -308,6 +341,11 @@ describe('the rendered screen over reads that never answered', () => {
       // But the screen claims nothing it cannot know.
       expect(out).not.toContain('0 of 4')
       expect(out.toLowerCase()).not.toContain('not linked')
+      // The players sentence keeps the figure it has and drops the one it
+      // does not: the rows are in hand, the replies are not. Asserted on
+      // the span, because the event's own sentence beside it legitimately
+      // carries a going figure that arrived with the event.
+      expect(out).toContain('<span class="tn-players">Players this session covers: 4</span>')
     } finally {
       state.links = was.links
       state.rsvp = was.rsvp
@@ -323,6 +361,11 @@ describe('the rendered screen over reads that never answered', () => {
       // the reply clause stays unsaid, rather than "0 with a reply".
       expect(out).toContain('2 of 4 players linked to Spond')
       expect(out).not.toContain('with a reply for this event')
+      // And the pair goes half silent the same way: the event's own
+      // sentence is unaffected (its figures came with the event), while
+      // the players sentence withholds a reply it cannot prove.
+      expect(out).toContain('Spond audience: 49 people invited · 20 of them going')
+      expect(out).toContain('<span class="tn-players">Players this session covers: 4</span>')
     } finally {
       state.rsvp = was
     }
