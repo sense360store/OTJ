@@ -3,8 +3,16 @@
 // removing one never hides or orphans content: the foreign keys null the
 // references and the confirm spells that out. REVIEW: capability gated
 // admin surface.
-import { useState } from 'react'
+//
+// VISUAL-02 brought it onto the shared system: PageHeader, Card, Button and
+// IconButton, the field primitives, Note and the shared state families.
+// Nothing about the queries, the capability gate, the removal consequences or
+// the bib vocabulary moved; what changed is which vocabulary draws them, and
+// that two refusals the screen could already produce are now shown rather
+// than swallowed.
+import { useRef, useState } from 'react'
 import { useSessions } from '../context/SessionsContext'
+import { useFocusRestore } from '../hooks/useFocusRestore'
 import {
   useDeleteTeam,
   useInsertTeam,
@@ -18,21 +26,33 @@ import type { Team } from '../lib/data'
 import { BIB_COLOURS, bibSwatch } from '../lib/bibs'
 import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
-import { ErrorNote, Loading, Modal } from '../components/ui'
+import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
+import { Button, Card, IconButton, Note, PageHeader, SelectField, TextField } from '../components/primitives'
 
 function DeleteTeamModal({
   team,
   memberCount,
   sessionCount,
   onClose,
+  onRemoved,
 }: {
   team: Team
   memberCount: number
   sessionCount: number
   onClose: () => void
+  onRemoved: () => void
 }) {
   const del = useDeleteTeam()
-  const remove = () => del.mutate({ id: team.id }, { onSuccess: onClose })
+  const remove = () =>
+    del.mutate(
+      { id: team.id },
+      {
+        onSuccess: () => {
+          onRemoved()
+          onClose()
+        },
+      },
+    )
   return (
     <Modal
       title="Remove team"
@@ -40,30 +60,33 @@ function DeleteTeamModal({
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={del.isPending}>
+          <Button variant="quiet" onClick={onClose} disabled={del.isPending}>
             Cancel
-          </button>
-          <button className="btn btn-danger" onClick={remove} disabled={del.isPending}>
-            <Icon.trash />
+          </Button>
+          <Button variant="danger" icon={Icon.trash} onClick={remove} disabled={del.isPending}>
             {del.isPending ? 'Removing…' : 'Remove'}
-          </button>
+          </Button>
         </>
       }
     >
-      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+      {/* The consequences, unchanged. Teams are a filter and a default, so
+          removing one clears references rather than deleting anything, and a
+          session that covered only this team is left with no teams rather
+          than widened to the whole club. */}
+      <p className="modal-copy">
         {memberCount} member{memberCount !== 1 ? 's' : ''} and {sessionCount} session
         {sessionCount !== 1 ? 's' : ''} reference this team. They keep working; their team is cleared. Any registered
         players on this team become Unassigned, keeping their registration, shirt number and history. No sessions, people
         or players are removed.
       </p>
-      <p style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+      <p className="modal-copy">
         A session that covered only this team is left with no teams set, and its register lists nobody until a coach
         picks the teams again. It never widens to the whole club.
       </p>
       {del.isError && (
-        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5 }}>
+        <Note tone="danger" role="alert">
           Could not remove the team. Try again.
-        </p>
+        </Note>
       )}
     </Modal>
   )
@@ -72,6 +95,12 @@ function DeleteTeamModal({
 // The team's default bib colour, the one a whole squad wears unless a
 // coach overrides someone on the night. Presentational so the swatch and
 // the option list render without a query client.
+//
+// 2.16 makes bib colour the deliberate exception that stays colour, and it
+// stays paired with its word: the select carries the colour's NAME, which is
+// the information, and the swatch beside it is aria-hidden and supplementary.
+// The label is read rather than shown, because in a list of five teams the
+// row's own name is what a sighted reader is reading and the label repeats it.
 export function BibColourField({
   value,
   disabled,
@@ -84,25 +113,16 @@ export function BibColourField({
   onChange: (v: string | null) => void
 }) {
   return (
-    <div className="row" style={{ gap: 7, alignItems: 'center' }}>
+    <div className="bib-field">
       {value && (
-        <span
-          aria-hidden="true"
-          style={{
-            width: 16,
-            height: 16,
-            borderRadius: '50%',
-            border: '1px solid var(--line)',
-            background: bibSwatch(value) ?? 'transparent',
-            flex: '0 0 16px',
-          }}
-        />
+        <span aria-hidden="true" className="bib-swatch" style={{ background: bibSwatch(value) ?? 'transparent' }} />
       )}
-      <select
+      <SelectField
+        label={label}
+        labelHidden
+        className="field-flush bib-select"
         value={value ?? ''}
-        aria-label={label}
         disabled={disabled}
-        style={{ minHeight: 44, width: 128 }}
         onChange={(e) => onChange(e.target.value || null)}
       >
         <option value="">No bib</option>
@@ -111,7 +131,7 @@ export function BibColourField({
             {b.label}
           </option>
         ))}
-      </select>
+      </SelectField>
     </div>
   )
 }
@@ -122,46 +142,75 @@ function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
   const [draft, setDraft] = useState(team.name)
   const changed = draft.trim() !== team.name && draft.trim() !== ''
   return (
-    <div className="row wrap" style={{ gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)' }}>
-      <div className="field" style={{ flex: 1, minWidth: 150, marginBottom: 0 }}>
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} />
-      </div>
+    <li className="admin-row">
+      <TextField
+        label={`Team name for ${team.name}`}
+        labelHidden
+        className="field-flush admin-field-grow"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+      />
       <BibColourField
         value={team.bibColour}
         disabled={setBib.isPending}
         label={'Default bib colour for ' + team.name}
         onChange={(v) => setBib.mutate({ teamId: team.id, bibColour: v })}
       />
-      <button
-        className="btn btn-ghost btn-sm"
-        disabled={!changed || rename.isPending}
-        onClick={() => rename.mutate({ id: team.id, name: draft.trim() })}
-      >
-        <Icon.check />
-        Rename
-      </button>
-      <button
-        className="btn btn-ghost btn-sm icon-only"
-        style={{ width: 38, padding: 0 }}
-        aria-label={'Remove ' + team.name}
-        onClick={onDelete}
-      >
-        <Icon.trash />
-      </button>
-    </div>
+      <div className="admin-row-acts">
+        <Button
+          size="sm"
+          icon={Icon.check}
+          disabled={!changed || rename.isPending}
+          onClick={() => rename.mutate({ id: team.id, name: draft.trim() })}
+        >
+          {rename.isPending ? 'Renaming…' : 'Rename'}
+        </Button>
+        <IconButton tone="danger" icon={Icon.trash} label={'Remove ' + team.name} onClick={onDelete} />
+      </div>
+      {/* Both refusals used to be swallowed: the mutation failed and the row
+          said nothing at all, so a rename or a bib change that the RLS
+          refused looked like one that had saved. */}
+      {rename.isError && (
+        <Note tone="danger" role="alert" className="admin-row-note">
+          Could not rename {team.name}. Try again.
+        </Note>
+      )}
+      {setBib.isError && (
+        <Note tone="danger" role="alert" className="admin-row-note">
+          Could not change the bib colour for {team.name}. Try again.
+        </Note>
+      )}
+    </li>
   )
 }
 
 export function AdminTeams() {
-  const { data: teams = [], isLoading, isError } = useTeams()
+  const { data: teams = [], isLoading, isError, refetch } = useTeams()
   const { data: members = [] } = useProfiles()
   const { sessions } = useSessions()
   const insert = useInsertTeam()
   const [name, setName] = useState('')
   const [removing, setRemoving] = useState<Team | null>(null)
+  const [removed, setRemoved] = useState<{ id: string; message: string } | null>(null)
   const { caps } = useMyCapabilities()
+  /* The removal's outcome, and the thing focus goes back to. Pressing the
+     row's Remove opens the dialog; the dialog closes on success and Modal
+     restores focus to the trigger; the refetch then takes the row and the
+     trigger with it, and the browser drops focus onto the document body.
+     Reproduced in a browser before it was repaired, which is the rule #215,
+     #216 and #217 left.
+
+     WHAT IS WAITED FOR IS THE ROW LEAVING THE LIST, not the write settling,
+     and the two are a network round trip apart: on the settling render the
+     trigger is still there and still focused, so a hook keyed on the write
+     would find focus exactly where it should be, do nothing, and forget it
+     had been asked. This is the case the Feedback slice met on a deleted
+     item and it behaves the same way here. */
+  const removedRef = useRef<HTMLDivElement>(null)
+  const rowGone = removed !== null && !teams.some((t) => t.id === removed.id)
+  const wantRemovedFocus = useFocusRestore(rowGone, removedRef)
   if (isLoading) return <Loading />
-  if (isError) return <ErrorNote />
+  if (isError) return <ErrorNote onRetry={() => void refetch()} />
   // The route guard already keeps members without teams.manage out; this is
   // belt and braces for the brief render before a redirect.
   if (!caps.has('teams.manage')) return null
@@ -174,50 +223,56 @@ export function AdminTeams() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Teams</h1>
-          <div className="sub">The club's teams. A filter and a default for sessions and coaches, never a wall.</div>
-        </div>
-      </div>
+      <PageHeader
+        title="Teams"
+        sub="The club's teams. A filter and a default for sessions and coaches, never a wall."
+      />
 
-      <div className="card" style={{ padding: 18, maxWidth: 560 }}>
-        <div className="row" style={{ gap: 10, marginBottom: 4 }}>
-          <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-            <label>New team</label>
-            <input
-              placeholder="Team name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && add()}
-            />
-          </div>
-          <button
-            className="btn btn-primary"
-            style={{ alignSelf: 'flex-end' }}
-            disabled={!name.trim() || insert.isPending}
-            onClick={add}
-          >
-            <Icon.plus />
-            Add team
-          </button>
+      <Card className="admin-narrow">
+        <div className="admin-add">
+          <TextField
+            label="New team"
+            className="field-flush admin-field-grow"
+            placeholder="Team name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && add()}
+          />
+          <Button variant="primary" icon={Icon.plus} disabled={!name.trim() || insert.isPending} onClick={add}>
+            {insert.isPending ? 'Adding…' : 'Add team'}
+          </Button>
         </div>
         {insert.isError && (
-          <p className="muted" style={{ fontSize: 12.5, color: 'var(--danger)', marginBottom: 8 }}>
+          <Note tone="danger" role="alert" className="admin-note">
             Could not add the team. The name may already exist.
-          </p>
+          </Note>
         )}
-        <div style={{ marginTop: 12 }}>
-          {teams.map((t) => (
-            <TeamRow key={t.id} team={t} onDelete={() => setRemoving(t)} />
-          ))}
-          {teams.length === 0 && (
-            <p className="muted" style={{ fontSize: 13.5 }}>
-              No teams yet. Add the first one above.
-            </p>
-          )}
-        </div>
-      </div>
+        {removed && (
+          <div ref={removedRef} tabIndex={-1} className="admin-note">
+            <Note tone="success" role="status">
+              {removed.message}
+            </Note>
+          </div>
+        )}
+        {teams.length === 0 ? (
+          <Empty icon={Icon.users} title="No teams yet">
+            Add the first one above. Sessions and coaches can then be filtered by it.
+          </Empty>
+        ) : (
+          <ul className="admin-list">
+            {teams.map((t) => (
+              <TeamRow
+                key={t.id}
+                team={t}
+                onDelete={() => {
+                  setRemoved(null)
+                  setRemoving(t)
+                }}
+              />
+            ))}
+          </ul>
+        )}
+      </Card>
 
       {removing && (
         <DeleteTeamModal
@@ -227,6 +282,13 @@ export function AdminTeams() {
           memberCount={members.filter((m) => m.allTeams || m.teamIds.includes(removing.id)).length}
           sessionCount={sessions.filter((s) => sessionCoversAnyTeam(s, [removing.id])).length}
           onClose={() => setRemoving(null)}
+          onRemoved={() => {
+            wantRemovedFocus()
+            setRemoved({
+              id: removing.id,
+              message: `${removing.name} removed. No sessions, people or players were removed with it.`,
+            })
+          }}
         />
       )}
     </div>

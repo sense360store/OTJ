@@ -37,5 +37,10 @@
 .tick input:hover:not(:disabled) + .tick-box { border-color: var(--ink-2); }
 .tick input:checked + .tick-box { background: var(--navy); border-color: var(--navy); }
 .tick input:checked + .tick-box svg { opacity: 1; }
-.tick input:focus-visible + .tick-box { border-color: var(--royal); box-shadow: 0 0 0 3px rgba(31,67,214,.12); }
+/* The shared ring, on the box that is actually visible. The native input is
+   transparent and sits exactly over the box, so the element level
+   :focus-visible rule in styles.css draws a ring nobody can see; this is the
+   same declaration, moved to the thing on screen. 2.15 asks the three bespoke
+   focus treatments to adopt --focus, and this is that. */
+.tick input:focus-visible + .tick-box { outline: 2px solid var(--focus); outline-offset: 2px; }
 .tick input:disabled + .tick-box { opacity: .55; }

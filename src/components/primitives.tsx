@@ -207,7 +207,21 @@ export function Badge({ tone = 'neutral', children }: { tone?: BadgeTone; childr
    The label is a real <label> bound to the control, and an error sets the
    border AND renders a message AND wires aria-invalid / aria-describedby.
    A red border alone is never an error state. */
-type FieldShared = { label: ReactNode; hint?: ReactNode; error?: ReactNode; id?: string; className?: string }
+type FieldShared = {
+  label: ReactNode
+  hint?: ReactNode
+  error?: ReactNode
+  id?: string
+  className?: string
+  /* The label is READ but not shown. For an editable list row where the
+     control's own value is what a sighted reader sees: a team's name in the
+     box that renames it, a colour's name in the select that sets it. It stays
+     a real <label> bound to the control, so the accessible name is unchanged
+     and per row it says which row ("Team name for Titans"); what goes is a
+     column of repeated words above a list of five. Never for a form field a
+     reader has to fill in from nothing. */
+  labelHidden?: boolean
+}
 
 function useFieldIds(id: string | undefined, hint: ReactNode, error: ReactNode) {
   const auto = useId()
@@ -221,6 +235,7 @@ function useFieldIds(id: string | undefined, hint: ReactNode, error: ReactNode) 
 function FieldShell({
   controlId,
   label,
+  labelHidden,
   hint,
   hintId,
   error,
@@ -230,6 +245,7 @@ function FieldShell({
 }: {
   controlId: string
   label: ReactNode
+  labelHidden?: boolean
   hint?: ReactNode
   hintId: string
   error?: ReactNode
@@ -239,7 +255,9 @@ function FieldShell({
 }) {
   return (
     <div className={['field', className ?? ''].filter(Boolean).join(' ')}>
-      <label htmlFor={controlId}>{label}</label>
+      <label htmlFor={controlId} className={labelHidden ? 'sr-only' : undefined}>
+        {label}
+      </label>
       {children}
       {hint && (
         <span id={hintId} className="muted" style={{ display: 'block', marginTop: 'var(--space-4)', fontSize: 'var(--text-sm)' }}>
@@ -262,6 +280,7 @@ function FieldShell({
    and disables the submit that had focus. */
 export function TextField({
   label,
+  labelHidden,
   hint,
   error,
   id,
@@ -270,7 +289,7 @@ export function TextField({
 }: FieldShared & InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
-    <FieldShell {...{ controlId, label, hint, hintId, error, errorId, className }}>
+    <FieldShell {...{ controlId, label, labelHidden, hint, hintId, error, errorId, className }}>
       <input id={controlId} aria-invalid={error ? true : undefined} aria-describedby={describedBy} {...rest} />
     </FieldShell>
   )
@@ -278,6 +297,7 @@ export function TextField({
 
 export function SelectField({
   label,
+  labelHidden,
   hint,
   error,
   id,
@@ -287,7 +307,7 @@ export function SelectField({
 }: FieldShared & SelectHTMLAttributes<HTMLSelectElement>) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
-    <FieldShell {...{ controlId, label, hint, hintId, error, errorId, className }}>
+    <FieldShell {...{ controlId, label, labelHidden, hint, hintId, error, errorId, className }}>
       <select id={controlId} aria-invalid={error ? true : undefined} aria-describedby={describedBy} {...rest}>
         {children}
       </select>
@@ -305,6 +325,7 @@ export function SelectField({
    empties the box, so the browser leaves focus on the document body. */
 export function TextAreaField({
   label,
+  labelHidden,
   hint,
   error,
   id,
@@ -314,7 +335,7 @@ export function TextAreaField({
 }: FieldShared & TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
-    <FieldShell {...{ controlId, label, hint, hintId, error, errorId, className }}>
+    <FieldShell {...{ controlId, label, labelHidden, hint, hintId, error, errorId, className }}>
       <textarea id={controlId} rows={rows} aria-invalid={error ? true : undefined} aria-describedby={describedBy} {...rest} />
     </FieldShell>
   )

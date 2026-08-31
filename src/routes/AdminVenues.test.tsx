@@ -85,10 +85,20 @@ describe('BibColourField', () => {
     const html = renderToStaticMarkup(
       <BibColourField value="red" disabled={false} label="Default bib colour for Titans" onChange={noop} />,
     )
-    expect(html).toContain('aria-label="Default bib colour for Titans"')
+    // A real <label> bound to the control, read but not shown: in a list of
+    // five teams the row's own name is what a sighted reader is reading, and
+    // the label repeats it. VISUAL-02 moved this off aria-label, which is an
+    // accessible name with no element behind it.
+    expect(html).toMatch(/<label for="([^"]+)" class="sr-only">Default bib colour for Titans<\/label>/)
+    const id = html.match(/<label for="([^"]+)" class="sr-only">/)?.[1]
+    expect(html).toContain(`<select id="${id}"`)
     expect(html).toContain('value="red" selected')
     expect(html).toContain('>No bib<')
+    // The colour's NAME is the information and the swatch is supplementary:
+    // 2.16 keeps bib colour as colour, and keeps it paired with its word.
+    expect(html).toContain('>Red<')
     expect(html).toContain('#e23b3b')
+    expect(html).toContain('aria-hidden="true"')
     // No free text: a colour the app cannot render is not offerable.
     expect(html).not.toContain('<input')
   })
@@ -98,13 +108,19 @@ describe('BibColourField', () => {
       <BibColourField value={null} disabled={false} label="Default bib colour for Trojans" onChange={noop} />,
     )
     expect(html).toContain('value="" selected')
-    expect(html).not.toContain('border-radius:50%')
+    expect(html).not.toContain('bib-swatch')
   })
 
-  it('meets the 44px target', () => {
+  it('takes the shared control height from the field primitive', () => {
+    // It used to carry min-height: 44px inline. The height is .field select's
+    // now (var(--control-h), which IS 44px), so what this pins is that the
+    // control is on the shared treatment rather than on a literal of its own.
+    // The rendered 44px is measured in a browser by tools/visual/checks.mjs,
+    // which is the only place that can compute it.
     const html = renderToStaticMarkup(
       <BibColourField value={null} disabled={false} label="Default bib colour for Titans" onChange={noop} />,
     )
-    expect(html).toContain('min-height:44px')
+    expect(html).toContain('class="field field-flush bib-select"')
+    expect(html).not.toMatch(/style="[^"]*height/)
   })
 })
