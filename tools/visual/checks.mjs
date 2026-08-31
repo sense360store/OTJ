@@ -23,6 +23,7 @@ import {
   MEMBERS,
   ROLES,
   memberRow,
+  noWrites,
   queryForAdmin,
   roleRow,
   runAdminFlow,
@@ -4141,12 +4142,18 @@ const focusReturned = async (page, d) => {
     const r = await page.evaluate(() => ({
       path: document.querySelector('.content')?.getAttribute('data-path') ?? null,
       rows: document.querySelectorAll('.admin-row').length,
-      writes: window.__adminCalls ? Object.values(window.__adminCalls).reduce((a, b) => a + b, 0) : null,
     }))
+    /* The write half goes through `noWrites` rather than summing the log
+       here. Summing it read the recorded ORDER as a value: `0 + []` is the
+       STRING "0", so the sum never equalled 0 again and four redirect proofs
+       failed for a reason that had nothing to do with a redirect. Reusing the
+       helper also keeps the one rule about a renamed or emptied counter in
+       one place. */
+    const wrote = !(await noWrites(page))
     check(
       `${screen}: a member without the capability is redirected rather than shown the screen (${caps})`,
-      r.path === '/' && r.rows === 0 && r.writes === 0,
-      JSON.stringify(r),
+      r.path === '/' && r.rows === 0 && !wrote,
+      JSON.stringify({ ...r, wrote }),
     )
     await page.close()
   }
