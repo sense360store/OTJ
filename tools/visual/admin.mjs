@@ -242,19 +242,23 @@ export const callArgs = (name, want) => (page) =>
       if (made.length !== 1) return false
       const vars = made[0].vars
       if (!vars || typeof vars !== 'object') return false
-      const named = (field, id) =>
-        field === 'teamIds'
-          ? names.team(id)
-          : field === 'roleIds'
-            ? names.role(id)
-            : field === 'memberId' || field === 'userId'
-              ? names.member(id)
-              : id
+      /* A role capability pair reads as the tick's OWN accessible name, so a
+         payload assertion and a grid press are written the same way. */
+      const named = (field, v) =>
+        v && typeof v === 'object' && 'roleId' in v && 'capability' in v
+          ? `${names.capability(v.capability)} for ${names.role(v.roleId)}`
+          : field === 'teamIds'
+            ? names.team(v)
+            : field === 'roleIds'
+              ? names.role(v)
+              : field === 'memberId' || field === 'userId'
+                ? names.member(v)
+                : v
       return Object.entries(want).every(([field, expected]) => {
         const got = vars[field]
         if (Array.isArray(expected)) {
           if (!Array.isArray(got) || got.length !== expected.length) return false
-          const mine = got.map((id) => named(field, id)).sort()
+          const mine = got.map((v) => named(field, v)).sort()
           const theirs = [...expected].sort()
           return mine.every((v, i) => v === theirs[i])
         }
@@ -1117,7 +1121,16 @@ export const USER_FLOWS = [
       // Applying closes the dialog AND takes the Review button it was opened
       // from with the draft, so Modal's own restore finds its opener gone.
       (await focusOnOutcome('success')(page)) &&
-      (await calls('saveRoleCaps', 1)(page)),
+      (await calls('saveRoleCaps', 1)(page)) &&
+      /* And EXACTLY that one grant, named the way the tick that made it is.
+         The tick, the vanished Review button and the change count are all
+         drawn from the pre submit draft, so a payload carrying a capability
+         nobody ticked changed what the whole club may do and left every one
+         of them looking right. */
+      (await callArgs('saveRoleCaps', {
+        adds: [`Manage drills for ${ROLES.coach}`],
+        removes: [],
+      })(page)),
     drive: async (page) => {
       if (!(await pressTick(page, 'Manage drills', ROLES.coach))) return false
       await pause(page)

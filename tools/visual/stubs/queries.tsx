@@ -718,24 +718,64 @@ const adminCalls: AdminCallLog = {
 /* What the ids in a recorded payload are called, so an assertion can be
    written in the same vocabulary as every other entry: the team's name. The
    log itself keeps the RAW ids, because translating on the way in would hide
-   exactly the mix-up an identity proof exists to catch. Read off the store
-   rather than snapshotted, so a state that adds a team and a team added
-   during a run both resolve. */
-const MEMBERS_AT_LOAD = new Map(adminStore.members().map((m) => [m.id, m.fullName]))
+   exactly the mix-up an identity proof exists to catch.
+
+   AN AMBIGUOUS NAME IS NO IDENTITY AT ALL. Two members may share a full name,
+   which `profiles.full_name` permits, and a name that more than one id
+   carries cannot say WHICH of them a write was about: comparing by it would
+   let a write repointed at the namesake satisfy the assertion. Such a name
+   resolves to the empty string, which matches no expectation any entry can
+   write, so the entry fails rather than passing on a collapsed identity. That
+   is the same rule the product's own linking screen uses for an id it cannot
+   stand behind, and it is why a duplicate name in the fixtures would break
+   the proof loudly rather than quietly.
+
+   Live rows FIRST, then the club as it was when the page loaded. A removal
+   takes the member out of the store, so a live only lookup cannot name the
+   person a removal write was about, which is the one write where naming them
+   matters most. Nothing renames anything, so the two can never disagree. */
+const nameLookup = <T,>(rows: () => T[], idOf: (r: T) => string, nameOf: (r: T) => string) => {
+  const atLoad = new Map(rows().map((r) => [idOf(r), nameOf(r)]))
+  return (id: string) => {
+    const known = new Map(atLoad)
+    for (const r of rows()) known.set(idOf(r), nameOf(r))
+    const name = known.get(id)
+    if (name === undefined) return id
+    let carriers = 0
+    for (const n of known.values()) if (n === name) carriers += 1
+    return carriers === 1 ? name : ''
+  }
+}
 ;(
   globalThis as unknown as {
-    __adminNames?: { team: (id: string) => string; role: (id: string) => string; member: (id: string) => string }
+    __adminNames?: {
+      team: (id: string) => string
+      role: (id: string) => string
+      member: (id: string) => string
+      capability: (key: string) => string
+    }
   }
 ).__adminNames = {
-  team: (id: string) => adminStore.teams().find((t) => t.id === id)?.name ?? id,
-  role: (id: string) => adminStore.roles().find((r) => r.id === id)?.label ?? id,
-  /* The store FIRST, then the club as it was when the page loaded. A removal
-     takes the member out of the store, so a live only lookup cannot name the
-     person a removal write was about, which is the one write where naming
-     them matters most. Nothing renames a member, so the two can never
-     disagree. */
-  member: (id: string) =>
-    adminStore.members().find((m) => m.id === id)?.fullName ?? MEMBERS_AT_LOAD.get(id) ?? id,
+  team: nameLookup(
+    () => adminStore.teams(),
+    (t) => t.id,
+    (t) => t.name,
+  ),
+  role: nameLookup(
+    () => adminStore.roles(),
+    (r) => r.id,
+    (r) => r.label,
+  ),
+  member: nameLookup(
+    () => adminStore.members(),
+    (m) => m.id,
+    (m) => m.fullName,
+  ),
+  capability: nameLookup(
+    () => adminStore.capabilities(),
+    (c) => c.key,
+    (c) => c.label,
+  ),
 }
 
 const ADMIN_HANGS = state === 'inflight'

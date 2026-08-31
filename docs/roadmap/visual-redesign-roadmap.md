@@ -685,6 +685,22 @@ left the coach.**
   one needed the name lookup to survive the removal it describes, so it reads
   the store first and the club as it was at load second; nothing renames a
   member, so the two cannot disagree.
+- **A name two people share is no identity at all.** `profiles.full_name`
+  permits a namesake, and comparing a write's target by name collapses two
+  ids into one, so a write repointed at the namesake satisfied the assertion.
+  A name more than one id carries resolves to the empty string, which matches
+  no expectation any entry can write, so the entry fails rather than passing
+  on a collapsed identity. That is the rule the product's own linking screen
+  uses for an id it cannot stand behind, and it means a duplicate name in the
+  fixtures breaks the proof loudly.
+- **The capability apply carried its payload unobserved**, which is the
+  round one hole in the one place round one did not look. The tick, the
+  vanished Review button and the change count are all drawn from the PRE
+  SUBMIT draft, so an apply that smuggled in a capability nobody ticked
+  changed what the whole club may do and left every one of those looking
+  right. The exact adds and removes are asserted now, named the way the tick
+  that made them is (`Manage drills for Coach`), so the assertion and the
+  press are written in one vocabulary.
 
 `Tick` is kept rather than retired, and that is a decision rather than an
 omission. `.check-row`'s native checkbox is the shared treatment everywhere
