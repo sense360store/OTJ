@@ -110,11 +110,16 @@ export function BibColourField({
   value,
   disabled,
   label,
+  selectRef,
   onChange,
 }: {
   value: string | null
   disabled: boolean
   label: string
+  /* So the row can put focus back on the control a coach was standing on.
+     Choosing a colour starts the write that disables this select, and a
+     browser blurs a disabled control. */
+  selectRef?: React.Ref<HTMLSelectElement>
   onChange: (v: string | null) => void
 }) {
   return (
@@ -126,6 +131,7 @@ export function BibColourField({
         label={label}
         labelHidden
         className="field-flush bib-select"
+        ref={selectRef}
         value={value ?? ''}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value || null)}
@@ -146,12 +152,23 @@ function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
   const setBib = useSetTeamBibColour()
   const [draft, setDraft] = useState(team.name)
   const changed = draft.trim() !== team.name && draft.trim() !== ''
+  /* Both of this row's writes disable the control that started them, and a
+     browser blurs a disabled control. Choosing a bib colour freezes the
+     select; renaming settles with the stored name equal to the draft, so
+     `changed` goes false and Rename disables under the press. Both leave
+     focus on the document body, so both are restored to where the coach was.
+     Reproduced in a browser before either was repaired. */
+  const nameRef = useRef<HTMLInputElement>(null)
+  const bibRef = useRef<HTMLSelectElement>(null)
+  const wantNameFocus = useFocusRestore(!rename.isPending, nameRef)
+  const wantBibFocus = useFocusRestore(!setBib.isPending, bibRef)
   return (
     <li className="admin-row">
       <TextField
         label={`Team name for ${team.name}`}
         labelHidden
         className="field-flush admin-field-grow"
+        ref={nameRef}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
       />
@@ -159,14 +176,26 @@ function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
         value={team.bibColour}
         disabled={setBib.isPending}
         label={'Default bib colour for ' + team.name}
-        onChange={(v) => setBib.mutate({ teamId: team.id, bibColour: v })}
+        selectRef={bibRef}
+        onChange={(v) => {
+          wantBibFocus()
+          setBib.mutate({ teamId: team.id, bibColour: v })
+        }}
       />
       <div className="admin-row-acts">
+        {/* Named for its own team: a screen reader listing the page's buttons
+            gets five identical "Rename" otherwise, which is exactly the
+            context that listing strips away. The visible word is still the
+            start of the name, so the label matches what a voice user says. */}
         <Button
           size="sm"
           icon={Icon.check}
+          aria-label={'Rename ' + team.name}
           disabled={!changed || rename.isPending}
-          onClick={() => rename.mutate({ id: team.id, name: draft.trim() })}
+          onClick={() => {
+            wantNameFocus()
+            rename.mutate({ id: team.id, name: draft.trim() })
+          }}
         >
           {rename.isPending ? 'Renaming…' : 'Rename'}
         </Button>
@@ -214,6 +243,11 @@ export function AdminTeams() {
   const removedRef = useRef<HTMLDivElement>(null)
   const rowGone = removed !== null && !teams.some((t) => t.id === removed.id)
   const wantRemovedFocus = useFocusRestore(rowGone, removedRef)
+  /* Add team disables while the write is out and the success empties the
+     field, so it stays disabled and the browser drops focus. Focus goes back
+     to the field, which is where the next team is typed. */
+  const newTeamRef = useRef<HTMLInputElement>(null)
+  const wantNewTeamFocus = useFocusRestore(!insert.isPending, newTeamRef)
   if (isLoading) return <Loading />
   if (isError) return <ErrorNote onRetry={() => void refetch()} />
   // The route guard already keeps members without teams.manage out; this is
@@ -223,6 +257,7 @@ export function AdminTeams() {
   const add = () => {
     const trimmed = name.trim()
     if (!trimmed) return
+    wantNewTeamFocus()
     insert.mutate({ name: trimmed }, { onSuccess: () => setName('') })
   }
 
@@ -238,6 +273,7 @@ export function AdminTeams() {
           <TextField
             label="New team"
             className="field-flush admin-field-grow"
+            ref={newTeamRef}
             placeholder="Team name"
             value={name}
             onChange={(e) => setName(e.target.value)}

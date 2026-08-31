@@ -152,6 +152,31 @@ What the slice adopted: `PageHeader` for the heading, `Card` for the five contai
 
 What it deliberately did not do. It changed no query, no capability test, no auth client call and no message string. It kept the two destination lists as buttons that navigate rather than turning them into links, because the destinations are what the brief froze and a link is a different control. And it added no account removal affordance: that stays admin owned, is stated in the Membership card rather than offered, and its absence is now asserted for every capability set.
 
+**Seven accessibility repairs came out of an adversarial pass over the
+finished slice**, and they are listed rather than folded into the adoption
+because six of them are defects the screens carried before it:
+
+- The two warnings that account for an inert submit are announced now, not
+  only shown. A member who unticks the last role heard nothing.
+- The sentence explaining All teams, and the one explaining the locked Admin
+  tick, are BOUND to the control they account for. The five team boxes that
+  All teams ticks and freezes are out of the tab order, so a sentence merely
+  near them is one a screen reader never reaches.
+- The row actions are named for their own row (`Manage Priya Raghunathan`,
+  `Rename Titans`), which is what a buttons list strips the context away
+  from. The icon-only siblings beside them were already named this way.
+- The four card headings are `h2`. They were `h3` with no `h2` anywhere in the
+  document, which is a level a screen reader user navigating by heading falls
+  into; the Account screen already emits `h2` for the same shape.
+- The capability grid's row header names the capability alone. The
+  description stayed inside the `<th>`, so every one of the five cells in a
+  row was announced with the whole sentence in front of it.
+- Four more outcomes dropped focus onto the document body, and each was
+  reproduced before it was repaired: applying a capability change (the dialog
+  closes AND the button it was opened from goes with the draft, so `Modal`'s
+  own restore finds its opener already gone), choosing a bib colour, creating
+  a role and adding a team.
+
 Five things worth recording, none of them presentation alone:
 
 - **Three of the four successes dropped focus onto the document body, and getting that right took three attempts.** Remove photo unmounts with the photo it removed; Save goes inert because the name now matches; and the two Security submits go inert because they empty their own fields. A browser blurs a focused control when it is disabled or removed, so a coach who clicked rather than pressed Enter lost their place. Calling `.focus()` in the success callback fixed none of it: TanStack runs a per-call `onSuccess` inside its notify batch BEFORE it notifies its listeners, so React has not re-rendered, the control still carries the in-flight render's `disabled`, and focusing a disabled control is a no-op. And placing it unconditionally on the settled render was worse than the defect, because only the photo actions are disabled during a removal: a coach who moved into another field while the write was in flight had focus taken back off them. The rule that survived is one `useFocusRestore(settled, ref)`: the callback requests, the effect on the settled render places it, and it places it ONLY when `document.activeElement` is the body or nothing, which is what the browser leaves behind when the control it was on is disabled or removed. Both halves are driven in `checks.mjs`, restore and no-steal, and both fail under mutation.
@@ -624,6 +649,25 @@ cross product change rather than this slice's.
   pre-existing behaviour; a visible cue is new chrome rather than an adoption.
 - **The two checkbox treatments have not converged**, for the stated
   `color-scheme` reason above.
+- **Choosing a bib colour disables the select under the coach's fingers.**
+  The write starts on `change`, and on Windows arrowing a closed select fires
+  one `change` per step, so the first press freezes the control mid selection.
+  Focus is restored now, which is what this slice can fix; not disabling it,
+  or committing on blur, is a change to a frozen interaction rather than to
+  its presentation, so it is recorded here instead.
+- **A disabled submit still cannot deliver its own description.** Both
+  warnings are announced when they appear and both submits point at them, but
+  a disabled control is out of the tab order, so the description is reached
+  only in browse mode. Keeping the control focusable with `aria-disabled` is
+  new interaction on a frozen contract, which is the same deferral the Login
+  slice recorded for its own disabled submit.
+- **The loading, error and refused branches replace the page, `h1` included.**
+  Twelve routes in the product return a bare state that way; changing it on
+  two of them would make the pair inconsistent with the other ten, so it
+  belongs to VISUAL-04's whole product pass.
+- **`Empty` emits an `h3`.** On Teams, whose card carries no heading of its
+  own, that is the same level jump one branch down. It is a shared primitive
+  with thirty callers, so the level is not this slice's to move.
 
 ### VISUAL-03 — Feature-area waves
 

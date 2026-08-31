@@ -24,6 +24,7 @@
 // this screen at all.
 // =====================================================================
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import type { Capability, Member, RoleCapability, RoleInfo, Team } from '../lib/data'
@@ -204,10 +205,16 @@ function boxes(html: string): { name: string; checked: boolean; disabled: boolea
 const box = (html: string, name: string) => boxes(html).find((b) => b.name === name)
 
 describe('the page and its capability gate', () => {
-  it('renders one h1 naming the page', () => {
+  it('renders one h1 naming the page, with the card sections as level two', () => {
     const html = page()
     expect((html.match(/<h1>/g) ?? []).length).toBe(1)
     expect(html).toContain('<h1>Users</h1>')
+    /* The four cards are peers of the page title, not sub-sub-sections. They
+       were h3 with no h2 anywhere in the document, so a screen reader user
+       navigating by level found nothing at 2 and landed in a hole at 3. The
+       Account screen already emits h2 for the same shape. */
+    expect((html.match(/<h2>/g) ?? []).length).toBe(4)
+    expect((html.match(/<h3>/g) ?? []).length).toBe(0)
   })
 
   it('renders nothing at all for a member without users.manage', () => {
@@ -336,6 +343,24 @@ describe('the invite form', () => {
 })
 
 describe('an inert control points at the sentence that accounts for it', () => {
+  it('announces the no roles warning rather than only showing it', () => {
+    // A warning that appears when the last role is unticked and is announced
+    // to nobody leaves a screen reader user with a submit that has silently
+    // gone inert.
+    reads.roles = ALL_ROLES
+    const html = page()
+    // The invite form defaults to Coach, so the warning is absent here; what
+    // is pinned is that BOTH warnings carry the live region role wherever
+    // they render. Asserted on the source of truth for the tone and role.
+    expect(html).not.toContain('An invite with no role grants nothing')
+    const source = readFileSync(new URL('./AdminUsers.tsx', import.meta.url), 'utf8')
+    for (const words of ['Pick at least one role', 'Keep at least one role']) {
+      const at = source.indexOf(words)
+      expect(at, words).toBeGreaterThan(-1)
+      expect(source.slice(Math.max(0, at - 220), at), words).toContain('role="status"')
+    }
+  })
+
   it('binds the Send button to the no roles warning, and to nothing while a role is held', () => {
     // The default has Coach ticked, so there is no warning and nothing to
     // point at. This asserts the WIRING is absent then, because a describedby

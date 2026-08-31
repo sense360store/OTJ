@@ -819,14 +819,8 @@ summary:focus-visible,
    above the text. The label IS the control's hit area, so it takes the 44px
    minimum: a 16px box on a 21px row was a 21px target, and 2.5 binds every
    control rather than only the ones on a phone-first screen. */
-/* overflow-wrap: anywhere rather than break-word, because only `anywhere`
-   changes the MIN CONTENT contribution, and that is the thing that matters
-   here: a club team named with no space in it (measured at 393px) made its
-   own grid track 393px wide and scrolled a 360px phone sideways. It inherits,
-   so the wording inside the row breaks with it. */
 .check-row, .field .check-row { display: flex; align-items: center; gap: var(--space-8); margin: 0; min-height: var(--hit);
-  font-size: var(--text-base); font-weight: 600; color: var(--ink); cursor: pointer;
-  min-width: 0; overflow-wrap: anywhere; }
+  font-size: var(--text-base); font-weight: 600; color: var(--ink); cursor: pointer; }
 /* A DIRECT child, so a row whose control is drawn rather than native (the
    Tick, which hides a full size input over a drawn box) keeps its own
    sizing. Both selectors score the same, so without this the winner would
@@ -990,7 +984,12 @@ summary:focus-visible,
    member count Pill, whose own icon is 13px) keeps its own size. Every
    caller's glyph is a direct child, so this changes none of them. */
 .section-title > svg { width: 20px; height: 20px; color: var(--royal); }
-.section-title h3 { font-size: var(--text-lg); font-weight: 800; }
+/* h2 as well as h3: a card inside a page whose title is the h1 is a LEVEL
+   TWO section. The Account screen already emits h2 for that shape, through a
+   class of its own rather than through this one, so what is being followed
+   here is its heading LEVEL and not its styling. The two levels share the
+   step because what differs is the document structure rather than the type. */
+.section-title h2, .section-title h3 { font-size: var(--text-lg); font-weight: 800; }
 .divider { height: 1px; background: var(--line); margin: var(--space-24) 0; border: 0; }
 
 /* ============================================================ RESPONSIVE */
@@ -1687,7 +1686,19 @@ a.activity-batch:hover { text-decoration: underline; }
    scrolling on a phone for no reason. Each row keeps its own 44px height, so
    the columns never shrink the target. */
 .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0 var(--space-16); }
-.check-grid .check-row + .check-row { margin-top: 0; }
+/* Four classes, so this BEATS .choice-group's own row spacing rather than
+   tying with it and being decided by whichever the bundler emitted second. */
+.choice-group .check-grid .check-row + .check-row, .check-grid .check-row + .check-row { margin-top: 0; }
+/* overflow-wrap: anywhere rather than break-word, because only `anywhere`
+   changes the MIN CONTENT contribution, and that is the thing that matters
+   here: a club team named with no space in it (measured at 393px) made its
+   own grid track 393px wide and scrolled a 360px phone sideways. It inherits,
+   so the wording inside the row breaks with it.
+   Scoped to THIS grid rather than added to the shared .check-row: nothing on
+   the three dialogs that already use that class moves today, since their
+   wording is short and spaced, but how a future long value breaks there is
+   their own screens' decision rather than this slice's. */
+.check-grid .check-row { min-width: 0; overflow-wrap: anywhere; }
 /* The team list nests under the all teams toggle, indented behind a faint
    rule, so the toggle plainly governs the group. */
 .team-nest { margin-left: var(--space-8); padding-left: var(--space-16); border-left: 2px solid var(--line); }

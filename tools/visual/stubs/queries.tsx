@@ -689,6 +689,11 @@ interface AdminCallLog {
   renameTeam: number
   deleteTeam: number
   setTeamBib: number
+  /* The ORDER the writes went out in, which a scalar counter cannot show. The
+     member save is specified to write roles, then the all teams flag, then
+     the specific teams, and two counters both reading 1 hold whichever way
+     round they went. */
+  order: string[]
 }
 
 const adminCalls: AdminCallLog = {
@@ -705,6 +710,7 @@ const adminCalls: AdminCallLog = {
   renameTeam: 0,
   deleteTeam: 0,
   setTeamBib: 0,
+  order: [],
 }
 ;(globalThis as unknown as { __adminCalls?: AdminCallLog }).__adminCalls = adminCalls
 
@@ -732,6 +738,7 @@ function useAdminWrite<V, R = void>(
     reject?: (e: Error) => void,
   ) => {
     adminCalls[name] += 1
+    adminCalls.order.push(name)
     setFailed(false)
     setPending(true)
     // Hangs: no callback at all, and the control stays in flight, which is
@@ -748,8 +755,18 @@ function useAdminWrite<V, R = void>(
         opts.onError?.(err)
         reject?.(err)
       } else {
-        apply?.(vars)
+        /* THE CALLBACK FIRST, AND THE LIST A TICK LATER, because that is the
+           ORDER PRODUCTION HAS and the whole reason three screens wait for a
+           row to leave rather than for a write to settle. In the product the
+           per-call onSuccess runs when the mutation resolves and the list
+           only changes when the invalidated read comes back, a network round
+           trip afterwards. Applying the store update in the same callback
+           collapsed the two into one commit, which made "the row has gone"
+           true on the settling render and left the harness unable to tell a
+           hook keyed on the write from one keyed on the row: reducing
+           `rowGone` to `removed !== null` passed every entry. */
         opts.onSuccess?.(result ? result(vars) : (undefined as R))
+        setTimeout(() => apply?.(vars), 0)
       }
       setPending(false)
     }, ADMIN_DELAY)

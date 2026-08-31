@@ -73,16 +73,19 @@ function CheckItem({
   label,
   checked,
   disabled,
+  describedBy,
   onChange,
 }: {
   label: string
   checked: boolean
   disabled?: boolean
+  // The id of the sentence that accounts for this row being inert.
+  describedBy?: string
   onChange: () => void
 }) {
   return (
     <label className={disabled ? 'check-row is-disabled' : 'check-row'}>
-      <Tick checked={checked} disabled={disabled} onChange={onChange} />
+      <Tick checked={checked} disabled={disabled} describedBy={describedBy} onChange={onChange} />
       <span>{label}</span>
     </label>
   )
@@ -118,12 +121,19 @@ function TeamPicker({
   onAllTeams: (on: boolean) => void
   onToggleTeam: (id: string) => void
 }) {
+  /* Turning All teams on ticks and freezes every team below it at once. The
+     sentence saying so is BOUND to the toggle rather than merely sitting
+     under it, and announced when it appears, because the five boxes that
+     just changed are disabled and therefore out of the tab order: without
+     this nothing tells a member using a screen reader that they changed. */
+  const allTeamsHintId = useId()
   return (
     <div>
       <CheckItem
         label="All teams, current and future"
         checked={allTeams}
         disabled={disabled}
+        describedBy={allTeams && teams.length > 0 ? allTeamsHintId : undefined}
         onChange={() => onAllTeams(!allTeams)}
       />
       {/* The team list nests under the all teams toggle, indented behind a
@@ -148,7 +158,9 @@ function TeamPicker({
                 the open. It was a title on each row, which is a tooltip and
                 does not survive touch. */}
             {allTeams && (
-              <p className="admin-hint">All teams is on, so every team is included. Turn it off to pick teams.</p>
+              <p className="admin-hint" id={allTeamsHintId} role="status">
+                All teams is on, so every team is included. Turn it off to pick teams.
+              </p>
             )}
           </>
         )}
@@ -236,7 +248,7 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
   return (
     <Card>
       <div className="section-title section-title-tight">
-        <h3>Invite someone</h3>
+        <h2>Invite someone</h2>
       </div>
       <p className="admin-intro">
         They get an email with a link to the app, set a password and are signed in to this club with the roles and
@@ -280,7 +292,7 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
       {/* The reason Send is inert, in the open rather than left to be
           inferred from a greyed control. */}
       {noRoles && (
-        <Note tone="warning" id={noRolesId} className="admin-note">
+        <Note tone="warning" role="status" id={noRolesId} className="admin-note">
           Pick at least one role. An invite with no role grants nothing.
         </Note>
       )}
@@ -337,6 +349,7 @@ function ManageMemberModal({
   const [teamIds, setTeamIds] = useState<Set<string>>(() => new Set(member.teamIds))
   const [error, setError] = useState<string | null>(null)
   const noRolesId = useId()
+  const lockHintId = useId()
 
   const saving = setMemberRoles.isPending || setMemberTeams.isPending || setMemberAllTeams.isPending
 
@@ -412,6 +425,7 @@ function ManageMemberModal({
               label={r.label}
               checked={roleIds.has(r.id)}
               disabled={isLocked(r) || saving}
+              describedBy={isLocked(r) ? lockHintId : undefined}
               onChange={() => toggleRole(r.id)}
             />
           ))}
@@ -419,13 +433,13 @@ function ManageMemberModal({
         {/* Why the Admin tick is inert, said in the open. It was a title on
             the row, which does not survive touch. */}
         {anyLocked && (
-          <p className="admin-hint">
+          <p className="admin-hint" id={lockHintId}>
             The club must keep at least one admin. Make someone else an admin first.
           </p>
         )}
       </CheckGroup>
       {roleIds.size === 0 && (
-        <Note tone="warning" id={noRolesId} className="admin-note">
+        <Note tone="warning" role="status" id={noRolesId} className="admin-note">
           Keep at least one role. A member with none has no write access.
         </Note>
       )}
@@ -512,7 +526,12 @@ function MemberRow({
         {m.roles.length === 0 && <Badge tone="danger">No roles</Badge>}
       </div>
       <div className="admin-row-acts">
-        <Button size="sm" icon={Icon.edit} onClick={onManage}>
+        {/* Named for its own member: a screen reader listing the page's
+            buttons gets one identical "Manage" per row otherwise, which is
+            exactly the context that listing strips away. The visible word is
+            still the start of the name, so the label matches what a voice
+            user says. */}
+        <Button size="sm" icon={Icon.edit} aria-label={'Manage ' + (m.fullName || 'member')} onClick={onManage}>
           Manage
         </Button>
         {/* Removal is for administering others, and the only admin cannot be
@@ -679,24 +698,45 @@ function RolesCard({ roles, members }: { roles: RoleInfo[]; members: Member[] })
   const deletedRef = useRef<HTMLDivElement>(null)
   const roleGone = deleted !== null && !roles.some((r) => r.id === deleted.id)
   const wantDeletedFocus = useFocusRestore(roleGone, deletedRef)
+  /* Create role disables while the write is out and the success empties the
+     field, so it stays disabled; focus goes back to the field, which is where
+     the next role is typed. A rename replaces the row's field and Save with
+     the display form, so both unmount: focus goes to that row's own Rename
+     button, which is the control the coach pressed to get there. */
+  const newRoleRef = useRef<HTMLInputElement>(null)
+  const wantNewRoleFocus = useFocusRestore(!createRole.isPending, newRoleRef)
+  const renamedRef = useRef<HTMLButtonElement>(null)
+  const [renamed, setRenamed] = useState<string | null>(null)
+  const wantRenamedFocus = useFocusRestore(renamed !== null && renaming === null, renamedRef)
 
   const key = roleKeyFromLabel(label)
   const holders = (r: RoleInfo) => members.filter((m) => m.roles.some((x) => x.id === r.id)).length
 
   const create = () => {
     if (!key) return
+    wantNewRoleFocus()
     createRole.mutate({ key, label: label.trim() }, { onSuccess: () => setLabel('') })
   }
 
   const saveRename = () => {
     if (!renaming || !renaming.label.trim()) return
-    renameRole.mutate({ id: renaming.id, label: renaming.label.trim() }, { onSuccess: () => setRenaming(null) })
+    const id = renaming.id
+    wantRenamedFocus()
+    renameRole.mutate(
+      { id, label: renaming.label.trim() },
+      {
+        onSuccess: () => {
+          setRenamed(id)
+          setRenaming(null)
+        },
+      },
+    )
   }
 
   return (
     <Card>
       <div className="section-title section-title-tight">
-        <h3>Roles</h3>
+        <h2>Roles</h2>
       </div>
       <p className="admin-intro">
         The four system roles are fixed and cannot be renamed or deleted; their capabilities stay editable. Custom
@@ -751,7 +791,13 @@ function RolesCard({ roles, members }: { roles: RoleInfo[]; members: Member[] })
                 </div>
                 {!r.system && (
                   <div className="admin-row-acts">
-                    <Button size="sm" icon={Icon.edit} onClick={() => setRenaming({ id: r.id, label: r.label })}>
+                    <Button
+                      size="sm"
+                      icon={Icon.edit}
+                      aria-label={'Rename ' + r.label}
+                      ref={r.id === renamed ? renamedRef : undefined}
+                      onClick={() => setRenaming({ id: r.id, label: r.label })}
+                    >
                       Rename
                     </Button>
                     <IconButton
@@ -774,6 +820,7 @@ function RolesCard({ roles, members }: { roles: RoleInfo[]; members: Member[] })
         <TextField
           label="New role"
           className="field-flush admin-field-grow"
+          ref={newRoleRef}
           placeholder="For example Team Manager"
           value={label}
           hint={
@@ -923,6 +970,17 @@ function CapabilityGrid({ roles }: { roles: RoleInfo[] }) {
   const [draft, setDraft] = useState<Set<string> | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [saved, setSaved] = useState<number | null>(null)
+  // The base for each row header's own name id; the capability key makes each
+  // one unique within the grid.
+  const capNameId = useId()
+  /* Applying closes the dialog AND clears the draft, which removes the
+     "Review N changes…" button the dialog was opened from, so Modal's own
+     restore finds its opener already gone and the browser leaves focus on the
+     document body. Focus goes to the outcome, which is the only thing on the
+     page that says what happened. Reproduced in a browser before it was
+     repaired. */
+  const savedRef = useRef<HTMLDivElement>(null)
+  const wantSavedFocus = useFocusRestore(saved !== null, savedRef)
 
   const current = useMemo(() => new Set((mapping ?? []).map((rc) => tickKey(rc.roleId, rc.capability))), [mapping])
   const rows = useMemo(() => [...(catalogue ?? [])].sort(capabilityOrder), [catalogue])
@@ -930,7 +988,7 @@ function CapabilityGrid({ roles }: { roles: RoleInfo[] }) {
   const heading = (
     <>
       <div className="section-title section-title-tight">
-        <h3>Roles and capabilities</h3>
+        <h2>Roles and capabilities</h2>
       </div>
       <p className="admin-intro">
         Ticks decide what every member holding a role can do, club wide. A member with several roles gets everything
@@ -985,7 +1043,8 @@ function CapabilityGrid({ roles }: { roles: RoleInfo[] }) {
     setDraft(next)
   }
 
-  const apply = () =>
+  const apply = () => {
+    wantSavedFocus()
     save.mutate(
       { adds, removes },
       {
@@ -996,6 +1055,7 @@ function CapabilityGrid({ roles }: { roles: RoleInfo[] }) {
         },
       },
     )
+  }
 
   return (
     <Card>
@@ -1022,8 +1082,15 @@ function CapabilityGrid({ roles }: { roles: RoleInfo[] }) {
               const reserved = RESERVED_CAPABILITIES.includes(c.key)
               return (
                 <tr key={c.key}>
-                  <th scope="row">
-                    <span className="cap-name">{c.label}</span>
+                  {/* The header's NAME is the capability alone. Without the
+                      aria-labelledby the whole description joins it, and a
+                      screen reader reads roughly thirty words before every
+                      one of the five cells in the row; the sentence is still
+                      read when the header cell itself is. */}
+                  <th scope="row" aria-labelledby={`${capNameId}-${c.key}`}>
+                    <span className="cap-name" id={`${capNameId}-${c.key}`}>
+                      {c.label}
+                    </span>
                     <span className="cap-desc">
                       {c.description}
                       {reserved && ' Reserved to the admin role.'}
@@ -1079,9 +1146,11 @@ function CapabilityGrid({ roles }: { roles: RoleInfo[] }) {
       {/* Applying used to close the dialog and leave the page exactly as it
           was, so a club wide change confirmed nothing at all. */}
       {saved !== null && changeCount === 0 && (
-        <Note tone="success" role="status" className="admin-note">
-          {saved} change{saved === 1 ? '' : 's'} applied to the whole club.
-        </Note>
+        <div ref={savedRef} tabIndex={-1} className="admin-note">
+          <Note tone="success" role="status">
+            {saved} change{saved === 1 ? '' : 's'} applied to the whole club.
+          </Note>
+        </div>
       )}
       {confirming && changeCount > 0 && (
         <ConfirmGridModal
@@ -1148,7 +1217,7 @@ export function AdminUsers() {
 
         <Card>
           <div className="section-title section-title-spread">
-            <h3>Club members</h3>
+            <h2>Club members</h2>
             <Pill icon={Icon.users}>{members.length}</Pill>
           </div>
           {removed && (

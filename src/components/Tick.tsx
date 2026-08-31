@@ -17,16 +17,28 @@ export function Tick({
   checked,
   disabled,
   ariaLabel,
+  describedBy,
   onChange,
 }: {
   checked: boolean
   disabled?: boolean
   ariaLabel?: string
+  /* The id of the sentence that accounts for this tick being held on and
+     inert, so the reason is bound to the control rather than merely sitting
+     near it. */
+  describedBy?: string
   onChange: () => void
 }) {
   return (
     <span className="tick">
-      <input type="checkbox" checked={checked} disabled={disabled} aria-label={ariaLabel} onChange={onChange} />
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        aria-describedby={describedBy}
+        onChange={onChange}
+      />
       <span className="tick-box" aria-hidden="true">
         <Icon.check strokeWidth={3.4} />
       </span>

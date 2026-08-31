@@ -302,6 +302,11 @@ export function TextField({
   )
 }
 
+/* `ref` is named for the same reason TextField names its own: a caller that
+   has to place focus on the control needs a handle on it, and
+   SelectHTMLAttributes carries none. The first caller is the Admin Teams bib
+   colour, where choosing a colour starts the write that disables the select
+   the coach is standing on. */
 export function SelectField({
   label,
   labelHidden,
@@ -311,7 +316,7 @@ export function SelectField({
   className,
   children,
   ...rest
-}: FieldShared & SelectHTMLAttributes<HTMLSelectElement>) {
+}: FieldShared & SelectHTMLAttributes<HTMLSelectElement> & { ref?: Ref<HTMLSelectElement> }) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
     <FieldShell {...{ controlId, label, labelHidden, hint, hintId, error, errorId, className }}>

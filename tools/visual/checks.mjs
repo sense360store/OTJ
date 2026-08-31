@@ -3867,9 +3867,16 @@ const focusReturned = async (page, d) => {
       const namelessIcons = [...document.querySelectorAll('.content .icon-btn')].filter(
         (el) => !el.getAttribute('aria-label'),
       ).length
+      // Every heading in the content frame, in document order, as a level.
+      // A page whose only levels are 1 and 3 has a hole a screen reader user
+      // navigating by level falls into.
+      const levels = [...document.querySelectorAll('.content h1, .content h2, .content h3, .content h4')].map((h) =>
+        Number(h.tagName.slice(1)),
+      )
       return {
         h1: h1s.length,
         title: (h1s[0]?.textContent ?? '').trim(),
+        levels,
         unlabelled,
         checkboxes: checkboxes.length,
         namelessBoxes,
@@ -3877,6 +3884,11 @@ const focusReturned = async (page, d) => {
       }
     })
     check(`${screen}: exactly one h1 and it names the page`, r.h1 === 1 && r.title === title, JSON.stringify(r))
+    check(
+      `${screen}: heading levels do not skip one`,
+      r.levels.every((lv, i) => i === 0 || lv <= r.levels[i - 1] + 1),
+      JSON.stringify(r.levels),
+    )
     check(`${screen}: every field has a real label element bound to it`, r.unlabelled.length === 0, JSON.stringify(r.unlabelled))
     check(
       `${screen}: every tick control exposes a name`,
@@ -4032,14 +4044,22 @@ const focusReturned = async (page, d) => {
       (await typed(card.getByLabel('Full name', { exact: true }), 'Alex Nowell', WHAT)) &&
       (await pressed(card.getByRole('button', { name: 'Send invite', exact: true }), WHAT))
     if (ok) {
-      // The write is still out. Move somewhere else, exactly as an
-      // administrator carrying on with the page would.
+      /* The write is still out. Move somewhere else, exactly as an
+         administrator carrying on with the page would.
+
+         The field is MARKED first, so what is compared afterwards is that
+         element rather than its tag name: every role, team and capability
+         tick on this screen is an INPUT too, so a repair that moved focus
+         onto one of them passed a check named for focus staying put. */
+      await page.evaluate(() => {
+        document.querySelector('.card input[type="email"]')?.setAttribute('data-moved-to', 'yes')
+      })
       await focused(card.getByLabel('Email', { exact: true }), WHAT)
       await page.waitForTimeout(1800)
       const r = await page.evaluate(() => {
         const el = document.activeElement
         return {
-          onField: el?.tagName === 'INPUT',
+          onField: !!el && el.getAttribute('data-moved-to') === 'yes',
           outcome: document.querySelectorAll('.note-success').length,
         }
       })
@@ -4087,17 +4107,19 @@ const focusReturned = async (page, d) => {
   {
     const page = await open('adminusers', 1280, { adminEntry: adminEntry('remove-open') })
     await runAdminFlow(page, adminEntry('remove-open'))
+    /* Found by its VARIANT, not by the text it is then asserted to carry.
+       Selecting on "Remove member" and then testing /Remove/ against what was
+       selected cannot fail: nothing reaches the assertion unless it already
+       held. What is claimed is that the danger control says what it does. */
     const r = await page.evaluate(() => {
-      const confirm = [...document.querySelectorAll('.modal-foot button')].find((b) =>
-        (b.textContent ?? '').includes('Remove member'),
-      )
+      const confirm = document.querySelector('.modal-foot button.btn-danger')
       if (!confirm) return null
       const cs = getComputedStyle(confirm)
-      return { word: (confirm.textContent ?? '').trim(), fill: cs.backgroundColor, danger: confirm.classList.contains('btn-danger') }
+      return { word: (confirm.textContent ?? '').trim(), fill: cs.backgroundColor }
     })
     check(
       'the destructive confirm carries the word as well as the danger fill',
-      !!r && r.danger && /Remove/.test(r.word) && r.fill !== 'rgba(0, 0, 0, 0)',
+      !!r && /^Remove member$/.test(r.word) && r.fill !== 'rgba(0, 0, 0, 0)',
       JSON.stringify(r),
     )
     await page.close()

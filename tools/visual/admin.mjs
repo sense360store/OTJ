@@ -55,6 +55,11 @@ export const TEAMS = {
   first: 'Titans',
   second: 'Trojans',
   noBib: 'Gladiators',
+  // The two the `longnames` state adds. The second has no space in it at all,
+  // which is the case a wrapping rule has to answer; a spaced name breaks by
+  // itself and proves nothing.
+  long: 'Ossett Town Juniors Development Squad Under Nines',
+  unbroken: 'OssettTownJuniorsDevelopmentSquadUnderNines',
 }
 
 // What a driver types. The invite address is a .invalid domain, which can
@@ -112,6 +117,12 @@ const inviteCard = (page) => card(page, 'Invite someone')
 const gridCard = (page) => card(page, 'Roles and capabilities')
 
 const rowButton = (scope, name) => scope.getByRole('button', { name, exact: true })
+/* Every row action is named for its OWN row now, so a screen reader listing
+   the page's buttons does not get six identical "Manage". The driver names
+   them the same way, which is also what stops a press landing on a different
+   row's control. */
+const manage = (name) => `Manage ${name}`
+const renameOf = (name) => `Rename ${name}`
 const modal = (page) => page.locator('.modal')
 const modalButton = (page, name) => modal(page).getByRole('button', { name, exact: true })
 
@@ -157,24 +168,102 @@ const noteIn = (scope, tone, role, text) => async (page) =>
    Every `calls(name, 0)` below is paired with a `calls(name, 1)` on an entry
    that does make the same call, because a zero on its own is also what a
    deleted counter looks like. */
+// Every write the two screens can make, named here so a counter that is
+// renamed, dropped or never added fails rather than reading as nought.
+export const WRITE_NAMES = [
+  'invite',
+  'removeUser',
+  'setMemberRoles',
+  'setMemberTeams',
+  'setMemberAllTeams',
+  'createRole',
+  'renameRole',
+  'deleteRole',
+  'saveRoleCaps',
+  'insertTeam',
+  'renameTeam',
+  'deleteTeam',
+  'setTeamBib',
+]
+
 export const calls = (name, want) => (page) =>
   page.evaluate(
     ({ name, want }) => {
       const log = window.__adminCalls
       if (!log || typeof log !== 'object') return false
-      return (log[name] ?? 0) === want
+      /* The KEY has to EXIST, not merely read as nought. `log[name] ?? 0`
+         made every negative proof hold against a counter somebody had
+         renamed, which is the exact hole the comment above claims to close:
+         rename saveRoleCaps in the stub and four `calls(..., 0)` proofs stay
+         green while only the two paired `calls(..., 1)` catch it. */
+      if (!Object.prototype.hasOwnProperty.call(log, name)) return false
+      return log[name] === want
     },
     { name, want },
   )
 
-// Every counter is zero: what a page that has been looked at rather than
-// pressed must be able to claim.
+// The ORDER the writes went out in. Two counters both reading 1 hold
+// whichever way round they went, and the member save's order is a rule.
+export const callOrder = (want) => (page) =>
+  page.evaluate(
+    (want) => {
+      const log = window.__adminCalls
+      if (!log || !Array.isArray(log.order)) return false
+      return log.order.length === want.length && log.order.every((n, i) => n === want[i])
+    },
+    want,
+  )
+
+/* Every counter is zero: what a page that has been looked at rather than
+   pressed must be able to claim.
+
+   EVERY EXPECTED counter, present and zero, rather than every counter the log
+   happens to hold. `Object.values({}).every(...)` is true, so an emptied or
+   never-installed log made six entries whose whole point is "nothing was
+   written" report that a page nobody had instrumented wrote nothing. */
 export const noWrites = (page) =>
-  page.evaluate(() => {
+  page.evaluate((names) => {
     const log = window.__adminCalls
     if (!log || typeof log !== 'object') return false
-    return Object.values(log).every((v) => v === 0)
-  })
+    return names.every((n) => Object.prototype.hasOwnProperty.call(log, n) && log[n] === 0)
+  }, WRITE_NAMES)
+
+/* A control POINTS at the sentence that accounts for it: aria-describedby
+   naming an element that exists and says the words. A sentence merely near a
+   control is not an explanation a screen reader ever reaches, which is the
+   whole difference this asserts. */
+/* The same, for a BUTTON that has gone inert. Found by name rather than by
+   position, and it fails when the attribute is absent, which is what makes
+   deleting the binding a failing check rather than a silent one. */
+export const buttonDescribedBy = (page, scope, name, text) =>
+  page.evaluate(
+    ({ scope, name, text }) => {
+      const el = [...document.querySelectorAll(`${scope} button`)].find((b) =>
+        ((b.getAttribute('aria-label') ?? b.textContent) ?? '').trim().startsWith(name),
+      )
+      const id = el ? el.getAttribute('aria-describedby') : null
+      if (!id) return false
+      const said = document.getElementById(id)
+      return !!said && (said.textContent ?? '').includes(text)
+    },
+    { scope, name, text },
+  )
+
+export const describedByHolds = (page, scope, labelText, text) =>
+  page.evaluate(
+    ({ scope, labelText, text }) => {
+      // The row is found by the WORDING beside its box, which is also how a
+      // member finds it, rather than by a position a reordering would move.
+      const label = [...document.querySelectorAll(`${scope} label.check-row`)].find(
+        (l) => (l.textContent ?? '').trim() === labelText,
+      )
+      const id = label ? label.querySelector('input')?.getAttribute('aria-describedby') : null
+      if (!id) return false
+      const said = document.getElementById(id)
+      return !!said && (said.textContent ?? '').includes(text)
+    },
+    { scope, labelText, text },
+  )
 
 /* Where focus ended up. The outcome messages on both screens are wrapped in a
    tabIndex={-1} box, so a repair that worked put focus on the box HOLDING the
@@ -198,6 +287,16 @@ export const focusOnOutcome = (tone) => (page) =>
 // disabled control on its own is what an unfilled form looks like.
 const inFlight = (selectorText, name) => async (page) =>
   (await page.locator(`button:has-text("${selectorText}")[disabled]`).count()) > 0 && (await calls(name, 1)(page))
+
+/* A refusal that belongs to the row it was made on. `noteIn` takes a CSS
+   scope, so `.admin-row` matched a note on ANY row; these two say "the row
+   says so", which is a claim about WHICH row, and the team's own name is the
+   only token in the sentence that can tell them apart. */
+const rowNote = (rowLocator, tone, text) => async (page) => {
+  void page
+  const notes = rowLocator.locator(`.note-${tone}[role="alert"]`).filter({ hasText: text })
+  return (await notes.count()) === 1
+}
 
 const dialogTitled = (title) => (page) =>
   page.evaluate((title) => (document.querySelector('.modal h3')?.textContent ?? '').trim() === title, title)
@@ -320,12 +419,20 @@ export const USER_FLOWS = [
   },
   {
     key: 'invite-no-role',
-    note: 'every role unticked: the warning says why Send is inert, and Send is inert',
+    note: 'every role unticked on an OTHERWISE COMPLETE form: the warning says why Send is inert, Send is inert, and it points at the warning',
+    /* The fields are filled FIRST. Without that Send is disabled by the empty
+       address and name alone, so deleting the role rule from the disabled
+       expression left this entry green under a name claiming to prove it. */
     proof: async (page) =>
-      (await noteIn('.card', 'warning', null, 'Pick at least one role')(page)) &&
+      (await noteIn('.card', 'warning', 'status', 'Pick at least one role')(page)) &&
       (await rowButton(inviteCard(page), 'Send invite').isDisabled()) &&
+      (await buttonDescribedBy(page, '.card', 'Send invite', 'Pick at least one role')) &&
       (await calls('invite', 0)(page)),
-    drive: (page) => click(inviteCard(page).getByRole('checkbox', { name: ROLES.coach, exact: true })),
+    drive: async (page) => {
+      if (!(await fillIn(inviteCard(page).getByLabel('Email', { exact: true }), TYPED_EMAIL))) return false
+      if (!(await fillIn(inviteCard(page).getByLabel('Full name', { exact: true }), TYPED_NAME))) return false
+      return click(inviteCard(page).getByRole('checkbox', { name: ROLES.coach, exact: true }))
+    },
   },
   {
     key: 'invite-admin-all-teams',
@@ -334,6 +441,10 @@ export const USER_FLOWS = [
       (await inviteCard(page).getByRole('checkbox', { name: 'All teams, current and future', exact: true }).isChecked()) &&
       (await inviteCard(page).getByRole('checkbox', { name: TEAMS.first, exact: true }).isDisabled()) &&
       (await inviteCard(page).locator('.admin-hint').filter({ hasText: 'All teams is on' }).count()) === 1 &&
+      // BOUND to the toggle, not merely near it: the five boxes that just
+      // changed are disabled and so out of the tab order, and this is the
+      // only thing on the tab path that accounts for them.
+      (await describedByHolds(page, '.card', 'All teams, current and future', 'All teams is on')) &&
       (await calls('invite', 0)(page)),
     drive: (page) => click(inviteCard(page).getByRole('checkbox', { name: ROLES.admin, exact: true })),
   },
@@ -421,18 +532,19 @@ export const USER_FLOWS = [
       (await modal(page).getByRole('checkbox', { name: TEAMS.first, exact: true }).isChecked()) &&
       !(await modal(page).getByRole('checkbox', { name: TEAMS.noBib, exact: true }).isChecked()) &&
       (await noWrites(page)),
-    drive: (page) => click(rowButton(memberRow(page, MEMBERS.other), 'Manage')),
+    drive: (page) => click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))),
   },
   {
     key: 'manage-zero-roles',
     overlay: true,
     note: 'every role unticked: the warning says what that would mean, Save is inert, and nothing is written',
     proof: async (page) =>
-      (await noteIn('.modal', 'warning', null, 'Keep at least one role')(page)) &&
+      (await noteIn('.modal', 'warning', 'status', 'Keep at least one role')(page)) &&
       (await modalButton(page, 'Save').isDisabled()) &&
+      (await buttonDescribedBy(page, '.modal', 'Save', 'Keep at least one role')) &&
       (await noWrites(page)),
     drive: async (page) => {
-      if (!(await click(rowButton(memberRow(page, MEMBERS.other), 'Manage')))) return false
+      if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
       return click(modal(page).getByRole('checkbox', { name: ROLES.coach, exact: true }))
     },
@@ -446,11 +558,12 @@ export const USER_FLOWS = [
       (await modal(page).getByRole('checkbox', { name: ROLES.admin, exact: true }).isChecked()) &&
       (await modal(page).getByRole('checkbox', { name: ROLES.admin, exact: true }).isDisabled()) &&
       (await modal(page).locator('.admin-hint').filter({ hasText: 'must keep at least one admin' }).count()) === 1 &&
+      (await describedByHolds(page, '.modal', ROLES.admin, 'must keep at least one admin')) &&
       // Every other role stays editable: the lock is on the one tick that
       // would leave the club with no administrator, not on the dialog.
       !(await modal(page).getByRole('checkbox', { name: ROLES.coach, exact: true }).isDisabled()) &&
       (await noWrites(page)),
-    drive: (page) => click(rowButton(memberRow(page, MEMBERS.admin), 'Manage')),
+    drive: (page) => click(rowButton(memberRow(page, MEMBERS.admin), manage(MEMBERS.admin))),
   },
   {
     key: 'manage-all-teams',
@@ -461,7 +574,7 @@ export const USER_FLOWS = [
       (await modal(page).getByRole('checkbox', { name: TEAMS.noBib, exact: true }).isDisabled()) &&
       (await modal(page).locator('.admin-hint').filter({ hasText: 'All teams is on' }).count()) === 1,
     drive: async (page) => {
-      if (!(await click(rowButton(memberRow(page, MEMBERS.other), 'Manage')))) return false
+      if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
       return click(modal(page).getByRole('checkbox', { name: 'All teams, current and future', exact: true }))
     },
@@ -475,7 +588,7 @@ export const USER_FLOWS = [
       (await inFlight('Saving…', 'setMemberRoles')(page)) &&
       (await modal(page).getByRole('checkbox', { name: ROLES.manager, exact: true }).isDisabled()),
     drive: async (page) => {
-      if (!(await click(rowButton(memberRow(page, MEMBERS.other), 'Manage')))) return false
+      if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
       if (!(await click(modal(page).getByRole('checkbox', { name: ROLES.manager, exact: true })))) return false
       return click(modalButton(page, 'Save'))
@@ -494,7 +607,7 @@ export const USER_FLOWS = [
       (await calls('setMemberTeams', 0)(page)) &&
       (await calls('setMemberAllTeams', 0)(page)),
     drive: async (page) => {
-      if (!(await click(rowButton(memberRow(page, MEMBERS.other), 'Manage')))) return false
+      if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
       // Both halves changed, so the order the saves go in is what decides
       // which counter moves.
@@ -505,17 +618,41 @@ export const USER_FLOWS = [
   },
   {
     key: 'manage-saved',
-    note: 'roles and teams both changed: both writes made, in that order, the dialog closed and the row showing the new set',
+    note: 'roles and teams both changed: both writes made, IN THAT ORDER, the dialog closed and the row showing the new set',
+    // The order is read off the stub's own sequence rather than off two
+    // counters, which both read 1 whichever way round the awaits went.
     proof: async (page) =>
       (await noDialog(page)) &&
-      (await calls('setMemberRoles', 1)(page)) &&
-      (await calls('setMemberTeams', 1)(page)) &&
+      (await callOrder(['setMemberRoles', 'setMemberTeams'])(page)) &&
       (await memberRow(page, MEMBERS.other).locator('.pill').filter({ hasText: ROLES.manager }).count()) === 1,
     drive: async (page) => {
-      if (!(await click(rowButton(memberRow(page, MEMBERS.other), 'Manage')))) return false
+      if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
       if (!(await click(modal(page).getByRole('checkbox', { name: ROLES.manager, exact: true })))) return false
       if (!(await click(modal(page).getByRole('checkbox', { name: TEAMS.noBib, exact: true })))) return false
+      return click(modalButton(page, 'Save'))
+    },
+  },
+  {
+    key: 'manage-saved-all-three',
+    note: 'roles, the all teams flag and the specific teams all changed: three writes in the documented order, roles then all teams then teams',
+    /* The one entry that observes the all teams write at all, and the only
+       place the documented sequence is a claim rather than a comment. The
+       team is ticked BEFORE All teams, because turning All teams on freezes
+       the team rows, and the save still sends the specific selection
+       underneath it. */
+    proof: async (page) =>
+      (await noDialog(page)) &&
+      (await callOrder(['setMemberRoles', 'setMemberAllTeams', 'setMemberTeams'])(page)) &&
+      (await calls('setMemberAllTeams', 1)(page)) &&
+      (await memberRow(page, MEMBERS.other).locator('.admin-meta').filter({ hasText: 'All teams' }).count()) === 1,
+    drive: async (page) => {
+      if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
+      await pause(page)
+      if (!(await click(modal(page).getByRole('checkbox', { name: ROLES.manager, exact: true })))) return false
+      if (!(await click(modal(page).getByRole('checkbox', { name: TEAMS.noBib, exact: true })))) return false
+      if (!(await click(modal(page).getByRole('checkbox', { name: 'All teams, current and future', exact: true }))))
+        return false
       return click(modalButton(page, 'Save'))
     },
   },
@@ -524,10 +661,11 @@ export const USER_FLOWS = [
     note: 'only the teams changed: the roles write is never made, which is what saving only what changed means',
     proof: async (page) =>
       (await noDialog(page)) &&
+      (await callOrder(['setMemberTeams'])(page)) &&
       (await calls('setMemberRoles', 0)(page)) &&
-      (await calls('setMemberTeams', 1)(page)),
+      (await calls('setMemberAllTeams', 0)(page)),
     drive: async (page) => {
-      if (!(await click(rowButton(memberRow(page, MEMBERS.other), 'Manage')))) return false
+      if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
       if (!(await click(modal(page).getByRole('checkbox', { name: TEAMS.noBib, exact: true })))) return false
       return click(modalButton(page, 'Save'))
@@ -606,11 +744,12 @@ export const USER_FLOWS = [
     note: "the club's only admin: Remove is inert, a sentence in the row says why, and the control points at it",
     proof: async (page) =>
       (await memberRow(page, MEMBERS.admin).getByRole('button', { name: `Remove ${MEMBERS.admin}` }).isDisabled()) &&
-      (await page.evaluate((name) => {
-        const rows = [...document.querySelectorAll('.admin-row')]
-        const row = rows.find((r) => (r.textContent ?? '').includes(name))
-        const btn = row?.querySelector(`button[aria-label="Remove ${name}"]`)
-        const id = btn?.getAttribute('aria-describedby')
+      /* Scoped to the members card like every other locator in this file.
+         It read every .admin-row on the page and took the first whose text
+         held the name, which reaches the Roles card too. */
+      (await memberRow(page, MEMBERS.admin).evaluate((row, name) => {
+        const btn = row.querySelector(`button[aria-label="Remove ${name}"]`)
+        const id = btn ? btn.getAttribute('aria-describedby') : null
         const said = id ? document.getElementById(id)?.textContent ?? '' : ''
         return said.includes('only admin cannot be removed')
       }, MEMBERS.admin)) &&
@@ -619,9 +758,15 @@ export const USER_FLOWS = [
   {
     key: 'remove-absent-on-self',
     note: 'the signed in member: no Remove at all on their own row, which is the one the function refuses outright',
+    /* The absence of a CONTROL rather than of one exact label: a Remove that
+       lost its own name would satisfy a proof written against the string. The
+       row carries exactly one button and it is Manage, and the row beside it
+       carries two, which is what stops "one button" holding for a page that
+       renders no actions at all. */
     proof: async (page) =>
-      (await memberRow(page, MEMBERS.me).getByRole('button', { name: `Remove ${MEMBERS.me}` }).count()) === 0 &&
-      (await memberRow(page, MEMBERS.me).getByRole('button', { name: 'Manage' }).count()) === 1,
+      (await memberRow(page, MEMBERS.me).getByRole('button').count()) === 1 &&
+      (await memberRow(page, MEMBERS.me).getByRole('button', { name: manage(MEMBERS.me), exact: true }).count()) === 1 &&
+      (await memberRow(page, MEMBERS.other).getByRole('button').count()) === 2,
   },
 
   /* ---- the roles manager ---- */
@@ -631,7 +776,7 @@ export const USER_FLOWS = [
     proof: async (page) =>
       (await roleRow(page, ROLES.coach).locator('.badge').filter({ hasText: 'System' }).count()) === 1 &&
       (await roleRow(page, ROLES.coach).getByRole('button').count()) === 0 &&
-      (await roleRow(page, ROLES.custom).getByRole('button', { name: 'Rename' }).count()) === 1,
+      (await roleRow(page, ROLES.custom).getByRole('button', { name: renameOf(ROLES.custom), exact: true }).count()) === 1,
   },
   {
     key: 'role-create-disabled',
@@ -677,7 +822,7 @@ export const USER_FLOWS = [
     note: 'renaming a custom role: the row becomes a labelled field holding the current name, and nothing is written',
     proof: async (page) =>
       (await renameInput(page).inputValue()) === ROLES.custom && (await calls('renameRole', 0)(page)),
-    drive: (page) => click(rowButton(roleRow(page, ROLES.custom), 'Rename')),
+    drive: (page) => click(rowButton(roleRow(page, ROLES.custom), renameOf(ROLES.custom))),
   },
   {
     key: 'role-renamed',
@@ -687,7 +832,7 @@ export const USER_FLOWS = [
       (await memberRow(page, MEMBERS.invited).locator('.pill').filter({ hasText: 'Kit and Equipment' }).count()) === 1 &&
       (await calls('renameRole', 1)(page)),
     drive: async (page) => {
-      if (!(await click(rowButton(roleRow(page, ROLES.custom), 'Rename')))) return false
+      if (!(await click(rowButton(roleRow(page, ROLES.custom), renameOf(ROLES.custom))))) return false
       await pause(page)
       if (!(await fillIn(renameInput(page), 'Kit and Equipment'))) return false
       return click(card(page, 'Roles').locator('.admin-row').getByRole('button', { name: 'Save', exact: true }))
@@ -702,7 +847,7 @@ export const USER_FLOWS = [
       (await renameInput(page).count()) === 1 &&
       (await calls('renameRole', 1)(page)),
     drive: async (page) => {
-      if (!(await click(rowButton(roleRow(page, ROLES.custom), 'Rename')))) return false
+      if (!(await click(rowButton(roleRow(page, ROLES.custom), renameOf(ROLES.custom))))) return false
       await pause(page)
       if (!(await fillIn(renameInput(page), 'Kit and Equipment'))) return false
       return click(card(page, 'Roles').locator('.admin-row').getByRole('button', { name: 'Save', exact: true }))
@@ -916,7 +1061,13 @@ export const TEAM_FLOWS = [
     screen: 'adminteams',
     state: 'adminloading',
     note: 'the teams read has not answered: the labelled spinner, not an empty club',
-    proof: async (page) => (await page.locator('.loading[role="status"] .spinner').count()) === 1,
+    // Both halves. The spinner alone would hold for a page that rendered it
+    // AND fell through to "No teams yet", which is the reading this state
+    // exists to rule out.
+    proof: async (page) =>
+      (await page.locator('.loading[role="status"] .spinner').count()) === 1 &&
+      (await page.locator('.admin-row').count()) === 0 &&
+      (await page.locator('.empty').count()) === 0,
   },
   {
     key: 'teams-error',
@@ -932,7 +1083,15 @@ export const TEAM_FLOWS = [
     screen: 'adminteams',
     state: 'longnames',
     note: 'a team named as long as a club could type one, including one with no break opportunity at all',
-    proof: async (page) => (await page.locator('.admin-row').count()) === 7,
+    /* The NAMES, not a row count. Seven rows is true of a club whose long
+       teams were called A and B, and the screenshot and the contrast sweep
+       are filed under this key. teamRow finds a row by its own Remove
+       button's label, so a name that is not rendered has no row. */
+    proof: async (page) =>
+      (await page.locator('.admin-row').count()) === 7 &&
+      (await teamRow(page, TEAMS.long).count()) === 1 &&
+      (await teamRow(page, TEAMS.unbroken).count()) === 1 &&
+      (await teamRow(page, TEAMS.long).locator('input').inputValue()) === TEAMS.long,
   },
   {
     key: 'teams-add-disabled',
@@ -990,14 +1149,14 @@ export const TEAM_FLOWS = [
     screen: 'adminteams',
     note: 'the name untouched: Rename is inert, so a press cannot write the value that is already there',
     proof: async (page) =>
-      (await rowButton(teamRow(page, TEAMS.first), 'Rename').isDisabled()) && (await calls('renameTeam', 0)(page)),
+      (await rowButton(teamRow(page, TEAMS.first), renameOf(TEAMS.first)).isDisabled()) && (await calls('renameTeam', 0)(page)),
   },
   {
     key: 'teams-rename-changed',
     screen: 'adminteams',
     note: 'the name edited: Rename is live, and it still has not been pressed',
     proof: async (page) =>
-      (await rowButton(teamRow(page, TEAMS.first), 'Rename').isEnabled()) && (await calls('renameTeam', 0)(page)),
+      (await rowButton(teamRow(page, TEAMS.first), renameOf(TEAMS.first)).isEnabled()) && (await calls('renameTeam', 0)(page)),
     drive: (page) => fillIn(teamRow(page, TEAMS.first).locator('input'), TYPED_TEAM_RENAME),
   },
   {
@@ -1008,20 +1167,24 @@ export const TEAM_FLOWS = [
     proof: inFlight('Renaming…', 'renameTeam'),
     drive: async (page) => {
       if (!(await fillIn(teamRow(page, TEAMS.first).locator('input'), TYPED_TEAM_RENAME))) return false
-      return click(rowButton(teamRow(page, TEAMS.first), 'Rename'))
+      return click(rowButton(teamRow(page, TEAMS.first), renameOf(TEAMS.first)))
     },
   },
   {
     key: 'teams-rename-failed',
     screen: 'adminteams',
     state: 'writefails',
-    note: 'the rename refused: the row says so rather than swallowing it, which is what it used to do',
+    note: 'the rename refused: THIS row says so rather than swallowing it, which is what it used to do',
+    /* Scoped to the row that was driven, and naming the team. `.admin-row` as
+       a CSS scope matched a note on ANY row, and the substring stopped short
+       of the only token in the sentence that tells the rows apart. */
     proof: async (page) =>
-      (await noteIn('.admin-row', 'danger', 'alert', 'Could not rename')(page)) &&
+      (await rowNote(teamRow(page, TEAMS.first), 'danger', `Could not rename ${TEAMS.first}`)(page)) &&
+      (await teamRow(page, TEAMS.second).locator('.note-danger').count()) === 0 &&
       (await calls('renameTeam', 1)(page)),
     drive: async (page) => {
       if (!(await fillIn(teamRow(page, TEAMS.first).locator('input'), TYPED_TEAM_RENAME))) return false
-      return click(rowButton(teamRow(page, TEAMS.first), 'Rename'))
+      return click(rowButton(teamRow(page, TEAMS.first), renameOf(TEAMS.first)))
     },
   },
   {
@@ -1035,7 +1198,7 @@ export const TEAM_FLOWS = [
       (await calls('renameTeam', 1)(page)),
     drive: async (page) => {
       if (!(await fillIn(teamRow(page, TEAMS.first).locator('input'), TYPED_TEAM_RENAME))) return false
-      return click(rowButton(teamRow(page, TEAMS.first), 'Rename'))
+      return click(rowButton(teamRow(page, TEAMS.first), renameOf(TEAMS.first)))
     },
   },
   {
@@ -1071,9 +1234,10 @@ export const TEAM_FLOWS = [
     key: 'teams-bib-failed',
     screen: 'adminteams',
     state: 'writefails',
-    note: 'the bib change refused: the row says so rather than swallowing it, which is what it used to do',
+    note: 'the bib change refused: THIS row says so rather than swallowing it, which is what it used to do',
     proof: async (page) =>
-      (await noteIn('.admin-row', 'danger', 'alert', 'Could not change the bib colour')(page)) &&
+      (await rowNote(teamRow(page, TEAMS.noBib), 'danger', `Could not change the bib colour for ${TEAMS.noBib}`)(page)) &&
+      (await teamRow(page, TEAMS.first).locator('.note-danger').count()) === 0 &&
       (await calls('setTeamBib', 1)(page)),
     drive: (page) => choose(teamRow(page, TEAMS.noBib).locator('select'), 'green'),
   },
@@ -1094,13 +1258,17 @@ export const TEAM_FLOWS = [
     key: 'teams-remove-counts',
     screen: 'adminteams',
     overlay: true,
-    note: 'the dialog counts what references the team, so the consequence is this team rather than a generic sentence',
+    note: 'the dialog counts what references the team: three members and one session for Titans, not a sentence shaped like a count',
+    /* The NUMBERS, not the shape. A regex over "\\d+ members and \\d+ sessions"
+       is satisfied by "0 members and 0 sessions", which is exactly the
+       generic sentence this entry's name rules out. Counted from the
+       fixtures: one member is on Titans specifically (Priya) and two hold the
+       all teams flag (the signed in member and Marguerite), and one session
+       covers it. */
     proof: async (page) =>
       page.evaluate(() => {
         const said = [...document.querySelectorAll('.modal .modal-copy')].map((p) => p.textContent ?? '').join(' ')
-        // Two members on Titans specifically plus the three on the all teams
-        // flag, and the one session that covers it.
-        return /\b\d+ members? and \d+ sessions? reference this team/.test(said)
+        return said.includes('3 members and 1 session reference this team')
       }),
     drive: (page) => click(teamRow(page, TEAMS.first).getByRole('button', { name: `Remove ${TEAMS.first}` })),
   },

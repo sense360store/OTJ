@@ -274,11 +274,19 @@ export type HarnessState =
   // and writing the link back to the club's own row did not settle.
   | 'promotewarning'
   /* ---- Admin Users and Admin Teams (VISUAL-02) -------------------------
-     Both screens reuse `longnames`, `inflight`, `writefails`, `writeslow`
-     and `writeslowfails`, which mean here exactly what they mean everywhere
-     else: the strings a club chooses are as long as a club would really make
-     them, and every write hangs, refuses, settles slowly or refuses slowly.
-     Which write is driven is decided by the control the driver presses.
+     Both screens reuse `longnames`, `inflight`, `writefails` and
+     `writeslow`, which mean here exactly what they mean everywhere else: the
+     strings a club chooses are as long as a club would really make them, and
+     every write hangs, refuses or settles slowly. Which write is driven is
+     decided by the control the driver presses.
+
+     `writeslowfails` is deliberately NOT claimed. The admin stub branches on
+     it because it shares one write hook with the rest, but no entry names it
+     and `writeslow` is reached only by the focus no-steal check in
+     tools/visual/checks.mjs, which needs a write that SETTLES while somebody
+     carries on using the page. On the signed out screens `writeslowfails`
+     exists because a success there has nothing to say; here it does, so the
+     slow success is the case that separates a restore from a steal.
 
      The rest are their own, and they are NAMED for these screens rather than
      reusing `loading`, `empty` and `error`. Those three already answer for
