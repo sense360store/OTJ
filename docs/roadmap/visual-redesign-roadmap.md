@@ -152,31 +152,6 @@ What the slice adopted: `PageHeader` for the heading, `Card` for the five contai
 
 What it deliberately did not do. It changed no query, no capability test, no auth client call and no message string. It kept the two destination lists as buttons that navigate rather than turning them into links, because the destinations are what the brief froze and a link is a different control. And it added no account removal affordance: that stays admin owned, is stated in the Membership card rather than offered, and its absence is now asserted for every capability set.
 
-**Seven accessibility repairs came out of an adversarial pass over the
-finished slice**, and they are listed rather than folded into the adoption
-because six of them are defects the screens carried before it:
-
-- The two warnings that account for an inert submit are announced now, not
-  only shown. A member who unticks the last role heard nothing.
-- The sentence explaining All teams, and the one explaining the locked Admin
-  tick, are BOUND to the control they account for. The five team boxes that
-  All teams ticks and freezes are out of the tab order, so a sentence merely
-  near them is one a screen reader never reaches.
-- The row actions are named for their own row (`Manage Priya Raghunathan`,
-  `Rename Titans`), which is what a buttons list strips the context away
-  from. The icon-only siblings beside them were already named this way.
-- The four card headings are `h2`. They were `h3` with no `h2` anywhere in the
-  document, which is a level a screen reader user navigating by heading falls
-  into; the Account screen already emits `h2` for the same shape.
-- The capability grid's row header names the capability alone. The
-  description stayed inside the `<th>`, so every one of the five cells in a
-  row was announced with the whole sentence in front of it.
-- Four more outcomes dropped focus onto the document body, and each was
-  reproduced before it was repaired: applying a capability change (the dialog
-  closes AND the button it was opened from goes with the draft, so `Modal`'s
-  own restore finds its opener already gone), choosing a bib colour, creating
-  a role and adding a team.
-
 Five things worth recording, none of them presentation alone:
 
 - **Three of the four successes dropped focus onto the document body, and getting that right took three attempts.** Remove photo unmounts with the photo it removed; Save goes inert because the name now matches; and the two Security submits go inert because they empty their own fields. A browser blurs a focused control when it is disabled or removed, so a coach who clicked rather than pressed Enter lost their place. Calling `.focus()` in the success callback fixed none of it: TanStack runs a per-call `onSuccess` inside its notify batch BEFORE it notifies its listeners, so React has not re-rendered, the control still carries the in-flight render's `disabled`, and focusing a disabled control is a no-op. And placing it unconditionally on the settled render was worse than the defect, because only the photo actions are disabled during a removal: a coach who moved into another field while the write was in flight had focus taken back off them. The rule that survived is one `useFocusRestore(settled, ref)`: the callback requests, the effect on the settled render places it, and it places it ONLY when `document.activeElement` is the body or nothing, which is what the browser leaves behind when the control it was on is disabled or removed. Both halves are driven in `checks.mjs`, restore and no-steal, and both fail under mutation.
@@ -621,6 +596,64 @@ Five things worth recording, none of them presentation alone:
   deferred: it wanted to bind a field level refusal to its field and could not
   without rendering the message twice. The two admin submits that go inert
   while a member holds no role are its first callers.
+
+**Seven accessibility repairs came out of an adversarial pass over the
+finished slice**, and they are listed rather than folded into the adoption
+because six of them are defects the screens carried before it:
+
+- The two warnings that account for an inert submit are announced now, not
+  only shown. A member who unticks the last role heard nothing.
+- The sentence explaining All teams, and the one explaining the locked Admin
+  tick, are BOUND to the control they account for. The five team boxes that
+  All teams ticks and freezes are out of the tab order, so a sentence merely
+  near them is one a screen reader never reaches.
+- The row actions are named for their own row (`Manage Priya Raghunathan`,
+  `Rename Titans`), which is what a buttons list strips the context away
+  from. The icon-only siblings beside them were already named this way.
+- The four card headings are `h2`. They were `h3` with no `h2` anywhere in the
+  document, which is a level a screen reader user navigating by heading falls
+  into; the Account screen already emits `h2` for the same shape.
+- The capability grid's row header names the capability alone. The
+  description stayed inside the `<th>`, so every one of the five cells in a
+  row was announced with the whole sentence in front of it.
+- Four more outcomes dropped focus onto the document body, and each was
+  reproduced before it was repaired: applying a capability change (the dialog
+  closes AND the button it was opened from goes with the draft, so `Modal`'s
+  own restore finds its opener already gone), choosing a bib colour, creating
+  a role and adding a team.
+
+**The harness proved less than it claimed, and the adversarial pass is what
+found it.** Six holes, each of which left an entry green under a name
+asserting something it could not see:
+
+- **The stub collapsed a network round trip into one commit.** It applied its
+  store update in the same callback as `onSuccess`, so a removed row had
+  already gone by the time the outcome was set. That is the exact opposite of
+  production, where the per-call callback runs when the mutation resolves and
+  the list changes only when the invalidated read comes back, and it made the
+  three focus rules that wait for a row unfalsifiable: reducing `rowGone` to
+  `removed !== null`, which is the mistake those rules exist to stop, passed
+  every entry. The two moments are a tick apart now, and each of the three
+  fails under that mutation.
+- **A missing counter read as nought**, so every negative proof held against
+  a counter somebody had renamed, and `noWrites` passed on an empty log
+  (`Object.values({}).every(...)` is true). Both now require every expected
+  counter to EXIST.
+- **`setMemberAllTeams` had a zero with no paired one anywhere**, and no
+  entry drove an all teams save at all: the write that puts a member on every
+  current and future team was never observed. One entry now drives all three
+  writes at once.
+- **The member save's ORDER was asserted with two scalars** that hold
+  whichever way round the awaits went. The stub records the sequence now, and
+  swapping the two writes fails.
+- **`invite-no-role` was confounded**: it unticked the last role on an empty
+  form, where Send is inert from the empty address alone, so deleting the
+  role rule from the disabled expression left it green. It fills the form
+  first.
+- **Four entries asserted a shape rather than a fact**: a removal dialog's
+  counts matched `\d+ members and \d+ sessions` (which "0 and 0" satisfies),
+  a long name state proved a row count, a per row refusal matched a note on
+  ANY row, and an absence proof was written against one exact label.
 
 `Tick` is kept rather than retired, and that is a decision rather than an
 omission. `.check-row`'s native checkbox is the shared treatment everywhere
