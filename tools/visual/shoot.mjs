@@ -15,6 +15,7 @@ import { DIALOGS, openDialog, openRowMenu, queryFor, DIALOG_PLAYER } from './dia
 import { ACCOUNT_FLOWS, longValuesRendered, queryForFlow, runFlow } from './account.mjs'
 import { AUTH_FLOWS, BRAND, GUARD_CASES, brandRendered, runAuthFlow, urlForAuth } from './auth.mjs'
 import { FEEDBACK_ENTRIES, queryForFeedback, runFeedbackFlow } from './feedback.mjs'
+import { ADMIN_ENTRIES, queryForAdmin, runAdminFlow } from './admin.mjs'
 
 const OUT = process.argv[2] ?? 'visual-shots'
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
@@ -39,6 +40,13 @@ const authFlow = (key) => {
 const feedbackEntry = (key) => {
   const found = FEEDBACK_ENTRIES.find((f) => f.key === key)
   if (!found) throw new Error(`no feedback entry named ${key}`)
+  return found
+}
+
+// The same, for the admin entries, and for the same reason.
+const adminEntry = (key) => {
+  const found = ADMIN_ENTRIES.find((e) => e.key === key)
+  if (!found) throw new Error(`no admin entry named ${key}`)
   return found
 }
 
@@ -267,6 +275,46 @@ const SHOTS = [
     feedbackEntry: feedbackEntry(key),
     w: 360,
   })),
+
+  /* ---- VISUAL-02, Admin Users and Admin Teams ------------------------
+     Both screens at all seven of Part 4's widths, in both themes, because
+     what changes across them is the whole composition: the member row's
+     controls wrap under the name, the role and team pickers go from four
+     columns to one, and the capability grid starts scrolling inside its own
+     container. */
+  ...['adminusers', 'adminteams'].flatMap((screen) =>
+    WIDTHS.map((w) => ({ screen, caps: 'clubadmin', w })),
+  ),
+  /* Every driven state, at 390 and 1280. Each is DRIVEN through
+     tools/visual/admin.mjs, the same entries checks.mjs measures and
+     contrast.mjs sweeps, and every one of them proves the state its own name
+     claims before its screenshot is filed. Both themes for the same reason
+     the feedback matrix uses both: most of these shots exist to show a
+     semantic Note or a Badge, and the surface, border and glyph of each flip
+     with the theme. */
+  ...ADMIN_ENTRIES.flatMap((e) => [390, 1280].map((w) => ({ adminEntry: e, w }))),
+  /* And at 900 for the four that are a FORM DIALOG or a destructive one,
+     where 2.13 turns a dialog into a bottom sheet and the footer has to stay
+     above the keyboard. */
+  ...['manage-open', 'remove-open', 'role-delete-open', 'grid-confirm', 'teams-remove-open'].map((key) => ({
+    adminEntry: adminEntry(key),
+    w: 900,
+  })),
+  /* And at 360, the states that put a wrapped action cluster, a full width
+     picker or the scrolling grid in the narrowest width the product designs
+     for. The other driven states change a label or a disabled flag and lay
+     out identically to what is already shot at 390. */
+  ...[
+    'users-default',
+    'users-long-names',
+    'invite-admin-all-teams',
+    'manage-open',
+    'remove-open',
+    'grid-identity',
+    'teams-default',
+    'teams-long-name',
+    'teams-remove-open',
+  ].map((key) => ({ adminEntry: adminEntry(key), w: 360 })),
 ]
 
 // A state and an ADDRESS are two different things, and two shots that differ
@@ -277,10 +325,22 @@ const name = (s, theme) =>
     // An auth entry names the surface it mounts rather than the query key,
     // so a Set Password shot is filed under `auth` and a Login one under
     // `login` exactly as the browser opened them.
-    s.authEntry ? (s.authEntry.screen ?? 'auth') : s.feedbackEntry ? 'feedback' : s.screen,
+    s.authEntry
+      ? (s.authEntry.screen ?? 'auth')
+      : s.feedbackEntry
+        ? 'feedback'
+        : // An admin entry names WHICH of the two screens it drives, because
+          // the pair share one driver and one entry list.
+          s.adminEntry
+          ? (s.adminEntry.screen ?? 'adminusers')
+          : s.screen,
     // A feedback entry carries its own capability set, so the name says which
     // member the shot is of rather than defaulting to `na`.
-    s.feedbackEntry ? (s.feedbackEntry.caps ?? 'coach') : (s.caps ?? 'na'),
+    s.feedbackEntry
+      ? (s.feedbackEntry.caps ?? 'coach')
+      : s.adminEntry
+        ? (s.adminEntry.caps ?? 'clubadmin')
+        : (s.caps ?? 'na'),
     // A guard case has no state; what varies is the AUTH CONDITION, so that
     // is what rides in the state slot for it. Not to avoid a collision, which
     // the entry's own key in the next slot already rules out: it is so the
@@ -294,7 +354,9 @@ const name = (s, theme) =>
           ? s.flow.state
           : s.feedbackEntry
             ? (s.feedbackEntry.state ?? 'default')
-            : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
+            : s.adminEntry
+              ? (s.adminEntry.state ?? 'default')
+              : (s.state ?? 'default') + (s.at ? `-at-${s.at}` : ''),
     s.authEntry
       ? `auth-${s.authEntry.key}`
       : s.dialog
@@ -303,7 +365,9 @@ const name = (s, theme) =>
           ? `flow-${s.flow.key}`
           : s.feedbackEntry
             ? `fb-${s.feedbackEntry.key}`
-            : (s.open ?? 'default'),
+            : s.adminEntry
+              ? `adm-${s.adminEntry.key}`
+              : (s.open ?? 'default'),
     theme,
     `${s.w}w`,
   ].join('_') + '.png'
@@ -313,7 +377,7 @@ const name = (s, theme) =>
 const OVERLAY = new Set(['more', 'delete', 'moreactions', 'rowmenu', 'filters', 'history'])
 // A feedback entry says whether it leaves a dialog up, because several of them
 // close one on the way to the outcome they claim and those ARE page shots.
-const isOverlay = (s) => !!s.dialog || !!s.feedbackEntry?.overlay || OVERLAY.has(s.open)
+const isOverlay = (s) => !!s.dialog || !!s.feedbackEntry?.overlay || !!s.adminEntry?.overlay || OVERLAY.has(s.open)
 
 
 // Every entry whose name claims a state must PROVE that state before its
@@ -567,6 +631,8 @@ for (const theme of ['light', 'dark']) {
       ? queryForFlow(s.flow, { theme, caps: s.caps })
       : s.feedbackEntry
       ? queryForFeedback(s.feedbackEntry, { theme })
+      : s.adminEntry
+      ? queryForAdmin(s.adminEntry, { theme })
       : (() => {
           const p = new URLSearchParams({ screen: s.screen, theme })
           if (s.caps) p.set('caps', s.caps)
@@ -696,6 +762,17 @@ for (const theme of ['light', 'dark']) {
     // leaves an untouched list under a name claiming an outcome.
     if (s.feedbackEntry) {
       const why = await runFeedbackFlow(page, s.feedbackEntry)
+      if (why) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: ${why}`)
+      }
+    }
+    // An admin entry carries its own proof for the same reason: most of its
+    // states ARE a change to a list of members, roles or teams, and eleven of
+    // them are about a write that must NOT have happened, which no selector
+    // can see.
+    if (s.adminEntry) {
+      const why = await runAdminFlow(page, s.adminEntry)
       if (why) {
         failures++
         console.log(`ERROR ${name(s, theme)}: ${why}`)

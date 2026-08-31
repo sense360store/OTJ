@@ -29,7 +29,12 @@ import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
 import { Button, Card, IconButton, Note, PageHeader, SelectField, TextField } from '../components/primitives'
 
-function DeleteTeamModal({
+/* Exported for the same reason BibColourField is: what it says is a PRODUCT
+   RULE rather than copy (teams are a filter and a default, so removing one
+   clears references and widens nothing), and a source text check on those
+   sentences would be satisfied by writing them in a comment. Rendered
+   directly, src/routes/adminTeams.screens.test.tsx reads what a coach reads. */
+export function DeleteTeamModal({
   team,
   memberCount,
   sessionCount,

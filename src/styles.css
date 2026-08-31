@@ -819,8 +819,14 @@ summary:focus-visible,
    above the text. The label IS the control's hit area, so it takes the 44px
    minimum: a 16px box on a 21px row was a 21px target, and 2.5 binds every
    control rather than only the ones on a phone-first screen. */
+/* overflow-wrap: anywhere rather than break-word, because only `anywhere`
+   changes the MIN CONTENT contribution, and that is the thing that matters
+   here: a club team named with no space in it (measured at 393px) made its
+   own grid track 393px wide and scrolled a 360px phone sideways. It inherits,
+   so the wording inside the row breaks with it. */
 .check-row, .field .check-row { display: flex; align-items: center; gap: var(--space-8); margin: 0; min-height: var(--hit);
-  font-size: var(--text-base); font-weight: 600; color: var(--ink); cursor: pointer; }
+  font-size: var(--text-base); font-weight: 600; color: var(--ink); cursor: pointer;
+  min-width: 0; overflow-wrap: anywhere; }
 /* A DIRECT child, so a row whose control is drawn rather than native (the
    Tick, which hides a full size input over a drawn box) keeps its own
    sizing. Both selectors score the same, so without this the winner would
@@ -1652,9 +1658,11 @@ a.activity-batch:hover { text-decoration: underline; }
    record with columns, and at 360px the controls belong under the name they
    act on. */
 .admin-list { list-style: none; margin: 0; padding: 0; }
+/* --line-2 is 2.4's WITHIN group separator, which is what a list row is.
+   Every row carries it, the first one included, so the list is separated from
+   the heading or the add form above it rather than running straight on. */
 .admin-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8) var(--space-12);
-  padding: var(--space-12) 0; }
-.admin-row + .admin-row { border-top: 1px solid var(--line-2); }
+  padding: var(--space-12) 0; border-top: 1px solid var(--line-2); }
 .admin-row-main { flex: 1 1 200px; min-width: 0; }
 .admin-row-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); }
 /* overflow-wrap rather than a truncation: a club that names a team or a
@@ -1716,7 +1724,14 @@ a.activity-batch:hover { text-decoration: underline; }
    entity, and a matrix has no card form that is not the matrix. So this
    takes 2.9's other requirement instead: it scrolls inside its own
    container, never the page body. */
-.cap-scroll { overflow-x: auto; }
+/* position: relative is load bearing, and it was found by measuring rather
+   than by reading. .sr-only is `position: absolute`, and the reserved cells
+   use one to say why they are empty. A scroll container that is not itself
+   POSITIONED is not the containing block for an absolutely positioned
+   descendant, so those spans took the initial containing block instead,
+   escaped the container entirely, and scrolled a 360px phone 246px sideways
+   while the table beside them was clipped correctly. */
+.cap-scroll { overflow-x: auto; position: relative; }
 .cap-grid { width: 100%; border-collapse: collapse; }
 .cap-grid thead th { padding: var(--space-8) var(--space-4); font-size: var(--text-sm); font-weight: 800;
   color: var(--ink); text-align: center; }
