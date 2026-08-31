@@ -62,6 +62,19 @@ const code = (src: string) =>
 // The three paths that build a session nobody has edited yet.
 const CREATE_PATHS = ['routes/Planner.tsx', 'hooks/useStartFromTemplate.ts', 'lib/spond.ts']
 
+// A function's declared parameters, split on the commas between them.
+// Read from source because Function.length stops at the first default, so
+// a parameter reintroduced WITH one is invisible to it, and a defaulted
+// team argument is precisely the shape this file exists to refuse.
+function params(file: string, name: string): string[] {
+  const m = read(file).match(new RegExp(`export function ${name}\\(([^)]*)\\)`))
+  expect(m, `${name} not declared in ${file}`).toBeTruthy()
+  return m![1]
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)
+}
+
 describe('one rule decides what a new session covers', () => {
   it('every create path asks newSessionCoverage', () => {
     for (const f of CREATE_PATHS) {
@@ -80,7 +93,16 @@ describe('one rule decides what a new session covers', () => {
     // Structural. There is no parameter a profile team could arrive
     // through, which is what stops the old fallback being reintroduced by
     // a call site rather than by an edit to the rule.
-    expect(newSessionCoverage.length).toBe(1)
+    //
+    // Read from the DECLARATION rather than from Function.length, which
+    // counts only the parameters before the first default and so reports
+    // 1 for a rule that quietly grew a defaulted third. Both parameters
+    // are about the session: the club it belongs to, and the one team its
+    // source named, if any.
+    expect(params('lib/sessionTeams.ts', 'newSessionCoverage')).toEqual([
+      'allTeamIds: readonly string[]',
+      'forTeamId: string | null = null',
+    ])
     expect(newSessionCoverage(['t1', 't2'])).toEqual(['t1', 't2'])
     expect(newSessionCoverage(['t1', 't2'], 't2')).toEqual(['t2'])
   })
@@ -88,10 +110,14 @@ describe('one rule decides what a new session covers', () => {
 
 describe('no create path seeds coverage from the signed in coach', () => {
   it('blankSession takes no team at all', () => {
-    // The argument is gone rather than defaulted. Left in place it would
-    // read as an invitation, and the planner filled it with the profile
-    // team for exactly that reason.
-    expect(blankSession.length).toBe(1)
+    // The argument is GONE, not defaulted. Left in place with a default it
+    // would read as an invitation while every existing call still
+    // compiled, and the planner filled exactly such an argument with the
+    // profile team. Function.length cannot see that: it counts only the
+    // parameters before the first default, so it reports 1 for
+    // `(coachId: string, teamId: string | null = null)`. The declaration
+    // is what says so.
+    expect(params('lib/data.ts', 'blankSession')).toEqual(['coachId: string'])
     expect(blankSession('coach-1').teamIds).toEqual([])
     expect(code(read('lib/data.ts'))).not.toMatch(/teamIds: teamId/)
   })

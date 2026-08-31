@@ -491,10 +491,21 @@ export function TonightScreenView({
               {refreshing ? 'Refreshing…' : 'Refresh Spond'}
             </button>
           )}
-          {/* The two populations, each named. The chips above count Hub
-              players on this session; the event counts everybody Spond
-              invited. Printing either as a bare number beside the other is
-              what made one honest pair of figures look like a bug. */}
+          {/* THE TWO POPULATIONS, first, because they are the question the
+              coach arrived with. One sentence each, the same shape, one
+              under the other: the event's figures over everybody Spond
+              invited, then this session's own children. Each names who it
+              counted before it names a reply, so neither reads as a
+              measurement of the other's people.
+              Printing either one alone is what made an honest pair look
+              like a bug. The headcount by itself reconciled nothing, and
+              a going figure by itself was read as a squad. */}
+          {audienceNote && <span className="tn-audience">{audienceNote}</span>}
+          {playersNote && <span className="tn-players">{playersNote}</span>}
+          {/* Then why they differ. The link coverage is the bridge between
+              the two sentences above, so it reads after them rather than
+              before: how many of this session's children are bound to a
+              Spond member at all. */}
           {linkNote && (
             <span className="tn-linked">
               {linkNote}
@@ -505,19 +516,10 @@ export function TonightScreenView({
               )}
             </span>
           )}
-          {/* Which teams hold the unlinked players, so the coverage line
-              above is actionable rather than a puzzle. Composed by the
-              model from the same rows and link set, never counted here. */}
+          {/* And where the gap lives, so the coverage line above is
+              actionable rather than a puzzle. Composed by the model from
+              the same rows and link set, never counted here. */}
           {unlinkedNote && <span className="tn-unlinked">{unlinkedNote}</span>}
-          {/* The two populations side by side, one sentence each, same
-              shape. The event's figures first because that is the number
-              a coach arrives holding, then this session's own children
-              directly under them. Printing either one alone is what made
-              one honest pair look like a bug: the headcount by itself
-              reconciled nothing, and a going figure by itself was read as
-              a squad. */}
-          {audienceNote && <span className="tn-audience">{audienceNote}</span>}
-          {playersNote && <span className="tn-players">{playersNote}</span>}
           {onLinkEvent && (
             <button className="btn btn-quiet btn-sm" onClick={onLinkEvent}>
               <Icon.link />

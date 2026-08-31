@@ -349,7 +349,20 @@ export function PlanFromSpond({
   // takes them with it. What stays out of the DEFAULT list is the rule; what
   // the coach can still reach is not.
   const anythingToSuggest = suggest('all', 'upcoming').length > 0 || suggest('all', 'past').length > 0
-  if (hideWhenEmpty && !isLoading && !isError && !anythingToSuggest) return null
+  //
+  // A read that has not answered is never "nothing to suggest", and that
+  // now includes the teams read: without it the coach's scope resolves to
+  // no teams at all, so the list narrows to club events and the card would
+  // hide on the strength of a suggestion set it could not compute.
+  if (
+    hideWhenEmpty &&
+    !isLoading &&
+    !isError &&
+    !teamsQuery.isLoading &&
+    !teamsQuery.isError &&
+    !anythingToSuggest
+  )
+    return null
 
   // Coverage comes from the event: its own team, or every team the club
   // has when the sync matched it through more than one mapping and stored

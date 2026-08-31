@@ -241,9 +241,12 @@ describe('the rendered screen over answered reads', () => {
     const out = html()
     expect(out).toContain('Spond audience: 49 people invited · 20 of them going')
     expect(out).toContain('Players this session covers: 4 · 1 of them going')
-    // Order matters: the figure the coach came in with, then the one this
-    // screen is actually about.
+    // Order matters, twice over: the figure the coach came in with, then
+    // the one this screen is actually about, then the link coverage that
+    // explains why the two differ. The pair leads because it is the
+    // question they arrived with; the plumbing follows.
     expect(out.indexOf('49 people invited')).toBeLessThan(out.indexOf('Players this session covers'))
+    expect(out.indexOf('Players this session covers')).toBeLessThan(out.indexOf('players linked to Spond'))
   })
 
   it('keeps the aggregate out of every chip even now that its figure is on screen', () => {
