@@ -218,6 +218,16 @@ export function Templates() {
         <input placeholder="Search templates…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {createFailed && <ActionError style={{ marginBottom: 12 }}>{SESSION_CREATE_ERROR}</ActionError>}
+      {/* Why Use is disabled. A session built now could not be given
+          the teams it covers, and a button that does nothing with
+          nothing said is worse than the wait itself. Sub second in
+          practice; permanent only if the read failed, which is what
+          this sentence is really for. */}
+      {!teamsReady && (
+        <p className="muted" style={{ marginBottom: 12, fontSize: 13.5 }}>
+          Waiting for the club’s teams. A session cannot be given the ones it covers until they load.
+        </p>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 18 }}>
         {list.map((t) => (
           <TemplateCard

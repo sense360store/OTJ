@@ -59,15 +59,33 @@ const code = (src: string) =>
     .filter((l) => !l.trim().startsWith('//'))
     .join('\n')
 
-// The three paths that build a session nobody has edited yet.
+// The three paths that BUILD a session nobody has edited yet, and so the
+// three that must ask the shared rule.
 const CREATE_PATHS = ['routes/Planner.tsx', 'hooks/useStartFromTemplate.ts', 'lib/spond.ts']
+
+// Where a profile team could actually be READ and handed to one of them.
+// Not the same list, and getting that wrong was this file's own first
+// mistake: lib/spond.ts is pure and has never seen a profile, so checking
+// it for `profile.team_id` is checking a file that could not hold one,
+// while components/PlanFromSpond.tsx is where the defect literally lived
+// as `sessionFromSpondEvent(event, user?.id ?? '', profile?.team_id ?? null, ...)`
+// and was not checked at all.
+const PROFILE_TEAM_FREE = [
+  'routes/Planner.tsx',
+  'hooks/useStartFromTemplate.ts',
+  'components/PlanFromSpond.tsx',
+]
 
 // A function's declared parameters, split on the commas between them.
 // Read from source because Function.length stops at the first default, so
 // a parameter reintroduced WITH one is invisible to it, and a defaulted
 // team argument is precisely the shape this file exists to refuse.
 function params(file: string, name: string): string[] {
-  const m = read(file).match(new RegExp(`export function ${name}\\(([^)]*)\\)`))
+  // Comments stripped first. A file's own prose about the OLD signature
+  // is exactly the kind of thing this repo writes beside a rule, and
+  // matching it would let a documented `(coachId, teamId)` satisfy or
+  // break the check while the real declaration said something else.
+  const m = code(read(file)).match(new RegExp(`export function ${name}\\(([^)]*)\\)`))
   expect(m, `${name} not declared in ${file}`).toBeTruthy()
   return m![1]
     .split(',')
@@ -122,14 +140,26 @@ describe('no create path seeds coverage from the signed in coach', () => {
     expect(code(read('lib/data.ts'))).not.toMatch(/teamIds: teamId/)
   })
 
-  it('no create path reads a profile team', () => {
+  it('nothing that builds or feeds a new session reads a profile team', () => {
     // `profile?.team_id` and `profile.team_id`. It remains a legitimate
     // personal default elsewhere (a board's team, a programme's team
-    // picker), which is why this names the create paths rather than the
-    // whole tree.
-    for (const f of CREATE_PATHS) {
+    // picker), which is why this names the paths rather than the whole
+    // tree. It names the CALL SITE as well as the builder, because the
+    // defect lived at the call site: lib/spond.ts took the profile team
+    // as an argument and components/PlanFromSpond.tsx was what passed it.
+    for (const f of PROFILE_TEAM_FREE) {
       expect(code(read(f)), f).not.toMatch(/profile\??\.team_id/)
     }
+  })
+
+  it('hands the builder the club rather than anything coach shaped', () => {
+    // One level up from the rule: what the one Spond call site actually
+    // passes. `allTeamIds` is derived from the teams query on the line
+    // above it, so a call that went back to a profile team would have to
+    // rename the variable to pass this.
+    const src = code(read('components/PlanFromSpond.tsx'))
+    expect(src).toMatch(/const allTeamIds = \(teamsQuery\.data \?\? \[\]\)\.map\(/)
+    expect(src).toMatch(/sessionFromSpondEvent\(event, user\?\.id \?\? '', allTeamIds, venues\)/)
   })
 
   it('the planner seeds a draft once, and never an existing session', () => {
@@ -164,11 +194,16 @@ describe('a path that saves before the coach sees it waits for the club', () => 
   // written immediately: the planner it opens will not re-seed a stored
   // row, so the register lists nobody with no later repair. Both such
   // paths therefore gate on the teams read having ANSWERED.
-  it('Plan from Spond reads the teams query, not only the derived map', () => {
+  it('Plan from Spond proves the read by its data, the same way both paths do', () => {
+    // The derived map cannot say: a pending read, a failed read and a club
+    // with no teams all arrive at it as {}. And the FLAGS cannot say
+    // either: a query that never dispatched reports neither, which is the
+    // state ../lib/tonight's linkSetFromRead exists to refuse. Both create
+    // paths therefore prove it the same way, by data being in hand.
     const src = code(read('components/PlanFromSpond.tsx'))
     expect(src).toMatch(/useTeams\(\)/)
-    expect(src).toMatch(/teamsQuery\.isLoading/)
-    expect(src).toMatch(/teamsQuery\.isError/)
+    expect(src).toMatch(/const teamsKnown = teamsQuery\.data !== undefined/)
+    expect(src).toMatch(/teamsKnown && !anythingToSuggest/)
   })
 
   it('Use template reports whether the club is known, and the screens disable on it', () => {

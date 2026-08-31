@@ -238,7 +238,25 @@ export function PlanFromSpond({
   // venue leaves one field for the coach to fill in a moment later; an
   // empty covered set leaves a register listing nobody and no field
   // saying why.
+  //
+  // DATA IN HAND IS THE PROOF, not the flags, which is the same rule
+  // ../lib/tonight's linkSetFromRead states and for the same reason: a
+  // query that never dispatched (offline before the first fetch, or
+  // disabled while a gate loads) reports isLoading false and isError
+  // false with no data, and reading that as an answered empty club is how
+  // a covered set of nobody gets written.
+  //
+  // It reads the flags only AFTER data, and that ordering matters the
+  // other way too. A background refetch that fails leaves the previous
+  // teams in hand and sets isError, and the club's teams do not change
+  // between one render and the next; taking the card down over a stale
+  // but perfectly usable list would stop a coach planning for no reason.
+  // The stricter rule belongs where linkSetFromRead uses it, guarding a
+  // CLAIM about the club that stale data could make falsely. This guards
+  // a default for a row about to be written, where the last known list is
+  // the right answer.
   const teamsQuery = useTeams()
+  const teamsKnown = teamsQuery.data !== undefined
   const allTeamIds = (teamsQuery.data ?? []).map((t) => t.id)
   // The club's venues, so a new session can default to the one the event's
   // location names. A club wide read the planner already holds, so on the
@@ -354,15 +372,7 @@ export function PlanFromSpond({
   // now includes the teams read: without it the coach's scope resolves to
   // no teams at all, so the list narrows to club events and the card would
   // hide on the strength of a suggestion set it could not compute.
-  if (
-    hideWhenEmpty &&
-    !isLoading &&
-    !isError &&
-    !teamsQuery.isLoading &&
-    !teamsQuery.isError &&
-    !anythingToSuggest
-  )
-    return null
+  if (hideWhenEmpty && !isLoading && !isError && teamsKnown && !anythingToSuggest) return null
 
   // Coverage comes from the event: its own team, or every team the club
   // has when the sync matched it through more than one mapping and stored
@@ -389,9 +399,12 @@ export function PlanFromSpond({
       onShowAll={setShowAll}
       showAllToggle={showAllToggle}
       onPlan={plan}
-      loading={isLoading || venuesLoading || teamsQuery.isLoading}
-      error={isError || teamsQuery.isError}
-      errorText={!isError && teamsQuery.isError ? TEAMS_ERROR : EVENTS_ERROR}
+      // An unanswered teams read is a wait, and a failed one is a stop.
+      // Both only while the teams are actually unknown: once a list is in
+      // hand it stays usable through a later refetch failure.
+      loading={isLoading || venuesLoading || (!teamsKnown && !teamsQuery.isError)}
+      error={isError || (!teamsKnown && teamsQuery.isError)}
+      errorText={!isError && !teamsKnown ? TEAMS_ERROR : EVENTS_ERROR}
       planPendingId={planPendingId}
       planFailed={planFailed}
       planFailedText={linkTaken ? SESSION_SPOND_LINK_TAKEN_ERROR : SESSION_CREATE_ERROR}

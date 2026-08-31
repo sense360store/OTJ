@@ -331,6 +331,36 @@ describe('the rendered screen after a stored guest is removed', () => {
   })
 })
 
+describe('the reply figure never stands on its own', () => {
+  // The pair coming apart is the way this design fails, and the screen
+  // reaches that state for real. A session whose coverage was never set
+  // counts nobody, so the player sentence says nothing rather than claim
+  // a squad of zero, and without this the aggregate would be left alone:
+  // "20 of them going" over an audience of 49, with no second population
+  // beside it, which is the exact reading the whole arrangement exists to
+  // prevent.
+  const UNSET: Session = { ...SESSION, id: 's3', teamIds: [], teamId: null }
+
+  it('falls back to the headcount when there is no players sentence to pair with', () => {
+    withStoredRows([], () => {
+      const out = html(UNSET)
+      // The session covers nobody, so it says so.
+      expect(out).toContain('This session has no teams yet')
+      expect(out).not.toContain('Players this session covers')
+      // And the aggregate drops its reply figure with it.
+      expect(out).toContain('Spond audience: 49 people invited')
+      expect(out).not.toContain('of them going')
+    })
+  })
+
+  it('carries the reply figure whenever the pair is whole', () => {
+    // The same event, on a session that does cover children: both halves.
+    const out = html()
+    expect(out).toContain('Spond audience: 49 people invited · 20 of them going')
+    expect(out).toContain('Players this session covers: 4')
+  })
+})
+
 describe('the rendered screen over reads that never answered', () => {
   it('says nothing about links from a paused read, rather than "0 of 4 linked"', () => {
     const was = { links: state.links, rsvp: state.rsvp }

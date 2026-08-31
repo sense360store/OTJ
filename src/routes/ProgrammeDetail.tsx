@@ -343,6 +343,16 @@ function ProgrammeView({ p }: { p: Programme }) {
       )}
 
       {createFailed && <ActionError style={{ marginBottom: 12, maxWidth: 720 }}>{SESSION_CREATE_ERROR}</ActionError>}
+      {/* Why Use is disabled. A session built now could not be given
+          the teams it covers, and a button that does nothing with
+          nothing said is worse than the wait itself. Sub second in
+          practice; permanent only if the read failed, which is what
+          this sentence is really for. */}
+      {!teamsReady && (
+        <p className="muted" style={{ marginBottom: 12, maxWidth: 720, fontSize: 13.5 }}>
+          Waiting for the club’s teams. A session cannot be given the ones it covers until they load.
+        </p>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 720 }}>
         {weeks.map((w) => (
           <WeekRow

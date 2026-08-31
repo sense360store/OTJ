@@ -626,6 +626,17 @@ function PlannerEditor({
   // empty selection. An existing session never seeds at all: its stored
   // coverage is the answer, and a one team session must never widen for
   // being opened.
+  //
+  // This path does NOT wait for the team read the way Plan from Spond and
+  // Use template do, and the difference is deliberate. Those two save a
+  // session before the coach sees anything and drop them into a planner
+  // that will not re-seed a stored row, so an unanswered read there
+  // writes a register listing nobody with no visible cause. Here the
+  // coach is looking at the form: with no teams read there are no chips
+  // to press, the Teams row says the coverage is not set, and saving
+  // early leaves a session they can correct in one tap on the screen they
+  // are already on. Blocking Save over a sub second read, or over a
+  // failed one, would cost more than it saves.
   const coverageSeeded = useRef(!!existing)
   useEffect(() => {
     if (coverageSeeded.current || teams.length === 0) return

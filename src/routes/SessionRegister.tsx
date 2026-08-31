@@ -95,7 +95,7 @@ import {
 } from '../lib/tonight'
 import { BIB_COLOURS, BIB_NONE, bibInheritLabel, bibLabel, bibSwatch, effectiveBib } from '../lib/bibs'
 import { coveredTeamIds, coverageOf, coversWholeClub, soleCoveredTeamId } from '../lib/sessionTeams'
-import { spondAudienceReplyNote } from '../lib/spond'
+import { spondAudienceNote, spondAudienceReplyNote } from '../lib/spond'
 import {
   type SetupPlan,
   type SetupReadiness,
@@ -719,18 +719,25 @@ export function TonightScreen({ session }: { session: Session }) {
   // A cancelled event was only ever surfaced by the card this screen
   // replaces, so it says so here or it says so nowhere.
   const eventNote = event ? (event.cancelled ? `${event.title} · Cancelled` : event.title) : ''
-  // The event's own figures, labelled as its own. This is the pair a coach
-  // arrives holding: they read a going figure in Spond, read the Going
-  // chip here, and until both sentences were on one screen there was
-  // nowhere to find out that the two count different people. Empty when
-  // nothing is linked, so a club with no Spond sees no Spond sentence.
-  const audienceNote = event ? spondAudienceReplyNote(event) : ''
-  // This session's own children in the same shape, directly beneath it.
-  // Composed by the model from the counts it already built, so the screen
-  // counts nothing here and the sentence cannot disagree with a chip.
-  // Silent when coverage was never set, and it withholds the going clause
-  // until the reply read has answered.
+  // This session's own children, composed by the model from the counts it
+  // already built, so the screen counts nothing here and the sentence
+  // cannot disagree with a chip. Silent when coverage was never set, and
+  // it withholds the going clause until the reply read has answered.
   const playersNote = event ? tonightPlayersNote(counts, responsesKnown) : ''
+  // The event's own figures beside them, and THE REPLY FIGURE ONLY EXISTS
+  // AS HALF OF A PAIR.
+  //
+  // With a player sentence under it, the going figure is what a coach
+  // arrived holding and the comparison is the whole point. Without one it
+  // is a lone going number over an audience of fifty, which is precisely
+  // the shape that made an honest pair look like a bug, and the screen
+  // reaches that state for real: a session whose coverage was never set
+  // counts nobody, so the player sentence says nothing rather than claim
+  // a squad of zero, and the aggregate would have been left standing on
+  // its own. So it falls back to the headcount, which needs no
+  // counterpart. Empty when nothing is linked, so a club with no Spond
+  // sees no Spond sentence at all.
+  const audienceNote = !event ? '' : playersNote ? spondAudienceReplyNote(event) : spondAudienceNote(event)
   const staleNote = rsvpStaleNote(rsvp.data ?? {})
 
   return (

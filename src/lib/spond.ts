@@ -27,7 +27,10 @@ import { matchVenueByLocation, type Venue } from './venues'
 // 40 covered children were linked to one of them.
 //
 // So nothing here is compared with a Tonight count, and nothing here is
-// rendered without naming its population.
+// rendered without naming its population. Players & groups prints both
+// sentences one under the other, which is a comparison the reader makes
+// rather than one this module performs: it has never seen a player and
+// takes no parameter through which one could arrive.
 
 // Everybody the Spond event reached, which is what the four counts add up
 // to. Named rather than summed at each call site so no screen invents its
@@ -42,13 +45,13 @@ export function spondAudience(event: {
 }
 
 // The words for the aggregate's population, for anywhere that needs to
-// name it without the figure. No surface renders the four counts split any
-// more, so there is nothing left for this to caption; it survives as the
-// one place the population is named in words.
+// name it without the figure. No surface renders the four counts as a
+// split any more, so there is nothing left for this to caption; it
+// survives as the one place the population is named in words.
 export const SPOND_AUDIENCE_CAPTION = 'Everyone invited to the Spond event'
 
-// The aggregate as ONE labelled sentence, which is the only shape it takes
-// on any surface a coach organises a night from.
+// The aggregate as a bare headcount, which is what every surface shows
+// except the one that sets a second population beside it.
 //
 // WHY IT LOST ITS SPLIT. It used to render as four figures beside four
 // words: "20 accepted", "24 declined". Both the words and the figures then
@@ -59,9 +62,18 @@ export const SPOND_AUDIENCE_CAPTION = 'Everyone invited to the Spond event'
 // Nothing was wrong with either number and everything was wrong with
 // showing the larger pair as an unqualified split.
 //
-// So the aggregate keeps exactly one job here, saying how many people the
-// event reached, and it says whose figure it is in the same breath. The
-// per player replies are Tonight's, where the rows that back them are.
+// So this sentence keeps exactly one job, saying how many people the event
+// reached, and it says whose figure it is in the same breath. It is what
+// the picker, the planner card and the admin mirror render, because none
+// of them puts a covered squad next to it and a going number there is read
+// as one. The per player replies are Tonight's, where the rows that back
+// them are.
+//
+// The one surface that DOES put a covered squad next to it, Players &
+// groups, uses spondAudienceReplyNote below, which is this sentence plus
+// the event's own going figure. It exists because hiding that figure
+// everywhere left a coach holding a number the product no longer said
+// anything about. Read its header before changing either.
 export function spondAudienceNote(event: {
   accepted: number
   declined: number
