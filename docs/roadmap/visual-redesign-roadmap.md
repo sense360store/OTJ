@@ -675,6 +675,16 @@ left the coach.**
   Creating a role, adding a team, renaming a team, choosing a bib and applying
   a capability change all check `document.activeElement` by IDENTITY now, and
   each fails with its repair neutralised.
+- **And then WHO a write was about was still missing**, which the same review
+  found on its next pass over the fix. Two of the member save's three writes
+  are invisible on the row the dialog was opened from, so a save that sent one
+  of them for a DIFFERENT member left the entry green: the row still read All
+  teams, which the middle write had set correctly. Every entry that asserts a
+  save's arguments names the member now, the removal names the person it
+  removed, and each fails with the target repointed at another row. That last
+  one needed the name lookup to survive the removal it describes, so it reads
+  the store first and the club as it was at load second; nothing renames a
+  member, so the two cannot disagree.
 
 `Tick` is kept rather than retired, and that is a decision rather than an
 omission. `.check-row`'s native checkbox is the shared treatment everywhere

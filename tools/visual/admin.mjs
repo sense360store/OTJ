@@ -224,7 +224,14 @@ export const callOrder = (want) => (page) =>
    fails rather than silently matching. An array compares as a SET, because
    the product builds both lists from a Set and their order means nothing;
    anything else compares by value. Exactly one write of that name must have
-   been made, so this cannot pass by finding an earlier one. */
+   been made, so this cannot pass by finding an earlier one.
+
+   WHO the write was about is part of the payload, and the member save's three
+   writes each carry their own `memberId`. Two of the three are invisible on
+   the row the dialog was opened from, so a save that sent one of them for a
+   different member left the entry green: the row still read All teams, which
+   the middle write had set correctly. Every entry that asserts a save's
+   arguments names the member. */
 export const callArgs = (name, want) => (page) =>
   page.evaluate(
     ({ name, want }) => {
@@ -235,7 +242,14 @@ export const callArgs = (name, want) => (page) =>
       if (made.length !== 1) return false
       const vars = made[0].vars
       if (!vars || typeof vars !== 'object') return false
-      const named = (field, id) => (field === 'teamIds' ? names.team(id) : field === 'roleIds' ? names.role(id) : id)
+      const named = (field, id) =>
+        field === 'teamIds'
+          ? names.team(id)
+          : field === 'roleIds'
+            ? names.role(id)
+            : field === 'memberId' || field === 'userId'
+              ? names.member(id)
+              : id
       return Object.entries(want).every(([field, expected]) => {
         const got = vars[field]
         if (Array.isArray(expected)) {
@@ -244,7 +258,7 @@ export const callArgs = (name, want) => (page) =>
           const theirs = [...expected].sort()
           return mine.every((v, i) => v === theirs[i])
         }
-        return got === expected
+        return named(field, got) === expected
       })
     },
     { name, want },
@@ -703,6 +717,7 @@ export const USER_FLOWS = [
       (await noteIn('.modal', 'danger', 'alert', 'at least one admin')(page)) &&
       (await dialogTitled('Roles and teams')(page)) &&
       (await calls('setMemberRoles', 1)(page)) &&
+      (await callArgs('setMemberRoles', { memberId: MEMBERS.other })(page)) &&
       // The teams change was queued behind it and must not have been sent.
       (await calls('setMemberTeams', 0)(page)) &&
       (await calls('setMemberAllTeams', 0)(page)),
@@ -724,7 +739,16 @@ export const USER_FLOWS = [
     proof: async (page) =>
       (await noDialog(page)) &&
       (await callOrder(['setMemberRoles', 'setMemberTeams'])(page)) &&
-      (await memberRow(page, MEMBERS.other).locator('.pill').filter({ hasText: ROLES.manager }).count()) === 1,
+      (await memberRow(page, MEMBERS.other).locator('.pill').filter({ hasText: ROLES.manager }).count()) === 1 &&
+      // And both writes were about THIS member.
+      (await callArgs('setMemberRoles', {
+        memberId: MEMBERS.other,
+        roleIds: [ROLES.coach, ROLES.manager],
+      })(page)) &&
+      (await callArgs('setMemberTeams', {
+        memberId: MEMBERS.other,
+        teamIds: [TEAMS.first, TEAMS.second, TEAMS.noBib],
+      })(page)),
     drive: async (page) => {
       if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
@@ -750,9 +774,15 @@ export const USER_FLOWS = [
          way, so emptying the teams payload left this entry green: the
          specific selection is kept underneath the flag and the third write
          is the only place that is visible. */
-      (await callArgs('setMemberRoles', { roleIds: [ROLES.coach, ROLES.manager] })(page)) &&
-      (await callArgs('setMemberAllTeams', { allTeams: true })(page)) &&
-      (await callArgs('setMemberTeams', { teamIds: [TEAMS.first, TEAMS.second, TEAMS.noBib] })(page)),
+      (await callArgs('setMemberRoles', {
+        memberId: MEMBERS.other,
+        roleIds: [ROLES.coach, ROLES.manager],
+      })(page)) &&
+      (await callArgs('setMemberAllTeams', { memberId: MEMBERS.other, allTeams: true })(page)) &&
+      (await callArgs('setMemberTeams', {
+        memberId: MEMBERS.other,
+        teamIds: [TEAMS.first, TEAMS.second, TEAMS.noBib],
+      })(page)),
     drive: async (page) => {
       if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
@@ -770,7 +800,11 @@ export const USER_FLOWS = [
       (await noDialog(page)) &&
       (await callOrder(['setMemberTeams'])(page)) &&
       (await calls('setMemberRoles', 0)(page)) &&
-      (await calls('setMemberAllTeams', 0)(page)),
+      (await calls('setMemberAllTeams', 0)(page)) &&
+      (await callArgs('setMemberTeams', {
+        memberId: MEMBERS.other,
+        teamIds: [TEAMS.first, TEAMS.second, TEAMS.noBib],
+      })(page)),
     drive: async (page) => {
       if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
@@ -837,7 +871,10 @@ export const USER_FLOWS = [
       (await memberRow(page, MEMBERS.other).count()) === 0 &&
       (await noteIn('.card', 'success', 'status', 'content stays with the club')(page)) &&
       (await focusOnOutcome('success')(page)) &&
-      (await calls('removeUser', 1)(page)),
+      (await calls('removeUser', 1)(page)) &&
+      // The member the dialog named, which is the worst thing on either
+      // screen to get wrong.
+      (await callArgs('removeUser', { userId: MEMBERS.other })(page)),
     drive: async (page) => {
       if (!(await click(memberRow(page, MEMBERS.other).getByRole('button', { name: `Remove ${MEMBERS.other}` }))))
         return false

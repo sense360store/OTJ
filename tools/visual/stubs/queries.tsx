@@ -721,11 +721,22 @@ const adminCalls: AdminCallLog = {
    exactly the mix-up an identity proof exists to catch. Read off the store
    rather than snapshotted, so a state that adds a team and a team added
    during a run both resolve. */
-;(globalThis as unknown as { __adminNames?: { team: (id: string) => string; role: (id: string) => string } }).__adminNames =
-  {
-    team: (id: string) => adminStore.teams().find((t) => t.id === id)?.name ?? id,
-    role: (id: string) => adminStore.roles().find((r) => r.id === id)?.label ?? id,
+const MEMBERS_AT_LOAD = new Map(adminStore.members().map((m) => [m.id, m.fullName]))
+;(
+  globalThis as unknown as {
+    __adminNames?: { team: (id: string) => string; role: (id: string) => string; member: (id: string) => string }
   }
+).__adminNames = {
+  team: (id: string) => adminStore.teams().find((t) => t.id === id)?.name ?? id,
+  role: (id: string) => adminStore.roles().find((r) => r.id === id)?.label ?? id,
+  /* The store FIRST, then the club as it was when the page loaded. A removal
+     takes the member out of the store, so a live only lookup cannot name the
+     person a removal write was about, which is the one write where naming
+     them matters most. Nothing renames a member, so the two can never
+     disagree. */
+  member: (id: string) =>
+    adminStore.members().find((m) => m.id === id)?.fullName ?? MEMBERS_AT_LOAD.get(id) ?? id,
+}
 
 const ADMIN_HANGS = state === 'inflight'
 const ADMIN_FAILS = state === 'writefails' || state === 'writeslowfails'
