@@ -32,6 +32,7 @@ import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dia
 import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
 import { AUTH_FLOWS, GUARD_CASES, runAuthFlow, urlForAuth } from './auth.mjs'
 import { FEEDBACK_ENTRIES, queryForFeedback, runFeedbackFlow } from './feedback.mjs'
+import { ADMIN_ENTRIES, queryForAdmin, runAdminFlow } from './admin.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -546,6 +547,49 @@ for (const entry of FEEDBACK_ENTRIES) {
       const why = await runFeedbackFlow(page, entry)
       if (why) {
         failed.push(unreached(`feedback:${entry.key}`, why, where))
+        await page.close()
+        continue
+      }
+      const rows = await page.evaluate('(' + SWEEP + ')()')
+      for (const r of rows) {
+        if (r.ratio >= r.need) continue
+        const k = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+        if (seen.has(k)) continue
+        seen.add(k)
+        ;(r.disabled ? exempt : r.frozen ? frozen : failed).push({ ...r, where })
+      }
+      await page.close()
+    }
+  }
+}
+
+/* ---- VISUAL-02: Admin Users and Admin Teams ---------------------------
+   The same reasoning as the feedback log above. A plain sweep of either page
+   reaches the lists and nothing a press produces: every semantic Note, every
+   gerund label, the five dialogs, the locked capability cell and the empty
+   state are all behind a control or behind a state the reads answer with.
+
+   Every entry rather than a chosen few, for the reason the feedback sweep
+   uses every one of its own: between them they paint every tone the Note and
+   the Badge carry on these two screens, plus the disabled controls and the
+   grey sentences that account for them.
+
+   The reserved cell's dash, the member meta line and the capability
+   description are the runs most likely to be under the floor, and none of
+   them can be reached by reading the source. */
+for (const entry of ADMIN_ENTRIES) {
+  for (const theme of ['light', 'dark']) {
+    for (const w of [390, 1280]) {
+      const screen = entry.screen ?? 'adminusers'
+      const where = `${screen}-${entry.key}/${theme}/${w}w`
+      const page = await context.newPage()
+      await page.setViewportSize({ width: w, height: 1400 })
+      await page.goto(`${BASE}/?${queryForAdmin(entry, { theme })}`, { waitUntil: 'domcontentloaded' })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForTimeout(300)
+      const why = await runAdminFlow(page, entry)
+      if (why) {
+        failed.push(unreached(`${screen}:${entry.key}`, why, where))
         await page.close()
         continue
       }

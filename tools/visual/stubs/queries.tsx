@@ -7,13 +7,15 @@ export * from '../../../src/lib/queries'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 
 import {
+  ADMIN_SHARE_COUNTS,
+  adminStore,
+  harnessScreen,
   ACCOUNT_CLUB_NAME,
   FEEDBACK_MEMBERS,
   PROMOTE_RESULT,
   PROMOTE_WARNING,
   feedbackStore,
   ACTIVITY_PROFILES_FOR,
-  ACTIVITY_TEAMS_FOR,
   CURRENT_SEASON,
   DRILLS,
   MEDIA,
@@ -37,6 +39,7 @@ import {
   fixtures,
 } from '../fixtures'
 import type { ActivityFilters } from '../../../src/lib/activityView'
+import type { Capability, Member, RoleCapability, RoleInfo, Team } from '../../../src/lib/data'
 
 const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
   data,
@@ -103,8 +106,19 @@ export const useProgrammes = () => query([])
 // label the Activity feed can render at any length. It is a state rather than
 // a shared fixture so no other screen's shot moves, and the map answers from
 // the same list as the list, so the two cannot disagree about the club.
-export const useTeams = () => query(ACTIVITY_TEAMS_FOR(fixtures.state))
-export const useTeamMap = () => byId(ACTIVITY_TEAMS_FOR(fixtures.state))
+/* The teams come from the admin store, which STARTS as exactly what this
+   returned before (ACTIVITY_TEAMS_FOR, read once when the store is built), so
+   Players, Sessions, Account and Activity read what they always read. Only a
+   press on the Teams screen changes it, and then every subscriber re-renders
+   the way the product's own invalidation makes it. */
+const useAdminTeams = (): Team[] => useSyncExternalStore(adminStore.subscribe, adminStore.teams, adminStore.teams)
+export const useTeams = () => {
+  const teams = useAdminTeams()
+  if (state === 'adminloading') return pendingQuery<Team[]>()
+  if (state === 'adminerror') return failedQuery<Team[]>()
+  return query(teams)
+}
+export const useTeamMap = () => byId(useAdminTeams())
 export const useMyTeams = () => query({ teamIds: TEAMS.map((t) => t.id), allTeams: true })
 export const useVenues = () => query([])
 export const useVenueMap = () => ({})
@@ -113,9 +127,22 @@ export const useVenueMap = () => ({})
    so Home and Sessions still fall back to "Another coach" and no shot either
    of those screens takes moves. */
 export const useMemberMap = () => FEEDBACK_MEMBERS(fixtures.state)
-// The acting adults the Activity feed names and its Changed by filter offers.
-// No other screen in the harness reads this, so filling it moves no shot.
-export const useProfiles = () => query(ACTIVITY_PROFILES_FOR(fixtures.state))
+/* ONE read, two screens, two answers. It is the Activity feed's list of
+   acting adults AND the Users screen's list of club members, and the two need
+   different rows: widening the Activity fixture to carry the Users matrix
+   would put six names in Activity's Changed by filter and move every shot it
+   takes. So it branches on the screen, once, and says so.
+
+   On the admin screens it comes from the store, because an invite adds a row
+   and a removal takes one away, and the removal's focus rule waits for the
+   row to leave. */
+export const useProfiles = () => {
+  const members = useSyncExternalStore(adminStore.subscribe, adminStore.members, adminStore.members)
+  if (!ON_ADMIN) return query(ACTIVITY_PROFILES_FOR(fixtures.state))
+  if (state === 'adminloading') return pendingQuery<Member[]>()
+  if (state === 'adminerror') return failedQuery<Member[]>()
+  return query(members)
+}
 export const useClub = () =>
   query({ name: ACCOUNT_CLUB_NAME, motto: 'Where football and friendships flourish', crestUrl: null })
 /* ---- Registered players -------------------------------------------
@@ -125,6 +152,9 @@ export const useClub = () =>
    the query flags, `empty` returns no rows, `noseason` returns no seasons,
    and `overlimit` returns a register past the server's cap of 200. */
 const state = fixtures.state
+// Which of two member lists the shared profiles read answers with; see the
+// Admin section at the end of this file.
+const ON_ADMIN = harnessScreen === 'adminusers' || harnessScreen === 'adminteams'
 
 export const useCurrentSeason = () => {
   if (state === 'loading') return pendingQuery<typeof CURRENT_SEASON>()
@@ -632,3 +662,314 @@ export const useUpdateMyProfile = () =>
 
 export const useInsertDrill = mutation
 export const useUpdateDrill = mutation
+
+/* ---- Admin Users and Admin Teams (VISUAL-02) --------------------------
+   Every read and write those two screens make. The reads answer from the
+   store above, so a press moves the list the way an invalidation moves it in
+   the product; the writes are counted, because three of this pair's claims
+   are about a call that must NOT happen and a browser cannot see one of
+   those.
+
+   ON_ADMIN is read once at module scope for the same reason `state` is: it
+   decides which of two lists a shared read answers with, and a hook that
+   recomputed it per render would be answering a question about the page
+   rather than about the mount. */
+
+interface AdminCallLog {
+  invite: number
+  removeUser: number
+  setMemberRoles: number
+  setMemberTeams: number
+  setMemberAllTeams: number
+  createRole: number
+  renameRole: number
+  deleteRole: number
+  saveRoleCaps: number
+  insertTeam: number
+  renameTeam: number
+  deleteTeam: number
+  setTeamBib: number
+  /* Every write MADE, in order, WITH ITS ARGUMENTS. A counter says a write
+     happened and the order says when, and neither says what was sent: the
+     member save could send `teamIds: []` while the row still read All teams,
+     and the invite could carry the wrong teams entirely, with every entry
+     green. The payload is the thing the frozen rules are ABOUT, so it is the
+     thing recorded. */
+  writes: { name: string; vars: unknown }[]
+}
+
+const adminCalls: AdminCallLog = {
+  invite: 0,
+  removeUser: 0,
+  setMemberRoles: 0,
+  setMemberTeams: 0,
+  setMemberAllTeams: 0,
+  createRole: 0,
+  renameRole: 0,
+  deleteRole: 0,
+  saveRoleCaps: 0,
+  insertTeam: 0,
+  renameTeam: 0,
+  deleteTeam: 0,
+  setTeamBib: 0,
+  writes: [],
+}
+;(globalThis as unknown as { __adminCalls?: AdminCallLog }).__adminCalls = adminCalls
+/* What the ids in a recorded payload are called, so an assertion can be
+   written in the same vocabulary as every other entry: the team's name. The
+   log itself keeps the RAW ids, because translating on the way in would hide
+   exactly the mix-up an identity proof exists to catch.
+
+   AN AMBIGUOUS NAME IS NO IDENTITY AT ALL. Two members may share a full name,
+   which `profiles.full_name` permits, and a name that more than one id
+   carries cannot say WHICH of them a write was about: comparing by it would
+   let a write repointed at the namesake satisfy the assertion. Such a name
+   resolves to the empty string, which matches no expectation any entry can
+   write, so the entry fails rather than passing on a collapsed identity. That
+   is the same rule the product's own linking screen uses for an id it cannot
+   stand behind, and it is why a duplicate name in the fixtures would break
+   the proof loudly rather than quietly.
+
+   Live rows FIRST, then the club as it was when the page loaded. A removal
+   takes the member out of the store, so a live only lookup cannot name the
+   person a removal write was about, which is the one write where naming them
+   matters most. Nothing renames anything, so the two can never disagree. */
+const nameLookup = <T,>(rows: () => T[], idOf: (r: T) => string, nameOf: (r: T) => string) => {
+  const atLoad = new Map(rows().map((r) => [idOf(r), nameOf(r)]))
+  return (id: string) => {
+    const known = new Map(atLoad)
+    for (const r of rows()) known.set(idOf(r), nameOf(r))
+    const name = known.get(id)
+    if (name === undefined) return id
+    let carriers = 0
+    for (const n of known.values()) if (n === name) carriers += 1
+    return carriers === 1 ? name : ''
+  }
+}
+;(
+  globalThis as unknown as {
+    __adminNames?: {
+      team: (id: string) => string
+      role: (id: string) => string
+      member: (id: string) => string
+      capability: (key: string) => string
+    }
+  }
+).__adminNames = {
+  team: nameLookup(
+    () => adminStore.teams(),
+    (t) => t.id,
+    (t) => t.name,
+  ),
+  role: nameLookup(
+    () => adminStore.roles(),
+    (r) => r.id,
+    (r) => r.label,
+  ),
+  member: nameLookup(
+    () => adminStore.members(),
+    (m) => m.id,
+    (m) => m.fullName,
+  ),
+  capability: nameLookup(
+    () => adminStore.capabilities(),
+    (c) => c.key,
+    (c) => c.label,
+  ),
+}
+
+const ADMIN_HANGS = state === 'inflight'
+const ADMIN_FAILS = state === 'writefails' || state === 'writeslowfails'
+const ADMIN_DELAY = state === 'writeslow' || state === 'writeslowfails' ? 1200 : 0
+
+/* One write hook shape for all thirteen, because they differ only in what a
+   success applies and what a refusal says. The pending render happens FIRST,
+   on a timeout rather than a microtask, for the reason the Account and
+   Feedback stubs give: what has to have happened before a callback fires is
+   React's commit, and a callback that ran before it would let a focus repair
+   pass while doing nothing in production. */
+function useAdminWrite<V, R = void>(
+  name: keyof AdminCallLog,
+  message: string,
+  apply?: (vars: V) => void,
+  result?: (vars: V) => R,
+) {
+  const [pending, setPending] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const settle = (
+    vars: V,
+    opts: { onSuccess?: (r: R) => void; onError?: (e: Error) => void },
+    reject?: (e: Error) => void,
+  ) => {
+    adminCalls[name] += 1
+    adminCalls.writes.push({ name, vars })
+    setFailed(false)
+    setPending(true)
+    // Hangs: no callback at all, and the control stays in flight, which is
+    // the state itself rather than a drawn one.
+    if (ADMIN_HANGS) return
+    setTimeout(() => {
+      if (ADMIN_FAILS) {
+        setFailed(true)
+        // BOTH, because callers read the refusal two different ways. Most
+        // render `isError` off the hook; the invite passes an onError and
+        // renders nothing without it, which is what a stub answering only the
+        // success side hid: the write was counted, the message never came.
+        const err = new Error(message)
+        opts.onError?.(err)
+        reject?.(err)
+      } else {
+        /* THE CALLBACK FIRST, AND THE LIST A TICK LATER, because that is the
+           ORDER PRODUCTION HAS and the whole reason three screens wait for a
+           row to leave rather than for a write to settle. In the product the
+           per-call onSuccess runs when the mutation resolves and the list
+           only changes when the invalidated read comes back, a network round
+           trip afterwards. Applying the store update in the same callback
+           collapsed the two into one commit, which made "the row has gone"
+           true on the settling render and left the harness unable to tell a
+           hook keyed on the write from one keyed on the row: reducing
+           `rowGone` to `removed !== null` passed every entry. */
+        opts.onSuccess?.(result ? result(vars) : (undefined as R))
+        setTimeout(() => apply?.(vars), 0)
+      }
+      setPending(false)
+    }, ADMIN_DELAY)
+  }
+  return {
+    ...mutation(),
+    isPending: pending,
+    isError: failed,
+    error: failed ? new Error(message) : null,
+    mutate: (vars: V, opts: { onSuccess?: (r: R) => void; onError?: (e: Error) => void } = {}) => settle(vars, opts),
+    /* The member save is the one caller that awaits, in sequence, and stops
+       at the first refusal. So the promise has to reject rather than resolve,
+       or the dialog would close on a write the server turned down. A hanging
+       state never settles, which is what `inflight` means everywhere. */
+    mutateAsync: (vars: V) =>
+      new Promise<R>((resolve, reject) => {
+        settle(vars, { onSuccess: (r) => resolve(r) }, reject)
+      }),
+  }
+}
+
+export const useMemberStates = () => {
+  const states = useSyncExternalStore(adminStore.subscribe, adminStore.states, adminStore.states)
+  // An unsettled read is not "everybody is active": the screen's honest
+  // answer is no badge at all, which is what `data` being undefined gives it.
+  if (state === 'statesunknown') return pendingQuery<Record<string, 'invited' | 'active'>>()
+  return query(states)
+}
+
+export const useRoles = () => {
+  const roles = useSyncExternalStore(adminStore.subscribe, adminStore.roles, adminStore.roles)
+  if (state === 'adminloading') return pendingQuery<RoleInfo[]>()
+  if (state === 'adminerror') return failedQuery<RoleInfo[]>()
+  return query(roles)
+}
+
+/* The grid's own two reads. They are separate from the page's, because the
+   grid renders its heading and its own state whichever way they go, and
+   `gridunavailable` is the club that has not applied the RBAC migrations. */
+export const useCapabilities = () => {
+  if (state === 'gridloading') return pendingQuery<Capability[]>()
+  if (state === 'gridunavailable') return failedQuery<Capability[]>()
+  return query(adminStore.capabilities())
+}
+
+export const useRoleCapabilities = () => {
+  const mapping = useSyncExternalStore(adminStore.subscribe, adminStore.roleCaps, adminStore.roleCaps)
+  if (state === 'gridloading') return pendingQuery<RoleCapability[]>()
+  if (state === 'gridunavailable') return failedQuery<RoleCapability[]>()
+  return query(mapping)
+}
+
+// The advisory count inside the removal dialog. One member has links still
+// working and the rest have none, so the same dialog is reachable both with
+// the warning and without it. A null memberId is the caller saying it holds
+// no shares.manage, and answers nothing rather than zero.
+export const useMemberActiveShareCount = (memberId: string | null) =>
+  query(memberId ? (ADMIN_SHARE_COUNTS[memberId] ?? 0) : undefined)
+
+export const useInviteUser = () =>
+  useAdminWrite<
+    { email: string; fullName: string; roleIds: string[]; teamIds: string[]; allTeams: boolean },
+    { warning?: string }
+  >(
+    'invite',
+    'That email address is already a member of another club.',
+    (vars) => adminStore.invite(vars),
+    () => ({}),
+  )
+
+export const useRemoveUser = () =>
+  useAdminWrite<{ userId: string }, { message?: string }>(
+    'removeUser',
+    "The club's only admin cannot be removed.",
+    (vars) => adminStore.removeMember(vars.userId),
+    () => ({}),
+  )
+
+export const useSetMemberRoles = () =>
+  useAdminWrite<{ memberId: string; roleIds: string[] }>(
+    'setMemberRoles',
+    'The club must keep at least one admin.',
+    (vars) => adminStore.setMemberRoles(vars.memberId, vars.roleIds),
+  )
+
+export const useSetMemberTeams = () =>
+  useAdminWrite<{ memberId: string; teamIds: string[] }>(
+    'setMemberTeams',
+    'Only a holder of users.manage can change a member.',
+    (vars) => adminStore.setMemberTeams(vars.memberId, vars.teamIds),
+  )
+
+export const useSetMemberAllTeams = () =>
+  useAdminWrite<{ memberId: string; allTeams: boolean }>(
+    'setMemberAllTeams',
+    'Only a holder of users.manage can change a member.',
+    (vars) => adminStore.setMemberAllTeams(vars.memberId, vars.allTeams),
+  )
+
+export const useCreateRole = () =>
+  useAdminWrite<{ key: string; label: string }>(
+    'createRole',
+    'A role with that name already exists.',
+    (vars) => adminStore.createRole(vars.key, vars.label),
+  )
+
+export const useRenameRole = () =>
+  useAdminWrite<{ id: string; label: string }>('renameRole', 'System roles cannot be renamed.', (vars) =>
+    adminStore.renameRole(vars.id, vars.label),
+  )
+
+export const useDeleteRole = () =>
+  useAdminWrite<{ id: string }>('deleteRole', 'System roles cannot be deleted.', (vars) =>
+    adminStore.deleteRole(vars.id),
+  )
+
+export const useSaveRoleCapabilities = () =>
+  useAdminWrite<{ adds: RoleCapability[]; removes: RoleCapability[] }>(
+    'saveRoleCaps',
+    'Could not save every change.',
+    (vars) => adminStore.saveRoleCaps(vars),
+  )
+
+export const useInsertTeam = () =>
+  useAdminWrite<{ name: string }>('insertTeam', 'A team with that name already exists.', (vars) =>
+    adminStore.insertTeam(vars.name),
+  )
+
+export const useRenameTeam = () =>
+  useAdminWrite<{ id: string; name: string }>('renameTeam', 'Could not rename the team.', (vars) =>
+    adminStore.renameTeam(vars.id, vars.name),
+  )
+
+export const useDeleteTeam = () =>
+  useAdminWrite<{ id: string }>('deleteTeam', 'Could not remove the team.', (vars) =>
+    adminStore.deleteTeam(vars.id),
+  )
+
+export const useSetTeamBibColour = () =>
+  useAdminWrite<{ teamId: string; bibColour: string | null }>('setTeamBib', 'Could not change the bib colour.', (vars) =>
+    adminStore.setTeamBib(vars.teamId, vars.bibColour),
+  )

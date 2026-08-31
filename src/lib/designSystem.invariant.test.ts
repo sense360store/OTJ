@@ -67,6 +67,9 @@ const OWNED_FILES = [
   'routes/Login.tsx',
   'routes/SetPassword.tsx',
   'routes/Feedback.tsx',
+  'routes/AdminUsers.tsx',
+  'routes/AdminTeams.tsx',
+  'components/Tick.tsx',
 ]
 
 
@@ -399,6 +402,11 @@ describe('the type scale is the only source of a font size', () => {
     // card they share. Their one inline value was a MARGIN rather than a size,
     // which this rule cannot see; the spacing rule below owns that, and the
     // two are separate because they read different things.
+    // VISUAL-02, Admin Users and Admin Teams: the two capability gated admin
+    // screens and the one checkbox they share. Between them they carried
+    // thirty seven inline sizes and thirteen inline steps; neither writes an
+    // inline style now except the bib swatch's own fill, which 2.16 keeps as
+    // a colour.
     const OWNED = OWNED_FILES
     const offenders: string[] = []
     for (const f of sourceFiles.filter((f) => OWNED.includes(rel(f)))) {
@@ -446,6 +454,11 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     // as for its type. Its own layout rules live in the shared stylesheet,
     // which the off scale step rule above already reads.
     'routes/Feedback.tsx',
+    // VISUAL-02, Admin Users and Admin Teams: the same, for the same reason.
+    // Their own layout rules are in the shared stylesheet too, so the one
+    // inline style either of them writes is the bib swatch's fill.
+    'routes/AdminUsers.tsx',
+    'routes/AdminTeams.tsx',
   ]
 
   it('writes no inline margin, padding or gap outside the spacing scale', () => {
@@ -491,6 +504,8 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
       'routes/SetPassword.tsx',
       'routes/Login.css',
       'routes/Feedback.tsx',
+      'routes/AdminUsers.tsx',
+      'routes/AdminTeams.tsx',
     ]) {
       expect(SPACING_OWNED, `${f} is covered`).toContain(f)
       expect(sourceFiles.map(rel), `${f} exists`).toContain(f)

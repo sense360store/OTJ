@@ -5,6 +5,7 @@ import { blankSession } from '../../src/lib/data'
 import { ACTIVITY_PAGE_SIZE, activityQueryConditions } from '../../src/lib/activityView'
 import type { ActivityEvent, ActivityFilters } from '../../src/lib/activityView'
 import type {
+  Capability,
   Drill,
   FeedbackComment,
   FeedbackItem,
@@ -12,6 +13,8 @@ import type {
   Member,
   PlayerHistoryEntry,
   RegisteredPlayer,
+  RoleCapability,
+  RoleInfo,
   Season,
   Session,
   Team,
@@ -116,7 +119,15 @@ const capSet = (params.get('caps') ?? 'coach') as CapSet
    no existing shot moves. */
 export type HarnessAuth = 'signedin' | 'signedout' | 'needspassword' | 'authloading'
 
-const screenParam = params.get('screen') ?? 'home'
+/* WHICH SCREEN IS MOUNTED. Exported because exactly one read answers
+   differently for two screens: useProfiles is the Activity feed's list of
+   acting adults AND the Users screen's list of club members, and the two need
+   different rows. Widening the Activity fixture to cover the Users matrix
+   would put six names in Activity's Changed by filter and move every shot it
+   takes, so the read branches instead, once, with this. Nothing else in the
+   harness reads it. */
+export const harnessScreen = params.get('screen') ?? 'home'
+const screenParam = harnessScreen
 export const harnessAuth = (params.get('auth') ??
   (screenParam === 'login' ? 'signedout' : 'signedin')) as HarnessAuth
 
@@ -262,6 +273,47 @@ export type HarnessState =
   // outcome that is neither a success nor a failure: the public issue exists
   // and writing the link back to the club's own row did not settle.
   | 'promotewarning'
+  /* ---- Admin Users and Admin Teams (VISUAL-02) -------------------------
+     Both screens reuse `longnames`, `inflight`, `writefails` and
+     `writeslow`, which mean here exactly what they mean everywhere else: the
+     strings a club chooses are as long as a club would really make them, and
+     every write hangs, refuses or settles slowly. Which write is driven is
+     decided by the control the driver presses.
+
+     `writeslowfails` is deliberately NOT claimed. The admin stub branches on
+     it because it shares one write hook with the rest, but no entry names it
+     and `writeslow` is reached only by the focus no-steal check in
+     tools/visual/checks.mjs, which needs a write that SETTLES while somebody
+     carries on using the page. On the signed out screens `writeslowfails`
+     exists because a success there has nothing to say; here it does, so the
+     slow success is the case that separates a restore from a steal.
+
+     The rest are their own, and they are NAMED for these screens rather than
+     reusing `loading`, `empty` and `error`. Those three already answer for
+     the register, the feed and the log, and the reads this pair needs are
+     shared with four other harness screens: making `loading` hold the teams
+     read would move Players, Sessions, Account and Activity. */
+  // The page's own reads have not answered, and failed. On Users that is
+  // profiles and roles together, which is what gates the page; on Teams it is
+  // the teams read.
+  | 'adminloading'
+  | 'adminerror'
+  // A club with no teams at all: the Teams screen's empty state, and the
+  // Users screen's team picker saying where to add them.
+  | 'noteams'
+  // The capability grid's own two reads, which are separate from the page's:
+  // it renders its heading and its own state either way. `gridunavailable` is
+  // the club without the RBAC migrations.
+  | 'gridloading'
+  | 'gridunavailable'
+  // Exactly one member holds Admin, and it is NOT the signed in member. That
+  // is what makes the last admin lock reachable on somebody else's row: their
+  // Remove is refused and their Admin tick is held on.
+  | 'lastadmin'
+  // The member_states read has not answered, so no member carries an invited
+  // or active badge. A state of its own because the screen's honest answer to
+  // an unsettled read is to say nothing rather than to guess active.
+  | 'statesunknown'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -1167,5 +1219,344 @@ export const feedbackStore = {
       Object.entries(commentRows).map(([k, list]) => [k, list.filter((c) => c.id !== id)]),
     )
     feedbackChanged()
+  },
+}
+
+/* ---- Admin Users and Admin Teams (VISUAL-02) --------------------------
+   The club's people, its roles, the capability catalogue and the grid that
+   maps the two. Nothing here is a real person: the names are invented, the
+   emails are .invalid addresses that can never resolve, and none of it
+   reaches the application, because nothing under src/ imports this file.
+
+   The MEMBER SET is chosen to cover the matrix the slice is accepted
+   against in one render rather than one state per case: the signed in
+   holder, another ordinary member, a second admin (so removal is offered by
+   default), a member with allTeams, a member on specific teams, a member
+   holding three roles, a member holding a custom role, a member holding
+   none, and the invited and active states across them. */
+
+const ADMIN_ROLE_ADMIN: RoleInfo = { id: 'role-admin', key: 'admin', label: 'Admin', system: true }
+const ADMIN_ROLE_MANAGER: RoleInfo = { id: 'role-manager', key: 'manager', label: 'Manager', system: true }
+const ADMIN_ROLE_COACH: RoleInfo = { id: 'role-coach', key: 'coach', label: 'Coach', system: true }
+const ADMIN_ROLE_PARENT: RoleInfo = { id: 'role-parent', key: 'parent', label: 'Parent', system: true }
+const ADMIN_ROLE_KIT: RoleInfo = { id: 'role-kit', key: 'kit_officer', label: 'Kit Officer', system: false }
+
+// The four system roles in privilege order, then the custom one, which is
+// the order useRoles sorts them into.
+const ADMIN_ROLES: RoleInfo[] = [
+  ADMIN_ROLE_ADMIN,
+  ADMIN_ROLE_MANAGER,
+  ADMIN_ROLE_COACH,
+  ADMIN_ROLE_PARENT,
+  ADMIN_ROLE_KIT,
+]
+
+// A custom role whose label is as long as a club would really make one, for
+// the `longnames` state. It is a column heading in the capability grid, which
+// is the narrowest place a long string lands on these two screens.
+const ADMIN_ROLE_LONG: RoleInfo = {
+  id: 'role-long',
+  key: 'safeguarding_and_welfare_officer',
+  label: 'Safeguarding and Welfare Officer',
+  system: false,
+}
+
+const adminMember = (over: Partial<Member> & Pick<Member, 'id' | 'fullName'>): Member => ({
+  avatar: null,
+  avatarUrl: null,
+  role: 'coach',
+  teamId: null,
+  joined: '2026-02-11',
+  roles: [ADMIN_ROLE_COACH],
+  teamIds: [],
+  allTeams: false,
+  ...over,
+})
+
+/* The signed in member is `coach-me`, which is what fixtures.me and the auth
+   stub both say, so exactly one row reads "(you)" and carries no Remove. */
+const ADMIN_MEMBERS: Member[] = [
+  adminMember({
+    id: 'coach-me',
+    fullName: 'Sam Ashworth',
+    joined: '2025-08-04',
+    roles: [ADMIN_ROLE_ADMIN, ADMIN_ROLE_COACH],
+    allTeams: true,
+  }),
+  adminMember({
+    id: 'member-2',
+    fullName: 'Priya Raghunathan',
+    joined: '2025-09-18',
+    roles: [ADMIN_ROLE_COACH],
+    teamIds: ['titans', 'trojans'],
+  }),
+  adminMember({
+    id: 'member-3',
+    fullName: 'Marguerite Ashby-Fotheringay',
+    joined: '2026-01-06',
+    roles: [ADMIN_ROLE_ADMIN],
+    allTeams: true,
+  }),
+  adminMember({
+    id: 'member-4',
+    fullName: 'Tom Brearley',
+    joined: '2026-08-20',
+    roles: [ADMIN_ROLE_KIT],
+    teamIds: ['gladiators'],
+  }),
+  adminMember({
+    id: 'member-5',
+    fullName: 'Jo Hartley',
+    joined: '2026-08-26',
+    // No roles at all: the state the row marks in danger, because a member
+    // holding none has no write access anywhere.
+    roles: [],
+  }),
+  adminMember({
+    id: 'member-6',
+    fullName: 'Dev Chatterjee',
+    joined: '2025-11-30',
+    roles: [ADMIN_ROLE_MANAGER, ADMIN_ROLE_COACH, ADMIN_ROLE_KIT],
+    teamIds: ['spartans', 'argonauts'],
+  }),
+]
+
+/* The member whose name is as long as a club could really type one, and
+   deliberately hyphenated rather than spaced: a spaced name breaks by itself
+   and proves nothing about the wrapping rules. */
+const ADMIN_MEMBER_LONG: Member = adminMember({
+  id: 'member-long',
+  fullName: 'Christabel Fotheringay-Wallington-Smythe',
+  joined: '2026-03-02',
+  roles: [ADMIN_ROLE_LONG, ADMIN_ROLE_COACH],
+  teamIds: ['titans'],
+})
+
+/* Exactly one Admin, and it is somebody else. That is the only arrangement
+   in which the last admin lock is reachable on a row the signed in member can
+   act on: their own row carries no Remove at all, so a club where they are
+   the sole admin proves the lock nowhere. */
+const ADMIN_MEMBERS_LAST_ADMIN: Member[] = ADMIN_MEMBERS.map((m) =>
+  m.id === 'coach-me'
+    ? { ...m, roles: [ADMIN_ROLE_COACH], allTeams: false, teamIds: ['titans'] }
+    : m.id === 'member-3'
+      ? m
+      : { ...m, roles: m.roles.filter((r) => r.key !== 'admin') },
+)
+
+const ADMIN_MEMBERS_FOR = (s: HarnessState): Member[] =>
+  s === 'lastadmin'
+    ? ADMIN_MEMBERS_LAST_ADMIN
+    : s === 'longnames'
+      ? [...ADMIN_MEMBERS, ADMIN_MEMBER_LONG]
+      : ADMIN_MEMBERS
+
+const ADMIN_ROLES_FOR = (s: HarnessState): RoleInfo[] =>
+  s === 'longnames' ? [...ADMIN_ROLES, ADMIN_ROLE_LONG] : ADMIN_ROLES
+
+// Invited until they first sign in, then active. Two of the six have not
+// signed in yet, so both badges render in one shot.
+const ADMIN_MEMBER_STATES: Record<string, 'invited' | 'active'> = {
+  'coach-me': 'active',
+  'member-2': 'active',
+  'member-3': 'active',
+  'member-4': 'invited',
+  'member-5': 'invited',
+  'member-6': 'active',
+  'member-long': 'active',
+}
+
+/* The capability catalogue, in the shape the real table has: a key, a label
+   and one sentence. It covers every entity the screen's own render order
+   names, so the ordering rule is exercised rather than asserted, and it
+   carries BOTH reserved keys, which are the two the grid locks on to Admin
+   and offers nowhere else. */
+const ADMIN_CAPABILITIES: Capability[] = [
+  { key: 'drills.create', label: 'Create drills', description: 'Add drills to the club library.' },
+  { key: 'drills.manage', label: 'Manage drills', description: 'Edit or delete any drill in the club.' },
+  { key: 'media.create', label: 'Add media', description: 'Upload videos, images and PDFs.' },
+  { key: 'media.manage', label: 'Manage media', description: 'Edit or delete any media item in the club.' },
+  { key: 'templates.create', label: 'Create templates', description: 'Build reusable session templates.' },
+  { key: 'templates.manage', label: 'Curate templates', description: 'Mark a template official for the club.' },
+  { key: 'programmes.create', label: 'Create programmes', description: 'Build a multi week programme.' },
+  { key: 'sessions.create', label: 'Plan sessions', description: 'Build and run training sessions.' },
+  { key: 'players.view', label: 'See registered players', description: "Read the club's player register." },
+  { key: 'players.manage', label: 'Manage registered players', description: 'Add, edit and move players between teams.' },
+  { key: 'players.import', label: 'Import players', description: 'Bring a squad in from a file or from Spond.' },
+  { key: 'players.export', label: 'Export players', description: 'Download the register as a spreadsheet.' },
+  { key: 'players.delete', label: 'Delete players', description: 'Permanently remove a player and their history.' },
+  { key: 'seasons.manage', label: 'Manage seasons', description: 'Open, activate and archive registration seasons.' },
+  { key: 'teams.manage', label: 'Manage teams', description: "Add, rename and remove the club's teams." },
+  { key: 'users.manage', label: 'Manage users', description: 'Invite members, set roles and remove people.' },
+  { key: 'club.manage', label: 'Manage the club', description: 'Edit the club record and its integrations.' },
+  { key: 'audit.view', label: 'See the activity log', description: 'Read the club wide record of what changed.' },
+  { key: 'shares.create', label: 'Create public links', description: 'Share a drill or a session outside the club.' },
+  { key: 'shares.manage', label: 'Manage public links', description: 'Review and revoke any public link in the club.' },
+]
+
+const capsFor = (roleId: string, keys: string[]): RoleCapability[] =>
+  keys.map((capability) => ({ roleId, capability }))
+
+// Admin holds everything, including the two reserved keys the grid draws
+// locked. Every other role is a subset, so a tick is on for some roles and
+// off for others in every row a driver might press.
+const ADMIN_ROLE_CAPABILITIES: RoleCapability[] = [
+  ...capsFor(ADMIN_ROLE_ADMIN.id, ADMIN_CAPABILITIES.map((c) => c.key)),
+  ...capsFor(ADMIN_ROLE_MANAGER.id, [
+    'drills.create', 'drills.manage', 'media.create', 'media.manage', 'templates.create', 'templates.manage',
+    'programmes.create', 'sessions.create', 'players.view', 'players.manage', 'players.import', 'players.export',
+    'seasons.manage', 'teams.manage', 'audit.view', 'shares.create', 'shares.manage',
+  ]),
+  ...capsFor(ADMIN_ROLE_COACH.id, [
+    'drills.create', 'media.create', 'templates.create', 'programmes.create', 'sessions.create',
+    'players.view', 'players.manage', 'shares.create',
+  ]),
+  ...capsFor(ADMIN_ROLE_PARENT.id, []),
+  ...capsFor(ADMIN_ROLE_KIT.id, ['players.view']),
+  ...capsFor(ADMIN_ROLE_LONG.id, ['players.view', 'audit.view']),
+]
+
+// The one member with public links still working, which is the advisory
+// warning inside the removal dialog. Everybody else has none, so the same
+// dialog is reachable both with the warning and without it.
+export const ADMIN_SHARE_COUNTS: Record<string, number> = { 'member-2': 3 }
+
+// The email and name a driver types into the invite form.
+export const ADMIN_INVITE_EMAIL = 'new.coach@example.invalid'
+export const ADMIN_INVITE_NAME = 'Alex Nowell'
+// And the label a driver types into the new role field. Its key is derived by
+// the product's own roleKeyFromLabel, so the hint under the field is the
+// product's answer rather than a fixture's.
+export const ADMIN_NEW_ROLE = 'Team Manager'
+export const ADMIN_NEW_TEAM = 'Centurions'
+
+/* ---- the rows a press can change --------------------------------------
+   A tiny mutable store, for the same reason `feedbackStore` is one: most of
+   what these two screens do IS a change to a list, and a stub that answered
+   with the same rows either way would make every proof of a press hold
+   whether or not the press did anything. A removed member has to leave the
+   list (which is what the focus rule waits for), a renamed team has to keep
+   its new name, an invited member has to appear, and a capability tick has to
+   stick or the grid's pending change count is drawn rather than derived.
+
+   References are stable between writes, which is what useSyncExternalStore
+   requires: a fresh array on every read is an infinite render loop. */
+let adminMembers: Member[] = ADMIN_MEMBERS_FOR(harnessState)
+let adminRoles: RoleInfo[] = ADMIN_ROLES_FOR(harnessState)
+/* Teams start as whatever every other screen already reads, so putting them
+   behind the store moves no existing shot: only a press on the Teams screen
+   changes them. `noteams` is the club that has never added one. */
+let adminTeams: Team[] = harnessState === 'noteams' ? [] : ACTIVITY_TEAMS_FOR(harnessState)
+let adminRoleCaps: RoleCapability[] = ADMIN_ROLE_CAPABILITIES
+let adminStates: Record<string, 'invited' | 'active'> = ADMIN_MEMBER_STATES
+const adminListeners = new Set<() => void>()
+const adminChanged = () => {
+  for (const l of adminListeners) l()
+}
+
+let invitedCount = 0
+let createdRoleCount = 0
+let createdTeamCount = 0
+
+export const adminStore = {
+  members: (): Member[] => adminMembers,
+  roles: (): RoleInfo[] => adminRoles,
+  teams: (): Team[] => adminTeams,
+  roleCaps: (): RoleCapability[] => adminRoleCaps,
+  states: (): Record<string, 'invited' | 'active'> => adminStates,
+  capabilities: (): Capability[] => ADMIN_CAPABILITIES,
+  subscribe(l: () => void): () => void {
+    adminListeners.add(l)
+    return () => {
+      adminListeners.delete(l)
+    }
+  },
+  // The invite creates the auth user at once, so the new profile is already
+  // in the list, in the invited state until they first sign in. That is what
+  // useInviteUser's own comment says the product does.
+  invite(input: { email: string; fullName: string; roleIds: string[]; teamIds: string[]; allTeams: boolean }) {
+    invitedCount += 1
+    const id = `member-invited-${invitedCount}`
+    adminMembers = [
+      ...adminMembers,
+      adminMember({
+        id,
+        fullName: input.fullName,
+        roles: adminRoles.filter((r) => input.roleIds.includes(r.id)),
+        teamIds: input.allTeams ? [] : input.teamIds,
+        allTeams: input.allTeams,
+      }),
+    ]
+    adminStates = { ...adminStates, [id]: 'invited' }
+    adminChanged()
+  },
+  removeMember(id: string) {
+    adminMembers = adminMembers.filter((m) => m.id !== id)
+    adminChanged()
+  },
+  setMemberRoles(memberId: string, roleIds: string[]) {
+    adminMembers = adminMembers.map((m) =>
+      m.id === memberId ? { ...m, roles: adminRoles.filter((r) => roleIds.includes(r.id)) } : m,
+    )
+    adminChanged()
+  },
+  setMemberTeams(memberId: string, teamIds: string[]) {
+    adminMembers = adminMembers.map((m) => (m.id === memberId ? { ...m, teamIds } : m))
+    adminChanged()
+  },
+  setMemberAllTeams(memberId: string, allTeams: boolean) {
+    adminMembers = adminMembers.map((m) => (m.id === memberId ? { ...m, allTeams } : m))
+    adminChanged()
+  },
+  createRole(key: string, label: string) {
+    createdRoleCount += 1
+    adminRoles = [...adminRoles, { id: `role-new-${createdRoleCount}`, key, label, system: false }]
+    adminChanged()
+  },
+  renameRole(id: string, label: string) {
+    adminRoles = adminRoles.map((r) => (r.id === id ? { ...r, label } : r))
+    adminMembers = adminMembers.map((m) => ({
+      ...m,
+      roles: m.roles.map((r) => (r.id === id ? { ...r, label } : r)),
+    }))
+    adminChanged()
+  },
+  // Deleting a role cascades its assignments and its capability ticks away,
+  // which is what the dialog says it does.
+  deleteRole(id: string) {
+    adminRoles = adminRoles.filter((r) => r.id !== id)
+    adminRoleCaps = adminRoleCaps.filter((rc) => rc.roleId !== id)
+    adminMembers = adminMembers.map((m) => ({ ...m, roles: m.roles.filter((r) => r.id !== id) }))
+    adminChanged()
+  },
+  saveRoleCaps(input: { adds: RoleCapability[]; removes: RoleCapability[] }) {
+    const gone = new Set(input.removes.map((r) => `${r.roleId}:${r.capability}`))
+    adminRoleCaps = [
+      ...adminRoleCaps.filter((rc) => !gone.has(`${rc.roleId}:${rc.capability}`)),
+      ...input.adds,
+    ]
+    adminChanged()
+  },
+  insertTeam(name: string) {
+    createdTeamCount += 1
+    adminTeams = [...adminTeams, { id: `team-new-${createdTeamCount}`, name, bibColour: null }]
+    adminChanged()
+  },
+  renameTeam(id: string, name: string) {
+    adminTeams = adminTeams.map((t) => (t.id === id ? { ...t, name } : t))
+    adminChanged()
+  },
+  // Removing a team clears the references rather than deleting anything, so
+  // members keep their rows with the team taken off them. Nothing about a
+  // session, a person or a player is removed here, which is exactly what the
+  // dialog promises.
+  deleteTeam(id: string) {
+    adminTeams = adminTeams.filter((t) => t.id !== id)
+    adminMembers = adminMembers.map((m) => ({ ...m, teamIds: m.teamIds.filter((t) => t !== id) }))
+    adminChanged()
+  },
+  setTeamBib(teamId: string, bibColour: string | null) {
+    adminTeams = adminTeams.map((t) => (t.id === teamId ? { ...t, bibColour } : t))
+    adminChanged()
   },
 }

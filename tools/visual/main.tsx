@@ -25,6 +25,8 @@ import { Players } from '../../src/routes/Players'
 import { Activity } from '../../src/routes/Activity'
 import { Account } from '../../src/routes/Account'
 import { Feedback } from '../../src/routes/Feedback'
+import { AdminUsers } from '../../src/routes/AdminUsers'
+import { AdminTeams } from '../../src/routes/AdminTeams'
 import { ACTIVITY_BATCH_ID, PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
 import '../../src/styles.css'
 
@@ -243,6 +245,18 @@ function Harness() {
             screen is a variant of what it SURFACES (the status select, the
             promote action), never of whether it renders. */}
         <Route path="/feedback" element={<Feedback />} />
+        {/* Behind the real users.manage guard, so the capability variant with
+            no access shows what a member actually gets (a redirect to Home)
+            rather than an empty content frame. It is a THIRD boundary beside
+            players.view and audit.view, and the harness keeps all three
+            apart: `coach` holds teams.manage and not users.manage, which is
+            exactly the partial administrator this guard has to turn away. */}
+        <Route element={<RequireCap cap="users.manage" />}>
+          <Route path="/admin/users" element={<AdminUsers />} />
+        </Route>
+        <Route element={<RequireCap cap="teams.manage" />}>
+          <Route path="/admin/teams" element={<AdminTeams />} />
+        </Route>
       </Routes>
     </Shell>
   )
@@ -301,6 +315,8 @@ function authEntry(): string {
 
 const ENTRY: Record<string, string> = {
   sessions: '/sessions',
+  adminusers: '/admin/users',
+  adminteams: '/admin/teams',
   players: playersEntry(),
   activity: activityEntry(),
   account: '/account',

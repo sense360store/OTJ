@@ -52,11 +52,11 @@ Query string, all optional:
 
 | Key | Values |
 |---|---|
-| `screen` | `home`, `sessions`, `login`, `auth`, `players`, `activity`, `account`, `feedback`, `more`, `dialog`, `primitives` |
+| `screen` | `home`, `sessions`, `login`, `auth`, `players`, `activity`, `account`, `feedback`, `adminusers`, `adminteams`, `more`, `dialog`, `primitives` |
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin` |
 | `theme` | `light` (default), `dark` |
 | `auth` | `signedin` (default), `signedout` (the default for `screen=login`), `needspassword`, `authloading` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -359,3 +359,68 @@ rather than measuring against the page behind it. Two categories are reported
 without failing, each for a stated reason rather than as a list of instances:
 an inactive control, which WCAG 1.4.3 exempts, and a frozen classification
 hue, which the VISUAL programme has not decided to move.
+
+## Admin Users and Admin Teams
+
+Two capability gated screens driven from one module,
+`tools/visual/admin.mjs`, for the reason `dialogs.mjs`, `account.mjs`,
+`auth.mjs` and `feedback.mjs` each exist: shoot, checks and contrast all need
+the same presses, and each of them writing its own is how a matrix and a check
+drift apart until one is photographing an untouched page.
+
+Both mount behind the product's own `RequireCap`, so the capability variants
+prove a REDIRECT rather than an empty frame. That is a third boundary beside
+`players.view` and `audit.view`, and the harness keeps all three apart:
+`coach` holds `teams.manage` and `club.manage` and NOT `users.manage`, which
+is exactly the partial administrator the Users guard has to turn away, and
+`planner` holds neither.
+
+Seven states are their own, and they are named for these screens rather than
+reusing `loading`, `empty` and `error`. Those three already answer for the
+register, the feed and the log, and the reads this pair needs are shared with
+four other harness screens: making `loading` hold the teams read would move
+Players, Sessions, Account and Activity. `adminloading` and `adminerror` are
+the page's own reads; `noteams` is a club that has never added one;
+`gridloading` and `gridunavailable` are the capability grid's own two reads,
+which are separate from the page's because the grid renders its heading and
+its own state either way; `lastadmin` puts the club's only Admin on somebody
+else's row, which is the only arrangement in which the last admin lock is
+reachable on a row the signed in member can act on; and `statesunknown` leaves
+the member states read unsettled, so no member claims invited or active.
+
+Everything else is the SHARED write phases: `inflight`, `writefails`,
+`writeslow` and `writeslowfails` mean here exactly what they mean everywhere
+else, and which of the thirteen writes is driven is decided by the control the
+driver presses.
+
+One READ answers differently for two screens, and it says so: `useProfiles` is
+the Activity feed's list of acting adults AND the Users screen's list of club
+members. Widening the Activity fixture to carry the Users matrix would put six
+names in Activity's Changed by filter and move every shot it takes, so the
+stub branches on `harnessScreen`, once.
+
+The reads come from a small mutable store (`adminStore`), for the same reason
+`feedbackStore` exists: most of what these screens do IS a change to a list. A
+removed member has to leave it, which is what the focus rule waits for; a
+renamed team has to keep its new name; an invited member has to appear; and a
+capability tick has to stick, or the grid's pending change count is drawn
+rather than derived.
+
+Eleven of the entries claim that a write did NOT happen: a reserved capability
+tick that changes nothing, a save that stops at the first refusal without
+attempting the second, a form that has not been submitted, the club's only
+admin whose removal is refused before it is sent. A browser cannot see a call
+that never happened, so every write is counted on `window.__adminCalls` and
+every zero is paired with an entry that makes the same call and asserts one.
+
+That log records each write's ARGUMENTS beside its name and order, because
+neither of those says what was sent: the member save could carry `teamIds: []`
+while the row still read All teams, and the invite could carry the wrong teams
+entirely, with every entry green. Ids are compared through the store's own
+names (`callArgs`), so a payload assertion reads in the same vocabulary as the
+presses around it.
+
+Which tick belongs to which role and which capability is the identity a visual
+refactor is most likely to move silently, so no grid press is ever located by
+position: each names BOTH halves through the control's own accessible name
+(`"<capability> for <role>"`).

@@ -508,6 +508,247 @@ screen reader has been run over this screen: everything proved about
 announcement is structural, which role a Note carries and which element holds
 focus, exactly as it is on Login and Account.
 
+#### Admin Users + Admin Teams: complete
+
+The two capability gated admin screens now use the shared system. Their
+Design Read acceptance is a representative admin invite flow, a role change,
+a destructive removal and bib colour selection, and every one of those is
+covered; the general VISUAL-02 requirement is covered too: normal, loading,
+empty, error, capability limited, narrow phone and both themes.
+
+What the slice adopted: `PageHeader` for the two headings, `Card` for the
+five contained sections, `Button` and `IconButton` for the twenty three hand
+written class strings, `TextField` and `SelectField` for the nine raw `.field`
+blocks, `Note` for every message either screen can produce, `Badge` for the
+member state and the No roles marker, `Pill` for the role and count chips,
+and `Loading`, `Empty` and `ErrorNote` for the read states. Between them the
+two routes carried 44 inline font sizes, 72 inline spacing declarations and 89
+inline style objects; they write one inline style now, the bib swatch's own
+fill, which 2.16 keeps as a colour. Both join BOTH of the design system
+invariant's ownership lists, so neither a size nor a step can come back.
+
+**The capability grid is a real table now**, which is the one structural
+change. It was a CSS grid of unlabelled cells, so nothing told a screen
+reader which role a tick belonged to except the tick's own `aria-label`. It
+has a `<caption>`, `scope="col"` on the roles and `scope="row"` on the
+capabilities, and it scrolls inside its own container, which is 2.9's other
+requirement. 2.9's card equivalent is deliberately not built: that rule is
+for a table whose columns are attributes of one entity, and a matrix has no
+card form that is not the matrix.
+
+**Eight title attributes are gone, and six of them carried a rule.** A
+tooltip does not survive touch, so every one is a sentence on the page now:
+why the club's only admin cannot be removed (bound to the inert control with
+`aria-describedby`), why an Admin tick is held on, why every team reads ticked
+when All teams is on, why a member holding no role has no write access, why a
+system role cannot be renamed or deleted, and why a reserved capability is
+offered on no role but Admin. The other two named a control that already had
+an `aria-label`. The reserved cell that offers nothing says which rather than
+being blank.
+
+What it deliberately did not do. No query, capability gate, RLS assumption,
+Edge Function call, invite default, last admin rule, reserved capability
+rule, all teams rule or member save order moved. The member save still writes
+roles, then the all teams flag, then the specific teams, still sends only what
+changed, and still stops at the first refusal with the dialog open; both
+halves are counted in the browser rather than inferred from what is drawn.
+The dialogs are still dismissible while a write is in flight, unlike every
+adopted Registered players dialog, because the brief freezes that contract; it
+is measured and recorded rather than quietly changed.
+
+Two additions that are presentation of an existing state rather than new
+behaviour, and are called out rather than slipped in: the page level error
+states gained a Retry, which refetches the reads they already make; and
+applying a capability change now confirms in words, which it did not, so a club
+wide change closed a dialog and left the page looking exactly as it was.
+
+Five things worth recording, none of them presentation alone:
+
+- **A visually hidden span escaped a scrolling container and scrolled the
+  phone.** `.sr-only` is `position: absolute`, and the reserved cells use one
+  to say why they are empty. A scroll container that is not itself POSITIONED
+  is not the containing block for an absolutely positioned descendant, so
+  those spans took the initial containing block, escaped `.cap-scroll`
+  entirely and scrolled a 360px viewport 246px sideways while the table beside
+  them was clipped correctly. Found by measuring the document's scroll width,
+  not by reading the rule; `position: relative` on the container is the fix and
+  a check now measures it on both screens.
+- **A team name with no space in it made its own picker column 393px wide.**
+  `.check-row` takes `overflow-wrap: anywhere` rather than `break-word`,
+  because only `anywhere` changes the MIN CONTENT contribution, which is the
+  half that matters: the wrapping was never the problem, the track width was.
+- **Five outcomes dropped focus onto the document body**, and each was
+  reproduced in a browser with the repair NEUTRALISED before it was made,
+  which is the rule #215, #216 and #217 left: a sent invite, a refused invite,
+  a removed member, a deleted role and a removed team all left
+  `document.activeElement` on `<body>`. Three of them wait for the ROW LEAVING
+  THE LIST rather than for the write settling, because the two are a network
+  round trip apart: on the settling render `Modal` has just restored focus to
+  the trigger and a hook keyed on the write would find focus exactly where it
+  should be, do nothing, and forget it had been asked. Focus lands on the
+  outcome message, which is the error summary pattern the auth screens
+  settled, and the no-steal half is driven too.
+- **Two refusals were swallowed.** A rename or a bib change the RLS turned
+  down failed silently on the Teams screen: the mutation errored and the row
+  said nothing at all, so a refused change looked like one that had saved.
+  Both are a danger Note on the row now.
+- **`Note` gained an `id`,** which is the gap the Login slice recorded and
+  deferred: it wanted to bind a field level refusal to its field and could not
+  without rendering the message twice. The two admin submits that go inert
+  while a member holds no role are its first callers.
+
+**Seven accessibility repairs came out of an adversarial pass over the
+finished slice**, and they are listed rather than folded into the adoption
+because six of them are defects the screens carried before it:
+
+- The two warnings that account for an inert submit are announced now, not
+  only shown. A member who unticks the last role heard nothing.
+- The sentence explaining All teams, and the one explaining the locked Admin
+  tick, are BOUND to the control they account for. The five team boxes that
+  All teams ticks and freezes are out of the tab order, so a sentence merely
+  near them is one a screen reader never reaches.
+- The row actions are named for their own row (`Manage Priya Raghunathan`,
+  `Rename Titans`), which is what a buttons list strips the context away
+  from. The icon-only siblings beside them were already named this way.
+- The four card headings are `h2`. They were `h3` with no `h2` anywhere in the
+  document, which is a level a screen reader user navigating by heading falls
+  into; the Account screen already emits `h2` for the same shape.
+- The capability grid's row header names the capability alone. The
+  description stayed inside the `<th>`, so every one of the five cells in a
+  row was announced with the whole sentence in front of it.
+- Four more outcomes dropped focus onto the document body, and each was
+  reproduced before it was repaired: applying a capability change (the dialog
+  closes AND the button it was opened from goes with the draft, so `Modal`'s
+  own restore finds its opener already gone), choosing a bib colour, creating
+  a role and adding a team.
+
+**The harness proved less than it claimed, and the adversarial pass is what
+found it.** Six holes, each of which left an entry green under a name
+asserting something it could not see:
+
+- **The stub collapsed a network round trip into one commit.** It applied its
+  store update in the same callback as `onSuccess`, so a removed row had
+  already gone by the time the outcome was set. That is the exact opposite of
+  production, where the per-call callback runs when the mutation resolves and
+  the list changes only when the invalidated read comes back, and it made the
+  three focus rules that wait for a row unfalsifiable: reducing `rowGone` to
+  `removed !== null`, which is the mistake those rules exist to stop, passed
+  every entry. The two moments are a tick apart now, and each of the three
+  fails under that mutation.
+- **A missing counter read as nought**, so every negative proof held against
+  a counter somebody had renamed, and `noWrites` passed on an empty log
+  (`Object.values({}).every(...)` is true). Both now require every expected
+  counter to EXIST.
+- **`setMemberAllTeams` had a zero with no paired one anywhere**, and no
+  entry drove an all teams save at all: the write that puts a member on every
+  current and future team was never observed. One entry now drives all three
+  writes at once.
+- **The member save's ORDER was asserted with two scalars** that hold
+  whichever way round the awaits went. The stub records the sequence now, and
+  swapping the two writes fails.
+- **`invite-no-role` was confounded**: it unticked the last role on an empty
+  form, where Send is inert from the empty address alone, so deleting the
+  role rule from the disabled expression left it green. It fills the form
+  first.
+- **Four entries asserted a shape rather than a fact**: a removal dialog's
+  counts matched `\d+ members and \d+ sessions` (which "0 and 0" satisfies),
+  a long name state proved a row count, a per row refusal matched a note on
+  ANY row, and an absence proof was written against one exact label.
+
+**Codex named two more, and both were the same failure one level down: the
+harness watched that a write happened and never what it carried or where it
+left the coach.**
+
+- **A counter and an order say nothing about the PAYLOAD**, which is what
+  every frozen rule here is actually about. Sending `teamIds: []` from the
+  member save kept the three writes in the documented order and the row still
+  read All teams, so the entry named for that save stayed green while the
+  specific selection underneath the flag was thrown away; and the invite's own
+  rule, that the teams are dropped when All teams is on, was asserted through
+  the picker's ticks by an entry that never pressed Send. The log records each
+  write's arguments now, compared through the store's own names so a payload
+  assertion reads in the same vocabulary as the presses, and two entries send
+  a complete invite rather than looking at the form.
+- **Four of the five focus repairs above were unasserted.** They were
+  reproduced in a browser and repaired, and then nothing proved the repair:
+  deleting `wantNewRoleFocus` left every assertion in the entry holding.
+  Creating a role, adding a team, renaming a team, choosing a bib and applying
+  a capability change all check `document.activeElement` by IDENTITY now, and
+  each fails with its repair neutralised.
+- **And then WHO a write was about was still missing**, which the same review
+  found on its next pass over the fix. Two of the member save's three writes
+  are invisible on the row the dialog was opened from, so a save that sent one
+  of them for a DIFFERENT member left the entry green: the row still read All
+  teams, which the middle write had set correctly. Every entry that asserts a
+  save's arguments names the member now, the removal names the person it
+  removed, and each fails with the target repointed at another row. That last
+  one needed the name lookup to survive the removal it describes, so it reads
+  the store first and the club as it was at load second; nothing renames a
+  member, so the two cannot disagree.
+- **A name two people share is no identity at all.** `profiles.full_name`
+  permits a namesake, and comparing a write's target by name collapses two
+  ids into one, so a write repointed at the namesake satisfied the assertion.
+  A name more than one id carries resolves to the empty string, which matches
+  no expectation any entry can write, so the entry fails rather than passing
+  on a collapsed identity. That is the rule the product's own linking screen
+  uses for an id it cannot stand behind, and it means a duplicate name in the
+  fixtures breaks the proof loudly.
+- **The capability apply carried its payload unobserved**, which is the
+  round one hole in the one place round one did not look. The tick, the
+  vanished Review button and the change count are all drawn from the PRE
+  SUBMIT draft, so an apply that smuggled in a capability nobody ticked
+  changed what the whole club may do and left every one of those looking
+  right. The exact adds and removes are asserted now, named the way the tick
+  that made them is (`Manage drills for Coach`), so the assertion and the
+  press are written in one vocabulary.
+
+`Tick` is kept rather than retired, and that is a decision rather than an
+omission. `.check-row`'s native checkbox is the shared treatment everywhere
+else, but `.theme-dark` sets no `color-scheme`, so a native box is white on
+the dark card, and this is the one screen that renders dozens of them at once.
+What Tick adopts instead is the shared 44px hit area (from `.check-row` where
+there is text beside the box and a new `.check-cell` in the grid, where there
+is not) and the shared `--focus` ring, drawn on the box that is actually
+visible rather than on the transparent input over it. Unifying the product's
+two checkbox treatments needs the `color-scheme` decision first, which is a
+cross product change rather than this slice's.
+
+**What is deferred, and why each one is.**
+
+- **A team with no references is not reachable in the browser.** Three of the
+  club's six members hold the all teams flag, and the dialog counts them for
+  every team, so no team in the fixture has a member count of nought. The zero
+  case is proved by rendering the dialog directly in
+  `src/routes/adminTeams.screens.test.tsx`, which is where it is reachable.
+- **No screen reader has been run over either screen.** Everything proved
+  about announcement is structural, exactly as on Login, Account and Feedback:
+  which role a Note carries, which element holds focus, and that a disabled
+  control points at the sentence that accounts for it.
+- **The capability grid has no scroll affordance on a phone.** It scrolls
+  inside its own container and the table is visibly cut off, which is the
+  pre-existing behaviour; a visible cue is new chrome rather than an adoption.
+- **The two checkbox treatments have not converged**, for the stated
+  `color-scheme` reason above.
+- **Choosing a bib colour disables the select under the coach's fingers.**
+  The write starts on `change`, and on Windows arrowing a closed select fires
+  one `change` per step, so the first press freezes the control mid selection.
+  Focus is restored now, which is what this slice can fix; not disabling it,
+  or committing on blur, is a change to a frozen interaction rather than to
+  its presentation, so it is recorded here instead.
+- **A disabled submit still cannot deliver its own description.** Both
+  warnings are announced when they appear and both submits point at them, but
+  a disabled control is out of the tab order, so the description is reached
+  only in browse mode. Keeping the control focusable with `aria-disabled` is
+  new interaction on a frozen contract, which is the same deferral the Login
+  slice recorded for its own disabled submit.
+- **The loading, error and refused branches replace the page, `h1` included.**
+  Twelve routes in the product return a bare state that way; changing it on
+  two of them would make the pair inconsistent with the other ten, so it
+  belongs to VISUAL-04's whole product pass.
+- **`Empty` emits an `h3`.** On Teams, whose card carries no heading of its
+  own, that is the same level jump one branch down. It is a shared primitive
+  with thirty callers, so the level is not this slice's to move.
+
 ### VISUAL-03 — Feature-area waves
 
 **Outcome.** Feature areas whose product behaviour is still evolving are redesigned with, not immediately before, their functional work.

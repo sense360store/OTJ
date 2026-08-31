@@ -806,6 +806,12 @@ summary:focus-visible,
 .field-date input { max-width: 200px; }
 /* The last field in a dialog body or a filter row carries no trailing gap. */
 .field-flush { margin-bottom: 0; }
+/* A field whose label is read but not shown: an editable list row where the
+   control's own value is what a sighted reader sees (a team's name, its bib
+   colour). It is a real <label> bound to the control, so nothing about the
+   accessible name changes; what goes is the 4px gap .field label would
+   otherwise leave above the control. */
+.field label.sr-only { margin: -1px; }
 
 /* Compact check row: the native checkbox or radio sits adjacent to its text
    inside one clickable label. The higher specificity beats
@@ -815,8 +821,14 @@ summary:focus-visible,
    control rather than only the ones on a phone-first screen. */
 .check-row, .field .check-row { display: flex; align-items: center; gap: var(--space-8); margin: 0; min-height: var(--hit);
   font-size: var(--text-base); font-weight: 600; color: var(--ink); cursor: pointer; }
-.check-row input[type="checkbox"], .check-row input[type="radio"] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--royal); cursor: pointer; }
-.check-row input:disabled { cursor: default; }
+/* A DIRECT child, so a row whose control is drawn rather than native (the
+   Tick, which hides a full size input over a drawn box) keeps its own
+   sizing. Both selectors score the same, so without this the winner would
+   be whichever stylesheet the bundler happened to emit second. Every
+   existing caller puts the input directly inside the label, so this
+   narrowing changes none of them. */
+.check-row > input[type="checkbox"], .check-row > input[type="radio"] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--royal); cursor: pointer; }
+.check-row > input:disabled { cursor: default; }
 .total-time { display: flex; align-items: baseline; gap: var(--space-8); }
 .total-time .big { font-family: var(--display); font-size: var(--text-display); font-weight: 800; letter-spacing: -.03em; }
 
@@ -968,8 +980,16 @@ summary:focus-visible,
 .state-success > svg { width: 16px; height: 16px; flex: 0 0 auto; }
 
 .section-title { display: flex; align-items: center; gap: var(--space-8); margin: 0 0 var(--space-12); }
-.section-title svg { width: 20px; height: 20px; color: var(--royal); }
-.section-title h3 { font-size: var(--text-lg); font-weight: 800; }
+/* A DIRECT child, so a glyph inside something else in the heading row (the
+   member count Pill, whose own icon is 13px) keeps its own size. Every
+   caller's glyph is a direct child, so this changes none of them. */
+.section-title > svg { width: 20px; height: 20px; color: var(--royal); }
+/* h2 as well as h3: a card inside a page whose title is the h1 is a LEVEL
+   TWO section. The Account screen already emits h2 for that shape, through a
+   class of its own rather than through this one, so what is being followed
+   here is its heading LEVEL and not its styling. The two levels share the
+   step because what differs is the document structure rather than the type. */
+.section-title h2, .section-title h3 { font-size: var(--text-lg); font-weight: 800; }
 .divider { height: 1px; background: var(--line); margin: var(--space-24) 0; border: 0; }
 
 /* ============================================================ RESPONSIVE */
@@ -1603,6 +1623,172 @@ a.activity-batch:hover { text-decoration: underline; }
 .ip-outcome-line { font-size: var(--text-md); font-weight: 700; margin: var(--space-8) 0 var(--space-4); }
 .ip-outcome-note { font-size: var(--text-sm); color: var(--slate); margin: 0 0 var(--space-4); }
 .ip-outcome-ref { font-size: var(--text-xs); color: var(--slate); margin: var(--space-4) 0 0; }
+
+/* =====================================================================
+   Admin Users and Admin Teams (VISUAL-02)
+
+   Two capability gated screens that are the same shape: a stack of cards,
+   each holding a list of rows, each row carrying the controls for one
+   member, role or team. So the composition is shared and only the row's
+   contents differ.
+
+   Nothing here restyles a shared control. What is here is where a shared
+   control SITS on these two screens, which is the composition Part 4 says
+   belongs to the screen and no primitive should absorb.
+   ===================================================================== */
+
+.admin-stack { display: flex; flex-direction: column; gap: var(--space-24); }
+/* Teams is one short list of five rows. Left to the 1280px content column its
+   name field would run to about 800px for a word like Titans; 720 is the
+   width at which the whole row still fits on one line above the breakpoint. */
+.admin-narrow { max-width: 720px; }
+
+/* A card's heading with something opposite it (a count, a control). The type
+   comes from .section-title, which every other card heading already uses;
+   these only move the two apart and close the gap when a sentence of intro
+   copy follows the heading rather than the list. */
+.section-title-spread { justify-content: space-between; }
+.section-title-tight { margin-bottom: var(--space-4); }
+.admin-intro { margin: 0 0 var(--space-16); font-size: var(--text-sm); color: var(--slate);
+  line-height: var(--leading-body); }
+
+/* One list shape for members, roles and teams. It wraps rather than
+   scrolling, because every row here is a handful of controls rather than a
+   record with columns, and at 360px the controls belong under the name they
+   act on. */
+.admin-list { list-style: none; margin: 0; padding: 0; }
+/* --line-2 is 2.4's WITHIN group separator, which is what a list row is.
+   Every row carries it, the first one included, so the list is separated from
+   the heading or the add form above it rather than running straight on. */
+.admin-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8) var(--space-12);
+  padding: var(--space-12) 0; border-top: 1px solid var(--line-2); }
+.admin-row-main { flex: 1 1 200px; min-width: 0; }
+.admin-row-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); }
+/* overflow-wrap rather than a truncation: a club that names a team or a
+   member something long should still be able to read the whole of it, and
+   min-width: 0 is what lets the flex item shrink far enough to wrap at all. */
+.admin-name { font-size: var(--text-md); font-weight: 700; overflow-wrap: anywhere; }
+.admin-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-4) var(--space-8);
+  margin-top: var(--space-4); font-size: var(--text-sm); color: var(--slate); overflow-wrap: anywhere; }
+.admin-tags { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+/* A field that is one control in a row of them: it grows into the space the
+   buttons leave and shrinks far enough for a long value to wrap. */
+.admin-field-grow { flex: 1 1 180px; min-width: 0; }
+/* The row's own outcome and refusal messages, and the page's. */
+.admin-note { margin-top: var(--space-12); }
+.admin-row-note { flex: 1 1 100%; }
+/* The form that adds a team or a role: a field and its one button, aligned on
+   the control rather than on the label above it. */
+.admin-add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-8); }
+
+/* A set of check rows that wraps into columns where there is room. The role
+   and team pickers are short words, and one column of five leaves a dialog
+   scrolling on a phone for no reason. Each row keeps its own 44px height, so
+   the columns never shrink the target. */
+.check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0 var(--space-16); }
+/* Four classes, so this BEATS .choice-group's own row spacing rather than
+   tying with it and being decided by whichever the bundler emitted second. */
+.choice-group .check-grid .check-row + .check-row, .check-grid .check-row + .check-row { margin-top: 0; }
+/* overflow-wrap: anywhere rather than break-word, because only `anywhere`
+   changes the MIN CONTENT contribution, and that is the thing that matters
+   here: a club team named with no space in it (measured at 393px) made its
+   own grid track 393px wide and scrolled a 360px phone sideways. It inherits,
+   so the wording inside the row breaks with it.
+   Scoped to THIS grid rather than added to the shared .check-row: nothing on
+   the three dialogs that already use that class moves today, since their
+   wording is short and spaced, but how a future long value breaks there is
+   their own screens' decision rather than this slice's. */
+.check-grid .check-row { min-width: 0; overflow-wrap: anywhere; }
+/* The team list nests under the all teams toggle, indented behind a faint
+   rule, so the toggle plainly governs the group. */
+.team-nest { margin-left: var(--space-8); padding-left: var(--space-16); border-left: 2px solid var(--line); }
+/* A row whose control is disabled: the box dims itself and the wording beside
+   it goes to --slate, which still clears the text floor, rather than to the
+   opacity that used to take it under. */
+.check-row.is-disabled { color: var(--slate); cursor: default; }
+/* The sentence that accounts for a control the screen has disabled. 2.5 says
+   a disabled control is never the only account of why an action is
+   unavailable, and a title attribute is a tooltip that does not survive
+   touch, which is what four of these replace. */
+.admin-hint { margin: var(--space-4) 0 0; font-size: var(--text-sm); color: var(--slate);
+  line-height: var(--leading-body); }
+
+/* ---- the team row ---------------------------------------------------
+   The bib swatch and the colour's own name. The NAME is the information and
+   the swatch is supplementary, which is why the swatch is aria-hidden and
+   the select carries the word: 2.16 makes bib colour the deliberate
+   exception that stays colour, and it stays paired with its label. */
+.bib-field { display: flex; align-items: center; gap: var(--space-8); }
+.bib-swatch { width: 16px; height: 16px; flex: 0 0 16px; border-radius: var(--radius-pill);
+  border: 1px solid var(--slate-2); }
+/* Two classes, so this beats .field select's own full width rule on
+   specificity rather than on which rule the bundler emits second. */
+.field.bib-select select { width: 132px; }
+/* Below the phone breakpoint the row wraps to two lines by design: the name,
+   then the bib and the actions. The select is narrower there so the swatch
+   does not push the actions onto a THIRD line for the teams that have a
+   default colour while the teams that do not stay on two, which is what a
+   360px shot showed. Measured rather than guessed: 294px of row, 156px of
+   actions, a 12px gap and a 24px swatch leave 102. */
+@media (max-width: 430px) {
+  /* ONE arrangement for every row, whatever bib it carries. Measured at 360:
+     the name field's 180px basis plus a 100px bib fits on the first line and
+     plus a 124px one (the same bib with its swatch) does not, so a team with
+     a default colour wrapped differently from a team without and the list
+     read as two designs. The name takes the line, and the bib and the
+     actions take the next: 124 + 12 + 156 = 292 in a 294px row. */
+  .admin-row .admin-field-grow { flex-basis: 100%; }
+  .field.bib-select select { width: 100px; }
+}
+
+/* ---- the role to capability grid ------------------------------------
+   A real table, because it IS one: a capability per row, a role per column
+   and a tick where they cross. It was a CSS grid of unlabelled cells, so
+   nothing told a screen reader which role a tick belonged to except the
+   tick's own aria-label.
+
+   2.9's card equivalent is for a table whose columns are attributes of one
+   entity, and a matrix has no card form that is not the matrix. So this
+   takes 2.9's other requirement instead: it scrolls inside its own
+   container, never the page body. */
+/* position: relative is load bearing, and it was found by measuring rather
+   than by reading. .sr-only is `position: absolute`, and the reserved cells
+   use one to say why they are empty. A scroll container that is not itself
+   POSITIONED is not the containing block for an absolutely positioned
+   descendant, so those spans took the initial containing block instead,
+   escaped the container entirely, and scrolled a 360px phone 246px sideways
+   while the table beside them was clipped correctly. */
+.cap-scroll { overflow-x: auto; position: relative; }
+.cap-grid { width: 100%; border-collapse: collapse; }
+.cap-grid thead th { padding: var(--space-8) var(--space-4); font-size: var(--text-sm); font-weight: 800;
+  color: var(--ink); text-align: center; }
+.cap-grid thead th:first-child { text-align: left; }
+.cap-grid tbody th { border-top: 1px solid var(--line); text-align: left; font-weight: 400;
+  padding: var(--space-8) var(--space-12) var(--space-8) 0; min-width: 220px; }
+.cap-grid tbody td { border-top: 1px solid var(--line); text-align: center; width: 92px; padding: 0; }
+.cap-name { display: block; font-size: var(--text-base); font-weight: 700; color: var(--ink); }
+.cap-desc { display: block; font-size: var(--text-xs); color: var(--slate); line-height: var(--leading-body); }
+/* A capability the database reserves to the admin role is not offered on any
+   other one. The cell says so rather than being blank: the dash is the
+   visible cue and the sentence beside it is what a screen reader reads. */
+.cap-none { color: var(--slate); font-weight: 700; }
+/* A form's or a grid's own actions, at the end of what they act on. Shared
+   by the invite form's Send and the capability grid's pending change bar,
+   because both are the same shape and a second name for it is the thing this
+   programme removes. */
+.admin-acts-end { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-8);
+  margin-top: var(--space-16); }
+.cap-changes { list-style: disc; margin: 0; padding-left: var(--space-20); font-size: var(--text-base);
+  line-height: var(--leading-body); }
+
+/* A tick with no adjacent text: the grid's cell, where the name comes from
+   the row and the column rather than from a word beside the box. It is still
+   a <label>, so the 44px hit area is the target rather than the 16px box,
+   and the cells are 92px apart so an enlarged box cannot reach its
+   neighbour. */
+.check-cell { display: inline-grid; place-items: center; width: var(--hit); height: var(--hit);
+  margin: 0; cursor: pointer; }
+.check-cell.is-locked { cursor: default; }
 
 /* =====================================================================
    Content Sharing PR 2: the public drill page, the preview and the

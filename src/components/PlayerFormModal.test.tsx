@@ -60,7 +60,13 @@ describe('shared field styles keep checkboxes off the text-input sizing rule', (
     // The rule covers the radio too, because VISUAL-02 moved the export and
     // restore dialogs' inline styled radio rows onto this same class rather
     // than inventing a second one for them.
-    const rule = styles.match(/\.check-row input\[type="checkbox"\], \.check-row input\[type="radio"\] \{[^}]*\}/)
+    //
+    // A DIRECT child, since VISUAL-02's Admin Users slice: that screen's rows
+    // wrap a drawn Tick, whose own input is a full size transparent overlay,
+    // and the two selectors score the same, so without the > the winner would
+    // be whichever stylesheet the bundler emitted second. Every caller here
+    // puts the input directly inside the label, so nothing about them moved.
+    const rule = styles.match(/\.check-row > input\[type="checkbox"\], \.check-row > input\[type="radio"\] \{[^}]*\}/)
     expect(rule).not.toBeNull()
     expect(rule?.[0]).toContain('width: 16px')
     expect(rule?.[0]).toContain('height: 16px')

@@ -18,6 +18,18 @@ import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dia
 import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
 import { AUTH_FLOWS, BRAND, GUARD_CASES, LOGIN_EMAIL, LOGIN_PASSWORD, brandRendered, queryForAuth, runAuthFlow, urlForAuth } from './auth.mjs'
 import { FEEDBACK_ENTRIES, ROWS, expandRow, queryForFeedback, row, runFeedbackFlow } from './feedback.mjs'
+import {
+  ADMIN_ENTRIES,
+  MEMBERS,
+  ROLES,
+  memberRow,
+  noWrites,
+  queryForAdmin,
+  roleRow,
+  runAdminFlow,
+  teamRow,
+  tickState,
+} from './admin.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -139,8 +151,13 @@ const open = async (screen, width, opts = {}) => {
           // rather than of the caller.
           opts.feedbackEntry
           ? queryForFeedback(opts.feedbackEntry, { theme: opts.theme ?? 'light' })
-          : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
-  const plain = !opts.dialog && !opts.flow && !opts.authEntry && !opts.feedbackEntry
+          : // An admin entry owns its query string for the same reason again:
+            // WHICH of the two screens it drives, the capability set and the
+            // write phase it needs are all part of the entry.
+            opts.adminEntry
+            ? queryForAdmin(opts.adminEntry, { theme: opts.theme ?? 'light' })
+            : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
+  const plain = !opts.dialog && !opts.flow && !opts.authEntry && !opts.feedbackEntry && !opts.adminEntry
   // The auth condition the guard is given, for a plain open of an auth
   // surface. It is a key of its own rather than a state, because "has to set
   // a password" and "the write hangs" are both true of one screen at once.
@@ -3783,6 +3800,390 @@ const focusReturned = async (page, d) => {
       !why && shown === 'new',
       `${why ?? ''} showing ${shown}`,
     )
+    await page.close()
+  }
+}
+
+/* ======================================================================
+   VISUAL-02: Admin Users and Admin Teams
+
+   What a screenshot cannot settle on these two screens: whether a tick still
+   means the role and the capability its label says it does; whether the club
+   is protected from losing its last administrator when the control that says
+   so is disabled; whether a press that must NOT write actually wrote;
+   whether a dialog returns focus to the control that opened it rather than to
+   the first one on the page; and where focus ends up when a removal takes the
+   row it was standing on. The first three are claims about identity and about
+   calls, so they are read off the control's own accessible name and off the
+   harness stub's counter rather than inferred from what is drawn.
+
+   Every state is DRIVEN through tools/visual/admin.mjs, the same entries
+   shoot.mjs photographs and contrast.mjs sweeps, so a control that stops
+   rendering fails the run rather than producing a plausible measurement. */
+{
+  const adminEntry = (key) => ADMIN_ENTRIES.find((e) => e.key === key)
+
+  /* The backbone: every entry reaches the state its own name claims, in both
+     themes, because most of them are a semantic Note or a Badge whose
+     surface, border and glyph all flip. The screenshots and the contrast
+     sweep file their results under these names, so a name nothing proves is
+     the failure the whole apparatus exists to stop. */
+  for (const entry of ADMIN_ENTRIES) {
+    for (const theme of ['light', 'dark']) {
+      const page = await open(entry.screen ?? 'adminusers', 1280, { adminEntry: entry, theme })
+      const why = page.blank ? 'the surface never painted' : await runAdminFlow(page, entry)
+      check(`${entry.key} (${theme}): ${entry.note}`, !why, why ?? '')
+      await page.close()
+    }
+  }
+
+  /* ---- the page's own structure ---- */
+  for (const [screen, title, ticks] of [
+    // Users renders dozens of ticks; Teams renders none, so the two are asked
+    // different questions rather than one loose one that passes on an empty
+    // page.
+    ['adminusers', 'Users', true],
+    ['adminteams', 'Teams', false],
+  ]) {
+    const page = await open(screen, 1280, { caps: 'clubadmin' })
+    const r = await page.evaluate(() => {
+      const h1s = [...document.querySelectorAll('.content h1')]
+      // Every form control on the page, and whether it has a REAL label
+      // element bound to it. aria-label is an accessible name with no element
+      // behind it, and 2.6 asks for the element.
+      const controls = [...document.querySelectorAll('.content input, .content select, .content textarea')]
+      const unlabelled = controls
+        .filter((el) => {
+          if (el.type === 'checkbox') return false // named by the label it sits inside
+          const byFor = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null
+          return !byFor && !el.closest('label')
+        })
+        .map((el) => el.tagName + (el.id || el.getAttribute('aria-label') || ''))
+      // Every checkbox has a name, whichever way it gets one.
+      const checkboxes = [...document.querySelectorAll('.content input[type="checkbox"]')]
+      const namelessBoxes = checkboxes.filter(
+        (el) => !el.getAttribute('aria-label') && !(el.closest('label')?.textContent ?? '').trim(),
+      ).length
+      // No icon only control is left without an accessible name.
+      const namelessIcons = [...document.querySelectorAll('.content .icon-btn')].filter(
+        (el) => !el.getAttribute('aria-label'),
+      ).length
+      // Every heading in the content frame, in document order, as a level.
+      // A page whose only levels are 1 and 3 has a hole a screen reader user
+      // navigating by level falls into.
+      const levels = [...document.querySelectorAll('.content h1, .content h2, .content h3, .content h4')].map((h) =>
+        Number(h.tagName.slice(1)),
+      )
+      return {
+        h1: h1s.length,
+        title: (h1s[0]?.textContent ?? '').trim(),
+        levels,
+        unlabelled,
+        checkboxes: checkboxes.length,
+        namelessBoxes,
+        namelessIcons,
+      }
+    })
+    check(`${screen}: exactly one h1 and it names the page`, r.h1 === 1 && r.title === title, JSON.stringify(r))
+    check(
+      `${screen}: heading levels do not skip one`,
+      r.levels.every((lv, i) => i === 0 || lv <= r.levels[i - 1] + 1),
+      JSON.stringify(r.levels),
+    )
+    check(`${screen}: every field has a real label element bound to it`, r.unlabelled.length === 0, JSON.stringify(r.unlabelled))
+    check(
+      `${screen}: every tick control exposes a name`,
+      r.namelessBoxes === 0 && (ticks ? r.checkboxes > 0 : r.checkboxes === 0),
+      JSON.stringify(r),
+    )
+    check(`${screen}: every icon only action has an accessible name`, r.namelessIcons === 0, JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- the capability grid is a real table ---- */
+  {
+    const page = await open('adminusers', 1280, { caps: 'clubadmin' })
+    const r = await page.evaluate(() => {
+      const table = document.querySelector('table.cap-grid')
+      if (!table) return null
+      const colHeads = [...table.querySelectorAll('thead th')]
+      const rowHeads = [...table.querySelectorAll('tbody th')]
+      return {
+        caption: (table.querySelector('caption')?.textContent ?? '').trim(),
+        cols: colHeads.length,
+        colScopes: colHeads.every((th) => th.getAttribute('scope') === 'col'),
+        rows: rowHeads.length,
+        rowScopes: rowHeads.every((th) => th.getAttribute('scope') === 'row'),
+        // The table scrolls inside its own container, never the page body.
+        scrollsItself: !!table.closest('.cap-scroll'),
+      }
+    })
+    check(
+      'the capability grid is a table with a caption and scoped headers, scrolling in its own container',
+      !!r && !!r.caption && r.cols === 6 && r.colScopes && r.rows > 0 && r.rowScopes && r.scrollsItself,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* ---- hit areas, on both screens ---- */
+  for (const [screen, selectors] of [
+    ['adminusers', ['.check-row', '.check-cell', '.icon-btn', '.btn-sm']],
+    ['adminteams', ['.icon-btn', '.btn-sm', '.field select']],
+  ]) {
+    for (const width of [360, 1280]) {
+      const page = await open(screen, width, { caps: 'clubadmin' })
+      for (const sel of selectors) {
+        if (page.blank) break
+        await page.locator(sel).first().scrollIntoViewIfNeeded().catch(() => {})
+        const r = await page.evaluate((s) => {
+          const el = document.querySelector(s)
+          if (!el) return null
+          const b = el.getBoundingClientRect()
+          const a = getComputedStyle(el, '::after')
+          const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+          return {
+            h: Math.round(b.height),
+            w: Math.round(b.width),
+            pseudo: a.content === 'none' ? null : { w: Math.round(px(a.width)), h: Math.round(px(a.height)) },
+          }
+        }, sel)
+        const h = r ? Math.max(r.h, r.pseudo ? r.pseudo.h : 0) : 0
+        check(`${screen} at ${width}: ${sel} reaches a 44px hit area`, h >= 44, JSON.stringify(r))
+      }
+      await page.close()
+    }
+  }
+
+  /* The grid's ticks are 44px boxes 92px apart, so an enlarged target cannot
+     reach its neighbour. Measured rather than reasoned: the ListInput rows
+     and the row overflow menu both met exactly this overlap. */
+  {
+    const page = await open('adminusers', 1280, { caps: 'clubadmin' })
+    const overlaps = await page.evaluate(() => {
+      const boxes = [...document.querySelectorAll('.check-cell')].map((el) => el.getBoundingClientRect())
+      let hits = 0
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i]
+          const b = boxes[j]
+          if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) hits++
+        }
+      }
+      return { cells: boxes.length, hits }
+    })
+    check(
+      'no two capability ticks share a pixel of hit area',
+      overlaps.cells > 20 && overlaps.hits === 0,
+      JSON.stringify(overlaps),
+    )
+    await page.close()
+  }
+
+  /* ---- the tick works from the keyboard, and its state follows ---- */
+  {
+    const WHAT = 'a capability tick toggles from the keyboard and its state follows'
+    const page = await open('adminusers', 1280, { caps: 'clubadmin' })
+    const box = page.getByRole('checkbox', { name: `Manage drills for ${ROLES.coach}`, exact: true })
+    if (await focused(box, WHAT)) {
+      await page.keyboard.press('Space')
+      await page.waitForTimeout(200)
+      const after = await tickState('Manage drills', ROLES.coach)(page)
+      check(WHAT, !!after && after.checked === true, JSON.stringify(after))
+    }
+    await page.close()
+  }
+
+  /* ---- a dialog returns focus to the control that opened it ----
+     The ACTUAL opener, which is why this opens the third row's Remove rather
+     than the first: a repair that focused whatever came first would pass on
+     row one and be wrong everywhere else. */
+  for (const [screen, opener] of [
+    ['adminusers', `Remove ${MEMBERS.admin}`],
+    ['adminteams', 'Remove Gladiators'],
+  ]) {
+    const WHAT = `${screen}: Escape closes the dialog and focus returns to the control that opened it`
+    const page = await open(screen, 1280, { caps: 'clubadmin' })
+    const trigger = page.getByRole('button', { name: opener, exact: true })
+    if (await pressed(trigger, WHAT)) {
+      await page.waitForTimeout(250)
+      const opened = await page.locator('.modal').count()
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(250)
+      const r = await page.evaluate(() => ({
+        dialogs: document.querySelectorAll('.modal').length,
+        focused: document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName ?? null,
+      }))
+      check(WHAT, opened === 1 && r.dialogs === 0 && r.focused === opener, JSON.stringify({ opened, ...r }))
+    }
+    await page.close()
+  }
+
+  /* ---- the focus repair, both halves ----
+     The defect: pressing Send disables it, and on a success the cleared
+     fields keep it disabled, so the browser drops focus onto the document
+     body and an administrator who clicked rather than pressing Enter is left
+     at the top of the page with a message they have to hunt for.
+
+     Both halves are driven, because a repair that always moves focus is worse
+     than the defect: somebody who carried on working through the write must
+     keep their place. */
+  {
+    const WHAT = 'the invite outcome takes focus when the browser dropped it'
+    const entry = adminEntry('invite-ok')
+    const page = await open('adminusers', 1280, { adminEntry: entry })
+    const why = page.blank ? 'the surface never painted' : await runAdminFlow(page, entry)
+    check(WHAT, !why, why ?? '')
+    await page.close()
+  }
+  {
+    const WHAT = 'the invite outcome does NOT take focus from somebody who moved on during the write'
+    const page = await open('adminusers', 1280, { adminEntry: { screen: 'adminusers', state: 'writeslow' } })
+    const card = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Invite someone', exact: true }) })
+    const ok =
+      (await typed(card.getByLabel('Email', { exact: true }), 'new.coach@example.invalid', WHAT)) &&
+      (await typed(card.getByLabel('Full name', { exact: true }), 'Alex Nowell', WHAT)) &&
+      (await pressed(card.getByRole('button', { name: 'Send invite', exact: true }), WHAT))
+    if (ok) {
+      /* The write is still out. Move somewhere else, exactly as an
+         administrator carrying on with the page would.
+
+         The field is MARKED first, so what is compared afterwards is that
+         element rather than its tag name: every role, team and capability
+         tick on this screen is an INPUT too, so a repair that moved focus
+         onto one of them passed a check named for focus staying put. */
+      await page.evaluate(() => {
+        document.querySelector('.card input[type="email"]')?.setAttribute('data-moved-to', 'yes')
+      })
+      await focused(card.getByLabel('Email', { exact: true }), WHAT)
+      await page.waitForTimeout(1800)
+      const r = await page.evaluate(() => {
+        const el = document.activeElement
+        return {
+          onField: !!el && el.getAttribute('data-moved-to') === 'yes',
+          outcome: document.querySelectorAll('.note-success').length,
+        }
+      })
+      check(WHAT, r.onField && r.outcome === 1, JSON.stringify(r))
+    }
+    await page.close()
+  }
+
+  /* ---- the bib colour is never colour alone ---- */
+  {
+    const page = await open('adminteams', 1280, { caps: 'clubadmin' })
+    const r = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.admin-row')]
+      return rows.map((row) => {
+        const select = row.querySelector('select')
+        const swatch = row.querySelector('.bib-swatch')
+        return {
+          word: select ? (select.options[select.selectedIndex]?.textContent ?? '').trim() : null,
+          swatch: !!swatch,
+          // The swatch carries no information of its own, so it is hidden
+          // from assistive technology rather than read as a stray graphic.
+          hidden: swatch ? swatch.getAttribute('aria-hidden') === 'true' : null,
+        }
+      })
+    })
+    check(
+      'every team names its bib colour in words, with the swatch supplementary and hidden',
+      r.length > 0 && r.every((x) => !!x.word) && r.some((x) => x.swatch) && r.every((x) => x.hidden !== false),
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* ---- long names do not overflow ---- */
+  for (const screen of ['adminusers', 'adminteams']) {
+    const page = await open(screen, 360, { adminEntry: { screen, state: 'longnames' } })
+    const over = await page.evaluate(() => ({
+      body: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    }))
+    check(`${screen} at 360 with the longest names the club can type: the page does not scroll sideways`, over.body === 0, JSON.stringify(over))
+    await page.close()
+  }
+
+  /* ---- a destructive control is unmistakably destructive ---- */
+  {
+    const page = await open('adminusers', 1280, { adminEntry: adminEntry('remove-open') })
+    await runAdminFlow(page, adminEntry('remove-open'))
+    /* Found by its VARIANT, not by the text it is then asserted to carry.
+       Selecting on "Remove member" and then testing /Remove/ against what was
+       selected cannot fail: nothing reaches the assertion unless it already
+       held. What is claimed is that the danger control says what it does. */
+    const r = await page.evaluate(() => {
+      const confirm = document.querySelector('.modal-foot button.btn-danger')
+      if (!confirm) return null
+      const cs = getComputedStyle(confirm)
+      return { word: (confirm.textContent ?? '').trim(), fill: cs.backgroundColor }
+    })
+    check(
+      'the destructive confirm carries the word as well as the danger fill',
+      !!r && /^Remove member$/.test(r.word) && r.fill !== 'rgba(0, 0, 0, 0)',
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* ---- mounting the component grants nothing ----
+     Both screens sit behind a real RequireCap. This is the same claim the
+     capability matrix entries make, measured once more against the ROUTE
+     rather than against the markup, because an absence is not a redirect: a
+     blank frame, a guard returning null and a redirect to the wrong place all
+     lack the heading a markup check looks for. */
+  for (const [screen, caps] of [
+    ['adminusers', 'coach'],
+    ['adminusers', 'parent'],
+    ['adminteams', 'planner'],
+    ['adminteams', 'parent'],
+  ]) {
+    const page = await open(screen, 1280, { caps })
+    const r = await page.evaluate(() => ({
+      path: document.querySelector('.content')?.getAttribute('data-path') ?? null,
+      rows: document.querySelectorAll('.admin-row').length,
+    }))
+    /* The write half goes through `noWrites` rather than summing the log
+       here. Summing it read the recorded ORDER as a value: `0 + []` is the
+       STRING "0", so the sum never equalled 0 again and four redirect proofs
+       failed for a reason that had nothing to do with a redirect. Reusing the
+       helper also keeps the one rule about a renamed or emptied counter in
+       one place. */
+    const wrote = !(await noWrites(page))
+    check(
+      `${screen}: a member without the capability is redirected rather than shown the screen (${caps})`,
+      r.path === '/' && r.rows === 0 && !wrote,
+      JSON.stringify({ ...r, wrote }),
+    )
+    await page.close()
+  }
+
+  /* ---- the two rows a driver names are the rows it thinks they are ----
+     A visual refactor must not move which control belongs to which member or
+     which role, and both lists are the same row class inside one page. */
+  {
+    const page = await open('adminusers', 1280, { caps: 'clubadmin' })
+    const r = {
+      memberHasOwnRemove:
+        (await memberRow(page, MEMBERS.other).getByRole('button', { name: `Remove ${MEMBERS.other}` }).count()) === 1,
+      memberHasNoOtherRemove:
+        (await memberRow(page, MEMBERS.other).getByRole('button', { name: `Remove ${MEMBERS.invited}` }).count()) === 0,
+      roleHasOwnDelete:
+        (await roleRow(page, ROLES.custom).getByRole('button', { name: `Delete ${ROLES.custom}` }).count()) === 1,
+      systemRoleHasNone: (await roleRow(page, ROLES.parent).getByRole('button').count()) === 0,
+    }
+    check('each row carries only its own actions', Object.values(r).every(Boolean), JSON.stringify(r))
+    await page.close()
+  }
+  {
+    const page = await open('adminteams', 1280, { caps: 'clubadmin' })
+    const r = {
+      ownRemove: (await teamRow(page, 'Titans').getByRole('button', { name: 'Remove Titans' }).count()) === 1,
+      ownField: (await teamRow(page, 'Titans').locator('input').inputValue()) === 'Titans',
+      ownBib: (await teamRow(page, 'Titans').locator('select').inputValue()) === 'blue',
+      otherBib: (await teamRow(page, 'Trojans').locator('select').inputValue()) === 'red',
+    }
+    check('each team row edits its own name and its own bib', Object.values(r).every(Boolean), JSON.stringify(r))
     await page.close()
   }
 }

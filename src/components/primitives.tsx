@@ -171,18 +171,25 @@ export function Note({
   tone = 'neutral',
   icon: Ico,
   role,
+  id,
   className,
   children,
 }: {
   tone?: NoteTone
   icon?: IconComponent
   role?: 'alert' | 'status'
+  /* So a control can POINT at the sentence that accounts for it, rather than
+     the sentence merely sitting near it. Recorded as a gap by the Login
+     slice, which wanted to bind a field level refusal to its field and could
+     not without rendering the message twice. The first callers are the two
+     admin submits that go inert while a member holds no role. */
+  id?: string
   className?: string
   children: ReactNode
 }) {
   const I = Ico ?? NOTE_ICON[tone]
   return (
-    <div className={['note', `note-${tone}`, className ?? ''].filter(Boolean).join(' ')} role={role}>
+    <div id={id} className={['note', `note-${tone}`, className ?? ''].filter(Boolean).join(' ')} role={role}>
       <I aria-hidden="true" />
       <div className="note-body">{children}</div>
     </div>
@@ -207,7 +214,21 @@ export function Badge({ tone = 'neutral', children }: { tone?: BadgeTone; childr
    The label is a real <label> bound to the control, and an error sets the
    border AND renders a message AND wires aria-invalid / aria-describedby.
    A red border alone is never an error state. */
-type FieldShared = { label: ReactNode; hint?: ReactNode; error?: ReactNode; id?: string; className?: string }
+type FieldShared = {
+  label: ReactNode
+  hint?: ReactNode
+  error?: ReactNode
+  id?: string
+  className?: string
+  /* The label is READ but not shown. For an editable list row where the
+     control's own value is what a sighted reader sees: a team's name in the
+     box that renames it, a colour's name in the select that sets it. It stays
+     a real <label> bound to the control, so the accessible name is unchanged
+     and per row it says which row ("Team name for Titans"); what goes is a
+     column of repeated words above a list of five. Never for a form field a
+     reader has to fill in from nothing. */
+  labelHidden?: boolean
+}
 
 function useFieldIds(id: string | undefined, hint: ReactNode, error: ReactNode) {
   const auto = useId()
@@ -221,6 +242,7 @@ function useFieldIds(id: string | undefined, hint: ReactNode, error: ReactNode) 
 function FieldShell({
   controlId,
   label,
+  labelHidden,
   hint,
   hintId,
   error,
@@ -230,6 +252,7 @@ function FieldShell({
 }: {
   controlId: string
   label: ReactNode
+  labelHidden?: boolean
   hint?: ReactNode
   hintId: string
   error?: ReactNode
@@ -239,7 +262,9 @@ function FieldShell({
 }) {
   return (
     <div className={['field', className ?? ''].filter(Boolean).join(' ')}>
-      <label htmlFor={controlId}>{label}</label>
+      <label htmlFor={controlId} className={labelHidden ? 'sr-only' : undefined}>
+        {label}
+      </label>
       {children}
       {hint && (
         <span id={hintId} className="muted" style={{ display: 'block', marginTop: 'var(--space-4)', fontSize: 'var(--text-sm)' }}>
@@ -262,6 +287,7 @@ function FieldShell({
    and disables the submit that had focus. */
 export function TextField({
   label,
+  labelHidden,
   hint,
   error,
   id,
@@ -270,24 +296,30 @@ export function TextField({
 }: FieldShared & InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
-    <FieldShell {...{ controlId, label, hint, hintId, error, errorId, className }}>
+    <FieldShell {...{ controlId, label, labelHidden, hint, hintId, error, errorId, className }}>
       <input id={controlId} aria-invalid={error ? true : undefined} aria-describedby={describedBy} {...rest} />
     </FieldShell>
   )
 }
 
+/* `ref` is named for the same reason TextField names its own: a caller that
+   has to place focus on the control needs a handle on it, and
+   SelectHTMLAttributes carries none. The first caller is the Admin Teams bib
+   colour, where choosing a colour starts the write that disables the select
+   the coach is standing on. */
 export function SelectField({
   label,
+  labelHidden,
   hint,
   error,
   id,
   className,
   children,
   ...rest
-}: FieldShared & SelectHTMLAttributes<HTMLSelectElement>) {
+}: FieldShared & SelectHTMLAttributes<HTMLSelectElement> & { ref?: Ref<HTMLSelectElement> }) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
-    <FieldShell {...{ controlId, label, hint, hintId, error, errorId, className }}>
+    <FieldShell {...{ controlId, label, labelHidden, hint, hintId, error, errorId, className }}>
       <select id={controlId} aria-invalid={error ? true : undefined} aria-describedby={describedBy} {...rest}>
         {children}
       </select>
@@ -305,6 +337,7 @@ export function SelectField({
    empties the box, so the browser leaves focus on the document body. */
 export function TextAreaField({
   label,
+  labelHidden,
   hint,
   error,
   id,
@@ -314,7 +347,7 @@ export function TextAreaField({
 }: FieldShared & TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) {
   const { controlId, hintId, errorId, describedBy } = useFieldIds(id, hint, error)
   return (
-    <FieldShell {...{ controlId, label, hint, hintId, error, errorId, className }}>
+    <FieldShell {...{ controlId, label, labelHidden, hint, hintId, error, errorId, className }}>
       <textarea id={controlId} rows={rows} aria-invalid={error ? true : undefined} aria-describedby={describedBy} {...rest} />
     </FieldShell>
   )
