@@ -32,7 +32,14 @@ const TRAINING = spondEvent({ id: 'e-train', title: 'Titans Tuesday' })
 const MATCH = spondEvent({ id: 'e-match', title: 'U8 v Horbury', spondType: 'MATCH' })
 const GALA = spondEvent({ id: 'e-gala', title: 'Summer gala' })
 
-const query = <T,>(data: T) => ({ data, isLoading: false, isPending: false, isError: false, error: null })
+const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
+  data,
+  isLoading: false,
+  isPending: false,
+  isError: false,
+  error: null,
+  ...over,
+})
 
 vi.mock('../hooks/useNav', () => ({ useNav: () => () => {} }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: { id: 'me' }, profile: { team_id: 'titans' } }) }))
@@ -42,6 +49,11 @@ vi.mock('../hooks/useGuardedSubmit', () => ({
 // Mutable so a test can put a session in the club before rendering. The
 // container's whole "is this already planned?" decision reads this list.
 let clubSessions: { id: string; coachId: string; spondEventId: string | null }[] = []
+const TEAMS = [
+  { id: 'titans', name: 'Titans', bibColour: null },
+  { id: 'trojans', name: 'Trojans', bibColour: null },
+]
+let teamsRead: { data: unknown; isLoading: boolean; isError: boolean } = query(TEAMS)
 vi.mock('../context/SessionsContext', () => ({
   useSessions: () => ({ sessions: clubSessions, loading: false, error: null }),
 }))
@@ -52,10 +64,9 @@ vi.mock('../lib/queries', () => ({
   // The club's teams as a QUERY, because the container waits for this
   // read before it will plan anything: a club event covers every team,
   // and a session saved over an unanswered read would cover nobody.
-  useTeams: () => query([
-    { id: 'titans', name: 'Titans', bibColour: null },
-    { id: 'trojans', name: 'Trojans', bibColour: null },
-  ]),
+  // Mutable, so a case can put the read in a state the flags alone
+  // describe wrongly.
+  useTeams: () => teamsRead,
   // The club's venues, read so a new session can default to the one the
   // event's location names. Empty here: this file is about which rows the
   // container offers, and the venue rule has its own tests.
@@ -75,6 +86,7 @@ describe('the Plan from Spond container, as it opens', () => {
 
   beforeEach(() => {
     clubSessions = []
+    teamsRead = query(TEAMS)
   })
 
   it('suggests the training night and neither the match nor the gala', () => {
@@ -123,5 +135,51 @@ describe('the Plan from Spond container, as it opens', () => {
     const out = renderToStaticMarkup(<PlanFromSpond hideWhenEmpty />)
     expect(out).toContain('Plan from Spond')
     expect(out).toContain('Titans Tuesday')
+  })
+})
+
+// =====================================================================
+// What proves the club's teams are known.
+//
+// A club event covers every team the club has, and Plan this SAVES before
+// the coach sees anything, into a planner that will not re-seed a stored
+// row. So the container must not offer it over a read that has not
+// answered. What "answered" means is the whole of these three cases, and
+// the flags get two of them wrong on their own.
+// =====================================================================
+describe('the teams read, in the states its flags describe badly', () => {
+  const html = () => renderToStaticMarkup(<PlanFromSpond />)
+  const ROW = 'Titans Tuesday'
+  const TEAMS_ERROR = 'so a session cannot be given the ones it covers'
+
+  it('keeps planning through a failed REFETCH, because the teams are in hand', () => {
+    // tanstack query keeps the previous data and sets status error when a
+    // background refetch fails, and useTeams sets no staleTime under a
+    // bare QueryClient, so this happens on any window focus that catches a
+    // blip. The list is cached, correct, and exactly what plan() would
+    // write; taking the card down over it would stop a coach planning for
+    // no reason at all.
+    teamsRead = query(TEAMS, { isError: true })
+    const out = html()
+    expect(out).toContain(ROW)
+    expect(out).not.toContain(TEAMS_ERROR)
+  })
+
+  it('stops on a failed FIRST read, where there is nothing to plan with', () => {
+    teamsRead = query(undefined, { isError: true })
+    const out = html()
+    expect(out).not.toContain(ROW)
+    expect(out).toContain(TEAMS_ERROR)
+  })
+
+  it('waits on a read that never dispatched, which neither flag reports', () => {
+    // Offline before the first fetch, or disabled while a gate loads:
+    // isLoading and isError are BOTH false with no data. Gating on the
+    // flags would read this as an answered club of no teams and let a
+    // coach save a session covering nobody.
+    teamsRead = query(undefined)
+    const out = html()
+    expect(out).not.toContain(ROW)
+    expect(out).toContain('Loading…')
   })
 })
