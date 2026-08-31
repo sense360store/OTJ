@@ -171,18 +171,25 @@ export function Note({
   tone = 'neutral',
   icon: Ico,
   role,
+  id,
   className,
   children,
 }: {
   tone?: NoteTone
   icon?: IconComponent
   role?: 'alert' | 'status'
+  /* So a control can POINT at the sentence that accounts for it, rather than
+     the sentence merely sitting near it. Recorded as a gap by the Login
+     slice, which wanted to bind a field level refusal to its field and could
+     not without rendering the message twice. The first callers are the two
+     admin submits that go inert while a member holds no role. */
+  id?: string
   className?: string
   children: ReactNode
 }) {
   const I = Ico ?? NOTE_ICON[tone]
   return (
-    <div className={['note', `note-${tone}`, className ?? ''].filter(Boolean).join(' ')} role={role}>
+    <div id={id} className={['note', `note-${tone}`, className ?? ''].filter(Boolean).join(' ')} role={role}>
       <I aria-hidden="true" />
       <div className="note-body">{children}</div>
     </div>

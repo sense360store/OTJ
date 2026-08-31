@@ -228,6 +228,13 @@ const pressTick = (page, capability, role) =>
    the browser before the product ever sees it, and an entry that drove it
    would be proving the browser rather than the screen. The press goes to the
    44px cell around it instead, which is what a thumb actually lands on. */
+/* The WORD a select is currently showing, which is the information a bib
+   colour carries; the stored value is not one. */
+const selectedWord = (rowLocator) =>
+  rowLocator
+    .locator('select')
+    .evaluate((el) => (el.options[el.selectedIndex]?.textContent ?? '').trim())
+
 const pressCell = (page, capability, role) =>
   act(
     page
@@ -687,6 +694,21 @@ export const USER_FLOWS = [
     },
   },
   {
+    key: 'role-rename-failed',
+    state: 'writefails',
+    note: 'the rename refused: the danger Note with the server sentence, and the row still in its editing state to retry from',
+    proof: async (page) =>
+      (await noteIn('.card', 'danger', 'alert', 'System roles cannot be renamed')(page)) &&
+      (await renameInput(page).count()) === 1 &&
+      (await calls('renameRole', 1)(page)),
+    drive: async (page) => {
+      if (!(await click(rowButton(roleRow(page, ROLES.custom), 'Rename')))) return false
+      await pause(page)
+      if (!(await fillIn(renameInput(page), 'Kit and Equipment'))) return false
+      return click(card(page, 'Roles').locator('.admin-row').getByRole('button', { name: 'Save', exact: true }))
+    },
+  },
+  {
     key: 'role-delete-open',
     overlay: true,
     note: 'the delete dialog: how many hold the role, what happens to them, and nothing deleted',
@@ -737,8 +759,15 @@ export const USER_FLOWS = [
       (await gridCard(page).locator('.cap-none').count()) === 8,
   },
   {
+    /* WHAT THIS ISOLATES, stated because a mutation showed it isolates less
+       than its first name claimed. Two things refuse this press: the tick is
+       DISABLED, and toggle() refuses a reserved key even if it is called.
+       Either alone still refuses it, so removing one leaves this entry
+       passing; what it catches is a reserved capability becoming editable,
+       which is the failure that matters. The disabled half is caught on its
+       own by grid-reserved, which reads the control's state. */
     key: 'grid-reserved-inert',
-    note: 'pressing a reserved tick changes nothing: it stays on and no change is queued',
+    note: 'a reserved tick refuses the press: it stays on and inert, and no change is queued',
     proof: async (page) =>
       (await tickIs('Manage users', ROLES.admin, { checked: true, disabled: true })(page)) &&
       (await gridCard(page).getByRole('button', { name: /^Review/ }).count()) === 0 &&
@@ -861,10 +890,16 @@ export const TEAM_FLOWS = [
       (await page.locator('.admin-row').count()) === 5 &&
       (await teamRow(page, TEAMS.first).locator('.bib-swatch').count()) === 1 &&
       (await teamRow(page, TEAMS.first).locator('select').inputValue()) === 'blue' &&
+      // The WORD, not only the stored value. Found by mutation: deleting the
+      // option's own label left this entry passing, because a value is not a
+      // word and 2.16 keeps bib colour paired with one.
+      (await selectedWord(teamRow(page, TEAMS.first)) ) === 'Blue' &&
+      (await selectedWord(teamRow(page, TEAMS.second))) === 'Red' &&
       // A team with no default shows no swatch at all rather than an empty
       // circle, and the select still carries a word.
       (await teamRow(page, TEAMS.noBib).locator('.bib-swatch').count()) === 0 &&
       (await teamRow(page, TEAMS.noBib).locator('select').inputValue()) === '' &&
+      (await selectedWord(teamRow(page, TEAMS.noBib))) === 'No bib' &&
       (await noWrites(page)),
   },
   {

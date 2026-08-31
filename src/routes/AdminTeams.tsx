@@ -260,7 +260,7 @@ export function AdminTeams() {
           </div>
         )}
         {teams.length === 0 ? (
-          <Empty icon={Icon.users} title="No teams yet">
+          <Empty icon={Icon.flag} title="No teams yet">
             Add the first one above. Sessions and coaches can then be filtered by it.
           </Empty>
         ) : (

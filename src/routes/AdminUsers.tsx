@@ -14,9 +14,14 @@
 // families, with the capability grid becoming a real table. Nothing about the
 // queries, the invite defaults, the last admin protection, the reserved
 // capabilities, the all teams flag or the order the member save writes in
-// moved; what changed is which vocabulary draws them, and that four tooltips
-// that carried a rule became sentences a coach can read on a phone.
-import { useMemo, useRef, useState } from 'react'
+// moved; what changed is which vocabulary draws them, and that eight title
+// attributes became sentences a coach can read on a phone. Six of them
+// carried a RULE (why every team is ticked, why an Admin tick is held on,
+// why a member with no role has no write access, why the club's only admin
+// cannot be removed, why a system role cannot be renamed, why a reserved
+// capability is offered on no other role); the other two named a control
+// that already had an aria-label.
+import { useId, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -174,6 +179,9 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
      invite, who now tabs back up to the Email field. */
   const outcomeRef = useRef<HTMLDivElement>(null)
   const wantOutcomeFocus = useFocusRestore(note !== null, outcomeRef)
+  // So the inert submit POINTS at the sentence that accounts for it, rather
+  // than the sentence merely sitting above it.
+  const noRolesId = useId()
 
   const toggleRole = (r: RoleInfo) => {
     setRoleIds((prev) => {
@@ -272,7 +280,7 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
       {/* The reason Send is inert, in the open rather than left to be
           inferred from a greyed control. */}
       {noRoles && (
-        <Note tone="warning" className="admin-note">
+        <Note tone="warning" id={noRolesId} className="admin-note">
           Pick at least one role. An invite with no role grants nothing.
         </Note>
       )}
@@ -281,6 +289,7 @@ function InviteCard({ teams, roles }: { teams: Team[]; roles: RoleInfo[] }) {
           variant="primary"
           icon={Icon.plus}
           onClick={send}
+          aria-describedby={noRoles ? noRolesId : undefined}
           disabled={invite.isPending || !email.trim() || !fullName.trim() || noRoles}
         >
           {invite.isPending ? 'Sending…' : 'Send invite'}
@@ -327,6 +336,7 @@ function ManageMemberModal({
   const [allTeams, setAllTeams] = useState(member.allTeams)
   const [teamIds, setTeamIds] = useState<Set<string>>(() => new Set(member.teamIds))
   const [error, setError] = useState<string | null>(null)
+  const noRolesId = useId()
 
   const saving = setMemberRoles.isPending || setMemberTeams.isPending || setMemberAllTeams.isPending
 
@@ -381,7 +391,13 @@ function ManageMemberModal({
           <Button variant="quiet" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button variant="primary" icon={Icon.check} onClick={() => void save()} disabled={saving || roleIds.size === 0}>
+          <Button
+            variant="primary"
+            icon={Icon.check}
+            onClick={() => void save()}
+            aria-describedby={roleIds.size === 0 ? noRolesId : undefined}
+            disabled={saving || roleIds.size === 0}
+          >
             {saving ? 'Saving…' : 'Save'}
           </Button>
         </>
@@ -409,7 +425,7 @@ function ManageMemberModal({
         )}
       </CheckGroup>
       {roleIds.size === 0 && (
-        <Note tone="warning" className="admin-note">
+        <Note tone="warning" id={noRolesId} className="admin-note">
           Keep at least one role. A member with none has no write access.
         </Note>
       )}

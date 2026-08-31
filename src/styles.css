@@ -1713,6 +1713,22 @@ a.activity-batch:hover { text-decoration: underline; }
 /* Two classes, so this beats .field select's own full width rule on
    specificity rather than on which rule the bundler emits second. */
 .field.bib-select select { width: 132px; }
+/* Below the phone breakpoint the row wraps to two lines by design: the name,
+   then the bib and the actions. The select is narrower there so the swatch
+   does not push the actions onto a THIRD line for the teams that have a
+   default colour while the teams that do not stay on two, which is what a
+   360px shot showed. Measured rather than guessed: 294px of row, 156px of
+   actions, a 12px gap and a 24px swatch leave 102. */
+@media (max-width: 430px) {
+  /* ONE arrangement for every row, whatever bib it carries. Measured at 360:
+     the name field's 180px basis plus a 100px bib fits on the first line and
+     plus a 124px one (the same bib with its swatch) does not, so a team with
+     a default colour wrapped differently from a team without and the list
+     read as two designs. The name takes the line, and the bib and the
+     actions take the next: 124 + 12 + 156 = 292 in a 294px row. */
+  .admin-row .admin-field-grow { flex-basis: 100%; }
+  .field.bib-select select { width: 100px; }
+}
 
 /* ---- the role to capability grid ------------------------------------
    A real table, because it IS one: a capability per row, a role per column

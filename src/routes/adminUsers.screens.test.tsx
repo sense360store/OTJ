@@ -237,10 +237,14 @@ describe('the member list', () => {
   it('lists every member with their roles, their teams and their state', () => {
     const html = page()
     for (const m of TWO_ADMINS) expect(html).toContain(m.fullName)
-    // The all teams flag reads as All teams rather than as an empty list.
-    expect(html).toContain('All teams')
-    expect(html).toContain('Titans, Trojans')
-    expect(html).toContain('No teams')
+    /* The team summary in the row's own META LINE, anchored to the separator
+       and the closing tag. A bare `toContain('All teams')` held for the wrong
+       reason and was found by mutation: the invite form's own toggle reads
+       "All teams, current and future", so the substring was on the page
+       whatever the row said. */
+    expect(html).toContain('· All teams</span>')
+    expect(html).toContain('· Titans, Trojans</span>')
+    expect(html).toContain('· No teams</span>')
   })
 
   it('marks the signed in member and offers no removal on their own row', () => {
@@ -324,6 +328,21 @@ describe('the invite form', () => {
   it('says where to add teams when the club has none, rather than showing an empty box', () => {
     reads.teams = []
     expect(page()).toContain('No teams yet. Add them on the Teams screen.')
+  })
+
+  it('offers no warning while a role is ticked, since Send is live', () => {
+    expect(page()).not.toContain('An invite with no role grants nothing')
+  })
+})
+
+describe('an inert control points at the sentence that accounts for it', () => {
+  it('binds the Send button to the no roles warning, and to nothing while a role is held', () => {
+    // The default has Coach ticked, so there is no warning and nothing to
+    // point at. This asserts the WIRING is absent then, because a describedby
+    // left permanently on would name an element that is not on the page.
+    const html = page()
+    const send = html.match(/<button[^>]*>(?:(?!<\/button>).)*Send invite/s)?.[0] ?? ''
+    expect(send).not.toContain('aria-describedby')
   })
 })
 
