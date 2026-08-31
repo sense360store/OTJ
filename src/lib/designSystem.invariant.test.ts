@@ -66,6 +66,7 @@ const OWNED_FILES = [
   'components/AuthCard.tsx',
   'routes/Login.tsx',
   'routes/SetPassword.tsx',
+  'routes/Feedback.tsx',
 ]
 
 
@@ -440,6 +441,11 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     'routes/Login.tsx',
     'routes/SetPassword.tsx',
     'routes/Login.css',
+    // VISUAL-02, Feedback: the whole screen is on the shared vocabulary and
+    // writes no inline style at all, so it is owned for its spacing as well
+    // as for its type. Its own layout rules live in the shared stylesheet,
+    // which the off scale step rule above already reads.
+    'routes/Feedback.tsx',
   ]
 
   it('writes no inline margin, padding or gap outside the spacing scale', () => {
@@ -477,9 +483,15 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
   })
 
   it('covers every file this wave owns, so the list cannot quietly shrink', () => {
-    // The wave's own four, named here rather than derived, because the point
+    // The waves' own files, named here rather than derived, because the point
     // of the list is that somebody chose to put a file on it.
-    for (const f of ['components/AuthCard.tsx', 'routes/Login.tsx', 'routes/SetPassword.tsx', 'routes/Login.css']) {
+    for (const f of [
+      'components/AuthCard.tsx',
+      'routes/Login.tsx',
+      'routes/SetPassword.tsx',
+      'routes/Login.css',
+      'routes/Feedback.tsx',
+    ]) {
       expect(SPACING_OWNED, `${f} is covered`).toContain(f)
       expect(sourceFiles.map(rel), `${f} exists`).toContain(f)
     }
@@ -866,15 +878,38 @@ describe('a control the browser blurs is restored from one place', () => {
   })
 
   it('reaches it by import everywhere else', () => {
-    // A caller names the hook; only the module may define it. Anything that
-    // uses the name without importing it has written its own.
+    /* A caller names the hook; only the module may define it. Anything that
+       CALLS it without importing it has written its own.
+
+       Keyed on a call rather than on the string appearing anywhere, because
+       the module's own path contains the name: a file importing the shared
+       `focusWasLost` predicate from `hooks/useFocusRestore` matched the old
+       rule and then failed it, which would have pushed the next reader into
+       copying that one line predicate instead. `src/components/ui.tsx` is the
+       first such importer. */
     const offenders: string[] = []
     for (const f of sourceFiles.filter((f) => f.endsWith('.tsx') || f.endsWith('.ts'))) {
       if (rel(f) === HOOK) continue
       const src = read(f)
-      if (!src.includes('useFocusRestore')) continue
-      if (!/import \{[^}]*useFocusRestore[^}]*\} from '[^']*hooks\/useFocusRestore'/.test(src)) {
+      if (!/\buseFocusRestore\s*\(/.test(src)) continue
+      if (!/import \{[^}]*\buseFocusRestore\b[^}]*\} from '[^']*hooks\/useFocusRestore'/.test(src)) {
         offenders.push(rel(f))
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('shares the lost focus predicate rather than letting a caller restate it', () => {
+    /* `focusWasLost` is the whole of the difference between a restore and a
+       steal, and `Modal` needs the same rule for the recovery it performs on
+       every render. Anything that writes the comparison out by hand has
+       forked it, and an inverted copy is invisible in review. */
+    const offenders: string[] = []
+    for (const f of sourceFiles.filter((f) => f.endsWith('.tsx') || f.endsWith('.ts'))) {
+      if (rel(f) === HOOK) continue
+      const src = read(f)
+      for (const m of src.matchAll(/activeElement\s*===\s*document\.body|document\.body\s*===\s*[\w.]*activeElement/g)) {
+        offenders.push(`${rel(f)}: ${m[0]}`)
       }
     }
     expect(offenders).toEqual([])

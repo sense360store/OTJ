@@ -4,10 +4,14 @@
 // itself and only the reads and writes are replaced.
 export * from '../../../src/lib/queries'
 
-import { useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 
 import {
   ACCOUNT_CLUB_NAME,
+  FEEDBACK_MEMBERS,
+  PROMOTE_RESULT,
+  PROMOTE_WARNING,
+  feedbackStore,
   ACTIVITY_PROFILES_FOR,
   ACTIVITY_TEAMS_FOR,
   CURRENT_SEASON,
@@ -104,7 +108,11 @@ export const useTeamMap = () => byId(ACTIVITY_TEAMS_FOR(fixtures.state))
 export const useMyTeams = () => query({ teamIds: TEAMS.map((t) => t.id), allTeams: true })
 export const useVenues = () => query([])
 export const useVenueMap = () => ({})
-export const useMemberMap = () => ({})
+/* The members a name is resolved through. Its ids are the FEEDBACK fixtures'
+   own; `coach-them`, which the SESSIONS fixtures use, is deliberately absent,
+   so Home and Sessions still fall back to "Another coach" and no shot either
+   of those screens takes moves. */
+export const useMemberMap = () => FEEDBACK_MEMBERS(fixtures.state)
 // The acting adults the Activity feed names and its Changed by filter offers.
 // No other screen in the harness reads this, so filling it moves no shot.
 export const useProfiles = () => query(ACTIVITY_PROFILES_FOR(fixtures.state))
@@ -287,9 +295,216 @@ export const useSignedMediaUrl = (path?: string | null) =>
   query(path === AVATAR_PATH ? AVATAR_DATA_URL : null)
 export const useMediaSrc = () => ({ src: null, isLoading: false, isError: false })
 export const useBoards = () => query([])
-export const useFeedback = () => query([])
-export const useFeedbackCommentCounts = () => query({})
 export const useContentShareStatus = () => query(null)
+
+/* ---- Feedback (VISUAL-02) --------------------------------------------
+   The club's request and bug log. Two reads and nine writes, and none of the
+   writes is a plain object: every one of them is driven through
+   `mutate(vars, { onSuccess })` and read back through `isPending`, `isError`
+   and `error`, so a static mutation reaches none of the screen's outcomes.
+   These are real hooks with a phase, for the same reason the Account screen's
+   are.
+
+   The phases are the SHARED write states. `inflight` hangs, `writefails`
+   refuses, `writeslow` settles after a beat and `writeslowfails` refuses after
+   one, which is what those four already mean everywhere else in the harness,
+   so which write is driven is decided by the control the driver presses
+   rather than by a state per control.
+
+   A success APPLIES the change to the fixture store, so the screen moves the
+   way it moves in the product once the query has been invalidated and re
+   read: a deleted row leaves, a status sticks in its controlled select, a
+   filed item appears at the top and a posted comment joins the thread. Without
+   that, every proof of a success would hold whether or not the press did
+   anything.
+
+   WHAT IS COUNTED, AND WHY. Three claims this screen makes are about a call
+   that must NOT happen: an ordinary member never triggers the admin GitHub
+   refresh, a collapsed row never reads its comments, and neither of those is
+   visible in what is drawn. A browser cannot see a call that was never made,
+   so the calls are recorded on the window and a proof asserts the number. An
+   ABSENT counter fails rather than passes: it means the page is not running
+   this stub, which makes the claim unproved rather than true. And every zero
+   is paired with a flow that DOES make the same call, because a zero on its
+   own is also what a deleted record() line looks like. */
+interface FeedbackCallLog {
+  refreshFromGithub: number
+  setStatus: number
+  insert: number
+  update: number
+  remove: number
+  promote: number
+  addComment: number
+  editComment: number
+  removeComment: number
+  // The feedback ids whose comment thread has been read, as a list rather
+  // than a count: the claim is WHICH rows fetched, and a list is also robust
+  // to a component mounting twice.
+  threads: string[]
+}
+
+const feedbackCalls: FeedbackCallLog = {
+  refreshFromGithub: 0,
+  setStatus: 0,
+  insert: 0,
+  update: 0,
+  remove: 0,
+  promote: 0,
+  addComment: 0,
+  editComment: 0,
+  removeComment: 0,
+  threads: [],
+}
+;(globalThis as unknown as { __feedbackCalls?: FeedbackCallLog }).__feedbackCalls = feedbackCalls
+
+const recordFeedbackCall = (name: keyof Omit<FeedbackCallLog, 'threads'>) => {
+  feedbackCalls[name] += 1
+}
+
+const FEEDBACK_HANGS = state === 'inflight'
+const FEEDBACK_FAILS = state === 'writefails' || state === 'writeslowfails'
+const FEEDBACK_DELAY = state === 'writeslow' || state === 'writeslowfails' ? 1200 : 0
+
+/* One write hook shape for all nine, because they differ only in what a
+   success applies and what a refusal says. The pending render happens FIRST,
+   on a timeout rather than a microtask, for the reason the Account stub gives:
+   what has to have happened before a callback fires is React's commit, and a
+   callback that runs before it would let a focus repair pass while doing
+   nothing in production. */
+function useFeedbackWrite<V, R = void>(
+  name: keyof Omit<FeedbackCallLog, 'threads'>,
+  message: string,
+  apply?: (vars: V) => void,
+  result?: (vars: V) => R,
+) {
+  const [pending, setPending] = useState(false)
+  const [failed, setFailed] = useState(false)
+  return {
+    ...mutation(),
+    isPending: pending,
+    isError: failed,
+    error: failed ? new Error(message) : null,
+    mutate: (vars: V, opts: { onSuccess?: (r: R) => void } = {}) => {
+      recordFeedbackCall(name)
+      setFailed(false)
+      setPending(true)
+      // Hangs: no callback, and the control stays in flight, which is the
+      // state itself rather than a drawn one.
+      if (FEEDBACK_HANGS) return
+      setTimeout(() => {
+        if (FEEDBACK_FAILS) {
+          setFailed(true)
+        } else {
+          apply?.(vars)
+          opts.onSuccess?.(result ? result(vars) : (undefined as R))
+        }
+        setPending(false)
+      }, FEEDBACK_DELAY)
+    },
+  }
+}
+
+// The log itself. `loading` and `error` are the query's own flags, `empty`
+// returns no rows and `longnames` puts a long title, body, author and comment
+// in front of the ordinary list.
+export const useFeedback = () => {
+  const items = useSyncExternalStore(feedbackStore.subscribe, feedbackStore.items, feedbackStore.items)
+  if (state === 'loading') return pendingQuery<typeof items>()
+  if (state === 'error') return failedQuery<typeof items>()
+  return query(items)
+}
+
+export const useFeedbackCommentCounts = () => {
+  const counts = useSyncExternalStore(feedbackStore.subscribe, feedbackStore.counts, feedbackStore.counts)
+  return query(counts)
+}
+
+/* One item's thread. It is a SECOND read, and its two unsettled states are its
+   own rather than the page's: `commentsloading` and `commentserror` leave the
+   thread pending or failed while the log itself renders in full.
+
+   The read is RECORDED, because "a collapsed row fetches nothing" is a claim
+   about a call that did not happen. The product calls this hook from
+   FeedbackThread and nowhere else, and FeedbackThread is mounted only while a
+   row is expanded, so the ids this hook has been mounted for are exactly the
+   ids that would have fetched. */
+export const useFeedbackComments = (feedbackId: string) => {
+  // Subscribed to the THREAD rather than to the list: posting a comment
+  // changes no row, so a snapshot of the rows would compare equal and the
+  // thread would not re render. The store hands back the same array reference
+  // between writes, which is what useSyncExternalStore requires.
+  const read = () => feedbackStore.comments(feedbackId)
+  const comments = useSyncExternalStore(feedbackStore.subscribe, read, read)
+  useEffect(() => {
+    if (!feedbackCalls.threads.includes(feedbackId)) feedbackCalls.threads.push(feedbackId)
+  }, [feedbackId])
+  if (state === 'commentsloading') return pendingQuery<typeof comments>()
+  if (state === 'commentserror') return failedQuery<typeof comments>()
+  return query(comments)
+}
+
+export const useInsertFeedback = () =>
+  useFeedbackWrite<{ kind: 'feature' | 'bug' | 'general'; title: string; body: string }>(
+    'insert',
+    'Could not send the feedback. Try again.',
+    (vars) => feedbackStore.insert(vars),
+  )
+
+export const useUpdateFeedback = () =>
+  useFeedbackWrite<{ id: string; input: { kind: 'feature' | 'bug' | 'general'; title: string; body: string } }>(
+    'update',
+    'You can only edit feedback you filed.',
+    (vars) => feedbackStore.update(vars.id, vars.input),
+  )
+
+export const useDeleteFeedback = () =>
+  useFeedbackWrite<{ id: string }>('remove', 'You can only delete feedback you filed.', (vars) =>
+    feedbackStore.remove(vars.id),
+  )
+
+export const useSetFeedbackStatus = () =>
+  useFeedbackWrite<{ id: string; status: 'new' | 'planned' | 'in_progress' | 'done' | 'declined' }>(
+    'setStatus',
+    'Only a holder of club.manage can change feedback status.',
+    (vars) => feedbackStore.setStatus(vars.id, vars.status),
+  )
+
+// The promotion. `promotewarning` is the partial outcome: the public issue
+// exists and writing its number back to the club's own row did not settle.
+export const usePromoteFeedbackToGithub = () =>
+  useFeedbackWrite<{ id: string; title: string; body: string }, typeof PROMOTE_RESULT>(
+    'promote',
+    'Could not create the GitHub issue. Try again.',
+    (vars) => {
+      if (state !== 'promotewarning') {
+        feedbackStore.promote(vars.id, PROMOTE_RESULT.issueNumber, PROMOTE_RESULT.issueUrl)
+      }
+    },
+    () => (state === 'promotewarning' ? { ...PROMOTE_RESULT, warning: PROMOTE_WARNING } : PROMOTE_RESULT),
+  )
+
+/* The admin GitHub refresh, which the screen fires on open for a club.manage
+   holder and for nobody else. It is quiet by design: nothing is drawn either
+   way, so the only honest proof of it is the count. */
+export const useRefreshFeedbackFromGithub = () =>
+  useFeedbackWrite<void>('refreshFromGithub', 'Could not refresh issue state from GitHub.')
+
+export const useAddFeedbackComment = () =>
+  useFeedbackWrite<{ feedbackId: string; body: string }>(
+    'addComment',
+    'Could not post the comment. Try again.',
+    (vars) => feedbackStore.addComment(vars.feedbackId, vars.body),
+  )
+
+export const useEditFeedbackComment = () =>
+  useFeedbackWrite<{ id: string; body: string }>('editComment', 'You can only edit comments you wrote.', (vars) =>
+    feedbackStore.editComment(vars.id, vars.body),
+  )
+
+export const useDeleteFeedbackComment = () =>
+  useFeedbackWrite<{ id: string }>('removeComment', 'You can only delete comments you wrote.', (vars) =>
+    feedbackStore.removeComment(vars.id),
+  )
 /* ---- the club wide Activity feed ------------------------------------
    A real hook with real state, for the same reason the Spond roster import
    stub is one: Load more is PRESSED, and the second page arrives because

@@ -402,6 +402,112 @@ have to be true to fix it.
   binding without duplicating needs an `id` on the shared `Note`, which is
   VISUAL-01's primitive rather than this slice's.
 
+#### Feedback: complete
+
+The club's request and bug log now uses the shared system. Its Design Read
+acceptance is create, list, status change as an admin, and the read only
+variant, and every one of those is covered; the general VISUAL-02 requirement
+is covered too: normal, loading, empty, error, capability limited, narrow
+phone and both themes.
+
+What the slice adopted: `PageHeader` for the heading and its one action,
+`Card` for the list's container, `Button` and `IconButton` for the eight hand
+written class strings, `SelectField`, `TextField` and `TextAreaField` for the
+nine raw `.field` blocks, `Note` for every message the screen can produce,
+`Badge` for the two hand rolled `TagBadge` colour recipes, and `LoadingRows`
+and `ErrorNote` with a retry for the two read states. The page carried
+twenty four inline font sizes, four icon only buttons at 32 and 36px wearing a
+class that is defined in no stylesheet in the repository, and a hand built
+warning panel; `routes/Feedback.tsx` writes no inline style at all now and
+joins BOTH the design system invariant's ownership lists, the type one and the
+spacing one, so neither a size nor a step can come back.
+
+**The badges are where a decision was made rather than a class swapped.** The
+screen mapped kind to `--royal`, `--danger` and `--warning` and status to
+`--slate`, `--royal`, `--warning`, `--success` and `--danger`. Status is a
+STATE and those are the tones the Badge primitive exists for, so it keeps them
+exactly, said in the shared vocabulary: neutral, info, warning, success,
+danger, each a dot AND a word. Kind is a CLASSIFICATION and now takes no
+semantic tone at all, because a General item is not a warning and a Bug report
+is not an error the screen has just had, and 2.2 keeps the two apart. The
+product has no classification palette a feedback kind could use (`--c-*` is
+the four corners, `--m-*` is media type, and neither may be borrowed), and
+inventing a third is a token decision rather than an adoption. The cost is
+stated rather than hidden: a coach can no longer pick the bugs out of the list
+by hue, and what carries hue now is the status, which is the thing they scan
+for.
+
+What it deliberately did not do. No query, capability gate, ownership rule,
+status vocabulary, RLS assumption or GitHub call moved. The promote panel
+posts the same two fields, carries the same words, and keeps the DANGER tone
+rather than being softened to a warning: it is the one notice in the product
+standing between a child's name and a public repository, and a visual slice
+does not soften it. The dialogs are still dismissible while a write is in
+flight, unlike every adopted Registered players dialog, because the brief
+freezes that contract; it is measured and recorded rather than quietly
+changed. And the roadmap's own older phrase for this screen, "read only as
+parent", describes neither `0019_feedback.sql`, which opens the insert to the
+parent role and is the one table that does, nor `App.tsx`, which puts the
+route behind no capability guard. The live behaviour is what the slice
+preserved and what `src/routes/feedback.screens.test.tsx` now pins.
+
+Five things worth recording, none of them presentation alone:
+
+- **A defect in the shared `Modal`, found by measuring rather than by
+  reading.** Chrome fires no blur when the focused element is DISABLED, so
+  `Modal`'s focusout recovery never ran for the one case its own comment says
+  it exists for: a write in flight freezing every control at once. Driven in a
+  browser, pressing a submit that the handler then disables left
+  `document.activeElement` on `<body>`, which leaves the dialog's Escape
+  handling and its Tab trap dead, because both are bound to the dialog element
+  and only fire while focus is inside it. A dismissible dialog stopped closing
+  on Escape and Tab walked the page behind an `aria-modal` dialog. That was
+  true of all 64 dialog renders in the product, so it is fixed in the
+  primitive rather than six times on this screen, guarded by the same
+  `focusWasLost` rule `useFocusRestore` uses and by `document.hasFocus()`, so
+  a member who moved to the browser's own chrome is not pulled back.
+- **Three outcomes on the page itself dropped focus onto the document body**,
+  and each was reproduced in a browser BEFORE anything was changed, which is
+  the lesson #215 and #216 left. A status change disables its own select; a
+  posted comment disables the button and empties the box, so it stays
+  disabled; and a deleted item takes its row and the icon button that opened
+  the dialog. The third waits for the ROW LEAVING THE LIST rather than for the
+  write settling, and the two are a network round trip apart: `Modal` restores
+  focus to its opener while the row is still listed, and the row then unmounts
+  under the focused button and the browser drops focus again. Each repair is
+  mutation tested and each is caught by its own probe and by no other.
+- **The status badge rendered twice for a member without club.manage**, once
+  in the meta line and once in the action cluster, and every check that scoped
+  itself to one of the two passed. Found by a count of the badges in the whole
+  ROW. The meta line holds the row's facts and the cluster holds its controls,
+  which is why a club.manage holder finds the same status as a select in the
+  cluster instead.
+- **Three of this screen's claims are about a call that must NOT happen**, and
+  a browser cannot see one of those: an ordinary member never triggers the
+  admin GitHub refresh, a collapsed row never reads its comments, and a form
+  with an unfinished title sends nothing. The harness stub counts every write
+  on `window.__feedbackCalls` and records the thread reads as a LIST of
+  feedback ids rather than a count, because what is claimed is which rows
+  fetched. An absent counter fails rather than passes, and every zero is
+  paired with an entry that makes the same call and asserts one.
+- **The expander is named by the title alone.** It used to wrap the badges,
+  the byline and the comment count, so a screen reader announced the whole
+  meta line as the button's name. The meta line is now outside it, the panel
+  it controls exists while collapsed so `aria-controls` names something, and
+  the row's own 44px minimum is a real box rather than an overhanging pseudo
+  element, because the action cluster wraps directly beneath it at narrow
+  widths and a hit area that reached into that would put a stray press on
+  Delete.
+
+Two things are deferred, and each says what would have to be true to fix it.
+The `Modal` repair puts focus on the dialog CONTAINER rather than back on the
+control that was pressed, which is the announcement the container carries
+weighed against the retry being one Tab away; a caller that wants the control
+can still ask for it, because child effects run before parent ones. And no
+screen reader has been run over this screen: everything proved about
+announcement is structural, which role a Note carries and which element holds
+focus, exactly as it is on Login and Account.
+
 ### VISUAL-03 — Feature-area waves
 
 **Outcome.** Feature areas whose product behaviour is still evolving are redesigned with, not immediately before, their functional work.

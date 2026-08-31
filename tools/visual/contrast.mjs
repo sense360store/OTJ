@@ -31,6 +31,7 @@ import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
 import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
 import { AUTH_FLOWS, GUARD_CASES, runAuthFlow, urlForAuth } from './auth.mjs'
+import { FEEDBACK_ENTRIES, queryForFeedback, runFeedbackFlow } from './feedback.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -146,7 +147,7 @@ const SWEEP = `() => {
   return rows
 }`
 
-const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players', 'activity', 'account']
+const SCREENS = ['home', 'sessions', 'login', 'dialog', 'primitives', 'players', 'activity', 'account', 'feedback']
 // Which capability variants a screen renders, and which of its own states are
 // worth measuring. Registered players carries the destructive dialog, whose
 // confirm button label is the pairing VISUAL-00 measured at 3.34:1, so it is
@@ -161,9 +162,14 @@ const CAPS_FOR = (screen) =>
         // destination row, and a member with no coaching write, whose Default
         // team control is replaced by a line of muted text.
         ['clubadmin', 'parent']
-      : screen === 'home' || screen === 'sessions' || screen === 'players'
-        ? ['coach', 'viewer', 'parent']
-        : ['na']
+      : screen === 'feedback'
+        ? // A club.manage holder, whose rows carry a select and a promote
+          // action, and an ordinary member, whose status is a read only Badge.
+          // The Badge tones are the pairing this screen exists to check.
+          ['coach', 'viewer']
+        : screen === 'home' || screen === 'sessions' || screen === 'players'
+          ? ['coach', 'viewer', 'parent']
+          : ['na']
 // `allactions` opens the register with the Spond mapped team selected, which
 // is the only way every header action is offered; the run below then opens the
 // More actions popup, so its labels are measured on the ground they sit on
@@ -187,7 +193,13 @@ const STATES_FOR = (screen) =>
             // where a run can land on a new ground. Its driven states are
             // their own run below, for the same reason Account's are.
             ['default', 'longclub', 'longmotto']
-          : ['default']
+          : screen === 'feedback'
+            ? // The log as it opens, its three read states, and the long
+              // strings, where a run wraps onto a second line and can land on
+              // a new ground. Everything a press produces is its own run
+              // below, for the same reason Account's and Login's are.
+              ['default', 'loading', 'error', 'empty', 'longnames']
+            : ['default']
 
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
@@ -494,6 +506,46 @@ for (const entry of [...AUTH_FLOWS, ...GUARD_CASES]) {
       const why = await runAuthFlow(page, entry)
       if (why) {
         failed.push(unreached(`auth:${entry.key}`, why, where))
+        await page.close()
+        continue
+      }
+      const rows = await page.evaluate('(' + SWEEP + ')()')
+      for (const r of rows) {
+        if (r.ratio >= r.need) continue
+        const k = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+        if (seen.has(k)) continue
+        seen.add(k)
+        ;(r.disabled ? exempt : r.frozen ? frozen : failed).push({ ...r, where })
+      }
+      await page.close()
+    }
+  }
+}
+
+/* ---- VISUAL-02: the club feedback log's own states ---------------------
+   A sweep of the page reaches the list and nothing a press produces: the
+   expanded thread, the six dialogs, the five semantic Notes and the two
+   gerund labels are all behind a control. So they are DRIVEN through the same
+   entries shoot.mjs photographs, and an entry that did not reach its own
+   state is a failed run rather than a quiet skip: an unmeasured surface
+   reports zero findings, and zero findings is what a clean run looks like.
+
+   Every entry rather than a chosen few. There are forty five, they are the
+   whole state matrix of the screen, and between them they paint every tone
+   the Note and the Badge have plus the read only Badge column an ordinary
+   member sees. */
+for (const entry of FEEDBACK_ENTRIES) {
+  for (const theme of ['light', 'dark']) {
+    for (const w of [390, 1280]) {
+      const where = `feedback-${entry.key}/${theme}/${w}w`
+      const page = await context.newPage()
+      await page.setViewportSize({ width: w, height: 1400 })
+      await page.goto(`${BASE}/?${queryForFeedback(entry, { theme })}`, { waitUntil: 'domcontentloaded' })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForTimeout(300)
+      const why = await runFeedbackFlow(page, entry)
+      if (why) {
+        failed.push(unreached(`feedback:${entry.key}`, why, where))
         await page.close()
         continue
       }

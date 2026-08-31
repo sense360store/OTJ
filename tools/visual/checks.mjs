@@ -17,6 +17,7 @@ import { assertServingCurrentBuild } from './fresh.mjs'
 import { DIALOGS, DIALOG_PLAYER, openDialog, openRowMenu, queryFor } from './dialogs.mjs'
 import { ACCOUNT_FLOWS, queryForFlow, runFlow } from './account.mjs'
 import { AUTH_FLOWS, BRAND, GUARD_CASES, LOGIN_EMAIL, LOGIN_PASSWORD, brandRendered, queryForAuth, runAuthFlow, urlForAuth } from './auth.mjs'
+import { FEEDBACK_ENTRIES, ROWS, expandRow, queryForFeedback, row, runFeedbackFlow } from './feedback.mjs'
 
 const BASE = process.env.HARNESS ?? 'http://localhost:5199'
 await assertServingCurrentBuild(BASE)
@@ -133,8 +134,13 @@ const open = async (screen, width, opts = {}) => {
       ? queryForFlow(opts.flow, { theme: opts.theme ?? 'light', caps: opts.caps ?? 'coach' })
       : opts.authEntry
         ? queryForAuth(opts.authEntry, { theme: opts.theme ?? 'light' })
-        : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
-  const plain = !opts.dialog && !opts.flow && !opts.authEntry
+        : // A feedback entry owns its query string for the same reason: the
+          // capability set and the write phase it needs are part of the entry
+          // rather than of the caller.
+          opts.feedbackEntry
+          ? queryForFeedback(opts.feedbackEntry, { theme: opts.theme ?? 'light' })
+          : new URLSearchParams({ screen, theme: opts.theme ?? 'light' })
+  const plain = !opts.dialog && !opts.flow && !opts.authEntry && !opts.feedbackEntry
   // The auth condition the guard is given, for a plain open of an auth
   // surface. It is a key of its own rather than a state, because "has to set
   // a password" and "the write hangs" are both true of one screen at once.
@@ -273,6 +279,16 @@ const open = async (screen, width, opts = {}) => {
     ['activity', 390],
     ['activity', 900],
     ['activity', 1280],
+    // The feedback row puts a small ghost button and two icon buttons in one
+    // cluster, and wraps that cluster under the title at narrow widths, which
+    // is where an overhanging hit box would reach the row's own Delete. The
+    // expanded row, whose comment actions stack, is measured in the Feedback
+    // block below, because a collapsed page has no comment to act on.
+    ['feedback', 360],
+    ['feedback', 390],
+    ['feedback', 430],
+    ['feedback', 768],
+    ['feedback', 1280],
   ]) {
     const page = await open(screen, width)
     const r = await page.evaluate(() => {
@@ -3202,6 +3218,572 @@ const focusReturned = async (page, d) => {
       check(WHAT, !!r && r.page === 0 && r.inside && r.overflows, JSON.stringify(r))
       await page.close()
     }
+  }
+}
+
+/* ---- VISUAL-02: the club feedback log ---------------------------------
+   What a screenshot cannot settle on this screen: the hit areas in a row that
+   carries a select, a link, two icon buttons and (expanded) two more per
+   comment; the expander's programmatic state; where FOCUS ends up when an
+   outcome disables or removes the control that had it; whether a comment
+   thread is read before its row is opened; and whether the admin GitHub
+   refresh fires for the member it is supposed to and for nobody else. The
+   last two are claims about a call, so they are COUNTED on the harness stub
+   rather than inferred from what is drawn.
+
+   Every state is DRIVEN through tools/visual/feedback.mjs, the same entries
+   shoot.mjs photographs and contrast.mjs sweeps, so a control that stops
+   rendering fails the run rather than producing a plausible measurement. */
+{
+  const entryOf = (key) => FEEDBACK_ENTRIES.find((f) => f.key === key)
+
+  /* The backbone: every entry reaches the state its own name claims, in both
+     themes, because half of them are a semantic Note whose surface, border
+     and glyph all flip. The screenshots and the contrast sweep file their
+     results under these names, so a name nothing proves is the failure the
+     whole apparatus exists to stop. */
+  for (const entry of FEEDBACK_ENTRIES) {
+    for (const theme of ['light', 'dark']) {
+      const page = await open('feedback', 1280, { feedbackEntry: entry, theme })
+      const why = page.blank ? 'the surface never painted' : await runFeedbackFlow(page, entry)
+      check(`${entry.key} (${theme}): ${entry.note}`, !why, why ?? '')
+      await page.close()
+    }
+  }
+
+  /* ---- the page's own structure ---- */
+  {
+    const page = await open('feedback', 1280)
+    const r = await page.evaluate(() => {
+      const h1s = [...document.querySelectorAll('h1')]
+      const toggle = document.querySelector('.fb-toggle')
+      const panel = toggle ? document.getElementById(toggle.getAttribute('aria-controls') ?? '') : null
+      const badges = [...document.querySelectorAll('.fb-meta .badge')]
+      return {
+        h1: h1s.length,
+        title: (h1s[0]?.textContent ?? '').trim(),
+        expanded: toggle ? toggle.getAttribute('aria-expanded') : null,
+        // aria-controls names an element that EXISTS while collapsed, which
+        // is what makes the relationship readable before it is opened.
+        panel: !!panel,
+        panelHidden: panel ? panel.hasAttribute('hidden') : null,
+        // The name of the expander is the title alone: putting the badges and
+        // the byline inside the button would make the whole meta line its
+        // accessible name.
+        toggleText: (toggle?.textContent ?? '').trim(),
+        // No state is carried by colour alone: every badge has a dot AND a
+        // word.
+        badgesWithWords: badges.filter((b) => (b.textContent ?? '').trim().length > 0).length,
+        badgesWithDots: badges.filter((b) => !!b.querySelector('.badge-dot')).length,
+        badgeCount: badges.length,
+      }
+    })
+    check('the page has exactly one h1 and it names the page', r.h1 === 1 && r.title === 'Feedback', JSON.stringify(r))
+    check(
+      'the expander exposes its state and names a panel that exists while collapsed',
+      r.expanded === 'false' && r.panel === true && r.panelHidden === true,
+      JSON.stringify(r),
+    )
+    check(
+      'the expander is named by the title alone',
+      r.toggleText === 'Timer drifts on the live screen',
+      r.toggleText,
+    )
+    check(
+      'every badge carries a dot and a word, so no classification or state is colour alone',
+      r.badgeCount > 0 && r.badgesWithWords === r.badgeCount && r.badgesWithDots === r.badgeCount,
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* The expander is a control, so it works from the keyboard and its state
+     follows. Space rather than Enter, because a native button takes both and
+     Space is the one a div dressed as a button silently loses. */
+  {
+    const WHAT = 'the expander toggles from the keyboard and its state follows'
+    const page = await open('feedback', 1280)
+    const toggle = page.locator('.fb-toggle').first()
+    if (await focused(toggle, WHAT)) {
+      await page.keyboard.press('Space')
+      await page.waitForTimeout(200)
+      const r = await page.evaluate(() => {
+        const t = document.querySelector('.fb-toggle')
+        const panel = t ? document.getElementById(t.getAttribute('aria-controls') ?? '') : null
+        return { expanded: t?.getAttribute('aria-expanded'), hidden: panel ? panel.hasAttribute('hidden') : null }
+      })
+      check(WHAT, r.expanded === 'true' && r.hidden === false, JSON.stringify(r))
+    }
+    await page.close()
+  }
+
+  /* ---- hit areas, in the row and in the thread ---- */
+  for (const width of [360, 1280]) {
+    const page = await open('feedback', width)
+    if (!page.blank && (await expandRow(page, ROWS.thread))) {
+      const r = await page.evaluate(() => {
+        const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+        const measure = (el) => {
+          const b = el.getBoundingClientRect()
+          const a = getComputedStyle(el, '::after')
+          return {
+            label: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 26),
+            h: Math.round(Math.max(b.height, a.content === 'none' ? 0 : px(a.height))),
+            w: Math.round(Math.max(b.width, a.content === 'none' ? 0 : px(a.width))),
+          }
+        }
+        const controls = [
+          ...document.querySelectorAll(
+            '.fb-toggle, .fb-item .icon-btn, .fb-item .btn, .fb-item a.btn, .fb-item select, .fb-comment .icon-btn',
+          ),
+        ]
+        return {
+          count: controls.length,
+          small: controls.map(measure).filter((m) => m.h < 44 || m.w < 44),
+        }
+      })
+      check(
+        `every control in an expanded feedback row reaches 44px at ${width}`,
+        r.count > 8 && r.small.length === 0,
+        `${r.count} controls${r.small.length ? ': ' + JSON.stringify(r.small.slice(0, 4)) : ''}`,
+      )
+
+      // And the enlarged boxes do not reach into each other. The comment
+      // actions stack two icon buttons in a column at 360, which is the
+      // arrangement a 44px box over a 38px control can spill out of.
+      const clash = await page.evaluate(() => {
+        const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+        const boxes = [...document.querySelectorAll('.fb-item .icon-btn, .fb-item .btn, .fb-comment .icon-btn')].map(
+          (el) => {
+            const b = el.getBoundingClientRect()
+            const a = getComputedStyle(el, '::after')
+            const ph = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+            const pw = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+            return {
+              label: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 22),
+              hit: {
+                l: b.left - (pw - b.width) / 2,
+                r: b.right + (pw - b.width) / 2,
+                t: b.top - (ph - b.height) / 2,
+                b: b.bottom + (ph - b.height) / 2,
+              },
+              box: b,
+            }
+          },
+        )
+        const out = []
+        for (const a of boxes) {
+          for (const c of boxes) {
+            if (a === c) continue
+            const ox = Math.min(a.hit.r, c.box.right) - Math.max(a.hit.l, c.box.left)
+            const oy = Math.min(a.hit.b, c.box.bottom) - Math.max(a.hit.t, c.box.top)
+            if (ox > 0.5 && oy > 0.5) out.push(`${a.label} over ${c.label}`)
+          }
+        }
+        return [...new Set(out)]
+      })
+      check(
+        `no hit area overlaps a neighbour in an expanded feedback row at ${width}`,
+        clash.length === 0,
+        clash.slice(0, 3).join(', '),
+      )
+    }
+    await page.close()
+  }
+
+  /* ---- every control has a real accessible name, and every field a label -- */
+  {
+    const page = await open('feedback', 1280)
+    if (!page.blank && (await expandRow(page, ROWS.thread))) {
+      const r = await page.evaluate(() => {
+        const named = (el) => {
+          const aria = (el.getAttribute('aria-label') ?? '').trim()
+          if (aria) return true
+          const id = el.getAttribute('id')
+          if (id && document.querySelector(`label[for="${CSS.escape(id)}"]`)) return true
+          return (el.textContent ?? '').trim().length > 0
+        }
+        const controls = [...document.querySelectorAll('button, a[href], select, input, textarea')]
+        const fields = [...document.querySelectorAll('.fb-item select, .fb-item textarea, .fb-item input')]
+        return {
+          count: controls.length,
+          unnamed: controls.filter((el) => !named(el)).map((el) => el.tagName + '.' + el.className),
+          // A field is bound by a real <label for>, or named by aria-label
+          // where a visible label per row would be noise (the status select,
+          // which names the item it belongs to).
+          fields: fields.map((el) => ({
+            tag: el.tagName,
+            label: el.id ? !!document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : false,
+            aria: (el.getAttribute('aria-label') ?? '').slice(0, 40),
+          })),
+        }
+      })
+      check(
+        'every control on the feedback page has an accessible name',
+        r.count > 10 && r.unnamed.length === 0,
+        `${r.count} controls${r.unnamed.length ? ': ' + r.unnamed.slice(0, 4).join(', ') : ''}`,
+      )
+      check(
+        'every field in a row is bound to a label or names its own item',
+        r.fields.length > 0 && r.fields.every((f) => f.label || f.aria.length > 0),
+        JSON.stringify(r.fields),
+      )
+    }
+    await page.close()
+  }
+
+  /* The dialogs' fields, which are the ones a member types into. Every one is
+     a real <label for>, which is what the field primitives give them. */
+  for (const [what, opener] of [
+    ['New feedback', 'New feedback'],
+    ['Edit feedback', `Edit ${ROWS.own}`],
+    ['Promote to GitHub issue', `Promote ${ROWS.own} to a GitHub issue`],
+  ]) {
+    const WHAT = `every field in the ${what} dialog is bound to its own label`
+    const page = await open('feedback', 1280)
+    if (!page.blank && (await pressed(page.getByRole('button', { name: opener, exact: true }), WHAT))) {
+      await page.waitForTimeout(250)
+      const r = await page.evaluate(() => {
+        const fields = [...document.querySelectorAll('.modal input, .modal select, .modal textarea')]
+        return fields.map((el) => ({
+          id: el.id,
+          label: el.id ? (document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.textContent ?? '').trim() : '',
+        }))
+      })
+      check(WHAT, r.length > 0 && r.every((f) => f.id && f.label.length > 0), JSON.stringify(r))
+    }
+    await page.close()
+  }
+
+  /* ---- FOCUS. Measured in a browser before it was repaired, which is what
+     #215 and #216 asked for. Every one of these landed on document.body: a
+     status change (the select is disabled while it saves), a posted comment
+     (the button is disabled and the box empties, so it stays disabled), a
+     deleted item (the row and its icon button go), and a REFUSED dialog write
+     (Chrome fires no blur when a focused control is disabled, so Modal's own
+     focusout recovery never runs, which also leaves Escape and the Tab trap
+     dead). ---- */
+  const focusNow = (page) =>
+    page.evaluate(() => {
+      const a = document.activeElement
+      if (!a || a === document.body) return 'BODY'
+      return `${a.tagName.toLowerCase()}|${(a.getAttribute('aria-label') || a.textContent || '').trim().slice(0, 60)}`
+    })
+
+  {
+    const WHAT = 'a settled status change puts focus back on the select it was made from'
+    const page = await open('feedback', 1280)
+    if (!page.blank && (await chose(row(page, ROWS.own).locator('select'), 'planned', WHAT))) {
+      await page.waitForTimeout(600)
+      const at = await focusNow(page)
+      check(WHAT, at.startsWith('select|Status of'), at)
+    }
+    await page.close()
+  }
+
+  {
+    const WHAT = 'a posted comment puts focus back in the reply box rather than on the document body'
+    const page = await open('feedback', 1280)
+    if (!page.blank && (await expandRow(page, ROWS.thread))) {
+      const thread = row(page, ROWS.thread)
+      if (
+        (await typed(thread.getByLabel('Reply', { exact: true }), 'A reply from the check.', WHAT)) &&
+        (await pressed(thread.getByRole('button', { name: 'Post comment', exact: true }), WHAT))
+      ) {
+        await page.waitForTimeout(600)
+        const at = await focusNow(page)
+        check(WHAT, at.startsWith('textarea'), at)
+      }
+    }
+    await page.close()
+  }
+
+  {
+    const WHAT = 'a deleted item puts focus on the page action rather than on the row that has gone'
+    const page = await open('feedback', 1280)
+    if (
+      !page.blank &&
+      (await pressed(row(page, ROWS.own).getByRole('button', { name: `Delete ${ROWS.own}`, exact: true }), WHAT))
+    ) {
+      await page.waitForTimeout(250)
+      if (await pressed(page.locator('.modal').getByRole('button', { name: 'Delete', exact: true }), WHAT)) {
+        await page.waitForTimeout(700)
+        const at = await focusNow(page)
+        check(WHAT, at === 'button|New feedback', at)
+      }
+    }
+    await page.close()
+  }
+
+  {
+    const WHAT = 'a refused dialog write leaves focus inside the dialog, so Escape still closes it'
+    const page = await open('feedback', 1280, { state: 'writefails' })
+    if (!page.blank && (await pressed(page.getByRole('button', { name: 'New feedback', exact: true }), WHAT))) {
+      await page.waitForTimeout(250)
+      if (
+        (await typed(page.locator('.modal').getByLabel('Title', { exact: true }), 'A title from the check', WHAT)) &&
+        (await pressed(page.locator('.modal').getByRole('button', { name: 'Send feedback', exact: true }), WHAT))
+      ) {
+        await page.waitForTimeout(600)
+        const at = await focusNow(page)
+        const inside = await page.evaluate(() => !!document.querySelector('.modal')?.contains(document.activeElement))
+        await page.keyboard.press('Escape')
+        await page.waitForTimeout(250)
+        const closed = await page.evaluate(() => document.querySelectorAll('.modal').length === 0)
+        check(WHAT, inside && closed, `${at}, dialog ${closed ? 'closed' : 'stayed open'}`)
+      }
+    }
+    await page.close()
+  }
+
+  /* The other half of the focus claim, and the one that makes it a RESTORE
+     rather than a steal: a member who moved elsewhere while a write was
+     running keeps their place. `writeslow` settles after a beat, which is
+     what leaves room to move. */
+  {
+    const WHAT = 'a slow status change does not take focus back off a member who moved away'
+    const page = await open('feedback', 1280, { state: 'writeslow' })
+    if (
+      !page.blank &&
+      (await chose(row(page, ROWS.own).locator('select'), 'planned', WHAT)) &&
+      (await focused(page.getByRole('button', { name: 'New feedback', exact: true }), WHAT))
+    ) {
+      await page.waitForTimeout(1700)
+      const at = await focusNow(page)
+      check(WHAT, at === 'button|New feedback', at)
+    }
+    await page.close()
+  }
+
+  /* Focus returns to the ACTUAL opener, not to the first control that looks
+     like it. Every row carries a Delete, so a dialog that restored focus to
+     `document.querySelector` would land on the wrong one and nothing about
+     the first row would say so. */
+  {
+    const WHAT = 'a dialog returns focus to the row that opened it, not to the first row'
+    const page = await open('feedback', 1280)
+    const opener = row(page, ROWS.ownPromoted).getByRole('button', {
+      name: `Delete ${ROWS.ownPromoted}`,
+      exact: true,
+    })
+    if (!page.blank && (await pressed(opener, WHAT))) {
+      await page.waitForTimeout(250)
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(250)
+      const at = await focusNow(page)
+      check(WHAT, at === `button|Delete ${ROWS.ownPromoted}`, at)
+    }
+    await page.close()
+  }
+
+  /* ---- the two claims about a call that must not happen ---- */
+  {
+    const WHAT = 'a collapsed row reads no comments, and opening one reads only its own'
+    const page = await open('feedback', 1280)
+    const before = await page.evaluate(() => window.__feedbackCalls?.threads ?? null)
+    let after = null
+    if (!page.blank && (await expandRow(page, ROWS.thread))) {
+      after = await page.evaluate(() => window.__feedbackCalls?.threads ?? null)
+    }
+    check(
+      WHAT,
+      Array.isArray(before) && before.length === 0 && Array.isArray(after) && after.length === 1 && after[0] === 'fb-2',
+      JSON.stringify({ before, after }),
+    )
+    await page.close()
+  }
+
+  for (const [caps, want] of [
+    ['coach', 1],
+    ['viewer', 0],
+    ['parent', 0],
+  ]) {
+    const page = await open('feedback', 1280, { caps })
+    await page.waitForTimeout(300)
+    const n = await page.evaluate(() => window.__feedbackCalls?.refreshFromGithub ?? null)
+    check(
+      `the admin GitHub refresh fires ${want} time(s) for the ${caps} capability set`,
+      n === want,
+      `counted ${n}`,
+    )
+    await page.close()
+  }
+
+  /* ---- the external link stays recognisable as one ---- */
+  {
+    const page = await open('feedback', 1280)
+    const r = await page.evaluate(() => {
+      const a = document.querySelector('.fb-acts a[href^="https://github.com"]')
+      if (!a) return null
+      return {
+        target: a.getAttribute('target'),
+        rel: a.getAttribute('rel'),
+        label: a.getAttribute('aria-label'),
+        glyph: !!a.querySelector('svg'),
+        text: (a.textContent ?? '').trim(),
+      }
+    })
+    check(
+      'a promoted item links out with an external glyph, a name and a safe target',
+      !!r && r.target === '_blank' && (r.rel ?? '').includes('noreferrer') && r.glyph && /^GitHub issue #\d+$/.test(r.label ?? '') && /^Issue #\d+$/.test(r.text),
+      JSON.stringify(r),
+    )
+    await page.close()
+  }
+
+  /* ---- long strings, at the narrowest phone ---- */
+  for (const width of [360, 390]) {
+    const WHAT = `a long title, body, author and comment stay inside the card at ${width}`
+    const page = await open('feedback', width, { state: 'longnames' })
+    if (!page.blank && (await expandRow(page, 'Sessionplannerrecalculates'))) {
+      const r = await page.evaluate(() => {
+        const doc = document.documentElement
+        const card = document.querySelector('.card')
+        if (!card) return null
+        const box = card.getBoundingClientRect()
+        const out = [...document.querySelectorAll('.fb-title, .fb-body, .fb-by, .fb-comment-body, .fb-acts a')]
+          .filter((el) => {
+            const b = el.getBoundingClientRect()
+            return b.right > box.right + 1 || b.left < box.left - 1
+          })
+          .map((el) => (el.textContent ?? '').trim().slice(0, 24))
+        return { page: doc.scrollWidth - doc.clientWidth, out }
+      })
+      check(WHAT, !!r && r.page === 0 && r.out.length === 0, JSON.stringify(r))
+    }
+    await page.close()
+  }
+
+  /* ---- the dismissal contract, RECORDED rather than changed --------------
+     Every adopted Registered players dialog passes `dismissible={!busy}`, so
+     a write in flight freezes Escape, the overlay and the X. The feedback
+     dialogs never have, and this slice deliberately did not change it: the
+     brief freezes the dismissibility contract, and moving it is a behaviour
+     change rather than an adoption. So it is measured and stated instead of
+     being quietly fixed or quietly forgotten.
+
+     It is also the check that made the Modal defect visible. Before the
+     recovery in src/components/ui.tsx, this failed: the dialog said it was
+     dismissible, the X was enabled and the overlay would close it, and
+     Escape did NOTHING, because pressing the submit disabled it and Chrome
+     fires no blur for that, so focus was on the document body and the
+     dialog's own key handler never ran. The contract was already broken for
+     a keyboard; what the fix does is honour the one that is written down. */
+  {
+    const WHAT = 'a feedback dialog is still dismissible while its write is in flight (unchanged, and unlike the register dialogs)'
+    const page = await open('feedback', 1280, { state: 'inflight' })
+    if (!page.blank && (await pressed(page.getByRole('button', { name: 'New feedback', exact: true }), WHAT))) {
+      await page.waitForTimeout(250)
+      if (
+        (await typed(page.locator('.modal').getByLabel('Title', { exact: true }), 'A title from the check', WHAT)) &&
+        (await pressed(page.locator('.modal').getByRole('button', { name: 'Send feedback', exact: true }), WHAT))
+      ) {
+        await page.waitForTimeout(400)
+        const closeDisabled = await page.evaluate(
+          () => document.querySelector('.modal .icon-btn')?.hasAttribute('disabled') ?? null,
+        )
+        await page.keyboard.press('Escape')
+        await page.waitForTimeout(250)
+        const gone = await page.evaluate(() => document.querySelectorAll('.modal').length === 0)
+        check(WHAT, gone === true && closeDisabled === false, `Escape ${gone ? 'closed it' : 'did not close it'}`)
+      }
+    }
+    await page.close()
+  }
+
+  /* THE LIST STAYS A LIST WITH A DIALOG OPEN. Each row wires its own edit,
+     delete and promote dialogs, and a Modal renders its own overlay, so a row
+     that returned its <li> and its overlays side by side put a <div> among the
+     <ul>'s children. Measured before it was fixed: the children read
+     LI, DIV, LI, LI, LI, LI, and the separator on the row AFTER the open
+     dialog went from 1px to 0, because `.fb-item + .fb-item` is an adjacency
+     rule and the <div> broke it. Codex found it; this is what would have.
+
+     Both halves are asserted, because either alone would pass a fix that
+     addressed the other: the markup is what assistive technology reads, and
+     the border is what a coach sees. */
+  {
+    const WHAT = 'an open row dialog leaves the list a list, and the next row keeps its separator'
+    const page = await open('feedback', 1280)
+    const read = () =>
+      page.evaluate(() => ({
+        children: [...(document.querySelector('.fb-list')?.children ?? [])].map((c) => c.tagName),
+        borders: [...document.querySelectorAll('.fb-item')].map((el) => getComputedStyle(el).borderTopWidth),
+      }))
+    const before = page.blank ? null : await read()
+    if (
+      before &&
+      (await pressed(row(page, ROWS.own).getByRole('button', { name: `Delete ${ROWS.own}`, exact: true }), WHAT))
+    ) {
+      await page.waitForTimeout(300)
+      const after = await read()
+      const allRows = (r) => r.children.length === 5 && r.children.every((t) => t === 'LI')
+      // The first row carries none by design (the card's own padding is the
+      // gap above it); every row after it carries one, dialog or no dialog.
+      const separated = (r) => r.borders.length === 5 && r.borders[0] === '0px' && r.borders.slice(1).every((b) => b === '1px')
+      check(
+        WHAT,
+        allRows(before) && separated(before) && allRows(after) && separated(after),
+        JSON.stringify({ before, after }),
+      )
+    }
+    await page.close()
+  }
+
+  /* A form dialog on a phone is a bottom sheet, so its actions stay above the
+     keyboard rather than under it, and the longest body this screen has (the
+     public repository caution above two fields) still leaves them on screen.
+     Measured rather than assumed: the sheet's own max-height is what keeps
+     the footer inside the viewport, and a body that grew past it would push
+     the footer out with nothing else saying so. */
+  for (const [what, opener] of [
+    ['New feedback', 'New feedback'],
+    ['Promote to GitHub issue', `Promote ${ROWS.own} to a GitHub issue`],
+  ]) {
+    const WHAT = `the ${what} dialog is a bottom sheet at 390 with its actions on screen`
+    const page = await open('feedback', 390)
+    if (!page.blank && (await pressed(page.getByRole('button', { name: opener, exact: true }), WHAT))) {
+      await page.waitForTimeout(300)
+      const r = await page.evaluate(() => {
+        const modal = document.querySelector('.modal')
+        const foot = document.querySelector('.modal-foot')
+        if (!modal || !foot) return null
+        const m = modal.getBoundingClientRect()
+        const f = foot.getBoundingClientRect()
+        return {
+          // Anchored to the bottom of the viewport, which is what the sheet
+          // treatment does at and below 900.
+          bottom: Math.round(window.innerHeight - m.bottom),
+          footerVisible: f.bottom <= window.innerHeight + 1 && f.top >= 0,
+          radius: getComputedStyle(modal).borderBottomLeftRadius,
+        }
+      })
+      check(WHAT, !!r && r.bottom === 0 && r.footerVisible && r.radius === '0px', JSON.stringify(r))
+    }
+    await page.close()
+  }
+
+  /* The row's status control keeps a coach's own choice while the write is in
+     flight rather than snapping back to the stored value, which is what a
+     controlled select does if the screen forgets to hold the pending value.
+     Recorded as what it is: this screen does NOT hold one, so the select
+     shows the stored status until the write settles. Frozen behaviour. */
+  {
+    const entry = entryOf('status-pending')
+    const page = await open('feedback', 1280, { feedbackEntry: entry })
+    const why = page.blank ? 'the surface never painted' : await runFeedbackFlow(page, entry)
+    const shown = await page.evaluate(() => {
+      const item = [...document.querySelectorAll('.fb-item')].find((el) =>
+        (el.textContent ?? '').includes('Timer drifts on the live screen'),
+      )
+      return item?.querySelector('select')?.value ?? null
+    })
+    check(
+      'a status write in flight leaves the select on the stored value, which is the unchanged behaviour',
+      !why && shown === 'new',
+      `${why ?? ''} showing ${shown}`,
+    )
+    await page.close()
   }
 }
 

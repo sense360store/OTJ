@@ -6,6 +6,8 @@ import { ACTIVITY_PAGE_SIZE, activityQueryConditions } from '../../src/lib/activ
 import type { ActivityEvent, ActivityFilters } from '../../src/lib/activityView'
 import type {
   Drill,
+  FeedbackComment,
+  FeedbackItem,
   MediaItem,
   Member,
   PlayerHistoryEntry,
@@ -238,6 +240,28 @@ export type HarnessState =
      everywhere else, so which call is driven is decided by the press. */
   | 'longclub'
   | 'longmotto'
+  /* ---- Feedback (VISUAL-02) --------------------------------------------
+     The club's request and bug log. It reuses `loading`, `empty`, `error`,
+     `longnames`, `inflight`, `writefails`, `writeslow` and `writeslowfails`,
+     which mean on it exactly what they mean everywhere else: the read has not
+     answered, the read is empty, the read failed, the strings this screen
+     renders are as long as a club would really make them, and every write
+     hangs, refuses, settles slowly or refuses slowly. Which write is driven
+     is decided by the control the driver presses, never by a state per
+     control, so there is no state named for a dialog here.
+
+     Three are its own, because they are reads and outcomes nothing else on
+     the page can answer for. */
+  // The per item comment thread, which is a SECOND read and only runs once a
+  // row is expanded. Its two unsettled states cannot ride on `loading` and
+  // `error`: those answer the page level feedback read, and a page that never
+  // rendered a row has no thread to open.
+  | 'commentsloading'
+  | 'commentserror'
+  // A promotion that succeeded AND carried a warning, which is the one
+  // outcome that is neither a success nor a failure: the public issue exists
+  // and writing the link back to the club's own row did not settle.
+  | 'promotewarning'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -827,3 +851,321 @@ export function activityPages(rows: ActivityEvent[], pageCount: number): Activit
 
 export const activityHasNext = (pages: ActivityEvent[][]): boolean =>
   (pages[pages.length - 1]?.length ?? 0) === ACTIVITY_PAGE_SIZE
+
+/* ---- Feedback (VISUAL-02) ---------------------------------------------
+   The club's request and bug log. Every name here is invented; no real
+   member, coach or child appears, and nothing on this screen holds child
+   data at all.
+
+   The rows exist to put every axis of the screen on one page at once, so a
+   single render covers what would otherwise be five states: all three kinds,
+   all five statuses, an item the signed in member filed and items somebody
+   else did, an item already promoted to a GitHub issue and items that are
+   not, and a thread with comments beside rows with none. Ownership is not a
+   state either: `coach-me` is the harness's signed in member, so the same
+   list shows an owner's row and a stranger's row side by side. */
+const FEEDBACK_MEMBER_ME = 'coach-me'
+const FEEDBACK_MEMBER_2 = 'member-2'
+const FEEDBACK_MEMBER_3 = 'member-3'
+
+/* The strings this screen renders at whatever length a club types. The title
+   is a single unbroken token followed by words, which is the case a wrapping
+   rule has to survive; a spaced phrase breaks under any rule at all and would
+   guard nothing. */
+const LONG_FEEDBACK_TITLE =
+  'Sessionplannerrecalculatesthetotalminuteswrongly when a warm up is moved between phases on a phone'
+const LONG_FEEDBACK_AUTHOR = 'Christabel Fotheringay-Wallington-Smythe'
+const LONG_FEEDBACK_BODY =
+  'Reproduced on three separate evenings with the same squad. Drag the warm up out of its phase and back again, ' +
+  'and the total at the foot of the planner keeps the old figure until the page is reloaded, which makes a ' +
+  'ninety minute session read as a hundred and five. It matters because the total is what the coaches use to ' +
+  'decide whether the last game fits before the lights go off, and nobody reloads a page on a touchline.'
+const LONG_FEEDBACK_COMMENT =
+  'Seen it too, on both an old phone and a new one, so it is not the device. It only happens after a drag; ' +
+  'editing a duration in place recalculates correctly every time, which is probably the clue. Happy to sit ' +
+  'with whoever picks this up and show them on the pitch rather than describing it again here.'
+
+const hoursAgo = (n: number): string => new Date(Date.now() - n * 3_600_000).toISOString()
+
+const feedback = (over: Partial<FeedbackItem> & Pick<FeedbackItem, 'id' | 'kind' | 'title' | 'status'>): FeedbackItem => ({
+  body: '',
+  createdBy: FEEDBACK_MEMBER_2,
+  createdAt: hoursAgo(48),
+  updatedAt: hoursAgo(48),
+  githubIssueNumber: null,
+  githubIssueUrl: null,
+  ...over,
+})
+
+const ISSUE = (n: number) => `https://github.com/sense360store/OTJ/issues/${n}`
+
+export const FEEDBACK: FeedbackItem[] = [
+  feedback({
+    id: 'fb-1',
+    kind: 'bug',
+    title: 'Timer drifts on the live screen',
+    status: 'new',
+    createdBy: FEEDBACK_MEMBER_ME,
+    createdAt: hoursAgo(3),
+    updatedAt: hoursAgo(3),
+    body: 'After ten minutes the clock reads about two seconds fast against a stopwatch.',
+  }),
+  feedback({
+    id: 'fb-2',
+    kind: 'feature',
+    title: 'A kit checklist on the session setup',
+    status: 'planned',
+    createdAt: hoursAgo(30),
+    updatedAt: hoursAgo(30),
+    body: 'Bibs, balls, cones and the first aid bag, ticked off before anyone leaves the car park.',
+    githubIssueNumber: 128,
+    githubIssueUrl: ISSUE(128),
+  }),
+  feedback({
+    id: 'fb-3',
+    kind: 'general',
+    title: 'Directions for the away venues',
+    status: 'in_progress',
+    createdBy: FEEDBACK_MEMBER_3,
+    createdAt: hoursAgo(74),
+    updatedAt: hoursAgo(74),
+    body: 'A map link on the venue would save three phone calls every Saturday morning.',
+  }),
+  feedback({
+    id: 'fb-4',
+    kind: 'feature',
+    title: 'Show the bib colour on the group view',
+    status: 'done',
+    createdBy: FEEDBACK_MEMBER_ME,
+    createdAt: hoursAgo(200),
+    updatedAt: hoursAgo(200),
+    githubIssueNumber: 121,
+    githubIssueUrl: ISSUE(121),
+  }),
+  feedback({
+    id: 'fb-5',
+    kind: 'bug',
+    title: 'Duplicate sessions after a Spond sync',
+    status: 'declined',
+    createdAt: hoursAgo(900),
+    updatedAt: hoursAgo(900),
+    body: 'Could not reproduce it after the August fix, so closing this one. Reopen it if it happens again.',
+  }),
+]
+
+const LONG_FEEDBACK: FeedbackItem[] = [
+  feedback({
+    id: 'fb-long',
+    kind: 'bug',
+    title: LONG_FEEDBACK_TITLE,
+    status: 'planned',
+    createdBy: 'member-long',
+    createdAt: hoursAgo(5),
+    updatedAt: hoursAgo(5),
+    body: LONG_FEEDBACK_BODY,
+  }),
+  ...FEEDBACK,
+]
+
+const comment = (
+  over: Partial<FeedbackComment> & Pick<FeedbackComment, 'id' | 'feedbackId' | 'body'>,
+): FeedbackComment => ({
+  createdBy: FEEDBACK_MEMBER_2,
+  createdAt: hoursAgo(20),
+  updatedAt: hoursAgo(20),
+  ...over,
+})
+
+/* One thread with three comments and one with a single comment, so a driver
+   can open a populated thread and an almost empty one without a state of its
+   own. Every other row has none, which is the third case. */
+const FEEDBACK_COMMENTS: Record<string, FeedbackComment[]> = {
+  'fb-2': [
+    comment({
+      id: 'fbc-1',
+      feedbackId: 'fb-2',
+      body: 'Would this be per team, or one list for the whole club?',
+      createdAt: hoursAgo(26),
+      updatedAt: hoursAgo(26),
+    }),
+    comment({
+      id: 'fbc-2',
+      feedbackId: 'fb-2',
+      body: 'Per team. The under sevens carry different kit from the under elevens.',
+      createdBy: FEEDBACK_MEMBER_ME,
+      createdAt: hoursAgo(22),
+      updatedAt: hoursAgo(22),
+    }),
+    comment({
+      id: 'fbc-3',
+      feedbackId: 'fb-2',
+      body: LONG_FEEDBACK_COMMENT,
+      createdBy: FEEDBACK_MEMBER_3,
+      createdAt: hoursAgo(9),
+      // Later than createdAt, which is what makes the row say "edited".
+      updatedAt: hoursAgo(8),
+    }),
+  ],
+  'fb-3': [
+    comment({
+      id: 'fbc-4',
+      feedbackId: 'fb-3',
+      body: 'Venues have a name in the Hub already, so this is probably a small one.',
+      createdBy: FEEDBACK_MEMBER_3,
+      createdAt: hoursAgo(70),
+      updatedAt: hoursAgo(70),
+    }),
+  ],
+  'fb-long': [
+    comment({
+      id: 'fbc-5',
+      feedbackId: 'fb-long',
+      body: LONG_FEEDBACK_COMMENT,
+      createdBy: 'member-long',
+      createdAt: hoursAgo(4),
+      updatedAt: hoursAgo(4),
+    }),
+  ],
+}
+
+export const FEEDBACK_FOR = (s: HarnessState): FeedbackItem[] =>
+  s === 'empty' ? [] : s === 'longnames' ? LONG_FEEDBACK : FEEDBACK
+
+export const FEEDBACK_COMMENTS_FOR = (feedbackId: string): FeedbackComment[] =>
+  FEEDBACK_COMMENTS[feedbackId] ?? []
+
+// The badge on a collapsed row, derived from the same threads the expanded
+// row reads, so the number on the row and the number of comments under it
+// cannot disagree.
+export const FEEDBACK_COMMENT_COUNTS = (s: HarnessState): Record<string, number> =>
+  Object.fromEntries(
+    FEEDBACK_FOR(s).map((item) => [item.id, FEEDBACK_COMMENTS_FOR(item.id).length]),
+  )
+
+/* The members the log resolves an author id through. The three ids are the
+   feedback fixtures' own; `coach-them`, which the SESSIONS fixtures use, is
+   deliberately absent, so Home and Sessions still fall back to "Another
+   coach" and no shot those screens take moves. */
+export const FEEDBACK_MEMBERS = (s: HarnessState): Record<string, Member> => ({
+  [FEEDBACK_MEMBER_ME]: member(FEEDBACK_MEMBER_ME, 'Sam Whitfield'),
+  [FEEDBACK_MEMBER_2]: member(FEEDBACK_MEMBER_2, 'Priya Raghunathan'),
+  [FEEDBACK_MEMBER_3]: member(FEEDBACK_MEMBER_3, 'Marguerite Ashby-Fotheringay'),
+  ...(s === 'longnames' ? { 'member-long': member('member-long', LONG_FEEDBACK_AUTHOR) } : {}),
+})
+
+// What the promote Edge Function answers. The warning is the partial outcome:
+// the public issue exists and writing its number back to the club's own row
+// did not settle.
+export const PROMOTE_RESULT = {
+  ok: true,
+  alreadyPromoted: false,
+  issueNumber: 214,
+  issueUrl: ISSUE(214),
+  warning: '',
+}
+export const PROMOTE_WARNING =
+  'The issue was created, but the feedback item could not be updated with its number. Refresh to check.'
+
+/* ---- the feedback rows a press can change ------------------------------
+   A tiny mutable store, for the same reason `profileEdits` is one: several of
+   this screen's outcomes ARE a change to the list, and a stub that answered
+   with the same rows either way would make every proof of them hold whether
+   or not the press did anything. A deleted row has to leave (which is what
+   the focus rule waits for), a status change has to stick (the select is
+   controlled, so without it the value snaps back and the screenshot shows a
+   control that refused the coach), a filed item has to appear, and a posted
+   comment has to join the thread.
+
+   References are stable between writes, which is what useSyncExternalStore
+   requires: a fresh array or object on every read is an infinite render loop.
+   The counts are recomputed on write rather than on read for exactly that
+   reason. */
+let feedbackRows: FeedbackItem[] = FEEDBACK_FOR(harnessState)
+let commentRows: Record<string, FeedbackComment[]> = Object.fromEntries(
+  feedbackRows.map((item) => [item.id, FEEDBACK_COMMENTS_FOR(item.id)]),
+)
+let commentCounts: Record<string, number> = FEEDBACK_COMMENT_COUNTS(harnessState)
+const NO_COMMENTS: FeedbackComment[] = []
+const feedbackListeners = new Set<() => void>()
+
+function feedbackChanged() {
+  commentCounts = Object.fromEntries(feedbackRows.map((item) => [item.id, (commentRows[item.id] ?? NO_COMMENTS).length]))
+  for (const l of feedbackListeners) l()
+}
+
+let filedCount = 0
+
+export const feedbackStore = {
+  items: (): FeedbackItem[] => feedbackRows,
+  comments: (feedbackId: string): FeedbackComment[] => commentRows[feedbackId] ?? NO_COMMENTS,
+  counts: (): Record<string, number> => commentCounts,
+  subscribe(l: () => void): () => void {
+    feedbackListeners.add(l)
+    return () => {
+      feedbackListeners.delete(l)
+    }
+  },
+  insert(input: { kind: FeedbackItem['kind']; title: string; body: string }) {
+    filedCount += 1
+    const row = feedback({
+      id: `fb-new-${filedCount}`,
+      kind: input.kind,
+      title: input.title.trim(),
+      status: 'new',
+      createdBy: FEEDBACK_MEMBER_ME,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      body: input.body.trim(),
+    })
+    feedbackRows = [row, ...feedbackRows]
+    commentRows = { ...commentRows, [row.id]: NO_COMMENTS }
+    feedbackChanged()
+  },
+  update(id: string, input: { kind: FeedbackItem['kind']; title: string; body: string }) {
+    feedbackRows = feedbackRows.map((r) =>
+      r.id === id ? { ...r, kind: input.kind, title: input.title.trim(), body: input.body.trim() } : r,
+    )
+    feedbackChanged()
+  },
+  remove(id: string) {
+    feedbackRows = feedbackRows.filter((r) => r.id !== id)
+    feedbackChanged()
+  },
+  setStatus(id: string, status: FeedbackItem['status']) {
+    feedbackRows = feedbackRows.map((r) => (r.id === id ? { ...r, status } : r))
+    feedbackChanged()
+  },
+  promote(id: string, issueNumber: number, issueUrl: string) {
+    feedbackRows = feedbackRows.map((r) =>
+      r.id === id ? { ...r, githubIssueNumber: issueNumber, githubIssueUrl: issueUrl } : r,
+    )
+    feedbackChanged()
+  },
+  addComment(feedbackId: string, body: string) {
+    const row = comment({
+      id: `fbc-new-${Date.now()}`,
+      feedbackId,
+      body: body.trim(),
+      createdBy: FEEDBACK_MEMBER_ME,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    commentRows = { ...commentRows, [feedbackId]: [...(commentRows[feedbackId] ?? NO_COMMENTS), row] }
+    feedbackChanged()
+  },
+  editComment(id: string, body: string) {
+    commentRows = Object.fromEntries(
+      Object.entries(commentRows).map(([k, list]) => [
+        k,
+        list.map((c) => (c.id === id ? { ...c, body: body.trim(), updatedAt: new Date().toISOString() } : c)),
+      ]),
+    )
+    feedbackChanged()
+  },
+  removeComment(id: string) {
+    commentRows = Object.fromEntries(
+      Object.entries(commentRows).map(([k, list]) => [k, list.filter((c) => c.id !== id)]),
+    )
+    feedbackChanged()
+  },
+}
