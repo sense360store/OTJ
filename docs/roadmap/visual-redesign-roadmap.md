@@ -655,6 +655,27 @@ asserting something it could not see:
   a long name state proved a row count, a per row refusal matched a note on
   ANY row, and an absence proof was written against one exact label.
 
+**Codex named two more, and both were the same failure one level down: the
+harness watched that a write happened and never what it carried or where it
+left the coach.**
+
+- **A counter and an order say nothing about the PAYLOAD**, which is what
+  every frozen rule here is actually about. Sending `teamIds: []` from the
+  member save kept the three writes in the documented order and the row still
+  read All teams, so the entry named for that save stayed green while the
+  specific selection underneath the flag was thrown away; and the invite's own
+  rule, that the teams are dropped when All teams is on, was asserted through
+  the picker's ticks by an entry that never pressed Send. The log records each
+  write's arguments now, compared through the store's own names so a payload
+  assertion reads in the same vocabulary as the presses, and two entries send
+  a complete invite rather than looking at the form.
+- **Four of the five focus repairs above were unasserted.** They were
+  reproduced in a browser and repaired, and then nothing proved the repair:
+  deleting `wantNewRoleFocus` left every assertion in the entry holding.
+  Creating a role, adding a team, renaming a team, choosing a bib and applying
+  a capability change all check `document.activeElement` by IDENTITY now, and
+  each fails with its repair neutralised.
+
 `Tick` is kept rather than retired, and that is a decision rather than an
 omission. `.check-row`'s native checkbox is the shared treatment everywhere
 else, but `.theme-dark` sets no `color-scheme`, so a native box is white on

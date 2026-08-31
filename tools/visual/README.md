@@ -413,6 +413,13 @@ admin whose removal is refused before it is sent. A browser cannot see a call
 that never happened, so every write is counted on `window.__adminCalls` and
 every zero is paired with an entry that makes the same call and asserts one.
 
+That log records each write's ARGUMENTS beside its name and order, because
+neither of those says what was sent: the member save could carry `teamIds: []`
+while the row still read All teams, and the invite could carry the wrong teams
+entirely, with every entry green. Ids are compared through the store's own
+names (`callArgs`), so a payload assertion reads in the same vocabulary as the
+presses around it.
+
 Which tick belongs to which role and which capability is the identity a visual
 refactor is most likely to move silently, so no grid press is ever located by
 position: each names BOTH halves through the control's own accessible name

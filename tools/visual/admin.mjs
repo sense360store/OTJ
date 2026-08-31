@@ -208,10 +208,46 @@ export const callOrder = (want) => (page) =>
   page.evaluate(
     (want) => {
       const log = window.__adminCalls
-      if (!log || !Array.isArray(log.order)) return false
-      return log.order.length === want.length && log.order.every((n, i) => n === want[i])
+      if (!log || !Array.isArray(log.writes)) return false
+      const made = log.writes.map((w) => w.name)
+      return made.length === want.length && made.every((n, i) => n === want[i])
     },
     want,
+  )
+
+/* What a write actually CARRIED. A counter says a write happened and the
+   order says when; neither says what was sent, so the frozen payload rules
+   (an invite's teams are empty when All teams is on; the member save sends
+   the specific selection underneath it) held against a payload that had been
+   emptied. Ids are compared through the store's own names, so an assertion
+   reads in the same vocabulary as the presses above and a renamed fixture
+   fails rather than silently matching. An array compares as a SET, because
+   the product builds both lists from a Set and their order means nothing;
+   anything else compares by value. Exactly one write of that name must have
+   been made, so this cannot pass by finding an earlier one. */
+export const callArgs = (name, want) => (page) =>
+  page.evaluate(
+    ({ name, want }) => {
+      const log = window.__adminCalls
+      const names = window.__adminNames
+      if (!log || !Array.isArray(log.writes) || !names) return false
+      const made = log.writes.filter((w) => w.name === name)
+      if (made.length !== 1) return false
+      const vars = made[0].vars
+      if (!vars || typeof vars !== 'object') return false
+      const named = (field, id) => (field === 'teamIds' ? names.team(id) : field === 'roleIds' ? names.role(id) : id)
+      return Object.entries(want).every(([field, expected]) => {
+        const got = vars[field]
+        if (Array.isArray(expected)) {
+          if (!Array.isArray(got) || got.length !== expected.length) return false
+          const mine = got.map((id) => named(field, id)).sort()
+          const theirs = [...expected].sort()
+          return mine.every((v, i) => v === theirs[i])
+        }
+        return got === expected
+      })
+    },
+    { name, want },
   )
 
 /* Every counter is zero: what a page that has been looked at rather than
@@ -281,6 +317,18 @@ export const focusOnOutcome = (tone) => (page) =>
     },
     tone,
   )
+
+/* Focus landed on THIS control, by identity rather than by shape. The four
+   repairs below put it back on a field or a select the browser blurred when
+   the write disabled it, and there is no outcome message involved, so
+   `focusOnOutcome` cannot speak for them. Identity, because "some input has
+   focus" is satisfied by the wrong row's field and by every tick on the
+   screen. */
+const focusedOn = (locator) => async (page) => {
+  void page
+  if ((await locator.count()) !== 1) return false
+  return locator.first().evaluate((el) => el === document.activeElement)
+}
 
 // A control that is in flight rather than merely inert: it carries its own
 // gerund AND is disabled AND the write it names has actually been made. A
@@ -474,6 +522,48 @@ export const USER_FLOWS = [
     },
   },
   {
+    /* The two teams SENT, rather than the two teams ticked. `invite-teams-picked`
+       above never presses Send, so nothing observed the payload the picker
+       feeds; emptying `teamIds` on the way out left both green. */
+    key: 'invite-sent-teams',
+    note: 'a complete invite for two specific teams: the payload carries exactly those two and All teams is off',
+    proof: async (page) =>
+      (await calls('invite', 1)(page)) &&
+      (await callArgs('invite', {
+        teamIds: [TEAMS.first, TEAMS.second],
+        allTeams: false,
+      })(page)),
+    drive: async (page) => {
+      if (!(await fillIn(inviteCard(page).getByLabel('Email', { exact: true }), TYPED_EMAIL))) return false
+      if (!(await fillIn(inviteCard(page).getByLabel('Full name', { exact: true }), TYPED_NAME))) return false
+      if (!(await click(inviteCard(page).getByRole('checkbox', { name: TEAMS.first, exact: true })))) return false
+      if (!(await click(inviteCard(page).getByRole('checkbox', { name: TEAMS.second, exact: true })))) return false
+      return click(rowButton(inviteCard(page), 'Send invite'))
+    },
+  },
+  {
+    /* The frozen rule itself: `teamIds: allTeams ? [] : [...teamIds]`. The
+       teams are ticked FIRST and All teams turned on afterwards, so the
+       selection is still held in state and the payload has to drop it. A
+       picker state assertion cannot see this at all. */
+    key: 'invite-sent-all-teams',
+    note: 'teams picked and then All teams turned on: the invite carries no specific teams at all',
+    proof: async (page) =>
+      (await calls('invite', 1)(page)) &&
+      (await callArgs('invite', {
+        teamIds: [],
+        allTeams: true,
+        roleIds: [ROLES.coach, ROLES.admin],
+      })(page)),
+    drive: async (page) => {
+      if (!(await fillIn(inviteCard(page).getByLabel('Email', { exact: true }), TYPED_EMAIL))) return false
+      if (!(await fillIn(inviteCard(page).getByLabel('Full name', { exact: true }), TYPED_NAME))) return false
+      if (!(await click(inviteCard(page).getByRole('checkbox', { name: TEAMS.first, exact: true })))) return false
+      if (!(await click(inviteCard(page).getByRole('checkbox', { name: ROLES.admin, exact: true })))) return false
+      return click(rowButton(inviteCard(page), 'Send invite'))
+    },
+  },
+  {
     key: 'invite-pending',
     state: 'inflight',
     note: 'the invite in flight: the submit reads Sending… and is frozen',
@@ -506,7 +596,17 @@ export const USER_FLOWS = [
       (await focusOnOutcome('success')(page)) &&
       (await inviteCard(page).getByLabel('Email', { exact: true }).inputValue()) === '' &&
       (await memberRow(page, TYPED_NAME).locator('.badge').filter({ hasText: 'Invited' }).count()) === 1 &&
-      (await calls('invite', 1)(page)),
+      (await calls('invite', 1)(page)) &&
+      // What it CARRIED, not merely that it was made: the typed address and
+      // name, the default role and nothing else, and no teams with All teams
+      // off, which is the shape the invite function is given.
+      (await callArgs('invite', {
+        email: TYPED_EMAIL,
+        fullName: TYPED_NAME,
+        roleIds: [ROLES.coach],
+        teamIds: [],
+        allTeams: false,
+      })(page)),
     drive: async (page) => {
       if (!(await fillIn(inviteCard(page).getByLabel('Email', { exact: true }), TYPED_EMAIL))) return false
       if (!(await fillIn(inviteCard(page).getByLabel('Full name', { exact: true }), TYPED_NAME))) return false
@@ -645,7 +745,14 @@ export const USER_FLOWS = [
       (await noDialog(page)) &&
       (await callOrder(['setMemberRoles', 'setMemberAllTeams', 'setMemberTeams'])(page)) &&
       (await calls('setMemberAllTeams', 1)(page)) &&
-      (await memberRow(page, MEMBERS.other).locator('.admin-meta').filter({ hasText: 'All teams' }).count()) === 1,
+      (await memberRow(page, MEMBERS.other).locator('.admin-meta').filter({ hasText: 'All teams' }).count()) === 1 &&
+      /* And WHAT each of the three carried. The row reads All teams either
+         way, so emptying the teams payload left this entry green: the
+         specific selection is kept underneath the flag and the third write
+         is the only place that is visible. */
+      (await callArgs('setMemberRoles', { roleIds: [ROLES.coach, ROLES.manager] })(page)) &&
+      (await callArgs('setMemberAllTeams', { allTeams: true })(page)) &&
+      (await callArgs('setMemberTeams', { teamIds: [TEAMS.first, TEAMS.second, TEAMS.noBib] })(page)),
     drive: async (page) => {
       if (!(await click(rowButton(memberRow(page, MEMBERS.other), manage(MEMBERS.other))))) return false
       await pause(page)
@@ -796,10 +903,14 @@ export const USER_FLOWS = [
   },
   {
     key: 'role-created',
-    note: 'the role created: it joins the list holding nobody, the field is emptied, and one write was made',
+    note: 'the role created: it joins the list holding nobody, the field is emptied, and focus is back in it',
     proof: async (page) =>
       (await roleRow(page, TYPED_ROLE).locator('.pill').filter({ hasText: '0 members' }).count()) === 1 &&
       (await card(page, 'Roles').getByLabel('New role', { exact: true }).inputValue()) === '' &&
+      // The success EMPTIES the field, so Create stays disabled and the
+      // browser drops focus. Without this the repair could be deleted and
+      // every other assertion here would still hold.
+      (await focusedOn(card(page, 'Roles').getByLabel('New role', { exact: true }))(page)) &&
       (await calls('createRole', 1)(page)),
     drive: async (page) => {
       if (!(await fillIn(card(page, 'Roles').getByLabel('New role', { exact: true }), TYPED_ROLE))) return false
@@ -961,11 +1072,14 @@ export const USER_FLOWS = [
   },
   {
     key: 'grid-applied',
-    note: 'the changes applied: the grid holds them, the pending bar is gone, and one write says so in words',
+    note: 'the changes applied: the grid holds them, the pending bar is gone, one write says so in words, and focus is on it',
     proof: async (page) =>
       (await tickIs('Manage drills', ROLES.coach, { checked: true, disabled: false })(page)) &&
       (await gridCard(page).getByRole('button', { name: /^Review/ }).count()) === 0 &&
       (await noteIn('.card', 'success', 'status', '1 change applied to the whole club')(page)) &&
+      // Applying closes the dialog AND takes the Review button it was opened
+      // from with the draft, so Modal's own restore finds its opener gone.
+      (await focusOnOutcome('success')(page)) &&
       (await calls('saveRoleCaps', 1)(page)),
     drive: async (page) => {
       if (!(await pressTick(page, 'Manage drills', ROLES.coach))) return false
@@ -1134,10 +1248,11 @@ export const TEAM_FLOWS = [
   {
     key: 'teams-added',
     screen: 'adminteams',
-    note: 'the team added: it joins the list with no bib set, the field is emptied, and one write was made',
+    note: 'the team added: it joins the list with no bib set, the field is emptied, and focus is back in it',
     proof: async (page) =>
       (await teamRow(page, TYPED_TEAM).count()) === 1 &&
       (await page.getByLabel('New team', { exact: true }).inputValue()) === '' &&
+      (await focusedOn(page.getByLabel('New team', { exact: true }))(page)) &&
       (await calls('insertTeam', 1)(page)),
     drive: async (page) => {
       if (!(await fillIn(page.getByLabel('New team', { exact: true }), TYPED_TEAM))) return false
@@ -1190,11 +1305,14 @@ export const TEAM_FLOWS = [
   {
     key: 'teams-renamed',
     screen: 'adminteams',
-    note: 'the rename stuck: the row carries the new name and one write was made',
+    note: 'the rename stuck: the row carries the new name, focus is back in its field, and one write was made',
     proof: async (page) =>
       (await teamRow(page, TYPED_TEAM_RENAME).count()) === 1 &&
       (await teamRow(page, TYPED_TEAM_RENAME).locator('input').inputValue()) === TYPED_TEAM_RENAME &&
       (await teamRow(page, TEAMS.first).count()) === 0 &&
+      // Settling makes the stored name equal the draft, so Rename goes inert
+      // under the press and the browser blurs it.
+      (await focusedOn(teamRow(page, TYPED_TEAM_RENAME).locator('input'))(page)) &&
       (await calls('renameTeam', 1)(page)),
     drive: async (page) => {
       if (!(await fillIn(teamRow(page, TEAMS.first).locator('input'), TYPED_TEAM_RENAME))) return false
@@ -1204,10 +1322,13 @@ export const TEAM_FLOWS = [
   {
     key: 'teams-bib-set',
     screen: 'adminteams',
-    note: 'a default bib chosen: the colour is named in words and the swatch appears beside it, from one write',
+    note: 'a default bib chosen: the colour is named in words, the swatch appears beside it, and focus stays on that row\'s select',
     proof: async (page) =>
       (await teamRow(page, TEAMS.noBib).locator('select').inputValue()) === 'green' &&
       (await teamRow(page, TEAMS.noBib).locator('.bib-swatch').count()) === 1 &&
+      // THIS row's select, not any: the write disables the control under the
+      // coach's finger and the restore has to put it back where they were.
+      (await focusedOn(teamRow(page, TEAMS.noBib).locator('select'))(page)) &&
       (await calls('setTeamBib', 1)(page)),
     drive: (page) => choose(teamRow(page, TEAMS.noBib).locator('select'), 'green'),
   },

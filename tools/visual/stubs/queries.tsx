@@ -689,11 +689,13 @@ interface AdminCallLog {
   renameTeam: number
   deleteTeam: number
   setTeamBib: number
-  /* The ORDER the writes went out in, which a scalar counter cannot show. The
-     member save is specified to write roles, then the all teams flag, then
-     the specific teams, and two counters both reading 1 hold whichever way
-     round they went. */
-  order: string[]
+  /* Every write MADE, in order, WITH ITS ARGUMENTS. A counter says a write
+     happened and the order says when, and neither says what was sent: the
+     member save could send `teamIds: []` while the row still read All teams,
+     and the invite could carry the wrong teams entirely, with every entry
+     green. The payload is the thing the frozen rules are ABOUT, so it is the
+     thing recorded. */
+  writes: { name: string; vars: unknown }[]
 }
 
 const adminCalls: AdminCallLog = {
@@ -710,9 +712,20 @@ const adminCalls: AdminCallLog = {
   renameTeam: 0,
   deleteTeam: 0,
   setTeamBib: 0,
-  order: [],
+  writes: [],
 }
 ;(globalThis as unknown as { __adminCalls?: AdminCallLog }).__adminCalls = adminCalls
+/* What the ids in a recorded payload are called, so an assertion can be
+   written in the same vocabulary as every other entry: the team's name. The
+   log itself keeps the RAW ids, because translating on the way in would hide
+   exactly the mix-up an identity proof exists to catch. Read off the store
+   rather than snapshotted, so a state that adds a team and a team added
+   during a run both resolve. */
+;(globalThis as unknown as { __adminNames?: { team: (id: string) => string; role: (id: string) => string } }).__adminNames =
+  {
+    team: (id: string) => adminStore.teams().find((t) => t.id === id)?.name ?? id,
+    role: (id: string) => adminStore.roles().find((r) => r.id === id)?.label ?? id,
+  }
 
 const ADMIN_HANGS = state === 'inflight'
 const ADMIN_FAILS = state === 'writefails' || state === 'writeslowfails'
@@ -738,7 +751,7 @@ function useAdminWrite<V, R = void>(
     reject?: (e: Error) => void,
   ) => {
     adminCalls[name] += 1
-    adminCalls.order.push(name)
+    adminCalls.writes.push({ name, vars })
     setFailed(false)
     setPending(true)
     // Hangs: no callback at all, and the control stays in flight, which is
