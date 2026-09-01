@@ -208,6 +208,21 @@ Core design rules from Phase 4 onward. Every feature, screen, query and mutation
 
 ---
 
+## Cache boundary
+
+Postgres RLS is still the only enforcement of who may read what. This is about what a screen renders before its own read answers.
+
+- **Each signed in identity gets its own `QueryClient`.** `src/lib/queryIdentity.ts` is the rule and `components/QueryIdentityScope.tsx` is the only place a client is created or provided. A change of user id builds a new client and remounts the tree under it, and the previous identity's client is let go.
+- **A new client rather than a cleared one, because clearing is a statement about one moment** and the previous identity has work that lands after it. Clearing the mutation cache neither cancels a mutation in flight nor stops its callbacks, and several of those write to the cache: `useUpsertSession`'s `onError` rolls back by writing the previous identity's row onto the global `['sessions']` key, and a sign out makes exactly that error likely, because the request being rolled back lost the JWT it was sent under. So a cleared cache repopulates itself with the previous club a beat later. Policing those writes in place needs either a rule at every call site that writes, which one forgotten site silently undoes, or a dependency on the order in which query-core fires a mutation's callbacks against its own state dispatch, which is internal and would make this a race rather than a boundary. A callback belonging to the previous identity closed over the previous identity's client, so it writes where nobody is reading.
+- **Never club scope the query keys to get this.** It stops the previous identity's rows being served without removing them from the tab, it needs a club id that is itself an async read so every key would re-key mid flight through a shared `undefined`, and it is a rule roughly fifty existing read families and every future one have to remember, where forgetting is silent and presents exactly like the defect. `useQuery` reads a bare global literal on purpose.
+- **The remount key is load bearing.** `useQuery` builds its observer once against whichever client was current then and never moves it to another, so a new client alone is invisible to every screen already on the page. That is the whole of the direct A to B case: an invite or recovery link opened in a tab somebody else is signed into emits `SIGNED_IN` with no `SIGNED_OUT`, so the guard never sends anyone to Login and nothing unmounts.
+- **The provider order is the boundary.** `AuthProvider` sits above the query layer, because the identity decides which cache is current; everything that reads the query layer sits inside the scope. The auth flow reads Supabase directly and touches no client, so `hooks/useAuth.tsx` is not part of this and did not change for it.
+- **Only a move of the user id replaces the client.** An auth answer that has not arrived changes nothing, so the first page load of a session is not a remount. The first answer is adopted in place, keeping the client, because nothing identity bound can be in a cache one paint old. A token refresh, a user update and a repeated initial session all report the same id and are not a move.
+- Nothing outside TanStack Query needs its own rule today. `SessionsContext` is a thin wrapper over `useSessions`, so it moves with the cache. The `localStorage` keys are a device theme, a per session kit list and a live timer position, none of which name a person or a club, and the club branding cache is a name, a motto and a crest for the signed out screens.
+- `src/lib/queryIdentity.test.ts` is the behavioural half and opens with the leak reproduced on one shared client, so the guards beside it cannot go vacuous. `src/lib/queryIdentity.invariant.test.ts` is the tripwire on the wiring and names in its own tests the shapes it cannot catch.
+
+---
+
 ## Secrets
 
 - Only the anon public key reaches the front-end, as `VITE_SUPABASE_ANON_KEY`. Vite exposes any `VITE_`-prefixed variable to the browser, so never prefix a secret with `VITE_`.
