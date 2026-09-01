@@ -1,24 +1,26 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './styles.css'
 import { App } from './App'
 import { AuthProvider } from './hooks/useAuth'
+import { QueryIdentityScope } from './components/QueryIdentityScope'
 import { ThemeProvider } from './hooks/useTheme'
 
-const queryClient = new QueryClient()
-
+// AuthProvider sits ABOVE the query layer, because each signed in identity
+// gets its own QueryClient and the identity is what decides which one is
+// current. See src/lib/queryIdentity.ts. There is deliberately no module
+// level client: one that outlived a sign out is the whole defect.
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <QueryIdentityScope>
           <BrowserRouter>
             <App />
           </BrowserRouter>
-        </AuthProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+        </QueryIdentityScope>
+      </AuthProvider>
+    </ThemeProvider>
   </StrictMode>,
 )

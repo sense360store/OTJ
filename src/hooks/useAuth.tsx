@@ -2,10 +2,8 @@
 // App.tsx and the shell read from this. REVIEW: part of the auth flow.
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import type { Session as AuthSession, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import { createIdentityBoundary } from '../lib/queryIdentity'
 import type { Role } from '../lib/data'
 
 export type { Role }
@@ -69,32 +67,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileLoading, setProfileLoading] = useState(true)
   const [needsPassword, setNeedsPassword] = useState(arrivedToSetPassword)
 
-  // The cache boundary between one signed in identity and the next. The
-  // QueryClient lives for the tab, so without this a second member signing in
-  // here is served the first member's club out of cache before their own read
-  // answers. See src/lib/queryIdentity.ts for why the fix is a drop rather
-  // than club scoped keys.
-  //
-  // Every auth observation below calls it with the user id that observation
-  // carries, BEFORE the session state that renders the new member's screens.
-  // Same handler, one line earlier, so the ordering is structural: a separate
-  // listener on the same Supabase event would depend on registration order,
-  // and losing that race means the new member's first render reads a cache
-  // nobody has dropped yet.
-  const queryClient = useQueryClient()
-  const [observeIdentity] = useState(() => createIdentityBoundary(queryClient))
-
   // Resolve the initial session, then track auth state changes.
   useEffect(() => {
     let active = true
     supabase.auth.getSession().then(({ data }) => {
       if (!active) return
-      observeIdentity(data.session?.user?.id ?? null)
       setSession(data.session)
       setLoading(false)
     })
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
-      observeIdentity(next?.user?.id ?? null)
       setSession(next)
       if (event === 'PASSWORD_RECOVERY') setNeedsPassword(true)
       if (event === 'SIGNED_OUT') setNeedsPassword(false)
@@ -103,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false
       sub.subscription.unsubscribe()
     }
-  }, [observeIdentity])
+  }, [])
 
   // Load the profile row whenever the signed-in user changes.
   useEffect(() => {

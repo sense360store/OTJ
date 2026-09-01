@@ -1,27 +1,28 @@
 // =====================================================================
 // A tripwire, not a proof.
 //
-// queryIdentity.test.ts drives the boundary over a real cache and proves what
-// it does. It cannot prove that the product CALLS it, because this project has
-// no DOM and AuthProvider's effects never run under a static render. So this
-// file reads the source instead and fails the build on the realistic ways the
-// wiring gets lost: a third auth observation added without the boundary, the
-// boundary moved to after the session state it is supposed to precede, a
-// second listener registered somewhere else where ordering becomes a race,
-// and a second implementation of the drop.
+// queryIdentity.test.ts drives the rule over real clients and proves what it
+// does. It cannot prove the product MOUNTS it, because this project has no
+// DOM and main.tsx is never rendered under test. So this file reads the
+// source and fails the build on the realistic ways the boundary gets lost: a
+// module level client coming back, the scope dropped out of the tree, the
+// provider order inverted so the auth answer arrives below the cache it
+// decides, or the remount key removed so a new client never reaches a screen
+// that stayed mounted.
 //
 // A pass means nobody typed the obvious thing. It does not mean the wiring is
-// correct: see the shapes named in the last describe below, which this file
-// cannot catch and does not pretend to.
+// correct: see the shapes named in the last describe, which this file cannot
+// catch and does not pretend to.
 // =====================================================================
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const read = (name: string) => readFileSync(fileURLToPath(new URL(name, import.meta.url)), 'utf8')
-const AUTH = read('../hooks/useAuth.tsx')
-const BOUNDARY = read('./queryIdentity.ts')
 const MAIN = read('../main.tsx')
+const SCOPE = read('../components/QueryIdentityScope.tsx')
+const RULE = read('./queryIdentity.ts')
+const AUTH = read('../hooks/useAuth.tsx')
 
 const SRC = fileURLToPath(new URL('..', import.meta.url))
 function sourceFiles(dir: string): string[] {
@@ -34,84 +35,87 @@ function sourceFiles(dir: string): string[] {
 }
 const ALL = sourceFiles(SRC).map((path) => ({ path: path.slice(SRC.length), body: readFileSync(path, 'utf8') }))
 
-describe('the auth path calls the boundary', () => {
-  it('builds one, from the shared factory', () => {
-    expect(AUTH).toContain("import { createIdentityBoundary } from '../lib/queryIdentity'")
-    expect(AUTH).toMatch(/useState\(\(\)\s*=>\s*createIdentityBoundary\(queryClient\)\)/)
+describe('the product mounts one scope and no client beside it', () => {
+  it('creates a QueryClient in exactly one place, and not at module level', () => {
+    const creators = ALL.filter((f) => f.body.includes('new QueryClient(')).map((f) => f.path)
+    expect(creators).toEqual(['/lib/queryIdentity.ts'])
+    // The defect in one line. A client built at module load lives for the tab
+    // and outlives every sign out in it.
+    expect(MAIN).not.toContain('new QueryClient')
   })
 
-  it('observes the identity before the session state that renders the new member screens', () => {
-    // The ordering is the whole point. setSession is what mounts the incoming
-    // member's tree, and useQuery reads the cache during render, so a drop
-    // that happens after it has already been beaten by one commit.
-    const lines = AUTH.split('\n')
-    const sets = lines.map((line, i) => [line, i] as const).filter(([line]) => line.includes('setSession('))
-    expect(sets.length, 'a new session write needs the boundary in front of it, so look at this').toBe(2)
-    for (const [, i] of sets) {
-      const before = lines.slice(0, i).reverse().find((line) => line.trim() !== '') ?? ''
-      expect(before, `the line above setSession on line ${i + 1} is not the boundary`).toContain('observeIdentity(')
-    }
+  it('provides the client in exactly one place', () => {
+    const providers = ALL.filter((f) => f.body.includes('<QueryClientProvider')).map((f) => f.path)
+    expect(providers).toEqual(['/components/QueryIdentityScope.tsx'])
   })
 
-  it('reads the identity off the auth observation itself, not off React state', () => {
-    // session state lags the event by a commit, so reading it here would drop
-    // the cache one identity late.
-    expect(AUTH).toContain('observeIdentity(data.session?.user?.id ?? null)')
-    expect(AUTH).toContain('observeIdentity(next?.user?.id ?? null)')
+  it('mounts the scope below the auth answer and above everything that reads the cache', () => {
+    // The order is the boundary. The scope asks useAuth who is signed in, so
+    // it must sit inside AuthProvider; everything that reads the query layer
+    // must sit inside the scope.
+    const at = (needle: string) => MAIN.indexOf(needle)
+    expect(at('<AuthProvider>')).toBeGreaterThan(-1)
+    expect(at('<QueryIdentityScope>')).toBeGreaterThan(at('<AuthProvider>'))
+    expect(at('<BrowserRouter>')).toBeGreaterThan(at('<QueryIdentityScope>'))
+    expect(at('</QueryIdentityScope>')).toBeGreaterThan(at('</BrowserRouter>'))
+  })
+
+  it('keys the tree on the generation, which is what reaches a screen that stayed mounted', () => {
+    // useQuery builds its observer once against whichever client was current
+    // then. Without the remount a new client is invisible to every screen
+    // already on the page, which is the whole of the direct A to B case.
+    expect(SCOPE).toMatch(/key=\{next\.generation\}/)
+    expect(SCOPE).toContain('client={next.client}')
+  })
+
+  it('reads the identity during render rather than from an effect', () => {
+    // useQuery reads the cache while rendering, so an effect would be a
+    // commit too late: the incoming member's first render would be the one
+    // that reads the outgoing member's club.
+    expect(SCOPE).not.toContain('useEffect')
+    expect(SCOPE).toMatch(/const next = nextQueryScope\(scope, user\?\.id \?\? null, loading\)/)
+  })
+
+  it('leaves the auth flow out of the cache entirely', () => {
+    // The auth flow reads Supabase directly and needs no client. Reaching for
+    // one there would put it below the boundary it decides.
+    expect(AUTH).not.toContain('useQueryClient')
+    expect(AUTH).not.toContain('QueryClient')
   })
 })
 
-describe('one listener, one implementation', () => {
-  it('subscribes to auth state in exactly one place', () => {
-    // A second onAuthStateChange listener would make the drop depend on
-    // registration order against the one that sets the session.
-    const listeners = ALL.filter((f) => f.body.includes('onAuthStateChange')).map((f) => f.path)
-    expect(listeners).toEqual(['/hooks/useAuth.tsx'])
-    expect(BOUNDARY).not.toContain('onAuthStateChange')
-    expect(BOUNDARY).not.toContain('supabase')
+describe('the rule itself', () => {
+  it('replaces the client only on a move of the user id', () => {
+    const body = RULE.slice(RULE.indexOf('export function nextQueryScope'))
+    expect(body).toContain('if (loading) return scope')
+    expect(body).toContain('if (scope.identity === userId) return scope')
+    expect(body).toContain('generation: scope.generation + 1')
+    expect(body).toContain('client: new QueryClient()')
   })
 
-  it('reaches into the cache in exactly one place', () => {
-    const reachers = ALL.filter((f) => /getQueryCache\(|getMutationCache\(|\bresetQueries\(/.test(f.body)).map((f) => f.path)
-    expect(reachers).toEqual(['/lib/queryIdentity.ts'])
-  })
-
-  it('keeps the QueryClient module level, which is why the boundary is needed at all', () => {
-    // If this ever became per-session, the boundary would be dead code rather
-    // than silently half working, and this test is where that gets noticed.
-    expect(MAIN).toContain('const queryClient = new QueryClient()')
-  })
-
-  it('drops by default and names the anonymous families in one closed list', () => {
-    expect(BOUNDARY).toMatch(/export const ANONYMOUS_QUERY_FAMILIES: readonly string\[\] = \['public-share'\]/)
-    // The predicate answers from the list. An added `|| family === 'x'` is a
-    // second list, and the point of the list is that there is only one.
-    const predicate = BOUNDARY.slice(BOUNDARY.indexOf('export function isIdentityBound'))
-    expect(predicate.slice(0, predicate.indexOf('\n}'))).toContain('ANONYMOUS_QUERY_FAMILIES.includes(family)')
-  })
-
-  it('resets as well as removes', () => {
-    // Measured in queryIdentity.test.ts: removing alone leaves a mounted
-    // observer still reporting the previous identity's rows as a success.
-    const drop = BOUNDARY.slice(BOUNDARY.indexOf('export function dropIdentityBoundData'))
-    const body = drop.slice(0, drop.indexOf('\n}'))
-    expect(body).toContain('query.reset()')
-    expect(body).toContain('cache.remove(query)')
+  it('does not try to police the old cache instead of replacing it', () => {
+    // Clearing is a statement about one moment, and the previous identity has
+    // callbacks that land after it and write to the cache. If one of these
+    // comes back, the design has quietly reverted to the one that could not
+    // hold.
+    for (const banned of ['queryClient.clear', 'removeQueries', 'resetQueries', 'getMutationCache']) {
+      expect(RULE, `${banned} is the approach this replaced`).not.toContain(banned)
+    }
   })
 })
 
 describe('what this file cannot catch', () => {
   it('names them, so a green run is not read as more than it is', () => {
-    // 1. The boundary called through a variable or a wrapper, so the literal
-    //    `observeIdentity(` never appears above setSession.
-    // 2. A drop made conditional inside createIdentityBoundary on something
-    //    that is false in production.
-    // 3. A new authenticated read reaching for data some other way than a
-    //    query key, which no cache rule covers.
-    // 4. Whether the identity a screen renders under is the one its rows were
-    //    read under, which is a question about React commits and needs a DOM.
-    // The behavioural half is queryIdentity.test.ts; the browser half is
-    // tools/visual.
+    // 1. A client provided through a variable or a wrapper, so the literal
+    //    `<QueryClientProvider` never appears.
+    // 2. Nesting read by string position rather than by parsing, which a
+    //    reformat or a conditional branch could satisfy while the runtime
+    //    tree differs.
+    // 3. Whether React actually remounts on a changed key, which is React's
+    //    behaviour and needs a DOM to observe.
+    // 4. A read that reaches for data some other way than a query key, which
+    //    no cache rule covers.
+    // The behavioural half is queryIdentity.test.ts.
     expect(true).toBe(true)
   })
 })
