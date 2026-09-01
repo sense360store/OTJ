@@ -456,10 +456,16 @@ describe('an expired invite or recovery link', () => {
       seen = mod.useAuth().needsPassword
       return null
     }
+    // The real AuthProvider reads the QueryClient, because it owns the cache
+    // boundary between one signed in identity and the next
+    // (src/lib/queryIdentity.ts). main.tsx mounts it inside
+    // QueryClientProvider, so this render does too.
     renderToStaticMarkup(
-      <mod.AuthProvider>
-        <Probe />
-      </mod.AuthProvider>,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <mod.AuthProvider>
+          <Probe />
+        </mod.AuthProvider>
+      </QueryClientProvider>,
     )
     return seen === true
   }
