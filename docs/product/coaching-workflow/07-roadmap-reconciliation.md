@@ -130,8 +130,9 @@ programme neither needs it nor blocks on it.
 
 Unaffected, and **kept strictly separate**. It carried migration `0050`, applied
 on 23 August 2026 (hosted `20260823065041` / `bulk_delete_players`), and #191
-merged on 27 August 2026. So this programme's first migration is `0051`,
-confirmed against the hosted ledger on 2 September 2026, and it pins that head.
+merged on 27 August 2026. So this programme's first migration is numbered
+`0051` if the ledger still stands where it was read on 2 September 2026, and it
+pins the head as it is at its own review, never one read in advance.
 
 ### PLAN-01 (Done, #179) and TRAIN-01 (Done, #185)
 
@@ -201,8 +202,10 @@ after it rather than in front of it.**
 
 **PR #191 owned reviewed migration `0050`; it merged on 27 August 2026 and
 `0050` is applied. This programme did not modify it and did not depend on it,
-and the hosted head it left (`20260823065041` / `bulk_delete_players`) is what
-the first coaching migration pins.**
+and the hosted head it left (`20260823065041` / `bulk_delete_players`, read
+2 September 2026) is the head the first coaching migration will pin only if
+nothing else has applied first; the pin itself is taken at that migration's own
+review.**
 
 The reviewed register
 (`.github/scripts/production-migration/reviewed_migrations.py`) pins every

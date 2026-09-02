@@ -54,9 +54,10 @@ The reviewed register pins `expected_previous_version` and
 `0050` until it merged on 27 August 2026, and `0050` was applied on 23 August;
 this programme neither modified it nor assumed it. A file number reserves
 nothing, so no coaching migration was authored as "the one after 0050" while
-`0050` was unresolved. The hosted head is `20260823065041` /
-`bulk_delete_players` (read 2 September 2026), and that is what COACH-1's
-migration pins.
+`0050` was unresolved. The hosted head observed on 2 September 2026 was
+`20260823065041` / `bulk_delete_players`; COACH-1's migration pins the head as
+it stands at its own review, which is that row only if nothing else has applied
+first.
 
 ---
 

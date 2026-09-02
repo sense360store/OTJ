@@ -748,9 +748,10 @@ reserves nothing: the reviewed register pins every migration to the hosted
 ledger head it was written against, so an entry cannot even be written until that
 head is known (`04-data-model-proposal.md` section 8). When this plan was
 written, open draft PR #191 owned reviewed migration `0050`; it merged on
-27 August 2026 and `0050` was applied on 23 August, so the hosted head is now
-`20260823065041` / `bulk_delete_players` (read 2 September 2026), and that is
-the head the first coaching migration pins.
+27 August 2026 and `0050` was applied on 23 August, so the hosted head observed
+on 2 September 2026 is `20260823065041` / `bulk_delete_players`. The first
+coaching migration pins whatever the head is at its own review, which is that
+row only if nothing else has applied first.
 
 **So the non-migration slices led, and each migration is authored, numbered and
 registered when it is ready for its own application review, against the live
