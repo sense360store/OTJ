@@ -57,7 +57,7 @@ function inDays(n: number): string {
 }
 
 const session = (over: Partial<Session> & Pick<Session, 'id' | 'name'>): Session => ({
-  ...blankSession(THEM, null),
+  ...blankSession(THEM),
   date: inDays(2),
   time: '17:30',
   status: 'upcoming',

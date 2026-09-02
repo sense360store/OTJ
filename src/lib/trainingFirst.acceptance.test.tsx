@@ -57,7 +57,7 @@ const THEM = 'coach-them'
 const NOW = new Date(2026, 7, 11, 12, 0, 0, 0)
 
 const session = (over: Partial<Session> & Pick<Session, 'id' | 'name'>): Session => ({
-  ...blankSession(THEM, null),
+  ...blankSession(THEM),
   date: '2026-08-11',
   time: '17:30',
   teamIds: ['titans'],
@@ -227,8 +227,8 @@ describe('9. a fixture planned from Spond is still a fixture on every screen', (
   const lookup = spondEventLookup([matchEvent, trainingEvent])
 
   // Exactly what "Plan this" writes, built by the real function.
-  const plannedMatch = { ...sessionFromSpondEvent(matchEvent, ME, 'titans', [], []), id: 'planned-match' }
-  const plannedTraining = { ...sessionFromSpondEvent(trainingEvent, THEM, 'titans', [], []), id: 'planned-training' }
+  const plannedMatch = { ...sessionFromSpondEvent(matchEvent, ME, [], []), id: 'planned-match' }
+  const plannedTraining = { ...sessionFromSpondEvent(trainingEvent, THEM, [], []), id: 'planned-training' }
   const schedule = [plannedMatch, plannedTraining, myTraining]
 
   it('carries no classification of its own, which is the whole problem', () => {

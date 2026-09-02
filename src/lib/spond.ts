@@ -5,6 +5,7 @@
 // event facts the spond_events read returns (CLAUDE.md, Spond integration).
 import { blankSession } from './data'
 import type { Session, SpondEvent, SpondMapping } from './data'
+import { newSessionCoverage } from './sessionTeams'
 import { matchVenueByLocation, type Venue } from './venues'
 
 // ---- The event aggregate, and who it counts --------------------------
@@ -26,7 +27,10 @@ import { matchVenueByLocation, type Venue } from './venues'
 // 40 covered children were linked to one of them.
 //
 // So nothing here is compared with a Tonight count, and nothing here is
-// rendered without naming its population.
+// rendered without naming its population. Players & groups prints both
+// sentences one under the other, which is a comparison the reader makes
+// rather than one this module performs: it has never seen a player and
+// takes no parameter through which one could arrive.
 
 // Everybody the Spond event reached, which is what the four counts add up
 // to. Named rather than summed at each call site so no screen invents its
@@ -41,13 +45,13 @@ export function spondAudience(event: {
 }
 
 // The words for the aggregate's population, for anywhere that needs to
-// name it without the figure. No surface renders the four counts split any
-// more, so there is nothing left for this to caption; it survives as the
-// one place the population is named in words.
+// name it without the figure. No surface renders the four counts as a
+// split any more, so there is nothing left for this to caption; it
+// survives as the one place the population is named in words.
 export const SPOND_AUDIENCE_CAPTION = 'Everyone invited to the Spond event'
 
-// The aggregate as ONE labelled sentence, which is the only shape it takes
-// on any surface a coach organises a night from.
+// The aggregate as a bare headcount, which is what every surface shows
+// except the one that sets a second population beside it.
 //
 // WHY IT LOST ITS SPLIT. It used to render as four figures beside four
 // words: "20 accepted", "24 declined". Both the words and the figures then
@@ -58,9 +62,18 @@ export const SPOND_AUDIENCE_CAPTION = 'Everyone invited to the Spond event'
 // Nothing was wrong with either number and everything was wrong with
 // showing the larger pair as an unqualified split.
 //
-// So the aggregate keeps exactly one job here, saying how many people the
-// event reached, and it says whose figure it is in the same breath. The
-// per player replies are Tonight's, where the rows that back them are.
+// So this sentence keeps exactly one job, saying how many people the event
+// reached, and it says whose figure it is in the same breath. It is what
+// the picker, the planner card and the admin mirror render, because none
+// of them puts a covered squad next to it and a going number there is read
+// as one. The per player replies are Tonight's, where the rows that back
+// them are.
+//
+// The one surface that DOES put a covered squad next to it, Players &
+// groups, uses spondAudienceReplyNote below, which is this sentence plus
+// the event's own going figure. It exists because hiding that figure
+// everywhere left a coach holding a number the product no longer said
+// anything about. Read its header before changing either.
 export function spondAudienceNote(event: {
   accepted: number
   declined: number
@@ -221,6 +234,45 @@ export function spondPickerSummary(event: SpondEvent): string {
   return `${spondEventWhen(event.startsAt)} · ${spondTeamLabel(event.teamName)} · ${spondAudienceNote(event)}`
 }
 
+// The aggregate WITH its reply figure, for the one surface whose job is
+// reconciling it against the club's own players.
+//
+// WHY THIS EXISTS BESIDE spondAudienceNote, WHICH IS UNCHANGED. The
+// headcount alone answers "whose figure is this?" and it does not answer
+// the question a coach actually arrives with. They open Spond, read 30
+// going, open Players & groups, read Going 11, and the screen offers them
+// a total of 50 that reconciles neither. Naming the population was the
+// right half of the fix and hiding the figure was the wrong half: the
+// number they carried in is still missing, so the two lists still look
+// like they disagree and there is nowhere on the product to find out that
+// they do not.
+//
+// So the going figure comes back on that ONE screen, never as a bare
+// number and never as a split of four. It is one sentence that states its
+// population, its size and its reply in that order, and Players & groups
+// prints the matching sentence about covered players directly beneath it
+// (tonightPlayersNote). Read together they say plainly that 30 of 50
+// invited people said going while 11 of 40 covered children did, which is
+// two facts rather than a contradiction.
+//
+// "of them" is load bearing. It ties the reply to the headcount inside one
+// sentence, so the figure cannot be lifted out and read as a squad the way
+// a bare "30 going" was. The four counts are still never rendered as four
+// figures beside four words, here or anywhere.
+//
+// Every other surface keeps the headcount only, through spondAudienceNote.
+// The picker, the planner card and the admin mirror are not places anyone
+// reconciles two populations, so a reply figure there is the noise this
+// note's own history records.
+export function spondAudienceReplyNote(event: {
+  accepted: number
+  declined: number
+  unanswered: number
+  waiting: number
+}): string {
+  return `${spondAudienceNote(event)} · ${event.accepted} of them going`
+}
+
 // The event's local wall clock split into the session's yyyy-mm-dd date and
 // HH:mm time, the same instant the suggestion row shows through spondEventWhen.
 // An unreadable timestamp leaves both blank.
@@ -332,13 +384,31 @@ export function spondPlanSuggestions({
 
 // The pre filled session "Plan this" creates: the tapping coach owns it, the
 // date and time come from the event, and the link is set so the session shows
-// the attendance block. Coverage is the event's team, or the coach's default
-// when the event is a club event with no team, or the whole club when neither
-// names one, matching a fresh planner draft. It is never left unset: this
-// session is saved before the coach sees it, and an unset session's register
-// lists nobody. No drills are added; the coach builds those in the planner.
-// Rides the existing session create path and its RLS, so no new policy. Pure
-// so the test pins the carried fields.
+// the attendance block. No drills are added; the coach builds those in the
+// planner. Rides the existing session create path and its RLS, so no new
+// policy. Pure so the test pins the carried fields.
+//
+// COVERAGE COMES FROM THE EVENT AND FROM NOWHERE ELSE. A team specific
+// event covers exactly its own team; a club event, one the sync matched
+// through more than one mapping and stored with no team, covers every team
+// the club has. That is newSessionCoverage, the same rule a hand made
+// session and a template session start from.
+//
+// It used to read `event.teamId ?? defaultTeamId`, which meant a CLUB event
+// inherited the tapping coach's profile team: the club's Tuesday was
+// arranged for everybody in Spond and saved as one team's session, and the
+// register then listed one squad on a night the whole club was invited to.
+// The coach was never asked and nothing on the screen said a choice had
+// been made. The parameter is gone rather than defaulted, so it cannot come
+// back by a call site passing the profile team again.
+//
+// `allTeamIds` MUST be the club's real teams, and the caller must know them
+// before it offers Plan this. This session is saved before the coach sees
+// it and the planner it opens will not re-seed a saved row, so an empty
+// list here writes a session covering nobody, whose register lists nobody,
+// with no later repair. The one caller waits for the teams read for exactly
+// that reason. Empty is still passed through rather than guessed at, which
+// is what ./sessionTeams demands of absence everywhere else.
 //
 // THE VENUE IS A DEFAULT AND ONLY EVER A DEFAULT. `venues` is the club's
 // list, and the event's location seeds `venueId` only where it names exactly
@@ -364,15 +434,13 @@ export function spondPlanSuggestions({
 export function sessionFromSpondEvent(
   event: SpondEvent,
   coachId: string,
-  defaultTeamId: string | null,
   allTeamIds: string[],
   venues: readonly Venue[],
 ): Session {
   const { date, time } = spondEventLocalDateTime(event.startsAt)
-  const teamId = event.teamId ?? defaultTeamId
   return {
-    ...blankSession(coachId, teamId),
-    teamIds: teamId ? [teamId] : allTeamIds,
+    ...blankSession(coachId),
+    teamIds: newSessionCoverage(allTeamIds, event.teamId),
     name: event.title,
     date,
     time,

@@ -567,11 +567,26 @@ export function sessionMinutes(s: { activities: Activity[] }): number {
   return activeActivityMinutes(s.activities)
 }
 
-// A new session belongs to the signed-in coach and defaults to their team
-// when one is set. Team is a filter and a default, never access control. The
-// planner builds a draft from this for an unsaved session, and the Spond plan
-// surface overrides the carried fields (name, date, time, link) on top.
-export function blankSession(coachId: string, teamId: string | null): Session {
+// A new session belongs to the signed-in coach and covers nothing yet.
+//
+// It takes no team, and that is the point. Coverage is decided by
+// newSessionCoverage in ./sessionTeams, from the club's teams and from
+// whatever the session was created FROM, never from who is creating it;
+// this function used to take the coach's profile team and seed coverage
+// with it, which is how a club wide Tuesday saved as a Trojans session.
+// Removing the argument is what stops a caller reintroducing that by
+// passing the profile team back in.
+//
+// So a draft starts UNSET, and each create path says what it covers in
+// one place: the planner seeds the whole club once the team list arrives
+// (what the coach sees ticked is what saves), and the two paths that save
+// before the coach sees anything ask newSessionCoverage directly.
+//
+// The frozen legacy team_id (0044) is left null here and everywhere else.
+// New code never writes a value to it, and the write path never sends the
+// column at all, so a value here would only ever be read back by
+// coverageOf as legacy coverage during the optimistic window.
+export function blankSession(coachId: string): Session {
   return {
     id: crypto.randomUUID(),
     name: 'New Session',
@@ -586,7 +601,7 @@ export function blankSession(coachId: string, teamId: string | null): Session {
     status: 'upcoming',
     activities: [],
     coachId,
-    teamId,
+    teamId: null,
     intentions: [],
     space: '',
     sourceUrl: '',
@@ -598,11 +613,10 @@ export function blankSession(coachId: string, teamId: string | null): Session {
     spondEventId: null,
     boardId: null,
     venueId: null,
-    // Coverage starts at the coach's own team when their profile names one.
-    // With no team on the profile it starts unset, and the planner seeds the
-    // whole club once the team list arrives, so what saves is what the coach
-    // saw selected.
-    teamIds: teamId ? [teamId] : [],
+    // Unset, always. The planner seeds the whole club once the team list
+    // arrives, so what saves is what the coach saw selected, and a draft
+    // built before that read answers stays honest about knowing nothing.
+    teamIds: [],
     // A new session is club only until someone classifies it. The upsert never
     // writes the column, so this mirrors the database default rather than
     // choosing a value.

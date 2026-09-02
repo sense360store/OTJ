@@ -69,6 +69,7 @@ const screen = (over: Partial<Parameters<typeof TonightScreenView>[0]> = {}) => 
       linkNote=""
       unlinkedNote=""
       audienceNote=""
+      playersNote=""
       refreshing={false}
       refreshFailed={false}
       unset={false}
@@ -499,6 +500,7 @@ describe('no filter or selection writes anything', () => {
         linkNote=""
         unlinkedNote=""
         audienceNote=""
+        playersNote=""
         refreshing={false}
         refreshFailed={false}
         unset={false}
@@ -598,11 +600,18 @@ describe('linking coverage is only claimed when the read can answer', () => {
 // and could not tell that they count different sets of people.
 
 describe('every number on Tonight names the population it counted', () => {
+  // The sentences the container actually composes, so these fixtures say
+  // what a coach reads rather than a shape the product left behind. The
+  // wording itself is pinned at its source in ../lib/tonightCounts.test.ts
+  // and rendered through the real container in ./sessionRegister.screens.test.tsx.
+  const AUDIENCE = 'Spond audience: 50 people invited · 21 of them going'
+  const PLAYERS = 'Players this session covers: 40 · 11 of them going'
+
   it('counts the chips over Hub players on this session, not the event audience', () => {
     // Three covered children, one of them accepted. The linked Spond event
     // has fifty people on it and twenty one of them going; neither figure
     // may appear on a chip.
-    const html = screen({ audienceNote: 'Spond event: 50 invited, 21 going' })
+    const html = screen({ audienceNote: AUDIENCE })
     expect(html).toContain('Going 1')
     expect(html).toContain('Everyone 3')
     expect(html).not.toContain('Going 21')
@@ -610,24 +619,36 @@ describe('every number on Tonight names the population it counted', () => {
   })
 
   it('prints the event aggregate as a labelled sentence, never as a chip', () => {
-    const html = screen({ audienceNote: 'Spond event: 50 invited, 21 going' })
-    expect(html).toContain('Spond event: 50 invited, 21 going')
+    const html = screen({ audienceNote: AUDIENCE })
+    expect(html).toContain(AUDIENCE)
     // A chip is tappable and filters the list. The aggregate filters
     // nothing and must never look like it does.
-    expect(html).not.toMatch(/<button[^>]*>Spond event/)
+    expect(html).not.toMatch(/<button[^>]*>Spond audience/)
     expect(html).toContain('tn-audience')
+  })
+
+  it('sets the two populations side by side, each naming itself', () => {
+    // The pair, at the view. The event's figures and the session's own
+    // children, in the same shape, one under the other: 21 of 50 invited
+    // people said going while 11 of 40 covered children did. Either
+    // sentence alone is what made one honest pair look like a bug.
+    const html = screen({ audienceNote: AUDIENCE, playersNote: PLAYERS })
+    expect(html).toContain(AUDIENCE)
+    expect(html).toContain(PLAYERS)
+    expect(html.indexOf(AUDIENCE)).toBeLessThan(html.indexOf(PLAYERS))
+    expect(html).toContain('tn-players')
   })
 
   it('shows the link coverage that explains the gap between the two', () => {
     const html = screen({
       linkNote: '27 of 40 players linked to Spond',
-      audienceNote: 'Spond event: 50 invited, 21 going',
+      audienceNote: AUDIENCE,
     })
     // Read together these answer the question the bare numbers could not:
     // the event reached fifty people, the squad is forty, and twenty seven
     // of them are bound to a Spond member.
     expect(html).toContain('27 of 40 players linked to Spond')
-    expect(html).toContain('Spond event: 50 invited, 21 going')
+    expect(html).toContain(AUDIENCE)
   })
 
   it('says how many linked players actually have a reply for this event', () => {
@@ -635,9 +656,21 @@ describe('every number on Tonight names the population it counted', () => {
     expect(html).toContain('24 with a reply for this event')
   })
 
-  it('shows no audience sentence when nothing is linked to say it about', () => {
-    const html = screen({ hasSpondEvent: false, hasResponses: false, eventNote: '', audienceNote: '', filter: 'all' })
+  it('shows neither sentence when nothing is linked to say them about', () => {
+    // A club with no Spond gets no Spond wording at all, and that includes
+    // the players sentence: without an event there are no two populations
+    // to set against each other, and the chips and the list already say
+    // everything there is to say.
+    const html = screen({
+      hasSpondEvent: false,
+      hasResponses: false,
+      eventNote: '',
+      audienceNote: '',
+      playersNote: '',
+      filter: 'all',
+    })
     expect(html).not.toContain('tn-audience')
+    expect(html).not.toContain('tn-players')
     expect(html).not.toContain('invited')
   })
 })

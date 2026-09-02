@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   coverageKey,
   coverageOf,
+  newSessionCoverage,
   coversWholeClub,
   coveredTeamIds,
   sessionCoversAnyTeam,
@@ -135,5 +136,45 @@ describe('toggleCoveredTeam', () => {
     // Clearing every team is a real state the planner shows as unset,
     // not something to silently refuse.
     expect(toggleCoveredTeam(['t1'], 't1')).toEqual([])
+  })
+})
+
+describe('newSessionCoverage', () => {
+  it('covers the whole club when nothing names one team', () => {
+    expect(newSessionCoverage(['t1', 't2', 't3'])).toEqual(['t1', 't2', 't3'])
+  })
+
+  it('covers exactly the one team the source named', () => {
+    // A team specific Spond event, and nothing else the club has.
+    expect(newSessionCoverage(['t1', 't2', 't3'], 't2')).toEqual(['t2'])
+  })
+
+  it('narrows to a team the club list does not carry, rather than dropping it', () => {
+    // A team the read has not caught up with is still what the event said.
+    // Dropping it would silently widen the night to everybody, which is
+    // the direction this whole rule exists to prevent.
+    expect(newSessionCoverage([], 't9')).toEqual(['t9'])
+  })
+
+  it('takes no coach, so a personal default cannot narrow a night', () => {
+    // THE DEFECT, structurally. The profile team used to be an argument,
+    // and a club wide event inherited it. There is no parameter for one
+    // now, and the second is about the SESSION's source rather than about
+    // who is creating it.
+    expect(newSessionCoverage.length).toBe(1)
+  })
+
+  it('returns an empty set for an unknown club rather than inventing one', () => {
+    // Absence is absence, exactly as coverageOf insists. A caller that
+    // would SAVE this must wait for the team read instead of asking early.
+    expect(newSessionCoverage([])).toEqual([])
+  })
+
+  it('de-duplicates and returns a fresh array the caller may edit', () => {
+    const all = ['t1', 't1', 't2']
+    const out = newSessionCoverage(all)
+    expect(out).toEqual(['t1', 't2'])
+    out.push('t3')
+    expect(all).toEqual(['t1', 't1', 't2'])
   })
 })

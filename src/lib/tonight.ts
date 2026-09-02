@@ -416,6 +416,39 @@ export function tonightLinkNote(counts: TonightCounts, responsesKnown: boolean):
   return parts.join(' · ')
 }
 
+// The players half of the pair, in the same shape as the event half.
+//
+// Players & groups is the one screen where a coach holds two figures at
+// once: what Spond told them (30 going out of everybody invited) and what
+// this session's own children said (11 going out of 40 covered). Both are
+// correct and they count different people, and the way that stopped being
+// readable as a contradiction is printing them as two sentences of one
+// shape, one under the other, each naming its own population before its
+// own reply figure.
+//
+// So this composes `Players this session covers: 40 · 11 of them going`
+// against ../lib/spond's `Spond audience: 50 people invited · 30 of them
+// going`. Neither figure is derived from the other's data and neither
+// module can see the other's: tonightCounts takes rows and links and has
+// no parameter an aggregate could arrive through, and the audience note
+// has never seen a player.
+//
+// TWO THINGS STAY UNSAID RATHER THAN GUESSED, which is the rule the whole
+// file runs on. A session covering nobody says nothing at all here: the
+// screen's own empty state already says coverage was never set, and "0
+// players" would read as a squad that turned up empty. And the going
+// clause is withheld until the reply read has actually answered, because
+// a read in flight, a failed read and one that never dispatched all leave
+// every row without a response, which counts identically to a night
+// nobody replied to. The covered figure survives that, because the rows
+// are in hand either way.
+export function tonightPlayersNote(counts: TonightCounts, responsesKnown: boolean): string {
+  if (counts.covered === 0) return ''
+  const covered = `Players this session covers: ${counts.covered}`
+  if (!responsesKnown) return covered
+  return `${covered} · ${counts.responses.going} of them going`
+}
+
 // ---- What a read is allowed to prove ----------------------------------
 //
 // The screen once decided this inline, from isLoading and isError alone,

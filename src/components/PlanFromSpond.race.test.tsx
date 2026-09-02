@@ -62,7 +62,13 @@ vi.mock('../lib/queries', () => ({
   useMyCapabilities: () => ({ caps: new Set(['sessions.create']), isPending: false }),
   useMyTeams: () => query({ teamIds: ['titans'], allTeams: false }),
   useSpondEvents: () => query([EVENT]),
-  useTeamMap: () => ({ titans: { id: 'titans', name: 'Titans', bibColour: null } }),
+  // The club's teams as a QUERY, because the container waits for this
+  // read before it will plan anything: a club event covers every team,
+  // and a session saved over an unanswered read would cover nobody.
+  useTeams: () => query([
+    { id: 'titans', name: 'Titans', bibColour: null },
+    { id: 'trojans', name: 'Trojans', bibColour: null },
+  ]),
   useVenues: () => query([]),
   useRefreshSpondPlanning: () => refresh,
   useEventKindContext: () => ({ teamNames: ['Titans', 'Trojans'] }),

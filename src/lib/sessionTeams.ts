@@ -103,3 +103,36 @@ export function sessionTeamsLabel(
 export function toggleCoveredTeam(selected: string[], teamId: string): string[] {
   return selected.includes(teamId) ? selected.filter((id) => id !== teamId) : [...selected, teamId]
 }
+
+// ---- What a session STARTS covering ------------------------------------
+//
+// The whole club, unless the thing the session was created FROM names one
+// team. There is exactly one input to that decision and it is the event,
+// template or programme week the session came out of; the signed in
+// coach's profile team is deliberately not one.
+//
+// WHY THE PROFILE TEAM IS GONE. It used to seed coverage on all three
+// create paths, and it is the wrong kind of fact for the job. A profile
+// team is a personal default: which team a coach mostly works with, used
+// to focus a view and to preselect a picker. Coverage is a statement
+// about the NIGHT, and the two only agree by coincidence. A coach whose
+// profile said Trojans opened a new session and found Trojans already
+// ticked, so a club wide Tuesday saved as a Trojans session, and the
+// register then listed one team's children on a night the whole club was
+// invited to. Nothing on the screen said a choice had been made for them.
+//
+// Widening is the safe direction here, and it is the only one available:
+// a coach who wants one team unticks the other four in one tap and can
+// see what they are doing, while a coach who never noticed the narrowing
+// had no such prompt. Team is a filter and a default, never access
+// control (CLAUDE.md, Roles), so a wider default grants nobody anything.
+//
+// An empty club list returns an empty set rather than inventing one. That
+// is the same refusal coverageOf makes: absence is absence, and a caller
+// that would SAVE the result must not call this until it knows the club's
+// teams. Both save-before-the-coach-sees-it paths (Plan from Spond, Use
+// template) wait for that read for exactly this reason.
+export function newSessionCoverage(allTeamIds: readonly string[], forTeamId: string | null = null): string[] {
+  if (forTeamId) return [forTeamId]
+  return [...new Set(allTeamIds)]
+}

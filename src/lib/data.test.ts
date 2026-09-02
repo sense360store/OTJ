@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blankSession,
   embedSrc,
   hasAllCaps,
   isSampleMedia,
@@ -217,5 +218,36 @@ describe('hasAllCaps', () => {
     expect(hasAllCaps(caps, ['drills.create', 'media.create'])).toBe(true)
     expect(hasAllCaps(caps, ['drills.create', 'programmes.create'])).toBe(false)
     expect(hasAllCaps(caps, [])).toBe(true)
+  })
+})
+
+describe('blankSession', () => {
+  it('starts covering nothing and takes no team to start from', () => {
+    // The draft is UNSET on purpose. Coverage is decided by
+    // newSessionCoverage in ./sessionTeams, from the club's teams and from
+    // whatever the session was created from, and the planner seeds the
+    // whole club once the team read answers. This function used to take
+    // the coach's profile team and seed coverage with it, which is how a
+    // club wide Tuesday saved as one team's session; the argument is gone
+    // so a caller cannot pass it back in.
+    const s = blankSession('coach-1')
+    expect(s.teamIds).toEqual([])
+    expect(s.teamId).toBeNull()
+    expect(blankSession.length).toBe(1)
+  })
+
+  it('owns the session and leaves everything else neutral', () => {
+    const s = blankSession('coach-1')
+    expect(s.coachId).toBe('coach-1')
+    expect(s.activities).toEqual([])
+    expect(s.spondEventId).toBeNull()
+    expect(s.venueId).toBeNull()
+    // The frozen free text venue column is never given a value either.
+    expect(s.venue).toBe('')
+    expect(s.rights).toBe('internal_only')
+  })
+
+  it('mints a fresh id each time, so two drafts are never one session', () => {
+    expect(blankSession('coach-1').id).not.toBe(blankSession('coach-1').id)
   })
 })

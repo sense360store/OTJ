@@ -178,14 +178,20 @@ describe('Tonight counts people in exactly one place', () => {
     expect(src).not.toMatch(/groups\.reduce\(/)
   })
 
-  it('lets no Spond event aggregate reach a per player count', () => {
-    // The four aggregate fields count everybody Spond invited. Tonight
-    // counts covered Hub players. The screen may name the aggregate in a
-    // labelled sentence (spondAudienceNote) and must never read a field
-    // off an event to produce one of its own figures.
+  it('shows the two populations as a pair, each composed by the module that owns it', () => {
+    // The four aggregate fields count everybody Spond invited. The chips
+    // count covered Hub players. This screen is the one place BOTH belong,
+    // because it is the only place a coach holds the two at once and asks
+    // which is wrong; every other surface keeps the headcount alone.
+    //
+    // What makes that safe is that neither sentence is written here. Each
+    // is composed by the module that owns its numbers and names its own
+    // population before its own reply figure, so the screen still reads no
+    // count field off an event to produce a figure of its own.
     const src = read(SCREEN)
     expect(src).not.toMatch(/event\.(accepted|declined|unanswered|waiting)\b/)
-    expect(src).toMatch(/spondAudienceNote\(/)
+    expect(src).toMatch(/spondAudienceReplyNote\(/)
+    expect(src).toMatch(/tonightPlayersNote\(/)
   })
 
   it('hands the builder a link set that may be unknown, so zero is never guessed', () => {
@@ -559,13 +565,26 @@ describe('Saved is a comparison, not an assumption', () => {
 // while the same night's covered players were 10 going and 14 not going.
 // Both pairs were correct and only one of them was about players.
 //
-// So the split survives on exactly one surface, the admin mirror
-// inspection, whose whole job is showing what was synced. Everywhere a
-// coach organises a night the aggregate is one labelled sentence.
+// So the SPLIT survives nowhere. The four counts are never four figures
+// beside four words on any surface, and everywhere a coach organises a
+// night the aggregate is a labelled sentence.
+//
+// THE REPLY FIGURE IS A NARROWER QUESTION, and the answer changed once.
+// Hiding it everywhere was half a fix: a coach reads 30 going in Spond,
+// opens Players & groups, reads Going 11, and a headcount of 50 reconciles
+// neither, so the two lists still look like they disagree and the product
+// says nothing about why. It comes back on that ONE screen, inside the
+// same sentence as the headcount ("50 people invited, 30 of them going")
+// and directly above the matching sentence about covered players, which is
+// the only arrangement where the comparison is the point. Everywhere else
+// the headcount stands alone, because nobody reconciles two populations
+// while choosing which night to plan.
 //
 // A tripwire, not a proof: it reads source text and catches somebody
-// adding the pills back. What it cannot catch is a count reaching a label
-// through a variable, or a new file nothing here names.
+// adding the pills back, or carrying the reply figure onto a surface that
+// has no second population to set it against. What it cannot catch is a
+// count reaching a label through a variable, or a new file nothing here
+// names.
 // =====================================================================
 describe('the Spond event aggregate is never a player RSVP, on any screen', () => {
   // Only the module that composes the wording. The admin mirror
@@ -576,6 +595,12 @@ describe('the Spond event aggregate is never a player RSVP, on any screen', () =
   // A reply word beside a figure is read as a statement about players
   // wherever it appears, so there is no exempt surface.
   const ALLOWED = ['lib/spond.ts']
+
+  // The one screen that may show the aggregate's reply figure, because it
+  // is the only one that prints a player figure of the same shape beneath
+  // it. The sentence is still composed in lib/spond.ts; this is about
+  // where it may be RENDERED.
+  const RECONCILES = 'routes/SessionRegister.tsx'
 
   it('leaves no list of the four API reply words anywhere in the product', () => {
     const offenders = sourceFiles()
@@ -618,6 +643,37 @@ describe('the Spond event aggregate is never a player RSVP, on any screen', () =
     ]) {
       expect(code(read(f))).toMatch(/spondAudienceNote\(/)
     }
+  })
+
+  it('carries the reply figure onto no surface but the one that pairs it with players', () => {
+    // spondAudienceReplyNote is the headcount PLUS the event's going
+    // figure. It belongs where a coach is reconciling two populations and
+    // sees the covered players stated in the same shape underneath. On a
+    // picker row or a planner card there is no second figure to set it
+    // against, and a lone going number over an audience of 50 is exactly
+    // the reading this whole section exists to prevent.
+    const offenders = sourceFiles()
+      .filter((f) => !isTest(f) && f !== 'lib/spond.ts' && f !== RECONCILES)
+      .filter((f) => /spondAudienceReplyNote\(/.test(code(read(f))))
+    expect(offenders).toEqual([])
+  })
+
+  it('pairs it with the players sentence rather than letting it stand alone', () => {
+    // The figure is only safe next to its counterpart, so the two are
+    // pinned together: whichever is dropped, this fails.
+    const src = code(read(RECONCILES))
+    expect(src).toMatch(/spondAudienceReplyNote\(/)
+    expect(src).toMatch(/tonightPlayersNote\(/)
+  })
+
+  it('composes the players sentence in the module that owns the player counts', () => {
+    // Not in the screen, and not in lib/spond.ts, which has never seen a
+    // player. tonightPlayersNote reads the counts tonightCounts already
+    // built, so the sentence and the chips cannot disagree.
+    const offenders = sourceFiles()
+      .filter((f) => !isTest(f) && f !== 'lib/tonight.ts')
+      .filter((f) => /export function tonightPlayersNote/.test(read(f)))
+    expect(offenders).toEqual([])
   })
 
   it('lets the reply words be rendered only against a population of players', () => {

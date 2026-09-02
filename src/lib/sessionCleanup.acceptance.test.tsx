@@ -54,7 +54,7 @@ const TUESDAY_EVENING = at(2026, 8, 11, 22, 0)
 const WEDNESDAY_MORNING = at(2026, 8, 12, 9, 0)
 
 const session = (over: Partial<Session> & Pick<Session, 'id' | 'name' | 'date'>): Session => ({
-  ...blankSession(ME, null),
+  ...blankSession(ME),
   time: '18:00',
   teamIds: ['titans'],
   activities: [
@@ -256,7 +256,7 @@ describe('15. a past Spond event does not clutter the default Training list', ()
     // The round trip. A session planned from an event carries the event's
     // own date and time, so the same rule reaches it through the row it
     // became; the Spond lookup still answers what KIND of night it was.
-    const planned = { ...sessionFromSpondEvent(ranLastNight, ME, 'titans', [], []), id: 'planned-mon' }
+    const planned = { ...sessionFromSpondEvent(ranLastNight, ME, [], []), id: 'planned-mon' }
     const lookup = spondEventLookup([ranLastNight, runsTonight])
     const rows = [planned, tonight]
     expect(ids(applyEventFilter(rows, DEFAULT_EVENT_FILTER, { userId: ME, kindContext: { spondEvents: lookup }, now: TUESDAY_MORNING }))).toEqual([

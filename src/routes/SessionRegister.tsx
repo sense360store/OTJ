@@ -60,6 +60,7 @@ import {
   linkSetFromRead,
   responsesKnownFromRead,
   tonightCounts,
+  tonightPlayersNote,
   tonightLinkNote,
   tonightUnlinkedNote,
   PLAYERS_GROUPS_TITLE,
@@ -94,7 +95,7 @@ import {
 } from '../lib/tonight'
 import { BIB_COLOURS, BIB_NONE, bibInheritLabel, bibLabel, bibSwatch, effectiveBib } from '../lib/bibs'
 import { coveredTeamIds, coverageOf, coversWholeClub, soleCoveredTeamId } from '../lib/sessionTeams'
-import { spondAudienceNote } from '../lib/spond'
+import { spondAudienceNote, spondAudienceReplyNote } from '../lib/spond'
 import {
   type SetupPlan,
   type SetupReadiness,
@@ -320,6 +321,7 @@ export function TonightScreenView({
   linkNote,
   unlinkedNote,
   audienceNote,
+  playersNote,
   refreshing,
   refreshFailed,
   onFilter,
@@ -367,12 +369,21 @@ export function TonightScreenView({
   // team session does not send a coach hunting through five teams for the
   // thirteen. Empty when there is no gap or the link set is unknown.
   unlinkedNote: string
-  // "Spond event: 50 invited, 21 going": the event's OWN aggregate, over
-  // everybody Spond invited. It is here so the coach who saw "21 accepted"
-  // in the picker can see why the Going chip says 11, and it is a labelled
-  // sentence rather than a chip precisely so it can never be mistaken for
-  // one of the per player counts.
+  // The PAIR that answers "why does Spond say 30 and this screen say 11?".
+  //
+  // audienceNote is the Spond event's own figures, over everybody it
+  // invited: "Spond audience: 50 people invited · 30 of them going".
+  // playersNote is this session's covered children in the same shape:
+  // "Players this session covers: 40 · 11 of them going". They render one
+  // under the other, and each states its population before its reply
+  // figure, so neither can be read as a measurement of the other's people.
+  //
+  // Both are labelled sentences rather than chips, precisely so neither
+  // can be mistaken for one of the per player counts above. Either is
+  // empty when there is nothing honest to say, and an empty one renders
+  // as nothing rather than as a zero.
   audienceNote: string
+  playersNote: string
   refreshing: boolean
   refreshFailed: boolean
   onFilter: (f: ResponseFilter) => void
@@ -471,7 +482,7 @@ export function TonightScreenView({
 
       {/* Everything Spond has to say about tonight, in one line each,
           where the coach already is. No trip to the admin screen. */}
-      {(eventNote || linkNote || audienceNote || hasSpondEvent || onLinkEvent) && (
+      {(eventNote || linkNote || audienceNote || playersNote || hasSpondEvent || onLinkEvent) && (
         <div className="tn-spond">
           {eventNote && <span className="tn-event">{eventNote}</span>}
           {hasSpondEvent && onRefresh && (
@@ -480,10 +491,21 @@ export function TonightScreenView({
               {refreshing ? 'Refreshing…' : 'Refresh Spond'}
             </button>
           )}
-          {/* The two populations, each named. The chips above count Hub
-              players on this session; the event counts everybody Spond
-              invited. Printing either as a bare number beside the other is
-              what made one honest pair of figures look like a bug. */}
+          {/* THE TWO POPULATIONS, first, because they are the question the
+              coach arrived with. One sentence each, the same shape, one
+              under the other: the event's figures over everybody Spond
+              invited, then this session's own children. Each names who it
+              counted before it names a reply, so neither reads as a
+              measurement of the other's people.
+              Printing either one alone is what made an honest pair look
+              like a bug. The headcount by itself reconciled nothing, and
+              a going figure by itself was read as a squad. */}
+          {audienceNote && <span className="tn-audience">{audienceNote}</span>}
+          {playersNote && <span className="tn-players">{playersNote}</span>}
+          {/* Then why they differ. The link coverage is the bridge between
+              the two sentences above, so it reads after them rather than
+              before: how many of this session's children are bound to a
+              Spond member at all. */}
           {linkNote && (
             <span className="tn-linked">
               {linkNote}
@@ -494,11 +516,10 @@ export function TonightScreenView({
               )}
             </span>
           )}
-          {/* Which teams hold the unlinked players, so the coverage line
-              above is actionable rather than a puzzle. Composed by the
-              model from the same rows and link set, never counted here. */}
+          {/* And where the gap lives, so the coverage line above is
+              actionable rather than a puzzle. Composed by the model from
+              the same rows and link set, never counted here. */}
           {unlinkedNote && <span className="tn-unlinked">{unlinkedNote}</span>}
-          {audienceNote && <span className="tn-audience">{audienceNote}</span>}
           {onLinkEvent && (
             <button className="btn btn-quiet btn-sm" onClick={onLinkEvent}>
               <Icon.link />
@@ -698,10 +719,25 @@ export function TonightScreen({ session }: { session: Session }) {
   // A cancelled event was only ever surfaced by the card this screen
   // replaces, so it says so here or it says so nowhere.
   const eventNote = event ? (event.cancelled ? `${event.title} · Cancelled` : event.title) : ''
-  // The event's own aggregate, labelled as such. It is the number a coach
-  // meets in the picker and on the planner, and without it named here the
-  // Going chip looks like it contradicts one of them.
-  const audienceNote = event ? spondAudienceNote(event) : ''
+  // This session's own children, composed by the model from the counts it
+  // already built, so the screen counts nothing here and the sentence
+  // cannot disagree with a chip. Silent when coverage was never set, and
+  // it withholds the going clause until the reply read has answered.
+  const playersNote = event ? tonightPlayersNote(counts, responsesKnown) : ''
+  // The event's own figures beside them, and THE REPLY FIGURE ONLY EXISTS
+  // AS HALF OF A PAIR.
+  //
+  // With a player sentence under it, the going figure is what a coach
+  // arrived holding and the comparison is the whole point. Without one it
+  // is a lone going number over an audience of fifty, which is precisely
+  // the shape that made an honest pair look like a bug, and the screen
+  // reaches that state for real: a session whose coverage was never set
+  // counts nobody, so the player sentence says nothing rather than claim
+  // a squad of zero, and the aggregate would have been left standing on
+  // its own. So it falls back to the headcount, which needs no
+  // counterpart. Empty when nothing is linked, so a club with no Spond
+  // sees no Spond sentence at all.
+  const audienceNote = !event ? '' : playersNote ? spondAudienceReplyNote(event) : spondAudienceNote(event)
   const staleNote = rsvpStaleNote(rsvp.data ?? {})
 
   return (
@@ -735,6 +771,7 @@ export function TonightScreen({ session }: { session: Session }) {
         linkNote={linkNote}
         unlinkedNote={unlinkedNote}
         audienceNote={audienceNote}
+        playersNote={playersNote}
         refreshing={sync.isPending}
         refreshFailed={sync.isError || sync.data?.ok === false}
         unset={unset}

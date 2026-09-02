@@ -46,6 +46,7 @@ function WeekRow({
   nav,
   onUse,
   usePendingId,
+  useBlocked,
   onEditTemplate,
 }: {
   week: number
@@ -58,6 +59,11 @@ function WeekRow({
   // in flight disables all Use buttons, not only its own.
   onUse: (t: Template) => void
   usePendingId: string | null
+  // The club's teams are not known yet, so a session built now could not
+  // be given the ones it covers. A sub second state in practice, and the
+  // one press it stops is the one that would save a session covering
+  // nobody with no later repair.
+  useBlocked: boolean
   // Editing a week's template is a templates update, which the RLS reserves
   // for admins; null hides the affordance for everyone else.
   onEditTemplate: ((t: Template) => void) | null
@@ -125,7 +131,7 @@ function WeekRow({
         </div>
       )}
       {template && coaching && (
-        <button className="btn btn-primary" style={{ minHeight: 44 }} disabled={usePendingId !== null} onClick={() => onUse(template)}>
+        <button className="btn btn-primary" style={{ minHeight: 44 }} disabled={usePendingId !== null || useBlocked} onClick={() => onUse(template)}>
           <Icon.copy />
           {usePendingId === template.id ? 'Creating…' : 'Use this week'}
         </button>
@@ -198,7 +204,12 @@ function ProgrammeView({ p }: { p: Programme }) {
   const nav = useNav()
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
-  const { start: startFromTemplate, pendingTemplateId, failed: createFailed } = useStartFromTemplate()
+  const {
+    start: startFromTemplate,
+    pendingTemplateId,
+    failed: createFailed,
+    ready: teamsReady,
+  } = useStartFromTemplate()
   const { data: templates = [] } = useTemplates()
   const { sessions } = useSessions()
   const teamById = useTeamMap()
@@ -332,6 +343,16 @@ function ProgrammeView({ p }: { p: Programme }) {
       )}
 
       {createFailed && <ActionError style={{ marginBottom: 12, maxWidth: 720 }}>{SESSION_CREATE_ERROR}</ActionError>}
+      {/* Why Use is disabled. A session built now could not be given
+          the teams it covers, and a button that does nothing with
+          nothing said is worse than the wait itself. Sub second in
+          practice; permanent only if the read failed, which is what
+          this sentence is really for. */}
+      {!teamsReady && (
+        <p className="muted" style={{ marginBottom: 12, maxWidth: 720, fontSize: 13.5 }}>
+          Waiting for the club’s teams. A session cannot be given the ones it covers until they load.
+        </p>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 720 }}>
         {weeks.map((w) => (
           <WeekRow
@@ -344,6 +365,7 @@ function ProgrammeView({ p }: { p: Programme }) {
             nav={nav}
             onUse={startFromTemplate}
             usePendingId={pendingTemplateId}
+            useBlocked={!teamsReady}
             onEditTemplate={caps.has('templates.manage') ? setEditingTemplate : null}
           />
         ))}

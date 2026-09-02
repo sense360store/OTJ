@@ -1,7 +1,7 @@
 // Build a new session from a template and open it in the planner. The
 // Templates screen's Use template button and a programme week's Use button
 // share this, so a session built from a template always lands the same way:
-// owned by the signed-in coach, defaulting to their team, with the
+// owned by the signed-in coach, covering the whole club, with the
 // template's activities and intentions copied on.
 //
 // The create is awaited: the planner opens only after the session lands, and
@@ -15,14 +15,23 @@ import { useNav } from './useNav'
 import { useGuardedSubmit } from './useGuardedSubmit'
 import { useSessions } from '../context/SessionsContext'
 import { useTeams } from '../lib/queries'
+import { newSessionCoverage } from '../lib/sessionTeams'
 import { stableCreateId } from '../lib/sessionSubmit'
 import type { Activity, Session, Template } from '../lib/data'
 
 export function useStartFromTemplate() {
   const nav = useNav()
-  const { user, profile } = useAuth()
+  const { user } = useAuth()
   const { upsertSession } = useSessions()
-  const { data: teams = [] } = useTeams()
+  // The club's teams decide what the new session covers, so `ready` below
+  // reports whether that read has ANSWERED. This path saves before the
+  // coach sees anything and opens the planner on a stored row, which does
+  // not re-seed coverage, so building one over an unanswered read would
+  // write a session covering nobody with no later repair. A pending read,
+  // a failed read and a club with no teams all reach `data` as nothing,
+  // and only the first two are worth waiting through.
+  const teamsQuery = useTeams()
+  const teams = teamsQuery.data ?? []
   // One id per template for the life of this screen, so a retry after an
   // ambiguous failure reuses it and cannot create a duplicate; a success
   // navigates away and unmounts, so using the same template again later mints
@@ -45,7 +54,7 @@ export function useStartFromTemplate() {
       status: 'upcoming',
       activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],
       coachId: user?.id ?? '',
-      teamId: profile?.team_id ?? null,
+      teamId: null,
       intentions: [...t.intentions],
       space: '',
       sourceUrl: '',
@@ -57,15 +66,26 @@ export function useStartFromTemplate() {
       spondEventId: null,
       boardId: null,
       venueId: null,
-      // The coach's own team when their profile names one, the whole club
-      // otherwise, the same default a fresh planner draft starts from. Never
-      // left unset: this session is saved before the coach sees it, and an
-      // unset session's register lists nobody.
-      teamIds: profile?.team_id ? [profile.team_id] : teams.map((t) => t.id),
+      // The whole club, the same default a fresh planner draft starts from
+      // and through the same rule. It used to be the coach's own team when
+      // their profile named one, which is a personal default about the
+      // coach standing in for a statement about the night: a coach whose
+      // profile said Trojans got a Trojans session out of a club template
+      // without being asked. Never left unset: this session is saved
+      // before the coach sees it, and an unset session's register lists
+      // nobody, which is what `ready` protects.
+      teamIds: newSessionCoverage(teams.map((t) => t.id)),
       // Club only until classified; the upsert never writes the column.
       rights: 'internal_only',
     }
     void submit({ templateId: t.id, session })
   }
-  return { start, pendingTemplateId: pending?.templateId ?? null, failed }
+  return {
+    start,
+    pendingTemplateId: pending?.templateId ?? null,
+    failed,
+    // Whether the club's teams are known yet. The screens disable Use
+    // until they are, so a press can never save a session covering nobody.
+    ready: teamsQuery.data !== undefined,
+  }
 }
