@@ -299,9 +299,86 @@ database did not have. The workflow was therefore run against the reviewed
 
 ## Reviewed, registered, not yet applied
 
-Nothing. Every entry in `REVIEWED_MIGRATIONS` has been applied. Applied entries
-are never removed from the register, so this section being empty means there is
-nothing pending, not that nothing is registered.
+| Migration | Registered against | Ledger name | Idempotency key |
+|---|---|---|---|
+| `0051_team_sort_order` | `20260823065041` / `bulk_delete_players` | `team_sort_order` | `otj:migration:0051_team_sort_order` |
+
+`0051` is the first coaching workflow migration (roadmap COACH-1, its
+database half). It was written against the hosted head `0050`'s apply left,
+read from the hosted ledger on 2 September 2026 with every remote branch
+scanned for a competing `0051` file and none found. Its pull request applies
+nothing: the register entry is what makes it selectable, and the apply is a
+human pressing the button after review. Confirm the head again immediately
+before applying.
+
+Applied entries are never removed from the register, so once `0051` has run
+this section goes back to naming nothing, which means nothing is pending
+rather than that nothing is registered.
+
+## What `0051` does, kept for reference
+
+`0051_team_sort_order` adds ONE nullable integer column,
+`public.teams.sort_order`, with no default and no backfill; ONE partial unique
+index, `teams_sort_order_unique` on `(club_id, sort_order)` where the position
+is not null; and `sort_order` on the update allow list of the existing
+`public.audit_teams()`, field name only, never a value. Nothing else: no
+policy, no grant, no capability key, no trigger, no row. Null means the club
+has not configured its order, which is every team on apply, so no behaviour
+changes when it lands; positions mean something only within one club and need
+not be contiguous; it is not an ability score and there is no per-player
+field. The full reasoning is the file's own header, and the settled shape is
+`docs/product/coaching-workflow/04-data-model-proposal.md` section 5.
+
+Its self-verification takes a BEFORE fingerprint of every team row, the policy
+set, the three grant views (`role_table_grants`, the stored ACL, and every
+column ACL) and the trigger set into a transaction local table before the DDL,
+and requires each unchanged afterwards, with the row fingerprint compared minus
+the one column the file adds and every position required to be null. It then
+runs the rule rather than describing it: inside a subtransaction it always
+rolls back it inserts two synthetic clubs and three synthetic teams, proves two
+unordered teams coexist, that one club's teams cannot share a position, that
+two clubs may, that a position can be given back, and that each write leaves
+exactly the `team.updated` trail the allow list says with no value in it, then
+checks the rollback against the before fingerprint rather than trusting it.
+Finally it reads the stored `audit_teams()` back and requires `sort_order` to
+appear only in the comparison that names the field.
+
+Its three probes are the column by shape (`information_schema.columns`:
+integer, nullable, no default), the index by shape (`pg_index`: unique, not the
+primary key, partial, two key columns) and the allow list by the stored
+function body (`to_regprocedure` then `pg_get_functiondef`). The third is the
+first probe in this register that flips on the BODY of a function that already
+exists rather than on presence, because `audit_teams()` has existed since 0037.
+
+`.github/scripts/production-migration/test_0051_team_sort_order.sh` runs in CI
+against a throwaway PostgreSQL: it applies the reviewed file to a stand-in of
+the teams substrate, flips the three probes in both gate states, drives the
+column through row level security as a `teams.manage` holder, a coach without
+it, a `teams.manage` holder of another club and anon, proves a second apply
+fails at its first statement and changes nothing, and mutates the file
+seventeen ways to prove the self-verification bites, each mutation pinned to
+the message of the one check that catches it. Ten do one thing the header
+forbids (a backfill, a non partial index, reversed key columns, the allow list
+entry removed, a new policy, a column scoped grant, the audit writer called
+twice, a new capability key, the audit trigger dropped, and a value written
+into an event). Seven change nothing the behavioural probe can see (the
+comparison's operands swapped, a second read of the column, a second writer
+and a fourth action string in dead code, SECURITY DEFINER dropped, the audit
+trigger recreated under another name, and a second trigger that does nothing),
+so the stored source and trigger checks are proved to bite on their own rather
+than behind the probe's counts. The security policy suite's `tests/security/team-order.test.ts`
+covers the contract through PostgREST on the local stack for the roles the
+fixtures hold: a club admin holding `teams.manage`, a coach without it, a
+parent, a coach of another club and an unauthenticated caller. No fixture
+holds `teams.manage` in a second club, so the cross club write refusal by a
+holder of that capability is proved in the harness alone, and the same
+position in another club is seeded there by the service role as a fixture and
+asserted through the members' own reads.
+
+Ordering. Safe to apply either side of the frontend: no deployed client reads
+or writes the column, because `TEAM_COLS` in `src/lib/queries.ts` names an
+explicit list without it, and `src/lib/teamOrder.invariant.test.ts` fails the
+build if a consumer arrives before COACH-1B, the frontend half.
 
 ## What runs, in order
 

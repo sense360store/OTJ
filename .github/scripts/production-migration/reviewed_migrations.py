@@ -477,6 +477,86 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             ),
         },
     ),
+    # ------------------------------------------------------------------
+    # 0051_team_sort_order: the club's ordering of its own teams (roadmap
+    # COACH-1, migration M1 of the coaching workflow programme). Adds ONE
+    # nullable integer column, public.teams.sort_order, with no default and
+    # NO backfill; ONE partial unique index, teams_sort_order_unique on
+    # (club_id, sort_order) where sort_order is not null; and sort_order on
+    # the update allow list of the existing public.audit_teams(), field
+    # name only, never a value. Nothing else: no policy, no grant, no
+    # capability key, no trigger, no row. Null means the club has not
+    # configured its order, which is every team on apply, so no behaviour
+    # changes when it lands; it is not an ability score and there is no
+    # per-player field.
+    #
+    # Its own self-verification takes a BEFORE fingerprint of every team
+    # row, the policy set, the three grant views and the trigger set into a
+    # transaction local table before the DDL and requires them unchanged
+    # after it (minus the one column it adds), exercises the index and the
+    # audit allow list on synthetic rows inside a subtransaction it always
+    # rolls back, and reads the stored audit_teams() back to prove the
+    # field name is all that reaches an event.
+    # .github/scripts/production-migration/test_0051_team_sort_order.sh
+    # applies the real file to a stand-in, drives the column through RLS as
+    # a teams.manage holder, a coach without it, an outsider and anon,
+    # flips the three probes below in both gate states, proves a second
+    # apply fails at its first statement, and mutates the file ten ways to
+    # prove each self-verification check bites. It runs in CI.
+    #
+    # Written against a hosted database whose newest ledger row is
+    # 20260823065041 / bulk_delete_players, the version the 0050 apply
+    # stamped on 23 August 2026, read from the hosted ledger on
+    # 2 September 2026. No remote branch and no open pull request carried
+    # a 0051 file on that date.
+    # ------------------------------------------------------------------
+    "supabase/migrations/0051_team_sort_order.sql": ReviewedMigration(
+        path="supabase/migrations/0051_team_sort_order.sql",
+        ledger_name="team_sort_order",
+        idempotency_key="otj:migration:0051_team_sort_order",
+        expected_previous_version="20260823065041",
+        expected_previous_name="bulk_delete_players",
+        objects={
+            # information_schema.columns, never pg_attribute (attisdropped
+            # spells a banned word). The SHAPE is probed with the name: a
+            # NOT NULL or a defaulted column would be a different
+            # migration, and so would a backfill's natural companion, a
+            # default.
+            "public.teams.sort_order, a nullable integer with no default": (
+                "(select count(*) > 0 from information_schema.columns "
+                "where table_schema = 'public' and table_name = 'teams' "
+                "and column_name = 'sort_order' "
+                "and data_type = 'integer' and is_nullable = 'YES' "
+                "and column_default is null)"
+            ),
+            # pg_index, as 0048's probe: unique, not the primary key,
+            # partial, and exactly two key columns. indpred is what
+            # separates the reviewed index from a non partial one of the
+            # same name, which reads false here. The predicate states that
+            # null is not a position; it is not what lets unordered teams
+            # coexist, since a unique index treats nulls as distinct
+            # either way.
+            "teams_sort_order_unique, a two column partial unique index on teams": (
+                "(select count(*) > 0 from pg_index x "
+                "join pg_class c on c.oid = x.indexrelid "
+                "where x.indrelid = to_regclass('public.teams') "
+                "and c.relname = 'teams_sort_order_unique' "
+                "and x.indisunique and not x.indisprimary "
+                "and x.indpred is not null and x.indnkeyatts = 2)"
+            ),
+            # The stored function, resolved through to_regprocedure and read
+            # back with pg_get_functiondef. audit_teams() exists BEFORE this
+            # apply (0037, replaced by 0044), so what flips is its body:
+            # false while 0044's allow list names only name and bib_colour,
+            # true once the comparison that names sort_order is in it.
+            "audit_teams() names sort_order on its allow list": (
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure('public.audit_teams()') "
+                "and position('new.sort_order is distinct from old.sort_order' "
+                "in pg_get_functiondef(p.oid)) > 0)"
+            ),
+        },
+    ),
 }
 
 

@@ -61,7 +61,11 @@ verification, never as the subject of an assertion.
 
 `drills`, `media` (rows), `sessions`, `players`, `boards`, `feedback`,
 `audit_events`, `import_batches`, `content_shares` /
-`content_share_dependencies` (the private public share substrate), plus
+`content_share_dependencies` (the private public share substrate), `teams`
+(the club's team order added by 0051, in `tests/security/team-order.test.ts`:
+club wide read of `sort_order`, writes only under `teams.manage`, the partial
+unique index refusing a shared position within one club and allowing one
+across clubs, and the `team.updated` trail naming the field and no value), plus
 `capabilities` / `role_capabilities` / `member_roles` for the capability
 consistency checks, and `profiles` / `member_roles` / `member_teams` for the
 signup membership boundary.

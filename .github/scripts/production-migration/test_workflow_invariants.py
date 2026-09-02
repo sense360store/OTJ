@@ -333,6 +333,63 @@ class TheProbeHarnessActuallyRunsInCi(unittest.TestCase):
             self.assertIn("ALL PROBE TOTALITY ASSERTIONS PASSED", fh.read())
 
 
+class TheTeamOrderHarnessRunsInCi(unittest.TestCase):
+    """test_0051_team_sort_order.sh is the only thing that applies the
+    reviewed 0051 file to a real server and drives its column through row
+    level security, so it runs in CI on the same terms as the probe harness:
+    REQUIRE_POSTGRES=1, every skip through skip_or_fail, and a positive
+    result line rather than silence."""
+
+    CI = os.path.join(REPO, ".github/workflows/ci.yml")
+    SCRIPT = os.path.join(
+        REPO, ".github/scripts/production-migration/test_0051_team_sort_order.sh"
+    )
+
+    def ci(self) -> dict:
+        with open(self.CI, "r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh)
+
+    def step(self) -> dict:
+        steps = [
+            s for job in self.ci()["jobs"].values() for s in job.get("steps", [])
+            if "test_0051_team_sort_order.sh" in (s.get("run") or "")
+        ]
+        self.assertEqual(len(steps), 1, "the 0051 harness runs in exactly one CI step")
+        return steps[0]
+
+    def test_ci_runs_the_harness_and_forbids_it_from_skipping(self):
+        self.assertEqual((self.step().get("env") or {}).get("REQUIRE_POSTGRES"), "1")
+
+    def test_the_script_honours_that_flag_on_every_skip_it_has(self):
+        with open(self.SCRIPT, "r", encoding="utf-8") as fh:
+            body = fh.read()
+        self.assertIn('REQUIRE_POSTGRES="${REQUIRE_POSTGRES:-0}"', body)
+        skips = [
+            line.strip() for line in body.splitlines()
+            if 'echo "SKIP' in line and not line.strip().startswith("#")
+        ]
+        self.assertEqual(
+            skips, ['echo "SKIP: $1"'],
+            "a bare SKIP bypasses REQUIRE_POSTGRES; call skip_or_fail instead",
+        )
+        self.assertGreaterEqual(
+            len([line for line in body.splitlines() if "skip_or_fail " in line]), 2,
+            "both early exits should go through skip_or_fail",
+        )
+
+    def test_the_harness_reports_a_positive_result_rather_than_only_silence(self):
+        with open(self.SCRIPT, "r", encoding="utf-8") as fh:
+            self.assertIn("ALL 0051 TEAM SORT ORDER ASSERTIONS PASSED", fh.read())
+
+    def test_the_harness_never_modifies_the_reviewed_file(self):
+        # Every mutation goes to a copy, and the last section asserts the
+        # working tree still carries no modified migration.
+        with open(self.SCRIPT, "r", encoding="utf-8") as fh:
+            body = fh.read()
+        self.assertIn('git diff --name-only -- supabase/migrations', body)
+        self.assertIn('${WORK}/mutant.sql', body)
+
+
 class WhatThisFileCannotCatch(unittest.TestCase):
     """Named on purpose, so a green run is not read as more than it is."""
 
