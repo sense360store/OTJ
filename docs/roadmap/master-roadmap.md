@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 27 August 2026 (PLAYERS-01 shipped in #191 after migration 0050 was applied and reconciled; #196 merged, so the visual redesign baseline is closed; VISUAL-00 is delivered in #210 as `docs/design/visual-design-read.md` and VISUAL-01 is next; DRILL-02's public/share half remains separately gated)
+Last reviewed: 2 September 2026 (VISUAL-01 delivered in #211; VISUAL-02 in progress, adopted route by route in seven pull requests, #212 to #218, with Home, Sessions and the remaining admin screens still to come; the coaching workflow's four migration-free slices COACH-2, COACH-3, COACH-4 and COACH-10 shipped in #198, #202, #203, #204, #206 and #207, and COACH-1, the club team order, is the next coaching slice and the first gated coaching migration; PLAYERS-01 and #196 both merged on 27 August; DRILL-02's public/share half remains separately gated)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -37,8 +37,8 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | Done | P0 | Shipped in #190, completed in #192. Both gates have run: migration 0049 applied 17 August 2026 (hosted head `20260817104226`, `spond_team_reconcile`) and `spond-link-members` deployed at version 4. Verified by a live production smoke test |
 | DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b). This public half does not block VISUAL-00/01 |
 | VISUAL-00 | Product design | Design Read: define the target OTJ visual language from current code, the reference design and representative real screens before changing pixels | Done | P1 | Delivered in #210 as `docs/design/visual-design-read.md`, captured against `main` at `434f67f` after #196 merged and CI went green. Documentation only: no React, CSS, behaviour, route, permission, Supabase or migration change. Settles the type scale, semantic colour roles and contrast floors, the spacing and radius scales, surfaces, the control primitives, both shells, the modal and sheet contract, the seven state families, focus and touch requirements, non-colour cues and what stays recognisably OTJ. Names the acceptance screens for VISUAL-01/02/03 and records seven open product decisions in its Part 5 |
-| VISUAL-01 | Product design | Build the shared visual foundation and app shell: tokens, typography, primitives, sidebar/top bar/content frame and mobile bottom navigation | Next | P1 | VISUAL-00 is done and is the task contract; implement Part 2 of `docs/design/visual-design-read.md` and accept against the five screens in its Part 4. Presentation only, no route/permission/data behaviour changes |
-| VISUAL-02 | Product design | Apply the new system to stable everyday surfaces including Home, Sessions, Registered Players, Activity, account/login, Feedback and stable admin screens | Later | P1 | VISUAL-01; PLAYERS-01 is already shipped so its destructive flow is redesigned once against final behaviour |
+| VISUAL-01 | Product design | Build the shared visual foundation and app shell: tokens, typography, primitives, sidebar/top bar/content frame and mobile bottom navigation | Done | P1 | Delivered in #211 on 27 August 2026: the token set, the primitives (including the danger and on-dark button variants, Note and Sheet) and the shared shell, implementing Part 2 of `docs/design/visual-design-read.md`, with the five Part 4 acceptance surfaces checked in both themes at every width each exists at and the full suite green. The table and badge primitives are accepted in VISUAL-02, as Part 4 states. Presentation only, no route/permission/data behaviour changes |
+| VISUAL-02 | Product design | Apply the new system to stable everyday surfaces including Home, Sessions, Registered Players, Activity, account/login, Feedback and stable admin screens | In progress | P1 | VISUAL-01 delivered. Adopted so far: Registered Players (#212, #213), Activity (#214), Account (#215), Login and Set Password (#216), Feedback (#217), Admin Users and Admin Teams (#218). Home, Sessions and the admin screens beyond Users and Teams are not yet adopted. PLAYERS-01 shipped first, so its destructive flow was redesigned once against final behaviour |
 | VISUAL-03 | Product design | Redesign evolving feature areas alongside their functional work rather than polishing them immediately before they change | Later | P1 | VISUAL-01; pair Planner/week plans with COACH-11/12/13, Training Day with COACH-5/6/7/8, public/share after DRILL-02b |
 | VISUAL-04 | Product design | Whole-product visual/accessibility QA across phone, tablet, desktop, light/dark/live modes and all state families | Later | P1 | VISUAL-01/02 and the relevant VISUAL-03 waves |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
@@ -61,8 +61,8 @@ When there is capacity, prefer this sequence unless production evidence changes 
 
 1. ~~Close PR #196 as the preferred Drill Maker baseline for the visual programme.~~ Done: #196 merged on 27 August 2026 and CI on `main` at `434f67f` is green across all eight jobs. PLAYERS-01 / #191 merged earlier the same day. The redesign baseline is closed.
 2. ~~Run **VISUAL-00**, the Design Read.~~ Done. `docs/design/visual-design-read.md` (#210) is the written target visual language, captured against `main` at `434f67f`, and is the task contract for VISUAL-01.
-3. Land **VISUAL-01**, the shared foundation and shell, before route-by-route polishing. This is the point after which new feature work should inherit the new system rather than extend the old one.
-4. Run **VISUAL-02** over the stable everyday surfaces, in reviewable groups rather than one application-wide PR.
+3. ~~Land **VISUAL-01**, the shared foundation and shell, before route-by-route polishing.~~ Done: #211 merged on 27 August 2026. New feature work now inherits the new system rather than extending the old one.
+4. Run **VISUAL-02** over the stable everyday surfaces, in reviewable groups rather than one application-wide PR. In progress: seven pull requests, #212 to #218, have adopted Registered Players, Activity, Account, Login and Set Password, Feedback, and Admin Users and Admin Teams; Home, Sessions and the remaining admin screens are still to come.
 5. Continue **VISUAL-03** alongside the functional roadmap: Planner/week-plan authoring with COACH-11/12/13, Training Day/setup with COACH-5/6/7/8, public/share only after DRILL-02b, and Live coordinated with LIVE-01/02 and accessibility.
 6. Finish with **VISUAL-04**, a whole-product phone-first visual/accessibility QA pass.
 
@@ -364,7 +364,7 @@ These documents contain deeper design history and security decisions. They do no
 - `docs/roadmaps/content-sharing-roadmap.md` — public content-sharing architecture and security model.
 - `docs/roadmaps/share-packs-roadmap.md` — later multi-item public sharing design.
 - `docs/roadmap/foundation-retrospective.md` — completed security/foundation programme history.
-- `docs/product/coaching-workflow/` — end-to-end coaching workflow design (reconciled 18 August 2026 after the completed coach discovery, then corrected: stations and the games phase are declared on an activity rather than inferred from its coaching phase; the games phase is ONE activity carrying a game count, because activities are sequential and summed; venue layouts are scoped to venue, season and age group rather than to a venue alone, and a session's season resolution fails closed rather than falling back to the current season): current-state audit, target product model, data-model proposal, share-boundary analysis and a thirteen-slice implementation plan. The product model is settled, no product question is outstanding. COACH-2/3/4/10 have since shipped; the remaining slices stay sequenced by their actual dependencies and any migration is registered against the hosted ledger head it will really run against. Start at `docs/product/coaching-workflow/README.md`.
+- `docs/product/coaching-workflow/` — end-to-end coaching workflow design (reconciled 18 August 2026 after the completed coach discovery, then corrected: stations and the games phase are declared on an activity rather than inferred from its coaching phase; the games phase is ONE activity carrying a game count, because activities are sequential and summed; venue layouts are scoped to venue, season and age group rather than to a venue alone, and a session's season resolution fails closed rather than falling back to the current season): current-state audit, target product model, data-model proposal, share-boundary analysis and a thirteen-slice implementation plan. The product model is settled, no product question is outstanding. COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10 have shipped (#198, #202, #203, #204, #206, #207) and the one content-sharing Edge deploy COACH-2A left outstanding has run. COACH-1, the club team order (`teams.sort_order`, migration M1), is the next coaching slice and the first gated coaching migration; it and every later migration is numbered and registered against the hosted ledger head at its own review, never against the highest file on disk. Start at `docs/product/coaching-workflow/README.md`.
 
 ## Roadmap rules
 
@@ -379,30 +379,40 @@ These documents contain deeper design history and security decisions. They do no
 
 ## Done
 
+Dates are merge dates in UTC, as GitHub records `merged_at`; a merge late on a British Summer Time evening is therefore listed under the earlier day.
+
 | Item | PR | Date |
 |---|---|---|
 | Training-first sessions / All events widening | #165 | 11 Aug 2026 |
 | Training Day “Players & groups” foundation | #167, #172, #176 | 11–15 Aug 2026 |
 | Session lifecycle and stale-live corrections | #166, #172, #174 | 11–12 Aug 2026 |
-| Spond population/count presentation and event classification | #168, #175 | 11–15 Aug 2026 |
+| Spond population/count presentation and event classification | #168, #175 | 11–12 Aug 2026 |
 | Drill Maker C1 diagram editor | #169 | 11 Aug 2026 |
 | Gated production migration workflow | #170 | 11 Aug 2026 |
-| Production migration ledger reconciliations through 0047 | #171, #173 | 12 Aug 2026 |
+| Production migration ledger reconciliations through 0047 | #171, #173 | 11–12 Aug 2026 |
 | PLAN-01 — Add from Library session planning | #179 | 15 Aug 2026 |
 | SPOND-02 — staff and non-player Spond members excluded from linking | #178 | 15 Aug 2026 |
 | SPOND-03a — setup diagnostics for unmatched registered players | #182 | 15 Aug 2026 |
 | OPS-01 — hosted ledger reconciliation after 0048 | #183 | 15 Aug 2026 |
 | REG-01 — stored guest removal settles correctly | #184 | 15 Aug 2026 |
 | TRAIN-01 — session day player and bib overview | #185 | 15 Aug 2026 |
-| SPOND-04 — British English copy sweep and a widened tripwire | #186 | 15 Aug 2026 |
-| SPOND-05 — Spond API and boundary documents reconciled with the code | #186 | 15 Aug 2026 |
-| SPOND-06 — deterministic Spond location to venue prefill | #186 | 15 Aug 2026 |
+| SPOND-04 — British English copy sweep and a widened tripwire | #186 | 16 Aug 2026 |
+| SPOND-05 — Spond API and boundary documents reconciled with the code | #186 | 16 Aug 2026 |
+| SPOND-06 — deterministic Spond location to venue prefill | #186 | 16 Aug 2026 |
 | SPOND-01 — registered players reconciled against Spond members | #187 | 16 Aug 2026 |
 | SPOND-03 — member-to-player linking UX, duplicate-member case included | #187 | 16 Aug 2026 |
 | SPOND-08 — current-season team reconciled from a proved Spond link | #190, #192 | 16–17 Aug 2026 |
 | OPS-03 — hosted ledger reconciliation after 0049 | #199 | 20 Aug 2026 |
+| COACH-2A — activity structure model and the active session duration | #198 | 20 Aug 2026 |
 | OPS-04 — live sharing state preserved across content-sharing deploys | #200 | 21 Aug 2026 |
+| COACH-2B — stations, the games phase and session stand-down authoring | #202 | 21 Aug 2026 |
+| COACH-3 — suggested setup generator and the Players & groups screen | #203, #204 | 21–22 Aug 2026 |
+| COACH-4 — saved groups preserved as attendance changes | #206 | 22 Aug 2026 |
+| COACH-10 — one activity editor shared by the planner and week plans | #207 | 22 Aug 2026 |
 | OPS-05 — hosted ledger reconciliation after 0050 | #208 | 23 Aug 2026 |
 | PLAYERS-01 — bulk player deletion | #191 | 27 Aug 2026 |
+| Drill Maker opens a new diagram on a blank area | #196 | 27 Aug 2026 |
+| VISUAL-00 — the OTJ design read | #210 | 27 Aug 2026 |
+| VISUAL-01 — shared visual foundation and application shell | #211 | 27 Aug 2026 |
 
 Update this table as subsequent roadmap items ship.

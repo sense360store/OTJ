@@ -9,10 +9,13 @@ principles that follow. It is the "why" behind every later document.
 Three labels are used throughout this document set and mean exactly one thing
 each:
 
-- **Today** is current repository behaviour, verified against `main` at
-  `afe790d`. `00-current-state-audit.md` carries the evidence.
-- **Target** is approved product behaviour from coach discovery. None of it is
-  built.
+- **Today** is current repository behaviour as the audit found it, verified
+  against `main` at `afe790d`. `00-current-state-audit.md` carries the
+  evidence, and a section a later slice has overtaken carries a superseded
+  marker there.
+- **Target** is approved product behaviour from coach discovery. Five slices of
+  it are built (COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10, recorded in
+  the README's Implementation status as of 2 September 2026); the rest is not.
 - **Unresolved** is something still to be decided. **No product or club question
   is outstanding**; what remains is three decisions taken at a migration's own
   review, named in `08-open-questions.md`, and none is hidden inside a target

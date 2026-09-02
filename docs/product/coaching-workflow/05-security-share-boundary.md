@@ -230,8 +230,9 @@ auto-merged:
 | Everything else | Ordinary PR review | The setup generator, the setup map, the station screen, the game plan UI, the authoring seam and the adaptation journeys touch no security boundary. |
 
 **Each gated migration is registered against the hosted head it will actually run
-against**, and none of them assumes or modifies reviewed migration `0050`, which
-open draft PR #191 owns (`04-data-model-proposal.md` section 8).
+against**, and none of them assumed or modified reviewed migration `0050`, which
+PR #191 carried until it merged on 27 August 2026 (`04-data-model-proposal.md`
+section 8).
 
 **No item in this programme needs a full RLS or auth review**, which is a change
 from the previous revision and is a direct consequence of withdrawing the

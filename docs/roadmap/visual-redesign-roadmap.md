@@ -1,8 +1,8 @@
 # OTJ visual redesign roadmap
 
-Status: approved direction. VISUAL-00 delivered; VISUAL-01 is next and implementation has not started.
+Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in seven pull requests, with Home, Sessions and the remaining admin screens still to come.
 
-Created: 27 August 2026. VISUAL-00 completed 27 August 2026.
+Created: 27 August 2026. VISUAL-00 completed 27 August 2026. VISUAL-01 completed 27 August 2026 (merged at 23:16 UTC, which was already 28 August in Yorkshire). Last reviewed 2 September 2026.
 
 This document defines the visual redesign programme for OTJ Training Hub. The master roadmap remains the source of truth for priority and status; this file owns the detailed visual-redesign sequence and acceptance criteria.
 
@@ -96,6 +96,20 @@ Then apply them to the shared shell: sidebar, top bar, content frame and mobile 
 
 **Acceptance.** Existing behaviour tests stay green. Desktop and phone navigation remain functionally identical. The shell, primitive states and core responsive behaviour are visually checked before the next wave.
 
+**Delivered** in #211 on 27 August 2026, implementing the Part 2 decisions of
+`docs/design/visual-design-read.md`. The token set, the primitives (including
+the danger and on-dark button variants, `Note` and `Sheet`) and the shared shell
+landed together, and the five Part 4 acceptance surfaces (Home, Sessions, Login,
+the More sheet and a dialog) were checked in both themes at every width each
+exists at, in every capability variant each renders, with the full suite green.
+The table and badge primitives were not accepted in this wave, as Part 4 says
+they cannot be: the product's only table and only status badges are on
+Registered Players, so both were accepted with that surface under VISUAL-02.
+One Codex finding, that the classification-to-semantic retarget touches routes
+scheduled for later waves, was accepted as foundation work rather than route
+adoption, for the reasons recorded on its thread. Presentation only: no route,
+permission, RLS, query, data semantic, migration or Edge Function change.
+
 ### VISUAL-02 — Stable everyday surfaces
 
 **Outcome.** The main routes coaches and admins use today consistently use the new system.
@@ -107,6 +121,14 @@ Home, Sessions and Login also appear as VISUAL-01 acceptance surfaces in `docs/d
 Players is deliberately in this wave only after #191, so bulk selection, dependency preview and destructive confirmation are redesigned once against their final application behaviour rather than being restyled on a moving branch.
 
 **Acceptance.** Every surface covers normal, loading, empty, error, read-only/permission-limited and narrow-phone states where those states are reachable. Destructive flows remain unmistakably destructive and preserve their existing confirmation semantics.
+
+**Status, 2 September 2026: in progress.** Adopted, each in its own reviewed
+PR: Registered Players (#212, #213), Activity (#214), Account (#215), Login and
+Set Password (#216), Feedback (#217), and Admin Users and Admin Teams (#218).
+Not yet adopted from the initial surface group: Home and Sessions, which are
+also VISUAL-01 acceptance surfaces and so have been checked but not adopted in
+full, and the admin screens beyond Users and Teams. The wave is Done when the
+whole initial surface group is adopted, not before.
 
 #### Registered Players: complete
 

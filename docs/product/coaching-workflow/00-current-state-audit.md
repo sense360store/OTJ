@@ -214,6 +214,11 @@ drill from the planner.** `DrillFormModal` is reachable from `Home.tsx`,
 
 ### There are already two activity editors, not one
 
+**Superseded by COACH-10 (#207).** This section is a snapshot captured before
+that slice: the planner and `TemplateFormModal` now mount one shared
+`ActivityListEditor` (`src/components/ActivityListEditor.tsx`), and the
+duplication described below no longer exists.
+
 `src/components/TemplateFormModal.tsx` carries its own activities editor, whose
 own comment says it "mirrors the planner": it mounts the same `AddDrillModal`
 (`:188`), adds the same custom activity literal
@@ -850,14 +855,15 @@ payload pinned by a test.
 
 ## 25. Migration ledger position
 
-- The highest migration file on disk on `main` is `0049_spond_team_reconcile.sql`,
-  applied to production on 17 August 2026. The hosted head is no longer 0049's
-  row: it is `20260823065041` (`bulk_delete_players`), applied 23 August 2026.
-- **`0050_bulk_delete_players.sql` is claimed by open draft PR #191**
-  (PLAYERS-01), and was applied to production on 23 August 2026 from that
+- The highest migration file on disk on `main` is `0050_bulk_delete_players.sql`
+  (re-verified 2 September 2026 against `main` at `3cb20f9`), applied to
+  production on 23 August 2026. The hosted head is its row, `20260823065041`
+  (`bulk_delete_players`).
+- **`0050_bulk_delete_players.sql` arrived in PR #191** (PLAYERS-01, merged
+  27 August 2026), and was applied to production on 23 August 2026 from that
   branch's reviewed commit, ahead of the branch merging, which is the reverse
   rollout order its register entry documents. So the first migration of any new
-  programme is `0051` at the earliest.
+  programme is `0051`, pinned to the head above at its own review.
 - The live ledger is the authority, not the highest file on disk. Confirm the next
   free number against it before writing a migration (`CLAUDE.md`, Data model).
 
@@ -1026,7 +1032,9 @@ one that does not exist yet.
 4. **Authoring is already duplicated across two editors.** The planner and
    `TemplateFormModal` each maintain their own activity list, add bar, custom
    activity literal and row component (section 9). Any authoring work must go
-   through one seam or it will diverge three ways.
+   through one seam or it will diverge three ways. **Superseded by COACH-10
+   (#207)**, which is that seam: both hosts now mount
+   `src/components/ActivityListEditor.tsx`.
 
 5. **Venue is a word.** Every layout concept is new. `venues` carries a name and
    nothing else, so there is no coordinate space, no geometry and no imagery to

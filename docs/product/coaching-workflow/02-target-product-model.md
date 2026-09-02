@@ -1,7 +1,9 @@
 # Target product model
 
 Status: approved product model, reconciled 18 August 2026 after the completed
-coach discovery. Nothing here is built. Every claim about what exists today is
+coach discovery. Five slices of it are built (COACH-2A, COACH-2B, COACH-3,
+COACH-4 and COACH-10, recorded in the README's Implementation status as of
+2 September 2026); the rest is design. Every claim about what exists today is
 carried by `00-current-state-audit.md`.
 
 This document decides what each concept **is**: a reference, a copy, a derived
