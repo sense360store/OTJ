@@ -1,8 +1,11 @@
 # Implementation plan
 
-Status: proposal, reconciled 18 August 2026 against `main` at `afe790d`.
-**Nothing in this plan has been implemented.** A settled design is not delivered
-work, and no slice below is Done.
+Status: proposal, reconciled 18 August 2026 against `main` at `afe790d`;
+delivery status re-verified 2 September 2026 against `main` at `3cb20f9`.
+**Five slices are built** (COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10,
+each recorded under its own heading below with its pull request), **COACH-1 is
+next** as the first gated coaching migration, and everything else remains
+design. A settled design is not delivered work.
 
 The order was re-derived from scratch after coach discovery, then corrected once
 more when two of its own conclusions turned out to be wrong: structure was being
@@ -27,12 +30,16 @@ turned out to be finished or unnecessary.
 | Migration gate hardening | **Merged.** PR #195. |
 | Groups, bibs, inclusion, attendance, quick add, Save groups | Shipped. `src/lib/tonight.ts` and `SessionRegister.tsx`. |
 | Session lifecycle, event classification, the calendar export | Shipped and correct. Untouched by this programme. |
-| Migration numbering | `0049` is the highest on disk. `0050` is claimed by open draft PR #191. |
+| COACH-2, declared stations and games | **Merged.** #198 (COACH-2A) and #202 (COACH-2B). |
+| COACH-3, the suggested setup | **Merged.** #203 (the generator) and #204 (the screen). |
+| COACH-4, the setup preserved across attendance changes | **Merged.** #206. |
+| COACH-10, the shared authoring seam | **Merged.** #207. |
+| Migration numbering | `0050_bulk_delete_players.sql` is the highest on disk and was applied on 23 August 2026; the hosted head is `20260823065041` / `bulk_delete_players` (read 2 September 2026). The next free number is `0051`, and it stays unclaimed until a register entry pins it to that head. |
 
-**Two open pull requests must stay separate from this work**, and nothing here
-belongs in either: **#191** (draft, PLAYERS-01 bulk permanent deletion, carrying
-migration `0050`) and **#196** (open, not draft, Drill Maker opening on a blank
-area).
+**The two pull requests that had to stay separate from this work have both
+merged**, on 27 August 2026, with nothing from this programme in either:
+**#191** (PLAYERS-01 bulk permanent deletion, carrying migration `0050`) and
+**#196** (Drill Maker opening on a blank area).
 
 ## 2. What this reconciliation removed
 
@@ -72,6 +79,9 @@ human review that is not auto-merged.
 
 ### COACH-1: the club's team order
 
+**Status.** Next. The first gated coaching migration, as its own PR; the reorder
+affordance follows in its own small frontend PR once the column exists.
+
 **Outcome.** An admin states the club's ordering of its own teams, so every later
 suggestion has ability context without a per-player field.
 
@@ -94,6 +104,13 @@ that the write still takes `teams.manage`.
 **PR boundary.** One gated migration PR. One small frontend PR.
 
 ### COACH-2: declare the stations and the games
+
+**Status.** Built. #198 (COACH-2A: the model, both mappers, the template
+boundary and all four duration consumers) and #202 (COACH-2B: the marking
+affordances and the declared line on both surfaces, and the Not running
+tonight toggle on the dated session planner alone, since `skipped` is session
+local). The Edge deploy for `_shared/share.ts` has run; see the README's
+Implementation status.
 
 **Outcome.** A plan says explicitly which activities are the carousel stations
 and which are the evening's small-sided games, and which stations are not being
@@ -200,6 +217,10 @@ authoring affordances.
 
 ### COACH-3: the suggested setup
 
+**Status.** Built. #203 (the pure generator) and #204 (the Players and groups
+screen). With `sort_order` absent it keeps teams whole and says the order is
+unset, which is the degradation this section asks for.
+
 **Outcome.** One or two days out, a coach opens the session and the night is
 already drafted: the station count, the groups, and a colour for each.
 
@@ -265,6 +286,8 @@ degrading honestly without it and saying the order is unset.
 **PR boundary.** One PR for the pure generator and its tests. One for the screen.
 
 ### COACH-4: keeping the coach's work when attendance changes
+
+**Status.** Built. #206.
 
 **Outcome.** Replies arriving after the coach has arranged the night do not throw
 the arrangement away.
@@ -542,6 +565,8 @@ per-recipient variant. No public projection.
 
 ### COACH-10: one authoring seam
 
+**Status.** Built. #207.
+
 **Outcome.** The planner and the week plan editor stop maintaining two activity
 editors.
 
@@ -720,36 +745,41 @@ Edge Function deploy or a Spond change.**
 
 ## 5. Recommended sequence, and how the migrations are timed
 
-**The four migration slices are not sequenced by this list.** Open draft PR #191
-owns reviewed migration `0050`, this programme does not modify it, and a file
-number reserves nothing: the reviewed register pins every migration to the hosted
+**The four migration slices are not sequenced by this list.** A file number
+reserves nothing: the reviewed register pins every migration to the hosted
 ledger head it was written against, so an entry cannot even be written until that
-head is known (`04-data-model-proposal.md` section 8).
+head is known (`04-data-model-proposal.md` section 8). When this plan was
+written, open draft PR #191 owned reviewed migration `0050`; it merged on
+27 August 2026 and `0050` was applied on 23 August, so the hosted head observed
+on 2 September 2026 is `20260823065041` / `bulk_delete_players`. The first
+coaching migration pins whatever the head is at its own review, which is that
+row only if nothing else has applied first.
 
-**So the non-migration slices lead, and each migration is authored, numbered and
+**So the non-migration slices led, and each migration is authored, numbered and
 registered when it is ready for its own application review, against the live
 ledger as it stands then.**
 
-### The migration-free run, which can start today
+### The migration-free run, now complete
 
-1. **COACH-2**, declare the stations and the games. No schema, two mapper
-   entries, and it is the root of everything operational. It also removes the
-   last reason anyone would reach for a blocks column, and it fixes a defect
-   rather than adding a feature: today nothing in the data says what a station
-   is.
-2. **COACH-3**, the suggested setup. The slice a coach feels: "26 confirmed, 5
-   stations, 5 groups, everyone has a colour", 24 to 48 hours out. It wants
-   COACH-1 for banding and degrades honestly without it, saying the order is
-   unset.
-3. **COACH-4**, preserving the coach's setup when attendance changes.
-4. **COACH-10**, the authoring seam, whenever capacity allows. It is a pure
-   refactor provable against two existing suites.
+1. ~~**COACH-2**, declare the stations and the games.~~ Built: #198 and #202.
+   No schema, two mapper entries, and it is the root of everything operational.
+   It also removed the last reason anyone would reach for a blocks column, and
+   it fixed a defect rather than adding a feature: before it nothing in the
+   data said what a station is.
+2. ~~**COACH-3**, the suggested setup.~~ Built: #203 and #204. The slice a coach
+   feels: "26 confirmed, 5 stations, 5 groups, everyone has a colour", 24 to 48
+   hours out. It wants COACH-1 for banding and degrades honestly without it,
+   saying the order is unset.
+3. ~~**COACH-4**, preserving the coach's setup when attendance changes.~~ Built:
+   #206.
+4. ~~**COACH-10**, the authoring seam.~~ Built: #207. A pure refactor proved
+   against two existing suites.
 
 ### The migration slices, in dependency order
 
-5. **COACH-1**, `teams.sort_order`. One nullable column on a five-row table, and
-   the smallest possible first migration for this programme. It upgrades COACH-3
-   from "keeps teams whole" to "combines adjacent bands".
+5. **COACH-1**, `teams.sort_order`. **Next.** One nullable column on a five-row
+   table, and the smallest possible first migration for this programme. It
+   upgrades COACH-3 from "keeps teams whole" to "combines adjacent bands".
 6. **COACH-5**, the `venue_layouts` table. The largest single review in the
    programme: a new table, a new shape boundary, RLS mirroring `venues`, and the
    season and age group resolution.

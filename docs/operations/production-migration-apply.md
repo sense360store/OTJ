@@ -25,8 +25,9 @@ order where each one fails before the next can do damage.
 the reverse rollout order its register entry documents: `main` auto-deploys to
 Vercel and the new Registered players screens call these functions, so merging
 first would have shipped a client calling functions the database did not have.
-Until #191 merges, the migration file and its register entry live on that
-branch; the hosted ledger, which is the authority, already records the apply.
+#191 merged on 27 August 2026, so the migration file and its register entry are
+on `main`; the hosted ledger, which is the authority, had already recorded the
+apply.
 
 `0047` stays in the dropdown and in `REVIEWED_MIGRATIONS` now that it has run.
 Entries are never removed once applied: the register is the closed list of what

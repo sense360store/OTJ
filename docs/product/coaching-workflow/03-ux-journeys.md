@@ -1,6 +1,8 @@
 # Target UX journeys
 
-Status: approved product model, reconciled 18 August 2026. Nothing here is built.
+Status: approved product model, reconciled 18 August 2026. The journeys that
+COACH-2, COACH-3, COACH-4 and COACH-10 deliver are built (the README's
+Implementation status, 2 September 2026); the rest is design.
 
 Eight journeys, written as what the coach does rather than as screens. Each names
 the existing components it reuses, because the point of the audit was to find

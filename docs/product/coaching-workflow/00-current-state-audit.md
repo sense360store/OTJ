@@ -7,7 +7,12 @@ genuinely changed have been edited: PR #189 has merged, so the drill diagram now
 renders across session delivery (sections 7, 18); the internal club link share was
 missed by the first pass and is recorded in a new section 24; the migration ledger
 position has moved on (section 25); and section 22's conclusion has been withdrawn
-now that nothing consumes it, while its arithmetic stands.
+now that nothing consumes it, while its arithmetic stands. **Re-read
+2 September 2026 against `main` at `3cb20f9`:** the passages that COACH-2
+(#198, #202), COACH-3 (#203, #204), COACH-4 (#206) and COACH-10 (#207) have
+overtaken carry a superseded or built marker where they stand (sections 2, 4,
+5, 9, 16, 17, 20 and 27, and the notable findings), and the rest is left as
+captured.
 
 This is the factual half of the coaching workflow discovery. It answers the
 questions the overhaul depends on, with the repository path, table or function
@@ -45,7 +50,7 @@ The columns that matter here:
 
 | Column | Meaning |
 |---|---|
-| `activities` jsonb | The plan. An array of `{ phase, drill_id?, title?, duration }`. |
+| `activities` jsonb | The plan. An array of `{ phase, drill_id?, title?, duration }` when this was captured; **since COACH-2 (#198, #202)** each entry may also carry `slot` (`'station'` or `'game'`, the declared structure) and `skipped` (`true` only, session local, stripped from every week plan). Section 27 carries the mapper detail. |
 | `date`, `start_time` | Local wall clock, read as parts, never `Date.parse`. |
 | `venue_id` | The chosen venue (0044). `venue` free text is FROZEN. |
 | `team_id` | FROZEN legacy single team. Coverage is `session_teams`. |
@@ -97,11 +102,18 @@ Nothing is stored and nothing writes. `sessions.status` is only ever set to
 Through `activities[].drill_id`. That is the only relationship. There is no join
 table, no ordering table and no per-session drill row.
 
-`Activity` (`src/lib/data.ts:302`) is exactly four optional-ish fields:
+`Activity` (`src/lib/data.ts:302`) was exactly four optional-ish fields when
+this was captured:
 
 ```ts
 interface Activity { phase: Phase; drillId?: string; title?: string; duration: number }
 ```
+
+**Superseded in part by COACH-2A (#198):** `Activity` now extends
+`StructuredActivity` (`src/lib/activityStructure.ts`) and carries `slot` and
+`skipped` beside those four; both mappers name both keys, and the template
+boundary strips `skipped` on the way into a week plan. The rule below is
+unchanged and is exactly why those two keys had to be added to both mappers.
 
 `toActivity` / `toActivityRow` (`src/lib/queries.ts:289`, `:296`) rebuild the
 object field by field from that allow-list, so **any key added to the stored
@@ -111,16 +123,24 @@ next save**. `sessions.activities` itself carries **no check constraint**
 
 ## 5. Is a session activity a snapshot or a reference?
 
-**A reference, with two per-session overrides.**
+**A reference, with two per-session overrides** when this was captured, and
+**four since COACH-2 (#198, #202)**: `slot` (which is also carried by a week
+plan, because it belongs to the plan) and `skipped` (session local only) join
+the two below. The reference itself is unchanged.
 
 - `duration` and `phase` are stored on the activity, so they are session-local.
 - Everything else (title, summary, coaching points, setup notes, equipment,
   area, players guidance, STEP adaptations, the attached media item, the
   diagram) is read live from the referenced `drills` row.
 - A "custom" activity has `title` and no `drillId`. It is the only session-local
-  content in the model, and it carries nothing but a title, a phase and a
-  duration. `src/routes/Planner.tsx:1194` creates one as
-  `{ phase: 'Skill', title: 'Custom activity', duration: 10 }`.
+  content in the model. When captured it carried nothing but a title, a phase
+  and a duration, created by the planner as
+  `{ phase: 'Skill', title: 'Custom activity', duration: 10 }`. Since COACH-2
+  (#198, #202) it carries the same two structural keys as any other row: the
+  role controls in `src/components/ActivityListEditor.tsx` render on every row,
+  drill or custom, so a custom row can be marked a station or the games phase
+  (`slot`), and on a dated session a custom station can be stood down
+  (`skipped`). It still carries no drill content.
 
 ## 6. What changes if a referenced drill is edited later
 
@@ -213,6 +233,11 @@ drill from the planner.** `DrillFormModal` is reachable from `Home.tsx`,
 `Library.tsx` and `DrillDetail.tsx` only.
 
 ### There are already two activity editors, not one
+
+**Superseded by COACH-10 (#207).** This section is a snapshot captured before
+that slice: the planner and `TemplateFormModal` now mount one shared
+`ActivityListEditor` (`src/components/ActivityListEditor.tsx`), and the
+duplication described below no longer exists.
 
 `src/components/TemplateFormModal.tsx` carries its own activities editor, whose
 own comment says it "mirrors the planner": it mounts the same `AddDrillModal`
@@ -405,14 +430,23 @@ Edge Functions in the repository: `fa-import`, `fa-import-programme`,
   client only, no migration (section 18).
 - Creating a drill while planning. `useInsertDrill` already exists; this is
   navigation, a modal and a shared authoring seam serving both the planner and
-  the week plan editor (section 9).
+  the week plan editor (section 9). **The seam is built (COACH-10, #207,
+  `src/components/ActivityListEditor.tsx`); creating a drill from it is
+  COACH-11 and is not.**
 - The suggested split of attending children into groups. Groups are already
   derived from bib colour; a suggestion is a pure function over the draft.
+  **Built in COACH-3 (#203, #204)** as `src/lib/sessionSetup.ts` and the
+  Players and groups screen, client only as predicted, and **COACH-4 (#206)**
+  preserves it as attendance changes.
 - The readiness readout for a session. Derivable from data already read.
+  **Built in COACH-3 (#204).**
 - The station list, its numbering and its count, derived from the activities
-  that **declare** themselves stations. Section 20 proves the plan carries no
-  such declaration today and that `Phase` cannot supply one, so the declaration
-  is what the target model adds; only the **derivation from it** is free.
+  that **declare** themselves stations. Section 20 proves the plan carried no
+  such declaration when this was written and that `Phase` cannot supply one, so
+  the declaration is what the target model adds; only the **derivation from
+  it** is free. **Built in COACH-2 (#198, #202):** the declaration is `slot` on
+  the activity and the derivation is `src/lib/activityStructure.ts`, client
+  only and with no migration, as predicted.
 - Rotation arithmetic and the "your group starts at station N" statement, since
   starting stations are derived rather than stored (section 22).
 - Sharing a session with another coach, which already ships and is client only
@@ -491,12 +525,23 @@ correct today, because today a zero total can only mean an empty plan. It stops
 being correct the moment a filter can empty the sum, which is exactly what the
 target rule introduces.
 
-**Superseded by COACH-2A.** This section is a snapshot captured before that
-slice, and the quoted body above is no longer what the file contains. All four
-implementations now defer to `src/lib/activityStructure.ts`, and
-`plannedMinutes` tells the two zeros apart rather than falling back on either.
-`04-data-model-proposal.md` section 2 carries the corrected rule and why the
-mechanism first proposed for it was rejected.
+**Superseded by COACH-2A (#198).** This section is a snapshot captured before
+that slice, and the quoted body above is no longer what the file contains. The
+three BROWSER implementations now share one rule: `sessionMinutes`
+(`src/lib/data.ts`) and `plannedMinutes` (`src/lib/sessionLifecycle.ts`) both
+call `activeActivityMinutes` from `src/lib/activityStructure.ts`, and the
+planner's own inline reduce is gone, `Planner.tsx` calling `sessionMinutes`
+instead. `plannedMinutes` tells the two zeros apart rather than falling back on
+either. The fourth implementation, `buildSessionSnapshot` in
+`supabase/functions/_shared/share.ts`, is a DELIBERATE DUPLICATE in Deno, not a
+fourth caller of the browser module: it cannot import from `src/lib/`, so it
+carries its own `isStoodDownActivity` predicate, which `share_test.ts` pins to
+the same cases `activityStructure.test.ts` pins. Any future change to the
+active-duration rule therefore has to reach that file separately and go out
+through the content-sharing Edge deploy, which is exactly the follow-up
+COACH-2A left and the README records as run. `04-data-model-proposal.md`
+section 2 carries the corrected rule and why the mechanism first proposed for
+it was rejected.
 
 **The Deno implementation is a different runtime, not a second call site.**
 `share.ts` runs in Supabase Edge Functions and cannot import from `src/lib/`.
@@ -597,6 +642,15 @@ order`, all of which except the last already exists.
 without storing anything". That is false, and the code below is what disproves
 it.**
 
+**Superseded in part by COACH-2A (#198) and COACH-2B (#202).** The analysis of
+`Phase` below still holds, and it is why structure is DECLARED on the activity
+rather than inferred from the phase. What is no longer true is the sentence
+"what the plan does record structurally today: nothing": `sessions.activities`
+now carries `slot` and `skipped` beside `phase`, `duration`, `drill_id` and
+`title` (section 27); both authoring surfaces set `slot`, only the dated
+session planner sets `skipped`, and `src/lib/activityStructure.ts` derives the
+station list, its numbering and its count from the declaration. `gameCount` (COACH-8) is still not built.
+
 `Phase` (`src/lib/data.ts:9`) is `'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'`,
 and `PHASES` (`:533`) is the ordered list the planner and the week plan editor
 both render.
@@ -620,10 +674,12 @@ the night:
 - The coach may also change a phase for coaching reasons that have nothing to do
   with structure.
 
-**What the plan does record structurally today: nothing.** There is no field
-saying which activities are the carousel, which one is the games phase, or how
-many pitches run inside it. `sessions.activities` carries `phase`, `duration`,
-`drill_id` and `title`, and that is the whole of it (section 4).
+**What the plan recorded structurally when this was written: nothing.** There
+was no field saying which activities are the carousel, which one is the games
+phase, or how many pitches run inside it. `sessions.activities` carried
+`phase`, `duration`, `drill_id` and `title`, and that was the whole of it
+(section 4), until COACH-2 added `slot` and `skipped` (section 27); how many
+pitches run inside the games phase is still not recorded.
 
 **What it does record usefully is order**, which is what station numbering can be
 built on **once the stations are declared**. The declaration is
@@ -850,14 +906,20 @@ payload pinned by a test.
 
 ## 25. Migration ledger position
 
-- The highest migration file on disk on `main` is `0049_spond_team_reconcile.sql`,
-  applied to production on 17 August 2026. The hosted head is no longer 0049's
-  row: it is `20260823065041` (`bulk_delete_players`), applied 23 August 2026.
-- **`0050_bulk_delete_players.sql` is claimed by open draft PR #191**
-  (PLAYERS-01), and was applied to production on 23 August 2026 from that
+- The highest migration file on disk on `main` is `0050_bulk_delete_players.sql`
+  (re-verified 2 September 2026 against `main` at `3cb20f9`), applied to
+  production on 23 August 2026. The hosted head is its row, `20260823065041`
+  (`bulk_delete_players`).
+- **`0050_bulk_delete_players.sql` arrived in PR #191** (PLAYERS-01, merged
+  27 August 2026), and was applied to production on 23 August 2026 from that
   branch's reviewed commit, ahead of the branch merging, which is the reverse
-  rollout order its register entry documents. So the first migration of any new
-  programme is `0051` at the earliest.
+  rollout order its register entry documents. So, as observed on 2 September
+  2026, the next free number is `0051` and the head is the row above. Both are
+  observations of the live state that day and not reservations: the number and
+  the `expected_previous_*` pin are taken from the ledger as it stands at that
+  migration's own review, and are that number and that row only if nothing else
+  has been registered or applied first, which is the rule the next paragraphs
+  state.
 - The live ledger is the authority, not the highest file on disk. Confirm the next
   free number against it before writing a migration (`CLAUDE.md`, Data model).
 
@@ -996,7 +1058,10 @@ one that does not exist yet.
    shows the plan carries nothing that can supply it: the phase records what kind
    of drill was added, not what part it plays on the night. The one duration
    change the overhaul does make is a consequence of standing a station down, not
-   of the carousel maths (section 17).
+   of the carousel maths (section 17). **Superseded by COACH-2 (#198, #202):**
+   stations and the games phase are now declared on the activity by `slot`, and
+   standing one down (`skipped`) is that one duration change, in all four
+   implementations.
 
 2. **A group is a bib colour, and the derivation has a collision.**
    `tonightGroups` (`src/lib/tonight.ts:1103`) keys on `bib ?? ''`, so **two
@@ -1006,7 +1071,9 @@ one that does not exist yet.
    surfaces it. Coach discovery has since settled that unique active bib colours
    are the rule and that "No bibs" is not a valid group, so both collisions are
    now readiness failures with a defined product answer rather than open
-   questions (`02-target-product-model.md` section 6.1).
+   questions (`02-target-product-model.md` section 6.1). **Built in COACH-3
+   (#203, #204):** the suggestion assigns unique colours and the readiness
+   readout names both collisions.
 
 2b. **A session-only bib override already exists and already behaves
    correctly.** `register_entries.bib_colour_override` (0044) is per session and
@@ -1026,7 +1093,9 @@ one that does not exist yet.
 4. **Authoring is already duplicated across two editors.** The planner and
    `TemplateFormModal` each maintain their own activity list, add bar, custom
    activity literal and row component (section 9). Any authoring work must go
-   through one seam or it will diverge three ways.
+   through one seam or it will diverge three ways. **Superseded by COACH-10
+   (#207)**, which is that seam: both hosts now mount
+   `src/components/ActivityListEditor.tsx`.
 
 5. **Venue is a word.** Every layout concept is new. `venues` carries a name and
    nothing else, so there is no coordinate space, no geometry and no imagery to

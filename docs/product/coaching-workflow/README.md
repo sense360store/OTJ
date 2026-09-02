@@ -4,31 +4,50 @@ Living design documents for the end-to-end coaching workflow: programmes,
 sessions, drills, Drill Maker, the drill library, Spond attendance, groups and
 bibs, venue layout, training-day delivery and sharing.
 
-**Status: reconciled 18 August 2026 after the completed coach discovery.** The
-product model below is settled. **No application or database behaviour was
-implemented by this document set**, and a settled design is not delivered work.
+**Status: reconciled 18 August 2026 after the completed coach discovery;
+implementation status re-verified 2 September 2026.** The product model below
+is settled. This document set implemented nothing itself, and a settled design
+is not delivered work; what has been built since is recorded below, slice by
+slice, with the pull request that built it.
 
-Verified against `main` at `afe790d`, which now contains PR #189 (drill diagrams
-across session delivery) and PR #195 (migration probe totality).
+Verified against `main` at `3cb20f9`, which contains PR #189 (drill diagrams
+across session delivery), PR #195 (migration probe totality) and the five
+coaching slices listed under Implementation status.
 
 ## Implementation status
 
 Recorded here so a reader is never left guessing which of this is code and which
-is still a document. One slice has been built; everything else in these
+is still a document. Five slices have been built; everything else in these
 documents remains design.
 
 | Slice | State |
 |---|---|
-| **COACH-2A**, the activity structure model and the active session duration | **Built.** `slot` and `skipped` on an activity, `src/lib/activityStructure.ts`, the template boundary, all four session duration implementations and the public snapshot total. No migration. |
-| **COACH-2B**, the authoring affordances | Not built. Marking a station or the games phase, the Not running tonight toggle, and the line stating what is declared. |
+| **COACH-2A**, the activity structure model and the active session duration | **Built** in #198 (20 August 2026). `slot` and `skipped` on an activity, `src/lib/activityStructure.ts`, the template boundary, all four session duration implementations and the public snapshot total. No migration. |
+| **COACH-2B**, the authoring affordances | **Built** in #202 (21 August 2026). Marking a station or the games phase and the line stating what is declared, on both authoring surfaces through `src/lib/activityRole.ts`; the Not running tonight toggle on the dated session planner only, because `skipped` is session local and the week plan variant of the shared editor structurally cannot receive it. No migration. |
+| **COACH-3**, the suggested setup | **Built** in #203 (the pure generator, 21 August 2026) and #204 (the Players and groups screen, 22 August 2026). No migration. |
+| **COACH-4**, preserving the coach's setup when attendance changes | **Built** in #206 (22 August 2026). No migration. |
+| **COACH-10**, one authoring seam | **Built** in #207 (22 August 2026). No migration. |
+| **COACH-1**, the club's team order | **Next.** The first gated coaching migration (M1, `teams.sort_order`), as its own gated PR, then the reorder affordance as a small frontend PR. |
 | Everything else | Not built. |
 
-**COACH-2A leaves one operational follow-up.** It changes
-`supabase/functions/_shared/share.ts`, so the two content-sharing Edge Functions
-carry stale source until they are redeployed through
-`docs/operations/content-sharing-edge-function-deploy.md`. Until that deploy
-runs, a session shared publicly counts a stood-down activity towards its
-published total while every screen in the app does not.
+**COACH-2A's one operational follow-up has run, and no stored snapshot needs
+repairing.** COACH-2A changed `supabase/functions/_shared/share.ts`, so the two
+content-sharing Edge Functions needed redeploying through
+`docs/operations/content-sharing-edge-function-deploy.md`. They were: the
+hosted `read-content-share` (version 11) and `manage-content-share` (version 7)
+were both deployed at 12:07 UTC on 21 August 2026, and on 2 September their
+deployed source was read back through the Supabase API and compared with
+`main`'s `_shared/share.ts` byte for byte, which it matches. A share is a
+frozen snapshot, so a snapshot minted while the OLD source was live would keep
+its old total whatever is deployed later; that window is empty here for two
+independent reasons. The only way to stand an activity down is the COACH-2B
+control, and #202 merged at 19:53 UTC on 21 August, after the deploy, so no
+client could write a stood-down activity while the old source was live. And
+production, read on 2 September as aggregates only, holds no session and no
+week plan carrying a `skipped` key at all, and exactly one share, created on
+10 August 2026 before COACH-2A existed. So a publicly shared session counts a
+stood-down activity exactly as every screen in the app does, and there is
+nothing to refresh.
 
 ## How to read these documents
 
@@ -37,7 +56,7 @@ Three labels are used throughout and each means exactly one thing:
 | Label | Meaning |
 |---|---|
 | **Today** | Current repository behaviour. `00-current-state-audit.md` carries the path, table or function behind every claim. |
-| **Target** | Approved product behaviour from coach discovery. Only COACH-2A is built; see Implementation status above. |
+| **Target** | Approved product behaviour from coach discovery. Which slices are built is recorded under Implementation status above. |
 | **Unresolved** | Something still to be decided. **No product or club question is outstanding**; what remains is three decisions taken at a migration's own review, listed in `08-open-questions.md`. |
 
 ## The outcome this serves
@@ -185,22 +204,25 @@ until something is stood down.
 
 Full detail, with dependencies and gates, in `06-phased-plan.md` section 5.
 
-**The migration-free slices lead**, because open draft PR #191 owns reviewed
-migration `0050` and a file number reserves nothing: the reviewed register pins
-every migration to the hosted ledger head it was written against, so an entry
-cannot be written until that head is known.
+**The migration-free slices led, and all four have shipped.** They went first
+because a file number reserves nothing: the reviewed register pins every
+migration to the hosted ledger head it was written against, so an entry cannot
+be written until that head is known, and at the time PR #191 still owned
+reviewed migration `0050`. #191 merged on 27 August 2026 and `0050` was applied
+on 23 August, so the hosted head is now `20260823065041` / `bulk_delete_players`
+(read 2 September 2026).
 
-1. **COACH-2**, declare the stations and the games. No schema, two mapper
-   entries, and the root of everything operational.
-2. **COACH-3**, the suggested setup from confirmed attendance. The slice a coach
-   actually feels, 24 to 48 hours out.
-3. **COACH-4**, preserving the coach's setup when attendance changes.
-4. **COACH-10**, the authoring seam, whenever capacity allows.
+1. ~~**COACH-2**, declare the stations and the games.~~ Built: #198 and #202.
+2. ~~**COACH-3**, the suggested setup from confirmed attendance.~~ Built: #203
+   and #204.
+3. ~~**COACH-4**, preserving the coach's setup when attendance changes.~~
+   Built: #206.
+4. ~~**COACH-10**, the authoring seam.~~ Built: #207.
 
-Then the gated migrations in dependency order: **COACH-1** (`teams.sort_order`),
-**COACH-5** (`venue_layouts`), **COACH-8** (the game bib), **COACH-12**
-(`drills.variant_of`), each authored and registered against the ledger as it
-stands at its own review.
+**COACH-1** (`teams.sort_order`) is next, as the first gated coaching
+migration. Then **COACH-5** (`venue_layouts`), **COACH-8** (the game bib) and
+**COACH-12** (`drills.variant_of`), each authored and registered against the
+ledger as it stands at its own review.
 
 **Full RLS or auth reviews: none.** One policy and grant review, COACH-5, whose
 policies mirror `venues`. **Focused content-sharing boundary reviews: two**,

@@ -849,8 +849,11 @@ wrong:
 
 ## 8. Migration sequencing, and why a file number reserves nothing
 
-**Open draft PR #191 owns reviewed migration `0050_bulk_delete_players.sql`. This
-programme does not modify it, does not depend on it, and must not assume it.**
+**PR #191 owned reviewed migration `0050_bulk_delete_players.sql`; it merged on
+27 August 2026 and `0050` was applied on 23 August, so the hosted head is
+`20260823065041` / `bulk_delete_players` (read 2 September 2026). This programme
+did not modify it and did not depend on it, and the paragraph below is why it
+could not assume it while it was open.**
 
 The production migration workflow applies one file per run, chosen from the
 closed register in

@@ -1,9 +1,12 @@
 # Roadmap reconciliation
 
-Status: proposal, reconciled 18 August 2026. **No status in
-`docs/roadmap/master-roadmap.md` has been changed by this task**, beyond two
-factual corrections named in section 5. The table changes when the proposal in
-section 2 is approved.
+Status: proposal, reconciled 18 August 2026; pull request state and delivery
+status re-read 2 September 2026 (sections 1, 2 and 6). **No status in
+`docs/roadmap/master-roadmap.md` was changed by the 18 August task**, beyond two
+factual corrections named in section 5; the 2 September pass recorded the
+shipped slices in that file's Done table and is described in section 6. The
+COACH rows proposed in section 2 are still not in the master table, which
+changes when that proposal is approved.
 
 ---
 
@@ -16,12 +19,13 @@ revision, which described two of these as open.
 |---|---|---|---|
 | **#189** | **Merged**, in `main` at `afe790d` | DRILL-02's authenticated half: saved drill diagrams on the planner, session day and both live stages | **Delivered.** Its seam is what COACH-7 mounts. No longer any part of this plan. |
 | **#195** | **Merged**, in `main` at `df41895` | OPS-02, production migration probe totality | Done on the roadmap already. Its tooling benefits this programme's four migrations. |
-| **#191** | **Open, draft** | PLAYERS-01, bulk permanent deletion, carrying migration `0050_bulk_delete_players.sql` | **Stays separate.** Nothing from this programme belongs in it, and it claims the next migration number. |
-| **#196** | **Open**, not a draft, `mergeable_state: clean`, based on `2283350` | Drill Maker opening a new diagram on a blank area | **Stays separate.** A focused default change with no schema. |
+| **#191** | **Merged** 27 August 2026, in `main` at `496fe19` (recorded as an open draft in the 18 August revision) | PLAYERS-01, bulk permanent deletion, carrying migration `0050_bulk_delete_players.sql` | **Delivered.** Nothing from this programme went into it. `0050` was applied on 23 August 2026 (hosted `20260823065041`) and the deploy pin was reconciled in #208, so the next migration number is free and is pinned to that head at its own review. |
+| **#196** | **Merged** 27 August 2026, in `main` at `2eb93c9` (recorded as open in the 18 August revision) | Drill Maker opening a new diagram on a blank area | **Delivered.** A focused default change with no schema. |
 
 **There was no open pull request for the coaching workflow discovery branch**
 before this reconciliation, checked by listing pull requests filtered on both the
-discovery branch and this one.
+discovery branch and this one. **On 2 September 2026 there were no open pull
+requests at all**, read from GitHub rather than assumed.
 
 **Two corrections to the previous revision, which is where the stale references
 came from.** It recorded #189 as open with a merge conflict and no human review,
@@ -34,24 +38,26 @@ conflict was resolved on the way in.
 Added to the current roadmap table. Statuses are proposals; nothing is set until
 approved. The namespace **COACH** is new and collides with nothing.
 
-**Only COACH-2A is Done.** A settled design is not delivered work, and the one
-slice that has been built is named as built rather than left to be inferred from
-the table below.
+**Five slices are Done: COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10**,
+shipped in #198, #202, #203 and #204, #206 and #207 between 20 and 22 August
+2026. A settled design is not delivered work, so the built slices are named as
+built rather than left to be inferred from the table below, and **COACH-1 is
+next**, as the first gated coaching migration.
 
 | ID | Workstream | Item | Proposed status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
 | COACH-00 | Coaching workflow | End-to-end coaching workflow discovery, architecture and post-discovery reconciliation | Done (docs only) | P1 | This document set. No code, no migration. |
-| COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | Later | P1 | Migration M1, gated, and sequenced against the hosted ledger rather than by filename. The one irreducible new fact. |
-| COACH-2A | Coaching workflow | The activity structure model: `slot`, `skipped`, the derivation module and the active session duration in all four implementations | **Done** | P1 | **No migration.** Two keys in the existing activity jsonb. Leaves one content-sharing Edge Function deploy outstanding. |
-| COACH-2B | Coaching workflow | The authoring affordances: mark a station or the games phase, and a Not running tonight toggle on a dated session | Next | P1 | No migration. Depends on COACH-2A. Gates COACH-3, COACH-6, COACH-7, COACH-8. |
-| COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | Next | P1 | No schema. Depends on COACH-2, wants COACH-1 and degrades honestly without it. |
-| COACH-4 | Coaching workflow | Preserve the coach's setup when attendance changes | Next | P1 | No schema. Depends on COACH-3. |
+| COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | **Next** | P1 | Migration M1, gated, registered against the hosted ledger head at its own review (`20260823065041` / `bulk_delete_players` as of 2 September 2026) rather than by filename. The one irreducible new fact. The database half is its own gated PR; the reorder affordance follows. |
+| COACH-2A | Coaching workflow | The activity structure model: `slot`, `skipped`, the derivation module and the active session duration in all four implementations | **Done** | P1 | **No migration.** Two keys in the existing activity jsonb. Shipped in #198; the content-sharing Edge Function deploy it left outstanding has since run. |
+| COACH-2B | Coaching workflow | The authoring affordances: mark a station or the games phase, and a Not running tonight toggle on a dated session | **Done** | P1 | No migration. Shipped in #202. Gates COACH-6, COACH-7, COACH-8. |
+| COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | **Done** | P1 | No schema. Shipped in #203 (generator) and #204 (screen). Wants COACH-1 and degrades honestly without it, saying the order is unset. |
+| COACH-4 | Coaching workflow | Preserve the coach's setup when attendance changes | **Done** | P1 | No schema. Shipped in #206. |
 | COACH-5 | Coaching workflow | Venue layouts scoped to venue, season and age group: four and five station layouts, one and two game visuals, admin owned | Later | P1 | Migration M2, gated, and the largest review here. New table, new shape boundary. Independent. |
 | COACH-6 | Coaching workflow | The setup map on session day | Later | P1 | Depends on COACH-2 and COACH-5. |
 | COACH-7 | Coaching workflow | The full screen station detail, browsing only | Later | P1 | Depends on COACH-6. Pull the phone half of QUALITY-02 in here. |
 | COACH-8 | Coaching workflow | The game plan and a separate game bib | Later | P2 | Migration M3, gated. Depends on COACH-3, wants COACH-1 and COACH-5. |
 | COACH-9 | Coaching workflow | Keep the protected session share reachable, and pin its payload | Later | P2 | No schema. Mostly a test. |
-| COACH-10 | Coaching workflow | One shared activity authoring seam | Next | P1 | Pure refactor, no user-visible change, no migration. Gates COACH-11 and COACH-12. |
+| COACH-10 | Coaching workflow | One shared activity authoring seam | **Done** | P1 | Pure refactor, no user-visible change, no migration. Shipped in #207. Gates COACH-11 and COACH-12. |
 | COACH-11 | Coaching workflow | Create and draw a drill from either planning surface | Later | P1 | No schema. Depends on COACH-10. |
 | COACH-12 | Coaching workflow | Adapt a drill for one session, unlisted, with Save as reusable | Later | P2 | Migration M4, gated. Depends on COACH-10. |
 | COACH-13 | Coaching workflow | Week plan naming, promotion and two deliveries of one plan | Later | P2 | No schema. |
@@ -120,11 +126,13 @@ of children will be at this place at this time" on a login-free URL that anyone
 can forward. That is a club decision with its own security review, and this
 programme neither needs it nor blocks on it.
 
-### PLAYERS-01 (Later, P2) and open draft #191
+### PLAYERS-01 (Done, #191)
 
-Unaffected, and **kept strictly separate**. It carries migration `0050`, so this
-programme's first migration is `0051` at the earliest, confirmed against the
-hosted ledger.
+Unaffected, and **kept strictly separate**. It carried migration `0050`, applied
+on 23 August 2026 (hosted `20260823065041` / `bulk_delete_players`), and #191
+merged on 27 August 2026. So this programme's first migration is numbered
+`0051` if the ledger still stands where it was read on 2 September 2026, and it
+pins the head as it is at its own review, never one read in advance.
 
 ### PLAN-01 (Done, #179) and TRAIN-01 (Done, #185)
 
@@ -192,15 +200,19 @@ after it rather than in front of it.**
 
 ### Migration sequencing, stated because it constrains the order
 
-**Open draft PR #191 owns reviewed migration `0050`. This programme does not
-modify it, does not depend on it, and must not assume it.**
+**PR #191 owned reviewed migration `0050`; it merged on 27 August 2026 and
+`0050` is applied. This programme did not modify it and did not depend on it,
+and the hosted head it left (`20260823065041` / `bulk_delete_players`, read
+2 September 2026) is the head the first coaching migration will pin only if
+nothing else has applied first; the pin itself is taken at that migration's own
+review.**
 
 The reviewed register
 (`.github/scripts/production-migration/reviewed_migrations.py`) pins every
 migration to the hosted ledger head it was written against, through
 `expected_previous_version` and `expected_previous_name`. So a file number
 reserves nothing, a register entry cannot be written before its head is known,
-and no coaching migration is authored as "the one after 0050" while `0050` is
+and no coaching migration was authored as "the one after 0050" while `0050` was
 unresolved. Each is numbered and registered at the moment it is ready for its own
 application review, against the live ledger as it stands then.
 
@@ -213,19 +225,19 @@ their own dependencies.
    restated. Not this programme's work.
 2. **QUALITY-01**, unchanged, since it gates several later items and this audit
    has reduced its cost.
-3. **COACH-2**, declaring stations and games. No migration, and the root of the
-   operational track.
-4. **COACH-3**, the suggested setup, then **COACH-4**.
-5. **COACH-10**, the authoring seam, whenever capacity allows. No migration.
+3. ~~**COACH-2**, declaring stations and games.~~ Done: #198 and #202.
+4. ~~**COACH-3**, the suggested setup, then **COACH-4**.~~ Done: #203, #204
+   and #206.
+5. ~~**COACH-10**, the authoring seam.~~ Done: #207.
 6. **COACH-1** (M1), the first gated coaching migration, timed against the
-   ledger.
+   ledger. **Next.**
 7. **COACH-5** (M2), the venue layouts table, then **COACH-6** and **COACH-7**.
 8. **COACH-8** (M3), the game plan. **COACH-9** any time.
 9. **COACH-11**, **COACH-12** (M4) and **COACH-13** on the authoring track.
 10. COACH-P1 and COACH-P2 on capacity and on evidence respectively.
 
-**#191 and #196 proceed on their own merits and are not sequenced by this
-programme.**
+**#191 and #196 proceeded on their own merits and were not sequenced by this
+programme.** Both merged on 27 August 2026.
 
 ## 5. What this task changed outside these documents
 
@@ -239,3 +251,27 @@ Two factual corrections in `docs/roadmap/master-roadmap.md`, and nothing else:
 **No status was changed, no row was added to the table, no row was removed, no
 priority was altered and nothing was moved to Done.** Roadmap rule 2 is intact
 and the history is intact.
+
+## 6. Re-verified 2 September 2026
+
+Read from `main` at `3cb20f9` and from GitHub, not carried forward from the
+18 August revision. Only factual delivery and status statements changed; no
+product design was rewritten and no priority was invented.
+
+- **#191 and #196 both merged on 27 August 2026.** Section 1's table and every
+  sentence that described either as open now say so. `0050` was applied on
+  23 August 2026 and the hosted ledger head is `20260823065041` /
+  `bulk_delete_players`, read from the hosted ledger on 2 September.
+- **COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10 are Done**, in #198, #202,
+  #203 and #204, #206 and #207. The content-sharing Edge deploy COACH-2A left
+  outstanding has run: on 2 September the deployed source of both functions
+  read back byte for byte identical to `main`'s `_shared/share.ts`.
+- **COACH-1 is the next coaching slice**, the first gated coaching migration,
+  numbered and registered against the hosted head above at its own review.
+- **In `docs/roadmap/master-roadmap.md`**, the shipped slices were added to the
+  Done table with their pull request numbers and merge dates, the Last reviewed
+  line and the coaching workflow pointer were brought up to date, and the VISUAL
+  rows were reconciled to what has merged (VISUAL-01 Done in #211, VISUAL-02 In
+  progress). The COACH rows proposed in section 2 were **not** added to the
+  master table; that remains the approval this document has always said it
+  waits for.

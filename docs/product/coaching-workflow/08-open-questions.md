@@ -50,10 +50,14 @@ ready for its own application review, never in advance.**
 
 The reviewed register pins `expected_previous_version` and
 `expected_previous_name` to the hosted head a migration was written against
-(`04-data-model-proposal.md` section 8). Open draft PR #191 owns reviewed
-migration `0050`, and this programme neither modifies it nor assumes it. A file
-number reserves nothing, so no coaching migration is authored as "the one after
-0050" while `0050` is unresolved.
+(`04-data-model-proposal.md` section 8). PR #191 carried reviewed migration
+`0050` until it merged on 27 August 2026, and `0050` was applied on 23 August;
+this programme neither modified it nor assumed it. A file number reserves
+nothing, so no coaching migration was authored as "the one after 0050" while
+`0050` was unresolved. The hosted head observed on 2 September 2026 was
+`20260823065041` / `bulk_delete_players`; COACH-1's migration pins the head as
+it stands at its own review, which is that row only if nothing else has applied
+first.
 
 ---
 

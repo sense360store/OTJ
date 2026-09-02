@@ -1,7 +1,9 @@
 # Target product model
 
 Status: approved product model, reconciled 18 August 2026 after the completed
-coach discovery. Nothing here is built. Every claim about what exists today is
+coach discovery. Five slices of it are built (COACH-2A, COACH-2B, COACH-3,
+COACH-4 and COACH-10, recorded in the README's Implementation status as of
+2 September 2026); the rest is design. Every claim about what exists today is
 carried by `00-current-state-audit.md`.
 
 This document decides what each concept **is**: a reference, a copy, a derived
@@ -1116,10 +1118,13 @@ layout around an existing seam rather than a new rendering path.
 
 ## 10. One authoring seam, two hosts
 
-**Today** the planner and `TemplateFormModal` each maintain their own activity
-list, add bar, custom activity literal and row component
-(`00-current-state-audit.md` section 9). Long range planning happens in the week
-plan editor, weeks before a dated session exists.
+**Today, as audited,** the planner and `TemplateFormModal` each maintained their
+own activity list, add bar, custom activity literal and row component
+(`00-current-state-audit.md` section 9). **Built since, in COACH-10 (#207):**
+both hosts now mount one `ActivityListEditor`
+(`src/components/ActivityListEditor.tsx`), which is the seam this section
+decides on. Long range planning happens in the week plan editor, weeks before a
+dated session exists.
 
 **Decision: authoring improvements go into one shared seam used by both hosts,
 never into the planner alone.** The seam owns the activity list and its
