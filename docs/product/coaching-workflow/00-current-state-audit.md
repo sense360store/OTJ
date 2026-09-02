@@ -509,12 +509,23 @@ correct today, because today a zero total can only mean an empty plan. It stops
 being correct the moment a filter can empty the sum, which is exactly what the
 target rule introduces.
 
-**Superseded by COACH-2A.** This section is a snapshot captured before that
-slice, and the quoted body above is no longer what the file contains. All four
-implementations now defer to `src/lib/activityStructure.ts`, and
-`plannedMinutes` tells the two zeros apart rather than falling back on either.
-`04-data-model-proposal.md` section 2 carries the corrected rule and why the
-mechanism first proposed for it was rejected.
+**Superseded by COACH-2A (#198).** This section is a snapshot captured before
+that slice, and the quoted body above is no longer what the file contains. The
+three BROWSER implementations now share one rule: `sessionMinutes`
+(`src/lib/data.ts`) and `plannedMinutes` (`src/lib/sessionLifecycle.ts`) both
+call `activeActivityMinutes` from `src/lib/activityStructure.ts`, and the
+planner's own inline reduce is gone, `Planner.tsx` calling `sessionMinutes`
+instead. `plannedMinutes` tells the two zeros apart rather than falling back on
+either. The fourth implementation, `buildSessionSnapshot` in
+`supabase/functions/_shared/share.ts`, is a DELIBERATE DUPLICATE in Deno, not a
+fourth caller of the browser module: it cannot import from `src/lib/`, so it
+carries its own `isStoodDownActivity` predicate, which `share_test.ts` pins to
+the same cases `activityStructure.test.ts` pins. Any future change to the
+active-duration rule therefore has to reach that file separately and go out
+through the content-sharing Edge deploy, which is exactly the follow-up
+COACH-2A left and the README records as run. `04-data-model-proposal.md`
+section 2 carries the corrected rule and why the mechanism first proposed for
+it was rejected.
 
 **The Deno implementation is a different runtime, not a second call site.**
 `share.ts` runs in Supabase Edge Functions and cannot import from `src/lib/`.
