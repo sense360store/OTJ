@@ -5,8 +5,8 @@ delivery status re-verified 2 September 2026 against `main` at `3cb20f9`.
 **Five slices are built** (COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10,
 each recorded under its own heading below with its pull request), **COACH-1 is
 in progress** as the first gated coaching migration (COACH-1A, migration
-`0051_team_sort_order`, registered and in review; COACH-1B follows once it is
-applied), and everything else remains design. A settled design is not
+`0051_team_sort_order`, registered and in review as #223; COACH-1B follows
+once it is applied), and everything else remains design. A settled design is not
 delivered work.
 
 The order was re-derived from scratch after coach discovery, then corrected once
@@ -784,7 +784,7 @@ ledger as it stands then.**
 ### The migration slices, in dependency order
 
 5. **COACH-1**, `teams.sort_order`. **In progress**: COACH-1A, migration
-   `0051_team_sort_order`, is registered and in review, and COACH-1B follows
+   `0051_team_sort_order`, is registered and in review as #223, and COACH-1B follows
    once it is applied. One nullable column on a five-row
    table, and the smallest possible first migration for this programme. It
    upgrades COACH-3 from "keeps teams whole" to "combines adjacent bands".
