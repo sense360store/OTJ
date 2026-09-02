@@ -822,6 +822,129 @@ class TheBulkDeleteRegistration(unittest.TestCase):
         self.assertIn(self.BULK, wf)
 
 
+class TheTeamOrderRegistration(unittest.TestCase):
+    """0051 is the first coaching workflow migration, and it is registered
+    against the head 0050's apply left, so what it is pinned to is pinned."""
+
+    ORDER = "supabase/migrations/0051_team_sort_order.sql"
+
+    def entry(self):
+        return rm.REVIEWED_MIGRATIONS[self.ORDER]
+
+    def test_it_is_registered_against_the_applied_0050_row(self):
+        # The hosted row 0050's apply stamped on 23 August 2026, read from
+        # the hosted ledger on 2 September 2026. A wrong value here fails
+        # the pre gate closed, which is safe, but it would also stop a
+        # correct apply.
+        e = self.entry()
+        self.assertEqual(e.expected_previous_version, "20260823065041")
+        self.assertEqual(e.expected_previous_name, "bulk_delete_players")
+
+    def test_the_repository_record_agrees_with_the_registration(self):
+        with open(os.path.join(REPO, "docs/operations/production-migration-apply.md"),
+                  "r", encoding="utf-8") as fh:
+            doc = fh.read()
+        e = self.entry()
+        self.assertIn("`20260823065041`", doc)
+        self.assertIn("`bulk_delete_players`", doc)
+        self.assertIn(e.expected_previous_version, doc)
+        self.assertIn("0051_team_sort_order", doc)
+
+    def test_it_names_the_file_and_carries_its_own_key(self):
+        e = self.entry()
+        self.assertEqual(e.ledger_name, "team_sort_order")
+        self.assertEqual(e.idempotency_key, "otj:migration:0051_team_sort_order")
+
+    def test_it_probes_the_column_the_index_and_the_allow_list(self):
+        # One probe per object, so a partial apply cannot read as a whole one.
+        self.assertEqual(len(self.entry().objects), 3)
+
+    def test_every_probe_is_total(self):
+        for label, probe in self.entry().objects.items():
+            with self.subTest(label=label):
+                vh.assert_probe_is_total(label, probe)
+
+    def test_the_column_probe_pins_the_shape_and_not_only_the_name(self):
+        probe = self.entry().objects["public.teams.sort_order, a nullable integer with no default"]
+        self.assertIn("information_schema.columns", probe)
+        self.assertNotIn("pg_attribute", probe)
+        self.assertIn("data_type = 'integer'", probe)
+        self.assertIn("is_nullable = 'YES'", probe)
+        self.assertIn("column_default is null", probe)
+
+    def test_the_index_probe_pins_unique_partial_and_two_key_columns(self):
+        probe = self.entry().objects[
+            "teams_sort_order_unique, a two column partial unique index on teams"
+        ]
+        self.assertIn("to_regclass('public.teams')", probe)
+        self.assertIn("x.indisunique", probe)
+        self.assertIn("not x.indisprimary", probe)
+        self.assertIn("x.indpred is not null", probe)
+        self.assertIn("x.indnkeyatts = 2", probe)
+
+    def test_the_audit_probe_flips_on_the_body_of_a_function_that_already_exists(self):
+        # audit_teams() exists before the apply (0037, replaced by 0044), so
+        # its probe cannot be a presence check: it reads the stored body for
+        # the exact comparison that names the field.
+        probe = self.entry().objects["audit_teams() names sort_order on its allow list"]
+        self.assertIn("to_regprocedure('public.audit_teams()')", probe)
+        self.assertIn("pg_get_functiondef(p.oid)", probe)
+        self.assertIn("new.sort_order is distinct from old.sort_order", probe)
+        self.assertNotIn("pg_get_function_identity_arguments", probe)
+
+    def test_the_migration_file_carries_the_reviewed_shape(self):
+        sql = rm.read_migration_sql(os.path.join(REPO, self.ORDER))
+        self.assertIn("alter table public.teams add column sort_order integer;", sql)
+        self.assertIn(
+            "create unique index teams_sort_order_unique\n"
+            "  on public.teams (club_id, sort_order)\n"
+            "  where sort_order is not null;",
+            sql,
+        )
+        self.assertIn(
+            "if new.sort_order is distinct from old.sort_order then "
+            "v_changed := array_append(v_changed, 'sort_order'); end if;",
+            sql,
+        )
+        # Nullable, no default, no check constraint, and not `if not exists`:
+        # a second run must fail at its first statement.
+        self.assertNotRegex(sql, r"sort_order integer\s+(not null|default)")
+        self.assertNotIn("check (sort_order", sql)
+        self.assertNotIn("add column if not exists", sql)
+        self.assertNotIn("create unique index if not exists", sql)
+
+    def test_the_file_backfills_nothing(self):
+        # The only writes of a position in the file are the probe's, and
+        # each names one synthetic team by the variable the probe holds it
+        # in. Matched per STATEMENT rather than per line, so an aliased
+        # table, a multi column set list or an insert carrying the column
+        # cannot slip past a filter that only knew one spelling. This is
+        # the offline tripwire; the guard at apply time is step 2 of the
+        # file itself, which harness mutation F1 proves bites.
+        sql = rm.read_migration_sql(os.path.join(REPO, self.ORDER))
+        statements = re.findall(
+            r"(?is)\b(?:update|insert\s+into)\s+public\.teams\b[^;]*;", sql)
+        self.assertTrue(statements, "the probe must exercise the table")
+        writes = [s for s in statements if re.search(r"(?i)\bsort_order\b", s)]
+        self.assertTrue(writes, "the probe must exercise the column")
+        for stmt in writes:
+            with self.subTest(statement=" ".join(stmt.split())):
+                # A plain update of the table by that name, with sort_order
+                # the only column it sets, addressed to one probe variable.
+                self.assertRegex(stmt, r"(?is)\Aupdate\s+public\.teams\s+set\s+sort_order\s*=")
+                self.assertNotRegex(stmt, r"(?is)\bset\b[^;]*,")
+                self.assertRegex(stmt, r"(?is)\bwhere\s+id\s*=\s*v_t[0-9]\s*;\Z")
+        for stmt in statements:
+            if re.match(r"(?i)insert", stmt):
+                with self.subTest(statement=" ".join(stmt.split())):
+                    self.assertNotRegex(stmt, r"(?i)sort_order")
+
+    def test_it_is_offered_by_the_workflow(self):
+        with open(os.path.join(REPO, ".github/workflows/apply-production-migration.yml"),
+                  "r", encoding="utf-8") as fh:
+            self.assertIn(self.ORDER, fh.read())
+
+
 class MutatingASafeProbeBackIsCaught(unittest.TestCase):
     """The four protected classes, mutated back and proved to be caught.
 

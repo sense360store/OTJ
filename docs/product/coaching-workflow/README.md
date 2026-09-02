@@ -27,7 +27,7 @@ documents remains design.
 | **COACH-3**, the suggested setup | **Built** in #203 (the pure generator, 21 August 2026) and #204 (the Players and groups screen, 22 August 2026). No migration. |
 | **COACH-4**, preserving the coach's setup when attendance changes | **Built** in #206 (22 August 2026). No migration. |
 | **COACH-10**, one authoring seam | **Built** in #207 (22 August 2026). No migration. |
-| **COACH-1**, the club's team order | **Next.** The first gated coaching migration (M1, `teams.sort_order`), as its own gated PR, then the reorder affordance as a small frontend PR. |
+| **COACH-1**, the club's team order | **In progress.** The database half, COACH-1A, is migration `0051_team_sort_order` (M1: `teams.sort_order`, the partial unique index and the audit allow list entry), registered against the hosted head `20260823065041` / `bulk_delete_players`, opened for review as #223 and awaiting the human production apply through the reviewed workflow. COACH-1B, the reorder affordance on Admin Teams and the first consumer of the column, follows as a small frontend PR once the column is live. |
 | Everything else | Not built. |
 
 **COACH-2A's one operational follow-up has run, and no stored snapshot needs
@@ -219,8 +219,10 @@ on 23 August, so the hosted head is now `20260823065041` / `bulk_delete_players`
    Built: #206.
 4. ~~**COACH-10**, the authoring seam.~~ Built: #207.
 
-**COACH-1** (`teams.sort_order`) is next, as the first gated coaching
-migration. Then **COACH-5** (`venue_layouts`), **COACH-8** (the game bib) and
+**COACH-1** (`teams.sort_order`) is in progress as the first gated coaching
+migration: COACH-1A, migration `0051_team_sort_order`, is registered and in
+review (#223), and COACH-1B follows once the column is live. Then **COACH-5**
+(`venue_layouts`), **COACH-8** (the game bib) and
 **COACH-12** (`drills.variant_of`), each authored and registered against the
 ledger as it stands at its own review.
 

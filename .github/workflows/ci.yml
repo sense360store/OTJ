@@ -235,6 +235,19 @@ jobs:
         env:
           REQUIRE_POSTGRES: '1'
         run: bash .github/scripts/production-migration/test_0050_probe_totality.sh
+      # 0051 adds a column, a partial unique index and an audit allow list
+      # entry, and its self-verification exercises the index on synthetic
+      # rows inside a subtransaction it rolls back. This runs the reviewed
+      # file against a real server: its three registered probes in both
+      # gate states, the column driven through row level security as every
+      # role the product has, a second apply refused at its first statement,
+      # and seventeen mutations of the file, each pinned to the message of
+      # the one self-verification check that catches it, so a check that
+      # went vacuous is noticed rather than masked by the behavioural probe.
+      - name: The team order migration applies, behaves and its checks bite, against a real PostgreSQL
+        env:
+          REQUIRE_POSTGRES: '1'
+        run: bash .github/scripts/production-migration/test_0051_team_sort_order.sh
 
   # The Edge Function parser tests are hermetic Deno tests pinned against
   # real FA fixture pages; npm ci first because Deno resolves the npm

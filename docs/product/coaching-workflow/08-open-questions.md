@@ -23,7 +23,9 @@ have to rediscover them.
 
 ### R1. Does `teams.sort_order` join the audited allow list?
 
-**In:** COACH-1 (M1). **Recommended: yes.**
+**In:** COACH-1 (M1). **Recommended: yes.** **Decided: yes**, in
+`0051_team_sort_order.sql`, whose self-verification reads the stored function
+back and requires the field name to be all that reaches an event.
 
 `audit_teams()` has an allow list, and `describeActivityEvent` renders
 `team.updated` as the deliberately general "Team updated"
