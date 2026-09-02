@@ -106,9 +106,11 @@ that the write still takes `teams.manage`.
 ### COACH-2: declare the stations and the games
 
 **Status.** Built. #198 (COACH-2A: the model, both mappers, the template
-boundary and all four duration consumers) and #202 (COACH-2B: the authoring
-affordances on both surfaces). The Edge deploy for `_shared/share.ts` has run;
-see the README's Implementation status.
+boundary and all four duration consumers) and #202 (COACH-2B: the marking
+affordances and the declared line on both surfaces, and the Not running
+tonight toggle on the dated session planner alone, since `skipped` is session
+local). The Edge deploy for `_shared/share.ts` has run; see the README's
+Implementation status.
 
 **Outcome.** A plan says explicitly which activities are the carousel stations
 and which are the evening's small-sided games, and which stations are not being

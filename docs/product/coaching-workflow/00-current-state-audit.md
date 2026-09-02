@@ -642,9 +642,9 @@ it.**
 rather than inferred from the phase. What is no longer true is the sentence
 "what the plan does record structurally today: nothing": `sessions.activities`
 now carries `slot` and `skipped` beside `phase`, `duration`, `drill_id` and
-`title` (section 27), both authoring surfaces set them, and
-`src/lib/activityStructure.ts` derives the station list, its numbering and its
-count from the declaration. `gameCount` (COACH-8) is still not built.
+`title` (section 27); both authoring surfaces set `slot`, only the dated
+session planner sets `skipped`, and `src/lib/activityStructure.ts` derives the
+station list, its numbering and its count from the declaration. `gameCount` (COACH-8) is still not built.
 
 `Phase` (`src/lib/data.ts:9`) is `'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'`,
 and `PHASES` (`:533`) is the ordered list the planner and the week plan editor

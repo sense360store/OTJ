@@ -23,7 +23,7 @@ documents remains design.
 | Slice | State |
 |---|---|
 | **COACH-2A**, the activity structure model and the active session duration | **Built** in #198 (20 August 2026). `slot` and `skipped` on an activity, `src/lib/activityStructure.ts`, the template boundary, all four session duration implementations and the public snapshot total. No migration. |
-| **COACH-2B**, the authoring affordances | **Built** in #202 (21 August 2026). Marking a station or the games phase, the Not running tonight toggle, and the line stating what is declared, on both authoring surfaces through `src/lib/activityRole.ts`. No migration. |
+| **COACH-2B**, the authoring affordances | **Built** in #202 (21 August 2026). Marking a station or the games phase and the line stating what is declared, on both authoring surfaces through `src/lib/activityRole.ts`; the Not running tonight toggle on the dated session planner only, because `skipped` is session local and the week plan variant of the shared editor structurally cannot receive it. No migration. |
 | **COACH-3**, the suggested setup | **Built** in #203 (the pure generator, 21 August 2026) and #204 (the Players and groups screen, 22 August 2026). No migration. |
 | **COACH-4**, preserving the coach's setup when attendance changes | **Built** in #206 (22 August 2026). No migration. |
 | **COACH-10**, one authoring seam | **Built** in #207 (22 August 2026). No migration. |
