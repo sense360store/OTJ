@@ -414,5 +414,7 @@ Dates are merge dates in UTC, as GitHub records `merged_at`; a merge late on a B
 | Drill Maker opens a new diagram on a blank area | #196 | 27 Aug 2026 |
 | VISUAL-00 — the OTJ design read | #210 | 27 Aug 2026 |
 | VISUAL-01 — shared visual foundation and application shell | #211 | 27 Aug 2026 |
+| COACH-1A — the club team ordering field, migration 0051 (applied 2 Sep 2026) | #223 | 2 Sep 2026 |
+| OPS-06 — hosted ledger reconciliation after 0051 | #224 | 2 Sep 2026 |
 
 Update this table as subsequent roadmap items ship.
