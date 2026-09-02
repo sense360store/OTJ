@@ -133,9 +133,14 @@ the two below. The reference itself is unchanged.
   area, players guidance, STEP adaptations, the attached media item, the
   diagram) is read live from the referenced `drills` row.
 - A "custom" activity has `title` and no `drillId`. It is the only session-local
-  content in the model, and it carries nothing but a title, a phase and a
-  duration. `src/routes/Planner.tsx:1194` creates one as
-  `{ phase: 'Skill', title: 'Custom activity', duration: 10 }`.
+  content in the model. When captured it carried nothing but a title, a phase
+  and a duration, created by the planner as
+  `{ phase: 'Skill', title: 'Custom activity', duration: 10 }`. Since COACH-2
+  (#198, #202) it carries the same two structural keys as any other row: the
+  role controls in `src/components/ActivityListEditor.tsx` render on every row,
+  drill or custom, so a custom row can be marked a station or the games phase
+  (`slot`), and on a dated session a custom station can be stood down
+  (`skipped`). It still carries no drill content.
 
 ## 6. What changes if a referenced drill is edited later
 
@@ -908,8 +913,13 @@ payload pinned by a test.
 - **`0050_bulk_delete_players.sql` arrived in PR #191** (PLAYERS-01, merged
   27 August 2026), and was applied to production on 23 August 2026 from that
   branch's reviewed commit, ahead of the branch merging, which is the reverse
-  rollout order its register entry documents. So the first migration of any new
-  programme is `0051`, pinned to the head above at its own review.
+  rollout order its register entry documents. So, as observed on 2 September
+  2026, the next free number is `0051` and the head is the row above. Both are
+  observations of the live state that day and not reservations: the number and
+  the `expected_previous_*` pin are taken from the ledger as it stands at that
+  migration's own review, and are that number and that row only if nothing else
+  has been registered or applied first, which is the rule the next paragraphs
+  state.
 - The live ledger is the authority, not the highest file on disk. Confirm the next
   free number against it before writing a migration (`CLAUDE.md`, Data model).
 
