@@ -40,8 +40,8 @@ const ROLE_CUSTOM: RoleInfo = { id: 'role-kit', key: 'kit_officer', label: 'Kit 
 const ALL_ROLES = [ROLE_ADMIN, ROLE_MANAGER, ROLE_COACH, ROLE_PARENT, ROLE_CUSTOM]
 
 const TEAMS: Team[] = [
-  { id: 'titans', name: 'Titans', bibColour: 'blue' },
-  { id: 'trojans', name: 'Trojans', bibColour: 'red' },
+  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: null },
+  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: null },
 ]
 
 const member = (over: Partial<Member> & Pick<Member, 'id' | 'fullName'>): Member => ({

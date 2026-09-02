@@ -4186,6 +4186,97 @@ const focusReturned = async (page, d) => {
     check('each team row edits its own name and its own bib', Object.values(r).every(Boolean), JSON.stringify(r))
     await page.close()
   }
+
+  /* ---- COACH-1B: the order is moved from the keyboard, and focus stays on the moved row ----
+     Moving a row moves its DOM node, and moving it to the top disables the
+     control that was pressed; either can leave focus on the body. The rule
+     under test is that it never does: the same control when it is still
+     usable, its partner on the same row when it is not. Driven from the
+     keyboard, because no drag gesture exists and Enter and Space are the
+     whole of the interaction. */
+  {
+    const page = await open('adminteams', 1280, { caps: 'clubadmin' })
+    const state = () =>
+      page.evaluate(() => ({
+        order: [...document.querySelectorAll('.admin-row button[aria-label^="Remove "]')].map((b) =>
+          (b.getAttribute('aria-label') ?? '').replace('Remove ', ''),
+        ),
+        active: document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName ?? 'none',
+        activeDisabled: !!(document.activeElement && document.activeElement.disabled),
+      }))
+    // A move that ends at the boundary: Move Trojans up disables itself.
+    await page.getByRole('button', { name: 'Move Trojans up', exact: true }).focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(150)
+    const top = await state()
+    check('Enter on Move up moves the row from the keyboard', top.order[0] === 'Trojans' && top.order[1] === 'Titans', JSON.stringify(top))
+    check(
+      "a move that reaches the top puts focus on the same row's Move down, never on the body or a disabled control",
+      top.active === 'Move Trojans down' && !top.activeDisabled,
+      JSON.stringify(top),
+    )
+    // A move short of a boundary: the pressed control is still usable and keeps focus.
+    await page.getByRole('button', { name: 'Move Spartans up', exact: true }).focus()
+    await page.keyboard.press('Space')
+    await page.waitForTimeout(150)
+    const mid = await state()
+    check('Space on Move up moves a row too', mid.order[2] === 'Spartans' && mid.order[3] === 'Gladiators', JSON.stringify(mid))
+    check('a move short of a boundary keeps focus on the control that was pressed', mid.active === 'Move Spartans up' && !mid.activeDisabled, JSON.stringify(mid))
+    // The bottom boundary, the other way round.
+    await page.getByRole('button', { name: 'Move Spartans down', exact: true }).focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(150)
+    await page.getByRole('button', { name: 'Move Argonauts down', exact: true }).count()
+    await page.getByRole('button', { name: 'Move Spartans down', exact: true }).focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(150)
+    const bottom = await state()
+    check(
+      "a move that reaches the bottom puts focus on the same row's Move up",
+      bottom.order[bottom.order.length - 1] === 'Spartans' && bottom.active === 'Move Spartans up' && !bottom.activeDisabled,
+      JSON.stringify(bottom),
+    )
+    check('four moves wrote nothing', await noWrites(page), '')
+    await page.close()
+  }
+
+  /* ---- the ordering cluster at 360: its own line, inside the card, 44px targets, under the longest names ---- */
+  {
+    const page = await open('adminteams', 360, { adminEntry: adminEntry('teams-long-name') })
+    if (!page.blank) {
+      const r = await page.evaluate(() => {
+        const card = document.querySelector('.card')?.getBoundingClientRect()
+        return [...document.querySelectorAll('.admin-row')].map((row) => {
+          const cluster = row.querySelector('.admin-order-acts')?.getBoundingClientRect()
+          const field = row.querySelector('.admin-field-grow')?.getBoundingClientRect()
+          // The hit area is what the ::after pseudo element reaches, the
+          // same measurement the hit area check above takes: the visible
+          // box of an icon button is 38px by design and the target is 44.
+          const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+          const targets = [...row.querySelectorAll('.admin-order-acts .icon-btn')].map((b) => {
+            const box = b.getBoundingClientRect()
+            const a = getComputedStyle(b, '::after')
+            const pseudo = a.content === 'none' ? 0 : Math.min(px(a.width), px(a.height))
+            return Math.max(Math.min(box.width, box.height), pseudo)
+          })
+          return {
+            inside: !!card && !!cluster && cluster.right <= card.right + 0.5 && cluster.left >= card.left - 0.5,
+            ownLine: !!cluster && !!field && cluster.top >= field.bottom - 0.5,
+            targets: targets.length === 2 && targets.every((t) => t >= 44),
+            noScroll: document.documentElement.scrollWidth <= 360,
+          }
+        })
+      })
+      check(
+        'at 360 every ordering cluster sits on its own line inside the card with two 44px targets, under names as long as a club could type',
+        r.length === 7 && r.every((x) => x.inside && x.ownLine && x.targets && x.noScroll),
+        JSON.stringify(r),
+      )
+    } else {
+      check('the long names Teams screen paints at 360', false, 'the surface never painted')
+    }
+    await page.close()
+  }
 }
 
 /* ---- reduced motion ---- */

@@ -21,9 +21,9 @@ import type { Team } from './data'
 const cover = (teamIds: string[], teamId: string | null = null) => ({ teamId, teamIds })
 
 const teams: Record<string, Team | undefined> = {
-  t1: { id: 't1', name: 'Titans', bibColour: 'red' },
-  t2: { id: 't2', name: 'Trojans', bibColour: null },
-  t3: { id: 't3', name: 'Spartans', bibColour: null },
+  t1: { id: 't1', name: 'Titans', bibColour: 'red', sortOrder: null },
+  t2: { id: 't2', name: 'Trojans', bibColour: null, sortOrder: null },
+  t3: { id: 't3', name: 'Spartans', bibColour: null, sortOrder: null },
 }
 const allIds = ['t1', 't2', 't3']
 

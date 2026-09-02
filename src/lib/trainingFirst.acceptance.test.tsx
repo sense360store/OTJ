@@ -314,8 +314,8 @@ describe('9b. one classifier answers for every surface', () => {
 })
 
 const teams: Team[] = [
-  { id: 'titans', name: 'Titans', bibColour: 'red' },
-  { id: 'trojans', name: 'Trojans', bibColour: null },
+  { id: 'titans', name: 'Titans', bibColour: 'red', sortOrder: null },
+  { id: 'trojans', name: 'Trojans', bibColour: null, sortOrder: null },
 ]
 
 const player = (id: string, displayName: string, teamId: string | null): Player => ({

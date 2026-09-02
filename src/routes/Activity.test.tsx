@@ -280,7 +280,7 @@ describe('ActivityFilterControls', () => {
   const actors: Member[] = [
     { id: 'm1', fullName: 'Alex Coach', avatar: null, avatarUrl: null, role: 'coach', teamId: null, joined: '', roles: [], teamIds: [], allTeams: false },
   ]
-  const teams: Team[] = [{ id: 'titans', name: 'Titans', bibColour: null }]
+  const teams: Team[] = [{ id: 'titans', name: 'Titans', bibColour: null, sortOrder: null }]
   const seasons: Season[] = [{ id: 'season-1', name: '2026/27', startsOn: '', endsOn: '', isCurrent: true, archivedAt: null }]
 
   function html(f = { from: '', to: '', actorId: '', entity: '' as const, action: '', teamId: '', seasonId: '', source: '' as const, batchId: '' }): string {

@@ -4,9 +4,9 @@ Status: proposal, reconciled 18 August 2026 against `main` at `afe790d`;
 delivery status re-verified 2 September 2026 against `main` at `3cb20f9`.
 **Five slices are built** (COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10,
 each recorded under its own heading below with its pull request), **COACH-1 is
-in progress** as the first gated coaching migration (COACH-1A, migration
-`0051_team_sort_order`, registered and in review as #223; COACH-1B follows
-once it is applied), and everything else remains design. A settled design is not
+built** (COACH-1A, migration `0051_team_sort_order`, merged as #223 and applied
+to production on 2 September 2026; COACH-1B, the Teams screen's ordering
+affordance, in its own PR), and everything else remains design. A settled design is not
 delivered work.
 
 The order was re-derived from scratch after coach discovery, then corrected once
@@ -81,12 +81,19 @@ human review that is not auto-merged.
 
 ### COACH-1: the club's team order
 
-**Status.** In progress. The database half, COACH-1A, is migration
+**Status.** Built. The database half, COACH-1A, is migration
 `0051_team_sort_order`, its own gated PR registered against the hosted head
-`20260823065041` / `bulk_delete_players` and awaiting the human production
-apply; the reorder affordance, COACH-1B, follows in its own small frontend PR
-once the column is live. R1 in `08-open-questions.md` is decided as its
-recommended default: `sort_order` joins the `audit_teams()` allow list.
+`20260823065041` / `bulk_delete_players`, merged as #223 and applied to
+production on 2 September 2026 through the reviewed workflow (hosted
+`20260902150212` / `team_sort_order`). The frontend half, COACH-1B, followed in
+its own PR: the Teams admin screen lists the teams in club order, moves them
+with Move up and Move down (no drag gesture), names the order as not set,
+incomplete or saved, and writes the positions 1..N through one Save team order
+checkpoint; `src/lib/teamOrder.ts` holds the rules and
+`src/lib/teamOrder.invariant.test.ts` pins that it is the one consumer. The
+grouping suggestion is still handed no order, by decision. R1 in
+`08-open-questions.md` is decided as its recommended default: `sort_order`
+joins the `audit_teams()` allow list.
 
 **Outcome.** An admin states the club's ordering of its own teams, so every later
 suggestion has ability context without a per-player field.
@@ -783,9 +790,9 @@ ledger as it stands then.**
 
 ### The migration slices, in dependency order
 
-5. **COACH-1**, `teams.sort_order`. **In progress**: COACH-1A, migration
-   `0051_team_sort_order`, is registered and in review as #223, and COACH-1B follows
-   once it is applied. One nullable column on a five-row
+5. **COACH-1**, `teams.sort_order`. **Built**: COACH-1A, migration
+   `0051_team_sort_order`, merged as #223 and applied on 2 September 2026, and
+   COACH-1B, the ordering affordance, in its own PR. One nullable column on a five-row
    table, and the smallest possible first migration for this programme. It
    upgrades COACH-3 from "keeps teams whole" to "combines adjacent bands".
 6. **COACH-5**, the `venue_layouts` table. The largest single review in the

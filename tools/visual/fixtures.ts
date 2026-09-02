@@ -314,6 +314,11 @@ export type HarnessState =
   // or active badge. A state of its own because the screen's honest answer to
   // an unsettled read is to say nothing rather than to guess active.
   | 'statesunknown'
+  // COACH-1B, the club's team order on the Teams screen. The default club is
+  // configured; these are the two other states the screen names in words: a
+  // club that has never placed a team, and one that has placed two of five.
+  | 'orderunset'
+  | 'orderincomplete'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -345,12 +350,17 @@ const session = (over: Partial<Session> & Pick<Session, 'id' | 'name'>): Session
 // the fullest header names it once rather than repeating the id.
 export const SPOND_TEAM_ID = 'titans'
 
-export const TEAMS = [
-  { id: 'titans', name: 'Titans', bibColour: 'blue' },
-  { id: 'trojans', name: 'Trojans', bibColour: 'red' },
-  { id: 'gladiators', name: 'Gladiators', bibColour: null },
-  { id: 'spartans', name: 'Spartans', bibColour: 'yellow' },
-  { id: 'argonauts', name: 'Argonauts', bibColour: null },
+// The club order is CONFIGURED by default, in the order the rows are listed,
+// so the Teams screen opens on its saved order and every other screen reads
+// exactly what it read before (nothing but the Teams screen renders the
+// position). `orderunset` and `orderincomplete` below are the other two
+// states the screen names.
+export const TEAMS: Team[] = [
+  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: 1 },
+  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: 2 },
+  { id: 'gladiators', name: 'Gladiators', bibColour: null, sortOrder: 3 },
+  { id: 'spartans', name: 'Spartans', bibColour: 'yellow', sortOrder: 4 },
+  { id: 'argonauts', name: 'Argonauts', bibColour: null, sortOrder: 5 },
 ]
 
 export const SESSIONS: Session[] = [
@@ -608,6 +618,9 @@ const LONG_TEAM: Team = {
   id: 'team-long',
   name: 'Ossett Town Juniors Development Squad Under Nines',
   bibColour: null,
+  // Unplaced, as a team just added is, so the long names state also renders
+  // the incomplete order sentence over a name as long as a club could type.
+  sortOrder: null,
 }
 
 // The hardest realistic entity label: a team name a coach typed with no
@@ -624,6 +637,7 @@ const UNBROKEN_TEAM: Team = {
   id: 'team-unbroken',
   name: 'OssettTownJuniorsDevelopmentSquadUnderNines',
   bibColour: null,
+  sortOrder: null,
 }
 
 export const ACTIVITY_BATCH_ID = 'a1b2c3d4-0000-4000-8000-000000000001'
@@ -1446,7 +1460,14 @@ let adminRoles: RoleInfo[] = ADMIN_ROLES_FOR(harnessState)
 /* Teams start as whatever every other screen already reads, so putting them
    behind the store moves no existing shot: only a press on the Teams screen
    changes them. `noteams` is the club that has never added one. */
-let adminTeams: Team[] = harnessState === 'noteams' ? [] : ACTIVITY_TEAMS_FOR(harnessState)
+let adminTeams: Team[] =
+  harnessState === 'noteams'
+    ? []
+    : harnessState === 'orderunset'
+      ? TEAMS.map((t) => ({ ...t, sortOrder: null }))
+      : harnessState === 'orderincomplete'
+        ? TEAMS.map((t) => ({ ...t, sortOrder: t.sortOrder !== null && t.sortOrder <= 2 ? t.sortOrder : null }))
+        : ACTIVITY_TEAMS_FOR(harnessState)
 let adminRoleCaps: RoleCapability[] = ADMIN_ROLE_CAPABILITIES
 let adminStates: Record<string, 'invited' | 'active'> = ADMIN_MEMBER_STATES
 const adminListeners = new Set<() => void>()
@@ -1539,7 +1560,8 @@ export const adminStore = {
   },
   insertTeam(name: string) {
     createdTeamCount += 1
-    adminTeams = [...adminTeams, { id: `team-new-${createdTeamCount}`, name, bibColour: null }]
+    // A new team is UNPLACED: adding one never states where it stands.
+    adminTeams = [...adminTeams, { id: `team-new-${createdTeamCount}`, name, bibColour: null, sortOrder: null }]
     adminChanged()
   },
   renameTeam(id: string, name: string) {
@@ -1557,6 +1579,14 @@ export const adminStore = {
   },
   setTeamBib(teamId: string, bibColour: string | null) {
     adminTeams = adminTeams.map((t) => (t.id === teamId ? { ...t, bibColour } : t))
+    adminChanged()
+  },
+  // The order as the product stores it after a successful save: 1..N in the
+  // order given. The product's two phases are its own business (driven in
+  // src/lib/teamOrder.test.ts); what the screen sees afterwards is this.
+  saveTeamOrder(orderedIds: string[]) {
+    const position = new Map(orderedIds.map((id, i) => [id, i + 1]))
+    adminTeams = adminTeams.map((t) => (position.has(t.id) ? { ...t, sortOrder: position.get(t.id) as number } : t))
     adminChanged()
   },
 }

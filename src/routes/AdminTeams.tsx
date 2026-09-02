@@ -10,24 +10,47 @@
 // the bib vocabulary moved; what changed is which vocabulary draws them, and
 // that two refusals the screen could already produce are now shown rather
 // than swallowed.
-import { useRef, useState } from 'react'
+//
+// COACH-1B added the club's TEAM ORDER: the list is shown in club order (the
+// placed teams by position, then the unplaced ones alphabetically), each row
+// carries Move up and Move down, and one explicit Save team order writes the
+// positions 1..N. Moving is a local draft and writes nothing; opening the
+// screen writes nothing; adding a team places nobody (a new team is
+// unplaced until an admin places it, because adding a team must never make
+// an ability judgement on its own); removing a team renumbers nobody, since
+// gaps are valid by database design. The order is a TEAM order and never a
+// player rating, and nothing on this screen or off it reads it for a
+// coaching decision yet: src/lib/teamOrder.ts holds the rules and says so.
+//
+// No drag and drop, on purpose. A club has about five teams, a press on Move
+// up is reliable on a phone, reachable from a keyboard and needs no hidden
+// gesture, and the accessible name of every control carries the team's own
+// name rather than relying on an arrow.
+import { useEffect, useRef, useState } from 'react'
 import { useSessions } from '../context/SessionsContext'
-import { useFocusRestore } from '../hooks/useFocusRestore'
+import { focusWasLost, useFocusRestore } from '../hooks/useFocusRestore'
 import {
   useDeleteTeam,
   useInsertTeam,
   useMyCapabilities,
   useProfiles,
   useRenameTeam,
+  useSaveTeamOrder,
   useSetTeamBibColour,
   useTeams,
 } from '../lib/queries'
 import type { Team } from '../lib/data'
 import { BIB_COLOURS, bibSwatch } from '../lib/bibs'
 import { sessionCoversAnyTeam } from '../lib/sessionTeams'
+import { clubOrder, moveTeam, reconcileDraft, sameIdOrder, teamsInDraftOrder } from '../lib/teamOrder'
+import type { ClubOrderState, MoveDirection } from '../lib/teamOrder'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
 import { Button, Card, IconButton, Note, PageHeader, SelectField, TextField } from '../components/primitives'
+
+/* The one sentence that says what the order is FOR, exported so the screen
+   test reads the same string the screen renders rather than a copy of it. */
+export const TEAM_ORDER_COPY = 'Used for coaching group suggestions. Put the strongest team first.'
 
 /* Exported for the same reason BibColourField is: what it says is a PRODUCT
    RULE rather than copy (teams are a filter and a default, so removing one
@@ -147,7 +170,58 @@ export function BibColourField({
   )
 }
 
-function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
+/* What the club has stated about its order, said in words. Exported and
+   rendered directly by the screen test, because the three states are a
+   product rule (null means unset and is SAID to be unset rather than quietly
+   read as an order) and a source text check would be satisfied by a comment.
+
+   The alphabetical fallback is named as alphabetical: the one thing this
+   sentence must never do is let a list that happens to be in name order read
+   as a judgement about the teams. */
+export function TeamOrderStatus({ state, unplaced }: { state: ClubOrderState; unplaced: readonly Team[] }) {
+  if (state === 'unset') {
+    return (
+      <Note tone="warning" className="admin-note">
+        Team order is not set. The teams are listed alphabetically, which is not a coaching order. Move them into
+        order and press Save team order, or press it without moving anything to accept the order shown.
+      </Note>
+    )
+  }
+  if (state === 'incomplete') {
+    const names = unplaced.map((t) => t.name)
+    const list = names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+    const plural = names.length !== 1
+    return (
+      <Note tone="warning" className="admin-note">
+        Team order is incomplete: {list} {plural ? 'have' : 'has'} no position yet and {plural ? 'are' : 'is'} listed
+        after the ordered teams. Move {plural ? 'them' : 'it'} into place and press Save team order, which places every
+        team.
+      </Note>
+    )
+  }
+  return <p className="admin-hint">Saved club order. Move a team and press Save team order to change it.</p>
+}
+
+function TeamRow({
+  team,
+  position,
+  total,
+  ordering,
+  onMove,
+  moveRef,
+  onDelete,
+}: {
+  team: Team
+  // 1-based position in the DRAFT, which is what the row is showing.
+  position: number
+  total: number
+  // The order is being written: the order controls and Remove freeze, so the
+  // draft being saved cannot be invalidated under the write.
+  ordering: boolean
+  onMove: (direction: MoveDirection) => void
+  moveRef: (direction: MoveDirection, el: HTMLButtonElement | null) => void
+  onDelete: () => void
+}) {
   const rename = useRenameTeam()
   const setBib = useSetTeamBibColour()
   const [draft, setDraft] = useState(team.name)
@@ -199,7 +273,38 @@ function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
         >
           {rename.isPending ? 'Renaming…' : 'Rename'}
         </Button>
-        <IconButton tone="danger" icon={Icon.trash} label={'Remove ' + team.name} onClick={onDelete} />
+        <IconButton
+          tone="danger"
+          icon={Icon.trash}
+          label={'Remove ' + team.name}
+          disabled={ordering}
+          onClick={onDelete}
+        />
+      </div>
+      {/* The ordering cluster: a second, smaller line under the row's main
+          controls rather than a fourth control squeezed into the first, so
+          nothing on a phone becomes one cramped strip. The number is the
+          row's DRAFT position; the group's name carries it for a screen
+          reader, and each button carries the team's name, so "Move Titans
+          up" is what is read and what a voice user says. */}
+      <div className="admin-order-acts" role="group" aria-label={`Team order for ${team.name}: position ${position} of ${total}`}>
+        <span className="admin-position" aria-hidden="true">
+          {position}
+        </span>
+        <IconButton
+          icon={Icon.chevUp}
+          label={`Move ${team.name} up`}
+          disabled={ordering || position === 1}
+          ref={(el) => moveRef('up', el)}
+          onClick={() => onMove('up')}
+        />
+        <IconButton
+          icon={Icon.chevDown}
+          label={`Move ${team.name} down`}
+          disabled={ordering || position === total}
+          ref={(el) => moveRef('down', el)}
+          onClick={() => onMove('down')}
+        />
       </div>
       {/* Both refusals used to be swallowed: the mutation failed and the row
           said nothing at all, so a rename or a bib change that the RLS
@@ -218,15 +323,111 @@ function TeamRow({ team, onDelete }: { team: Team; onDelete: () => void }) {
   )
 }
 
+/* One empty list for every render the read has not answered, so the fresh
+   read comparison below cannot see a new array on each render and loop. */
+const NO_TEAMS: Team[] = []
+
 export function AdminTeams() {
-  const { data: teams = [], isLoading, isError, refetch } = useTeams()
+  const { data, isLoading, isError, refetch } = useTeams()
+  const teams = data ?? NO_TEAMS
   const { data: members = [] } = useProfiles()
   const { sessions } = useSessions()
   const insert = useInsertTeam()
+  const save = useSaveTeamOrder()
   const [name, setName] = useState('')
   const [removing, setRemoving] = useState<Team | null>(null)
   const [removed, setRemoved] = useState<{ id: string; message: string } | null>(null)
   const { caps } = useMyCapabilities()
+
+  /* ---- the order draft ----
+     Null while the admin has moved nothing, in which case the list follows
+     what is stored and a fresh read (a team added, removed or placed by
+     anybody) shows through at once. A draft is the admin's own arrangement,
+     kept across refetches (a team the read still holds keeps its place, one
+     it no longer holds leaves, a newcomer joins at the end), and dropped
+     again the moment the stored order agrees with it, which is what a
+     successful save's refetch brings. So the list never flicks back to the
+     old order between the write settling and the read landing, and never
+     keeps showing a stale arrangement over one another admin has since
+     stored. */
+  const stored = clubOrder(teams)
+  const storedIds = stored.teams.map((t) => t.id)
+  const [draft, setDraft] = useState<string[] | null>(null)
+  const arranged = draft === null ? null : reconcileDraft(draft, teams)
+  const dirty = arranged !== null && !sameIdOrder(arranged, storedIds)
+  /* Dropped during the render a FRESH READ lands in, when the read agrees
+     with it, which is the documented way to adjust state to a changed input
+     (an effect would render the stale arrangement once and then re-render).
+     The read is compared by identity, so a render with the same rows does
+     nothing and a loading render sees the one shared empty list. */
+  const [seenTeams, setSeenTeams] = useState(teams)
+  if (teams !== seenTeams) {
+    setSeenTeams(teams)
+    if (draft !== null && !dirty) setDraft(null)
+  }
+  const draftIds = dirty ? (arranged as string[]) : storedIds
+  const rows = teamsInDraftOrder(draftIds, teams)
+  /* Save is offered whenever pressing it would state something: an unset or
+     incomplete club has positions to write even for an order nobody moved
+     (accepting the order shown IS the statement), and a configured club has
+     nothing to say until the draft differs from what is stored. */
+  const canSave = rows.length > 0 && !save.isPending && (stored.state !== 'configured' || dirty)
+  const [orderSaved, setOrderSaved] = useState(false)
+
+  /* ---- focus after a move ----
+     Moving a row moves its DOM node, and moving it to the top or the bottom
+     disables the control that was pressed; a browser drops focus to the body
+     for the first and, depending on the browser, keeps it on a control that
+     can no longer be reached from the keyboard for the second. Both count as
+     lost here, and focus goes back to the moved row: the same control when it
+     is still usable, otherwise its partner, so a press at the boundary lands
+     on Move down rather than on nothing. The predicate is the shared one; the
+     effect is this screen's own because what it waits for is the draft
+     changing, not a write settling, which is the case useFocusRestore keys
+     on. */
+  const moveButtons = useRef(new Map<string, Partial<Record<MoveDirection, HTMLButtonElement | null>>>())
+  const pendingMoveFocus = useRef<{ id: string; direction: MoveDirection } | null>(null)
+  const [moves, setMoves] = useState(0)
+  useEffect(() => {
+    const pending = pendingMoveFocus.current
+    if (!pending) return
+    pendingMoveFocus.current = null
+    const active = document.activeElement
+    const stuck = active instanceof HTMLButtonElement && active.disabled
+    if (!focusWasLost(active, document.body) && !stuck) return
+    const buttons = moveButtons.current.get(pending.id)
+    const same = buttons?.[pending.direction]
+    const other = buttons?.[pending.direction === 'up' ? 'down' : 'up']
+    const target = same && !same.disabled ? same : other && !other.disabled ? other : null
+    target?.focus()
+  }, [moves])
+  const moveRefFor = (id: string) => (direction: MoveDirection, el: HTMLButtonElement | null) => {
+    const entry = moveButtons.current.get(id) ?? {}
+    entry[direction] = el
+    moveButtons.current.set(id, entry)
+  }
+  const move = (id: string, direction: MoveDirection) => {
+    const next = moveTeam(rows, id, direction)
+    if (next === rows) return
+    pendingMoveFocus.current = { id, direction }
+    setOrderSaved(false)
+    setDraft(next.map((t) => t.id))
+    setMoves((n) => n + 1)
+  }
+
+  /* The save's outcome, and the thing focus goes back to. A successful save
+     leaves the draft equal to what is stored, so Save team order disables
+     under the press once the refetch lands and the browser drops focus; it
+     goes to the outcome, which is what AdminUsers does for the same shape. */
+  const savedRef = useRef<HTMLDivElement>(null)
+  const wantSavedFocus = useFocusRestore(orderSaved && !canSave, savedRef)
+  const saveOrder = () => {
+    if (!canSave) return
+    setOrderSaved(false)
+    wantSavedFocus()
+    save.mutate({ orderedIds: draftIds }, { onSuccess: () => setOrderSaved(true) })
+  }
+
   /* The removal's outcome, and the thing focus goes back to. Pressing the
      row's Remove opens the dialog; the dialog closes on success and Modal
      restores focus to the trigger; the refetch then takes the row and the
@@ -279,7 +480,12 @@ export function AdminTeams() {
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && add()}
           />
-          <Button variant="primary" icon={Icon.plus} disabled={!name.trim() || insert.isPending} onClick={add}>
+          <Button
+            variant="primary"
+            icon={Icon.plus}
+            disabled={!name.trim() || insert.isPending || save.isPending}
+            onClick={add}
+          >
             {insert.isPending ? 'Adding…' : 'Add team'}
           </Button>
         </div>
@@ -300,18 +506,54 @@ export function AdminTeams() {
             Add the first one above. Sessions and coaches can then be filtered by it.
           </Empty>
         ) : (
-          <ul className="admin-list">
-            {teams.map((t) => (
-              <TeamRow
-                key={t.id}
-                team={t}
-                onDelete={() => {
-                  setRemoved(null)
-                  setRemoving(t)
-                }}
-              />
-            ))}
-          </ul>
+          <>
+            <div className="section-title section-title-tight admin-order-title">
+              <h2>Team order</h2>
+            </div>
+            <p className="admin-intro">{TEAM_ORDER_COPY}</p>
+            <TeamOrderStatus state={stored.state} unplaced={stored.unplaced} />
+            <ul className="admin-list">
+              {rows.map((t, i) => (
+                <TeamRow
+                  key={t.id}
+                  team={t}
+                  position={i + 1}
+                  total={rows.length}
+                  ordering={save.isPending}
+                  onMove={(direction) => move(t.id, direction)}
+                  moveRef={moveRefFor(t.id)}
+                  onDelete={() => {
+                    setRemoved(null)
+                    setRemoving(t)
+                  }}
+                />
+              ))}
+            </ul>
+            <div className="admin-order-save">
+              <Button variant="primary" icon={Icon.check} disabled={!canSave} onClick={saveOrder}>
+                {save.isPending ? 'Saving order…' : 'Save team order'}
+              </Button>
+              {dirty && !save.isPending && <span className="admin-hint">Not saved yet.</span>}
+            </div>
+            {/* A refused or half written save says so. The status above is
+                read from what is STORED, which the settled write has refetched,
+                so an order left incomplete by a dropped connection is named as
+                incomplete there; the list keeps the arrangement so one more
+                press can finish it. */}
+            {save.isError && (
+              <Note tone="danger" role="alert" className="admin-note">
+                Could not save the team order. The status above says what is stored now; the list still shows the order
+                you arranged, so check it and press Save team order again.
+              </Note>
+            )}
+            {orderSaved && !save.isPending && (
+              <div ref={savedRef} tabIndex={-1} className="admin-note">
+                <Note tone="success" role="status">
+                  Team order saved.
+                </Note>
+              </div>
+            )}
+          </>
         )}
       </Card>
 

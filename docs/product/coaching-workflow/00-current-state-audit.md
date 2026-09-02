@@ -604,7 +604,13 @@ this section is not read as clearing the whole duration seam.
 
 ## 19. Teams: what exists, and what an ability order would need
 
-`public.teams` (`0002_teams_roles.sql:23`, extended by `0032` and `0044`) carries
+**Superseded by COACH-1 (#223, applied 2 September 2026, and the COACH-1B
+frontend PR).** `teams` now carries `sort_order`, the Teams screen offers Move
+up and Move down with one Save team order, and `src/lib/teamOrder.ts` reads the
+column; the grouping suggestion is still handed no order. What follows is what
+was captured.
+
+`public.teams` (`0002_teams_roles.sql:23`, extended by `0032` and `0044`) carried
 exactly:
 
 ```
@@ -614,7 +620,7 @@ id, club_id, name, created_at, bib_colour
 plus `teams_id_club_unique (id, club_id)` from 0032. Write is gated on
 `has_perm('teams.manage')` (`teams_manage`, `0012_rbac.sql:376`). The admin
 surface `src/routes/AdminTeams.tsx` offers add, rename, delete and set default
-bib colour. **There is no reorder affordance and no ordering column.**
+bib colour. **There was no reorder affordance and no ordering column.**
 
 `useTeams` (`src/lib/queries.ts:628`) reads `.order('name', { ascending: true })`,
 and `sessionTeamsLabel` (`src/lib/sessionTeams.ts:93`) sorts by name too. **Every

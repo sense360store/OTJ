@@ -689,6 +689,7 @@ interface AdminCallLog {
   renameTeam: number
   deleteTeam: number
   setTeamBib: number
+  saveTeamOrder: number
   /* Every write MADE, in order, WITH ITS ARGUMENTS. A counter says a write
      happened and the order says when, and neither says what was sent: the
      member save could send `teamIds: []` while the row still read All teams,
@@ -712,6 +713,7 @@ const adminCalls: AdminCallLog = {
   renameTeam: 0,
   deleteTeam: 0,
   setTeamBib: 0,
+  saveTeamOrder: 0,
   writes: [],
 }
 ;(globalThis as unknown as { __adminCalls?: AdminCallLog }).__adminCalls = adminCalls
@@ -972,4 +974,12 @@ export const useDeleteTeam = () =>
 export const useSetTeamBibColour = () =>
   useAdminWrite<{ teamId: string; bibColour: string | null }>('setTeamBib', 'Could not change the bib colour.', (vars) =>
     adminStore.setTeamBib(vars.teamId, vars.bibColour),
+  )
+
+/* COACH-1B. The one write of the club's team order; the payload is the
+   whole intended order, which is what the frozen rules are about, so the
+   call log carries it. */
+export const useSaveTeamOrder = () =>
+  useAdminWrite<{ orderedIds: string[] }>('saveTeamOrder', 'Could not save the team order.', (vars) =>
+    adminStore.saveTeamOrder(vars.orderedIds),
   )

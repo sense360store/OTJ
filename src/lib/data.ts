@@ -37,6 +37,12 @@ export interface Team {
   // The team's default bib colour (0044), null when unset. A register
   // entry may override it for one player on one session.
   bibColour: string | null
+  // The club's ordering of its own teams (0051, COACH-1): this team's
+  // position in the club's list, null when the club has not placed it.
+  // Lower is stronger. It is a TEAM order and never a player rating; no
+  // per-player field exists. Two orders coexist and must not be confused:
+  // every label stays alphabetical, and only src/lib/teamOrder.ts reads this.
+  sortOrder: number | null
 }
 
 // A child on a team's roster, the first child data the app holds. The shape

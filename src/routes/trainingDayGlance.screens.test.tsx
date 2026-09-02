@@ -31,8 +31,8 @@ const AT = '2026-08-15T09:00:00.000Z'
 // Titans wear red by default; Trojans have no default at all, which is what
 // makes a Trojan guest resolve to No bib without any override.
 const TEAMS: Team[] = [
-  { id: 't1', name: 'Titans', bibColour: 'red' },
-  { id: 't2', name: 'Trojans', bibColour: null },
+  { id: 't1', name: 'Titans', bibColour: 'red', sortOrder: null },
+  { id: 't2', name: 'Trojans', bibColour: null, sortOrder: null },
 ]
 
 const player = (

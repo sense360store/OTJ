@@ -12,8 +12,8 @@ import type { Team } from '../lib/data'
 
 const tokens: Token[] = formationPositions('2-3-1', 'home')
 const teams: Team[] = [
-  { id: 'team-1', name: 'Titans', bibColour: null },
-  { id: 'team-2', name: 'Trojans', bibColour: null },
+  { id: 'team-1', name: 'Titans', bibColour: null, sortOrder: null },
+  { id: 'team-2', name: 'Trojans', bibColour: null, sortOrder: null },
 ]
 const noop = () => {}
 

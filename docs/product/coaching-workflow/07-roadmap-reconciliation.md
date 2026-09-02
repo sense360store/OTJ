@@ -47,7 +47,7 @@ next**, as the first gated coaching migration.
 | ID | Workstream | Item | Proposed status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
 | COACH-00 | Coaching workflow | End-to-end coaching workflow discovery, architecture and post-discovery reconciliation | Done (docs only) | P1 | This document set. No code, no migration. |
-| COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | **In progress** (COACH-1A, migration `0051`, registered and in review as #223; COACH-1B to follow) | P1 | Migration M1, gated, registered against the hosted ledger head at its own review (`20260823065041` / `bulk_delete_players` as of 2 September 2026) rather than by filename. The one irreducible new fact. The database half is its own gated PR; the reorder affordance follows. |
+| COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | **Done** (COACH-1A, migration `0051`, merged as #223 and applied on 2 September 2026; COACH-1B, the ordering affordance on the Teams screen, in its own PR) | P1 | Migration M1, gated, registered against the hosted ledger head at its own review (`20260823065041` / `bulk_delete_players` as of 2 September 2026) rather than by filename. The one irreducible new fact. The database half is its own gated PR; the reorder affordance follows. |
 | COACH-2A | Coaching workflow | The activity structure model: `slot`, `skipped`, the derivation module and the active session duration in all four implementations | **Done** | P1 | **No migration.** Two keys in the existing activity jsonb. Shipped in #198; the content-sharing Edge Function deploy it left outstanding has since run. |
 | COACH-2B | Coaching workflow | The authoring affordances: mark a station or the games phase, and a Not running tonight toggle on a dated session | **Done** | P1 | No migration. Shipped in #202. Gates COACH-6, COACH-7, COACH-8. |
 | COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | **Done** | P1 | No schema. Shipped in #203 (generator) and #204 (screen). Wants COACH-1 and degrades honestly without it, saying the order is unset. |
@@ -230,8 +230,8 @@ their own dependencies.
    and #206.
 5. ~~**COACH-10**, the authoring seam.~~ Done: #207.
 6. **COACH-1** (M1), the first gated coaching migration, timed against the
-   ledger. **In progress**: COACH-1A registered and in review as #223, COACH-1B
-   to follow.
+   ledger. **Done**: COACH-1A merged as #223 and applied on 2 September 2026,
+   COACH-1B in its own PR.
 7. **COACH-5** (M2), the venue layouts table, then **COACH-6** and **COACH-7**.
 8. **COACH-8** (M3), the game plan. **COACH-9** any time.
 9. **COACH-11**, **COACH-12** (M4) and **COACH-13** on the authoring track.
@@ -270,12 +270,17 @@ product design was rewritten and no priority was invented.
 - **COACH-1 was the next coaching slice** at that pass, the first gated
   coaching migration, to be numbered and registered against the hosted head
   above at its own review.
-- **COACH-1 is in progress** since the same day: its database half, COACH-1A,
+- **COACH-1 was taken up** the same day and is built: its database half, COACH-1A,
   migration `0051_team_sort_order`, was authored and registered against that
   head (`20260823065041` / `bulk_delete_players`, re-read at that review) and
-  opened as its own gated pull request, #223; COACH-1B, the reorder affordance,
-  follows once the column is applied. Every COACH-1 status line in these
-  documents says the same thing.
+  opened as its own gated pull request, #223, which merged the same day after
+  the migration was applied at 15:02 UTC (hosted `20260902150212` /
+  `team_sort_order`). COACH-1B, the reorder affordance, followed in its own PR:
+  the Teams screen shows the club order, moves teams with Move up and Move
+  down, names the three states and saves 1..N through one checkpoint, with
+  `src/lib/teamOrder.ts` as the one consumer and the grouping suggestion still
+  handed no order. Every COACH-1 status line in these documents says the same
+  thing.
 - **In `docs/roadmap/master-roadmap.md`**, the shipped slices were added to the
   Done table with their pull request numbers and merge dates, the Last reviewed
   line and the coaching workflow pointer were brought up to date, and the VISUAL

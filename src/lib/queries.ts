@@ -71,6 +71,7 @@ import type {
   Team,
   Template,
 } from './data'
+import { saveTeamOrder, type TeamOrderWrite, type TeamPosition } from './teamOrder'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import { isActivitySlot } from './activityStructure'
 import type { ActivitySlot } from './activityStructure'
@@ -243,6 +244,7 @@ interface TeamRow {
   name: string
   bib_colour: string | null
   created_at: string
+  sort_order: number | null
 }
 
 interface RoleRow {
@@ -293,7 +295,11 @@ const PROGRAMME_COLS =
 // exactly as fresh as the row it belongs to.
 const SESSION_COLS =
   'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, rights, venue_id, session_teams(team_id)'
-const TEAM_COLS = 'id, club_id, name, bib_colour, created_at'
+// sort_order rides the ordinary read (COACH-1B) so the Teams screen can show
+// the club's order; the READ ORDER stays alphabetical by name, because that
+// is what every label and filter shows, and the club order is a separate
+// question src/lib/teamOrder.ts answers.
+const TEAM_COLS = 'id, club_id, name, bib_colour, created_at, sort_order'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
 const PROFILE_COLS =
@@ -552,7 +558,7 @@ export function toSession(r: SessionRow): Session {
 }
 
 function toTeam(r: TeamRow): Team {
-  return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null }
+  return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null, sortOrder: r.sort_order ?? null }
 }
 
 function toRole(r: RoleRow): RoleInfo {
@@ -5593,6 +5599,58 @@ export function useSetTeamBibColour() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  })
+}
+
+// ---- Team order (teams.manage, COACH-1B) ----------------------------------
+//
+// The club's ordering of its own teams, saved as one explicit checkpoint
+// from the Teams admin screen: the positions 1..N in the order the admin can
+// see. The algorithm, its two phases and why it fails safe are in
+// src/lib/teamOrder.ts (`saveTeamOrder`); this is the store it runs against,
+// and the store touches sort_order and nothing else. No name, bib or other
+// team field is part of this write, and a team already at its position is
+// never written.
+//
+// Every call reads its rows back with select(), because the teams RLS
+// answers a caller without teams.manage with no row rather than an error,
+// and `saveTeamOrder` treats a short answer as a refusal.
+type TeamPositionRow = { id: string; sort_order: number | null }
+const toTeamPosition = (r: TeamPositionRow): TeamPosition => ({ id: r.id, sortOrder: r.sort_order ?? null })
+
+const teamOrderStore = {
+  async readPositions(): Promise<TeamPosition[]> {
+    const { data, error } = await supabase.from('teams').select('id, sort_order')
+    if (error) throw error
+    return ((data ?? []) as TeamPositionRow[]).map(toTeamPosition)
+  },
+  async clearPositions(ids: readonly string[]): Promise<TeamPosition[]> {
+    const { data, error } = await supabase
+      .from('teams')
+      .update({ sort_order: null })
+      .in('id', [...ids])
+      .select('id, sort_order')
+    if (error) throw error
+    return ((data ?? []) as TeamPositionRow[]).map(toTeamPosition)
+  },
+  async setPosition(id: string, position: number): Promise<TeamPosition[]> {
+    const { data, error } = await supabase
+      .from('teams')
+      .update({ sort_order: position })
+      .eq('id', id)
+      .select('id, sort_order')
+    if (error) throw error
+    return ((data ?? []) as TeamPositionRow[]).map(toTeamPosition)
+  },
+}
+
+export function useSaveTeamOrder() {
+  const qc = useQueryClient()
+  return useMutation<TeamOrderWrite[], Error, { orderedIds: string[] }>({
+    mutationFn: ({ orderedIds }) => saveTeamOrder(teamOrderStore, orderedIds),
+    // Settled rather than success: a refused or half written save is exactly
+    // when the screen must show what is stored rather than what was meant.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['teams'] }),
   })
 }
 

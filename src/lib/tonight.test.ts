@@ -427,8 +427,8 @@ describe('the rows a save sends to the database', () => {
 
 describe('buildTonightRows', () => {
   const teams: Team[] = [
-    { id: 'titans', name: 'Titans', bibColour: 'blue' },
-    { id: 'trojans', name: 'Trojans', bibColour: null },
+    { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: null },
+    { id: 'trojans', name: 'Trojans', bibColour: null, sortOrder: null },
   ]
   const players: Player[] = [
     { id: 'anna', teamId: 'titans', displayName: 'Anna Synthetic', shirtNumber: 7, createdBy: null },
@@ -472,8 +472,8 @@ describe('buildTonightRows', () => {
 
 describe('quick add, which happens before any save', () => {
   const teams2: Team[] = [
-    { id: 'titans', name: 'Titans', bibColour: 'blue' },
-    { id: 'trojans', name: 'Trojans', bibColour: 'red' },
+    { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: null },
+    { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: null },
   ]
   const squad: Player[] = [
     { id: 'anna', teamId: 'titans', displayName: 'Anna Synthetic', shirtNumber: null, createdBy: null },

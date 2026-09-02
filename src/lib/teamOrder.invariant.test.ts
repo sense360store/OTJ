@@ -1,31 +1,42 @@
-// COACH-1A ships the club's team order as a COLUMN (migration
-// 0051_team_sort_order: teams.sort_order, nullable, with a partial unique
-// index per club) and deliberately NO consumer. COACH-1B, a separate
-// frontend pull request, reads and writes it. Until then these pin what
-// "no consumer" means, because the column exists in the database from the
-// day the migration is applied and a well-meaning read of it is the
-// easiest thing to add by accident:
+// The club's team order has ONE reviewed consumer, and this pins its edge.
 //
-//   * the teams read selects an explicit column list that does not name
-//     it, so the deployed client never sees the column and every write it
-//     sends omits it;
-//   * no application source reads or writes it, by either spelling, other
-//     than a comment naming what a later slice will do;
-//   * the grouping suggestion still takes the order as a parameter and
-//     names no column a write would target (pinned beside it in
-//     sessionSetup.invariant.test.ts, and restated here by reference);
-//   * the label every session surface shows stays alphabetical, which is
-//     the one order the product has today and is not what the column will
-//     mean. Two orders will coexist and must not be confused.
+// COACH-1A shipped the column (migration 0051_team_sort_order: teams
+// sort_order, nullable, with a partial unique index per club) with no
+// consumer at all, and the first version of this file pinned exactly that.
+// COACH-1B is the reviewed consumer: the teams read carries the column, the
+// Team model carries it as sortOrder, src/lib/teamOrder.ts holds every rule
+// about it, the Teams admin screen renders and saves it through the one
+// mutation in queries.ts, and NOTHING ELSE reads it. In particular the
+// grouping suggestion still takes the order as a parameter and the register
+// screen still hands it null; wiring the two together is a later slice's
+// decision, made in the open rather than by a column quietly arriving in a
+// select list. These pin that boundary, because the column exists in every
+// row now and a well meaning read of it is the easiest thing to add.
 //
-// Source text tripwires, not proofs: they catch the realistic mistake
-// (a column typed into a select list, a field read off a row) and say
-// nothing about a value that reaches a consumer through a variable. The
+//   * the teams read selects an explicit column list that names it, and
+//     still orders by NAME, because the read order is the product's
+//     display order and the club order is a separate answer;
+//   * the Team model carries sortOrder, so a consumer reads a typed field
+//     rather than a raw row, and no player level field of any such name
+//     exists anywhere;
+//   * the only application sources that name the column or the field, by
+//     either spelling, are the reviewed COACH-1B path;
+//   * the grouping suggestion names no column a write would target and the
+//     register passes it no order (both restated here by reference and
+//     pinned beside them in sessionSetup.invariant.test.ts);
+//   * the label every session surface shows stays alphabetical, whatever
+//     order the Team objects carry;
+//   * no Edge Function reads or forwards it.
+//
+// Source text tripwires, not proofs: they catch the realistic mistake (a
+// field read off a Team in a screen, a column typed into a select list) and
+// say nothing about a value that reaches a consumer through a variable. The
 // blind spots, named so a pass is read for what it is: a column name
-// assembled from parts ('sort_' + 'order'), a select('*') on teams that
-// would carry the column without naming it, a row spread into another
-// shape, and a mention after a URL on the same line, which the comment
-// stripping below leaves on the scanned side only up to the colon.
+// assembled from parts ('sort_' + 'order'), a select('*') on teams that would
+// carry the column without naming it, a Team spread into another shape and
+// read there under another name, and a mention after a URL on the same line,
+// which the comment stripping below leaves on the scanned side only up to
+// the colon.
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -39,6 +50,21 @@ const SRC = join(process.cwd(), 'src')
 // not see, and the public share deny lists are exactly where a new column
 // tends to arrive by accident.
 const FUNCTIONS = join(process.cwd(), 'supabase', 'functions')
+
+/* The reviewed COACH-1B boundary: the only application sources that may
+   name the column or the field. Widening this list is a product decision
+   (a consumer of the order), made in a reviewed change that also says what
+   the consumer does with it. */
+const REVIEWED_CONSUMERS = [
+  'src/lib/data.ts', // the Team model carries sortOrder
+  'src/lib/queries.ts', // the read carries sort_order; the save writes it and nothing else
+  'src/lib/teamOrder.ts', // every rule about the order
+]
+/* The one screen. It never names the column or the field itself: it reads
+   the order through teamOrder.ts and saves it through the one mutation, so
+   a screen that started reading `team.sortOrder` directly would show up in
+   the sweep below like any other consumer. */
+const REVIEWED_SCREEN = 'src/routes/AdminTeams.tsx'
 
 function read(rel: string): string {
   return readFileSync(join(SRC, rel), 'utf8')
@@ -70,36 +96,115 @@ function applicationSources(): string[] {
   return out.sort()
 }
 
-describe('the team order column has no consumer yet', () => {
-  it('the teams read selects an explicit column list that does not name sort_order', () => {
+function mentions(rel: string): string[] {
+  const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
+  const found: string[] = []
+  code.split('\n').forEach((line, i) => {
+    if (/sort_order|sortOrder/.test(line)) found.push(`${rel}:${i + 1}: ${line.trim()}`)
+  })
+  return found
+}
+
+describe('the teams read carries the column and keeps the display order', () => {
+  it('selects an explicit column list that names sort_order, never select(*)', () => {
     const src = read('lib/queries.ts')
     const match = /const TEAM_COLS = '([^']+)'/.exec(src)
     expect(match, 'TEAM_COLS must be a literal column list').not.toBeNull()
-    // Exact, so widening it is a deliberate change in the slice that owns
-    // the consumer rather than a drift this test lets through.
-    expect(match![1]).toBe('id, club_id, name, bib_colour, created_at')
-    expect(match![1]).not.toContain('sort_order')
+    // Exact, so widening it again is a deliberate change rather than drift.
+    expect(match![1]).toBe('id, club_id, name, bib_colour, created_at, sort_order')
+    expect(withoutComments(src)).not.toMatch(/from\('teams'\)\s*\.select\('\*'\)/)
   })
 
-  it('the client Team shape carries no order', () => {
-    const src = read('lib/data.ts')
-    const shape = /export interface Team \{([^}]*)\}/.exec(src)
+  it('still orders the read by name, so the club order never becomes the display order by accident', () => {
+    const src = withoutComments(read('lib/queries.ts'))
+    const readSite = src.match(/from\('teams'\)\.select\(TEAM_COLS\)\.order\('([^']+)'/)
+    expect(readSite, 'the teams read orders by a column').not.toBeNull()
+    expect(readSite![1]).toBe('name')
+  })
+
+  it('maps sort_order to sortOrder on the Team model, null for null', () => {
+    const src = withoutComments(read('lib/queries.ts'))
+    expect(src).toMatch(/sortOrder: r\.sort_order \?\? null/)
+    const shape = /export interface Team \{([^}]*)\}/.exec(read('lib/data.ts'))
     expect(shape).not.toBeNull()
-    expect(shape![1]).not.toMatch(/sortOrder|sort_order/)
+    expect(shape![1]).toMatch(/sortOrder: number \| null/)
   })
 
-  it('no application source, browser or Edge, reads or writes sort_order or sortOrder outside a comment', () => {
+  it('writes only sort_order from the save, never a name, a bib or any other team field', () => {
+    const src = withoutComments(read('lib/queries.ts'))
+    const store = src.slice(src.indexOf('const teamOrderStore'), src.indexOf('export function useSaveTeamOrder'))
+    expect(store.length).toBeGreaterThan(0)
+    // Every update in the store sets sort_order and nothing else.
+    const updates = [...store.matchAll(/\.update\(\{([^}]*)\}\)/g)].map((m) => m[1].trim())
+    expect(updates.length).toBeGreaterThanOrEqual(2)
+    for (const u of updates) expect(u).toMatch(/^sort_order: /)
+    expect(store).not.toMatch(/\bname\b|bib_colour|upsert|insert\(|delete\(/)
+  })
+})
+
+describe('no player level ability field exists', () => {
+  it('the Player shape carries no ability, rating, level or band', () => {
+    const src = withoutComments(read('lib/data.ts'))
+    const player = /export interface Player \{([^}]*)\}/.exec(src)
+    expect(player, 'the Player model').not.toBeNull()
+    expect(player![1]).not.toMatch(/\b(ability|rating|level|band|skill|sortOrder|sort_order)\w*\s*[:?]/i)
+  })
+
+  it('no application source names a player ability column', () => {
     const offenders: string[] = []
     for (const rel of applicationSources()) {
-      // A comment naming what COACH-1B will do is the only permitted
-      // mention. Anything else is a consumer arriving early.
       const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
-      code.split('\n').forEach((line, i) => {
-        if (!/sort_order|sortOrder/.test(line)) return
-        offenders.push(`${rel}:${i + 1}: ${line.trim()}`)
-      })
+      if (/player_(ability|rating|level|band)|players\.(ability|rating|level|band)/.test(code)) offenders.push(rel)
     }
     expect(offenders).toEqual([])
+  })
+})
+
+describe('only the reviewed COACH-1B boundary consumes the column', () => {
+  it('no application source outside the reviewed list names sort_order or sortOrder outside a comment', () => {
+    const offenders: string[] = []
+    for (const rel of applicationSources()) {
+      if (REVIEWED_CONSUMERS.includes(rel)) continue
+      offenders.push(...mentions(rel))
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('every reviewed consumer actually names it, so the list cannot carry a file that stopped being one', () => {
+    for (const rel of REVIEWED_CONSUMERS) expect(mentions(rel), rel).not.toEqual([])
+  })
+
+  it('the Teams screen is the only screen on the order, and reaches it through the helper and the one mutation', () => {
+    const screen = withoutComments(read('routes/AdminTeams.tsx'))
+    expect(screen).toMatch(/from '\.\.\/lib\/teamOrder'/)
+    expect(screen).toMatch(/useSaveTeamOrder/)
+    // No other route, component or hook touches the helper or the mutation.
+    const others = applicationSources().filter(
+      (rel) => rel !== REVIEWED_SCREEN && !REVIEWED_CONSUMERS.includes(rel) && rel.startsWith('src/'),
+    )
+    const offenders = others.filter((rel) => {
+      const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
+      return /lib\/teamOrder'|useSaveTeamOrder|clubOrder\(|moveTeam\(|teamOrderWrites\(/.test(code)
+    })
+    expect(offenders).toEqual([])
+  })
+
+  it('no Edge Function reads or forwards it', () => {
+    for (const rel of applicationSources().filter((f) => f.startsWith('supabase/functions/'))) {
+      expect(mentions(rel), rel).toEqual([])
+    }
+  })
+
+  it('the grouping suggestion still names no column, and the register still hands it no order', () => {
+    // sessionSetup.invariant.test.ts bans the column name from the generator
+    // body; this checks that ban is still there and that the register's one
+    // call still passes null, so the files cannot be loosened one at a time.
+    const guard = read('lib/sessionSetup.invariant.test.ts')
+    expect(guard).toContain("expect(src).not.toMatch(/\\bsort_order\\b/)")
+    const register = withoutComments(read('routes/SessionRegister.tsx'))
+    const calls = [...register.matchAll(/planSetup\(([^)]*)\)/g)].map((m) => m[1].replace(/\s+/g, ' ').trim())
+    expect(calls).toEqual(['rows, live, null'])
+    expect(register).not.toMatch(/teamOrder|clubOrder|positionByTeam/)
   })
 
   it('the comment stripping keeps code beside a closed block comment and drops a block comment interior', () => {
@@ -118,29 +223,25 @@ describe('the team order column has no consumer yet', () => {
     expect(withoutComments('const y = 2 // sortOrder later')).not.toContain('sortOrder')
     expect(withoutComments("const u = 'https://example.test/sort_order'")).toContain('sort_order')
   })
-
-  it('the grouping suggestion keeps its own tripwire against the column', () => {
-    // sessionSetup.invariant.test.ts bans the column name from the
-    // generator body; this only checks that ban is still there, so the two
-    // files cannot be loosened one at a time without noticing.
-    const guard = read('lib/sessionSetup.invariant.test.ts')
-    expect(guard).toContain("expect(src).not.toMatch(/\\bsort_order\\b/)")
-  })
 })
 
 describe('labels stay alphabetical whatever order the club states', () => {
-  it('sessionTeamsLabel sorts by name, not by insertion order', () => {
-    // Insertion order is deliberately not alphabetical, and the ids are
-    // chosen so that neither id order nor insertion order agrees with the
-    // name order the label must show.
+  it('sessionTeamsLabel sorts by name even when every Team carries a contrary club position', () => {
+    // The club order is deliberately the REVERSE of the alphabetical one,
+    // and the insertion order agrees with neither, so a label that read
+    // either would come out differently.
     const teams: Record<string, Team | undefined> = {
-      t1: { id: 't1', name: 'Zulu', bibColour: null },
-      t2: { id: 't2', name: 'Alpha', bibColour: 'red' },
-      t3: { id: 't3', name: 'Mike', bibColour: null },
-      t4: { id: 't4', name: 'Bravo', bibColour: null },
+      t1: { id: 't1', name: 'Zulu', bibColour: null, sortOrder: 1 },
+      t2: { id: 't2', name: 'Alpha', bibColour: 'red', sortOrder: 4 },
+      t3: { id: 't3', name: 'Mike', bibColour: null, sortOrder: 2 },
+      t4: { id: 't4', name: 'Bravo', bibColour: null, sortOrder: 3 },
     }
     expect(sessionTeamsLabel({ teamId: null, teamIds: ['t1', 't3', 't2'] }, teams)).toBe('Alpha, Mike, Zulu')
     expect(sessionTeamsLabel({ teamId: null, teamIds: ['t4', 't2'] }, teams)).toBe('Alpha, Bravo')
     expect(sessionTeamsLabel({ teamId: null, teamIds: ['t1', 't2', 't3', 't4'] }, teams)).toBe('All teams')
+  })
+
+  it('the label module never reads the field', () => {
+    expect(withoutComments(read('lib/sessionTeams.ts'))).not.toMatch(/sortOrder|sort_order/)
   })
 })

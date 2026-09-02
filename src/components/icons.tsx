@@ -86,6 +86,7 @@ export const Icon = {
   chevL: S(['M15 5l-7 7 7 7']),
   chevR: S(['M9 5l7 7-7 7']),
   chevDown: S(['M5 9l7 7 7-7']),
+  chevUp: S(['M5 15l7-7 7 7']),
   arrowRight: S([L(4, 12, 20, 12), 'M14 6l6 6-6 6']),
   sun: S([
     C(12, 12, 4.5),

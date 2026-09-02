@@ -15,8 +15,8 @@ import { buildRegister, type RegisterEntry } from '../lib/register'
 import type { Player, Team } from '../lib/data'
 
 const teams: Team[] = [
-  { id: 't1', name: 'Titans', bibColour: 'red' },
-  { id: 't2', name: 'Trojans', bibColour: null },
+  { id: 't1', name: 'Titans', bibColour: 'red', sortOrder: null },
+  { id: 't2', name: 'Trojans', bibColour: null, sortOrder: null },
 ]
 
 const player = (id: string, name: string, teamId: string | null, shirt: number | null = null): Player => ({
