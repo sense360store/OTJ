@@ -10,8 +10,9 @@ position has moved on (section 25); and section 22's conclusion has been withdra
 now that nothing consumes it, while its arithmetic stands. **Re-read
 2 September 2026 against `main` at `3cb20f9`:** the passages that COACH-2
 (#198, #202), COACH-3 (#203, #204), COACH-4 (#206) and COACH-10 (#207) have
-overtaken carry a superseded or built marker where they stand (sections 9, 16,
-17, 20 and 27, and the notable findings), and the rest is left as captured.
+overtaken carry a superseded or built marker where they stand (sections 2, 4,
+5, 9, 16, 17, 20 and 27, and the notable findings), and the rest is left as
+captured.
 
 This is the factual half of the coaching workflow discovery. It answers the
 questions the overhaul depends on, with the repository path, table or function
@@ -49,7 +50,7 @@ The columns that matter here:
 
 | Column | Meaning |
 |---|---|
-| `activities` jsonb | The plan. An array of `{ phase, drill_id?, title?, duration }`. |
+| `activities` jsonb | The plan. An array of `{ phase, drill_id?, title?, duration }` when this was captured; **since COACH-2 (#198, #202)** each entry may also carry `slot` (`'station'` or `'game'`, the declared structure) and `skipped` (`true` only, session local, stripped from every week plan). Section 27 carries the mapper detail. |
 | `date`, `start_time` | Local wall clock, read as parts, never `Date.parse`. |
 | `venue_id` | The chosen venue (0044). `venue` free text is FROZEN. |
 | `team_id` | FROZEN legacy single team. Coverage is `session_teams`. |
@@ -101,11 +102,18 @@ Nothing is stored and nothing writes. `sessions.status` is only ever set to
 Through `activities[].drill_id`. That is the only relationship. There is no join
 table, no ordering table and no per-session drill row.
 
-`Activity` (`src/lib/data.ts:302`) is exactly four optional-ish fields:
+`Activity` (`src/lib/data.ts:302`) was exactly four optional-ish fields when
+this was captured:
 
 ```ts
 interface Activity { phase: Phase; drillId?: string; title?: string; duration: number }
 ```
+
+**Superseded in part by COACH-2A (#198):** `Activity` now extends
+`StructuredActivity` (`src/lib/activityStructure.ts`) and carries `slot` and
+`skipped` beside those four; both mappers name both keys, and the template
+boundary strips `skipped` on the way into a week plan. The rule below is
+unchanged and is exactly why those two keys had to be added to both mappers.
 
 `toActivity` / `toActivityRow` (`src/lib/queries.ts:289`, `:296`) rebuild the
 object field by field from that allow-list, so **any key added to the stored
@@ -115,7 +123,10 @@ next save**. `sessions.activities` itself carries **no check constraint**
 
 ## 5. Is a session activity a snapshot or a reference?
 
-**A reference, with two per-session overrides.**
+**A reference, with two per-session overrides** when this was captured, and
+**four since COACH-2 (#198, #202)**: `slot` (which is also carried by a week
+plan, because it belongs to the plan) and `skipped` (session local only) join
+the two below. The reference itself is unchanged.
 
 - `duration` and `phase` are stored on the activity, so they are session-local.
 - Everything else (title, summary, coaching points, setup notes, equipment,

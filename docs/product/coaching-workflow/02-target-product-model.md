@@ -1118,10 +1118,13 @@ layout around an existing seam rather than a new rendering path.
 
 ## 10. One authoring seam, two hosts
 
-**Today** the planner and `TemplateFormModal` each maintain their own activity
-list, add bar, custom activity literal and row component
-(`00-current-state-audit.md` section 9). Long range planning happens in the week
-plan editor, weeks before a dated session exists.
+**Today, as audited,** the planner and `TemplateFormModal` each maintained their
+own activity list, add bar, custom activity literal and row component
+(`00-current-state-audit.md` section 9). **Built since, in COACH-10 (#207):**
+both hosts now mount one `ActivityListEditor`
+(`src/components/ActivityListEditor.tsx`), which is the seam this section
+decides on. Long range planning happens in the week plan editor, weeks before a
+dated session exists.
 
 **Decision: authoring improvements go into one shared seam used by both hosts,
 never into the planner alone.** The seam owns the activity list and its
