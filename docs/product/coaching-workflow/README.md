@@ -30,15 +30,24 @@ documents remains design.
 | **COACH-1**, the club's team order | **Next.** The first gated coaching migration (M1, `teams.sort_order`), as its own gated PR, then the reorder affordance as a small frontend PR. |
 | Everything else | Not built. |
 
-**COACH-2A's one operational follow-up has run.** It changed
-`supabase/functions/_shared/share.ts`, so the two content-sharing Edge Functions
-needed redeploying through
-`docs/operations/content-sharing-edge-function-deploy.md`. On 2 September 2026
-the deployed source of both `read-content-share` (version 11) and
-`manage-content-share` (version 7) was read back and compared with `main`'s
-`_shared/share.ts` byte for byte, and both carry it, so a publicly shared
-session now counts a stood-down activity exactly as every screen in the app
-does.
+**COACH-2A's one operational follow-up has run, and no stored snapshot needs
+repairing.** COACH-2A changed `supabase/functions/_shared/share.ts`, so the two
+content-sharing Edge Functions needed redeploying through
+`docs/operations/content-sharing-edge-function-deploy.md`. They were: the
+hosted `read-content-share` (version 11) and `manage-content-share` (version 7)
+were both deployed at 12:07 UTC on 21 August 2026, and on 2 September their
+deployed source was read back through the Supabase API and compared with
+`main`'s `_shared/share.ts` byte for byte, which it matches. A share is a
+frozen snapshot, so a snapshot minted while the OLD source was live would keep
+its old total whatever is deployed later; that window is empty here for two
+independent reasons. The only way to stand an activity down is the COACH-2B
+control, and #202 merged at 19:53 UTC on 21 August, after the deploy, so no
+client could write a stood-down activity while the old source was live. And
+production, read on 2 September as aggregates only, holds no session and no
+week plan carrying a `skipped` key at all, and exactly one share, created on
+10 August 2026 before COACH-2A existed. So a publicly shared session counts a
+stood-down activity exactly as every screen in the app does, and there is
+nothing to refresh.
 
 ## How to read these documents
 

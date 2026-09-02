@@ -7,7 +7,11 @@ genuinely changed have been edited: PR #189 has merged, so the drill diagram now
 renders across session delivery (sections 7, 18); the internal club link share was
 missed by the first pass and is recorded in a new section 24; the migration ledger
 position has moved on (section 25); and section 22's conclusion has been withdrawn
-now that nothing consumes it, while its arithmetic stands.
+now that nothing consumes it, while its arithmetic stands. **Re-read
+2 September 2026 against `main` at `3cb20f9`:** the passages that COACH-2
+(#198, #202), COACH-3 (#203, #204), COACH-4 (#206) and COACH-10 (#207) have
+overtaken carry a superseded or built marker where they stand (sections 9, 16,
+17, 20 and 27, and the notable findings), and the rest is left as captured.
 
 This is the factual half of the coaching workflow discovery. It answers the
 questions the overhaul depends on, with the repository path, table or function
@@ -410,14 +414,23 @@ Edge Functions in the repository: `fa-import`, `fa-import-programme`,
   client only, no migration (section 18).
 - Creating a drill while planning. `useInsertDrill` already exists; this is
   navigation, a modal and a shared authoring seam serving both the planner and
-  the week plan editor (section 9).
+  the week plan editor (section 9). **The seam is built (COACH-10, #207,
+  `src/components/ActivityListEditor.tsx`); creating a drill from it is
+  COACH-11 and is not.**
 - The suggested split of attending children into groups. Groups are already
   derived from bib colour; a suggestion is a pure function over the draft.
+  **Built in COACH-3 (#203, #204)** as `src/lib/sessionSetup.ts` and the
+  Players and groups screen, client only as predicted, and **COACH-4 (#206)**
+  preserves it as attendance changes.
 - The readiness readout for a session. Derivable from data already read.
+  **Built in COACH-3 (#204).**
 - The station list, its numbering and its count, derived from the activities
-  that **declare** themselves stations. Section 20 proves the plan carries no
-  such declaration today and that `Phase` cannot supply one, so the declaration
-  is what the target model adds; only the **derivation from it** is free.
+  that **declare** themselves stations. Section 20 proves the plan carried no
+  such declaration when this was written and that `Phase` cannot supply one, so
+  the declaration is what the target model adds; only the **derivation from
+  it** is free. **Built in COACH-2 (#198, #202):** the declaration is `slot` on
+  the activity and the derivation is `src/lib/activityStructure.ts`, client
+  only and with no migration, as predicted.
 - Rotation arithmetic and the "your group starts at station N" statement, since
   starting stations are derived rather than stored (section 22).
 - Sharing a session with another coach, which already ships and is client only
@@ -602,6 +615,15 @@ order`, all of which except the last already exists.
 without storing anything". That is false, and the code below is what disproves
 it.**
 
+**Superseded in part by COACH-2A (#198) and COACH-2B (#202).** The analysis of
+`Phase` below still holds, and it is why structure is DECLARED on the activity
+rather than inferred from the phase. What is no longer true is the sentence
+"what the plan does record structurally today: nothing": `sessions.activities`
+now carries `slot` and `skipped` beside `phase`, `duration`, `drill_id` and
+`title` (section 27), both authoring surfaces set them, and
+`src/lib/activityStructure.ts` derives the station list, its numbering and its
+count from the declaration. `gameCount` (COACH-8) is still not built.
+
 `Phase` (`src/lib/data.ts:9`) is `'Warm-Up' | 'Skill' | 'Game' | 'Cool-Down'`,
 and `PHASES` (`:533`) is the ordered list the planner and the week plan editor
 both render.
@@ -625,10 +647,12 @@ the night:
 - The coach may also change a phase for coaching reasons that have nothing to do
   with structure.
 
-**What the plan does record structurally today: nothing.** There is no field
-saying which activities are the carousel, which one is the games phase, or how
-many pitches run inside it. `sessions.activities` carries `phase`, `duration`,
-`drill_id` and `title`, and that is the whole of it (section 4).
+**What the plan recorded structurally when this was written: nothing.** There
+was no field saying which activities are the carousel, which one is the games
+phase, or how many pitches run inside it. `sessions.activities` carried
+`phase`, `duration`, `drill_id` and `title`, and that was the whole of it
+(section 4), until COACH-2 added `slot` and `skipped` (section 27); how many
+pitches run inside the games phase is still not recorded.
 
 **What it does record usefully is order**, which is what station numbering can be
 built on **once the stations are declared**. The declaration is
@@ -1002,7 +1026,10 @@ one that does not exist yet.
    shows the plan carries nothing that can supply it: the phase records what kind
    of drill was added, not what part it plays on the night. The one duration
    change the overhaul does make is a consequence of standing a station down, not
-   of the carousel maths (section 17).
+   of the carousel maths (section 17). **Superseded by COACH-2 (#198, #202):**
+   stations and the games phase are now declared on the activity by `slot`, and
+   standing one down (`skipped`) is that one duration change, in all four
+   implementations.
 
 2. **A group is a bib colour, and the derivation has a collision.**
    `tonightGroups` (`src/lib/tonight.ts:1103`) keys on `bib ?? ''`, so **two
@@ -1012,7 +1039,9 @@ one that does not exist yet.
    surfaces it. Coach discovery has since settled that unique active bib colours
    are the rule and that "No bibs" is not a valid group, so both collisions are
    now readiness failures with a defined product answer rather than open
-   questions (`02-target-product-model.md` section 6.1).
+   questions (`02-target-product-model.md` section 6.1). **Built in COACH-3
+   (#203, #204):** the suggestion assigns unique colours and the readiness
+   readout names both collisions.
 
 2b. **A session-only bib override already exists and already behaves
    correctly.** `register_entries.bib_colour_override` (0044) is per session and
