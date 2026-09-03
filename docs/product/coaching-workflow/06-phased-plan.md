@@ -4,9 +4,11 @@ Status: proposal, reconciled 18 August 2026 against `main` at `afe790d`;
 delivery status re-verified 2 September 2026 against `main` at `3cb20f9`.
 **Five slices are built** (COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10,
 each recorded under its own heading below with its pull request), **COACH-1 is
-in progress** as the first gated coaching migration (COACH-1A, migration
-`0051_team_sort_order`, registered and in review as #223; COACH-1B follows
-once it is applied), and everything else remains design. A settled design is not
+in progress** and has taken TWO gated migrations rather than the one this plan
+carried (COACH-1A, migration `0051_team_sort_order`, merged as #223 and applied
+on 2 September 2026; COACH-1B open as #225 and held for
+`0052_atomic_team_order`, registered and awaiting its apply), and everything
+else remains design. A settled design is not
 delivered work.
 
 The order was re-derived from scratch after coach discovery, then corrected once
@@ -36,7 +38,7 @@ turned out to be finished or unnecessary.
 | COACH-3, the suggested setup | **Merged.** #203 (the generator) and #204 (the screen). |
 | COACH-4, the setup preserved across attendance changes | **Merged.** #206. |
 | COACH-10, the shared authoring seam | **Merged.** #207. |
-| Migration numbering | `0050_bulk_delete_players.sql` is the highest on disk and was applied on 23 August 2026; the hosted head is `20260823065041` / `bulk_delete_players` (read 2 September 2026). The next free number is `0051`, and it stays unclaimed until a register entry pins it to that head. |
+| Migration numbering | `0051_team_sort_order.sql` is the highest applied and stamped `20260902150212` / `team_sort_order` on 2 September 2026, which is the hosted head. `0052_atomic_team_order.sql` is registered against it and awaits its apply. The number after that stays unclaimed until a register entry pins it to whatever head the ledger then holds, read live rather than inferred from the highest file on disk. |
 
 **The two pull requests that had to stay separate from this work have both
 merged**, on 27 August 2026, with nothing from this programme in either:
@@ -82,11 +84,27 @@ human review that is not auto-merged.
 ### COACH-1: the club's team order
 
 **Status.** In progress. The database half, COACH-1A, is migration
-`0051_team_sort_order`, its own gated PR registered against the hosted head
-`20260823065041` / `bulk_delete_players` and awaiting the human production
-apply; the reorder affordance, COACH-1B, follows in its own small frontend PR
-once the column is live. R1 in `08-open-questions.md` is decided as its
-recommended default: `sort_order` joins the `audit_teams()` allow list.
+`0051_team_sort_order`, merged as #223 and applied to production on 2 September
+2026 (hosted `20260902150212` / `team_sort_order`). R1 in
+`08-open-questions.md` is decided as its recommended default: `sort_order`
+joins the `audit_teams()` allow list.
+
+The reorder affordance, COACH-1B, is open as #225 and took a SECOND gated
+migration this plan did not anticipate. A whole club order written from the
+browser is several PostgREST statements, each conditioned on the value the
+screen last read, and two admins who move DISJOINT rows never collide: from
+`A=1 B=2 C=3 D=4`, one swaps A and B while the other swaps C and D, every
+compare and set passes, both commit, and the club holds `B=1 A=2 D=3 C=4`,
+which neither submitted and the partial unique index cannot object to. The
+missing thing is a transaction, so `0052_atomic_team_order` adds one
+capability gated SECURITY DEFINER function, `set_team_order`, which validates
+the complete set and the admin's expected snapshot under a club advisory lock
+and SHARE ROW EXCLUSIVE on `teams`, refuses a stale save with SQLSTATE 40001
+before writing, and otherwise clears and places the whole order in one
+transaction. It is registered against `20260902150212` and awaits the human
+production apply; #225 then replaces its client save with one call to it. The
+lesson generalises: any later slice that writes a SET of rows a unique index
+constrains cannot do it correctly from the client.
 
 **Outcome.** An admin states the club's ordering of its own teams, so every later
 suggestion has ability context without a per-player field.
@@ -784,9 +802,11 @@ ledger as it stands then.**
 ### The migration slices, in dependency order
 
 5. **COACH-1**, `teams.sort_order`. **In progress**: COACH-1A, migration
-   `0051_team_sort_order`, is registered and in review as #223, and COACH-1B follows
-   once it is applied. One nullable column on a five-row
-   table, and the smallest possible first migration for this programme. It
+   `0051_team_sort_order`, merged as #223 and applied on 2 September 2026, and
+   COACH-1B is open as #225 behind a second gated migration,
+   `0052_atomic_team_order`, which adds the transactional writer the client
+   save cannot be. One nullable column on a five-row table plus one function,
+   and still the smallest first migration for this programme. It
    upgrades COACH-3 from "keeps teams whole" to "combines adjacent bands".
 6. **COACH-5**, the `venue_layouts` table. The largest single review in the
    programme: a new table, a new shape boundary, RLS mirroring `venues`, and the

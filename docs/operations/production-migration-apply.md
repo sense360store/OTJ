@@ -336,11 +336,15 @@ database did not have. The workflow was therefore run against the reviewed
 
 ## Reviewed, registered, not yet applied
 
-None. `0051_team_sort_order` sat here between its review and its apply on
-2 September 2026 and is now in the applied table above. The next migration is
-numbered and registered against the head that apply left, `20260902150212` /
-`team_sort_order`, at its own review, and only if nothing else has applied
-first.
+`0052_atomic_team_order`. Registered against the head `0051`'s apply left,
+`20260902150212` / `team_sort_order`, confirmed live on 3 September 2026, with
+the idempotency key `otj:migration:0052_atomic_team_order`. It waits here for
+the human production apply. What it does is below.
+
+`0051_team_sort_order` sat here between its review and its apply on 2 September
+2026 and is now in the applied table above. Each migration after it is numbered
+and registered against the head the previous apply left, at its own review, and
+only if nothing else has applied first.
 
 ## What `0051` does, kept for reference
 
@@ -410,6 +414,155 @@ Ordering. Safe to apply either side of the frontend: no deployed client reads
 or writes the column, because `TEAM_COLS` in `src/lib/queries.ts` names an
 explicit list without it, and `src/lib/teamOrder.invariant.test.ts` fails the
 build if a consumer arrives before COACH-1B, the frontend half.
+
+## What `0052` does, kept for reference
+
+`0052_atomic_team_order` adds ONE function,
+`public.set_team_order(p_team_ids uuid[], p_expected_sort_orders integer[])`,
+and nothing else: no table, no column, no index, no policy, no grant on any
+table, no capability key, no trigger, and no value added to any vocabulary,
+`audit_events.source` and `audit_events.action` included. The only privilege it
+moves is EXECUTE on its own function, revoked from `public` and `anon` and
+granted to `authenticated`. Every write it performs is a write a `teams.manage`
+holder could already make by hand through the `teams_manage` policy. What it
+adds is that the whole order lands together or not at all, under one
+serialization point.
+
+**Why it exists.** COACH-1B writes the club order from the browser as separate
+PostgREST statements, each conditioned on the value the screen last read. Two
+admins who move DISJOINT rows never collide. From a stored `A=1 B=2 C=3 D=4`,
+one swaps A and B while the other swaps C and D: no compare and set fails,
+both commit, and the club is left with `B=1 A=2 D=3 C=4`, a complete valid
+order NEITHER admin submitted. `teams_sort_order_unique` cannot object, because
+the merge is a permutation like any other. A client without a transaction can
+only read the damage back afterwards and say so, which is what COACH-1B does
+today. The missing thing is a transaction, so the fix is in the database.
+
+**Serialization.** Two locks, always in that order, both taken before a team
+row is read. A club scoped advisory transaction lock, the
+`otj.<domain>:' || club` idiom 0031, 0032, 0036 and 0049 already use, orders
+whole order saves against each other per club. Then SHARE ROW EXCLUSIVE on
+`public.teams`, because the advisory lock does not stop an ordinary
+`teams.manage` write ADDING or REMOVING a team underneath the complete set
+validation, and an insert has no row to lock. SHARE ROW EXCLUSIVE conflicts
+with ROW EXCLUSIVE, so no concurrent insert, update or delete on `teams` can
+interleave; it does not conflict with ACCESS SHARE or ROW SHARE, so ordinary
+reads are unaffected. It is table wide rather than club wide because PostgreSQL
+has no narrower lock that blocks an insert, so a team being added to club B does
+briefly wait behind club A's order save. That is stated rather than hidden:
+`teams` holds a handful of rows per club and this is an admin screen's explicit
+Save. Deadlock freedom follows from the fixed order and from ordinary team
+writes taking neither lock.
+
+**The expected snapshot.** `p_expected_sort_orders` is aligned with
+`p_team_ids` and carries, for each team, the position that team held when the
+admin's draft was drawn; `null` is a real expected value meaning the team was
+unplaced. Under the locks the function requires the request to name the club's
+current team set exactly (no missing, extra, duplicate or null id), compares
+every stored position with the expected one, and refuses BEFORE writing if any
+differ. The disjoint merge is therefore unreachable rather than merely
+reported: admin two's expected values for C and D still hold, but A and B no
+longer match what admin one committed. There is no version column to add, no
+backfill and nothing for a future writer to remember to bump; the evidence is
+the data itself.
+
+**Refusal codes.** A stale snapshot is SQLSTATE `40001`, PostgreSQL's own
+`serialization_failure`, so a client can recognise a concurrency refusal
+without parsing English: PostgREST returns the SQLSTATE as the error body's
+`code`, which is how `src/lib/queries.ts` already tells `23505` and `42501`
+apart. A stack that auto retries a `40001` is safe here rather than dangerous,
+because the retry carries the same stale snapshot and is refused again, having
+written nothing. Not signed in and the missing capability are `42501`, as 0049.
+A malformed request (mismatched lengths, a null or duplicate id, an incomplete
+set, a foreign team) is `P0001`. A foreign team id is refused by count and never
+echoed back, so no other club is nameable, readable or writable through this
+path.
+
+**Security posture.** SECURITY DEFINER with `set search_path = ''` and fully
+schema qualified references, so RLS does not bind it and the in body checks ARE
+the enforcement. The club comes from `public.my_club()` and the caller cannot
+name one. The capability check is `public.has_perm('teams.manage')`, exactly the
+capability the `teams_manage` policy (0012) already names, so the function grants
+no caller any authority they did not hold and narrows it, since it also refuses
+requests a direct `teams.manage` update would accept. No new capability key.
+There is one UPDATE statement shape in the function and it assigns `sort_order`,
+so no other column can move through it, and there is no insert into or delete
+from `teams` in the file. No player, registration, register entry, session or
+Spond row is read, written or referenced.
+
+**The 0051 index is untouched.** `teams_sort_order_unique` is still the last
+guard, and the function's clear-then-place exists precisely because that index
+is checked per row and an in place swap would collide. Both phases run inside
+the one function call, so a failure at any point rolls the whole call back and
+the "honestly incomplete order" a multi statement client save can leave is not
+reachable through this path.
+
+**Audit, stated honestly.** No new writer, no new action, no new vocabulary.
+`audit_teams()` (0037, replaced by 0044, allow list extended by 0051) already
+fires on every UPDATE of `teams` and emits `team.updated` with `changed_fields`
+naming `sort_order` and never a value. The clear-then-place writes a moved,
+already placed team TWICE inside the one transaction, so such a team records TWO
+`team.updated` events; a team that was unplaced records one, and a team already
+at its final position is not written at all and records none. Collapsing that
+would mean suppressing, deferring or bypassing the trigger, each a larger and
+more dangerous change to the audit boundary than the noise it would save.
+
+Registered against `20260902150212` / `team_sort_order` with the idempotency key
+`otj:migration:0052_atomic_team_order`. Its three probes are the function
+resolving through `to_regprocedure` (never a textual signature cast, for the
+reason 0049's review found: `has_function_privilege` raises `42883` for a name
+that does not resolve, so it could not return false in the state the PRE gate
+reads), the function being SECURITY DEFINER with an empty `search_path`
+(`proconfig` compared against a value composed with `chr(34)`, because the
+verifier refuses a probe carrying a quote), and `authenticated` holding EXECUTE
+while `anon` does not, with `anon` tested rather than inferred from `PUBLIC`.
+
+Its self-verification takes a BEFORE fingerprint of the team rows, every team's
+position whole, the audit row count, the policy set, the grant set, the trigger
+set and the `teams_sort_order_unique` definition into a transaction local table
+BEFORE the DDL, and requires each unchanged afterwards, so "changes no data, no
+policy, no grant and no trigger" is a comparison across the DDL rather than a
+value compared with itself. It then reads the STORED function definition back
+and asserts the boundaries the header claims, and RUNS the rule rather than
+describing it: inside a subtransaction it always rolls back, it replays the
+disjoint merge and shows the second order refused with nothing written, then
+checks the rollback against the before fingerprint rather than trusting it.
+
+One thing that self-verification structurally cannot prove is the only thing
+the function exists for. A DO block cannot contend with itself, so whether TWO
+CONCURRENT CONNECTIONS can both commit and leave a merge neither submitted
+needs two backends on the same lock.
+`.github/scripts/production-migration/test_0052_atomic_team_order.sh` is that
+proof and runs in CI with `REQUIRE_POSTGRES=1`. It builds a stand-in of the
+substrate as 0051 leaves it and runs eight sections: the probes total in the
+state the PRE gate reads, the migration applying and ordering nobody, the
+disjoint race with two real connections BOTH WAYS ROUND plus the overlapping
+race and the per club independence of the advisory key, the atomicity of a
+refusal, every gate including the foreign id refusal that does not leak, the
+unset and incomplete and unchanged cases with the audit trail as documented,
+fourteen mutations of the file that must each abort the apply, and a second raw
+apply. The race sections assert that the loser actually BLOCKED before being
+refused, because a race that never contends proves nothing, and assert both
+that the stored order equals exactly one submission and that it is never the
+merge.
+
+Section H is honest about a difference from 0051. `create or replace` is
+idempotent where `add column` is not, so a second RAW apply of this file is not
+refused by its own self-verification; the harness asserts instead that it
+changes nothing (the same rows, an identical `pg_get_functiondef` hash, still
+exactly one overload), and that what refuses a second apply THROUGH THE WORKFLOW
+is the ledger's unique `idempotency_key`, which the pre-apply gate hits before
+any DDL runs.
+
+`tests/security/set-team-order.test.ts` covers the contract through PostgREST on
+the local stack for the roles the fixtures hold: a club admin with
+`teams.manage`, a coach without it, a parent, a coach of another club and an
+unauthenticated caller.
+
+Ordering. Apply BEFORE COACH-1B (#225) merges. The pull request that replaces
+the client's multi statement save with one `set_team_order` call cannot ship
+against a database without the function, and #225 as it stands today is the
+client save this migration exists to retire.
 
 ## What runs, in order
 
@@ -551,6 +704,11 @@ that passes regardless.
 anything else, and the gate fails closed between an apply and its
 reconciliation, which is intended. The apply evidence behind the move is
 recorded in `docs/operations/content-sharing-edge-function-deploy.md`.
+
+`0052_atomic_team_order` is registered against that same head and not yet
+applied, so the pin is current. When it applies, the version its apply stamps
+goes through this same route, in its own pull request, before the
+content-sharing deploy workflow will run again.
 
 ## Writing an object probe
 

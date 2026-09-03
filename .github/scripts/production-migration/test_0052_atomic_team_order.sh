@@ -61,7 +61,10 @@
 #
 # It runs in CI with REQUIRE_POSTGRES=1, which turns every skip below into a
 # failure, because a skipped proof reported as a green check is worth less
-# than no check at all. Run by hand it still skips where no server exists:
+# than no check at all. The two session sections hold locks for a few seconds
+# on purpose: a race that never actually contends proves nothing, so the
+# waits are asserted rather than assumed. Run by hand it still skips where no
+# server exists:
 #
 #   bash .github/scripts/production-migration/test_0052_atomic_team_order.sh
 #

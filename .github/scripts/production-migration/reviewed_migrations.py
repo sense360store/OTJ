@@ -616,12 +616,11 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # builds a stand-in of the substrate as 0051 leaves it and runs the
     # disjoint race with TWO REAL CONNECTIONS, both ways round, plus the
     # overlapping race, the per club independence of the advisory key,
-    # every gate, the atomicity of a refusal, the audit trail, and twelve
+    # every gate, the atomicity of a refusal, the audit trail, and fourteen
     # mutations of the file that must each abort the apply. Two sessions
     # are the whole point: the migration's own DO block cannot contend with
-    # itself, so the serialization claim is only provable there. It needs a
-    # local PostgreSQL server and is therefore not part of CI; run it by
-    # hand when reviewing.
+    # itself, so the serialization claim is only provable there. It runs in
+    # CI with REQUIRE_POSTGRES=1, and by hand when reviewing.
     #
     # Written against a hosted database whose newest ledger row is
     # 20260902150212 / team_sort_order, the version the 0051 apply stamped

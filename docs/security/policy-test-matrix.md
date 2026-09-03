@@ -65,7 +65,9 @@ verification, never as the subject of an assertion.
 (the club's team order added by 0051, in `tests/security/team-order.test.ts`:
 club wide read of `sort_order`, writes only under `teams.manage`, the partial
 unique index refusing a shared position within one club and allowing one
-across clubs, and the `team.updated` trail naming the field and no value), plus
+across clubs, and the `team.updated` trail naming the field and no value, with
+the transactional writer from 0052 in `tests/security/set-team-order.test.ts`,
+below), plus
 `capabilities` / `role_capabilities` / `member_roles` for the capability
 consistency checks, and `profiles` / `member_roles` / `member_teams` for the
 signup membership boundary.
@@ -270,6 +272,43 @@ grant or policy); it carries counts, format and state only, never a file
 fingerprint, a filename, row content or a child name. Full design:
 `docs/adr/ADR-0007-player-import-export-architecture.md` and
 `docs/security/registered-players-boundary.md` section 4.
+
+### set_team_order (0052_atomic_team_order)
+
+The transactional club team order writer (`tests/security/set-team-order.test.ts`).
+Contract: `set_team_order(p_team_ids uuid[], p_expected_sort_orders integer[])`
+is SECURITY DEFINER with an empty `search_path`, self gates on
+`has_perm('teams.manage')` (a coach, a parent and a coach of another club are
+each refused `42501` with no position moved), derives the club from
+`my_club()` so the caller cannot name one, and holds EXECUTE for
+`authenticated` only (`anon` cannot call it at all). It writes the club's
+COMPLETE order or nothing: the request must name the club's current team set
+exactly, and a missing team, an extra team, a duplicate id, a null id and
+mismatched array lengths are each `P0001` with nothing written. A team id
+belonging to another club is refused by count, without the id appearing in the
+message, and that club's own positions are unmoved.
+
+The concurrency contract is the reason it exists. `p_expected_sort_orders` is
+aligned with `p_team_ids` and carries the position each team held when the
+admin's draft was drawn, with `null` a real expected value for an unplaced
+team. Under a club scoped advisory lock and SHARE ROW EXCLUSIVE on `teams`, the
+function compares every stored position with the expected one and refuses with
+SQLSTATE `40001` BEFORE writing if any differ, so a save built on a stale read
+writes nothing; re-reading and submitting the fresh snapshot lands the whole
+order as 1..N. The audit trail is the existing `audit_teams()` trigger and is
+asserted as documented: `team.updated` with `changed_fields` exactly
+`['sort_order']`, no `safe_changes` and no `metadata`, and a moved, already
+placed team recording two events because the clear-then-place writes it twice
+inside the one transaction.
+
+What this suite cannot prove is the merge itself: PostgREST calls from one test
+process do not contend, so the two connection race (both admins committing from
+one snapshot and leaving an order neither submitted) is proved in
+`.github/scripts/production-migration/test_0052_atomic_team_order.sh` against a
+real PostgreSQL, both ways round, with the loser asserted to have blocked before
+being refused. Full design: the header of
+`supabase/migrations/0052_atomic_team_order.sql` and the `0052` section of
+`docs/operations/production-migration-apply.md`.
 
 ## CI
 
