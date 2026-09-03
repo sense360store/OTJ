@@ -594,6 +594,17 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # first version of the guard assumed PostgreSQL rewrites the level at
     # SET time, which it does not, and turned that caller away.
     #
+    # It also refuses a caller that ALREADY HOLDS a write lock on teams.
+    # The deadlock freedom argument originally said ordinary team writes
+    # take neither lock and so cannot close a cycle, which is true of a
+    # transaction that only writes teams and false of one that writes teams
+    # and then calls this: it enters holding ROW EXCLUSIVE, blocks another
+    # caller at the table lock, and waits for that caller's advisory key.
+    # No ordering of the two locks fixes it, because the conflicting lock is
+    # held before the function is entered, so deadlock freedom is a property
+    # of that refusal. A caller that only SELECTed is not refused, since
+    # ACCESS SHARE and ROW SHARE conflict with neither lock.
+    #
     # Then TWO locks, always in that order: a club scoped
     # advisory transaction lock (the 'otj.<domain>:' || club idiom 0031,
     # 0032, 0036 and 0049 already use) which orders whole order saves
@@ -644,7 +655,7 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # builds a stand-in of the substrate as 0051 leaves it and runs the
     # disjoint race with TWO REAL CONNECTIONS, both ways round, plus the
     # overlapping race, the per club independence of the advisory key,
-    # every gate, the atomicity of a refusal, the audit trail, and eighteen
+    # every gate, the atomicity of a refusal, the audit trail, and nineteen
     # mutations of the file that must each abort the apply. Two sessions
     # are the whole point: the migration's own DO block cannot contend with
     # itself, so the serialization claim is only provable there. It runs in

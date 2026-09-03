@@ -284,8 +284,9 @@ each refused `42501` with no position moved), derives the club from
 `authenticated` only (`anon` cannot call it at all). It writes the club's
 COMPLETE order or nothing: the request must name the club's current team set
 exactly, and a missing team, an extra team, a duplicate id, a null id,
-mismatched array lengths and an array of more than one dimension are each
-`P0001` with nothing written. A team id
+mismatched array lengths, an array of more than one dimension and a calling
+transaction that already holds a write lock on `teams` are each `P0001` with
+nothing written. A team id
 belonging to another club is refused by count, without the id appearing in the
 message, and that club's own positions are unmoved.
 

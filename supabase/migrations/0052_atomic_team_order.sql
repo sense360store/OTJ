@@ -74,11 +74,13 @@
 --     save can leave behind is not reachable through this path at all.
 --
 -- SERIALIZATION, which is the reason the function exists rather than a
--- nicety. It is THREE things, and the third was found in review after the
--- other two were already written and tested. Taking them in the order they
--- are checked:
+-- nicety. It is FOUR things, and only the two locks were in the first
+-- draft. The two preconditions either side of them were found in review,
+-- each after the locks had been written, tested and believed sufficient,
+-- and each is a fact about HOW the call was made rather than about what it
+-- asked for. Taking them in the order they are checked:
 --
---   0. THE CALLER'S TRANSACTION MUST BE ABLE TO SEE THE RACE IT LOST.
+--   0a. THE CALLER'S TRANSACTION MUST BE ABLE TO SEE THE RACE IT LOST.
 --      The locks below decide what a caller WAITS FOR. They cannot decide
 --      WHEN IT LOOKED. A REPEATABLE READ or SERIALIZABLE transaction fixes
 --      its snapshot at its first statement, before it ever reaches a lock
@@ -95,6 +97,18 @@
 --      rather than trusting it, because the first version of this check
 --      assumed PostgreSQL rewrote the level at SET time (it does not) and
 --      turned away a caller it should have served.
+--
+--   0b. THE CALLER MUST NOT ALREADY HOLD A WRITE LOCK ON teams. A
+--      transaction that writes teams and THEN calls this enters holding
+--      ROW EXCLUSIVE, which blocks another caller at the table lock while
+--      this one waits for that caller's advisory key: a cycle, broken by
+--      PostgreSQL with 40P01. Nothing corrupts, but an admin gets an error
+--      they can do nothing about, and no ordering of the two locks below
+--      fixes it, because the conflicting lock is held before this function
+--      is entered. So that call order is refused, and deadlock freedom is
+--      a property of the refusal rather than of the lock order alone. A
+--      caller that only SELECTed from teams holds ACCESS SHARE or ROW
+--      SHARE, neither of which conflicts with anything here, and is served.
 --
 -- Then two locks, always in this order, both taken before any team row
 -- is read:
@@ -127,13 +141,24 @@
 --      trade the header claims, on a table whose whole content is a
 --      handful of rows per club.
 --
---   DEADLOCK FREEDOM. Every call takes the advisory key first and the
---   table lock second, and takes at most one of each, so a cycle would
---   need a transaction holding the table lock to wait on an advisory key,
---   which no caller of this function can do (it takes the key before the
---   table). Ordinary team writes take neither, so they cannot close a
---   cycle either: they wait for the table lock and hold nothing this
---   function wants.
+--   DEADLOCK FREEDOM, and the first version of this paragraph was wrong.
+--   Every call takes the advisory key first and the table lock second, and
+--   takes at most one of each, so no two callers of this function can form
+--   a cycle. What that argument then said was that ordinary team writes
+--   take neither lock and so cannot close one either. True of a
+--   transaction that ONLY writes teams. False of one that writes teams and
+--   THEN calls this: it enters already holding ROW EXCLUSIVE, which blocks
+--   another caller at the table lock, while it waits for that caller's
+--   advisory key. PostgreSQL breaks the cycle with 40P01 rather than
+--   hanging, so nothing corrupts, but an admin gets an error they can do
+--   nothing about.
+--
+--   Reordering the two locks does not fix it, because the conflicting lock
+--   is already held before the function is entered. So that call order is
+--   REFUSED, by a check above these locks, and deadlock freedom is a
+--   property of the refusal rather than of the lock order alone. A caller
+--   that only SELECTed from teams holds ACCESS SHARE or ROW SHARE, neither
+--   of which conflicts with SHARE ROW EXCLUSIVE, and is not refused.
 --
 -- THE EXPECTED SNAPSHOT, and why it is per team rather than a version
 -- number. p_expected_sort_orders is aligned with p_team_ids and carries,
@@ -290,7 +315,9 @@ select
 --   P0001  the request cannot be served as made: the calling transaction is
 --          not READ COMMITTED (a fixed snapshot cannot see the race it
 --          lost, so it would commit the merge); or the request is
---          malformed, meaning an array has more than one dimension, the
+--          malformed, meaning the calling transaction already holds a
+--          write lock on teams (that call order can deadlock and cannot be
+--          served), an array has more than one dimension, the
 --          two arrays differ in length, an id is null, an id repeats, the
 --          set is not exactly the club's current teams, or an id is not a
 --          team of this club. Never retry a P0001 unchanged: it will be
@@ -366,6 +393,48 @@ begin
     raise exception
       'set_team_order: requires a read committed transaction, but this one is %',
       pg_catalog.current_setting('transaction_isolation')
+      using errcode = 'P0001';
+  end if;
+
+  -- ============ The caller must not already hold a lock on teams =========
+  -- The second hole in the locking design, found in the same review as the
+  -- first, and it is a hole in the DEADLOCK FREEDOM ARGUMENT rather than in
+  -- the serialization. That argument said ordinary team writes take neither
+  -- of these locks and so cannot close a cycle. True of a transaction that
+  -- ONLY writes teams; false of one that writes teams and THEN calls this.
+  --
+  --   T1: update public.teams ...        -- holds ROW EXCLUSIVE to commit
+  --   T2: set_team_order(...)            -- takes the advisory key, then
+  --                                         waits for SHARE ROW EXCLUSIVE,
+  --                                         which T1's ROW EXCLUSIVE blocks
+  --   T1: set_team_order(...)            -- waits for T2's advisory key
+  --
+  -- A cycle. PostgreSQL detects it and aborts one of them with 40P01, so
+  -- nothing corrupts, but an admin screen gets a deadlock error it can do
+  -- nothing about and the header's claim was simply wrong as written.
+  --
+  -- Refused rather than accommodated, for the same reason as the isolation
+  -- level: this function's contract is that it reads the club's teams as
+  -- everybody else sees them and compares that with what the admin saw. A
+  -- caller holding an uncommitted write to teams is asking it to reason
+  -- about a world only that caller can see. There is no ordering of these
+  -- two locks that fixes it either, because the conflicting lock is already
+  -- held before this function is entered.
+  --
+  -- ACCESS SHARE and ROW SHARE are excluded deliberately: neither conflicts
+  -- with SHARE ROW EXCLUSIVE, so a caller that merely SELECTed from teams,
+  -- with or without FOR SHARE, cannot close the cycle and is not refused.
+  if exists (
+    select 1
+      from pg_catalog.pg_locks l
+     where l.locktype = 'relation'
+       and l.relation = 'public.teams'::pg_catalog.regclass
+       and l.pid = pg_catalog.pg_backend_pid()
+       and l.granted
+       and l.mode not in ('AccessShareLock', 'RowShareLock')
+  ) then
+    raise exception
+      'set_team_order: the calling transaction already holds a write lock on teams; call this before any other write to teams, not after one'
       using errcode = 'P0001';
   end if;
 
@@ -540,7 +609,7 @@ end
 $$;
 
 comment on function public.set_team_order(uuid[], integer[]) is
-  $$Writes the club's COMPLETE team order atomically (0052_atomic_team_order.sql). SECURITY DEFINER, self gates on teams.manage, derives the club from my_club() server side and refuses any id that is not a team of that club. p_team_ids is the whole desired order, first id to position 1; p_expected_sort_orders is aligned with it and carries the sort_order each team held when the admin's draft was drawn, with null a valid expected value. THE POINT IS ATOMICITY AND SERIALIZATION: a club scoped advisory transaction lock orders whole order saves against each other, SHARE ROW EXCLUSIVE on teams stops a team being added or removed underneath the complete set validation, and every stored position is compared with the expected snapshot BEFORE any write, so two admins moving disjoint rows can no longer both succeed and leave a merged order neither submitted. REQUIRES A READ COMMITTED TRANSACTION (read uncommitted is accepted, since PostgreSQL runs it as read committed): a fixed snapshot transaction waits for the locks and then still reads the pre race world, so it would commit exactly the merge this exists to prevent, and it is refused with P0001 rather than served. A stale snapshot raises P0001 with DETAIL 'stale_order' and writes nothing, a stable machine token a client reads from `details`; it is deliberately NOT 40001, because nothing failed to serialize and a retry with the same snapshot can never succeed; a malformed or incomplete request raises P0001, which covers an array of more than one dimension (array_length counts one dimension while unnest flattens all of them, so a rectangular array would otherwise pass every count and store a position outside 1..N) as well as an isolation level this cannot serialise; no club or no capability raises 42501. The whole order commits or nothing does, so no partial order is reachable through this path. Writes only sort_order, on rows whose position actually changes, and creates and deletes no team. teams_sort_order_unique (0051) is untouched and remains the last guard; the clear-then-place exists because it is checked per row. Audited by the existing audit_teams() trigger only: a moved, already placed team records two team.updated events (the clear and the placement), an unplaced one records one, an unmoved one records none, and none carries a value.$$;
+  $$Writes the club's COMPLETE team order atomically (0052_atomic_team_order.sql). SECURITY DEFINER, self gates on teams.manage, derives the club from my_club() server side and refuses any id that is not a team of that club. p_team_ids is the whole desired order, first id to position 1; p_expected_sort_orders is aligned with it and carries the sort_order each team held when the admin's draft was drawn, with null a valid expected value. THE POINT IS ATOMICITY AND SERIALIZATION: a club scoped advisory transaction lock orders whole order saves against each other, SHARE ROW EXCLUSIVE on teams stops a team being added or removed underneath the complete set validation, and every stored position is compared with the expected snapshot BEFORE any write, so two admins moving disjoint rows can no longer both succeed and leave a merged order neither submitted. REQUIRES A READ COMMITTED TRANSACTION, AND MUST BE CALLED BEFORE ANY OTHER WRITE TO teams IN THAT TRANSACTION. A caller already holding ROW EXCLUSIVE on teams can close a deadlock cycle against another caller holding the advisory key and waiting for the table lock, which no ordering of these two locks can prevent, so it is refused. Read uncommitted is accepted, since PostgreSQL runs it as read committed. On the isolation level: a fixed snapshot transaction waits for the locks and then still reads the pre race world, so it would commit exactly the merge this exists to prevent, and it is refused with P0001 rather than served. A stale snapshot raises P0001 with DETAIL 'stale_order' and writes nothing, a stable machine token a client reads from `details`; it is deliberately NOT 40001, because nothing failed to serialize and a retry with the same snapshot can never succeed; a malformed or incomplete request raises P0001, which covers an array of more than one dimension (array_length counts one dimension while unnest flattens all of them, so a rectangular array would otherwise pass every count and store a position outside 1..N) as well as an isolation level this cannot serialise; no club or no capability raises 42501. The whole order commits or nothing does, so no partial order is reachable through this path. Writes only sort_order, on rows whose position actually changes, and creates and deletes no team. teams_sort_order_unique (0051) is untouched and remains the last guard; the clear-then-place exists because it is checked per row. Audited by the existing audit_teams() trigger only: a moved, already placed team records two team.updated events (the clear and the placement), an unplaced one records one, an unmoved one records none, and none carries a value.$$;
 
 revoke execute on function public.set_team_order(uuid[], integer[]) from public, anon;
 grant execute on function public.set_team_order(uuid[], integer[]) to authenticated;
@@ -629,6 +698,9 @@ begin
   -- found in its own source checks; the harness proves each pattern bites.
   v_src := pg_get_functiondef(to_regprocedure('public.set_team_order(uuid[], integer[])'));
 
+  if v_src !~ 'AccessShareLock' or v_src !~ 'pg_backend_pid' then
+    raise exception 'atomic_team_order: the prior teams lock check is missing from the function';
+  end if;
   if v_src !~ 'if array_ndims\(p_team_ids\) > 1' then
     raise exception 'atomic_team_order: the one dimension check is missing from the function';
   end if;

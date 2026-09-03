@@ -920,6 +920,37 @@ refuse "a rectangular multidimensional order is refused" "one dimensional" \
 same "and no team holds a position outside 1..N" \
   "$(scalar "select count(*) from public.teams where club_id = '${CLUB_A}' and (sort_order < 1 or sort_order > 4)")" "0"
 
+# A CALLER THAT ALREADY HOLDS A WRITE LOCK ON teams is refused, and this one
+# is about DEADLOCK rather than about correctness of the order. A transaction
+# that updates teams first holds ROW EXCLUSIVE until it commits; another
+# caller can then hold the advisory key and be waiting for SHARE ROW
+# EXCLUSIVE behind it, while this one waits for that advisory key. That is a
+# cycle, and PostgreSQL breaks it by aborting somebody with 40P01. Reordering
+# the two locks cannot help, because the conflicting lock is held before the
+# function is entered, so the call order is refused instead.
+#
+# Asserted with ONE session, deliberately. Two sessions would have to lose a
+# real race to observe it, which is a test that passes for the wrong reason
+# whenever the timing slips; the guard is what is under test here, and one
+# transaction holding its own prior lock is exactly what the guard reads.
+refuse "a caller holding a prior write lock on teams is refused" "already holds a write lock on teams" \
+  "begin;
+   ${CTX_A}
+   update public.teams set name = name where id = '${A1}';
+   select public.set_team_order(array['${A1}','${A2}','${A3}','${A4}']::uuid[], array[1,2,3,4]::integer[]);
+   commit;"
+# A caller that only READ from teams holds ACCESS SHARE, which conflicts with
+# nothing this function takes, so it must NOT be refused. Without this the
+# guard could be widened to every lock mode and nobody would notice.
+same "a caller that only read from teams is still served" \
+  "$(psql_run -d "${DB}" -tAc "begin;
+     select set_config('otj.test_club','${CLUB_A}',true);
+     select set_config('otj.test_caps','teams.manage',true);
+     select count(*) from public.teams where club_id = '${CLUB_A}';
+     select (public.set_team_order(array['${A1}','${A2}','${A3}','${A4}']::uuid[],
+                                   array[1,2,3,4]::integer[]) ->> 'changed');
+     commit;" | tail -2 | head -1)" "0"
+
 # A FOREIGN id is refused, and the message does not carry it. The set is kept
 # the right SIZE so the completeness count passes and the club check is what
 # refuses, which is the path that could otherwise leak.
@@ -1103,6 +1134,13 @@ check_mutation "M17 the guard replaced by prose that says the same words" "the r
 # position outside 1..N, which section E proved before this guard existed.
 mutate "${WORK}/mutant.sql" "s.replace(\"  if array_ndims(p_team_ids) > 1 or array_ndims(p_expected_sort_orders) > 1 then\n    raise exception 'set_team_order: the order must be a one dimensional array'\n      using errcode = 'P0001';\n  end if;\n\", '')"
 check_mutation "M18 the one dimension check removed" "the one dimension check is missing"
+
+# M19 is the prior lock check. Like M16 and M18 it is invisible to every
+# test that does not make the call the way it guards against, and unlike
+# them its absence is not a wrong ANSWER but a deadlock: PostgreSQL aborts
+# somebody with 40P01 and the admin sees an error they cannot act on.
+mutate "${WORK}/mutant.sql" "s.replace(\"  if exists (\n    select 1\n      from pg_catalog.pg_locks l\n     where l.locktype = 'relation'\n       and l.relation = 'public.teams'::pg_catalog.regclass\n       and l.pid = pg_catalog.pg_backend_pid()\n       and l.granted\n       and l.mode not in ('AccessShareLock', 'RowShareLock')\n  ) then\n\", '  if false then\n')"
+check_mutation "M19 the prior teams lock check defeated" "the prior teams lock check is missing"
 
 # ---------------------------------------------------------------------
 echo "== H. a second apply is refused, and changes nothing"

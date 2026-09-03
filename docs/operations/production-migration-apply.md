@@ -469,8 +469,19 @@ reads are unaffected. It is table wide rather than club wide because PostgreSQL
 has no narrower lock that blocks an insert, so a team being added to club B does
 briefly wait behind club A's order save. That is stated rather than hidden:
 `teams` holds a handful of rows per club and this is an admin screen's explicit
-Save. Deadlock freedom follows from the fixed order and from ordinary team
-writes taking neither lock.
+Save.
+
+Deadlock freedom does NOT follow from the fixed order alone, and the first
+version of this claim said it did. Two callers of this function cannot form a
+cycle, and a transaction that only writes `teams` cannot either. A transaction
+that writes `teams` and THEN calls this can: it enters holding ROW EXCLUSIVE,
+blocks another caller at the table lock, and waits for that caller's advisory
+key. PostgreSQL breaks it with `40P01`, so nothing corrupts, but an admin gets
+an error they can do nothing about. No ordering of the two locks fixes it,
+because the conflicting lock is held before the function is entered, so that
+call order is REFUSED by a check above both locks and deadlock freedom is a
+property of the refusal. A caller that only SELECTed from `teams` holds ACCESS
+SHARE or ROW SHARE, neither of which conflicts, and is served.
 
 **The expected snapshot.** `p_expected_sort_orders` is aligned with
 `p_team_ids` and carries, for each team, the position that team held when the
@@ -503,8 +514,8 @@ same snapshot and is refused identically, for ever. A stable machine token in
 `details` is the same shape as 0049's `stale_link` outcome strings, and it is
 what separates a stale order from a malformed one without parsing English.
 Not signed in and the missing capability are `42501`, as 0049.
-A request that cannot be served as made is `P0001`: an array of more than one
-dimension, an isolation level this cannot serialise, mismatched lengths, a null
+A request that cannot be served as made is `P0001`: a calling transaction that
+already holds a write lock on `teams`, an array of more than one dimension, an isolation level this cannot serialise, mismatched lengths, a null
 or duplicate id, an incomplete set, or a foreign team. The dimension check is
 not defensive tidiness: `array_length(x, 1)` counts only the first dimension
 while every `unnest` flattens all of them, so a rectangular 4x2 array over a
@@ -587,15 +598,17 @@ disjoint race with two real connections BOTH WAYS ROUND plus the overlapping
 race and the per club independence of the advisory key, the atomicity of a
 refusal, every gate including the foreign id refusal that does not leak, the
 unset and incomplete and unchanged cases with the audit trail as documented,
-eighteen mutations of the file that must each abort the apply, and a second raw
+nineteen mutations of the file that must each abort the apply, and a second raw
 apply. The race sections assert that the loser actually BLOCKED before being
 refused, because a race that never contends proves nothing, and assert both
 that the stored order equals exactly one submission and that it is never the
 merge.
 
-Four of those eighteen are not like the other fourteen, and each is there
+Five of those nineteen are not like the other fourteen, and each is there
 because something got past a check that looked sufficient. M18 is the dimension
-check, invisible to any test that sends a one dimensional array.
+check, invisible to any test that sends a one dimensional array, and M19 is the
+prior lock check, invisible to any test that does not call this after writing
+`teams` in the same transaction.
 
 M16 removes the isolation guard and M17 replaces it with a comment saying the
 same words. The second exists because `pg_get_functiondef` returns the body's
