@@ -74,7 +74,29 @@
 --     save can leave behind is not reachable through this path at all.
 --
 -- SERIALIZATION, which is the reason the function exists rather than a
--- nicety. Two locks, always in this order, both taken before any team row
+-- nicety. It is THREE things, and the third was found in review after the
+-- other two were already written and tested. Taking them in the order they
+-- are checked:
+--
+--   0. THE CALLER'S TRANSACTION MUST BE ABLE TO SEE THE RACE IT LOST.
+--      The locks below decide what a caller WAITS FOR. They cannot decide
+--      WHEN IT LOOKED. A REPEATABLE READ or SERIALIZABLE transaction fixes
+--      its snapshot at its first statement, before it ever reaches a lock
+--      here, so it can wait its whole turn and then still read the world as
+--      it was before the winner committed: its expected snapshot matches
+--      values nobody holds any more, and it writes the rows the winner did
+--      not touch. PostgreSQL finds no write conflict on those rows, because
+--      nobody else wrote them, and the merge commits. That was reproduced,
+--      not theorised: with this check removed a REPEATABLE READ caller is
+--      ACCEPTED and stores exactly the merge. So anything but READ
+--      COMMITTED is refused outright, before any lock, rather than served
+--      on a snapshot that cannot move. READ UNCOMMITTED is accepted, since
+--      PostgreSQL runs it AS read committed, and the harness asserts that
+--      rather than trusting it, because the first version of this check
+--      assumed PostgreSQL rewrote the level at SET time (it does not) and
+--      turned away a caller it should have served.
+--
+-- Then two locks, always in this order, both taken before any team row
 -- is read:
 --
 --   1. A CLUB SCOPED ADVISORY TRANSACTION LOCK. Serialises whole order
@@ -145,7 +167,11 @@
 -- Every other refusal is a caller error rather than a race and keeps the
 -- codes this repo already uses: 42501 for not signed in and for the
 -- missing capability (as 0049), P0001 for a malformed request (mismatched
--- lengths, a null or duplicate id, an incomplete set, a foreign team).
+-- lengths, a null or duplicate id, an incomplete set, a foreign team, and
+-- an isolation level this function cannot serialise). The isolation
+-- refusal is deliberately NOT 40001: it is not a race that was lost, and a
+-- client that read it as one would retry for ever, since the retry is
+-- refused identically.
 --
 -- AUDIT. Deliberately no new writer, no new action and no new vocabulary.
 -- audit_teams() (0037, replaced by 0044, allow list extended by 0051) is
@@ -238,9 +264,13 @@ select
 --   42501  not signed in to a club; or no teams.manage capability
 --   40001  the club's stored order no longer matches the expected snapshot
 --          (another admin saved in between). THE ONLY concurrency code
---   P0001  the request is malformed: the two arrays differ in length, an id
---          is null, an id repeats, the set is not exactly the club's
---          current teams, or an id is not a team of this club
+--   P0001  the request cannot be served as made: the calling transaction is
+--          not READ COMMITTED (a fixed snapshot cannot see the race it
+--          lost, so it would commit the merge); or the request is
+--          malformed, meaning the two arrays differ in length, an id is
+--          null, an id repeats, the set is not exactly the club's current
+--          teams, or an id is not a team of this club. Never retry a P0001
+--          unchanged: it will be refused identically.
 -- ---------------------------------------------------------------------
 create or replace function public.set_team_order(
   p_team_ids             uuid[],
@@ -267,6 +297,52 @@ begin
   if not public.has_perm('teams.manage') then
     raise exception 'set_team_order: requires the teams.manage capability'
       using errcode = '42501';
+  end if;
+
+  -- ============ The caller's snapshot must be able to move ===============
+  -- THE LOCKS BELOW ARE NOT ENOUGH ON THEIR OWN, and this is the subtlest
+  -- thing in the file. They decide what a caller WAITS FOR; they cannot
+  -- decide WHEN it looked. A REPEATABLE READ or SERIALIZABLE transaction
+  -- fixes its snapshot at its first statement, which is before it ever
+  -- reaches these locks, so after waiting its whole transaction it still
+  -- reads the pre race world: the expected snapshot matches values nobody
+  -- holds any more, and it writes the rows the winner did not touch.
+  -- PostgreSQL finds no write conflict on those rows, because nobody else
+  -- wrote them, and the merge this function exists to prevent commits.
+  --
+  -- Reproduced, not reasoned about: with the guard removed, a REPEATABLE
+  -- READ caller whose snapshot predates the winner's commit is ACCEPTED and
+  -- stores exactly the merge. The harness runs that race both ways and M16
+  -- pins this guard to it.
+  --
+  -- READ COMMITTED is what makes the design work, because there every
+  -- statement takes a new snapshot: the reads after the locks see whatever
+  -- committed while this caller was waiting, so a stale expected snapshot
+  -- is visible as stale and refused. There is no way to take a fresh
+  -- snapshot inside a fixed snapshot transaction, so this is refused rather
+  -- than worked around, and refused OUTRIGHT rather than only when it would
+  -- have lost a race, because a rule that fires only under contention is a
+  -- rule nobody can test and nobody can trust.
+  --
+  -- READ UNCOMMITTED IS ACCEPTED, and it is named rather than assumed. The
+  -- first version of this guard tested equality with 'read committed' on
+  -- the belief that PostgreSQL normalises READ UNCOMMITTED when it is SET.
+  -- It does not: it BEHAVES as read committed, which is all this function
+  -- needs, while transaction_isolation still reports 'read uncommitted'.
+  -- The harness asserted the belief instead of trusting it and refused the
+  -- caller, which is how the second arm got here. A guard that turned away
+  -- a caller PostgreSQL treats as correct would be its own defect.
+  --
+  -- P0001 rather than 40001: this is not a race that was lost, it is a call
+  -- that cannot be served as made, which is what every other P0001 here
+  -- means. A client must not read it as "somebody else saved first" and
+  -- retry, because the retry would be refused identically for ever.
+  if pg_catalog.current_setting('transaction_isolation')
+       not in ('read committed', 'read uncommitted') then
+    raise exception
+      'set_team_order: requires a read committed transaction, but this one is %',
+      pg_catalog.current_setting('transaction_isolation')
+      using errcode = 'P0001';
   end if;
 
   -- ============ Shape of the request, before any lock is taken ===========
@@ -414,7 +490,7 @@ end
 $$;
 
 comment on function public.set_team_order(uuid[], integer[]) is
-  $$Writes the club's COMPLETE team order atomically (0052_atomic_team_order.sql). SECURITY DEFINER, self gates on teams.manage, derives the club from my_club() server side and refuses any id that is not a team of that club. p_team_ids is the whole desired order, first id to position 1; p_expected_sort_orders is aligned with it and carries the sort_order each team held when the admin's draft was drawn, with null a valid expected value. THE POINT IS ATOMICITY AND SERIALIZATION: a club scoped advisory transaction lock orders whole order saves against each other, SHARE ROW EXCLUSIVE on teams stops a team being added or removed underneath the complete set validation, and every stored position is compared with the expected snapshot BEFORE any write, so two admins moving disjoint rows can no longer both succeed and leave a merged order neither submitted. A stale snapshot raises 40001 and writes nothing; a malformed or incomplete request raises P0001; no club or no capability raises 42501. The whole order commits or nothing does, so no partial order is reachable through this path. Writes only sort_order, on rows whose position actually changes, and creates and deletes no team. teams_sort_order_unique (0051) is untouched and remains the last guard; the clear-then-place exists because it is checked per row. Audited by the existing audit_teams() trigger only: a moved, already placed team records two team.updated events (the clear and the placement), an unplaced one records one, an unmoved one records none, and none carries a value.$$;
+  $$Writes the club's COMPLETE team order atomically (0052_atomic_team_order.sql). SECURITY DEFINER, self gates on teams.manage, derives the club from my_club() server side and refuses any id that is not a team of that club. p_team_ids is the whole desired order, first id to position 1; p_expected_sort_orders is aligned with it and carries the sort_order each team held when the admin's draft was drawn, with null a valid expected value. THE POINT IS ATOMICITY AND SERIALIZATION: a club scoped advisory transaction lock orders whole order saves against each other, SHARE ROW EXCLUSIVE on teams stops a team being added or removed underneath the complete set validation, and every stored position is compared with the expected snapshot BEFORE any write, so two admins moving disjoint rows can no longer both succeed and leave a merged order neither submitted. REQUIRES A READ COMMITTED TRANSACTION (read uncommitted is accepted, since PostgreSQL runs it as read committed): a fixed snapshot transaction waits for the locks and then still reads the pre race world, so it would commit exactly the merge this exists to prevent, and it is refused with P0001 rather than served. A stale snapshot raises 40001 and writes nothing; a malformed or incomplete request, or an isolation level this cannot serialise, raises P0001; no club or no capability raises 42501. The whole order commits or nothing does, so no partial order is reachable through this path. Writes only sort_order, on rows whose position actually changes, and creates and deletes no team. teams_sort_order_unique (0051) is untouched and remains the last guard; the clear-then-place exists because it is checked per row. Audited by the existing audit_teams() trigger only: a moved, already placed team records two team.updated events (the clear and the placement), an unplaced one records one, an unmoved one records none, and none carries a value.$$;
 
 revoke execute on function public.set_team_order(uuid[], integer[]) from public, anon;
 grant execute on function public.set_team_order(uuid[], integer[]) to authenticated;
@@ -515,6 +591,20 @@ begin
   -- Both locks, in this order. The advisory key serialises this function
   -- against itself; the table lock stops membership moving underneath the
   -- complete set check. Either alone leaves a hole the header names.
+  --
+  -- The isolation guard comes first, because it is the precondition BOTH
+  -- locks rest on: they decide what a caller waits for and cannot decide
+  -- when it looked, so a fixed snapshot caller waits its turn and then
+  -- commits the merge anyway. Matched on the executable expression rather
+  -- than on the words, because pg_get_functiondef returns the body's
+  -- COMMENTS too and this function's comment says both 'transaction
+  -- isolation' and 'read committed'; a check on those words would pass with
+  -- the statement deleted and the prose left, which is the shape of vacuous
+  -- assertion this file's review found elsewhere.
+  if v_src !~ ('if pg_catalog\.current_setting\(''transaction_isolation''\)'
+               || '[^;]*not in \(''read committed'', ''read uncommitted''\) then') then
+    raise exception 'atomic_team_order: the read committed isolation guard is missing from the function';
+  end if;
   if v_src !~ 'pg_advisory_xact_lock' then
     raise exception 'atomic_team_order: the club advisory lock is missing from the function';
   end if;
@@ -532,7 +622,13 @@ begin
   if v_src !~ 'is distinct from want\.expected' then
     raise exception 'atomic_team_order: the expected snapshot comparison is missing from the function';
   end if;
-  if v_src !~ '40001' then
+  -- The RAISE, not the number. This check read simply '40001' until the
+  -- isolation guard above arrived carrying a comment that says "P0001 rather
+  -- than 40001", and pg_get_functiondef returns comments: the check then
+  -- passed with the errcode changed, and M5 caught it. Every positive source
+  -- check in this section is only as strong as the narrowest thing the body
+  -- could say by accident, so anchor on syntax wherever prose could collide.
+  if v_src !~ 'using errcode = ''40001''' then
     raise exception 'atomic_team_order: the stale snapshot refusal must use SQLSTATE 40001';
   end if;
   if position('want.expected' in v_src) > position('set sort_order = null' in v_src) then

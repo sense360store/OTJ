@@ -578,7 +578,23 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # the writes that store it one atomic, serialized transaction, so the
     # merge is not reachable rather than merely reported.
     #
-    # It serialises on TWO locks, always in that order: a club scoped
+    # It serialises on THREE things. The first was found in review, after
+    # the other two were written and tested, and it is the one a reader is
+    # least likely to expect: the locks decide what a caller WAITS FOR and
+    # cannot decide WHEN IT LOOKED. A REPEATABLE READ or SERIALIZABLE
+    # transaction fixes its snapshot before it ever reaches a lock, so it
+    # waits its whole turn and then still reads the pre race world, matches
+    # an expected snapshot nobody holds any more, and writes the rows the
+    # winner did not touch, where PostgreSQL finds no conflict. That was
+    # reproduced against a real server, not theorised: without the guard a
+    # REPEATABLE READ caller is ACCEPTED and stores exactly the merge. So
+    # anything but READ COMMITTED is refused with P0001 before any lock.
+    # READ UNCOMMITTED is accepted because PostgreSQL runs it AS read
+    # committed, and the harness asserts that rather than trusting it: the
+    # first version of the guard assumed PostgreSQL rewrites the level at
+    # SET time, which it does not, and turned that caller away.
+    #
+    # Then TWO locks, always in that order: a club scoped
     # advisory transaction lock (the 'otj.<domain>:' || club idiom 0031,
     # 0032, 0036 and 0049 already use) which orders whole order saves
     # against each other, and SHARE ROW EXCLUSIVE on public.teams which
@@ -624,7 +640,7 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # builds a stand-in of the substrate as 0051 leaves it and runs the
     # disjoint race with TWO REAL CONNECTIONS, both ways round, plus the
     # overlapping race, the per club independence of the advisory key,
-    # every gate, the atomicity of a refusal, the audit trail, and fourteen
+    # every gate, the atomicity of a refusal, the audit trail, and seventeen
     # mutations of the file that must each abort the apply. Two sessions
     # are the whole point: the migration's own DO block cannot contend with
     # itself, so the serialization claim is only provable there. It runs in

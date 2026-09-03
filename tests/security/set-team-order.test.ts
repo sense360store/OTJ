@@ -35,10 +35,15 @@
 //                (the clear and the placement), an unplaced one writes one,
 //                an unmoved one writes none, and none carries a value.
 //
-// WHAT THIS FILE CANNOT PROVE, and where that proof lives. Serialization
-// needs two connections contending on the same lock, and vitest holds one
-// session per client. The two session proof, including the disjoint race run
-// both ways round, is in
+// WHAT THIS FILE CANNOT PROVE, and where that proof lives. Two things.
+// Serialization needs two connections contending on the same lock, and
+// vitest holds one session per client. And the function requires a READ
+// COMMITTED transaction, refusing anything else with P0001 before any lock,
+// because a fixed snapshot caller waits its turn and then still reads the
+// pre race world and would commit the merge; PostgREST issues every request
+// in its own READ COMMITTED transaction and offers a client no way to
+// change that, so the refusal is unreachable from here. Both proofs, and
+// the disjoint race run both ways round, are in
 // .github/scripts/production-migration/test_0052_atomic_team_order.sh, which
 // runs the same function against a real PostgreSQL. THIS file proves the
 // gates against the REAL schema, policies, capabilities and grants, which

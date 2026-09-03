@@ -683,6 +683,125 @@ same "and the club holds exactly the winner's order" \
   "$(scalar "select string_agg(name, ',' order by sort_order) from public.teams where club_id = '${CLUB_A}'")" \
   "Bravo,Alpha,Charlie,Delta"
 
+# THE SNAPSHOT RACE, which is a different race from the one above and was
+# found in review. Everything above runs at READ COMMITTED, where every
+# statement takes a fresh snapshot, so the reads AFTER the locks see whatever
+# the winner committed while this caller was waiting. A REPEATABLE READ
+# caller fixes its snapshot at its FIRST statement, which is before it ever
+# reaches the locks. Its reads then still show the pre-race world, its
+# expected snapshot matches, and it goes on to write the rows the winner did
+# not touch: PostgreSQL sees no write conflict on those rows and lets the
+# merge commit. The locks cannot help, because the problem is not what the
+# caller waited for but WHEN it looked.
+#
+# So the merge is reachable through an isolation level, and the function
+# refuses one it cannot serialise rather than degrading silently under it.
+# This section is that refusal, run as the real race.
+reset_order  # back to Alpha=1 Bravo=2 Charlie=3 Delta=4
+run "delete from public.audit_events"
+
+cat >"${WORK}/session_seven.sql" <<SQL
+begin;
+select set_config('otj.test_club', '${CLUB_A}', true);
+select set_config('otj.test_caps', 'teams.manage', true);
+-- the TOP swap, at READ COMMITTED, holding the locks
+select public.set_team_order(
+  array['${A2}','${A1}','${A3}','${A4}']::uuid[], array[2,1,3,4]::integer[]);
+select pg_sleep(3);
+commit;
+SQL
+
+# The loser opens REPEATABLE READ and takes its snapshot BEFORE the winner
+# commits, by reading a row first. Then it calls, blocks on the locks, and
+# by the time it proceeds the winner has committed underneath a snapshot it
+# cannot see past.
+cat >"${WORK}/session_eight.sql" <<SQL
+begin isolation level repeatable read;
+select set_config('otj.test_club', '${CLUB_A}', true);
+select set_config('otj.test_caps', 'teams.manage', true);
+-- Fix the snapshot here, while the winner is still mid transaction.
+select count(*) from public.teams where club_id = '${CLUB_A}';
+-- the BOTTOM swap, from that fixed snapshot 1,2,3,4. Disjoint rows again.
+select public.set_team_order(
+  array['${A1}','${A2}','${A4}','${A3}']::uuid[], array[1,2,4,3]::integer[]);
+commit;
+SQL
+
+psql_run -d "${DB}" -q -f "${WORK}/session_seven.sql" >"${WORK}/seven.out" 2>&1 &
+SEVEN_PID=$!
+sleep 1  # session seven now holds the locks
+set +e
+PGHOST="${WORK}" PGPORT="${PORT}" PGUSER=postgres PGOPTIONS='-c client_min_messages=warning' \
+  psql --no-psqlrc --set ON_ERROR_STOP=1 -q -d "${DB}" -f "${WORK}/session_eight.sql" \
+  >"${WORK}/eight.out" 2>&1
+EIGHT_RC=$?
+set -e
+wait ${SEVEN_PID} || fail "session seven failed: $(cat "${WORK}/seven.out")"
+
+[ ${EIGHT_RC} -ne 0 ] \
+  || fail "a REPEATABLE READ caller was ACCEPTED on a snapshot fixed before the race: $(cat "${WORK}/eight.out")"
+ok "a REPEATABLE READ caller is refused rather than served on a stale snapshot"
+
+RR_FINAL="$(scalar "select string_agg(name, ',' order by sort_order) from public.teams where club_id = '${CLUB_A}'")"
+[ "${RR_FINAL}" != "Bravo,Alpha,Delta,Charlie" ] \
+  || fail "the stored order is the MERGE, reached through REPEATABLE READ: ${RR_FINAL}"
+same "the stored order is exactly the READ COMMITTED winner's submission" \
+  "${RR_FINAL}" "Bravo,Alpha,Charlie,Delta"
+
+# Uncontended, so the refusal is the isolation level itself rather than a
+# race: there is nobody to race here, and it is still refused.
+cat >"${WORK}/rr_alone.sql" <<SQL
+begin isolation level repeatable read;
+select set_config('otj.test_club', '${CLUB_A}', true);
+select set_config('otj.test_caps', 'teams.manage', true);
+select public.set_team_order(
+  array['${A1}','${A2}','${A3}','${A4}']::uuid[], array[2,1,3,4]::integer[]);
+commit;
+SQL
+set +e
+RR_OUT="$(psql_run -d "${DB}" -q -f "${WORK}/rr_alone.sql" 2>&1)"
+RR_RC=$?
+set -e
+[ ${RR_RC} -ne 0 ] || fail "an uncontended REPEATABLE READ call was accepted"
+echo "${RR_OUT}" | grep -q "read committed" \
+  || fail "the isolation refusal did not name the requirement: ${RR_OUT}"
+ok "and refused uncontended too, naming the isolation level it needs"
+
+# SERIALIZABLE has the same fixed snapshot and is refused the same way.
+set +e
+SER_OUT="$(psql_run -d "${DB}" -q -c "begin isolation level serializable;
+  select set_config('otj.test_club', '${CLUB_A}', true);
+  select set_config('otj.test_caps', 'teams.manage', true);
+  select public.set_team_order(array['${A1}','${A2}','${A3}','${A4}']::uuid[], array[2,1,3,4]::integer[]);
+  commit;" 2>&1)"
+SER_RC=$?
+set -e
+[ ${SER_RC} -ne 0 ] || fail "a SERIALIZABLE call was accepted"
+ok "SERIALIZABLE is refused for the same reason"
+
+# READ UNCOMMITTED must be ACCEPTED, and this assertion is why the guard has
+# two arms rather than one. PostgreSQL BEHAVES as read committed here, which
+# is all the function needs, but transaction_isolation still REPORTS 'read
+# uncommitted': it does not rewrite the level at SET time, which is what the
+# first version of the guard assumed. That version refused this caller, and
+# this test is what said so. Asserted rather than trusted, because a guard
+# that turns away a caller PostgreSQL treats as correct is its own defect.
+reset_order  # Alpha=1 Bravo=2 Charlie=3 Delta=4
+# ON_ERROR_STOP is set, so a refusal fails the script here rather than being
+# read out of the output. The stored order afterwards is what proves it was
+# accepted AND applied, rather than accepted and quietly doing nothing.
+run "begin isolation level read uncommitted;
+     select set_config('otj.test_club','${CLUB_A}',true);
+     select set_config('otj.test_caps','teams.manage',true);
+     select public.set_team_order(array['${A2}','${A1}','${A3}','${A4}']::uuid[],
+                                  array[2,1,3,4]::integer[]);
+     commit;"
+ok "READ UNCOMMITTED is accepted, because PostgreSQL runs it as read committed"
+same "and it really did write, so the acceptance is not a silent no-op" \
+  "$(scalar "select string_agg(name, ',' order by sort_order) from public.teams where club_id = '${CLUB_A}'")" \
+  "Bravo,Alpha,Charlie,Delta"
+reset_order
+
 # TWO CLUBS DO NOT WAIT ON EACH OTHER for the advisory key. They do share the
 # teams table lock, which is the stated cost, so this asserts the advisory key
 # is club scoped rather than global by showing club B's save completes on its
@@ -928,6 +1047,23 @@ check_mutation "M14 anon granted after the fact" "anon must not execute"
 # is the point: the file refuses to apply because it asked to be somebody.
 mutate "${WORK}/mutant.sql" "s.replace(GRANT_LINE, GRANT_LINE + 'do \$probe\$ begin perform public.set_team_order(array[]::uuid[], array[]::integer[]); end \$probe\$;\n', 1)"
 check_mutation "M15 the migration tries to call its own function" "not signed in to a club"
+
+# M16 is the isolation guard, and it is here because the guard is invisible
+# in every test that does not set an isolation level. Removed, the file still
+# applies, every other mutation still bites, and the whole of section C above
+# still passes: READ COMMITTED callers behave identically. What changes is
+# that a REPEATABLE READ caller commits the merge, which is what the snapshot
+# race in section C proved before this guard existed.
+mutate "${WORK}/mutant.sql" "s.replace(\"  if pg_catalog.current_setting('transaction_isolation')\n       not in ('read committed', 'read uncommitted') then\n    raise exception\n      'set_team_order: requires a read committed transaction, but this one is %',\n      pg_catalog.current_setting('transaction_isolation')\n      using errcode = 'P0001';\n  end if;\n\", '')"
+check_mutation "M16 the read committed isolation guard removed" "the read committed isolation guard is missing"
+
+# And the same check must not be satisfiable by the function's own prose.
+# pg_get_functiondef returns comments, and this function's comment says both
+# 'transaction isolation' and 'read committed', so a source check anchored on
+# those words would pass with the statement gone. M17 deletes the statement
+# and leaves every comment untouched, which is exactly that case.
+mutate "${WORK}/mutant.sql" "s.replace(\"  if pg_catalog.current_setting('transaction_isolation')\n       not in ('read committed', 'read uncommitted') then\n    raise exception\n      'set_team_order: requires a read committed transaction, but this one is %',\n      pg_catalog.current_setting('transaction_isolation')\n      using errcode = 'P0001';\n  end if;\n\", \"  -- transaction_isolation must be 'read committed' for this to be safe.\n\")"
+check_mutation "M17 the guard replaced by prose that says the same words" "the read committed isolation guard is missing"
 
 # ---------------------------------------------------------------------
 echo "== H. a second apply is refused, and changes nothing"

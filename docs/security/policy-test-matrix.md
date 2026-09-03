@@ -288,6 +288,14 @@ mismatched array lengths are each `P0001` with nothing written. A team id
 belonging to another club is refused by count, without the id appearing in the
 message, and that club's own positions are unmoved.
 
+The function also requires a `READ COMMITTED` transaction and refuses anything
+but that (or `READ UNCOMMITTED`, which PostgreSQL runs as read committed) with
+`P0001` before taking any lock, because a fixed snapshot caller waits its turn
+and then still reads the pre race world, so it would commit exactly the merge
+the function exists to prevent. That refusal is not exercised here: PostgREST
+issues each request in its own `READ COMMITTED` transaction and gives a client
+no way to change it, which is why the isolation cases live in the harness.
+
 The concurrency contract is the reason it exists. `p_expected_sort_orders` is
 aligned with `p_team_ids` and carries the position each team held when the
 admin's draft was drawn, with `null` a real expected value for an unplaced

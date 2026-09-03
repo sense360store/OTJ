@@ -438,7 +438,25 @@ the merge is a permutation like any other. A client without a transaction can
 only read the damage back afterwards and say so, which is what COACH-1B does
 today. The missing thing is a transaction, so the fix is in the database.
 
-**Serialization.** Two locks, always in that order, both taken before a team
+**Serialization.** Three things, and the first was found in review after the
+other two were written and tested.
+
+The locks decide what a caller WAITS FOR. They cannot decide WHEN IT LOOKED. A
+`REPEATABLE READ` or `SERIALIZABLE` transaction fixes its snapshot at its first
+statement, before it reaches any lock here, so it can wait its whole turn and
+then still read the world as it was before the winner committed: its expected
+snapshot matches values nobody holds any more, and it writes the rows the winner
+did not touch, where PostgreSQL finds no write conflict. The merge commits. That
+was reproduced against a real server rather than reasoned about, and with the
+guard removed the harness watches a `REPEATABLE READ` caller be accepted and
+store exactly the merge. So anything but `READ COMMITTED` is refused with `P0001`
+before any lock, rather than served on a snapshot that cannot move. `READ
+UNCOMMITTED` is accepted, because PostgreSQL runs it AS read committed; the
+harness asserts that rather than trusting it, after the first version of the
+guard assumed PostgreSQL rewrites the level at SET time (it does not) and turned
+that caller away.
+
+Then two locks, always in that order, both taken before a team
 row is read. A club scoped advisory transaction lock, the
 `otj.<domain>:' || club` idiom 0031, 0032, 0036 and 0049 already use, orders
 whole order saves against each other per club. Then SHARE ROW EXCLUSIVE on
@@ -473,8 +491,10 @@ without parsing English: PostgREST returns the SQLSTATE as the error body's
 apart. A stack that auto retries a `40001` is safe here rather than dangerous,
 because the retry carries the same stale snapshot and is refused again, having
 written nothing. Not signed in and the missing capability are `42501`, as 0049.
-A malformed request (mismatched lengths, a null or duplicate id, an incomplete
-set, a foreign team) is `P0001`. A foreign team id is refused by count and never
+A request that cannot be served as made is `P0001`: an isolation level this
+cannot serialise, mismatched lengths, a null or duplicate id, an incomplete set,
+or a foreign team. The isolation refusal is deliberately not `40001`, because it
+is not a race that was lost and a client reading it as one would retry for ever. A foreign team id is refused by count and never
 echoed back, so no other club is nameable, readable or writable through this
 path.
 
@@ -551,14 +571,26 @@ disjoint race with two real connections BOTH WAYS ROUND plus the overlapping
 race and the per club independence of the advisory key, the atomicity of a
 refusal, every gate including the foreign id refusal that does not leak, the
 unset and incomplete and unchanged cases with the audit trail as documented,
-fifteen mutations of the file that must each abort the apply, and a second raw
+seventeen mutations of the file that must each abort the apply, and a second raw
 apply. The race sections assert that the loser actually BLOCKED before being
 refused, because a race that never contends proves nothing, and assert both
 that the stored order equals exactly one submission and that it is never the
 merge.
 
-The fifteenth mutation is not like the other fourteen, and it is there because
-the harness once lied. It re-adds a call to `set_team_order` from inside the
+Three of those seventeen are not like the other fourteen, and each is there
+because something got past a check that looked sufficient.
+
+M16 removes the isolation guard and M17 replaces it with a comment saying the
+same words. The second exists because `pg_get_functiondef` returns the body's
+COMMENTS, so the guard's own prose satisfied a source check anchored on the
+words `transaction isolation` and `read committed`; the check now matches the
+executable `if` instead. That same trap had already been sprung once in this
+file without being noticed: the `40001` check read simply `'40001'`, and the
+isolation guard's comment, which says "P0001 rather than 40001", made it pass
+with the errcode changed. M5 caught it on the next run. Every positive source
+check is only as strong as the narrowest thing the body could say by accident.
+
+M15 is there because the harness once lied. It re-adds a call to `set_team_order` from inside the
 migration and requires the apply to abort. That defect was real: the draft that
 carried a behavioural probe PASSED this harness and failed the moment CI ran
 `supabase db reset`, because this harness's stand-in `my_club()` reads a GUC the
