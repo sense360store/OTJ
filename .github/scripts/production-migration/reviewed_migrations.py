@@ -597,9 +597,17 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # into a transaction local table BEFORE the function is created and
     # compares it AFTER, so "changed nothing" is a real comparison across
     # the DDL. It also reads the STORED function definition back and
-    # asserts the boundaries the header claims, and RUNS the rule: the
-    # disjoint merge is replayed in one transaction and the second order is
-    # shown refused with nothing written.
+    # asserts the boundaries the header claims.
+    #
+    # It deliberately does NOT call the function, and that is stated in the
+    # file rather than left as a gap. set_team_order gates on my_club() and
+    # has_perm(), both of which resolve through auth.uid(), and a migration
+    # apply has no JWT, so the function correctly refuses its own probe
+    # with 42501. An earlier draft carried such a probe and aborted the
+    # apply exactly there. Giving it an identity would mean writing to
+    # auth.users and forging request.jwt.claims from inside the one file
+    # whose whole claim is that it touches nothing else. 0049 is the
+    # precedent and reached the same conclusion for the same reason.
     #
     # AUDIT, stated honestly: the existing audit_teams() trigger (0037,
     # replaced by 0044, allow list extended by 0051) is the only record and

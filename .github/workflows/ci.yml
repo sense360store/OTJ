@@ -255,7 +255,7 @@ jobs:
       # backends contending on the same lock, so it runs here, against a real
       # server, both ways round. The same script drives the overlapping race,
       # every gate, the atomicity of a refusal, the audit trail, both probe
-      # states and fourteen mutations of the file, each pinned to the message
+      # states and fifteen mutations of the file, each pinned to the message
       # of the one self-verification check that catches it.
       - name: The atomic team order RPC serialises two real sessions, against a real PostgreSQL
         env:

@@ -6,14 +6,24 @@
 # whole team order and leave a merge neither of them submitted.
 #
 # WHY THIS EXISTS, and why it is not the migration's own self-verification.
-# The migration's DO block replays the disjoint merge in ONE transaction: it
-# calls the function twice in sequence and shows the second is refused. That
-# proves the expected-snapshot comparison works. It CANNOT prove the thing
-# the whole slice is about, because a single transaction has no second
-# session to contend with: whether two real connections are serialised, which
-# one wins, whether the loser blocks or interleaves, and whether the loser's
-# refusal happens before it has written anything. Those need two backends,
-# and this file is where they get them.
+# The migration NEVER CALLS the function, and cannot: set_team_order gates on
+# my_club() and has_perm(), both of which resolve through auth.uid(), and a
+# migration apply has no JWT, so the function correctly refuses its own probe
+# with 42501. An earlier draft of the file did carry such a probe. It passed
+# here, because this harness's STAND-IN my_club() reads a GUC the probe could
+# set for itself, and it failed on the real schema the moment CI ran
+# `supabase db reset`. M15 below is that defect, pinned: it re-adds the call
+# and requires the apply to abort. A stand-in that is more permissive than
+# the schema it stands in for is the one way this file can lie, so the place
+# it did lie is now a test.
+#
+# So every behavioural claim about the function is made here, where a caller
+# can have an identity, and one of them could never have been made in the
+# migration at all: a single transaction has no second session to contend
+# with, so whether two real connections are serialised, which one wins,
+# whether the loser blocks or interleaves, and whether its refusal happens
+# before it has written anything, all need two backends. This file is where
+# they get them.
 #
 # THE DEFECT UNDER TEST, in full. PR #225 saves the club order from the
 # browser as separate PostgREST statements, each conditioned on the value the
@@ -445,13 +455,26 @@ ok "and the post gate refuses that same database, so the two gates are not the s
 # ---------------------------------------------------------------------
 echo "== B. the migration applies, and orders nobody"
 # ---------------------------------------------------------------------
+# Applied on a connection carrying NO identity at all: otj.test_club and
+# otj.test_caps are unset here, so the stand-in's my_club() returns null and
+# its has_perm() returns false, which is the state a real migration apply is
+# always in. A file that needs a caller to be somebody cannot be applied by
+# the workflow, and the way that fails is an aborted production apply.
+same "the apply connection has no club" \
+  "$(scalar "select coalesce(public.my_club()::text, 'none')")" "none"
+same "and no capability" \
+  "$(scalar "select public.has_perm('teams.manage')")" "f"
 apply "${DB}" "${MIGRATION}" || fail "0052 did not apply: ${APPLY_OUT}"
-ok "0052 applied, self-verification included"
+ok "0052 applied with no caller identity, self-verification included"
 same "every team row is byte for byte what it was" "$(scalar "${ROWS_SQL}")" "${ROWS_BEFORE}"
 same "the migration wrote no audit event" "$(scalar "select count(*) from public.audit_events")" "${AUDIT_AT_SEED}"
 same "no team gained a position" "$(scalar "select count(*) from public.teams where sort_order is not null")" "5"
-same "no temporary relation survived the apply" \
-  "$(scalar "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname like 'pg_temp%' and c.relname like '%team_order%'")" "0"
+# The BEFORE fingerprint lives in a transaction local table declared ON
+# COMMIT DROP. Named exactly, because the previous pattern here matched
+# '%team_order%', which _0052_before does not contain, so it could only ever
+# have counted zero.
+same "the before fingerprint table did not survive the apply" \
+  "$(scalar "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname like 'pg_temp%' and c.relname = '_0052_before'")" "0"
 
 read_state || fail "the state read raised after the apply: $(cat "${WORK}/state.err")"
 for p in "${ALL[@]}"; do
@@ -895,6 +918,16 @@ check_mutation "M13 the 0051 unique index dropped" "must be untouched\|is missin
 
 mutate "${WORK}/mutant.sql" "s.replace(GRANT_LINE, GRANT_LINE + 'grant execute on function public.set_team_order(uuid[], integer[]) to anon;\n', 1)"
 check_mutation "M14 anon granted after the fact" "anon must not execute"
+
+# M15 is not like the others: it does not break a rule the self-verification
+# asserts, it breaks the file's ability to be applied at all. A migration
+# cannot exercise a function gated on auth.uid(), because the apply has no
+# JWT. This is the defect CI caught after the harness passed, and it is here
+# so the harness cannot miss it twice. The abort comes from the FUNCTION's
+# own first gate rather than from any check in the verification block, which
+# is the point: the file refuses to apply because it asked to be somebody.
+mutate "${WORK}/mutant.sql" "s.replace(GRANT_LINE, GRANT_LINE + 'do \$probe\$ begin perform public.set_team_order(array[]::uuid[], array[]::integer[]); end \$probe\$;\n', 1)"
+check_mutation "M15 the migration tries to call its own function" "not signed in to a club"
 
 # ---------------------------------------------------------------------
 echo "== H. a second apply is refused, and changes nothing"

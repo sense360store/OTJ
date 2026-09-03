@@ -317,7 +317,7 @@ begin
   -- temporary table. A temporary table here was wrong twice over: `on
   -- commit drop` outlives a single CALL, so a caller invoking this function
   -- twice in one transaction failed on the second with "relation already
-  -- exists" (the migration's own probe caught it), and a per call temporary
+  -- exists" (the CI harness caught it), and a per call temporary
   -- relation is catalogue churn for a read of a handful of rows. The locks
   -- above are what make these reads stable, not where they are stored.
   --
@@ -423,31 +423,21 @@ grant execute on function public.set_team_order(uuid[], integer[]) to authentica
 -- Self verification. Same transaction as everything above, so any failure
 -- rolls the whole release back and leaves the database exactly as it was.
 --
--- It proves what this migration ADDS by RUNNING the rule rather than
--- describing it, including the disjoint merge this whole slice exists to
--- prevent, and it proves what it did NOT change by comparing against the
--- fingerprint taken before the DDL rather than by asserting a posture it
--- cannot know.
+-- It proves what this migration ADDS by reading the created function's
+-- shape, privileges and STORED SOURCE back, so the boundaries hold against
+-- what will actually run rather than against what this file says. It
+-- proves what it did NOT change by comparing against the fingerprint taken
+-- before the DDL, rather than by asserting a posture it cannot know.
 --
--- The behavioural probe runs inside a subtransaction that always rolls
--- back, so nothing it creates survives, which section 5 then checks
--- against the before fingerprint rather than against the probe's own
--- bookkeeping.
+-- It does NOT call the function. Section 4 is the reasoning, and it is not
+-- an omission: a migration apply has no caller identity, and this function
+-- is gated on one.
 -- ---------------------------------------------------------------------
 do $$
 declare
   b        _0052_before;
   n        integer;
   v_src    text;
-  v_club_a uuid;
-  v_club_b uuid;
-  v_t1     uuid;
-  v_t2     uuid;
-  v_t3     uuid;
-  v_t4     uuid;
-  v_bt     uuid;
-  v_out    jsonb;
-  v_state  text;
 begin
   select * into b from _0052_before;
   if not found then
@@ -565,201 +555,46 @@ begin
     raise exception 'atomic_team_order: every read and write of teams must be club scoped';
   end if;
 
-  -- ---- 4. IT ACTUALLY WORKS, and the merge it exists to stop is stopped -
-  -- Driven on synthetic clubs inside a subtransaction that always unwinds.
-  -- The concurrency claim is proved here in the only way one transaction
-  -- can prove it: by replaying, in order, exactly the two reads and writes
-  -- two admins would make, and showing the second is refused by the
-  -- snapshot comparison. The two SESSION harness
-  -- (.github/scripts/production-migration/test_0052_atomic_team_order.sh)
-  -- proves the same thing with two real connections contending on the
-  -- locks, which a single transaction cannot do.
-  begin
-    insert into public.clubs (name) values ('0052 probe club A') returning id into v_club_a;
-    insert into public.clubs (name) values ('0052 probe club B') returning id into v_club_b;
-    insert into public.teams (club_id, name, sort_order) values (v_club_a, 'A team one', 1) returning id into v_t1;
-    insert into public.teams (club_id, name, sort_order) values (v_club_a, 'A team two', 2) returning id into v_t2;
-    insert into public.teams (club_id, name, sort_order) values (v_club_a, 'A team three', 3) returning id into v_t3;
-    insert into public.teams (club_id, name, sort_order) values (v_club_a, 'A team four', 4) returning id into v_t4;
-    insert into public.teams (club_id, name, sort_order) values (v_club_b, 'B team one', 1) returning id into v_bt;
-
-    -- Act as a teams.manage holder of club A. The stand-ins the harness
-    -- uses read these; on the hosted database my_club() and has_perm()
-    -- read the request JWT, and this probe runs as the migration's own
-    -- superuser session, so it sets what those helpers read.
-    perform set_config('otj.test_club', v_club_a::text, true);
-    perform set_config('otj.test_caps', 'teams.manage', true);
-    perform set_config('otj.test_uid', gen_random_uuid()::text, true);
-
-    -- ADMIN ONE swaps the top two. Their draft was drawn from 1,2,3,4.
-    v_out := public.set_team_order(
-      array[v_t2, v_t1, v_t3, v_t4],
-      array[2, 1, 3, 4]::integer[]
-    );
-    if (v_out ->> 'changed')::integer <> 2 then
-      raise exception 'atomic_team_order: swapping two teams must write exactly two rows (wrote %)',
-        v_out ->> 'changed';
-    end if;
-    select string_agg(t.name, ',' order by t.sort_order) into v_state
-      from public.teams t where t.club_id = v_club_a;
-    if v_state <> 'A team two,A team one,A team three,A team four' then
-      raise exception 'atomic_team_order: the first order did not store as submitted (got %)', v_state;
-    end if;
-
-    -- ADMIN TWO swaps the BOTTOM two, from the SAME original draft. Their
-    -- rows are disjoint from admin one's, so #225's per row compare and set
-    -- would let this through and leave a merged order. Here the expected
-    -- snapshot no longer matches and the whole order is refused.
-    begin
-      v_out := public.set_team_order(
-        array[v_t1, v_t2, v_t4, v_t3],
-        array[1, 2, 3, 4]::integer[]
-      );
-      raise exception 'atomic_team_order: a stale disjoint order must be refused, not applied';
-    exception
-      when sqlstate '40001' then
-        null;
-    end;
-    -- And it wrote NOTHING: the club still holds exactly admin one's order.
-    select string_agg(t.name, ',' order by t.sort_order) into v_state
-      from public.teams t where t.club_id = v_club_a;
-    if v_state <> 'A team two,A team one,A team three,A team four' then
-      raise exception 'atomic_team_order: the refused order must write nothing (club now %)', v_state;
-    end if;
-
-    -- The refusal is not a dead end: the same admin, having re read, saves
-    -- the same intent against the current snapshot and it lands whole. The
-    -- expected array carries each team's CURRENT position in that team's own
-    -- slot, which after admin one's save is two=1, one=2, four=4, three=3.
-    v_out := public.set_team_order(
-      array[v_t2, v_t1, v_t4, v_t3],
-      array[1, 2, 4, 3]::integer[]
-    );
-    select string_agg(t.name, ',' order by t.sort_order) into v_state
-      from public.teams t where t.club_id = v_club_a;
-    if v_state <> 'A team two,A team one,A team four,A team three' then
-      raise exception 'atomic_team_order: a fresh order must apply whole (got %)', v_state;
-    end if;
-
-    -- An order that changes nothing writes nothing.
-    v_out := public.set_team_order(
-      array[v_t2, v_t1, v_t4, v_t3],
-      array[1, 2, 3, 4]::integer[]
-    );
-    if (v_out ->> 'changed')::integer <> 0 then
-      raise exception 'atomic_team_order: an unchanged order must write no row (wrote %)',
-        v_out ->> 'changed';
-    end if;
-
-    -- An unset club: every expected value is null and the order is accepted.
-    update public.teams set sort_order = null where club_id = v_club_a;
-    v_out := public.set_team_order(
-      array[v_t1, v_t2, v_t3, v_t4],
-      array[null, null, null, null]::integer[]
-    );
-    select string_agg(coalesce(t.sort_order::text, 'null'), ',' order by t.sort_order) into v_state
-      from public.teams t where t.club_id = v_club_a;
-    if v_state <> '1,2,3,4' then
-      raise exception 'atomic_team_order: an unset club must normalise to 1..N (got %)', v_state;
-    end if;
-
-    -- An INCOMPLETE club (some placed, some not) normalises the same way,
-    -- and its expected snapshot must carry the nulls it actually held.
-    update public.teams set sort_order = null where id in (v_t3, v_t4);
-    v_out := public.set_team_order(
-      array[v_t4, v_t3, v_t2, v_t1],
-      array[null, null, 2, 1]::integer[]
-    );
-    select string_agg(t.name, ',' order by t.sort_order) into v_state
-      from public.teams t where t.club_id = v_club_a;
-    if v_state <> 'A team four,A team three,A team two,A team one' then
-      raise exception 'atomic_team_order: an incomplete club must normalise whole (got %)', v_state;
-    end if;
-
-    -- A missing team, an extra team, a duplicate and a foreign id are all
-    -- refused, and the foreign id is not echoed back in the message.
-    begin
-      v_out := public.set_team_order(array[v_t4, v_t3, v_t2], array[1, 2, 3]::integer[]);
-      raise exception 'atomic_team_order: an incomplete set must be refused';
-    exception when sqlstate 'P0001' then null;
-    end;
-    begin
-      v_out := public.set_team_order(
-        array[v_t4, v_t3, v_t2, v_t1, v_bt], array[1, 2, 3, 4, null]::integer[]);
-      raise exception 'atomic_team_order: a foreign team must be refused';
-    exception when sqlstate 'P0001' then null;
-    end;
-    begin
-      v_out := public.set_team_order(
-        array[v_t4, v_t4, v_t2, v_t1], array[1, 2, 3, 4]::integer[]);
-      raise exception 'atomic_team_order: a duplicate id must be refused';
-    exception when sqlstate 'P0001' then null;
-    end;
-    begin
-      v_out := public.set_team_order(array[v_t4, v_t3, v_t2, v_t1], array[1, 2, 3]::integer[]);
-      raise exception 'atomic_team_order: mismatched array lengths must be refused';
-    exception when sqlstate 'P0001' then null;
-    end;
-
-    -- The other club was never touched by any of that.
-    select coalesce(string_agg(t.name || '=' || coalesce(t.sort_order::text, 'null'), ','), '')
-      into v_state from public.teams t where t.club_id = v_club_b;
-    if v_state <> 'B team one=1' then
-      raise exception 'atomic_team_order: another club must be untouched (got %)', v_state;
-    end if;
-
-    -- Without the capability, nothing is readable or writable through it.
-    perform set_config('otj.test_caps', 'sessions.create', true);
-    begin
-      v_out := public.set_team_order(array[v_t1, v_t2, v_t3, v_t4], array[4, 3, 2, 1]::integer[]);
-      raise exception 'atomic_team_order: a caller without teams.manage must be refused';
-    exception when sqlstate '42501' then null;
-    end;
-    -- And with no club at all.
-    perform set_config('otj.test_club', '', true);
-    perform set_config('otj.test_caps', 'teams.manage', true);
-    begin
-      v_out := public.set_team_order(array[v_t1, v_t2, v_t3, v_t4], array[4, 3, 2, 1]::integer[]);
-      raise exception 'atomic_team_order: a caller with no club must be refused';
-    exception when sqlstate '42501' then null;
-    end;
-
-    -- THE AUDIT TRAIL, exactly as the header says it is. Counted over the
-    -- probe's own teams only. The first save moved two placed teams, so it
-    -- left two events each; nothing here may carry a value.
-    perform set_config('otj.test_club', v_club_a::text, true);
-    select count(*) into n from public.audit_events
-     where entity_id in (v_t1, v_t2, v_t3, v_t4)
-       and action = 'team.updated'
-       and (changed_fields is null or not (changed_fields @> array['sort_order']));
-    if n <> 0 then
-      raise exception 'atomic_team_order: every ordering event must name sort_order (% did not)', n;
-    end if;
-    select count(*) into n from public.audit_events
-     where entity_id in (v_t1, v_t2, v_t3, v_t4)
-       and (safe_changes is not null or metadata is not null);
-    if n <> 0 then
-      raise exception 'atomic_team_order: no team event may carry a value (% did)', n;
-    end if;
-    select count(*) into n from public.audit_events
-     where entity_id in (v_t1, v_t2, v_t3, v_t4)
-       and action not in ('team.created', 'team.updated');
-    if n <> 0 then
-      raise exception 'atomic_team_order: the function must add no audit action (% unexpected)', n;
-    end if;
-
-    -- Unwind. Nothing this probe did survives.
-    raise exception using errcode = 'OTJ52', message = 'atomic_team_order: probe complete, rolling back';
-  exception
-    when sqlstate 'OTJ52' then
-      null;
-  end;
-
-  -- ---- 5. THE PROBE LEFT NOTHING BEHIND --------------------------------
-  select count(*) into n from public.clubs where name like '0052 probe club %';
-  if n <> 0 then
-    raise exception 'atomic_team_order: % probe club(s) survived the rollback', n;
-  end if;
+  -- ---- 4. THERE IS NO IN MIGRATION BEHAVIOURAL PROBE, AND WHY ---------
+  -- This is the one place 0051's pattern does not carry over, and the
+  -- difference is not stylistic. 0051 added an INDEX, which any caller
+  -- exercises: its probe inserted synthetic rows and watched the unique
+  -- constraint bite. set_team_order is gated on an IDENTITY. It calls
+  -- public.my_club() and public.has_perm(), both of which resolve through
+  -- auth.uid(), and a migration apply has no JWT: the file runs as the
+  -- database owner over a direct connection, so auth.uid() is null,
+  -- my_club() is null, and the function correctly refuses its own probe
+  -- with 42501. An earlier draft of this file did carry that probe and
+  -- aborted the apply exactly there, which is the gate working.
+  --
+  -- Giving the probe an identity would mean writing a synthetic row into
+  -- auth.users, letting the 0029 signup trigger fire on it, and forging
+  -- request.jwt.claims. That is a bigger claim on the auth boundary than
+  -- anything this migration is for, and it would be made by the very file
+  -- whose whole point is that it touches nothing else. 0049 is the
+  -- precedent and reached the same conclusion for the same reason: its
+  -- SECURITY DEFINER function is verified here by fingerprints and by
+  -- reading the stored source back, and never by calling it.
+  --
+  -- So the behavioural proof lives where a caller can have an identity,
+  -- and it is stronger there than it could ever be here:
+  --
+  --   * .github/scripts/production-migration/test_0052_atomic_team_order.sh
+  --     applies THIS file to a real PostgreSQL and drives the function as
+  --     four different callers, including the disjoint merge run with TWO
+  --     REAL CONNECTIONS, both ways round, asserting that the loser
+  --     actually blocked on the lock before being refused. One
+  --     transaction cannot contend with itself, so that proof was never
+  --     available in this file at all.
+  --   * tests/security/set-team-order.test.ts drives it through PostgREST
+  --     with real JWTs against the REAL schema, policies, capabilities
+  --     and grants, which the harness stand-in cannot reproduce.
+  --
+  -- What remains here is what a migration CAN prove about itself: the
+  -- function exists in the reviewed shape with the reviewed privileges
+  -- (sections 1 and 2), its stored source carries every boundary this
+  -- header claims (section 3), and nothing else in the database moved
+  -- (sections 6 to 10, against a fingerprint taken before the DDL).
 
   -- ---- 6. What this migration did NOT change ---------------------------
   -- Compared against the fingerprint taken BEFORE the function was created,

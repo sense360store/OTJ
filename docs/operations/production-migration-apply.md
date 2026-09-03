@@ -396,7 +396,7 @@ the message of the one check that catches it. Ten do one thing the header
 forbids (a backfill, a non partial index, reversed key columns, the allow list
 entry removed, a new policy, a column scoped grant, the audit writer called
 twice, a new capability key, the audit trigger dropped, and a value written
-into an event). Seven change nothing the behavioural probe can see (the
+into an event). Seven change nothing a behavioural probe could see (the
 comparison's operands swapped, a second read of the column, a second writer
 and a fourth action string in dead code, SECURITY DEFINER dropped, the audit
 trigger recreated under another name, and a second trigger that does nothing),
@@ -523,15 +523,26 @@ set and the `teams_sort_order_unique` definition into a transaction local table
 BEFORE the DDL, and requires each unchanged afterwards, so "changes no data, no
 policy, no grant and no trigger" is a comparison across the DDL rather than a
 value compared with itself. It then reads the STORED function definition back
-and asserts the boundaries the header claims, and RUNS the rule rather than
-describing it: inside a subtransaction it always rolls back, it replays the
-disjoint merge and shows the second order refused with nothing written, then
-checks the rollback against the before fingerprint rather than trusting it.
+and asserts the boundaries the header claims, so they hold against what will
+actually run rather than against what the file says.
 
-One thing that self-verification structurally cannot prove is the only thing
-the function exists for. A DO block cannot contend with itself, so whether TWO
-CONCURRENT CONNECTIONS can both commit and leave a merge neither submitted
-needs two backends on the same lock.
+It deliberately does NOT call the function, and section 4 of the file is that
+reasoning rather than a gap. This is the one place 0051's pattern does not
+carry over: 0051 added an INDEX, which any caller exercises, while
+`set_team_order` is gated on an IDENTITY. It resolves `my_club()` and
+`has_perm()` through `auth.uid()`, and a migration apply has no JWT, so the
+function correctly refuses its own probe with `42501`. An earlier draft did
+carry that probe and aborted the apply exactly there, which is the gate
+working. Giving the probe an identity would mean writing a synthetic row into
+`auth.users`, letting the 0029 signup trigger fire on it and forging
+`request.jwt.claims`, from inside the very file whose claim is that it touches
+nothing else. `0049` is the precedent and reached the same conclusion for the
+same reason.
+
+So the behavioural proof lives where a caller can have an identity, and it is
+stronger there than it could have been in the file. A DO block cannot contend
+with itself either, so whether TWO CONCURRENT CONNECTIONS can both commit and
+leave a merge neither submitted was never provable there at all.
 `.github/scripts/production-migration/test_0052_atomic_team_order.sh` is that
 proof and runs in CI with `REQUIRE_POSTGRES=1`. It builds a stand-in of the
 substrate as 0051 leaves it and runs eight sections: the probes total in the
@@ -540,11 +551,22 @@ disjoint race with two real connections BOTH WAYS ROUND plus the overlapping
 race and the per club independence of the advisory key, the atomicity of a
 refusal, every gate including the foreign id refusal that does not leak, the
 unset and incomplete and unchanged cases with the audit trail as documented,
-fourteen mutations of the file that must each abort the apply, and a second raw
+fifteen mutations of the file that must each abort the apply, and a second raw
 apply. The race sections assert that the loser actually BLOCKED before being
 refused, because a race that never contends proves nothing, and assert both
 that the stored order equals exactly one submission and that it is never the
 merge.
+
+The fifteenth mutation is not like the other fourteen, and it is there because
+the harness once lied. It re-adds a call to `set_team_order` from inside the
+migration and requires the apply to abort. That defect was real: the draft that
+carried a behavioural probe PASSED this harness and failed the moment CI ran
+`supabase db reset`, because this harness's stand-in `my_club()` reads a GUC the
+probe could set for itself while the real one resolves through `auth.uid()`. A
+stand-in more permissive than the schema it stands in for is the one way this
+file can mislead, so the place it did is now a test. The apply itself is also
+now made on a connection asserted to hold no club and no capability, which is
+the state every real apply is in.
 
 Section H is honest about a difference from 0051. `create or replace` is
 idempotent where `add column` is not, so a second RAW apply of this file is not
