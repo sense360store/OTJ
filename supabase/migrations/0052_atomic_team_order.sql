@@ -106,9 +106,21 @@
 --      they can do nothing about, and no ordering of the two locks below
 --      fixes it, because the conflicting lock is held before this function
 --      is entered. So that call order is refused, and deadlock freedom is
---      a property of the refusal rather than of the lock order alone. A
---      caller that only SELECTed from teams holds ACCESS SHARE or ROW
---      SHARE, neither of which conflicts with anything here, and is served.
+--      a property of the refusal rather than of the lock order alone.
+--
+--      EVERY mode but ACCESS SHARE is refused, and the first version of
+--      this exempted ROW SHARE as well, on the reasoning that it conflicts
+--      with nothing here. True of the RELATION lock and false of the ROW
+--      locks that come with it: SELECT ... FOR UPDATE lets a concurrent
+--      caller take the advisory key and the table lock, then blocks it on
+--      a row this function must write, while the holder waits for that
+--      advisory key. The same cycle. Refused as a class, which also
+--      refuses the RowShareLock an ordinary foreign key check takes, whose
+--      KEY SHARE row locks could not have blocked a non key update: a
+--      durable row lock lives in the tuple's xmax and not in pg_locks, so
+--      the two are not distinguishable from here. Over refusing costs one
+--      clear message; under refusing costs a deadlock nobody can act on. A
+--      plain SELECT holds ACCESS SHARE and no row lock, and is served.
 --
 -- Then two locks, always in this order, both taken before any team row
 -- is read:
@@ -424,9 +436,30 @@ begin
   -- two locks that fixes it either, because the conflicting lock is already
   -- held before this function is entered.
   --
-  -- ACCESS SHARE and ROW SHARE are excluded deliberately: neither conflicts
-  -- with SHARE ROW EXCLUSIVE, so a caller that merely SELECTed from teams,
-  -- with or without FOR SHARE, cannot close the cycle and is not refused.
+  -- ONLY ACCESS SHARE is exempt, and the first version of this check also
+  -- exempted ROW SHARE, which was wrong for a reason worth writing down:
+  -- it reasoned about RELATION level conflicts and forgot ROW level ones.
+  -- SELECT ... FOR UPDATE takes only RowShareLock on the relation, which
+  -- conflicts with nothing here, so a concurrent caller is granted the
+  -- advisory key and the table lock quite happily and then blocks on one of
+  -- the ROWS this function's UPDATE has to write, while this caller enters
+  -- and blocks on that advisory key. The same cycle, through a lock mode
+  -- the guard had named as safe. It was reproduced: with ROW SHARE exempt,
+  -- a caller holding FOR UPDATE is accepted.
+  --
+  -- ROW SHARE is therefore refused as a CLASS, and that is conservative
+  -- rather than exact, which is stated rather than hidden. pg_locks cannot
+  -- tell FOR UPDATE apart from the RowShareLock an ordinary foreign key
+  -- check takes, because a durable row lock lives in the tuple's xmax and
+  -- not in pg_locks. So a transaction that inserted a row referencing teams
+  -- holds KEY SHARE row locks, which would NOT block this function's non
+  -- key update of sort_order, and is refused anyway. Over refusing a caller
+  -- who could have been served costs them one clear message; under refusing
+  -- costs somebody a deadlock they cannot act on.
+  --
+  -- A plain SELECT takes ACCESS SHARE, holds no row lock at all, and is
+  -- served. That is asserted in the harness beside the refusals, because a
+  -- guard widened to every mode would refuse it and nothing else would say.
   if exists (
     select 1
       from pg_catalog.pg_locks l
@@ -434,7 +467,7 @@ begin
        and l.relation = 'public.teams'::pg_catalog.regclass
        and l.pid = pg_catalog.pg_backend_pid()
        and l.granted
-       and l.mode not in ('AccessShareLock', 'RowShareLock')
+       and l.mode <> 'AccessShareLock'
   ) then
     raise exception
       'set_team_order: the calling transaction already holds a write lock on teams; call this before any other write to teams, not after one'

@@ -939,6 +939,29 @@ refuse "a caller holding a prior write lock on teams is refused" "already holds 
    update public.teams set name = name where id = '${A1}';
    select public.set_team_order(array['${A1}','${A2}','${A3}','${A4}']::uuid[], array[1,2,3,4]::integer[]);
    commit;"
+# A caller holding SELECT ... FOR UPDATE is refused too, and that is a
+# SEPARATE case from the write lock above rather than a tidier spelling of
+# it. FOR UPDATE takes only RowShareLock on the RELATION, which conflicts
+# with nothing this function takes, so the table lock is granted to a
+# concurrent caller quite happily. What it also takes is ROW level locks,
+# which this function's UPDATE needs: the concurrent caller gets the
+# advisory key and the table lock, then blocks on one of those rows, while
+# this caller enters the function and blocks on that advisory key. The same
+# 40P01 cycle, reached through a lock mode the first version of this guard
+# exempted by name.
+#
+# pg_locks cannot tell FOR UPDATE apart from the RowShareLock an ordinary
+# foreign key check takes, because a durable row lock lives in the tuple's
+# xmax rather than in pg_locks, so RowShareLock is refused as a class. That
+# is conservative in the safe direction: an insert into a table referencing
+# teams takes KEY SHARE row locks, which would NOT block this function's non
+# key update, and is refused anyway. Stated rather than hidden.
+refuse "a caller holding SELECT ... FOR UPDATE on teams is refused" "already holds a write lock on teams" \
+  "begin;
+   ${CTX_A}
+   select id from public.teams where id = '${A1}' for update;
+   select public.set_team_order(array['${A1}','${A2}','${A3}','${A4}']::uuid[], array[1,2,3,4]::integer[]);
+   commit;"
 # A caller that only READ from teams holds ACCESS SHARE, which conflicts with
 # nothing this function takes, so it must NOT be refused. Without this the
 # guard could be widened to every lock mode and nobody would notice.
@@ -1139,7 +1162,7 @@ check_mutation "M18 the one dimension check removed" "the one dimension check is
 # test that does not make the call the way it guards against, and unlike
 # them its absence is not a wrong ANSWER but a deadlock: PostgreSQL aborts
 # somebody with 40P01 and the admin sees an error they cannot act on.
-mutate "${WORK}/mutant.sql" "s.replace(\"  if exists (\n    select 1\n      from pg_catalog.pg_locks l\n     where l.locktype = 'relation'\n       and l.relation = 'public.teams'::pg_catalog.regclass\n       and l.pid = pg_catalog.pg_backend_pid()\n       and l.granted\n       and l.mode not in ('AccessShareLock', 'RowShareLock')\n  ) then\n\", '  if false then\n')"
+mutate "${WORK}/mutant.sql" "s.replace(\"  if exists (\n    select 1\n      from pg_catalog.pg_locks l\n     where l.locktype = 'relation'\n       and l.relation = 'public.teams'::pg_catalog.regclass\n       and l.pid = pg_catalog.pg_backend_pid()\n       and l.granted\n       and l.mode <> 'AccessShareLock'\n  ) then\n\", '  if false then\n')"
 check_mutation "M19 the prior teams lock check defeated" "the prior teams lock check is missing"
 
 # ---------------------------------------------------------------------

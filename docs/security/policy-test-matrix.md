@@ -285,8 +285,9 @@ each refused `42501` with no position moved), derives the club from
 COMPLETE order or nothing: the request must name the club's current team set
 exactly, and a missing team, an extra team, a duplicate id, a null id,
 mismatched array lengths, an array of more than one dimension and a calling
-transaction that already holds a write lock on `teams` are each `P0001` with
-nothing written. A team id
+transaction that already holds any lock on `teams` stronger than ACCESS SHARE
+(a prior write, or a `SELECT ... FOR UPDATE`, either of which can deadlock
+against a concurrent caller) are each `P0001` with nothing written. A team id
 belonging to another club is refused by count, without the id appearing in the
 message, and that club's own positions are unmoved.
 

@@ -480,8 +480,27 @@ key. PostgreSQL breaks it with `40P01`, so nothing corrupts, but an admin gets
 an error they can do nothing about. No ordering of the two locks fixes it,
 because the conflicting lock is held before the function is entered, so that
 call order is REFUSED by a check above both locks and deadlock freedom is a
-property of the refusal. A caller that only SELECTed from `teams` holds ACCESS
-SHARE or ROW SHARE, neither of which conflicts, and is served.
+property of the refusal.
+
+**Every mode but ACCESS SHARE is refused**, and the first version of that check
+also exempted ROW SHARE, on the reasoning that it conflicts with nothing here.
+True of the RELATION lock, false of the ROW locks that come with it.
+`SELECT ... FOR UPDATE` takes only `RowShareLock` on the relation, so a
+concurrent caller is granted the advisory key and the table lock quite happily,
+then blocks on a row this function must write, while the holder waits for that
+advisory key. The same cycle, through a mode the guard had named as safe. It was
+reproduced before it was fixed: with ROW SHARE exempt, a caller holding
+`FOR UPDATE` is accepted.
+
+Refusing ROW SHARE as a class is conservative rather than exact, and that is
+stated rather than hidden. `pg_locks` cannot tell `FOR UPDATE` apart from the
+`RowShareLock` an ordinary foreign key check takes, because a durable row lock
+lives in the tuple's `xmax` and not in `pg_locks`. A transaction that inserted a
+row referencing `teams` holds KEY SHARE row locks, which could not have blocked
+this function's non key update of `sort_order`, and is refused anyway. Over
+refusing a caller who could have been served costs one clear message; under
+refusing costs somebody a deadlock they cannot act on. A plain `SELECT` holds
+ACCESS SHARE and no row lock, and is served.
 
 **The expected snapshot.** `p_expected_sort_orders` is aligned with
 `p_team_ids` and carries, for each team, the position that team held when the

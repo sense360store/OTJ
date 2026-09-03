@@ -122,8 +122,9 @@ Two more preconditions the RPC enforces, both of which PostgREST satisfies by
 construction and a future server side caller might not: the calling transaction
 must be `READ COMMITTED` (a fixed snapshot waits for the locks and then still
 reads the pre race world, so it would commit exactly the merge), and it must
-not already hold a write lock on `teams` (that call order can deadlock, and no
-lock ordering inside the function can prevent it). Each is refused with
+not already hold any lock on `teams` stronger than ACCESS SHARE, which covers a
+prior write and a `SELECT ... FOR UPDATE` alike (either call order can deadlock,
+and no lock ordering inside the function can prevent it). Each is refused with
 `P0001`. A client that sends one request per transaction, as PostgREST does,
 meets both without trying.
 

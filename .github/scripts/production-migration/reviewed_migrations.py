@@ -602,8 +602,16 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # caller at the table lock, and waits for that caller's advisory key.
     # No ordering of the two locks fixes it, because the conflicting lock is
     # held before the function is entered, so deadlock freedom is a property
-    # of that refusal. A caller that only SELECTed is not refused, since
-    # ACCESS SHARE and ROW SHARE conflict with neither lock.
+    # of that refusal. Every mode but ACCESS SHARE is refused: exempting
+    # ROW SHARE as well was the first version and was wrong, because it
+    # reasoned about relation level conflicts and forgot the ROW locks that
+    # come with SELECT ... FOR UPDATE, which a concurrent caller blocks on
+    # after taking both of this function's locks. Refusing ROW SHARE as a
+    # class also refuses the RowShareLock a foreign key check takes, whose
+    # KEY SHARE row locks could not have blocked a non key update; pg_locks
+    # cannot distinguish them, because a durable row lock lives in the
+    # tuple's xmax. Conservative in the safe direction. A plain SELECT holds
+    # ACCESS SHARE and no row lock, and is served.
     #
     # Then TWO locks, always in that order: a club scoped
     # advisory transaction lock (the 'otj.<domain>:' || club idiom 0031,
