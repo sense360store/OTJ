@@ -364,7 +364,33 @@ export function AdminTeams() {
   const { data: members = [] } = useProfiles()
   const { sessions } = useSessions()
   const insert = useInsertTeam()
-  const save = useSaveTeamOrder()
+  /* The save's outcomes are handled in the HOOK's callbacks, which run before
+     its invalidation refetch is awaited; a callback passed to mutate() would
+     run after that read had landed, which is too late to set what the read
+     is compared against (see useSaveTeamOrder). */
+  const save = useSaveTeamOrder({
+    // The refetch will carry exactly what was written, and the snapshot
+    // becomes that, so the save's own readback is not taken for another
+    // admin's change; a read that differs from it IS one, and is said so.
+    // A draft is kept (or made, for an unset or incomplete club that
+    // accepted the order shown without a move) for exactly that
+    // comparison, and is dropped again the moment the read agrees.
+    onSuccess: (vars) => {
+      const intended = intendedPositions(vars.orderedIds)
+      setSavedAs(intended)
+      setDraft({ ids: vars.orderedIds, expected: intended })
+    },
+    // The club's teams or their positions changed under the draft: the
+    // draft is dropped so the refetched truth is what the list shows,
+    // and the refusal says so. Any other refusal may have written some
+    // rows: the arrangement is kept, so one more press can finish it,
+    // and the next read is adopted as what it was drawn over rather
+    // than compared with a snapshot the save itself has outdated.
+    onError: (error) => {
+      if (error instanceof TeamOrderChanged) setDraft(null)
+      else setDraft((d) => (d === null ? null : { ids: d.ids, expected: null }))
+    },
+  })
   const [name, setName] = useState('')
   const [removing, setRemoving] = useState<Team | null>(null)
   const [removed, setRemoved] = useState<{ id: string; message: string } | null>(null)
@@ -532,39 +558,16 @@ export function AdminTeams() {
     setAnnouncement('')
     wantSavedFocus()
     wantFailedFocus()
-    save.mutate(
-      // The positions the draft was drawn from go with it, so a position
-      // another admin stored in between is refused rather than overwritten.
-      // With no draft (an unset or incomplete club accepting the order
-      // shown) the positions are the ones on screen now.
-      { orderedIds: draftIds, expected: draft?.expected ?? teamPositions(teams) },
-      {
-        // The refetch will carry exactly what was written, and the snapshot
-        // becomes that, so the save's own readback is not taken for another
-        // admin's change; a read that differs from it IS one, and is said so.
-        // A draft is kept (or made, for an unset or incomplete club that
-        // accepted the order shown without a move) for exactly that
-        // comparison, and is dropped again the moment the read agrees.
-        onSuccess: () => {
-          const intended = intendedPositions(draftIds)
-          setSavedAs(intended)
-          setDraft({ ids: draftIds, expected: intended })
-          setAwaitingRead(true)
-        },
-        // The club's teams or their positions changed under the draft: the
-        // draft is dropped so the refetched truth is what the list shows,
-        // and the refusal says so. Any other refusal may have written some
-        // rows: the arrangement is kept, so one more press can finish it,
-        // and the next read is adopted as what it was drawn over rather
-        // than compared with a snapshot the save itself has outdated. Save
-        // waits for that read either way.
-        onError: (error) => {
-          if (error instanceof TeamOrderChanged) setDraft(null)
-          else setDraft((d) => (d === null ? null : { ids: d.ids, expected: null }))
-          setAwaitingRead(true)
-        },
-      },
-    )
+    // Armed BEFORE the write goes out, never in a callback: the read that
+    // clears it is the invalidation the hook awaits before any per-call
+    // callback runs, so a flag set there would be set after the read had
+    // landed and nothing would clear it.
+    setAwaitingRead(true)
+    // The positions the draft was drawn from go with it, so a position
+    // another admin stored in between is refused rather than overwritten.
+    // With no draft (an unset or incomplete club accepting the order
+    // shown) the positions are the ones on screen now.
+    save.mutate({ orderedIds: draftIds, expected: draft?.expected ?? teamPositions(teams) })
   }
 
   /* The removal's outcome, and the thing focus goes back to. Pressing the
@@ -602,14 +605,16 @@ export function AdminTeams() {
     // being saved.
     if (!trimmed || insert.isPending || save.isPending) return
     wantNewTeamFocus()
+    // Save stays withheld until the read that carries the new team. Armed
+    // before the write for the reason saveOrder gives: the insert's hook
+    // awaits its invalidation before a per-call callback runs. A refused
+    // insert brings no read, so the refusal disarms it.
+    setAwaitingRead(true)
     insert.mutate(
       { name: trimmed },
       {
-        onSuccess: () => {
-          setName('')
-          // Save stays withheld until the read that carries the new team.
-          setAwaitingRead(true)
-        },
+        onSuccess: () => setName(''),
+        onError: () => setAwaitingRead(false),
       },
     )
   }

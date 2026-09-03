@@ -221,8 +221,8 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(screen).toMatch(/snapshotAfterRead\(draft\.expected, read\)/)
     // After its own save the snapshot is what the save wrote, never a read,
     // and a draft is made for that comparison whether or not one existed.
-    expect(screen).toMatch(/const intended = intendedPositions\(draftIds\)/)
-    expect(screen).toMatch(/setDraft\(\{ ids: draftIds, expected: intended \}\)/)
+    expect(screen).toMatch(/const intended = intendedPositions\(vars\.orderedIds\)/)
+    expect(screen).toMatch(/setDraft\(\{ ids: vars\.orderedIds, expected: intended \}\)/)
     // The success note is derived from the read agreeing with what was
     // saved, never a flag set true on success and cleared by hand.
     expect(screen).toMatch(/const orderSaved = savedAs !== null && positionsAgree\(savedAs, teamPositions\(teams\)\)/)
@@ -240,6 +240,32 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
       return /from '(\.\.?\/)+(lib\/)?teamOrder'|useSaveTeamOrder|clubOrder\(|moveTeam\(|teamOrderWrites\(|saveTeamOrder\(/.test(code)
     })
     expect(offenders).toEqual([])
+  })
+
+  it('the save outcome is handled in the hook\'s own callbacks, ahead of the awaited invalidation', () => {
+    // TanStack awaits the hook level onSuccess, then onSettled, before the
+    // per-call callbacks run, and onSettled returns the invalidation, which
+    // resolves when the teams refetch has landed. So anything the screen
+    // must have in place before that read (the snapshot it is compared
+    // against) goes through the hook's callbacks, and the flag that says a
+    // read is awaited is armed before the write goes out.
+    const src = withoutComments(read('lib/queries.ts'))
+    const hook = src.slice(src.indexOf('export function useSaveTeamOrder'), src.indexOf('// ---- Spond RSVP context'))
+    expect(hook).toMatch(/onSuccess: \(_data, vars\) => callbacks\?\.onSuccess\?\.\(vars\)/)
+    expect(hook).toMatch(/onError: \(error, vars\) => callbacks\?\.onError\?\.\(error, vars\)/)
+    expect(hook).toMatch(/onSettled: \(\) => qc\.invalidateQueries\(\{ queryKey: \['teams'\] \}\)/)
+    expect(hook.indexOf('onSuccess:')).toBeLessThan(hook.indexOf('onSettled:'))
+    expect(hook.indexOf('onError:')).toBeLessThan(hook.indexOf('onSettled:'))
+    const screen = withoutComments(read('routes/AdminTeams.tsx'))
+    expect(screen).toMatch(/useSaveTeamOrder\(\{/)
+    // The mutate call carries the variables and nothing else.
+    expect(screen).toMatch(/save\.mutate\(\{ orderedIds: draftIds, expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)
+    expect(screen).not.toMatch(/save\.mutate\([^)]*onSuccess/)
+    // Armed before each write, not in its callbacks.
+    const saveOrder = screen.slice(screen.indexOf('const saveOrder = () => {'), screen.indexOf('save.mutate('))
+    expect(saveOrder).toContain('setAwaitingRead(true)')
+    const add = screen.slice(screen.indexOf('const add = () => {'), screen.indexOf('insert.mutate('))
+    expect(add).toContain('setAwaitingRead(true)')
   })
 
   it('the Teams screen saves only on a press: no effect calls the mutation', () => {

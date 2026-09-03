@@ -5652,14 +5652,34 @@ const teamOrderStore = {
   },
 }
 
-export function useSaveTeamOrder() {
+export interface SaveTeamOrderVariables {
+  orderedIds: string[]
+  expected: TeamPosition[]
+}
+
+/* The screen's outcome handling is taken HERE, as the hook's own callbacks,
+   rather than as options to mutate(). TanStack awaits the hook level
+   onSuccess and then the hook level onSettled before it runs the per-call
+   callbacks, and onSettled below returns the invalidation, which resolves
+   only when the teams refetch has landed. A per-call callback therefore runs
+   AFTER the refetch, too late for anything the screen must have in place
+   before that read arrives (the snapshot the read is compared against, the
+   flag that says a read is awaited). The hook level onSuccess and onError
+   run before onSettled, so what is handed in here is in place first. */
+export function useSaveTeamOrder(callbacks?: {
+  onSuccess?: (vars: SaveTeamOrderVariables) => void
+  onError?: (error: Error, vars: SaveTeamOrderVariables) => void
+}) {
   const qc = useQueryClient()
   // `expected` is the positions the screen drew its draft from, so a position
   // another admin stored in between is refused rather than overwritten.
-  return useMutation<TeamOrderWrite[], Error, { orderedIds: string[]; expected: TeamPosition[] }>({
+  return useMutation<TeamOrderWrite[], Error, SaveTeamOrderVariables>({
     mutationFn: ({ orderedIds, expected }) => saveTeamOrder(teamOrderStore, orderedIds, expected),
+    onSuccess: (_data, vars) => callbacks?.onSuccess?.(vars),
+    onError: (error, vars) => callbacks?.onError?.(error, vars),
     // Settled rather than success: a refused or half written save is exactly
     // when the screen must show what is stored rather than what was meant.
+    // Returned, so the mutation settles only once the read has landed.
     onSettled: () => qc.invalidateQueries({ queryKey: ['teams'] }),
   })
 }

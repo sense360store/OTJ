@@ -999,9 +999,30 @@ export const useSetTeamBibColour = () =>
 /* COACH-1B. The one write of the club's team order; the payload is the
    whole intended order, which is what the frozen rules are about, so the
    call log carries it. */
-export const useSaveTeamOrder = () =>
-  useAdminWrite<{ orderedIds: string[]; expected: { id: string; sortOrder: number | null }[] }>(
-    'saveTeamOrder',
-    'Could not save the team order.',
-    (vars) => adminStore.saveTeamOrder(vars.orderedIds),
+type SaveTeamOrderVars = { orderedIds: string[]; expected: { id: string; sortOrder: number | null }[] }
+/* The product hook takes the screen's outcome handling as ITS OWN callbacks,
+   which run before its invalidation refetch is awaited, so the stub calls
+   them in the same place: on settle, before the store applies the write and
+   lands the read a tick later. */
+export const useSaveTeamOrder = (callbacks?: {
+  onSuccess?: (vars: SaveTeamOrderVars) => void
+  onError?: (error: Error, vars: SaveTeamOrderVars) => void
+}) => {
+  const write = useAdminWrite<SaveTeamOrderVars>('saveTeamOrder', 'Could not save the team order.', (vars) =>
+    adminStore.saveTeamOrder(vars.orderedIds),
   )
+  return {
+    ...write,
+    mutate: (vars: SaveTeamOrderVars, opts: { onSuccess?: () => void; onError?: (e: Error) => void } = {}) =>
+      write.mutate(vars, {
+        onSuccess: () => {
+          callbacks?.onSuccess?.(vars)
+          opts.onSuccess?.()
+        },
+        onError: (e) => {
+          callbacks?.onError?.(e, vars)
+          opts.onError?.(e)
+        },
+      }),
+  }
+}
