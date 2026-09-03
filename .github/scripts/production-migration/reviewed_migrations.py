@@ -557,6 +557,119 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             ),
         },
     ),
+    # ------------------------------------------------------------------
+    # 0052_atomic_team_order: adds ONE function, public.set_team_order, and
+    # nothing else. No table, no column, no index, no policy, no grant on
+    # any table, no capability key, no trigger, and no value added to any
+    # vocabulary (audit_events.source and audit_events.action are both
+    # untouched). The only privilege it moves is EXECUTE on its own
+    # function: revoked from public and anon, granted to authenticated,
+    # with the function self gating on teams.manage in its body.
+    #
+    # WHAT IT IS FOR. COACH-1B (#225) writes the club's team order from the
+    # browser as separate PostgREST statements, each conditioned on the
+    # value the screen last read. Two admins who move DISJOINT rows never
+    # collide: one swaps positions 1 and 2 while the other swaps 3 and 4,
+    # every per row compare and set passes, both commit, and the club is
+    # left with a complete valid order NEITHER submitted.
+    # teams_sort_order_unique cannot object because the merge is a
+    # permutation like any other. The client can only detect that
+    # afterwards. This function makes the read that validates the order and
+    # the writes that store it one atomic, serialized transaction, so the
+    # merge is not reachable rather than merely reported.
+    #
+    # It serialises on TWO locks, always in that order: a club scoped
+    # advisory transaction lock (the 'otj.<domain>:' || club idiom 0031,
+    # 0032, 0036 and 0049 already use) which orders whole order saves
+    # against each other, and SHARE ROW EXCLUSIVE on public.teams which
+    # stops a team being added or removed underneath the complete set
+    # validation. The second is table wide because PostgreSQL has no
+    # narrower lock that blocks an insert; teams is a handful of rows per
+    # club and the migration's header states that trade rather than hiding
+    # it. Under the locks it requires the request to name the club's
+    # CURRENT team set exactly, compares every stored position with the
+    # expected snapshot the admin's draft was drawn from, and refuses with
+    # SQLSTATE 40001 BEFORE writing if any differ.
+    #
+    # It changes no data. Its own self-verification takes a BEFORE
+    # fingerprint of the teams, their positions whole, the audit rows,
+    # policies, grants, triggers and the teams_sort_order_unique definition
+    # into a transaction local table BEFORE the function is created and
+    # compares it AFTER, so "changed nothing" is a real comparison across
+    # the DDL. It also reads the STORED function definition back and
+    # asserts the boundaries the header claims, and RUNS the rule: the
+    # disjoint merge is replayed in one transaction and the second order is
+    # shown refused with nothing written.
+    #
+    # AUDIT, stated honestly: the existing audit_teams() trigger (0037,
+    # replaced by 0044, allow list extended by 0051) is the only record and
+    # is untouched. The clear-then-place writes a moved, already placed
+    # team twice inside the one transaction, so such a team records TWO
+    # team.updated events; an unplaced team records one, an unmoved team
+    # records none, and none carries a value. Collapsing that would mean
+    # suppressing or deferring the trigger, which is a larger change to the
+    # audit boundary than the noise it would save.
+    #
+    # Its behaviour was exercised against a real PostgreSQL before
+    # shipping:
+    # .github/scripts/production-migration/test_0052_atomic_team_order.sh
+    # builds a stand-in of the substrate as 0051 leaves it and runs the
+    # disjoint race with TWO REAL CONNECTIONS, both ways round, plus the
+    # overlapping race, the per club independence of the advisory key,
+    # every gate, the atomicity of a refusal, the audit trail, and twelve
+    # mutations of the file that must each abort the apply. Two sessions
+    # are the whole point: the migration's own DO block cannot contend with
+    # itself, so the serialization claim is only provable there. It needs a
+    # local PostgreSQL server and is therefore not part of CI; run it by
+    # hand when reviewing.
+    #
+    # Written against a hosted database whose newest ledger row is
+    # 20260902150212 / team_sort_order, the version the 0051 apply stamped
+    # on 2 September 2026, read from the live ledger on 3 September 2026.
+    # ------------------------------------------------------------------
+    "supabase/migrations/0052_atomic_team_order.sql": ReviewedMigration(
+        path="supabase/migrations/0052_atomic_team_order.sql",
+        ledger_name="atomic_team_order",
+        idempotency_key="otj:migration:0052_atomic_team_order",
+        expected_previous_version="20260902150212",
+        expected_previous_name="team_sort_order",
+        # Resolved through to_regprocedure, never a textual signature cast,
+        # for the reason 0049's review found: has_function_privilege raises
+        # 42883 for a name that does not resolve, so it cannot return false
+        # for an absent function and would break the PRE gate, which by
+        # definition runs where the function is absent. to_regprocedure
+        # returns null instead, and every privilege test below is made
+        # against the resolved oid.
+        objects={
+            "public.set_team_order(uuid[], integer[])": (
+                "(select to_regprocedure("
+                "'public.set_team_order(uuid[], integer[])'"
+                ") is not null)"
+            ),
+            # SECURITY DEFINER with an empty search_path is what makes the
+            # in body capability check the enforcement rather than a
+            # suggestion. chr(34) rather than a literal double quote: the
+            # verifier refuses a probe carrying a quote of any kind.
+            "it is SECURITY DEFINER with an empty search_path": (
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure("
+                "'public.set_team_order(uuid[], integer[])'"
+                ") "
+                "and p.prosecdef "
+                "and p.proconfig @> array[concat('search_path=', chr(34), chr(34))])"
+            ),
+            # anon is tested rather than assumed from PUBLIC, because a
+            # grant to PUBLIC would reach anon without ever naming it.
+            "authenticated executes it and anon does not": (
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure("
+                "'public.set_team_order(uuid[], integer[])'"
+                ") "
+                "and has_function_privilege('authenticated', p.oid, 'EXECUTE') "
+                "and not has_function_privilege('anon', p.oid, 'EXECUTE'))"
+            ),
+        },
+    ),
 }
 
 
