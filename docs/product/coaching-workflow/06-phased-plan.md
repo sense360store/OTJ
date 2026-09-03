@@ -99,12 +99,38 @@ which neither submitted and the partial unique index cannot object to. The
 missing thing is a transaction, so `0052_atomic_team_order` adds one
 capability gated SECURITY DEFINER function, `set_team_order`, which validates
 the complete set and the admin's expected snapshot under a club advisory lock
-and SHARE ROW EXCLUSIVE on `teams`, refuses a stale save with SQLSTATE 40001
-before writing, and otherwise clears and places the whole order in one
-transaction. It is registered against `20260902150212` and awaits the human
-production apply; #225 then replaces its client save with one call to it. The
-lesson generalises: any later slice that writes a SET of rows a unique index
-constrains cannot do it correctly from the client.
+and SHARE ROW EXCLUSIVE on `teams`, refuses a stale save before writing, and
+otherwise clears and places the whole order in one transaction. It is
+registered against `20260902150212` and awaits the human production apply;
+#225 then replaces its client save with one call to it.
+
+**What COACH-1B must match, because getting it wrong is silent.** A stale save
+raises `P0001` carrying the DETAIL token `stale_order`, which PostgREST returns
+as the error body's `details`. **Match the token, not the code**: `P0001` also
+covers every malformed request, so a client that keys on the code alone will
+show "another admin saved a different order" for its own bugs and the reverse.
+This passage said `40001` while that was the contract, and it is worth saying
+why it is not, because `40001` is what an experienced reader would expect.
+Nothing in the database fails to serialize here: the transaction does what it
+is told and the application logic finds the caller's snapshot stale, so calling
+it `serialization_failure` tells every layer above that a retry may succeed
+when it never can. The security suite also showed, twice and deterministically,
+that a `40001` raised by this function never reaches a PostgREST client at all.
+Do not retry a `P0001` unchanged in either case.
+
+Two more preconditions the RPC enforces, both of which PostgREST satisfies by
+construction and a future server side caller might not: the calling transaction
+must be `READ COMMITTED` (a fixed snapshot waits for the locks and then still
+reads the pre race world, so it would commit exactly the merge), and it must
+not already hold a write lock on `teams` (that call order can deadlock, and no
+lock ordering inside the function can prevent it). Each is refused with
+`P0001`. A client that sends one request per transaction, as PostgREST does,
+meets both without trying.
+
+The lesson generalises twice over: any later slice that writes a SET of rows a
+unique index constrains cannot do it correctly from the client, and any slice
+that invents an error contract must check that this product's own client can
+receive it.
 
 **Outcome.** An admin states the club's ordering of its own teams, so every later
 suggestion has ability context without a per-player field.
