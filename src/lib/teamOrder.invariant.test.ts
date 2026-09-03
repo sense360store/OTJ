@@ -263,6 +263,12 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     // move save on an incomplete club never adopts a half written order.
     expect(screen).toMatch(/else setDraft\(\{ ids: vars\.orderedIds, expected: null \}\)/)
     expect(screen).not.toMatch(/d === null \? null/)
+    // A failure on the fresh read wrote nothing, so the snapshot it carried
+    // is kept: a later read that differs is somebody else's change, not
+    // this save's, and must drop the draft rather than be adopted.
+    expect(screen).toMatch(
+      /else if \(error instanceof TeamOrderReadFailed\) setDraft\(\{ ids: vars\.orderedIds, expected: vars\.expected \}\)/,
+    )
     // The mutate call carries the variables and nothing else.
     expect(screen).toMatch(/save\.mutate\(\{ orderedIds: draftIds, expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)
     expect(screen).not.toMatch(/save\.mutate\([^)]*onSuccess/)

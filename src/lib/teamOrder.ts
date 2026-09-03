@@ -308,6 +308,18 @@ export class TeamOrderRefused extends Error {
   }
 }
 
+/* The fresh read itself failed, so NOTHING was written. Its own class
+   because the screen treats it differently from a failure after a write
+   may have landed: the draft's snapshot is still true of what was read
+   before, so it is kept and a later read is checked against it, rather
+   than adopted as if this save had changed what is stored. */
+export class TeamOrderReadFailed extends Error {
+  constructor(cause: unknown) {
+    super("The club's teams could not be read, so nothing was written.", { cause })
+    this.name = 'TeamOrderReadFailed'
+  }
+}
+
 /* What a refused save says, beside the refusals it names so the wording and
    the failure it describes cannot drift apart. The two refusals the save
    itself raises are written for a coach and are shown as they are; anything
@@ -315,6 +327,9 @@ export class TeamOrderRefused extends Error {
 export function saveFailureMessage(error: unknown): string {
   const lead = 'Could not save the team order.'
   if (error instanceof TeamOrderChanged) return `${lead} ${error.message}`
+  if (error instanceof TeamOrderReadFailed) {
+    return `${lead} ${error.message} The list still shows the order you arranged; check the connection and press Save team order again.`
+  }
   if (error instanceof TeamOrderRefused) {
     return `${lead} ${error.message} The status above says what is stored now; check the order and press Save team order again.`
   }
@@ -331,7 +346,16 @@ export async function saveTeamOrder(
   orderedIds: readonly string[],
   expected?: readonly TeamPosition[],
 ): Promise<TeamOrderWrite[]> {
-  const fresh = await store.readPositions()
+  // The one read that precedes every write: a failure here is typed, so
+  // the caller knows nothing was written and keeps its snapshot. The
+  // readback at the end is deliberately NOT wrapped: by then the writes
+  // have landed, and a failure there is a failure after a write.
+  let fresh: TeamPosition[]
+  try {
+    fresh = await store.readPositions()
+  } catch (cause) {
+    throw new TeamOrderReadFailed(cause)
+  }
   const known = new Set(fresh.map((r) => r.id))
   const distinct = new Set(orderedIds)
   if (fresh.length !== orderedIds.length || distinct.size !== orderedIds.length || orderedIds.some((id) => !known.has(id))) {

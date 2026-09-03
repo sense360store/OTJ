@@ -45,6 +45,7 @@ import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import {
   TEAM_ORDER_CHANGED,
   TeamOrderChanged,
+  TeamOrderReadFailed,
   clubOrder,
   moveTeam,
   reconcileDraft,
@@ -382,15 +383,21 @@ export function AdminTeams() {
     },
     // The club's teams or their positions changed under the draft: the
     // draft is dropped so the refetched truth is what the list shows,
-    // and the refusal says so. Any other refusal may have written some
-    // rows: the arrangement that was SENT is kept as the draft, made into
-    // one if the club accepted the order shown without a move, so the
-    // list keeps showing what the admin accepted rather than adopting a
-    // half written order, one more press can finish it, and the next read
-    // is adopted as what it was drawn over rather than compared with a
-    // snapshot the save itself has outdated.
+    // and the refusal says so. A failure on the fresh read itself wrote
+    // nothing, so the snapshot the save carried is still true of what was
+    // read before and is KEPT: a later read that differs from it is
+    // somebody else's change and drops the draft, rather than being
+    // adopted as if this save had changed what is stored, which would let
+    // the retry pass the check and overwrite it. Any other failure may
+    // have written some rows: the arrangement that was SENT is kept as
+    // the draft, made into one if the club accepted the order shown
+    // without a move, so the list keeps showing what the admin accepted
+    // rather than adopting a half written order, one more press can
+    // finish it, and the next read is adopted as what it was drawn over
+    // rather than compared with a snapshot the save itself has outdated.
     onError: (error, vars) => {
       if (error instanceof TeamOrderChanged) setDraft(null)
+      else if (error instanceof TeamOrderReadFailed) setDraft({ ids: vars.orderedIds, expected: vars.expected })
       else setDraft({ ids: vars.orderedIds, expected: null })
     },
   })

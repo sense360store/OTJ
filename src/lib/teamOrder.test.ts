@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { Team } from './data'
 import {
   TeamOrderChanged,
+  TeamOrderReadFailed,
   TeamOrderRefused,
   canonicalPositions,
   clubOrder,
@@ -643,6 +644,40 @@ describe('saving the order', () => {
       { id: 'a', sortOrder: 2 },
     ])
     expect(intendedPositions([])).toEqual([])
+  })
+
+  it('types a failure of the fresh read, because nothing was written, and leaves the readback failure plain', async () => {
+    const { store, log } = fakeStore([
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: 2 },
+    ])
+    const dead: TeamOrderStore = {
+      ...store,
+      async readPositions() {
+        throw new Error('network dropped')
+      },
+    }
+    const failure = await saveTeamOrder(dead, ['b', 'a']).catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TeamOrderReadFailed)
+    expect((failure as Error).cause).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('nothing was written')
+    expect(log).toEqual([])
+    expect(saveFailureMessage(failure)).toContain('The list still shows the order you arranged')
+    // The readback after the writes is a failure AFTER a write, and is not
+    // dressed as a read failure: the caller must not keep its snapshot.
+    let reads = 0
+    const lateDead: TeamOrderStore = {
+      ...store,
+      async readPositions() {
+        reads += 1
+        if (reads > 1) throw new Error('network dropped')
+        return store.readPositions()
+      },
+    }
+    const late = await saveTeamOrder(lateDead, ['b', 'a']).catch((e: unknown) => e)
+    expect(late).not.toBeInstanceOf(TeamOrderReadFailed)
+    expect((late as Error).message).toBe('network dropped')
+    expect(log.filter((l) => l.startsWith('set'))).toEqual(['set b=1', 'set a=2'])
   })
 
   it('refuses to overwrite a position another admin stored after the draft was read, and writes nothing', async () => {
