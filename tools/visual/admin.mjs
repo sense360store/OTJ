@@ -1587,9 +1587,10 @@ export const TEAM_FLOWS = [
   {
     key: 'teams-order-saved',
     screen: 'adminteams',
-    note: 'the moved order saved: ONE write carrying the whole intended order and the positions the screen read, the success note with focus on it, the saved order sentence again, and Save withheld again',
+    note: 'the moved order saved: ONE write carrying the whole intended order and the positions the screen read, the success note with focus on it, the saved order sentence again, Save withheld again, and the refetch NOT taken for another admin\'s change',
     proof: async (page) =>
       (await calls('saveTeamOrder', 1)(page)) &&
+      (await page.locator('.note-warning[role="status"]').count()) === 0 &&
       (await lastWriteWas(page, 'saveTeamOrder', {
         orderedIds: ['titans', 'trojans', 'gladiators', 'argonauts', 'spartans'],
         expected: READ_POSITIONS,
@@ -1644,11 +1645,13 @@ export const TEAM_FLOWS = [
     key: 'teams-order-failed',
     screen: 'adminteams',
     state: 'writefails',
-    note: 'the order write refused: the alert says so and holds focus, the list keeps the arrangement, no success is claimed, and Save is offered again rather than the refusal being swallowed',
+    note: 'the order write refused: the alert says so and holds focus, the list keeps the arrangement as unsaved after the refetch lands, no success is claimed, no refresh warning is raised, and Save is offered again rather than the refusal being swallowed',
     proof: async (page) =>
       (await page.locator('.note-danger[role="alert"]').filter({ hasText: 'Could not save the team order' }).count()) === 1 &&
       (await page.evaluate(() => !!document.activeElement?.querySelector('.note-danger[role="alert"]'))) &&
       (await orderOf(page)).join(',') === 'Titans,Trojans,Gladiators,Argonauts,Spartans' &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 1 &&
+      (await page.locator('.note-warning[role="status"]').count()) === 0 &&
       !(await saveOrderButton(page).isDisabled()) &&
       (await page.locator('.note-success').count()) === 0 &&
       (await calls('saveTeamOrder', 1)(page)),

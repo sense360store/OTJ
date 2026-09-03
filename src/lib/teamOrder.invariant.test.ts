@@ -215,8 +215,12 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(screen).toMatch(/expected: draft\?\.expected \?\? teamPositions\(teams\)/)
     // The snapshot is never rebuilt from a later read: it is taken when the
     // draft is created and checked against each fresh read.
-    expect(screen).toMatch(/expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)
-    expect(screen).toMatch(/snapshotAfterRead\(draft\.expected, teamPositions\(teams\)\)/)
+    // A later move keeps the draft's snapshot as it is, a null left by a
+    // failed save included, rather than taking a fresh one.
+    expect(screen).toMatch(/expected: draft \? draft\.expected : teamPositions\(teams\) \}\)/)
+    expect(screen).toMatch(/snapshotAfterRead\(draft\.expected, read\)/)
+    // After its own save the snapshot is what the save wrote, never a read.
+    expect(screen).toMatch(/expected: intendedPositions\(draftIds\)/)
     // No other route, component or hook touches the helper or the mutation.
     const others = applicationSources().filter(
       (rel) => rel !== REVIEWED_SCREEN && !REVIEWED_CONSUMERS.includes(rel) && rel.startsWith('src/'),

@@ -1477,6 +1477,11 @@ const adminListeners = new Set<() => void>()
 const adminChanged = () => {
   for (const l of adminListeners) l()
 }
+/* COACH-1B. How many reads have LANDED, which is what the product's
+   dataUpdatedAt says: a refetch after a write that changed nothing brings
+   the same rows and is a read all the same, and the Teams screen keys its
+   draft handling on the read landing rather than on the rows changing. */
+let adminReadVersion = 0
 
 let invitedCount = 0
 let createdRoleCount = 0
@@ -1494,6 +1499,13 @@ export const adminStore = {
     return () => {
       adminListeners.delete(l)
     }
+  },
+  readVersion: (): number => adminReadVersion,
+  // A read landing, with or without a change: the stub's writes call it a
+  // tick after settling, the way an invalidated read comes back.
+  readLanded() {
+    adminReadVersion += 1
+    adminChanged()
   },
   // The invite creates the auth user at once, so the new profile is already
   // in the list, in the invited state until they first sign in. That is what

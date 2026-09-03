@@ -185,6 +185,17 @@ export function teamsInDraftOrder(draft: readonly string[], teams: readonly Team
 // status the refetch brings, and never a blend presented as configured.
 // The unique index remains the last guard for the write itself.
 //
+// WHAT IT CANNOT PREVENT, and what it does instead. Two saves that change
+// DISJOINT rows (one swaps the top two, the other the bottom two) touch no
+// row in common, so every compare and set passes for both and the club
+// ends with a merge neither admin arranged. Serialising whole order saves
+// needs a club wide lock, a version column or one server side function
+// writing the order in one transaction, each a gated migration this slice
+// does not make. So the save reads the club back after its last placement
+// and refuses as TeamOrderChanged when what is stored is not what it meant
+// to store: the merge is never called saved, the admin sees the refreshed
+// order, and the other admin's readback or next read says the same.
+//
 // WHAT THE AUDIT TRAIL SHOWS. audit_teams() records every distinct change of
 // sort_order as team.updated naming the field and never the value, so a
 // reorder of a club whose teams are already placed records TWO events per
@@ -203,6 +214,13 @@ export interface TeamPosition {
    function and the screen stays a consumer of the helper, not of the column. */
 export function teamPositions(teams: readonly Pick<Team, 'id' | 'sortOrder'>[]): TeamPosition[] {
   return teams.map((t) => ({ id: t.id, sortOrder: t.sortOrder }))
+}
+
+/* The positions a save MEANS to leave: 1..N in the order given. What the
+   screen expects its own refetch to carry after a successful save, and what
+   the save compares its readback with. */
+export function intendedPositions(orderedIds: readonly string[]): TeamPosition[] {
+  return orderedIds.map((id, i) => ({ id, sortOrder: i + 1 }))
 }
 
 export function samePositions(a: readonly TeamPosition[], b: readonly TeamPosition[]): boolean {
@@ -353,6 +371,23 @@ export async function saveTeamOrder(
       )
     }
     done.push(w)
+  }
+
+  // THE READBACK. Two saves that change DISJOINT rows pass every compare
+  // and set above, because neither touches a row the other wrote, and the
+  // club ends with a merge neither admin arranged. Without a version column
+  // or a server side function that cannot be prevented from here, so it is
+  // detected: the club is read again after the last placement and compared
+  // whole with the order this save meant to store, and a difference is
+  // refused as TeamOrderChanged, so "saved" is never said of a merge. The
+  // other save's own readback, or its screen's next read, tells the other
+  // admin the same way.
+  const after = await store.readPositions()
+  const want = new Map(intendedPositions(orderedIds).map((r) => [r.id, r.sortOrder]))
+  if (after.length !== want.size || after.some((r) => want.get(r.id) !== r.sortOrder)) {
+    throw new TeamOrderChanged(
+      'The order was written, but another admin saved at the same time and the stored order now differs from the one you arranged. The list has been refreshed; check it and save again.',
+    )
   }
   return done
 }

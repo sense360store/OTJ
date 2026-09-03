@@ -11,6 +11,7 @@ import {
   clubOrder,
   clubOrderState,
   compareTeamsByName,
+  intendedPositions,
   moveTeam,
   reconcileDraft,
   sameTeamOrder,
@@ -249,7 +250,7 @@ describe('saving the order', () => {
     ])
     // Nothing is placed, so there is nothing to clear: the writes are the
     // three placements and nothing else.
-    expect(log).toEqual(['read', 'set c=1', 'set a=2', 'set b=3'])
+    expect(log).toEqual(['read', 'set c=1', 'set a=2', 'set b=3', 'read'])
   })
 
   it('swaps two placed teams without ever holding both at one position', async () => {
@@ -263,7 +264,9 @@ describe('saving the order', () => {
     expect(state.get('a')).toBe(2)
     expect(state.get('b')).toBe(1)
     expect(state.get('c')).toBe(3)
-    expect(log).toEqual(['read', 'clear b@2', 'clear a@1', 'set b=1', 'set a=2'])
+    // The trailing read is the readback: what is stored is compared whole
+    // with what the save meant to store before "saved" is said.
+    expect(log).toEqual(['read', 'clear b@2', 'clear a@1', 'set b=1', 'set a=2', 'read'])
   })
 
   it('leaves a team already at its position untouched', async () => {
@@ -273,7 +276,7 @@ describe('saving the order', () => {
       { id: 'c', sortOrder: 8 },
     ])
     await saveTeamOrder(store, ['a', 'b', 'c'])
-    expect(log).toEqual(['read', 'clear b@3', 'clear c@8', 'set b=2', 'set c=3'])
+    expect(log).toEqual(['read', 'clear b@3', 'clear c@8', 'set b=2', 'set c=3', 'read'])
     expect(log.some((l) => l.includes(' a'))).toBe(false)
   })
 
@@ -582,6 +585,63 @@ describe('saving the order', () => {
       ]),
     ).rejects.toBeInstanceOf(TeamOrderChanged)
     expect(again.log).toEqual(['read'])
+  })
+
+  it('detects two saves over disjoint rows, which no compare and set can refuse, and never calls the merge saved', async () => {
+    // A swaps the top two, B swaps the bottom two. Neither touches a row
+    // the other writes, so every compare and set passes for both and the
+    // club ends with a merge neither arranged. That is the limit of a save
+    // made of separate statements, and what the readback is for: A's
+    // readback finds the bottom two not where A left them and refuses,
+    // so "saved" is not said of the merge.
+    const shared = fakeStore([
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: 2 },
+      { id: 'c', sortOrder: 3 },
+      { id: 'd', sortOrder: 4 },
+    ])
+    const { gate, release, waiting } = step()
+    const gated: TeamOrderStore = {
+      readPositions: () => shared.store.readPositions(),
+      clearPosition: (id, from) => gate(() => shared.store.clearPosition(id, from)),
+      setPosition: (id, position) => gate(() => shared.store.setPosition(id, position)),
+    }
+    const snapshot = await shared.store.readPositions()
+    const a = saveTeamOrder(gated, ['b', 'a', 'c', 'd'], snapshot).catch((e: unknown) => e)
+    await settle()
+    expect(waiting()).toBe(1)
+    // B runs in full while A waits at its first write; B's own readback
+    // agrees with B, so B is told saved.
+    await saveTeamOrder(shared.store, ['a', 'b', 'd', 'c'], snapshot)
+    expect([...shared.state]).toEqual([
+      ['a', 1],
+      ['b', 2],
+      ['c', 4],
+      ['d', 3],
+    ])
+    // A's rows are untouched, so A's writes all land...
+    while (waiting() > 0) {
+      release()
+      await settle()
+    }
+    const failure = await a
+    // ...and A's readback refuses, naming the cause.
+    expect(failure).toBeInstanceOf(TeamOrderChanged)
+    expect((failure as Error).message).toContain('another admin saved at the same time')
+    expect([...shared.state]).toEqual([
+      ['a', 2],
+      ['b', 1],
+      ['c', 4],
+      ['d', 3],
+    ])
+  })
+
+  it('states what a save means to leave as 1..N in the order given', () => {
+    expect(intendedPositions(['b', 'a'])).toEqual([
+      { id: 'b', sortOrder: 1 },
+      { id: 'a', sortOrder: 2 },
+    ])
+    expect(intendedPositions([])).toEqual([])
   })
 
   it('refuses to overwrite a position another admin stored after the draft was read, and writes nothing', async () => {

@@ -114,9 +114,12 @@ export const useProgrammes = () => query([])
 const useAdminTeams = (): Team[] => useSyncExternalStore(adminStore.subscribe, adminStore.teams, adminStore.teams)
 export const useTeams = () => {
   const teams = useAdminTeams()
+  // The product's dataUpdatedAt: moves when a read LANDS, rows changed or
+  // not, which is what the Teams screen keys its draft handling on.
+  const dataUpdatedAt = useSyncExternalStore(adminStore.subscribe, adminStore.readVersion, adminStore.readVersion)
   if (state === 'adminloading') return pendingQuery<Team[]>()
   if (state === 'adminerror') return failedQuery<Team[]>()
-  return query(teams)
+  return query(teams, { dataUpdatedAt })
 }
 export const useTeamMap = () => byId(useAdminTeams())
 export const useMyTeams = () => query({ teamIds: TEAMS.map((t) => t.id), allTeams: true })
@@ -754,7 +757,10 @@ const nameLookup = <T,>(rows: () => T[], idOf: (r: T) => string, nameOf: (r: T) 
    It is a driver hook, not a write of this screen, and the call log does
    not record it. */
 ;(globalThis as unknown as { __adminStore?: { saveTeamOrder: (orderedIds: string[]) => void } }).__adminStore = {
-  saveTeamOrder: (orderedIds) => adminStore.saveTeamOrder(orderedIds),
+  saveTeamOrder: (orderedIds) => {
+    adminStore.saveTeamOrder(orderedIds)
+    adminStore.readLanded()
+  },
 }
 ;(
   globalThis as unknown as {
@@ -828,6 +834,9 @@ function useAdminWrite<V, R = void>(
         const err = new Error(message)
         opts.onError?.(err)
         reject?.(err)
+        // The invalidated read still comes back after a refusal, a tick
+        // later, carrying whatever the refused write left.
+        setTimeout(() => adminStore.readLanded(), 0)
       } else {
         /* THE CALLBACK FIRST, AND THE LIST A TICK LATER, because that is the
            ORDER PRODUCTION HAS and the whole reason three screens wait for a
@@ -840,7 +849,10 @@ function useAdminWrite<V, R = void>(
            hook keyed on the write from one keyed on the row: reducing
            `rowGone` to `removed !== null` passed every entry. */
         opts.onSuccess?.(result ? result(vars) : (undefined as R))
-        setTimeout(() => apply?.(vars), 0)
+        setTimeout(() => {
+          apply?.(vars)
+          adminStore.readLanded()
+        }, 0)
       }
       setPending(false)
     }, ADMIN_DELAY)

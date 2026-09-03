@@ -51,6 +51,7 @@ import {
   sameIdOrder,
   samePositions,
   saveFailureMessage,
+  intendedPositions,
   snapshotAfterRead,
   teamPositions,
   teamsInDraftOrder,
@@ -357,7 +358,7 @@ function TeamRow({
 const NO_TEAMS: Team[] = []
 
 export function AdminTeams() {
-  const { data, isLoading, isError, refetch } = useTeams()
+  const { data, isLoading, isError, refetch, dataUpdatedAt } = useTeams()
   const teams = data ?? NO_TEAMS
   const { data: members = [] } = useProfiles()
   const { sessions } = useSessions()
@@ -385,8 +386,12 @@ export function AdminTeams() {
      taken when the draft is created and never rebuilt from a later read:
      the save refuses against that snapshot, and a snapshot rebuilt at Save
      time from a read already carrying another admin's order would agree
-     with the fresh read and let the older draft overwrite it. */
-  const [draft, setDraft] = useState<{ ids: string[]; expected: TeamPosition[] } | null>(null)
+     with the fresh read and let the older draft overwrite it. After a save
+     the snapshot is what the save LEFT: on success the order it wrote, so
+     its own refetch is not mistaken for another admin's change; after any
+     other failure null, meaning the next read is adopted as it comes,
+     because some rows may have been written and the arrangement is kept. */
+  const [draft, setDraft] = useState<{ ids: string[]; expected: TeamPosition[] | null } | null>(null)
   const [orderSaved, setOrderSaved] = useState(false)
   /* Set when a fresh read dropped the draft because the stored order moved
      under it, so the screen says why the arrangement went. */
@@ -399,27 +404,30 @@ export function AdminTeams() {
   const dirty = arranged !== null && !sameIdOrder(arranged, storedIds)
   /* Adjusted during the render a FRESH READ lands in, which is the documented
      way to adjust state to a changed input (an effect would render the stale
-     arrangement once and then re-render). The read is compared by identity,
-     so a render with the same rows does nothing and a loading render sees
-     the one shared empty list. The draft is checked against its snapshot
+     arrangement once and then re-render). A landed read is known by the
+     query's own timestamp rather than by the rows changing, because a
+     refetch after a save that wrote nothing brings the same rows and is a
+     read all the same. The draft is checked against its snapshot
      (snapshotAfterRead): a position that moved under it drops it and says
-     so, a read that agrees with what is stored drops it silently, and a team
-     just added joins the snapshot unplaced. The saved note goes once a fresh
-     read leaves the club no longer configured (a team added or removed after
-     the save), so "Team order saved." never sits beside "Team order is
-     incomplete". */
-  const [seenTeams, setSeenTeams] = useState(teams)
-  if (teams !== seenTeams) {
-    setSeenTeams(teams)
+     so, a read that agrees with what is stored drops it silently, a team
+     just added joins the snapshot unplaced, and a draft left with no
+     snapshot by a failed save adopts the read as it comes. The saved note
+     goes once a fresh read leaves the club no longer configured (a team
+     added or removed after the save), so "Team order saved." never sits
+     beside "Team order is incomplete". */
+  const [seenRead, setSeenRead] = useState(dataUpdatedAt)
+  if (dataUpdatedAt !== seenRead) {
+    setSeenRead(dataUpdatedAt)
     setAwaitingRead(false)
     if (draft !== null) {
-      const next = snapshotAfterRead(draft.expected, teamPositions(teams))
+      const read = teamPositions(teams)
+      const next = draft.expected === null ? read : snapshotAfterRead(draft.expected, read)
       if (next === null) {
         setDraft(null)
         setRefreshed(true)
       } else if (!dirty) {
         setDraft(null)
-      } else if (!samePositions(next, draft.expected)) {
+      } else if (draft.expected === null || !samePositions(next, draft.expected)) {
         setDraft({ ids: draft.ids, expected: next })
       }
     }
@@ -433,7 +441,8 @@ export function AdminTeams() {
      nothing to say until the draft differs from what is stored. It is
      withheld while a team is being added and until the read that carries
      the new team lands, because an order sent in that window would not know
-     the team and would either be refused as a change or leave it unplaced. */
+     the team and would either be refused as a change or leave it unplaced,
+     and likewise between a save settling and its refetch. */
   const canSave =
     rows.length > 0 && !save.isPending && !insert.isPending && !awaitingRead && (stored.state !== 'configured' || dirty)
   /* What a screen reader hears after a move. The position pill is visual and
@@ -481,9 +490,10 @@ export function AdminTeams() {
     setOrderSaved(false)
     setRefreshed(false)
     // The snapshot is the read the FIRST move was made over; later moves
-    // keep it, and a fresh read is checked against it rather than replacing
-    // it.
-    setDraft({ ids: next.map((t) => t.id), expected: draft?.expected ?? teamPositions(teams) })
+    // keep it (a null left by a failed save included, until the next read
+    // is adopted), and a fresh read is checked against it rather than
+    // replacing it.
+    setDraft({ ids: next.map((t) => t.id), expected: draft ? draft.expected : teamPositions(teams) })
     setMoves((n) => n + 1)
     const to = next.findIndex((t) => t.id === id)
     setAnnouncement(`${next[to].name} moved to position ${to + 1} of ${next.length}. Not saved yet.`)
@@ -518,13 +528,25 @@ export function AdminTeams() {
       // shown) the positions are the ones on screen now.
       { orderedIds: draftIds, expected: draft?.expected ?? teamPositions(teams) },
       {
-        onSuccess: () => setOrderSaved(true),
+        // The refetch will carry exactly what was written, and the snapshot
+        // becomes that, so the save's own readback is not taken for another
+        // admin's change; a read that differs from it IS one, and is said so.
+        onSuccess: () => {
+          setOrderSaved(true)
+          setDraft((d) => (d === null ? null : { ids: d.ids, expected: intendedPositions(draftIds) }))
+          setAwaitingRead(true)
+        },
         // The club's teams or their positions changed under the draft: the
         // draft is dropped so the refetched truth is what the list shows,
-        // and the refusal says so. Any other refusal keeps the arrangement,
-        // so one more press can finish it.
+        // and the refusal says so. Any other refusal may have written some
+        // rows: the arrangement is kept, so one more press can finish it,
+        // and the next read is adopted as what it was drawn over rather
+        // than compared with a snapshot the save itself has outdated. Save
+        // waits for that read either way.
         onError: (error) => {
           if (error instanceof TeamOrderChanged) setDraft(null)
+          else setDraft((d) => (d === null ? null : { ids: d.ids, expected: null }))
+          setAwaitingRead(true)
         },
       },
     )
