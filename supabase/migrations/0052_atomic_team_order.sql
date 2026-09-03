@@ -302,8 +302,11 @@ select
 --
 -- Returns, on success:
 --   {"teams": [{"id": ..., "sort_order": 1}, ...], "changed": <int>}
--- in position order. `changed` is how many rows were actually written,
--- which is also how many teams the audit trail will show moving.
+-- in position order. `changed` is how many TEAMS ENDED SOMEWHERE ELSE,
+-- which is not the same as how many row writes happened: a moved, already
+-- placed team is written twice by the clear-then-place below and counted
+-- once here, and it is that team's TWO audit events the trail will show. A
+-- team already at its final position is neither written nor counted.
 --
 -- Raises (nothing is written, the whole call is rolled back):
 --   42501  not signed in to a club; or no teams.manage capability
