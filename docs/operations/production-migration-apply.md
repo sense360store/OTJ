@@ -465,7 +465,10 @@ whole order saves against each other per club. Then SHARE ROW EXCLUSIVE on
 validation, and an insert has no row to lock. SHARE ROW EXCLUSIVE conflicts
 with ROW EXCLUSIVE, so no concurrent insert, update or delete on `teams` can
 interleave; it does not conflict with ACCESS SHARE or ROW SHARE, so ordinary
-reads are unaffected. It is table wide rather than club wide because PostgreSQL
+reads are unaffected. That is a statement about this lock and not about who the
+guard above refuses: a caller already holding ROW SHARE is refused before
+reaching it, because the row locks it also holds are what a concurrent caller
+would block on. Conflating the two is the mistake this migration made twice. It is table wide rather than club wide because PostgreSQL
 has no narrower lock that blocks an insert, so a team being added to club B does
 briefly wait behind club A's order save. That is stated rather than hidden:
 `teams` holds a handful of rows per club and this is an admin screen's explicit

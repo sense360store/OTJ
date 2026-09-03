@@ -141,7 +141,12 @@
 --      make one of the placements a silent no-op. SHARE ROW EXCLUSIVE
 --      conflicts with ROW EXCLUSIVE, so no concurrent INSERT, UPDATE or
 --      DELETE on teams can interleave; it does not conflict with ACCESS
---      SHARE or ROW SHARE, so ordinary reads are unaffected. teams is a
+--      SHARE or ROW SHARE, so ordinary reads are unaffected. That is a
+--      statement about THIS LOCK and not about who 0b refuses: a caller
+--      already holding ROW SHARE is refused before reaching here, because
+--      the row locks it also holds are what a concurrent caller would
+--      block on. Conflating the two is the mistake this file has made
+--      twice, so the two sentences say which question they answer. teams is a
 --      five row per club configuration table and this is an admin screen's
 --      explicit Save, so the cost is a lock held for the length of one
 --      small transaction and the gain is that "complete" means complete.
@@ -168,9 +173,12 @@
 --   Reordering the two locks does not fix it, because the conflicting lock
 --   is already held before the function is entered. So that call order is
 --   REFUSED, by a check above these locks, and deadlock freedom is a
---   property of the refusal rather than of the lock order alone. A caller
---   that only SELECTed from teams holds ACCESS SHARE or ROW SHARE, neither
---   of which conflicts with SHARE ROW EXCLUSIVE, and is not refused.
+--   property of the refusal rather than of the lock order alone. WHICH
+--   lock modes that refusal covers is stated once, in 0b above, and
+--   deliberately not restated here: this paragraph carried its own copy
+--   and the copy went stale the moment ROW SHARE stopped being exempt,
+--   which review caught and which a maintainer could have read as licence
+--   to put the unsafe exemption back.
 --
 -- THE EXPECTED SNAPSHOT, and why it is per team rather than a version
 -- number. p_expected_sort_orders is aligned with p_team_ids and carries,
@@ -540,7 +548,10 @@ begin
   -- being complete before the writes below land. SHARE ROW EXCLUSIVE
   -- conflicts with the ROW EXCLUSIVE that INSERT, UPDATE and DELETE take,
   -- and with itself; it does not conflict with the ACCESS SHARE that reads
-  -- take. Always second, never first: see the header's deadlock argument.
+  -- take. What this lock conflicts with is a different question from which
+  -- callers the check above refuses, which is why a ROW SHARE holder never
+  -- reaches this line. Always second, never first: see the header's
+  -- deadlock argument.
   lock table public.teams in share row exclusive mode;
 
   -- ============ The club's teams, as they are under the lock =============
