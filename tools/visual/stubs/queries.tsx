@@ -980,6 +980,8 @@ export const useSetTeamBibColour = () =>
    whole intended order, which is what the frozen rules are about, so the
    call log carries it. */
 export const useSaveTeamOrder = () =>
-  useAdminWrite<{ orderedIds: string[] }>('saveTeamOrder', 'Could not save the team order.', (vars) =>
-    adminStore.saveTeamOrder(vars.orderedIds),
+  useAdminWrite<{ orderedIds: string[]; expected: { id: string; sortOrder: number | null }[] }>(
+    'saveTeamOrder',
+    'Could not save the team order.',
+    (vars) => adminStore.saveTeamOrder(vars.orderedIds),
   )

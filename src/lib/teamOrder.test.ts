@@ -14,6 +14,7 @@ import {
   moveTeam,
   reconcileDraft,
   sameTeamOrder,
+  saveFailureMessage,
   saveTeamOrder,
   teamOrderWrites,
   teamsInDraftOrder,
@@ -376,11 +377,84 @@ describe('saving the order', () => {
     await expect(saveTeamOrder(lying, ['a', 'b'])).rejects.toBeInstanceOf(TeamOrderRefused)
   })
 
-  it('never carries anything but an id and a position through the store', () => {
-    // The store's own contract: a position is the only thing a save can set.
-    // Pinned as a type level statement by the fake, which has no way to be
-    // handed a name or a bib colour.
-    const write: Parameters<TeamOrderStore['setPosition']> = ['a', 1]
-    expect(write).toHaveLength(2)
+  it('refuses to overwrite a position another admin stored after the draft was read, and writes nothing', async () => {
+    // The screen read a, b, c at 1, 2, 3 and arranged c, b, a. Another admin
+    // then stored their own order. The save carries what the screen read as
+    // `expected`; a fresh position that differs from it is refused before
+    // any write, so the other admin's order stands and the refusal says the
+    // list has been refreshed.
+    const { store, log, state } = fakeStore([
+      { id: 'a', sortOrder: 2 },
+      { id: 'b', sortOrder: 1 },
+      { id: 'c', sortOrder: 3 },
+    ])
+    const expected: TeamPosition[] = [
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: 2 },
+      { id: 'c', sortOrder: 3 },
+    ]
+    await expect(saveTeamOrder(store, ['c', 'b', 'a'], expected)).rejects.toBeInstanceOf(TeamOrderChanged)
+    expect(log).toEqual(['read'])
+    expect([...state]).toEqual([
+      ['a', 2],
+      ['b', 1],
+      ['c', 3],
+    ])
+  })
+
+  it('saves when the fresh read agrees with what the draft was drawn from', async () => {
+    const rows: TeamPosition[] = [
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: 2 },
+      { id: 'c', sortOrder: null },
+    ]
+    const { store, state } = fakeStore(rows)
+    const done = await saveTeamOrder(store, ['c', 'a', 'b'], rows.map((r) => ({ ...r })))
+    expect(done).toEqual([
+      { id: 'c', position: 1 },
+      { id: 'a', position: 2 },
+      { id: 'b', position: 3 },
+    ])
+    expect([...state]).toEqual([
+      ['a', 2],
+      ['b', 3],
+      ['c', 1],
+    ])
+  })
+
+  it('reads a null in the snapshot as a fact too: a team placed in between is a change', async () => {
+    const { store, log } = fakeStore([
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: 2 },
+    ])
+    const expected: TeamPosition[] = [
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: null },
+    ]
+    await expect(saveTeamOrder(store, ['b', 'a'], expected)).rejects.toBeInstanceOf(TeamOrderChanged)
+    expect(log).toEqual(['read'])
+  })
+
+  it('with no snapshot, accepts whatever is stored: the caller has chosen last writer wins', async () => {
+    const { store, state } = fakeStore([
+      { id: 'a', sortOrder: 2 },
+      { id: 'b', sortOrder: 1 },
+    ])
+    await saveTeamOrder(store, ['a', 'b'])
+    expect([...state]).toEqual([
+      ['a', 1],
+      ['b', 2],
+    ])
+  })
+
+  it('says in its refusals what is stored, in words a coach can act on', async () => {
+    const refused = fakeStore([{ id: 'a', sortOrder: null }], { refuseWrites: true })
+    await expect(saveTeamOrder(refused.store, ['a'])).rejects.toThrow('no position was written')
+    expect(new TeamOrderChanged().message).toContain('The list has been refreshed')
+    expect(saveFailureMessage(new TeamOrderChanged())).toMatch(/^Could not save the team order\. The club's teams changed/)
+    expect(saveFailureMessage(new TeamOrderRefused('Half done.'))).toBe(
+      'Could not save the team order. Half done. The status above says what is stored now; check the order and press Save team order again.',
+    )
+    expect(saveFailureMessage(new Error('boom'))).not.toContain('boom')
   })
 })

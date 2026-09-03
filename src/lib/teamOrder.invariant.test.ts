@@ -136,9 +136,25 @@ describe('the teams read carries the column and keeps the display order', () => 
     expect(store.length).toBeGreaterThan(0)
     // Every update in the store sets sort_order and nothing else.
     const updates = [...store.matchAll(/\.update\(\{([^}]*)\}\)/g)].map((m) => m[1].trim())
-    expect(updates.length).toBeGreaterThanOrEqual(2)
-    for (const u of updates) expect(u).toMatch(/^sort_order: /)
-    expect(store).not.toMatch(/\bname\b|bib_colour|upsert|insert\(|delete\(/)
+    expect(updates.length).toBe(2)
+    // Exactly the two payloads: a null for the clearing phase and the
+    // position for the placing phase. A second key in either would be a
+    // second field the save writes.
+    expect(updates.sort()).toEqual(['sort_order: null', 'sort_order: position'])
+    for (const u of updates) expect(u).toMatch(/^sort_order: (null|position)$/)
+    expect(store).not.toMatch(/\bname\b|bib_colour|club_id|created_at|upsert|insert\(|delete\(/)
+  })
+
+  it('the teams read itself never touches the field: the club order is a separate answer', () => {
+    // A `.order('sort_order')` or a sort on `sortOrder` inside useTeams would
+    // make the club order the display order on every screen at once. The
+    // read body is pinned as naming neither spelling; the column reaches it
+    // only through TEAM_COLS and toTeam, which are checked above.
+    const src = withoutComments(read('lib/queries.ts'))
+    const body = /export function useTeams\(\) \{([\s\S]*?)\n\}/.exec(src)
+    expect(body, 'useTeams').not.toBeNull()
+    expect(body![1]).not.toMatch(/sortOrder|sort_order/)
+    expect(body![1]).toContain("select(TEAM_COLS).order('name'")
   })
 })
 
@@ -178,15 +194,34 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     const screen = withoutComments(read('routes/AdminTeams.tsx'))
     expect(screen).toMatch(/from '\.\.\/lib\/teamOrder'/)
     expect(screen).toMatch(/useSaveTeamOrder/)
+    // The snapshot the save refuses against is built by the helper, so the
+    // screen never reads the field itself (the sweep above would list it).
+    expect(screen).toMatch(/expected: teamPositions\(teams\)/)
     // No other route, component or hook touches the helper or the mutation.
     const others = applicationSources().filter(
       (rel) => rel !== REVIEWED_SCREEN && !REVIEWED_CONSUMERS.includes(rel) && rel.startsWith('src/'),
     )
     const offenders = others.filter((rel) => {
       const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
-      return /lib\/teamOrder'|useSaveTeamOrder|clubOrder\(|moveTeam\(|teamOrderWrites\(/.test(code)
+      // Any import specifier that resolves to the helper, from any depth
+      // (`./teamOrder` beside it, `../lib/teamOrder` from a route, and the
+      // deeper relative forms a component or a hook would use), plus the
+      // mutation and the helper's own names.
+      return /from '(\.\.?\/)+(lib\/)?teamOrder'|useSaveTeamOrder|clubOrder\(|moveTeam\(|teamOrderWrites\(|saveTeamOrder\(/.test(code)
     })
     expect(offenders).toEqual([])
+  })
+
+  it('the Teams screen saves only on a press: no effect calls the mutation', () => {
+    // Opening the screen writes nothing. The realistic way to break that is
+    // an effect that "keeps the order in sync"; every useEffect body on the
+    // screen is read and none may reach `.mutate(`. The pure tests cover
+    // the rest of the rule (a render writes nothing is pinned by the screen
+    // test, which counts the mutations a static render makes).
+    const screen = withoutComments(read('routes/AdminTeams.tsx'))
+    const effects = [...screen.matchAll(/useEffect\(\(\) => \{([\s\S]*?)\n {2}\}, \[/g)].map((m) => m[1])
+    expect(effects.length).toBeGreaterThanOrEqual(1)
+    for (const body of effects) expect(body).not.toMatch(/\.mutate\(|mutateAsync/)
   })
 
   it('no Edge Function reads or forwards it', () => {

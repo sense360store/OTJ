@@ -157,21 +157,39 @@ export function teamsInDraftOrder(draft: readonly string[], teams: readonly Team
 // an INCOMPLETE order, the untouched teams at their positions and the moved
 // ones at null, which the screen names as incomplete; the unique index has
 // not been asked to accept anything false, and nothing here retries on its
-// own. A second press is the admin's decision, made against the refetched
-// truth, so a later change by another admin is never overwritten by a stale
-// draft replaying itself.
+// own. A second press is the admin's decision.
 //
 // Every write is read back rather than assumed: row level security answers a
 // caller without teams.manage with no row rather than an error, and a count
 // that comes back short is a refusal.
 //
-// The changed set is computed against a FRESH read of the club's teams, not
-// against the cache the screen drew from, so a team another admin added,
-// removed or placed since the screen loaded is refused with a message rather
-// than silently arranged around.
+// The changed set is computed against a FRESH read of the club's teams, never
+// against the cache the screen drew from, and the caller hands over the
+// positions its draft was drawn from: a team another admin added or removed
+// since the screen loaded, or a position another admin stored since, is
+// refused as TeamOrderChanged rather than silently arranged around or
+// overwritten. The screen then drops its draft and shows what is stored, and
+// the admin decides again. The unique index remains the last guard for the
+// write itself.
+//
+// WHAT THE AUDIT TRAIL SHOWS. audit_teams() records every distinct change of
+// sort_order as team.updated naming the field and never the value, so a
+// reorder of a club whose teams are already placed records TWO events per
+// moved team, one for the clear and one for the placement; an unset club's
+// clear is null to null and records nothing. Accepted as a property of the
+// fail safe strategy; one event per press would need a server side function,
+// which is a gated change this slice does not make.
 export interface TeamPosition {
   id: string
   sortOrder: number | null
+}
+
+/* The positions a screen's draft was drawn from, in the shape the save
+   takes as `expected`. Built here so the screen names no field of the Team
+   beyond its id: the read's positions go into the save through this one
+   function and the screen stays a consumer of the helper, not of the column. */
+export function teamPositions(teams: readonly Pick<Team, 'id' | 'sortOrder'>[]): TeamPosition[] {
+  return teams.map((t) => ({ id: t.id, sortOrder: t.sortOrder }))
 }
 
 export interface TeamOrderStore {
@@ -198,12 +216,38 @@ export class TeamOrderRefused extends Error {
   }
 }
 
-export async function saveTeamOrder(store: TeamOrderStore, orderedIds: readonly string[]): Promise<TeamOrderWrite[]> {
+/* What a refused save says, beside the refusals it names so the wording and
+   the failure it describes cannot drift apart. The two refusals the save
+   itself raises are written for a coach and are shown as they are; anything
+   else (a dropped connection, a server error) gets the general sentence. */
+export function saveFailureMessage(error: unknown): string {
+  const lead = 'Could not save the team order.'
+  if (error instanceof TeamOrderChanged) return `${lead} ${error.message}`
+  if (error instanceof TeamOrderRefused) {
+    return `${lead} ${error.message} The status above says what is stored now; check the order and press Save team order again.`
+  }
+  return `${lead} The status above says what is stored now; the list still shows the order you arranged, so check it and press Save team order again.`
+}
+
+// `expected` is what the screen read before the admin arranged anything: the
+// positions its draft was drawn from. A fresh position that differs from it
+// is another admin's placement landing in between, and the save refuses
+// rather than overwriting it. A caller that omits it accepts last writer
+// wins for positions, which no screen does.
+export async function saveTeamOrder(
+  store: TeamOrderStore,
+  orderedIds: readonly string[],
+  expected?: readonly TeamPosition[],
+): Promise<TeamOrderWrite[]> {
   const fresh = await store.readPositions()
   const known = new Set(fresh.map((r) => r.id))
   const distinct = new Set(orderedIds)
   if (fresh.length !== orderedIds.length || distinct.size !== orderedIds.length || orderedIds.some((id) => !known.has(id))) {
     throw new TeamOrderChanged()
+  }
+  if (expected) {
+    const read = new Map(expected.map((r) => [r.id, r.sortOrder]))
+    if (fresh.some((r) => read.has(r.id) && read.get(r.id) !== r.sortOrder)) throw new TeamOrderChanged()
   }
   const byId = new Map(fresh.map((r) => [r.id, r]))
   const writes = teamOrderWrites(orderedIds.map((id) => byId.get(id) as TeamPosition))

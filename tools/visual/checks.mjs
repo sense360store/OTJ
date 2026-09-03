@@ -4204,39 +4204,40 @@ const focusReturned = async (page, d) => {
         active: document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName ?? 'none',
         activeDisabled: !!(document.activeElement && document.activeElement.disabled),
       }))
-    // A move that ends at the boundary: Move Trojans up disables itself.
-    await page.getByRole('button', { name: 'Move Trojans up', exact: true }).focus()
+    // The fixture club opens Trojans, Titans, Gladiators, Argonauts, Spartans.
+    // A move that ends at the boundary: Move Titans up disables itself.
+    await page.getByRole('button', { name: 'Move Titans up', exact: true }).focus()
     await page.keyboard.press('Enter')
     await page.waitForTimeout(150)
     const top = await state()
-    check('Enter on Move up moves the row from the keyboard', top.order[0] === 'Trojans' && top.order[1] === 'Titans', JSON.stringify(top))
+    check('Enter on Move up moves the row from the keyboard', top.order[0] === 'Titans' && top.order[1] === 'Trojans', JSON.stringify(top))
     check(
       "a move that reaches the top puts focus on the same row's Move down, never on the body or a disabled control",
-      top.active === 'Move Trojans down' && !top.activeDisabled,
+      top.active === 'Move Titans down' && !top.activeDisabled,
       JSON.stringify(top),
     )
     // A move short of a boundary: the pressed control is still usable and keeps focus.
-    await page.getByRole('button', { name: 'Move Spartans up', exact: true }).focus()
+    await page.getByRole('button', { name: 'Move Argonauts up', exact: true }).focus()
     await page.keyboard.press('Space')
     await page.waitForTimeout(150)
     const mid = await state()
-    check('Space on Move up moves a row too', mid.order[2] === 'Spartans' && mid.order[3] === 'Gladiators', JSON.stringify(mid))
-    check('a move short of a boundary keeps focus on the control that was pressed', mid.active === 'Move Spartans up' && !mid.activeDisabled, JSON.stringify(mid))
-    // The bottom boundary, the other way round.
-    await page.getByRole('button', { name: 'Move Spartans down', exact: true }).focus()
-    await page.keyboard.press('Enter')
-    await page.waitForTimeout(150)
-    await page.getByRole('button', { name: 'Move Argonauts down', exact: true }).count()
-    await page.getByRole('button', { name: 'Move Spartans down', exact: true }).focus()
+    check('Space on Move up moves a row too', mid.order[2] === 'Argonauts' && mid.order[3] === 'Gladiators', JSON.stringify(mid))
+    check('a move short of a boundary keeps focus on the control that was pressed', mid.active === 'Move Argonauts up' && !mid.activeDisabled, JSON.stringify(mid))
+    // The bottom boundary, the other way round: Gladiators is one from the end.
+    await page.getByRole('button', { name: 'Move Gladiators down', exact: true }).focus()
     await page.keyboard.press('Enter')
     await page.waitForTimeout(150)
     const bottom = await state()
     check(
       "a move that reaches the bottom puts focus on the same row's Move up",
-      bottom.order[bottom.order.length - 1] === 'Spartans' && bottom.active === 'Move Spartans up' && !bottom.activeDisabled,
+      bottom.order[bottom.order.length - 1] === 'Gladiators' && bottom.active === 'Move Gladiators up' && !bottom.activeDisabled,
       JSON.stringify(bottom),
     )
-    check('four moves wrote nothing', await noWrites(page), '')
+    // What a screen reader is told after a move: the moved team, its new
+    // position, and that nothing is saved yet.
+    const said = await page.evaluate(() => document.querySelector('.sr-only[aria-live="polite"]')?.textContent ?? '')
+    check('each move is announced politely with the new position and the unsaved state', said === 'Gladiators moved to position 5 of 5. Not saved yet.', said)
+    check('three moves wrote nothing', await noWrites(page), '')
     await page.close()
   }
 

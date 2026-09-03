@@ -5646,8 +5646,10 @@ const teamOrderStore = {
 
 export function useSaveTeamOrder() {
   const qc = useQueryClient()
-  return useMutation<TeamOrderWrite[], Error, { orderedIds: string[] }>({
-    mutationFn: ({ orderedIds }) => saveTeamOrder(teamOrderStore, orderedIds),
+  // `expected` is the positions the screen drew its draft from, so a position
+  // another admin stored in between is refused rather than overwritten.
+  return useMutation<TeamOrderWrite[], Error, { orderedIds: string[]; expected: TeamPosition[] }>({
+    mutationFn: ({ orderedIds, expected }) => saveTeamOrder(teamOrderStore, orderedIds, expected),
     // Settled rather than success: a refused or half written save is exactly
     // when the screen must show what is stored rather than what was meant.
     onSettled: () => qc.invalidateQueries({ queryKey: ['teams'] }),

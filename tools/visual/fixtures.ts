@@ -355,12 +355,15 @@ export const SPOND_TEAM_ID = 'titans'
 // exactly what it read before (nothing but the Teams screen renders the
 // position). `orderunset` and `orderincomplete` below are the other two
 // states the screen names.
+/* The club order DISAGREES with the array order and with the alphabetical
+   order on purpose: a screen that rendered the read as it came, or sorted
+   by name, would fail the order entries rather than pass them by luck. */
 export const TEAMS: Team[] = [
-  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: 1 },
-  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: 2 },
+  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: 2 },
+  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: 1 },
   { id: 'gladiators', name: 'Gladiators', bibColour: null, sortOrder: 3 },
-  { id: 'spartans', name: 'Spartans', bibColour: 'yellow', sortOrder: 4 },
-  { id: 'argonauts', name: 'Argonauts', bibColour: null, sortOrder: 5 },
+  { id: 'spartans', name: 'Spartans', bibColour: 'yellow', sortOrder: 5 },
+  { id: 'argonauts', name: 'Argonauts', bibColour: null, sortOrder: 4 },
 ]
 
 export const SESSIONS: Session[] = [

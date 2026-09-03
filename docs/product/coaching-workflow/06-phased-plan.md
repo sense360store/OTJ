@@ -793,8 +793,10 @@ ledger as it stands then.**
 5. **COACH-1**, `teams.sort_order`. **Built**: COACH-1A, migration
    `0051_team_sort_order`, merged as #223 and applied on 2 September 2026, and
    COACH-1B, the ordering affordance, in its own PR. One nullable column on a five-row
-   table, and the smallest possible first migration for this programme. It
-   upgrades COACH-3 from "keeps teams whole" to "combines adjacent bands".
+   table, and the smallest possible first migration for this programme. Whether
+   it upgrades COACH-3 from "keeps teams whole" to "combines adjacent bands" is
+   a later decision: nothing consumes the order yet, and the register still
+   hands the grouping suggestion no order.
 6. **COACH-5**, the `venue_layouts` table. The largest single review in the
    programme: a new table, a new shape boundary, RLS mirroring `venues`, and the
    season and age group resolution.

@@ -65,6 +65,10 @@ const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
 
 const writes: string[] = []
 const mutation = () => ({ mutate: () => void writes.push('write'), isPending: false, isError: false, error: null })
+/* The order save's own state, so a write in flight and a refused write can
+   be rendered without a DOM: the page reads isPending and error off the
+   mutation and nothing else. */
+const saveState: { isPending: boolean; isError: boolean; error: Error | null } = { isPending: false, isError: false, error: null }
 
 vi.mock('../lib/queries', () => ({
   useMyCapabilities: () => ({ caps: reads.caps, isPending: false }),
@@ -79,7 +83,7 @@ vi.mock('../lib/queries', () => ({
   useRenameTeam: mutation,
   useDeleteTeam: mutation,
   useSetTeamBibColour: mutation,
-  useSaveTeamOrder: mutation,
+  useSaveTeamOrder: () => ({ ...mutation(), ...saveState }),
 }))
 
 vi.mock('../context/SessionsContext', () => ({
@@ -87,6 +91,7 @@ vi.mock('../context/SessionsContext', () => ({
 }))
 
 const { AdminTeams, BibColourField, DeleteTeamModal, TEAM_ORDER_COPY, TeamOrderStatus } = await import('./AdminTeams')
+const { TeamOrderChanged, TeamOrderRefused, saveFailureMessage } = await import('../lib/teamOrder')
 
 const page = (): string => renderToStaticMarkup(<AdminTeams />)
 
@@ -96,6 +101,9 @@ beforeEach(() => {
   reads.loading = false
   reads.isError = false
   writes.length = 0
+  saveState.isPending = false
+  saveState.isError = false
+  saveState.error = null
 })
 
 /* The rows in the order the page rendered them, read off each row's own
@@ -321,17 +329,45 @@ describe('the team order says which of its three states it is in', () => {
   })
 
   it('states the status as words a coach reads, for one unplaced team and for several', () => {
-    const one = renderToStaticMarkup(<TeamOrderStatus state="incomplete" unplaced={[TEAMS[0]]} />)
+    const one = renderToStaticMarkup(<TeamOrderStatus state="incomplete" unplaced={[TEAMS[0]]} dirty={false} />)
     expect(one).toContain('Titans has no position yet and is listed')
-    const two = renderToStaticMarkup(<TeamOrderStatus state="incomplete" unplaced={[TEAMS[0], TEAMS[1]]} />)
+    const two = renderToStaticMarkup(<TeamOrderStatus state="incomplete" unplaced={[TEAMS[0], TEAMS[1]]} dirty={false} />)
     expect(two).toContain('Titans and Trojans have no position yet and are listed')
-    expect(renderToStaticMarkup(<TeamOrderStatus state="unset" unplaced={TEAMS} />)).toContain('Team order is not set')
-    expect(renderToStaticMarkup(<TeamOrderStatus state="configured" unplaced={[]} />)).toContain('Saved club order')
+    expect(renderToStaticMarkup(<TeamOrderStatus state="unset" unplaced={TEAMS} dirty={false} />)).toContain('Team order is not set')
+    expect(renderToStaticMarkup(<TeamOrderStatus state="configured" unplaced={[]} dirty={false} />)).toContain('Saved club order')
+  })
+
+  it('stops describing the list as alphabetical, or as saved, once the admin has moved something', () => {
+    // The list shows the draft, so a sentence about what is STORED must not
+    // describe what is on screen as alphabetical or as the saved order.
+    const unset = renderToStaticMarkup(<TeamOrderStatus state="unset" unplaced={TEAMS} dirty />)
+    expect(unset).toContain('Team order is not set')
+    expect(unset).toContain('the order you are arranging')
+    expect(unset).not.toContain('listed alphabetically')
+    const incomplete = renderToStaticMarkup(<TeamOrderStatus state="incomplete" unplaced={[TEAMS[0]]} dirty />)
+    expect(incomplete).toContain('Titans has no position yet')
+    expect(incomplete).toContain('the order you are arranging')
+    expect(incomplete).not.toContain('listed after the ordered teams')
+    const configured = renderToStaticMarkup(<TeamOrderStatus state="configured" unplaced={[]} dirty />)
+    expect(configured).toContain('changes not yet stored')
   })
 
   it('says what the order is for, strongest first, in the one exported sentence', () => {
     expect(TEAM_ORDER_COPY).toContain('strongest team first')
     expect(page()).toContain(TEAM_ORDER_COPY)
+  })
+
+  it('does not claim the order is in use, because nothing consumes it yet', () => {
+    // Present tense would send an admin to Players and groups expecting a
+    // change; the sentence says a later release will use it.
+    expect(TEAM_ORDER_COPY).not.toMatch(/^Used for/)
+    expect(TEAM_ORDER_COPY).toContain('later release')
+    expect(TEAM_ORDER_COPY).toContain('nothing uses it yet')
+  })
+
+  it('carries a polite live region for the move announcements, empty until a move', () => {
+    const html = page()
+    expect(html).toMatch(/<div class="sr-only" aria-live="polite"><\/div>/)
   })
 
   it('shows each row its draft position', () => {
@@ -414,6 +450,47 @@ describe('Save team order is a checkpoint, offered when pressing it would state 
     const html = page()
     expect(html).not.toContain('Team order saved')
     expect(html).not.toContain('Could not save the team order')
+  })
+
+  it('freezes every ordering control, Remove and Add team while the order is being written', () => {
+    saveState.isPending = true
+    const html = page()
+    const saving = html.match(/<button[^>]*>(?:(?!<\/button>).)*Saving order…(?:(?!<\/button>).)*<\/button>/s)
+    expect(saving, 'Saving order…').not.toBeNull()
+    expect(saving![0]).toContain('disabled')
+    for (const t of TEAMS) {
+      expect(button(html, `Move ${t.name} up`)).toContain('disabled')
+      expect(button(html, `Move ${t.name} down`)).toContain('disabled')
+      expect(button(html, `Remove ${t.name}`)).toContain('disabled')
+    }
+    const add = html.match(/<button[^>]*>(?:(?!<\/button>).)*Add team(?:(?!<\/button>).)*<\/button>/s)
+    expect(add).not.toBeNull()
+    expect(add![0]).toContain('disabled')
+    expect(html).not.toContain('Not saved yet')
+  })
+
+  it('renders a refused save as an alert in the refusal\'s own words', () => {
+    saveState.isError = true
+    saveState.error = new TeamOrderChanged()
+    const html = page()
+    expect(html).toMatch(/role="alert"/)
+    expect(html).toContain('Could not save the team order.')
+    expect(html).toContain('The list has been refreshed; check it and save again.')
+    // The refusal wrapper is the thing focus goes to.
+    expect(html).toMatch(/<div tabindex="-1" class="admin-note"><div[^>]*role="alert"/)
+  })
+
+  it('writes one sentence per refusal, and a general one for anything else', () => {
+    const changed = saveFailureMessage(new TeamOrderChanged())
+    expect(changed).toBe(`Could not save the team order. ${new TeamOrderChanged().message}`)
+    const refused = saveFailureMessage(new TeamOrderRefused('A position was not stored. 1 of 2 moved teams were placed.'))
+    expect(refused).toContain('A position was not stored. 1 of 2 moved teams were placed.')
+    expect(refused).toContain('press Save team order again')
+    const other = saveFailureMessage(new Error('network down'))
+    expect(other).toContain('Could not save the team order.')
+    expect(other).not.toContain('network down')
+    expect(other).toContain('press Save team order again')
+    expect(saveFailureMessage(undefined)).toBe(other)
   })
 })
 
