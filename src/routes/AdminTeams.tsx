@@ -52,6 +52,7 @@ import {
   samePositions,
   saveFailureMessage,
   intendedPositions,
+  positionsAgree,
   snapshotAfterRead,
   teamPositions,
   teamsInDraftOrder,
@@ -392,7 +393,13 @@ export function AdminTeams() {
      other failure null, meaning the next read is adopted as it comes,
      because some rows may have been written and the arrangement is kept. */
   const [draft, setDraft] = useState<{ ids: string[]; expected: TeamPosition[] | null } | null>(null)
-  const [orderSaved, setOrderSaved] = useState(false)
+  /* The order the last successful save wrote, and the success note is
+     DERIVED from it: "Team order saved." shows only while the read holds
+     exactly that order. A read carrying somebody else's order, a team added
+     or removed since, or an order left incomplete takes the note with it,
+     so it is never said of an order this admin did not save. */
+  const [savedAs, setSavedAs] = useState<TeamPosition[] | null>(null)
+  const orderSaved = savedAs !== null && positionsAgree(savedAs, teamPositions(teams))
   /* Set when a fresh read dropped the draft because the stored order moved
      under it, so the screen says why the arrangement went. */
   const [refreshed, setRefreshed] = useState(false)
@@ -412,9 +419,9 @@ export function AdminTeams() {
      so, a read that agrees with what is stored drops it silently, a team
      just added joins the snapshot unplaced, and a draft left with no
      snapshot by a failed save adopts the read as it comes. The saved note
-     goes once a fresh read leaves the club no longer configured (a team
-     added or removed after the save), so "Team order saved." never sits
-     beside "Team order is incomplete". */
+     needs no adjusting here: it is derived from the read agreeing with what
+     was saved, so a team added or removed after the save, or another
+     admin's order, takes it away in the same render. */
   const [seenRead, setSeenRead] = useState(dataUpdatedAt)
   if (dataUpdatedAt !== seenRead) {
     setSeenRead(dataUpdatedAt)
@@ -431,10 +438,14 @@ export function AdminTeams() {
         setDraft({ ids: draft.ids, expected: next })
       }
     }
-    if (orderSaved && stored.state !== 'configured') setOrderSaved(false)
   }
   const draftIds = dirty ? (arranged as string[]) : storedIds
   const rows = teamsInDraftOrder(draftIds, teams)
+  /* Between a save settling and its refetch the draft is what was just
+     written and is not "unsaved": the status and the hint describe the
+     stored order plainly for that one round trip rather than calling the
+     order just saved not yet stored. */
+  const unsaved = dirty && !awaitingRead
   /* Save is offered whenever pressing it would state something: an unset or
      incomplete club has positions to write even for an order nobody moved
      (accepting the order shown IS the statement), and a configured club has
@@ -487,7 +498,7 @@ export function AdminTeams() {
     const next = moveTeam(rows, id, direction)
     if (next === rows) return
     pendingMoveFocus.current = { id, direction }
-    setOrderSaved(false)
+    setSavedAs(null)
     setRefreshed(false)
     // The snapshot is the read the FIRST move was made over; later moves
     // keep it (a null left by a failed save included, until the next read
@@ -516,7 +527,7 @@ export function AdminTeams() {
   const wantFailedFocus = useFocusRestore(!save.isPending, failedRef)
   const saveOrder = () => {
     if (!canSave) return
-    setOrderSaved(false)
+    setSavedAs(null)
     setRefreshed(false)
     setAnnouncement('')
     wantSavedFocus()
@@ -531,9 +542,13 @@ export function AdminTeams() {
         // The refetch will carry exactly what was written, and the snapshot
         // becomes that, so the save's own readback is not taken for another
         // admin's change; a read that differs from it IS one, and is said so.
+        // A draft is kept (or made, for an unset or incomplete club that
+        // accepted the order shown without a move) for exactly that
+        // comparison, and is dropped again the moment the read agrees.
         onSuccess: () => {
-          setOrderSaved(true)
-          setDraft((d) => (d === null ? null : { ids: d.ids, expected: intendedPositions(draftIds) }))
+          const intended = intendedPositions(draftIds)
+          setSavedAs(intended)
+          setDraft({ ids: draftIds, expected: intended })
           setAwaitingRead(true)
         },
         // The club's teams or their positions changed under the draft: the
@@ -648,7 +663,7 @@ export function AdminTeams() {
               <h2>Team order</h2>
             </div>
             <p className="admin-intro">{TEAM_ORDER_COPY}</p>
-            <TeamOrderStatus state={stored.state} unplaced={stored.unplaced} dirty={dirty} />
+            <TeamOrderStatus state={stored.state} unplaced={stored.unplaced} dirty={unsaved} />
             {/* The arrangement was dropped because a fresh read carried an
                 order somebody else stored under it. Said here, as a status,
                 because the list below has already changed. */}
@@ -681,7 +696,7 @@ export function AdminTeams() {
               <Button variant="primary" icon={Icon.check} disabled={!canSave} onClick={saveOrder}>
                 {save.isPending ? 'Saving order…' : 'Save team order'}
               </Button>
-              {dirty && !save.isPending && <span className="admin-hint">Not saved yet.</span>}
+              {unsaved && !save.isPending && <span className="admin-hint">Not saved yet.</span>}
             </div>
             {/* A refused or half written save says so, in the save's own words
                 where it has them. The status above is read from what is

@@ -223,6 +223,16 @@ export function intendedPositions(orderedIds: readonly string[]): TeamPosition[]
   return orderedIds.map((id, i) => ({ id, sortOrder: i + 1 }))
 }
 
+/* Whether a read holds exactly the positions a save wrote: the same teams,
+   each at the same position, whatever order the read came in. What the
+   success note is derived from, so "Team order saved." is never said of an
+   order that is not the one this admin saved. */
+export function positionsAgree(saved: readonly TeamPosition[], read: readonly TeamPosition[]): boolean {
+  if (saved.length !== read.length) return false
+  const at = new Map(read.map((r) => [r.id, r.sortOrder]))
+  return saved.every((r) => at.has(r.id) && at.get(r.id) === r.sortOrder)
+}
+
 export function samePositions(a: readonly TeamPosition[], b: readonly TeamPosition[]): boolean {
   return a.length === b.length && a.every((r, i) => r.id === b[i].id && r.sortOrder === b[i].sortOrder)
 }

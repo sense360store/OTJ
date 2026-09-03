@@ -1708,6 +1708,49 @@ export const TEAM_FLOWS = [
       (await click(page.getByRole('button', { name: 'Add team', exact: true }))),
   },
   {
+    key: 'teams-order-saved-then-other-admin',
+    screen: 'adminteams',
+    note: "another admin's order landing after a successful save: the success note goes, because the order shown is no longer the one this admin saved, the list shows what is stored, and Save is withheld",
+    proof: async (page) =>
+      (await calls('saveTeamOrder', 1)(page)) &&
+      (await page.locator('.note-success').count()) === 0 &&
+      (await orderOf(page)).join(',') === 'Spartans,Argonauts,Gladiators,Titans,Trojans' &&
+      (await page.locator('.admin-hint').filter({ hasText: 'Saved club order. Move a team' }).count()) === 1 &&
+      (await saveOrderButton(page).isDisabled()),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await click(saveOrderButton(page))) &&
+      (await page
+        .locator('.admin-hint')
+        .filter({ hasText: 'Saved club order. Move a team' })
+        .waitFor()
+        .then(() => true)) &&
+      (await page
+        .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
+        .then(() => true)),
+  },
+  {
+    key: 'teams-order-accepted-then-other-admin',
+    screen: 'adminteams',
+    state: 'orderunset',
+    note: "the alphabetical order accepted without a move, then another admin's order landing: the success note goes and the list shows what is stored, so a save made with no draft is compared like any other",
+    proof: async (page) =>
+      (await calls('saveTeamOrder', 1)(page)) &&
+      (await page.locator('.note-success').count()) === 0 &&
+      (await orderOf(page)).join(',') === 'Spartans,Argonauts,Gladiators,Titans,Trojans' &&
+      (await saveOrderButton(page).isDisabled()),
+    drive: async (page) =>
+      (await click(saveOrderButton(page))) &&
+      (await page
+        .locator('.admin-hint')
+        .filter({ hasText: 'Saved club order. Move a team' })
+        .waitFor()
+        .then(() => true)) &&
+      (await page
+        .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
+        .then(() => true)),
+  },
+  {
     key: 'teams-order-new-team-unplaced',
     screen: 'adminteams',
     note: 'a team added to a configured club is UNPLACED: the order reads incomplete naming it, it lands last, and no order was written for it',

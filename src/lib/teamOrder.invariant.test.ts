@@ -219,8 +219,14 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     // failed save included, rather than taking a fresh one.
     expect(screen).toMatch(/expected: draft \? draft\.expected : teamPositions\(teams\) \}\)/)
     expect(screen).toMatch(/snapshotAfterRead\(draft\.expected, read\)/)
-    // After its own save the snapshot is what the save wrote, never a read.
-    expect(screen).toMatch(/expected: intendedPositions\(draftIds\)/)
+    // After its own save the snapshot is what the save wrote, never a read,
+    // and a draft is made for that comparison whether or not one existed.
+    expect(screen).toMatch(/const intended = intendedPositions\(draftIds\)/)
+    expect(screen).toMatch(/setDraft\(\{ ids: draftIds, expected: intended \}\)/)
+    // The success note is derived from the read agreeing with what was
+    // saved, never a flag set true on success and cleared by hand.
+    expect(screen).toMatch(/const orderSaved = savedAs !== null && positionsAgree\(savedAs, teamPositions\(teams\)\)/)
+    expect(screen).not.toMatch(/setOrderSaved/)
     // No other route, component or hook touches the helper or the mutation.
     const others = applicationSources().filter(
       (rel) => rel !== REVIEWED_SCREEN && !REVIEWED_CONSUMERS.includes(rel) && rel.startsWith('src/'),

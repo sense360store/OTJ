@@ -13,6 +13,7 @@ import {
   compareTeamsByName,
   intendedPositions,
   moveTeam,
+  positionsAgree,
   reconcileDraft,
   sameTeamOrder,
   samePositions,
@@ -750,6 +751,18 @@ describe('a draft snapshot under a fresh read', () => {
 
   it('lets a team the read no longer holds leave', () => {
     expect(snapshotAfterRead([pos('a', 1), pos('b', 2)], [pos('a', 1)])).toEqual([pos('a', 1)])
+  })
+
+  it('says whether a read holds exactly what a save wrote, whatever order the read came in', () => {
+    const saved = [pos('b', 1), pos('a', 2)]
+    expect(positionsAgree(saved, [pos('a', 2), pos('b', 1)])).toBe(true)
+    // Another admin's order, a team added, a team removed, and a position
+    // lost all take the success note away.
+    expect(positionsAgree(saved, [pos('a', 1), pos('b', 2)])).toBe(false)
+    expect(positionsAgree(saved, [pos('a', 2), pos('b', 1), pos('n', null)])).toBe(false)
+    expect(positionsAgree(saved, [pos('b', 1)])).toBe(false)
+    expect(positionsAgree(saved, [pos('a', 2), pos('b', null)])).toBe(false)
+    expect(positionsAgree([], [])).toBe(true)
   })
 
   it('is what the save refuses against, so the two agree', async () => {
