@@ -484,17 +484,33 @@ longer match what admin one committed. There is no version column to add, no
 backfill and nothing for a future writer to remember to bump; the evidence is
 the data itself.
 
-**Refusal codes.** A stale snapshot is SQLSTATE `40001`, PostgreSQL's own
-`serialization_failure`, so a client can recognise a concurrency refusal
-without parsing English: PostgREST returns the SQLSTATE as the error body's
-`code`, which is how `src/lib/queries.ts` already tells `23505` and `42501`
-apart. A stack that auto retries a `40001` is safe here rather than dangerous,
-because the retry carries the same stale snapshot and is refused again, having
-written nothing. Not signed in and the missing capability are `42501`, as 0049.
-A request that cannot be served as made is `P0001`: an isolation level this
-cannot serialise, mismatched lengths, a null or duplicate id, an incomplete set,
-or a foreign team. The isolation refusal is deliberately not `40001`, because it
-is not a race that was lost and a client reading it as one would retry for ever. A foreign team id is refused by count and never
+**Refusal codes.** A stale snapshot is `P0001` carrying the DETAIL token
+`stale_order`, which PostgREST returns as the error body's `details`. It was
+`40001` first, and that is worth recording. The security suite showed, twice
+and deterministically, that a `40001` raised by this function **never reaches a
+PostgREST client**: the request hung until the caller gave up, while every
+other refusal from the same function over the same client returned in tens of
+milliseconds. The mechanism inside PostgREST was not isolated further; the
+behaviour was reproduced, which is what decides it. A refusal the product's own
+client cannot receive is not a contract.
+
+The name was also wrong on its own terms, which is the part that would still
+hold if that behaviour changed. **Nothing in the database failed to serialize.**
+The transaction did what it was told; the application logic found the caller's
+snapshot stale. Calling that `serialization_failure` tells every layer above
+that a retry may succeed, and a retry here can never succeed: it carries the
+same snapshot and is refused identically, for ever. A stable machine token in
+`details` is the same shape as 0049's `stale_link` outcome strings, and it is
+what separates a stale order from a malformed one without parsing English.
+Not signed in and the missing capability are `42501`, as 0049.
+A request that cannot be served as made is `P0001`: an array of more than one
+dimension, an isolation level this cannot serialise, mismatched lengths, a null
+or duplicate id, an incomplete set, or a foreign team. The dimension check is
+not defensive tidiness: `array_length(x, 1)` counts only the first dimension
+while every `unnest` flattens all of them, so a rectangular 4x2 array over a
+four team club passes the length, duplicate, completeness and snapshot checks
+and then hands the write EIGHT ordinalities, storing a position outside 1..N.
+That was run before it was fixed, and the call was accepted. A foreign team id is refused by count and never
 echoed back, so no other club is nameable, readable or writable through this
 path.
 
@@ -571,23 +587,24 @@ disjoint race with two real connections BOTH WAYS ROUND plus the overlapping
 race and the per club independence of the advisory key, the atomicity of a
 refusal, every gate including the foreign id refusal that does not leak, the
 unset and incomplete and unchanged cases with the audit trail as documented,
-seventeen mutations of the file that must each abort the apply, and a second raw
+eighteen mutations of the file that must each abort the apply, and a second raw
 apply. The race sections assert that the loser actually BLOCKED before being
 refused, because a race that never contends proves nothing, and assert both
 that the stored order equals exactly one submission and that it is never the
 merge.
 
-Three of those seventeen are not like the other fourteen, and each is there
-because something got past a check that looked sufficient.
+Four of those eighteen are not like the other fourteen, and each is there
+because something got past a check that looked sufficient. M18 is the dimension
+check, invisible to any test that sends a one dimensional array.
 
 M16 removes the isolation guard and M17 replaces it with a comment saying the
 same words. The second exists because `pg_get_functiondef` returns the body's
 COMMENTS, so the guard's own prose satisfied a source check anchored on the
 words `transaction isolation` and `read committed`; the check now matches the
 executable `if` instead. That same trap had already been sprung once in this
-file without being noticed: the `40001` check read simply `'40001'`, and the
-isolation guard's comment, which says "P0001 rather than 40001", made it pass
-with the errcode changed. M5 caught it on the next run. Every positive source
+file without being noticed: the stale refusal's check read simply `'40001'`,
+and the body's own comments say that number, which made it pass with the
+errcode changed. M5 caught it on the next run. Every positive source
 check is only as strong as the narrowest thing the body could say by accident.
 
 M15 is there because the harness once lied. It re-adds a call to `set_team_order` from inside the

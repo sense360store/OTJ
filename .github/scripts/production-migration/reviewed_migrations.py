@@ -605,7 +605,11 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # it. Under the locks it requires the request to name the club's
     # CURRENT team set exactly, compares every stored position with the
     # expected snapshot the admin's draft was drawn from, and refuses with
-    # SQLSTATE 40001 BEFORE writing if any differ.
+    # P0001 carrying the DETAIL token 'stale_order' BEFORE writing if any
+    # differ. Not 40001, which it was first: nothing failed to serialize, a
+    # retry with the same snapshot can never succeed, and the security suite
+    # showed deterministically that a 40001 raised here never reaches a
+    # PostgREST client at all while every other refusal returns at once.
     #
     # It changes no data. Its own self-verification takes a BEFORE
     # fingerprint of the teams, their positions whole, the audit rows,
@@ -640,7 +644,7 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
     # builds a stand-in of the substrate as 0051 leaves it and runs the
     # disjoint race with TWO REAL CONNECTIONS, both ways round, plus the
     # overlapping race, the per club independence of the advisory key,
-    # every gate, the atomicity of a refusal, the audit trail, and seventeen
+    # every gate, the atomicity of a refusal, the audit trail, and eighteen
     # mutations of the file that must each abort the apply. Two sessions
     # are the whole point: the migration's own DO block cannot contend with
     # itself, so the serialization claim is only provable there. It runs in

@@ -152,17 +152,37 @@
 --   * there is no version column to add, no backfill, and nothing for a
 --     future writer to remember to bump. The evidence is the data itself.
 --
--- THE REFUSAL SQLSTATE IS 40001, chosen so a client can recognise a
--- concurrency refusal without parsing English. PostgREST returns the
--- SQLSTATE as the error body's `code`, which is how src/lib/queries.ts
--- already tells 23505 and 42501 apart. 40001 is PostgreSQL's own
--- serialization_failure, which is exactly what this is: a transaction
--- refused because concurrent work invalidated the snapshot it was built
--- on. A client stack that auto retries a 40001 is safe here rather than
--- dangerous: the retry carries the SAME stale expected snapshot, so it is
--- refused again, idempotently, and never writes. It could only succeed if
--- the stored order had meanwhile returned to what the admin saw, in which
--- case writing their intent is correct.
+-- THE STALE REFUSAL IS P0001 CARRYING THE DETAIL TOKEN 'stale_order', AND
+-- IT USED TO BE 40001. That is worth the paragraph, because 40001 looked
+-- obviously right and was obviously wrong.
+--
+-- The reasoning for it was: PostgREST returns the SQLSTATE as the error
+-- body's `code`, which is how src/lib/queries.ts already tells 23505 and
+-- 42501 apart, and 40001 is PostgreSQL's own serialization_failure, which
+-- is what a refusal on a stale snapshot IS. The security suite then showed,
+-- twice and deterministically, that a 40001 raised by this function NEVER
+-- REACHES a PostgREST client: the request hung until the caller gave up,
+-- while every other refusal from the same function over the same client
+-- returned in tens of milliseconds. The mechanism inside PostgREST was not
+-- isolated further; the behaviour was reproduced, which is what matters
+-- here. A refusal the product's own client cannot receive is not a
+-- contract, whatever it is named.
+--
+-- And the name was wrong on its own terms, which is the part worth keeping
+-- even if that behaviour ever changes. NOTHING IN THE DATABASE FAILED TO
+-- SERIALIZE. The transaction did exactly what it was told; the application
+-- logic compared the caller's snapshot with what is stored and found it
+-- stale. Calling that serialization_failure tells every layer above that a
+-- retry may succeed, and a retry here can NEVER succeed: it carries the
+-- same stale expected snapshot, so it is refused identically, for ever.
+-- The one code in this file that means "cannot be served as made" is
+-- P0001, and this is that.
+--
+-- The client still needs to tell it from a malformed request without
+-- parsing English, so the raise carries DETAIL 'stale_order', which
+-- PostgREST returns as the error body's `details`. A stable machine token
+-- rather than a message, which is the same shape as 0049's 'stale_link'
+-- and 'member_linked_elsewhere' outcome strings.
 --
 -- Every other refusal is a caller error rather than a race and keeps the
 -- codes this repo already uses: 42501 for not signed in and for the
@@ -262,15 +282,19 @@ select
 --
 -- Raises (nothing is written, the whole call is rolled back):
 --   42501  not signed in to a club; or no teams.manage capability
---   40001  the club's stored order no longer matches the expected snapshot
---          (another admin saved in between). THE ONLY concurrency code
+--   P0001 with DETAIL 'stale_order'
+--          the club's stored order no longer matches the expected snapshot
+--          (another admin saved in between). Read `details`, not the
+--          message. Never retried automatically: the same snapshot is
+--          refused identically for ever
 --   P0001  the request cannot be served as made: the calling transaction is
 --          not READ COMMITTED (a fixed snapshot cannot see the race it
 --          lost, so it would commit the merge); or the request is
---          malformed, meaning the two arrays differ in length, an id is
---          null, an id repeats, the set is not exactly the club's current
---          teams, or an id is not a team of this club. Never retry a P0001
---          unchanged: it will be refused identically.
+--          malformed, meaning an array has more than one dimension, the
+--          two arrays differ in length, an id is null, an id repeats, the
+--          set is not exactly the club's current teams, or an id is not a
+--          team of this club. Never retry a P0001 unchanged: it will be
+--          refused identically.
 -- ---------------------------------------------------------------------
 create or replace function public.set_team_order(
   p_team_ids             uuid[],
@@ -333,10 +357,10 @@ begin
   -- caller, which is how the second arm got here. A guard that turned away
   -- a caller PostgreSQL treats as correct would be its own defect.
   --
-  -- P0001 rather than 40001: this is not a race that was lost, it is a call
-  -- that cannot be served as made, which is what every other P0001 here
-  -- means. A client must not read it as "somebody else saved first" and
-  -- retry, because the retry would be refused identically for ever.
+  -- P0001, like every other refusal here that means "cannot be served as
+  -- made". It carries no detail token, because a client has nothing to do
+  -- with this but fix how it calls: unlike a stale snapshot, retrying it
+  -- unchanged is not merely futile, it is a bug in the caller.
   if pg_catalog.current_setting('transaction_isolation')
        not in ('read committed', 'read uncommitted') then
     raise exception
@@ -352,8 +376,34 @@ begin
     raise exception 'set_team_order: both arrays are required'
       using errcode = 'P0001';
   end if;
-  v_len := coalesce(array_length(p_team_ids, 1), 0);
-  if v_len <> coalesce(array_length(p_expected_sort_orders, 1), 0) then
+  -- ONE DIMENSION, checked before anything counts either array. A
+  -- rectangular array of more than one dimension is a real hole rather than
+  -- a theoretical one, and it was reached: array_length(x, 1) counts only
+  -- the FIRST dimension while every unnest below flattens ALL of them. A 4x2
+  -- array over a four team club reports a length of four, offers four
+  -- distinct ids to the duplicate check, matches the club's team count, and
+  -- pairs consistently against the expected snapshot, so every gate passes.
+  -- The target CTE then receives EIGHT rows with ordinalities 1..8, one team
+  -- appears twice with two different targets, and a position the contract
+  -- says cannot exist is stored. Verified by running it: without this check
+  -- the call is ACCEPTED.
+  --
+  -- Refused rather than flattened. Flattening would be a guess at what a
+  -- caller who sent a shape this function never offered actually meant, and
+  -- the whole design of this function is that it refuses what it cannot
+  -- serve rather than doing something adjacent to it. array_ndims is null
+  -- for an empty array, and null > 1 is null, so an empty order still falls
+  -- through to the checks below rather than being caught here.
+  if array_ndims(p_team_ids) > 1 or array_ndims(p_expected_sort_orders) > 1 then
+    raise exception 'set_team_order: the order must be a one dimensional array'
+      using errcode = 'P0001';
+  end if;
+  -- cardinality, not array_length(x, 1): it counts EVERY element whatever
+  -- the shape, so if the dimension check above were ever lost this would
+  -- disagree with the club's team count instead of silently agreeing with
+  -- it. Two independent readings of "how many" rather than one.
+  v_len := coalesce(cardinality(p_team_ids), 0);
+  if v_len <> coalesce(cardinality(p_expected_sort_orders), 0) then
     raise exception 'set_team_order: the expected positions must be aligned with the team ids'
       using errcode = 'P0001';
   end if;
@@ -428,7 +478,7 @@ begin
      where n.sort_order is distinct from want.expected
   ) then
     raise exception 'set_team_order: another admin saved a different order, so this one was not applied'
-      using errcode = '40001';
+      using errcode = 'P0001', detail = 'stale_order';
   end if;
 
   -- ============ Write, in two phases, in this one transaction ============
@@ -490,7 +540,7 @@ end
 $$;
 
 comment on function public.set_team_order(uuid[], integer[]) is
-  $$Writes the club's COMPLETE team order atomically (0052_atomic_team_order.sql). SECURITY DEFINER, self gates on teams.manage, derives the club from my_club() server side and refuses any id that is not a team of that club. p_team_ids is the whole desired order, first id to position 1; p_expected_sort_orders is aligned with it and carries the sort_order each team held when the admin's draft was drawn, with null a valid expected value. THE POINT IS ATOMICITY AND SERIALIZATION: a club scoped advisory transaction lock orders whole order saves against each other, SHARE ROW EXCLUSIVE on teams stops a team being added or removed underneath the complete set validation, and every stored position is compared with the expected snapshot BEFORE any write, so two admins moving disjoint rows can no longer both succeed and leave a merged order neither submitted. REQUIRES A READ COMMITTED TRANSACTION (read uncommitted is accepted, since PostgreSQL runs it as read committed): a fixed snapshot transaction waits for the locks and then still reads the pre race world, so it would commit exactly the merge this exists to prevent, and it is refused with P0001 rather than served. A stale snapshot raises 40001 and writes nothing; a malformed or incomplete request, or an isolation level this cannot serialise, raises P0001; no club or no capability raises 42501. The whole order commits or nothing does, so no partial order is reachable through this path. Writes only sort_order, on rows whose position actually changes, and creates and deletes no team. teams_sort_order_unique (0051) is untouched and remains the last guard; the clear-then-place exists because it is checked per row. Audited by the existing audit_teams() trigger only: a moved, already placed team records two team.updated events (the clear and the placement), an unplaced one records one, an unmoved one records none, and none carries a value.$$;
+  $$Writes the club's COMPLETE team order atomically (0052_atomic_team_order.sql). SECURITY DEFINER, self gates on teams.manage, derives the club from my_club() server side and refuses any id that is not a team of that club. p_team_ids is the whole desired order, first id to position 1; p_expected_sort_orders is aligned with it and carries the sort_order each team held when the admin's draft was drawn, with null a valid expected value. THE POINT IS ATOMICITY AND SERIALIZATION: a club scoped advisory transaction lock orders whole order saves against each other, SHARE ROW EXCLUSIVE on teams stops a team being added or removed underneath the complete set validation, and every stored position is compared with the expected snapshot BEFORE any write, so two admins moving disjoint rows can no longer both succeed and leave a merged order neither submitted. REQUIRES A READ COMMITTED TRANSACTION (read uncommitted is accepted, since PostgreSQL runs it as read committed): a fixed snapshot transaction waits for the locks and then still reads the pre race world, so it would commit exactly the merge this exists to prevent, and it is refused with P0001 rather than served. A stale snapshot raises P0001 with DETAIL 'stale_order' and writes nothing, a stable machine token a client reads from `details`; it is deliberately NOT 40001, because nothing failed to serialize and a retry with the same snapshot can never succeed; a malformed or incomplete request raises P0001, which covers an array of more than one dimension (array_length counts one dimension while unnest flattens all of them, so a rectangular array would otherwise pass every count and store a position outside 1..N) as well as an isolation level this cannot serialise; no club or no capability raises 42501. The whole order commits or nothing does, so no partial order is reachable through this path. Writes only sort_order, on rows whose position actually changes, and creates and deletes no team. teams_sort_order_unique (0051) is untouched and remains the last guard; the clear-then-place exists because it is checked per row. Audited by the existing audit_teams() trigger only: a moved, already placed team records two team.updated events (the clear and the placement), an unplaced one records one, an unmoved one records none, and none carries a value.$$;
 
 revoke execute on function public.set_team_order(uuid[], integer[]) from public, anon;
 grant execute on function public.set_team_order(uuid[], integer[]) to authenticated;
@@ -579,6 +629,9 @@ begin
   -- found in its own source checks; the harness proves each pattern bites.
   v_src := pg_get_functiondef(to_regprocedure('public.set_team_order(uuid[], integer[])'));
 
+  if v_src !~ 'if array_ndims\(p_team_ids\) > 1' then
+    raise exception 'atomic_team_order: the one dimension check is missing from the function';
+  end if;
   if v_src !~ 'has_perm\(''teams\.manage''\)' then
     raise exception 'atomic_team_order: the teams.manage gate is missing from the function';
   end if;
@@ -622,14 +675,14 @@ begin
   if v_src !~ 'is distinct from want\.expected' then
     raise exception 'atomic_team_order: the expected snapshot comparison is missing from the function';
   end if;
-  -- The RAISE, not the number. This check read simply '40001' until the
-  -- isolation guard above arrived carrying a comment that says "P0001 rather
-  -- than 40001", and pg_get_functiondef returns comments: the check then
-  -- passed with the errcode changed, and M5 caught it. Every positive source
-  -- check in this section is only as strong as the narrowest thing the body
-  -- could say by accident, so anchor on syntax wherever prose could collide.
-  if v_src !~ 'using errcode = ''40001''' then
-    raise exception 'atomic_team_order: the stale snapshot refusal must use SQLSTATE 40001';
+  -- The RAISE, not the words. An earlier version of this check read simply
+  -- '40001', and the body's own comments say that number: pg_get_functiondef
+  -- returns comments, so it passed with the errcode changed, and M5 caught
+  -- it. Every positive source check in this section is only as strong as the
+  -- narrowest thing the body could say by accident, so anchor on syntax
+  -- wherever prose could collide.
+  if v_src !~ 'using errcode = ''P0001'', detail = ''stale_order''' then
+    raise exception 'atomic_team_order: the stale refusal must carry the stale_order detail token';
   end if;
   if position('want.expected' in v_src) > position('set sort_order = null' in v_src) then
     raise exception 'atomic_team_order: the snapshot must be compared BEFORE anything is written';

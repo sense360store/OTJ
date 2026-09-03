@@ -25,8 +25,13 @@
 //   snapshot     Every stored position must still equal the expected value
 //                supplied for that same team, with null a valid expected
 //                value. One difference refuses the WHOLE order with SQLSTATE
-//                40001 and writes nothing. This is the check that makes the
-//                disjoint merge unreachable.
+//                P0001 carrying DETAIL 'stale_order' and writes nothing.
+//                The token, not the code, is what separates it from a
+//                malformed request; it is deliberately not 40001, because
+//                nothing failed to serialize, a retry with the same
+//                snapshot can never succeed, and a 40001 raised here never
+//                reached this very client at all. This is the check that
+//                makes the disjoint merge unreachable.
 //   atomicity    The whole order commits or nothing does. A refused call
 //                leaves every position exactly where it was, so no partial
 //                order is reachable through this path.
@@ -67,6 +72,7 @@ interface TeamRow {
 interface PgFailure {
   code?: string
   message?: string
+  details?: string
 }
 
 // The club's teams as they stand, which is what a complete order has to
@@ -252,7 +258,7 @@ describe('set_team_order (0052): the club order is written whole or not at all',
 
   // --- The expected snapshot, which is the whole point ------------------
 
-  it('a stale expected position refuses the WHOLE order with 40001 and writes nothing', async () => {
+  it('a stale expected position refuses the WHOLE order with the stale_order token and writes nothing', async () => {
     const current = await clubTeams(CLUB_A)
     const ordered = [...current].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
     const before = await positionsOf(CLUB_A)
@@ -270,7 +276,10 @@ describe('set_team_order (0052): the club order is written whole or not at all',
 
     const { error } = await callSetOrder(admin, ids, expected)
     expect(error).not.toBeNull()
-    expect(error!.code).toBe('40001')
+    expect(error!.code).toBe('P0001')
+    // The token, not the message: a client must tell this from a malformed
+    // request without parsing English.
+    expect(error!.details).toBe('stale_order')
 
     const after = await positionsOf(CLUB_A)
     expect([...after.entries()].sort()).toEqual([...before.entries()].sort())

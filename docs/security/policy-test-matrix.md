@@ -283,8 +283,9 @@ each refused `42501` with no position moved), derives the club from
 `my_club()` so the caller cannot name one, and holds EXECUTE for
 `authenticated` only (`anon` cannot call it at all). It writes the club's
 COMPLETE order or nothing: the request must name the club's current team set
-exactly, and a missing team, an extra team, a duplicate id, a null id and
-mismatched array lengths are each `P0001` with nothing written. A team id
+exactly, and a missing team, an extra team, a duplicate id, a null id,
+mismatched array lengths and an array of more than one dimension are each
+`P0001` with nothing written. A team id
 belonging to another club is refused by count, without the id appearing in the
 message, and that club's own positions are unmoved.
 
@@ -301,8 +302,12 @@ aligned with `p_team_ids` and carries the position each team held when the
 admin's draft was drawn, with `null` a real expected value for an unplaced
 team. Under a club scoped advisory lock and SHARE ROW EXCLUSIVE on `teams`, the
 function compares every stored position with the expected one and refuses with
-SQLSTATE `40001` BEFORE writing if any differ, so a save built on a stale read
-writes nothing; re-reading and submitting the fresh snapshot lands the whole
+`P0001` carrying the DETAIL token `stale_order` BEFORE writing if any differ,
+so a save built on a stale read writes nothing. The token rather than the code
+is what a client matches, since `P0001` also covers a malformed request; it is
+deliberately not `40001`, because nothing failed to serialize, a retry with the
+same snapshot can never succeed, and this very suite showed that a `40001`
+raised here never reaches a PostgREST client at all. re-reading and submitting the fresh snapshot lands the whole
 order as 1..N. The audit trail is the existing `audit_teams()` trigger and is
 asserted as documented: `team.updated` with `changed_fields` exactly
 `['sort_order']`, no `safe_changes` and no `metadata`, and a moved, already

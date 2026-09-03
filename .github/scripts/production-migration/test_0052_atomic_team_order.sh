@@ -567,11 +567,19 @@ grep -q "another admin saved a different order" "${WORK}/two.out" \
   || fail "session two failed for the wrong reason: $(cat "${WORK}/two.out")"
 ok "and refused with the stale snapshot message"
 # The SQLSTATE, not only the words: `code` is what the client matches on,
-# because PostgREST returns the SQLSTATE there. Caught by sqlstate and
-# re-raised as a distinguishable message, so the assertion does not depend
-# on the session's notice level.
+# because PostgREST returns the SQLSTATE there and the DETAIL as `details`.
+# Both are asserted: the code alone cannot separate a stale order from a
+# malformed one, so the token is what the client actually matches on.
+# Caught and re-raised as a distinguishable message, so the assertion does
+# not depend on the session's notice level.
+#
+# This used to assert 40001. That code never reached a PostgREST client at
+# all, deterministically, while every other refusal from the same function
+# returned in milliseconds, so the contract moved to P0001 plus a token.
 cat >"${WORK}/sqlstate.sql" <<SQL
 do \$probe\$
+declare
+  v_detail text;
 begin
   perform set_config('otj.test_club', '${CLUB_A}', true);
   perform set_config('otj.test_caps', 'teams.manage', true);
@@ -579,8 +587,9 @@ begin
     perform public.set_team_order(
       array['${A1}','${A2}','${A4}','${A3}']::uuid[], array[1,2,4,3]::integer[]);
     raise exception 'SQLSTATE-PROBE: the stale order was NOT refused';
-  exception when sqlstate '40001' then
-    raise exception 'SQLSTATE-PROBE: refused with 40001';
+  exception when sqlstate 'P0001' then
+    get stacked diagnostics v_detail = pg_exception_detail;
+    raise exception 'SQLSTATE-PROBE: refused with P0001 detail=%', coalesce(v_detail, 'none');
   end;
 end
 \$probe\$;
@@ -588,9 +597,9 @@ SQL
 set +e
 SQLSTATE_OUT="$(psql_run -d "${DB}" -q -f "${WORK}/sqlstate.sql" 2>&1)"
 set -e
-echo "${SQLSTATE_OUT}" | grep -q "SQLSTATE-PROBE: refused with 40001" \
-  || fail "the stale refusal did not carry SQLSTATE 40001: ${SQLSTATE_OUT}"
-ok "the refusal carries SQLSTATE 40001, which is what the client matches on"
+echo "${SQLSTATE_OUT}" | grep -q "SQLSTATE-PROBE: refused with P0001 detail=stale_order" \
+  || fail "the stale refusal did not carry P0001 with the stale_order token: ${SQLSTATE_OUT}"
+ok "the refusal carries P0001 and the stale_order token, which is what the client matches on"
 
 # It BLOCKED on the serialization point rather than interleaving. Session one
 # holds for 3s and session two started 1s in, so a real wait is ~2s; anything
@@ -889,6 +898,28 @@ refuse "a null array is refused" "both arrays are required" \
 refuse "an incomplete set is refused" "every team of the club exactly once" \
   "${CTX_A} select public.set_team_order(array['${A1}','${A2}','${A3}']::uuid[], array[1,2,3]::integer[]);"
 
+# A RECTANGULAR MULTIDIMENSIONAL ARRAY is a different shape of attack from
+# every case above and was found in review. array_length(x, 1) counts only
+# the FIRST dimension while every unnest flattens ALL of them, so this 4x2
+# over a four team club reports a length of 4, offers four distinct ids to
+# the duplicate check, matches the club's team count and pairs consistently
+# against the expected snapshot. It then hands the target CTE EIGHT rows
+# with ordinalities 1..8, and a team can be stored at a position the
+# contract says cannot exist. Refused rather than flattened: a caller who
+# sends this meant something this function does not implement.
+#
+# The stored order is reset to 1..4 first, so the expected snapshot below
+# MATCHES and the call reaches the write. Without that the snapshot
+# comparison refuses it for an unrelated reason and the test proves nothing
+# about dimensionality, which is what the first version of it did.
+reset_order  # Alpha=1 Bravo=2 Charlie=3 Delta=4
+refuse "a rectangular multidimensional order is refused" "one dimensional" \
+  "${CTX_A} select public.set_team_order(
+     array[['${A1}','${A2}'],['${A3}','${A4}'],['${A1}','${A2}'],['${A3}','${A4}']]::uuid[],
+     array[[1,2],[3,4],[1,2],[3,4]]::integer[]);"
+same "and no team holds a position outside 1..N" \
+  "$(scalar "select count(*) from public.teams where club_id = '${CLUB_A}' and (sort_order < 1 or sort_order > 4)")" "0"
+
 # A FOREIGN id is refused, and the message does not carry it. The set is kept
 # the right SIZE so the completeness count passes and the club check is what
 # refuses, which is the path that could otherwise leak.
@@ -1004,8 +1035,8 @@ check_mutation "M3 the teams membership lock removed" "the teams membership lock
 mutate "${WORK}/mutant.sql" "s.replace('     where n.sort_order is distinct from want.expected', '     where false')"
 check_mutation "M4 the expected snapshot comparison defeated" "the expected snapshot comparison is missing"
 
-mutate "${WORK}/mutant.sql" "s.replace(\"      using errcode = '40001';\", \"      using errcode = 'P0001';\", 1)"
-check_mutation "M5 the stale refusal no longer uses 40001" "must use SQLSTATE 40001"
+mutate "${WORK}/mutant.sql" "s.replace(\"      using errcode = 'P0001', detail = 'stale_order';\", \"      using errcode = 'P0001';\", 1)"
+check_mutation "M5 the stale refusal loses its machine token" "must carry the stale_order detail token"
 
 mutate "${WORK}/mutant.sql" "s.replace('security definer\nset search_path = ' + chr(39) + chr(39), 'security definer', 1)"
 check_mutation "M6 the empty search_path removed" "must set search_path to empty"
@@ -1064,6 +1095,14 @@ check_mutation "M16 the read committed isolation guard removed" "the read commit
 # and leaves every comment untouched, which is exactly that case.
 mutate "${WORK}/mutant.sql" "s.replace(\"  if pg_catalog.current_setting('transaction_isolation')\n       not in ('read committed', 'read uncommitted') then\n    raise exception\n      'set_team_order: requires a read committed transaction, but this one is %',\n      pg_catalog.current_setting('transaction_isolation')\n      using errcode = 'P0001';\n  end if;\n\", \"  -- transaction_isolation must be 'read committed' for this to be safe.\n\")"
 check_mutation "M17 the guard replaced by prose that says the same words" "the read committed isolation guard is missing"
+
+# M18 is the dimension check. Like M16 it is invisible to every test that
+# does not send the shape: the whole of sections C to F still passes without
+# it, because a one dimensional caller cannot tell. What changes is that a
+# rectangular 4x2 array over a four team club is ACCEPTED and stores a
+# position outside 1..N, which section E proved before this guard existed.
+mutate "${WORK}/mutant.sql" "s.replace(\"  if array_ndims(p_team_ids) > 1 or array_ndims(p_expected_sort_orders) > 1 then\n    raise exception 'set_team_order: the order must be a one dimensional array'\n      using errcode = 'P0001';\n  end if;\n\", '')"
+check_mutation "M18 the one dimension check removed" "the one dimension check is missing"
 
 # ---------------------------------------------------------------------
 echo "== H. a second apply is refused, and changes nothing"
