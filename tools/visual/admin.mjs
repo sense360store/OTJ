@@ -1657,6 +1657,54 @@ export const TEAM_FLOWS = [
       (await click(saveOrderButton(page))),
   },
   {
+    key: 'teams-order-refreshed-under-draft',
+    screen: 'adminteams',
+    note: "another admin's order landing under an open draft: the draft is dropped, the screen says why as a status, the list shows what is now stored, Save is withheld again, and this screen wrote nothing",
+    proof: async (page) =>
+      (await page.locator('.note-warning[role="status"]').filter({ hasText: "The club's teams changed while the order was being arranged" }).count()) === 1 &&
+      (await orderOf(page)).join(',') === 'Spartans,Argonauts,Gladiators,Titans,Trojans' &&
+      (await positionsOf(page)).join(',') === '1,2,3,4,5' &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 0 &&
+      (await saveOrderButton(page).isDisabled()) &&
+      (await noWrites(page)),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await page
+        .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
+        .then(() => true)),
+  },
+  {
+    key: 'teams-order-refresh-keeps-agreeing-draft',
+    screen: 'adminteams',
+    note: 'a refetch that changed nothing lands under an open draft: the arrangement is kept, no status is raised, and Save stays offered',
+    proof: async (page) =>
+      (await page.locator('.note-warning[role="status"]').count()) === 0 &&
+      (await orderOf(page)).join(',') === 'Titans,Trojans,Gladiators,Argonauts,Spartans' &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 1 &&
+      !(await saveOrderButton(page).isDisabled()) &&
+      (await noWrites(page)),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await page
+        .evaluate(() => window.__adminStore.saveTeamOrder(['trojans', 'titans', 'gladiators', 'argonauts', 'spartans']))
+        .then(() => true)),
+  },
+  {
+    key: 'teams-order-blocked-while-adding',
+    screen: 'adminteams',
+    state: 'inflight',
+    note: 'a team insert in flight: Save team order is withheld until the read that carries the new team, so an order that does not know it cannot be sent',
+    proof: async (page) =>
+      (await calls('insertTeam', 1)(page)) &&
+      (await page.getByRole('button', { name: 'Adding…', exact: true }).count()) === 1 &&
+      (await saveOrderButton(page).isDisabled()) &&
+      (await calls('saveTeamOrder', 0)(page)),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await fillIn(page.getByLabel('New team', { exact: true }), TYPED_TEAM)) &&
+      (await click(page.getByRole('button', { name: 'Add team', exact: true }))),
+  },
+  {
     key: 'teams-order-new-team-unplaced',
     screen: 'adminteams',
     note: 'a team added to a configured club is UNPLACED: the order reads incomplete naming it, it lands last, and no order was written for it',

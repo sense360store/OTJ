@@ -43,16 +43,19 @@ import type { Team } from '../lib/data'
 import { BIB_COLOURS, bibSwatch } from '../lib/bibs'
 import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import {
+  TEAM_ORDER_CHANGED,
   TeamOrderChanged,
   clubOrder,
   moveTeam,
   reconcileDraft,
   sameIdOrder,
+  samePositions,
   saveFailureMessage,
+  snapshotAfterRead,
   teamPositions,
   teamsInDraftOrder,
 } from '../lib/teamOrder'
-import type { ClubOrderState, MoveDirection } from '../lib/teamOrder'
+import type { ClubOrderState, MoveDirection, TeamPosition } from '../lib/teamOrder'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
 import { Button, Card, IconButton, Note, PageHeader, SelectField, TextField } from '../components/primitives'
@@ -378,22 +381,48 @@ export function AdminTeams() {
      stored. */
   const stored = clubOrder(teams)
   const storedIds = stored.teams.map((t) => t.id)
-  const [draft, setDraft] = useState<string[] | null>(null)
+  /* A draft carries the arrangement AND the positions it was drawn from,
+     taken when the draft is created and never rebuilt from a later read:
+     the save refuses against that snapshot, and a snapshot rebuilt at Save
+     time from a read already carrying another admin's order would agree
+     with the fresh read and let the older draft overwrite it. */
+  const [draft, setDraft] = useState<{ ids: string[]; expected: TeamPosition[] } | null>(null)
   const [orderSaved, setOrderSaved] = useState(false)
-  const arranged = draft === null ? null : reconcileDraft(draft, teams)
+  /* Set when a fresh read dropped the draft because the stored order moved
+     under it, so the screen says why the arrangement went. */
+  const [refreshed, setRefreshed] = useState(false)
+  /* Set between a team insert settling and the fresh read that carries the
+     new team: Save is withheld in that window, or it would send an order
+     that does not know the team just added. */
+  const [awaitingRead, setAwaitingRead] = useState(false)
+  const arranged = draft === null ? null : reconcileDraft(draft.ids, teams)
   const dirty = arranged !== null && !sameIdOrder(arranged, storedIds)
-  /* Dropped during the render a FRESH READ lands in, when the read agrees
-     with it, which is the documented way to adjust state to a changed input
-     (an effect would render the stale arrangement once and then re-render).
-     The read is compared by identity, so a render with the same rows does
-     nothing and a loading render sees the one shared empty list. The saved
-     note goes the same way once a fresh read leaves the club no longer
-     configured (a team added or removed after the save), so "Team order
-     saved." never sits beside "Team order is incomplete". */
+  /* Adjusted during the render a FRESH READ lands in, which is the documented
+     way to adjust state to a changed input (an effect would render the stale
+     arrangement once and then re-render). The read is compared by identity,
+     so a render with the same rows does nothing and a loading render sees
+     the one shared empty list. The draft is checked against its snapshot
+     (snapshotAfterRead): a position that moved under it drops it and says
+     so, a read that agrees with what is stored drops it silently, and a team
+     just added joins the snapshot unplaced. The saved note goes once a fresh
+     read leaves the club no longer configured (a team added or removed after
+     the save), so "Team order saved." never sits beside "Team order is
+     incomplete". */
   const [seenTeams, setSeenTeams] = useState(teams)
   if (teams !== seenTeams) {
     setSeenTeams(teams)
-    if (draft !== null && !dirty) setDraft(null)
+    setAwaitingRead(false)
+    if (draft !== null) {
+      const next = snapshotAfterRead(draft.expected, teamPositions(teams))
+      if (next === null) {
+        setDraft(null)
+        setRefreshed(true)
+      } else if (!dirty) {
+        setDraft(null)
+      } else if (!samePositions(next, draft.expected)) {
+        setDraft({ ids: draft.ids, expected: next })
+      }
+    }
     if (orderSaved && stored.state !== 'configured') setOrderSaved(false)
   }
   const draftIds = dirty ? (arranged as string[]) : storedIds
@@ -401,8 +430,12 @@ export function AdminTeams() {
   /* Save is offered whenever pressing it would state something: an unset or
      incomplete club has positions to write even for an order nobody moved
      (accepting the order shown IS the statement), and a configured club has
-     nothing to say until the draft differs from what is stored. */
-  const canSave = rows.length > 0 && !save.isPending && (stored.state !== 'configured' || dirty)
+     nothing to say until the draft differs from what is stored. It is
+     withheld while a team is being added and until the read that carries
+     the new team lands, because an order sent in that window would not know
+     the team and would either be refused as a change or leave it unplaced. */
+  const canSave =
+    rows.length > 0 && !save.isPending && !insert.isPending && !awaitingRead && (stored.state !== 'configured' || dirty)
   /* What a screen reader hears after a move. The position pill is visual and
      the group's name does not re-announce when it changes, so the moved team
      and its new position are said once, politely, and the sentence carries
@@ -446,7 +479,11 @@ export function AdminTeams() {
     if (next === rows) return
     pendingMoveFocus.current = { id, direction }
     setOrderSaved(false)
-    setDraft(next.map((t) => t.id))
+    setRefreshed(false)
+    // The snapshot is the read the FIRST move was made over; later moves
+    // keep it, and a fresh read is checked against it rather than replacing
+    // it.
+    setDraft({ ids: next.map((t) => t.id), expected: draft?.expected ?? teamPositions(teams) })
     setMoves((n) => n + 1)
     const to = next.findIndex((t) => t.id === id)
     setAnnouncement(`${next[to].name} moved to position ${to + 1} of ${next.length}. Not saved yet.`)
@@ -470,13 +507,16 @@ export function AdminTeams() {
   const saveOrder = () => {
     if (!canSave) return
     setOrderSaved(false)
+    setRefreshed(false)
     setAnnouncement('')
     wantSavedFocus()
     wantFailedFocus()
     save.mutate(
       // The positions the draft was drawn from go with it, so a position
       // another admin stored in between is refused rather than overwritten.
-      { orderedIds: draftIds, expected: teamPositions(teams) },
+      // With no draft (an unset or incomplete club accepting the order
+      // shown) the positions are the ones on screen now.
+      { orderedIds: draftIds, expected: draft?.expected ?? teamPositions(teams) },
       {
         onSuccess: () => setOrderSaved(true),
         // The club's teams or their positions changed under the draft: the
@@ -525,7 +565,16 @@ export function AdminTeams() {
     // being saved.
     if (!trimmed || insert.isPending || save.isPending) return
     wantNewTeamFocus()
-    insert.mutate({ name: trimmed }, { onSuccess: () => setName('') })
+    insert.mutate(
+      { name: trimmed },
+      {
+        onSuccess: () => {
+          setName('')
+          // Save stays withheld until the read that carries the new team.
+          setAwaitingRead(true)
+        },
+      },
+    )
   }
 
   return (
@@ -578,6 +627,14 @@ export function AdminTeams() {
             </div>
             <p className="admin-intro">{TEAM_ORDER_COPY}</p>
             <TeamOrderStatus state={stored.state} unplaced={stored.unplaced} dirty={dirty} />
+            {/* The arrangement was dropped because a fresh read carried an
+                order somebody else stored under it. Said here, as a status,
+                because the list below has already changed. */}
+            {refreshed && !save.isError && (
+              <Note tone="warning" role="status" className="admin-note">
+                {TEAM_ORDER_CHANGED}
+              </Note>
+            )}
             <div className="sr-only" aria-live="polite">
               {announcement}
             </div>

@@ -69,6 +69,7 @@ const mutation = () => ({ mutate: () => void writes.push('write'), isPending: fa
    be rendered without a DOM: the page reads isPending and error off the
    mutation and nothing else. */
 const saveState: { isPending: boolean; isError: boolean; error: Error | null } = { isPending: false, isError: false, error: null }
+const insertState: { isPending: boolean } = { isPending: false }
 
 vi.mock('../lib/queries', () => ({
   useMyCapabilities: () => ({ caps: reads.caps, isPending: false }),
@@ -79,7 +80,7 @@ vi.mock('../lib/queries', () => ({
       isSuccess: !reads.loading && !reads.isError,
     }),
   useProfiles: () => query(MEMBERS),
-  useInsertTeam: mutation,
+  useInsertTeam: () => ({ ...mutation(), ...insertState }),
   useRenameTeam: mutation,
   useDeleteTeam: mutation,
   useSetTeamBibColour: mutation,
@@ -104,6 +105,7 @@ beforeEach(() => {
   saveState.isPending = false
   saveState.isError = false
   saveState.error = null
+  insertState.isPending = false
 })
 
 /* The rows in the order the page rendered them, read off each row's own
@@ -467,6 +469,16 @@ describe('Save team order is a checkpoint, offered when pressing it would state 
     expect(add).not.toBeNull()
     expect(add![0]).toContain('disabled')
     expect(html).not.toContain('Not saved yet')
+  })
+
+  it('is withheld while a team is being added, so an order that does not know the new team cannot be sent', () => {
+    insertState.isPending = true
+    const html = page()
+    expect(html).toContain('Adding…')
+    expect(saveButton(html)).toContain('disabled')
+    // The ordering controls themselves stay live: the draft can still be
+    // arranged and the newcomer joins it unplaced when the read lands.
+    expect(button(html, 'Move Titans down')).not.toContain('disabled')
   })
 
   it('renders a refused save as an alert in the refusal\'s own words', () => {

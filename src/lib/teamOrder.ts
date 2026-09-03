@@ -169,8 +169,21 @@ export function teamsInDraftOrder(draft: readonly string[], teams: readonly Team
 // since the screen loaded, or a position another admin stored since, is
 // refused as TeamOrderChanged rather than silently arranged around or
 // overwritten. The screen then drops its draft and shows what is stored, and
-// the admin decides again. The unique index remains the last guard for the
-// write itself.
+// the admin decides again.
+//
+// THE CHECK COVERS THE WRITES, not only the read before them. Two admins can
+// both read fresh before either writes, and both pass; without more, the
+// second to finish would clear and replace what the first had just stored,
+// and the unique index would allow it because the result is still a valid
+// permutation. So every write is a compare and set: a clear lands only while
+// the row still holds the position the fresh read saw, and a placement lands
+// only while the row is still null, which is what this save's own clear
+// left. A write that finds anything else returns no row and the save stops,
+// with nothing overwritten. PostgREST offers no transaction across
+// statements without a server side function, so a save that stops between
+// its phases leaves an honestly INCOMPLETE order, named as such by the
+// status the refetch brings, and never a blend presented as configured.
+// The unique index remains the last guard for the write itself.
 //
 // WHAT THE AUDIT TRAIL SHOWS. audit_teams() records every distinct change of
 // sort_order as team.updated naming the field and never the value, so a
@@ -192,19 +205,70 @@ export function teamPositions(teams: readonly Pick<Team, 'id' | 'sortOrder'>[]):
   return teams.map((t) => ({ id: t.id, sortOrder: t.sortOrder }))
 }
 
+export function samePositions(a: readonly TeamPosition[], b: readonly TeamPosition[]): boolean {
+  return a.length === b.length && a.every((r, i) => r.id === b[i].id && r.sortOrder === b[i].sortOrder)
+}
+
+/* What a draft's snapshot becomes when a FRESH READ lands under it.
+
+   The snapshot is taken when the draft is created and it is the only thing
+   the save may refuse against, so it must not be rebuilt from a later read:
+   a snapshot taken at Save time from a read that already carries another
+   admin's order would agree with the fresh read and let the older draft
+   overwrite it. So the read is checked AGAINST the snapshot instead:
+
+   * a team the snapshot knows whose position differs is another admin's
+     placement, and the answer is null: the draft is dropped and the screen
+     says so;
+   * a team the snapshot does not know that arrives UNPLACED is a team just
+     added (by this admin or anybody) and joins the snapshot at null, so the
+     admin's own add-then-save keeps the arrangement;
+   * a team that arrives already placed is somebody's statement about the
+     order, and the answer is null;
+   * a team the read no longer holds leaves the snapshot, as it leaves the
+     draft.
+
+   Otherwise the snapshot is returned in the read's order, so a read that
+   changed nothing yields the same content and the screen keeps its state. */
+export function snapshotAfterRead(expected: readonly TeamPosition[], read: readonly TeamPosition[]): TeamPosition[] | null {
+  const had = new Map(expected.map((r) => [r.id, r.sortOrder]))
+  const next: TeamPosition[] = []
+  for (const r of read) {
+    if (had.has(r.id)) {
+      if (had.get(r.id) !== r.sortOrder) return null
+    } else if (r.sortOrder !== null) {
+      return null
+    }
+    next.push({ id: r.id, sortOrder: r.sortOrder })
+  }
+  return next
+}
+
 export interface TeamOrderStore {
   // Every team of the club, id and position only.
   readPositions(): Promise<TeamPosition[]>
-  // Set sort_order to null on exactly these rows, returning the rows as
-  // stored afterwards.
-  clearPositions(ids: readonly string[]): Promise<TeamPosition[]>
-  // Set one row's sort_order, returning the row as stored afterwards.
+  // Set sort_order to null on ONE row, and only while that row still holds
+  // `from`, the position the fresh read saw (a compare and set). Returns
+  // the row as stored afterwards, or no row when it no longer held `from`
+  // or the write was refused.
+  clearPosition(id: string, from: number): Promise<TeamPosition[]>
+  // Set sort_order to `position` on ONE row, and only while that row is
+  // still null, which is what this save's own clear left. Returns the row
+  // as stored afterwards, or no row when it was placed by somebody else in
+  // between or the write was refused.
   setPosition(id: string, position: number): Promise<TeamPosition[]>
 }
 
+/* The one sentence a dropped draft is explained with, on the screen and in
+   the refusal: the same words for the same fact, wherever it is met. */
+export const TEAM_ORDER_CHANGED =
+  "The club's teams changed while the order was being arranged. The list has been refreshed; check it and save again."
+
 export class TeamOrderChanged extends Error {
-  constructor() {
-    super("The club's teams changed while the order was being arranged. The list has been refreshed; check it and save again.")
+  // `detail`, when given, replaces the general sentence with what THIS
+  // refusal knows: how far a save that met another admin's write got.
+  constructor(detail?: string) {
+    super(detail ?? TEAM_ORDER_CHANGED)
     this.name = 'TeamOrderChanged'
   }
 }
@@ -253,17 +317,37 @@ export async function saveTeamOrder(
   const writes = teamOrderWrites(orderedIds.map((id) => byId.get(id) as TeamPosition))
   if (writes.length === 0) return []
 
-  const ids = writes.map((w) => w.id)
-  const cleared = await store.clearPositions(ids)
-  const clearedIds = new Set(cleared.map((r) => r.id))
-  if (cleared.length !== ids.length || !ids.every((id) => clearedIds.has(id)) || cleared.some((r) => r.sortOrder !== null)) {
-    throw new TeamOrderRefused('The positions could not be cleared for every team that moves, so no position was written.')
+  // Phase one: free the positions of the teams that move, one row at a
+  // time, each write conditioned on the position the fresh read saw. A row
+  // that no longer holds it was changed by somebody else after the read,
+  // and the save stops there: nothing has been placed, and what was cleared
+  // is named as unplaced by the status the refetch brings.
+  const placed = writes.filter((w) => (byId.get(w.id) as TeamPosition).sortOrder !== null)
+  let cleared = 0
+  for (const w of placed) {
+    const from = (byId.get(w.id) as TeamPosition).sortOrder as number
+    const [row] = await store.clearPosition(w.id, from)
+    if (!row || row.id !== w.id) {
+      throw new TeamOrderChanged(
+        `The team order changed while it was being saved, or the write was refused. Nothing was placed; ${cleared} of ${placed.length} moved teams had been cleared. The list has been refreshed; check it and save again.`,
+      )
+    }
+    if (row.sortOrder !== null) throw new TeamOrderRefused('A position was not cleared, so no position was written.')
+    cleared += 1
   }
 
+  // Phase two: place each moved team, each write conditioned on the row
+  // still being null, which is what this save's own clear left. A row
+  // somebody else placed in between is not overwritten.
   const done: TeamOrderWrite[] = []
   for (const w of writes) {
     const [row] = await store.setPosition(w.id, w.position)
-    if (!row || row.id !== w.id || row.sortOrder !== w.position) {
+    if (!row || row.id !== w.id) {
+      throw new TeamOrderChanged(
+        `The team order changed while it was being saved, or the write was refused. ${done.length} of ${writes.length} moved teams were placed; the rest are unplaced until the order is saved again. The list has been refreshed; check it and save again.`,
+      )
+    }
+    if (row.sortOrder !== w.position) {
       throw new TeamOrderRefused(
         `A position was not stored. ${done.length} of ${writes.length} moved teams were placed; the rest are unplaced until the order is saved again.`,
       )

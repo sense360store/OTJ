@@ -14,8 +14,10 @@ import {
   moveTeam,
   reconcileDraft,
   sameTeamOrder,
+  samePositions,
   saveFailureMessage,
   saveTeamOrder,
+  snapshotAfterRead,
   teamOrderWrites,
   teamsInDraftOrder,
   type TeamOrderStore,
@@ -177,6 +179,11 @@ interface FakeOptions {
   refuseWrites?: boolean
 }
 
+/* Enforces teams_sort_order_unique per row the way PostgreSQL does, and
+   answers each write the way PostgREST answers a conditional UPDATE: the
+   row comes back when the condition held and nothing comes back when it
+   did not, with nothing changed in that case. Two savers can share one
+   store, which is how the concurrency tests below interleave them. */
 function fakeStore(rows: TeamPosition[], opts: FakeOptions = {}) {
   const state = new Map(rows.map((r) => [r.id, r.sortOrder]))
   const log: string[] = []
@@ -200,19 +207,21 @@ function fakeStore(rows: TeamPosition[], opts: FakeOptions = {}) {
       log.push('read')
       return snapshot([...state.keys()])
     },
-    async clearPositions(ids) {
+    async clearPosition(id, from) {
       failing()
-      log.push(`clear ${[...ids].join(',')}`)
+      log.push(`clear ${id}@${from}`)
       if (opts.refuseWrites) return []
-      for (const id of ids) if (state.has(id)) state.set(id, null)
+      if (!state.has(id) || state.get(id) !== from) return []
+      state.set(id, null)
       assertUnique()
-      return snapshot(ids)
+      return snapshot([id])
     },
     async setPosition(id, position) {
       failing()
       log.push(`set ${id}=${position}`)
       if (opts.refuseWrites) return []
-      if (state.has(id)) state.set(id, position)
+      if (!state.has(id) || state.get(id) !== null) return []
+      state.set(id, position)
       assertUnique()
       return snapshot([id])
     },
@@ -238,10 +247,9 @@ describe('saving the order', () => {
       ['b', 3],
       ['c', 1],
     ])
-    // The clear still runs over the moved set, which is every team here,
-    // and is a no-op on rows already null.
-    expect(log[0]).toBe('read')
-    expect(log[1]).toBe('clear c,a,b')
+    // Nothing is placed, so there is nothing to clear: the writes are the
+    // three placements and nothing else.
+    expect(log).toEqual(['read', 'set c=1', 'set a=2', 'set b=3'])
   })
 
   it('swaps two placed teams without ever holding both at one position', async () => {
@@ -255,7 +263,7 @@ describe('saving the order', () => {
     expect(state.get('a')).toBe(2)
     expect(state.get('b')).toBe(1)
     expect(state.get('c')).toBe(3)
-    expect(log).toEqual(['read', 'clear b,a', 'set b=1', 'set a=2'])
+    expect(log).toEqual(['read', 'clear b@2', 'clear a@1', 'set b=1', 'set a=2'])
   })
 
   it('leaves a team already at its position untouched', async () => {
@@ -265,7 +273,7 @@ describe('saving the order', () => {
       { id: 'c', sortOrder: 8 },
     ])
     await saveTeamOrder(store, ['a', 'b', 'c'])
-    expect(log).toEqual(['read', 'clear b,c', 'set b=2', 'set c=3'])
+    expect(log).toEqual(['read', 'clear b@3', 'clear c@8', 'set b=2', 'set c=3'])
     expect(log.some((l) => l.includes(' a'))).toBe(false)
   })
 
@@ -310,14 +318,14 @@ describe('saving the order', () => {
   })
 
   it('a save that drops between the phases leaves an incomplete order of nulls, never a false one', async () => {
-    // The clear succeeds, the first set fails.
+    // Both clears succeed (writes 1 and 2), the first set (write 3) fails.
     const { store, state } = fakeStore(
       [
         { id: 'a', sortOrder: 1 },
         { id: 'b', sortOrder: 2 },
         { id: 'c', sortOrder: 3 },
       ],
-      { failAt: 2 },
+      { failAt: 3 },
     )
     await expect(saveTeamOrder(store, ['c', 'b', 'a'])).rejects.toThrow('network dropped')
     // Every MOVED team is null and nothing claims a position it does not
@@ -332,14 +340,32 @@ describe('saving the order', () => {
     expect(clubOrderState(left)).toBe('incomplete')
   })
 
-  it('a save that drops after some positions are set leaves the rest null, and says how many were placed', async () => {
+  it('a save that drops between two clears leaves the cleared team null and the rest as they were', async () => {
     const { store, state } = fakeStore(
       [
         { id: 'a', sortOrder: 1 },
         { id: 'b', sortOrder: 2 },
         { id: 'c', sortOrder: 3 },
       ],
-      { failAt: 3 },
+      { failAt: 2 },
+    )
+    await expect(saveTeamOrder(store, ['c', 'b', 'a'])).rejects.toThrow('network dropped')
+    expect([...state]).toEqual([
+      ['a', 1],
+      ['b', 2],
+      ['c', null],
+    ])
+  })
+
+  it('a save that drops after some positions are set leaves the rest null, and says how many were placed', async () => {
+    // Clears are writes 1 and 2, c=1 is write 3, a=3 is write 4 and fails.
+    const { store, state } = fakeStore(
+      [
+        { id: 'a', sortOrder: 1 },
+        { id: 'b', sortOrder: 2 },
+        { id: 'c', sortOrder: 3 },
+      ],
+      { failAt: 4 },
     )
     await expect(saveTeamOrder(store, ['c', 'b', 'a'])).rejects.toThrow('network dropped')
     // c reached its position, b was never touched, a is still cleared.
@@ -351,7 +377,10 @@ describe('saving the order', () => {
     expect(clubOrder(left).teams.map((t) => t.id)).toEqual(['c', 'b', 'a'])
   })
 
-  it('treats a write that comes back with no row as a refusal, and writes no position after it', async () => {
+  it('treats a write that comes back with no row as the order having changed or the write refused, and writes nothing after it', async () => {
+    // Row level security answers a caller without teams.manage with no
+    // row, exactly as a compare and set that found another value does; the
+    // save cannot tell them apart and says both.
     const { store, log } = fakeStore(
       [
         { id: 'a', sortOrder: null },
@@ -359,8 +388,16 @@ describe('saving the order', () => {
       ],
       { refuseWrites: true },
     )
-    await expect(saveTeamOrder(store, ['a', 'b'])).rejects.toBeInstanceOf(TeamOrderRefused)
-    expect(log).toEqual(['read', 'clear a,b'])
+    const failure = await saveTeamOrder(store, ['a', 'b']).catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(TeamOrderChanged)
+    expect((failure as Error).message).toContain('or the write was refused')
+    expect((failure as Error).message).toContain('0 of 2 moved teams were placed')
+    expect(log).toEqual(['read', 'set a=1'])
+    const placed = fakeStore([{ id: 'a', sortOrder: 1 }, { id: 'b', sortOrder: 2 }], { refuseWrites: true })
+    const atClear = await saveTeamOrder(placed.store, ['b', 'a']).catch((e: unknown) => e)
+    expect(atClear).toBeInstanceOf(TeamOrderChanged)
+    expect((atClear as Error).message).toContain('Nothing was placed')
+    expect(placed.log).toEqual(['read', 'clear b@2'])
   })
 
   it('treats a position that comes back different from a refusal too', async () => {
@@ -375,6 +412,176 @@ describe('saving the order', () => {
       },
     }
     await expect(saveTeamOrder(lying, ['a', 'b'])).rejects.toBeInstanceOf(TeamOrderRefused)
+    const unclearing: TeamOrderStore = {
+      ...store,
+      async clearPosition(id, from) {
+        return [{ id, sortOrder: from }]
+      },
+    }
+    const placed = fakeStore([{ id: 'a', sortOrder: 1 }, { id: 'b', sortOrder: 2 }])
+    await expect(saveTeamOrder({ ...placed.store, clearPosition: unclearing.clearPosition }, ['b', 'a'])).rejects.toBeInstanceOf(
+      TeamOrderRefused,
+    )
+  })
+
+  /* ---- two admins, one store ----
+     The fresh read before the writes is not enough on its own: two saves
+     can both read before either writes, and both pass. The compare and set
+     on every write is what refuses the second, and these interleave two
+     savers by hand over one store to prove it. */
+  const step = () => {
+    // A store whose writes wait until released, so two saves can be
+    // interleaved at chosen points.
+    const gates: (() => void)[] = []
+    const release = () => gates.shift()?.()
+    const waiting = () => gates.length
+    const gate = <T,>(run: () => Promise<T>) => new Promise<T>((resolve, reject) => gates.push(() => run().then(resolve, reject)))
+    return { gate, release, waiting }
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 0))
+
+  it('the second of two saves that both read before either wrote is refused at its first clear, with nothing overwritten', async () => {
+    const { store, state } = fakeStore([
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: 2 },
+      { id: 'c', sortOrder: 3 },
+    ])
+    const rows = () => store.readPositions()
+    // Both admins read the same club.
+    const snapshotA = await rows()
+    const snapshotB = await rows()
+    // A saves c, a, b in full first.
+    await saveTeamOrder(store, ['c', 'a', 'b'], snapshotA)
+    expect([...state]).toEqual([
+      ['a', 2],
+      ['b', 3],
+      ['c', 1],
+    ])
+    // B's fresh read now disagrees with B's snapshot: refused before any write.
+    await expect(saveTeamOrder(store, ['b', 'c', 'a'], snapshotB)).rejects.toBeInstanceOf(TeamOrderChanged)
+    expect([...state]).toEqual([
+      ['a', 2],
+      ['b', 3],
+      ['c', 1],
+    ])
+  })
+
+  it('a save whose fresh read passed is still refused by the compare and set when the other save lands between its read and its writes', async () => {
+    const shared = fakeStore([
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: 2 },
+      { id: 'c', sortOrder: 3 },
+    ])
+    const { gate, release, waiting } = step()
+    // B's writes are gated; B's read is not, so B reads fresh and passes
+    // the snapshot check, and then waits at its first clear.
+    const gated: TeamOrderStore = {
+      readPositions: () => shared.store.readPositions(),
+      clearPosition: (id, from) => gate(() => shared.store.clearPosition(id, from)),
+      setPosition: (id, position) => gate(() => shared.store.setPosition(id, position)),
+    }
+    const snapshot = await shared.store.readPositions()
+    const b = saveTeamOrder(gated, ['b', 'c', 'a'], snapshot).catch((e: unknown) => e)
+    await settle()
+    expect(waiting()).toBe(1)
+    // A saves in full while B is waiting.
+    await saveTeamOrder(shared.store, ['c', 'a', 'b'], snapshot)
+    expect([...shared.state]).toEqual([
+      ['a', 2],
+      ['b', 3],
+      ['c', 1],
+    ])
+    // B's first clear expects b@2, and b is now 3: no row, refused, and A's
+    // order stands untouched.
+    release()
+    const failure = await b
+    expect(failure).toBeInstanceOf(TeamOrderChanged)
+    expect((failure as Error).message).toContain('Nothing was placed')
+    expect([...shared.state]).toEqual([
+      ['a', 2],
+      ['b', 3],
+      ['c', 1],
+    ])
+    expect(waiting()).toBe(0)
+  })
+
+  it('a placement finds its row taken when the other save placed it in between, and stops rather than overwriting', async () => {
+    // Both start from an UNSET club, so neither has anything to clear and
+    // both go straight to placing; the compare and set on null is what
+    // separates them.
+    const shared = fakeStore([
+      { id: 'a', sortOrder: null },
+      { id: 'b', sortOrder: null },
+    ])
+    const { gate, release, waiting } = step()
+    const gated: TeamOrderStore = {
+      readPositions: () => shared.store.readPositions(),
+      clearPosition: (id, from) => gate(() => shared.store.clearPosition(id, from)),
+      setPosition: (id, position) => gate(() => shared.store.setPosition(id, position)),
+    }
+    const b = saveTeamOrder(gated, ['b', 'a']).catch((e: unknown) => e)
+    await settle()
+    expect(waiting()).toBe(1)
+    await saveTeamOrder(shared.store, ['a', 'b'])
+    release()
+    const failure = await b
+    expect(failure).toBeInstanceOf(TeamOrderChanged)
+    expect((failure as Error).message).toContain('0 of 2 moved teams were placed')
+    expect([...shared.state]).toEqual([
+      ['a', 1],
+      ['b', 2],
+    ])
+  })
+
+  it('a save that reads a half placed club reorders what it read, and the interrupted save is refused at its next placement', async () => {
+    // A places a=1 and then waits. B reads fresh (a at 1, b unplaced) and,
+    // with no snapshot of its own, arranges from what it read: its clear of
+    // a is conditioned on the 1 it saw and lands, b and a are placed, and
+    // B's order is complete. A resumes and finds b taken: refused, told how
+    // far it got, and B's order stands. Nothing anybody wrote was
+    // overwritten without having been read first.
+    const shared = fakeStore([
+      { id: 'a', sortOrder: null },
+      { id: 'b', sortOrder: null },
+    ])
+    const { gate, release, waiting } = step()
+    const gated: TeamOrderStore = {
+      readPositions: () => shared.store.readPositions(),
+      clearPosition: (id, from) => gate(() => shared.store.clearPosition(id, from)),
+      setPosition: (id, position) => gate(() => shared.store.setPosition(id, position)),
+    }
+    const a = saveTeamOrder(gated, ['a', 'b']).catch((e: unknown) => e)
+    await settle()
+    release() // a=1 lands
+    await settle()
+    expect(shared.state.get('a')).toBe(1)
+    expect(waiting()).toBe(1)
+    await saveTeamOrder(shared.store, ['b', 'a'])
+    expect([...shared.state]).toEqual([
+      ['a', 2],
+      ['b', 1],
+    ])
+    release() // A's b=2 finds b at 1
+    const failure = await a
+    expect(failure).toBeInstanceOf(TeamOrderChanged)
+    expect((failure as Error).message).toContain('1 of 2 moved teams were placed')
+    expect([...shared.state]).toEqual([
+      ['a', 2],
+      ['b', 1],
+    ])
+    // Had B carried the snapshot its screen drew the draft from (a unplaced),
+    // B would have been refused before writing instead.
+    const again = fakeStore([
+      { id: 'a', sortOrder: 1 },
+      { id: 'b', sortOrder: null },
+    ])
+    await expect(
+      saveTeamOrder(again.store, ['b', 'a'], [
+        { id: 'a', sortOrder: null },
+        { id: 'b', sortOrder: null },
+      ]),
+    ).rejects.toBeInstanceOf(TeamOrderChanged)
+    expect(again.log).toEqual(['read'])
   })
 
   it('refuses to overwrite a position another admin stored after the draft was read, and writes nothing', async () => {
@@ -449,12 +656,49 @@ describe('saving the order', () => {
 
   it('says in its refusals what is stored, in words a coach can act on', async () => {
     const refused = fakeStore([{ id: 'a', sortOrder: null }], { refuseWrites: true })
-    await expect(saveTeamOrder(refused.store, ['a'])).rejects.toThrow('no position was written')
+    await expect(saveTeamOrder(refused.store, ['a'])).rejects.toThrow('or the write was refused')
     expect(new TeamOrderChanged().message).toContain('The list has been refreshed')
     expect(saveFailureMessage(new TeamOrderChanged())).toMatch(/^Could not save the team order\. The club's teams changed/)
     expect(saveFailureMessage(new TeamOrderRefused('Half done.'))).toBe(
       'Could not save the team order. Half done. The status above says what is stored now; check the order and press Save team order again.',
     )
     expect(saveFailureMessage(new Error('boom'))).not.toContain('boom')
+  })
+})
+
+describe('a draft snapshot under a fresh read', () => {
+  const pos = (id: string, sortOrder: number | null): TeamPosition => ({ id, sortOrder })
+
+  it('keeps the same content for a read that changed nothing, whatever order the read came in', () => {
+    const expected = [pos('a', 1), pos('b', 2)]
+    const next = snapshotAfterRead(expected, [pos('b', 2), pos('a', 1)])
+    expect(next).toEqual([pos('b', 2), pos('a', 1)])
+    expect(samePositions(next as TeamPosition[], [pos('b', 2), pos('a', 1)])).toBe(true)
+    expect(samePositions(next as TeamPosition[], expected)).toBe(false)
+  })
+
+  it('answers null when a known team\'s position moved, which is another admin\'s placement', () => {
+    expect(snapshotAfterRead([pos('a', 1), pos('b', 2)], [pos('a', 2), pos('b', 1)])).toBeNull()
+    expect(snapshotAfterRead([pos('a', 1), pos('b', null)], [pos('a', 1), pos('b', 2)])).toBeNull()
+    expect(snapshotAfterRead([pos('a', 1), pos('b', 2)], [pos('a', 1), pos('b', null)])).toBeNull()
+  })
+
+  it('lets a team just added join unplaced, and refuses one that arrives already placed', () => {
+    expect(snapshotAfterRead([pos('a', 1)], [pos('a', 1), pos('n', null)])).toEqual([pos('a', 1), pos('n', null)])
+    expect(snapshotAfterRead([pos('a', 1)], [pos('a', 1), pos('n', 2)])).toBeNull()
+  })
+
+  it('lets a team the read no longer holds leave', () => {
+    expect(snapshotAfterRead([pos('a', 1), pos('b', 2)], [pos('a', 1)])).toEqual([pos('a', 1)])
+  })
+
+  it('is what the save refuses against, so the two agree', async () => {
+    // A draft drawn over a, b at 1, 2; the read moved b. The screen drops
+    // the draft (null here), and had it saved anyway the save would refuse.
+    const expected = [pos('a', 1), pos('b', 2)]
+    const read = [pos('a', 1), pos('b', 3)]
+    expect(snapshotAfterRead(expected, read)).toBeNull()
+    const { store } = fakeStore(read)
+    await expect(saveTeamOrder(store, ['b', 'a'], expected)).rejects.toBeInstanceOf(TeamOrderChanged)
   })
 })

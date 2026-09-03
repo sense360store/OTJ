@@ -748,6 +748,14 @@ const nameLookup = <T,>(rows: () => T[], idOf: (r: T) => string, nameOf: (r: T) 
     return carriers === 1 ? name : ''
   }
 }
+/* COACH-1B. Another admin's save, for a driver to land under an open draft:
+   the fixture store is the one the screen reads through, so a call here is
+   indistinguishable from a refetch carrying an order somebody else stored.
+   It is a driver hook, not a write of this screen, and the call log does
+   not record it. */
+;(globalThis as unknown as { __adminStore?: { saveTeamOrder: (orderedIds: string[]) => void } }).__adminStore = {
+  saveTeamOrder: (orderedIds) => adminStore.saveTeamOrder(orderedIds),
+}
 ;(
   globalThis as unknown as {
     __adminNames?: {

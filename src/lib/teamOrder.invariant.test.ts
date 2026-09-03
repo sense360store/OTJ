@@ -145,6 +145,22 @@ describe('the teams read carries the column and keeps the display order', () => 
     expect(store).not.toMatch(/\bname\b|bib_colour|club_id|created_at|upsert|insert\(|delete\(/)
   })
 
+  it('every write is a compare and set: a clear on the position the read saw, a placement on null', () => {
+    // Two admins can both read before either writes; without these
+    // conditions the second to finish would overwrite the first, and the
+    // unique index would allow it because the result is a valid
+    // permutation.
+    const src = withoutComments(read('lib/queries.ts'))
+    const store = src.slice(src.indexOf('const teamOrderStore'), src.indexOf('export function useSaveTeamOrder'))
+    const clear = /\.update\(\{ sort_order: null \}\)\s*\.eq\('id', id\)\s*\.eq\('sort_order', from\)\s*\.select\('id, sort_order'\)/
+    const place = /\.update\(\{ sort_order: position \}\)\s*\.eq\('id', id\)\s*\.is\('sort_order', null\)\s*\.select\('id, sort_order'\)/
+    expect(store).toMatch(clear)
+    expect(store).toMatch(place)
+    // One row per write, never a set: an `.in(` would clear rows this
+    // save had not compared.
+    expect(store).not.toMatch(/\.in\(/)
+  })
+
   it('the teams read itself never touches the field: the club order is a separate answer', () => {
     // A `.order('sort_order')` or a sort on `sortOrder` inside useTeams would
     // make the club order the display order on every screen at once. The
@@ -196,7 +212,11 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(screen).toMatch(/useSaveTeamOrder/)
     // The snapshot the save refuses against is built by the helper, so the
     // screen never reads the field itself (the sweep above would list it).
-    expect(screen).toMatch(/expected: teamPositions\(teams\)/)
+    expect(screen).toMatch(/expected: draft\?\.expected \?\? teamPositions\(teams\)/)
+    // The snapshot is never rebuilt from a later read: it is taken when the
+    // draft is created and checked against each fresh read.
+    expect(screen).toMatch(/expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)
+    expect(screen).toMatch(/snapshotAfterRead\(draft\.expected, teamPositions\(teams\)\)/)
     // No other route, component or hook touches the helper or the mutation.
     const others = applicationSources().filter(
       (rel) => rel !== REVIEWED_SCREEN && !REVIEWED_CONSUMERS.includes(rel) && rel.startsWith('src/'),

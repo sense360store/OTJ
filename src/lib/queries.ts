@@ -5624,20 +5624,28 @@ const teamOrderStore = {
     if (error) throw error
     return ((data ?? []) as TeamPositionRow[]).map(toTeamPosition)
   },
-  async clearPositions(ids: readonly string[]): Promise<TeamPosition[]> {
+  // Compare and set: the row is cleared only while it still holds `from`,
+  // the position the save's fresh read saw. A row somebody else changed
+  // since matches nothing and comes back as no row.
+  async clearPosition(id: string, from: number): Promise<TeamPosition[]> {
     const { data, error } = await supabase
       .from('teams')
       .update({ sort_order: null })
-      .in('id', [...ids])
+      .eq('id', id)
+      .eq('sort_order', from)
       .select('id, sort_order')
     if (error) throw error
     return ((data ?? []) as TeamPositionRow[]).map(toTeamPosition)
   },
+  // Compare and set: the row is placed only while it is still null, which
+  // is what this save's own clear left. A row somebody else placed in
+  // between comes back as no row rather than being overwritten.
   async setPosition(id: string, position: number): Promise<TeamPosition[]> {
     const { data, error } = await supabase
       .from('teams')
       .update({ sort_order: position })
       .eq('id', id)
+      .is('sort_order', null)
       .select('id, sort_order')
     if (error) throw error
     return ((data ?? []) as TeamPositionRow[]).map(toTeamPosition)
