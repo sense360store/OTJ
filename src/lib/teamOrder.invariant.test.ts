@@ -258,6 +258,11 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(hook.indexOf('onError:')).toBeLessThan(hook.indexOf('onSettled:'))
     const screen = withoutComments(read('routes/AdminTeams.tsx'))
     expect(screen).toMatch(/useSaveTeamOrder\(\{/)
+    // A failure that is not a refused concurrency keeps the arrangement
+    // that was SENT as the draft, whether or not one existed, so a no
+    // move save on an incomplete club never adopts a half written order.
+    expect(screen).toMatch(/else setDraft\(\{ ids: vars\.orderedIds, expected: null \}\)/)
+    expect(screen).not.toMatch(/d === null \? null/)
     // The mutate call carries the variables and nothing else.
     expect(screen).toMatch(/save\.mutate\(\{ orderedIds: draftIds, expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)
     expect(screen).not.toMatch(/save\.mutate\([^)]*onSuccess/)

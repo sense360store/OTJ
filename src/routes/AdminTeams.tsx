@@ -383,12 +383,15 @@ export function AdminTeams() {
     // The club's teams or their positions changed under the draft: the
     // draft is dropped so the refetched truth is what the list shows,
     // and the refusal says so. Any other refusal may have written some
-    // rows: the arrangement is kept, so one more press can finish it,
-    // and the next read is adopted as what it was drawn over rather
-    // than compared with a snapshot the save itself has outdated.
-    onError: (error) => {
+    // rows: the arrangement that was SENT is kept as the draft, made into
+    // one if the club accepted the order shown without a move, so the
+    // list keeps showing what the admin accepted rather than adopting a
+    // half written order, one more press can finish it, and the next read
+    // is adopted as what it was drawn over rather than compared with a
+    // snapshot the save itself has outdated.
+    onError: (error, vars) => {
       if (error instanceof TeamOrderChanged) setDraft(null)
-      else setDraft((d) => (d === null ? null : { ids: d.ids, expected: null }))
+      else setDraft({ ids: vars.orderedIds, expected: null })
     },
   })
   const [name, setName] = useState('')
