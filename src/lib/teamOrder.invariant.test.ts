@@ -117,6 +117,18 @@ function between(src: string, from: string, to: string): string {
    whole literal as opaque is the conservative choice. */
 function withoutLiterals(code: string): string {
   const out = code.split('')
+  // Whether a `/` opens a REGEX or divides. A regex can only start where a
+  // value can, so the last thing before it decides: an operator, a comma, an
+  // opening bracket, a colon or the start of the file means a regex, while an
+  // identifier, a number, a closing bracket or a string means division. This
+  // matters because `.update({ name: /\)\)/.source, sort_order: 1 })` is a
+  // legal payload whose two parentheses drive the bracket count to zero and
+  // end the slice before the key. Comments are already gone by here.
+  const startsValue = (at: number): boolean => {
+    let k = at - 1
+    while (k >= 0 && /\s/.test(out[k])) k -= 1
+    return k < 0 || /[([{,;:=!&|?+\-*%~^<>]/.test(out[k])
+  }
   let i = 0
   while (i < code.length) {
     const c = code[i]
@@ -128,13 +140,38 @@ function withoutLiterals(code: string): string {
       }
       const close = i
       i += 1
-      // A QUOTED PROPERTY KEY is code, not text: `{ 'sort_order': 1 }` is the
-      // same write as `{ sort_order: 1 }`, and blanking it would hide the
-      // write from the sweep. A string is a key when the next thing after it
-      // is a colon; anything else is a value and is blanked.
+      // A QUOTED PROPERTY KEY is code, not text: `{ 'sort_order': 1 }` and
+      // `{ ['sort_order']: 1 }` are the same write as `{ sort_order: 1 }`,
+      // and blanking either would hide it from the sweep. A string is a key
+      // when what follows it is a colon, or a closing square bracket and then
+      // a colon; anything else is a value and is blanked. The second form is
+      // narrow on purpose: keeping every string that a `]` follows would keep
+      // the last element of every array, so `{ tags: ['sort_order'] }` would
+      // read as a write of the column.
       let j = i
       while (j < code.length && /\s/.test(code[j])) j += 1
+      if (code[j] === ']') {
+        j += 1
+        while (j < code.length && /\s/.test(code[j])) j += 1
+      }
       if (code[j] === ':') continue
+      for (let k = open + 1; k < close && k < code.length; k += 1) out[k] = ' '
+      continue
+    }
+    if (c === '/' && startsValue(i)) {
+      const open = i
+      i += 1
+      let inClass = false
+      while (i < code.length && (inClass || code[i] !== '/')) {
+        if (code[i] === '\\') i += 2
+        else {
+          if (code[i] === '[') inClass = true
+          else if (code[i] === ']') inClass = false
+          i += 1
+        }
+      }
+      const close = i
+      i += 1
       for (let k = open + 1; k < close && k < code.length; k += 1) out[k] = ' '
       continue
     }
@@ -286,8 +323,29 @@ describe('the teams read carries the column and keeps the display order', () => 
     expect(caught("supabase.from('teams').update({ \"sortOrder\": 1 })")).toBe(true)
     expect(caught("supabase.from('teams').update({ name, sortOrder })")).toBe(true)
 
-    // And the column named only inside a string is not a write of it.
+    // The computed quoted key. `['sort_order']:` is the same write; the
+    // string is followed by `]` rather than by a colon, so the key rule has
+    // to look past one bracket.
+    expect(caught("supabase.from('teams').update({ ['sort_order']: 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').upsert([{ ['sortOrder']: n }])")).toBe(true)
+
+    // A REGEX whose body carries brackets must not end the slice. Without
+    // tokenizing it this one fails OPEN, exactly like the string case: the
+    // two parentheses drive the depth to zero before the key is reached.
+    expect(caught('supabase.from("teams").update({ name: /\\)\\)/.source, sort_order: 1 })')).toBe(true)
+    expect(caught("supabase.from('teams').update({ name: /[)}]/.source, sortOrder: 1 })")).toBe(true)
+    // Division is not a regex, and treating it as one would swallow the rest
+    // of the call and hide whatever followed.
+    expect(caught("supabase.from('teams').update({ ratio: a / b, sort_order: 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ ratio: a / b, name })")).toBe(false)
+
+    // And the column named only inside a string, or only inside a regex, is
+    // not a write of it.
     expect(caught("supabase.from('teams').update({ name: 'sort_order' })")).toBe(false)
+    expect(caught("supabase.from('teams').update({ ok: /sort_order/.test(s) })")).toBe(false)
+    // Nor is an ordinary array of strings that happens to carry the name:
+    // the last element is followed by `]`, which must not read as a key.
+    expect(caught("supabase.from('teams').update({ tags: ['sort_order'] })")).toBe(false)
   })
 
   it('the save is ONE rpc call to set_team_order, carrying the two aligned arrays', () => {
@@ -399,7 +457,8 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     // After its own save the snapshot is what the save wrote, never a read,
     // and a draft is made for that comparison whether or not one existed.
     // The rule itself is in teamOrder.ts and is tested there; the screen
-    // only has to hand it the ids it sent.
+    // only has to hand it the ids it sent. The callback bodies are read
+    // WHOLE below, which is what stops a second decision sitting beside it.
     expect(screen).toMatch(/setSavedAs\(intendedPositions\(vars\.orderedIds\)\)/)
     expect(screen).toMatch(/setDraft\(draftAfterSaved\(vars\.orderedIds\)\)/)
     // The success note is derived from the read agreeing with what was
@@ -437,15 +496,21 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(hook.indexOf('onError:')).toBeLessThan(hook.indexOf('onSettled:'))
     const screen = withoutComments(read('routes/AdminTeams.tsx'))
     expect(screen).toMatch(/useSaveTeamOrder\(\{/)
-    // Both outcomes DELEGATE. The rule that a failure which is not a
-    // refused concurrency keeps BOTH the arrangement that was sent AND the
-    // snapshot it was drawn from is stated and exercised in teamOrder.ts;
-    // what the screen must not do is decide it again here, because a second
-    // implementation is how the two come to disagree. So the callbacks pass
-    // the outcome straight through, and no error class is examined on this
-    // screen at all.
-    expect(screen).toMatch(/setDraft\(draftAfterFailure\(error, vars\)\)/)
-    expect(screen).not.toMatch(/instanceof TeamOrder/)
+    // A FAILED SAVE LEAVES NO DRAFT, and the whole callback is read rather
+    // than searched. A negative on one spelling is not enough: forbidding
+    // `instanceof TeamOrder` still admits `error.name === 'TeamOrderChanged'`
+    // placed AFTER the required call, which would reinstate the branch with
+    // every assertion here passing. So the body must be exactly the one
+    // statement, and there is then nowhere for a second decision to sit.
+    const onError = between(screen, 'onError:', '})\n  const [name')
+    expect(onError.length).toBeGreaterThan(0)
+    expect(onError.replace(/\s+/g, ' ').trim()).toBe('onError: () => setDraft(null),')
+    // Same for the accepted outcome: two statements, both delegating, and
+    // no third deciding anything.
+    const onSuccess = between(screen, 'onSuccess: (vars) => {', 'onError:')
+    expect(onSuccess.replace(/\s+/g, ' ').trim()).toBe(
+      'onSuccess: (vars) => { setSavedAs(intendedPositions(vars.orderedIds)) setDraft(draftAfterSaved(vars.orderedIds)) },',
+    )
     expect(screen).not.toMatch(/expected: vars\.expected \}\)/)
     // A draft ALWAYS carries the snapshot it was drawn from. `OrderDraft`
     // says so in its type, and the branches that once read a null one are

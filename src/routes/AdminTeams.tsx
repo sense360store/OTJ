@@ -45,7 +45,6 @@ import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import {
   TEAM_ORDER_CHANGED,
   clubOrder,
-  draftAfterFailure,
   draftAfterSaved,
   moveTeam,
   reconcileDraft,
@@ -376,13 +375,15 @@ export function AdminTeams() {
       setSavedAs(intendedPositions(vars.orderedIds))
       setDraft(draftAfterSaved(vars.orderedIds))
     },
-    /* Both outcomes are decided in teamOrder.ts, where they can be tested:
-       these callbacks are the only place the rule ran, and a static render
-       drives neither. `draftAfterFailure` states which failure drops the
-       draft and why every other one keeps the snapshot it was drawn from. */
-    onError: (error, vars) => {
-      setDraft(draftAfterFailure(error, vars))
-    },
+    /* A failed save leaves NO draft, whichever failure it was, so the list
+       goes back to the stored order and every refusal sentence's promise
+       that it has been refreshed is true. Keeping the arrangement and its
+       snapshot reads as safer and is not: a save that COMMITTED but lost its
+       response is indistinguishable here from one that never arrived, and if
+       another admin then restores the previous order the kept snapshot
+       matches it and the next press overwrites them. teamOrder.ts carries
+       the whole argument beside `draftAfterSaved`. */
+    onError: () => setDraft(null),
   })
   const [name, setName] = useState('')
   const [removing, setRemoving] = useState<Team | null>(null)
@@ -406,12 +407,9 @@ export function AdminTeams() {
      taken when the draft is created and never rebuilt from a later read:
      the save refuses against that snapshot, and a snapshot rebuilt at Save
      time from a read already carrying another admin's order would agree
-     with the fresh read and let the older draft overwrite it. What either
-     outcome leaves is `draftAfterSaved` and `draftAfterFailure`, stated and
-     tested in teamOrder.ts: a save that lands leaves the order it wrote, a
-     concurrency refusal leaves no draft at all, and every other failure
-     leaves both the arrangement that was sent and the snapshot it was drawn
-     from. */
+     with the fresh read and let the older draft overwrite it. A save that
+     lands leaves the order it wrote (`draftAfterSaved`, argued in
+     teamOrder.ts); a save that fails leaves no draft at all. */
   const [draft, setDraft] = useState<OrderDraft | null>(null)
   /* The order the last successful save wrote, and the success note is
      DERIVED from it: "Team order saved." shows only while the read holds

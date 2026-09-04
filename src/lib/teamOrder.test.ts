@@ -23,7 +23,6 @@ import {
   clubOrder,
   clubOrderState,
   compareTeamsByName,
-  draftAfterFailure,
   draftAfterSaved,
   intendedPositions,
   moveTeam,
@@ -339,16 +338,13 @@ describe('a draft snapshot under a fresh read', () => {
 })
 
 describe('the draft after a save', () => {
-  // These decide whether another admin's order can be silently overwritten.
-  // They lived in two callback bodies on the Teams screen that no test
-  // drove: the screen tests are static renders, so the rule was held only by
-  // an invariant matching each body's literal text. Three mutations of it (a
-  // success that dropped the draft, a failure that dropped it, a failure
-  // that kept the arrangement but cleared its snapshot) do fail that
-  // tripwire, so this is not a hole being filled; it is the difference
-  // between pinning the shape of the code and exercising the rule.
+  // A save that landed leaves what it wrote, and that has cases worth
+  // exercising. A save that FAILED leaves no draft at all, which has none:
+  // it is `onError: () => setDraft(null)` on the screen, pinned there
+  // structurally because the whole of it is one statement. The argument for
+  // it, including the ABA sequence that refuted the earlier "keep both"
+  // rule, is in teamOrder.ts beside the function below.
   const pos = (id: string, sortOrder: number | null): TeamPosition => ({ id, sortOrder })
-  const sent = { orderedIds: ['b', 'a', 'c'], expected: [pos('a', 1), pos('b', 2), pos('c', null)] }
 
   it('keeps what was written as the draft and its snapshot after an accepted save', () => {
     // The refetch carries exactly this, so the save's own readback is not
@@ -370,48 +366,4 @@ describe('the draft after a save', () => {
     expect(draft.ids).toEqual(['b', 'a'])
   })
 
-  it('drops the draft when another admin\'s order landed under it, because nothing was stored', () => {
-    expect(draftAfterFailure(new TeamOrderChanged(), sent)).toBeNull()
-    expect(draftAfterFailure(new TeamOrderChanged('a different sentence'), sent)).toBeNull()
-  })
-
-  it('keeps the arrangement AND its snapshot for every other failure', () => {
-    // The dangerous shape is a draft beside a snapshot it was not drawn
-    // from: the next press would then claim positions nobody arranged this
-    // order against, the function would accept, and another admin's order
-    // would be overwritten with no refusal anywhere.
-    for (const error of [
-      new TeamOrderRefused('The server refused the request as it was made.'),
-      new TeamOrderNotPermitted(),
-      new Error('network down'),
-      undefined,
-      null,
-      'a string nobody typed on purpose',
-    ]) {
-      expect(draftAfterFailure(error, sent), String(error)).toEqual({
-        ids: ['b', 'a', 'c'],
-        expected: [pos('a', 1), pos('b', 2), pos('c', null)],
-      })
-    }
-  })
-
-  it('keeps the snapshot for the transport failure too, which is the case the argument turns on', () => {
-    // This client cannot know whether the call landed. Keeping the snapshot
-    // can only cause a refusal (the call landed, or somebody else saved, so
-    // the read disagrees and the draft is dropped) or a survival (nothing
-    // changed). Clearing it lets the settled refetch become the expected
-    // snapshot, and the next press then overwrites whatever it carried.
-    const kept = draftAfterFailure(new Error('fetch failed'), sent)
-    expect(kept).not.toBeNull()
-    expect(kept!.expected).toEqual(sent.expected)
-  })
-
-  it('copies the snapshot rather than holding the variables the save was sent', () => {
-    const mutable = { orderedIds: ['a', 'b'], expected: [pos('a', 1), pos('b', 2)] }
-    const draft = draftAfterFailure(new Error('down'), mutable)!
-    mutable.orderedIds.push('c')
-    mutable.expected[0].sortOrder = 99
-    expect(draft.ids).toEqual(['a', 'b'])
-    expect(draft.expected).toEqual([pos('a', 1), pos('b', 2)])
-  })
 })

@@ -317,30 +317,48 @@ export function saveFailureMessage(error: unknown): string {
 
 /* ---- what the draft becomes after a save ----
 
-   One rule rather than two callback bodies. It lived inside
-   `useSaveTeamOrder`'s handlers on the Teams screen, where the only thing
-   holding it was a source text tripwire: the screen tests are static
-   renders, so nothing drove either callback, and the invariant test pinned
-   the exact literal of each body instead. That does catch a mutation of it,
-   which was checked rather than assumed, but it pins the SHAPE of the code
-   and says nothing about whether the rule is right, and any honest edit to
-   the callback has to edit a regex in step. This is the rule that decides
-   whether another admin's order can be silently overwritten, so it is worth
-   testing rather than transcribing; extracted, it is exercised directly and
-   the tripwire only has to say the screen delegates to it.
-
    The draft is what the screen is showing and the snapshot is what the next
-   save will claim was stored. They are kept together because a draft beside
+   save will claim was stored. They travel together because a draft beside
    the WRONG snapshot is the dangerous shape: the arrangement on screen is
-   compared against positions nobody drew it from.
+   compared against positions nobody drew it from, and the function accepts.
 
-   The snapshot is NOT nullable, and that is the rule made structural. It was
-   `TeamPosition[] | null` while a failed save cleared it, and null meant "the
-   next read is adopted as it comes", which is precisely the silent overwrite
-   below. With the snapshot always kept there is no writer left that can
-   produce one, so the type says so and the branches that read it are gone
-   rather than left as unreachable code describing a behaviour the product no
-   longer has. */
+   Two rules, and only one of them has cases:
+
+   A SAVE THAT LANDED leaves what it wrote, as `draftAfterSaved` below.
+
+   A SAVE THAT FAILED LEAVES NO DRAFT AT ALL. That is one line on the screen
+   (`onError: () => setDraft(null)`) and it is the third answer to a question
+   this file got wrong twice, so the reasoning is here rather than there.
+
+   The first answer kept the arrangement and CLEARED the snapshot, meaning
+   "adopt the next read as it comes". That is a silent overwrite: another
+   admin's order lands in the settled refetch, becomes this screen's expected
+   while the older arrangement is still on screen, and the next press matches
+   it and writes over them.
+
+   The second answer kept BOTH, on the argument that a kept snapshot can only
+   ever cause a refusal or a drop. That argument is false, and the case that
+   breaks it is ABA. Our save COMMITS, its response is lost, and this client
+   cannot tell that from a call that never arrived. Another admin sees the
+   order we stored, rejects it, and puts the previous one back. The refetch
+   now agrees with our kept snapshot, so the draft survives, and the next
+   press sends a snapshot the server matches and overwrites the order they
+   deliberately restored. Positions are values, not versions, so nothing in
+   the compare can see it. Only a monotonic version could, and that is a
+   column and a gated migration rather than a rule.
+
+   So a failure leaves the stored order on screen, which is what all four
+   refusal sentences already promise ("the list has been refreshed"). The
+   cost is an arrangement to redo after a failure. It is worth paying: of the
+   four failures, `TeamOrderChanged` means somebody else won, `42501` means
+   no permission and `TeamOrderRefused` means a defect in what this client
+   sent, and pressing again cannot help with any of them. Only the transport
+   case is worth retrying, and it is the one that cannot be kept.
+
+   The snapshot is therefore NOT nullable: no writer can produce a draft
+   without one. The type says so, and the branches that once read an absent
+   snapshot are gone rather than left as unreachable code describing a
+   behaviour the product does not have. */
 export interface OrderDraft {
   ids: string[]
   expected: TeamPosition[]
@@ -356,43 +374,3 @@ export function draftAfterSaved(orderedIds: readonly string[]): OrderDraft {
   return { ids: [...orderedIds], expected: intendedPositions(orderedIds) }
 }
 
-/* After a save that failed. Two answers, and THE SNAPSHOT IS ALWAYS KEPT.
-
-   TeamOrderChanged is another admin's order landing under the draft. The
-   function refuses before writing, so nothing was stored, and the draft is
-   dropped: the refetched truth is what the list shows and the refusal says
-   so.
-
-   Every other failure keeps the arrangement that was SENT as the draft, made
-   into one where the club accepted the order shown without a move so a
-   no-move save that fails never adopts an order nobody chose, AND keeps the
-   positions the draft was drawn from.
-
-   Clearing that snapshot was a defect, and the reasoning that produced it
-   was "nothing was written, so the next read can be adopted as it comes".
-   The missing half is that nothing was written BY US says nothing about what
-   anybody else wrote. With the snapshot cleared, a read landing in that
-   window is adopted wholesale, so another admin's order becomes this
-   screen's expected snapshot while the older draft is still on screen, and
-   the next press sends an expected that matches what is stored: the function
-   accepts, and their order is silently overwritten.
-
-   Keeping it is safe in every case, which is why there is no third branch
-   for the transport failure whose outcome this client cannot know. If the
-   call never landed and nothing else changed, the read agrees with the
-   snapshot and the arrangement survives for one more press. If somebody else
-   changed the order, the read disagrees and the draft is dropped. If the
-   call DID land, the read disagrees too, and the draft is dropped: the
-   wording is then a little generous to another admin, but the outcome is a
-   refreshed list rather than an overwrite. A kept snapshot can only ever
-   cause a refusal or a drop; a cleared one can cause a silent overwrite.
-
-   There is no branch for a half written order, because the function cannot
-   leave one. */
-export function draftAfterFailure(
-  error: unknown,
-  sent: { orderedIds: readonly string[]; expected: readonly TeamPosition[] },
-): OrderDraft | null {
-  if (error instanceof TeamOrderChanged) return null
-  return { ids: [...sent.orderedIds], expected: sent.expected.map((p) => ({ ...p })) }
-}
