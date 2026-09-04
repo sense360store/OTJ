@@ -38,7 +38,7 @@ turned out to be finished or unnecessary.
 | COACH-3, the suggested setup | **Merged.** #203 (the generator) and #204 (the screen). |
 | COACH-4, the setup preserved across attendance changes | **Merged.** #206. |
 | COACH-10, the shared authoring seam | **Merged.** #207. |
-| Migration numbering | `0051_team_sort_order.sql` is the highest applied and stamped `20260902150212` / `team_sort_order` on 2 September 2026, which is the hosted head. `0052_atomic_team_order.sql` is registered against it and awaits its apply. The number after that stays unclaimed until a register entry pins it to whatever head the ledger then holds, read live rather than inferred from the highest file on disk. |
+| Migration numbering | `0052_atomic_team_order.sql` is the highest applied and stamped `20260904174142` / `atomic_team_order` on 4 September 2026, which is the hosted head; `0051_team_sort_order.sql` is the row before it at `20260902150212` / `team_sort_order`. Nothing is registered and unapplied. `0053` stays unclaimed until a register entry pins it to whatever head the ledger then holds, read live rather than inferred from the highest file on disk. |
 
 **The two pull requests that had to stay separate from this work have both
 merged**, on 27 August 2026, with nothing from this programme in either:
@@ -100,9 +100,11 @@ missing thing is a transaction, so `0052_atomic_team_order` adds one
 capability gated SECURITY DEFINER function, `set_team_order`, which validates
 the complete set and the admin's expected snapshot under a club advisory lock
 and SHARE ROW EXCLUSIVE on `teams`, refuses a stale save before writing, and
-otherwise clears and places the whole order in one transaction. It is
-registered against `20260902150212` and awaits the human production apply;
-#225 then replaces its client save with one call to it.
+otherwise clears and places the whole order in one transaction. It was
+registered against `20260902150212`, merged as #226 and applied to
+production on 4 September 2026 (hosted `20260904174142` /
+`atomic_team_order`); #225 then replaces its client save with one call to
+it, which is the remaining COACH-1 work.
 
 **What COACH-1B must match, because getting it wrong is silent.** A stale save
 raises `P0001` carrying the DETAIL token `stale_order`, which PostgREST returns

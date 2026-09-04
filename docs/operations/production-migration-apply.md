@@ -20,6 +20,7 @@ order where each one fails before the next can do damage.
 | `0049_spond_team_reconcile` | `20260817104226` | `spond_team_reconcile` | 2026-08-17 |
 | `0050_bulk_delete_players` | `20260823065041` | `bulk_delete_players` | 2026-08-23 |
 | `0051_team_sort_order` | `20260902150212` | `team_sort_order` | 2026-09-02 |
+| `0052_atomic_team_order` | `20260904174142` | `atomic_team_order` | 2026-09-04 |
 
 `0050` was applied from the reviewed PLAYERS-01 branch commit
 `2d1de99827064f6856374bfc3c094cf50ae1cc3f` (PR #191) before that branch merged,
@@ -35,6 +36,14 @@ commit `855b0dc9fb0adfd7fa8e47cffe930638c2bf5759` (PR #223) at 15:02 UTC on
 2 September 2026, three minutes before that branch merged. Here either order
 was safe, because no deployed client reads the column; the apply was simply
 the human gate the pull request had waited on.
+
+`0052` went the same way again: applied from the reviewed COACH-1B database
+branch commit `973de7d692569c1db495d18e9ecb6001dc7160d0` (PR #226), workflow
+run 33901817120, at 17:41 UTC on 4 September 2026, nine minutes before that
+branch merged. Either order was safe for the same reason: no deployed client
+calls `set_team_order`, because COACH-1B's frontend half (#225) is still open
+and still saves the order from the browser. The apply was the human gate that
+pull request had waited on.
 
 `0047` stays in the dropdown and in `REVIEWED_MIGRATIONS` now that it has run.
 Entries are never removed once applied: the register is the closed list of what
@@ -163,6 +172,35 @@ the POST gate would have failed after the apply had already run. Both were fixed
 before the successful run, and the database was untouched throughout the first
 one.
 
+`0052` was applied on 4 September 2026, by workflow run 33901817120, from the
+reviewed COACH-1B database branch commit
+`973de7d692569c1db495d18e9ecb6001dc7160d0` (PR #226), at 17:41 UTC, nine
+minutes before that branch merged. The workflow ran to the end in one run: the
+pre-apply gate passed against a ledger still headed by `20260902150212` /
+`team_sort_order` with all three of its objects absent, the apply committed
+(the file's own DDL and self-verification ran inside the workflow's single
+transaction), and the post-apply gate passed. The hosted ledger assigned it
+version `20260904174142` under the name `atomic_team_order`, and that is the
+newest row: 47 rows, exactly one so named, and the recorded statement matching
+the reviewed file, MD5 `8a3d8a6778e343bacd3ebacb149d5e5a` over the file with
+its trailing newline stripped, 56271 bytes. Read back afterwards, outside the
+gate: `set_team_order(uuid[], integer[])` is `SECURITY DEFINER` with
+`search_path=""`, `authenticated` holds EXECUTE and neither `anon` nor `PUBLIC`
+does, and the state the migration promised to leave alone is intact, which no
+probe of a new function can speak to: `teams` still holds five rows with no
+position on any of them, still carries exactly its two policies and its one non
+internal trigger, and `teams_sort_order_unique` is still the definition 0051's
+apply left. Its `expected_previous_version` stays `20260902150212` /
+`team_sort_order`, as every entry's does. No gate reads a SHA-256: the plan
+step recorded the file's SHA-256,
+`c1f5c567bb79cb93157258dd2bdc5aaaeb1f9d6563d7dd65f8488ea51c2de3cf`, computed
+like the recorded statement over the file with its trailing newline stripped,
+which is the shape the ledger stores; the raw file with its newline hashes to
+`8dba8423b145a5e5f6d65b89593ff804aee41b4569e6c47feb61c84007d26747`, which is a
+different byte string and is not what any gate or ledger row carries. The
+content-sharing deploy pin moved to `20260904174142` in the change that records
+this apply (see `EXPECTED_LAST_MIGRATION` below).
+
 `0051` was applied on 2 September 2026, by workflow run 33645893501, from the
 reviewed COACH-1A branch commit `855b0dc9fb0adfd7fa8e47cffe930638c2bf5759`
 (PR #223), three minutes before that branch merged. The workflow ran to the end
@@ -171,7 +209,7 @@ in one run: the pre-apply gate passed against a ledger still headed by
 the apply committed (the file's own `lock table`, DDL and self-verification ran
 inside the workflow's single transaction), and the post-apply gate passed. The
 hosted ledger assigned it version `20260902150212` under the name
-`team_sort_order`, and that is now the newest row: 46 rows, exactly one so
+`team_sort_order`, which was then the newest row: 46 rows, exactly one so
 named, the recorded statement matching the reviewed file, and the column, the
 index and the allow list entry all present. Read back afterwards, outside the
 gate: the index definition is the reviewed string, `audit_teams()` is still
@@ -180,8 +218,8 @@ its two policies with row level security enabled, and every one of the five
 hosted teams carries a null position, which is the "no backfill" claim on the
 live rows. Its `expected_previous_version` stays `20260823065041` /
 `bulk_delete_players`, as every entry's does. The content-sharing deploy pin
-moves to `20260902150212` in the change that records this apply (see
-`EXPECTED_LAST_MIGRATION` below).
+moved to `20260902150212` in the change that recorded that apply, and has since
+moved on to `20260904174142` (see `EXPECTED_LAST_MIGRATION` below).
 
 An earlier dispatch of the workflow that afternoon, run 33643220492, was
 submitted with the migration input left on the dropdown's first entry,
@@ -200,7 +238,7 @@ to the end in one run: the pre-apply gate passed against a ledger still headed
 by `20260817104226` / `spond_team_reconcile` with every object the migration
 creates absent, the apply committed, and the post-apply gate passed. The hosted
 ledger assigned it version `20260823065041` under the name
-`bulk_delete_players`, and that is now the newest row. Applying it destroyed
+`bulk_delete_players`, which was then the newest row. Applying it destroyed
 nothing: the migration creates four functions and deletes no row, and its entry
 point is destructive only when called.
 
@@ -336,15 +374,15 @@ database did not have. The workflow was therefore run against the reviewed
 
 ## Reviewed, registered, not yet applied
 
-`0052_atomic_team_order`. Registered against the head `0051`'s apply left,
-`20260902150212` / `team_sort_order`, confirmed live on 3 September 2026, with
-the idempotency key `otj:migration:0052_atomic_team_order`. It waits here for
-the human production apply. What it does is below.
+Nothing. Every registered migration has been applied, and the hosted head is
+`20260904174142` / `atomic_team_order`.
 
 `0051_team_sort_order` sat here between its review and its apply on 2 September
-2026 and is now in the applied table above. Each migration after it is numbered
-and registered against the head the previous apply left, at its own review, and
-only if nothing else has applied first.
+2026, and `0052_atomic_team_order` between its review and its apply on
+4 September 2026; both are in the applied table above. Each migration after
+them is numbered and registered against the head the previous apply left, at
+its own review, read live from the ledger rather than inferred from the highest
+file on disk, and only if nothing else has applied first.
 
 ## What `0051` does, kept for reference
 
@@ -577,7 +615,9 @@ would mean suppressing, deferring or bypassing the trigger, each a larger and
 more dangerous change to the audit boundary than the noise it would save.
 
 Registered against `20260902150212` / `team_sort_order` with the idempotency key
-`otj:migration:0052_atomic_team_order`. Its three probes are the function
+`otj:migration:0052_atomic_team_order`, and applied on 4 September 2026 at
+hosted version `20260904174142` (see the apply record above). Its three probes
+are the function
 resolving through `to_regprocedure` (never a textual signature cast, for the
 reason 0049's review found: `has_function_privilege` raises `42883` for a name
 that does not resolve, so it could not return false in the state the PRE gate
@@ -804,17 +844,17 @@ Until that lands, the content-sharing Edge Function deploy workflow fails
 closed on its own ledger gate. That is intended: it is far safer than a check
 that passes regardless.
 
-**Reconciled.** `EXPECTED_LAST_MIGRATION` is `20260902150212`
-(`0051_team_sort_order`), matching the hosted head applied on 2 September
+**Reconciled.** `EXPECTED_LAST_MIGRATION` is `20260904174142`
+(`0052_atomic_team_order`), matching the hosted head applied on 4 September
 2026. Each move is its own reviewed change rather than being folded into
 anything else, and the gate fails closed between an apply and its
 reconciliation, which is intended. The apply evidence behind the move is
 recorded in `docs/operations/content-sharing-edge-function-deploy.md`.
 
-`0052_atomic_team_order` is registered against that same head and not yet
-applied, so the pin is current. When it applies, the version its apply stamps
-goes through this same route, in its own pull request, before the
-content-sharing deploy workflow will run again.
+Nothing is registered and unapplied behind it, so the pin is current. When the
+next migration applies, the version its apply stamps goes through this same
+route, in its own pull request, before the content-sharing deploy workflow
+will run again.
 
 ## Writing an object probe
 
