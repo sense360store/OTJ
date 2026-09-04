@@ -101,6 +101,30 @@ function between(src: string, from: string, to: string): string {
   return src.slice(start, end)
 }
 
+/* Every `.update(...)`, `.upsert(...)` and `.insert(...)` call, with its
+   ARGUMENT LIST read to the balanced closing bracket.
+
+   A regex that stops at the first `}` cannot do this: the ordinary Supabase
+   array form `.insert([{ ... }])` never opens with `{`, and a payload built
+   by a `.map(...)` closes its brace long before the call ends. Both are
+   reintroductions of the client side write, so both have to be visible. */
+function writeCallArguments(code: string): { method: string; args: string }[] {
+  const out: { method: string; args: string }[] = []
+  const call = /\.(update|upsert|insert)\s*\(/g
+  let m: RegExpExecArray | null
+  while ((m = call.exec(code)) !== null) {
+    let depth = 1
+    let i = m.index + m[0].length
+    for (; i < code.length && depth > 0; i += 1) {
+      const c = code[i]
+      if (c === '(' || c === '[' || c === '{') depth += 1
+      else if (c === ')' || c === ']' || c === '}') depth -= 1
+    }
+    out.push({ method: m[1], args: code.slice(m.index + m[0].length, i - 1) })
+  }
+  return out
+}
+
 function applicationSources(): string[] {
   const out: string[] = []
   for (const root of [SRC, FUNCTIONS]) {
@@ -155,25 +179,43 @@ describe('the teams read carries the column and keeps the display order', () => 
     // or a retry or for a single row, reopens exactly that race, and it would
     // do so silently: every individual write still succeeds.
     //
-    // Every application source is swept, not just this file, because the
-    // realistic reintroduction is a helper somewhere else that "just fixes
-    // one position".
+    // The whole ARGUMENT LIST of each write call is read, not just an object
+    // literal opening immediately after the bracket. The first version of
+    // this matched /\.update\(\s*\{/, which the ordinary Supabase array forms
+    // walk straight past: `.insert([{ sort_order: 1 }])` and
+    // `.upsert([{ sortOrder: 1 }])` are exactly the reintroduction this test
+    // exists to stop, and both passed it. Balanced brackets rather than a
+    // wider regex, so a nested call or a spread cannot hide a key either.
     const offenders: string[] = []
     for (const rel of applicationSources()) {
       const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
-      // An update whose payload names sort_order, in either spelling, on any
-      // table. `.update({ sort_order: ... })` and `.update({ sortOrder })`
-      // alike.
-      for (const m of code.matchAll(/\.update\(\s*\{([^}]*)\}/g)) {
-        if (/\bsort_?[Oo]rder\b/.test(m[1])) offenders.push(`${rel}: .update({${m[1].trim()}})`)
-      }
-      // An upsert or an insert carrying the column is the same write wearing
-      // another name.
-      for (const m of code.matchAll(/\.(upsert|insert)\(\s*\{([^}]*)\}/g)) {
-        if (/\bsort_?[Oo]rder\b/.test(m[2])) offenders.push(`${rel}: .${m[1]}({${m[2].trim()}})`)
+      for (const call of writeCallArguments(code)) {
+        if (/\bsort_?[Oo]rder\b\s*:/.test(call.args)) offenders.push(`${rel}: .${call.method}(${call.args.trim()})`)
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it('that sweep catches the array forms, the nested forms and the aliases', () => {
+    // A tripwire whose matcher is wrong is worse than no tripwire, so the
+    // matcher is driven over the shapes a reintroduction would actually take.
+    const caught = (code: string) =>
+      writeCallArguments(code).some((c) => /\bsort_?[Oo]rder\b\s*:/.test(c.args))
+
+    expect(caught("supabase.from('teams').update({ sort_order: 1 }).eq('id', id)")).toBe(true)
+    expect(caught("supabase.from('teams').insert([{ sort_order: 1 }])")).toBe(true)
+    expect(caught("supabase.from('teams').upsert([{ sortOrder: 1 }])")).toBe(true)
+    expect(caught("supabase.from('teams').upsert([{ id, name }, { id, sort_order: 2 }])")).toBe(true)
+    expect(caught("supabase.from('teams').update({ ...rest, sort_order: n })")).toBe(true)
+    expect(caught("supabase.from('teams').update(\n  { sort_order: null },\n)")).toBe(true)
+    expect(caught("supabase.from('teams').update(rows.map((r) => ({ sort_order: r.n })))")).toBe(true)
+
+    // And does not fire on the writes this screen legitimately makes.
+    expect(caught("supabase.from('teams').update({ name }).eq('id', id)")).toBe(false)
+    expect(caught("supabase.from('teams').update({ bib_colour: c }).eq('id', id)")).toBe(false)
+    expect(caught("supabase.rpc('set_team_order', teamOrderRequest(ids, expected))")).toBe(false)
+    // A local variable named sortOrder is not a write payload.
+    expect(caught("const sortOrder = 1; supabase.from('teams').update({ name })")).toBe(false)
   })
 
   it('the save is ONE rpc call to set_team_order, carrying the two aligned arrays', () => {
@@ -321,10 +363,14 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(hook.indexOf('onError:')).toBeLessThan(hook.indexOf('onSettled:'))
     const screen = withoutComments(read('routes/AdminTeams.tsx'))
     expect(screen).toMatch(/useSaveTeamOrder\(\{/)
-    // A failure that is not a refused concurrency keeps the arrangement
-    // that was SENT as the draft, whether or not one existed, so a no
-    // move save on an incomplete club never adopts a half written order.
-    expect(screen).toMatch(/else setDraft\(\{ ids: vars\.orderedIds, expected: null \}\)/)
+    // A failure that is not a refused concurrency keeps BOTH the
+    // arrangement that was sent AND the snapshot it was drawn from.
+    // Clearing the snapshot lets a read landing in that window be adopted
+    // wholesale, so another admin's order becomes this screen's expected
+    // and the next press overwrites it. A kept snapshot can only cause a
+    // refusal or a drop; a cleared one can cause a silent overwrite.
+    expect(screen).toMatch(/else setDraft\(\{ ids: vars\.orderedIds, expected: vars\.expected \}\)/)
+    expect(screen).not.toMatch(/expected: null \}\)/)
     expect(screen).not.toMatch(/d === null \? null/)
     // Two branches only, because the function is atomic: another admin's
     // order (nothing written, drop the draft) and everything else (nothing
@@ -332,7 +378,7 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     // that was sent and clear the snapshot). A third branch keeping the
     // snapshot would be a claim about what is stored that this client
     // cannot make.
-    expect(screen).toMatch(/if \(_error instanceof TeamOrderChanged\) setDraft\(null\)/)
+    expect(screen).toMatch(/if \(error instanceof TeamOrderChanged\) setDraft\(null\)/)
     expect(screen).not.toMatch(/TeamOrderReadFailed/)
     // The mutate call carries the variables and nothing else.
     expect(screen).toMatch(/save\.mutate\(\{ orderedIds: draftIds, expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)

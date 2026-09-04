@@ -380,30 +380,45 @@ export function AdminTeams() {
       setSavedAs(intended)
       setDraft({ ids: vars.orderedIds, expected: intended })
     },
-    /* Two branches, because the RPC leaves only two situations.
+    /* Two branches, and the SNAPSHOT IS ALWAYS KEPT.
 
        TeamOrderChanged is another admin's order landing under the draft.
-       The function refuses BEFORE writing, so nothing was stored, and the
+       The function refuses before writing, so nothing was stored, and the
        draft is dropped: the refetched truth is what the list shows and the
        refusal says so.
 
-       Everything else keeps the arrangement that was SENT as the draft
+       Every other failure keeps the arrangement that was SENT as the draft
        (made into one if the club accepted the order shown without a move,
-       so a no-move save that fails never adopts an order nobody chose) and
-       clears the snapshot, so the next read is adopted as it comes and one
-       more press finishes it. That covers a refused request and a
-       permission refusal, where nothing was written, and a transport
-       failure, where this client cannot know whether the call reached the
-       server. Keeping the snapshot in that last case would be a claim
-       about what is stored that nobody here can make, so it is not made;
-       the invalidation runs on settle either way and the refreshed list is
-       the answer.
+       so a no-move save that fails never adopts an order nobody chose) AND
+       keeps `vars.expected`, the positions the draft was drawn from.
+
+       Clearing that snapshot was a defect, and the reasoning that produced
+       it was "nothing was written, so the next read can be adopted as it
+       comes". The missing half is that nothing was written BY US says
+       nothing about what anybody else wrote. With the snapshot cleared, a
+       read landing in that window is adopted wholesale, so another admin's
+       order becomes this screen's expected snapshot while the older draft
+       is still on screen, and the next press sends an expected that matches
+       what is stored: the function accepts, and their order is silently
+       overwritten. That is the same class of defect the fresh read branch
+       used to exist to prevent.
+
+       Keeping it is safe in every case, which is why there is no third
+       branch for the transport failure whose outcome this client cannot
+       know. If the call never landed and nothing else changed, the read
+       agrees with the snapshot and the arrangement survives for one more
+       press. If somebody else changed the order, the read disagrees and the
+       draft is dropped. If the call DID land, the read disagrees too, and
+       the draft is dropped: the wording is then a little generous to
+       another admin, but the outcome is a refreshed list rather than an
+       overwrite. A kept snapshot can only ever cause a refusal or a drop;
+       a cleared one can cause a silent overwrite.
 
        There is no branch for a half written order, because the function
        cannot leave one. */
-    onError: (_error, vars) => {
-      if (_error instanceof TeamOrderChanged) setDraft(null)
-      else setDraft({ ids: vars.orderedIds, expected: null })
+    onError: (error, vars) => {
+      if (error instanceof TeamOrderChanged) setDraft(null)
+      else setDraft({ ids: vars.orderedIds, expected: vars.expected })
     },
   })
   const [name, setName] = useState('')
