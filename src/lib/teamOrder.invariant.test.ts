@@ -37,6 +37,18 @@
 // read there under another name, and a mention after a URL on the same line,
 // which the comment stripping below leaves on the scanned side only up to
 // the colon.
+//
+// What these DO NOT do any more is parse a write payload. An earlier version
+// sliced each write call to its balanced closing bracket and looked inside,
+// and it failed OPEN five separate times on delimiters its hand rolled
+// tokenizer did not know (a bracket inside a string, a regex body, a quoted
+// computed key, a postfix `++` before a division, a parenthesized computed
+// key). Each fix taught it one more thing about JavaScript and acquired its
+// own edge. The property is now enforced where it needs no parsing: outside
+// the three reviewed consumers the column may not be NAMED at all, two of
+// those three hold no client and make no write call, and in the third every
+// line naming the column is pinned. A write in any syntax is a line that is
+// not on the list, so the syntax stopped mattering.
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -115,98 +127,6 @@ function between(src: string, from: string, to: string): string {
    shifts. A template's `${...}` is blanked with the rest of it: an
    interpolation is not where a write payload's keys live, and treating the
    whole literal as opaque is the conservative choice. */
-function withoutLiterals(code: string): string {
-  const out = code.split('')
-  // Whether a `/` opens a REGEX or divides. A regex can only start where a
-  // value can, so the last thing before it decides: an operator, a comma, an
-  // opening bracket, a colon or the start of the file means a regex, while an
-  // identifier, a number, a closing bracket or a string means division. This
-  // matters because `.update({ name: /\)\)/.source, sort_order: 1 })` is a
-  // legal payload whose two parentheses drive the bracket count to zero and
-  // end the slice before the key. Comments are already gone by here.
-  const startsValue = (at: number): boolean => {
-    let k = at - 1
-    while (k >= 0 && /\s/.test(out[k])) k -= 1
-    return k < 0 || /[([{,;:=!&|?+\-*%~^<>]/.test(out[k])
-  }
-  let i = 0
-  while (i < code.length) {
-    const c = code[i]
-    if (c === "'" || c === '"' || c === '`') {
-      const open = i
-      i += 1
-      while (i < code.length && code[i] !== c) {
-        i += code[i] === '\\' ? 2 : 1
-      }
-      const close = i
-      i += 1
-      // A QUOTED PROPERTY KEY is code, not text: `{ 'sort_order': 1 }` and
-      // `{ ['sort_order']: 1 }` are the same write as `{ sort_order: 1 }`,
-      // and blanking either would hide it from the sweep. A string is a key
-      // when what follows it is a colon, or a closing square bracket and then
-      // a colon; anything else is a value and is blanked. The second form is
-      // narrow on purpose: keeping every string that a `]` follows would keep
-      // the last element of every array, so `{ tags: ['sort_order'] }` would
-      // read as a write of the column.
-      let j = i
-      while (j < code.length && /\s/.test(code[j])) j += 1
-      if (code[j] === ']') {
-        j += 1
-        while (j < code.length && /\s/.test(code[j])) j += 1
-      }
-      if (code[j] === ':') continue
-      for (let k = open + 1; k < close && k < code.length; k += 1) out[k] = ' '
-      continue
-    }
-    if (c === '/' && startsValue(i)) {
-      const open = i
-      i += 1
-      let inClass = false
-      while (i < code.length && (inClass || code[i] !== '/')) {
-        if (code[i] === '\\') i += 2
-        else {
-          if (code[i] === '[') inClass = true
-          else if (code[i] === ']') inClass = false
-          i += 1
-        }
-      }
-      const close = i
-      i += 1
-      for (let k = open + 1; k < close && k < code.length; k += 1) out[k] = ' '
-      continue
-    }
-    i += 1
-  }
-  return out.join('')
-}
-
-/* Every `.update(...)`, `.upsert(...)` and `.insert(...)` call, with its
-   ARGUMENT LIST read to the balanced closing bracket.
-
-   A regex that stops at the first `}` cannot do this: the ordinary Supabase
-   array form `.insert([{ ... }])` never opens with `{`, and a payload built
-   by a `.map(...)` closes its brace long before the call ends. Both are
-   reintroductions of the client side write, so both have to be visible.
-
-   Balancing runs over the literal-blanked source above, and the slice is
-   taken from THAT, so a key is only ever read from real code. */
-function writeCallArguments(code: string): { method: string; args: string }[] {
-  const blanked = withoutLiterals(code)
-  const out: { method: string; args: string }[] = []
-  const call = /\.(update|upsert|insert)\s*\(/g
-  let m: RegExpExecArray | null
-  while ((m = call.exec(blanked)) !== null) {
-    let depth = 1
-    let i = m.index + m[0].length
-    for (; i < blanked.length && depth > 0; i += 1) {
-      const c = blanked[i]
-      if (c === '(' || c === '[' || c === '{') depth += 1
-      else if (c === ')' || c === ']' || c === '}') depth -= 1
-    }
-    out.push({ method: m[1], args: blanked.slice(m.index + m[0].length, i - 1) })
-  }
-  return out
-}
 
 /* The column named ANYWHERE in a write payload, in either spelling.
 
@@ -266,86 +186,109 @@ describe('the teams read carries the column and keeps the display order', () => 
     expect(shape![1]).toMatch(/sortOrder: number \| null/)
   })
 
-  it('NO client code writes sort_order: the RPC is the only path, with no fallback', () => {
+  it('NO client code writes sort_order, and it is unwritable by construction rather than by scanning', () => {
     // The whole point of 0052. A whole order written from the browser cannot
     // be a transaction, so two admins moving disjoint rows leave an order
     // neither submitted. A direct write reintroduced anywhere, as a fallback
     // or a retry or for a single row, reopens exactly that race, and it would
     // do so silently: every individual write still succeeds.
     //
-    // The whole ARGUMENT LIST of each write call is read, not just an object
-    // literal opening immediately after the bracket. The first version of
-    // this matched /\.update\(\s*\{/, which the ordinary Supabase array forms
-    // walk straight past: `.insert([{ sort_order: 1 }])` and
-    // `.upsert([{ sortOrder: 1 }])` are exactly the reintroduction this test
-    // exists to stop, and both passed it. Balanced brackets rather than a
-    // wider regex, so a nested call or a spread cannot hide a key either.
-    const offenders: string[] = []
-    for (const rel of applicationSources()) {
+    // THIS USED TO READ THE WRITE PAYLOADS, and that was the wrong
+    // instrument. It sliced each `.update`/`.upsert`/`.insert` call to its
+    // balanced closing bracket and looked for the column inside. Every
+    // version of that slicer failed OPEN on a delimiter it did not know:
+    // a bracket inside a string, then a regex body, then a computed quoted
+    // key, then a postfix `++` before a division, then a parenthesized
+    // computed key. Five evasions in three review rounds, each fixed by
+    // teaching a hand rolled tokenizer one more thing about JavaScript, and
+    // each fix acquiring its own edge. A tripwire whose matcher is wrong is
+    // worse than no tripwire, because it reads as coverage, and no amount of
+    // hardening makes "parse the payload" fail closed.
+    //
+    // So the payload is no longer read at all. The property is enforced
+    // where it needs no parsing:
+    //
+    //   * outside the three reviewed consumers, ANY mention of the column is
+    //     a finding already (the sweep below), so a write cannot be
+    //     introduced anywhere else in any syntax;
+    //   * two of those three cannot write anything: they hold no Supabase
+    //     client and make no write call;
+    //   * which leaves queries.ts as the only file where a write call and
+    //     the column name can coexist, and EVERY line there naming the
+    //     column is pinned. A write in any syntax, computed, quoted,
+    //     interpolated or hidden behind a regex, is a line that is not on
+    //     this list.
+    //
+    // Fails closed: the way to add one is to add it here, in a change
+    // somebody reviews, which is the gate this file exists to be.
+    for (const rel of ['src/lib/data.ts', 'src/lib/teamOrder.ts']) {
       const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
-      for (const call of writeCallArguments(code)) {
-        if (NAMES_SORT_ORDER.test(call.args)) offenders.push(`${rel}: .${call.method}(${call.args.trim()})`)
-      }
+      expect(code, `${rel} holds a Supabase client`).not.toMatch(/supabase/)
+      expect(code, `${rel} makes a write call`).not.toMatch(/\.(update|upsert|insert)\s*\(/)
     }
-    expect(offenders).toEqual([])
+    const named = withoutComments(read('lib/queries.ts'))
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => NAMES_SORT_ORDER.test(l))
+    expect(named).toEqual([
+      // The row shape the teams read returns.
+      'sort_order: number | null',
+      // The read's explicit column list. A read, and the only place the
+      // column is named in a PostgREST call at all.
+      "const TEAM_COLS = 'id, club_id, name, bib_colour, created_at, sort_order'",
+      // Row to model, on the way in.
+      'return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null, sortOrder: r.sort_order ?? null }',
+      // The rows set_team_order returns, and their mapper. Also reads: the
+      // function returns what it stored and this client only displays it.
+      'type TeamPositionRow = { id: string; sort_order: number | null }',
+      'const toTeamPosition = (r: TeamPositionRow): TeamPosition => ({ id: r.id, sortOrder: r.sort_order ?? null })',
+    ])
   })
 
-  it('that sweep catches the array forms, the nested forms and the aliases', () => {
-    // A tripwire whose matcher is wrong is worse than no tripwire, so the
-    // matcher is driven over the shapes a reintroduction would actually take.
-    const caught = (code: string) =>
-      writeCallArguments(code).some((c) => NAMES_SORT_ORDER.test(c.args))
+  it('that pinning catches every write shape, including the five that evaded the payload scanner', () => {
+    // Driven over the shapes a reintroduction would take, as text added to
+    // the module. Each is a line naming the column that is not on the list,
+    // so the syntax it uses is irrelevant, which is the property the scanner
+    // could never have.
+    const pinned = [
+      'sort_order: number | null',
+      "const TEAM_COLS = 'id, club_id, name, bib_colour, created_at, sort_order'",
+      'return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null, sortOrder: r.sort_order ?? null }',
+      'type TeamPositionRow = { id: string; sort_order: number | null }',
+      'const toTeamPosition = (r: TeamPositionRow): TeamPosition => ({ id: r.id, sortOrder: r.sort_order ?? null })',
+    ]
+    const caught = (line: string) => NAMES_SORT_ORDER.test(line) && !pinned.includes(line.trim())
 
     expect(caught("supabase.from('teams').update({ sort_order: 1 }).eq('id', id)")).toBe(true)
     expect(caught("supabase.from('teams').insert([{ sort_order: 1 }])")).toBe(true)
     expect(caught("supabase.from('teams').upsert([{ sortOrder: 1 }])")).toBe(true)
-    expect(caught("supabase.from('teams').upsert([{ id, name }, { id, sort_order: 2 }])")).toBe(true)
     expect(caught("supabase.from('teams').update({ ...rest, sort_order: n })")).toBe(true)
-    expect(caught("supabase.from('teams').update(\n  { sort_order: null },\n)")).toBe(true)
     expect(caught("supabase.from('teams').update(rows.map((r) => ({ sort_order: r.n })))")).toBe(true)
+    expect(caught("supabase.from('teams').update({ sort_order })")).toBe(true)
+    // The five that walked past the payload scanner, in the order they were
+    // found. Each is now caught for a reason that has nothing to do with
+    // parsing: it is a new line naming the column.
+    expect(caught('supabase.from("teams").update({ label: "))", sort_order: 1 })')).toBe(true)
+    expect(caught("supabase.from('teams').update({ 'sort_order': 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ name: /\\)\\)/.source, sort_order: 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ ['sort_order']: 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ ratio: a++ / b, sort_order: 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ [('sort_order')]: 1 })")).toBe(true)
+    // A payload split across lines is caught on the line that names it.
+    expect(caught('  sort_order: n,')).toBe(true)
 
-    // And does not fire on the writes this screen legitimately makes.
+    // And the writes this data layer legitimately makes are silent, because
+    // they do not name the column at all.
     expect(caught("supabase.from('teams').update({ name }).eq('id', id)")).toBe(false)
     expect(caught("supabase.from('teams').update({ bib_colour: c }).eq('id', id)")).toBe(false)
     expect(caught("supabase.rpc('set_team_order', teamOrderRequest(ids, expected))")).toBe(false)
-    // A local variable named sortOrder is not a write payload.
-    expect(caught("const sortOrder = 1; supabase.from('teams').update({ name })")).toBe(false)
-
-    // A closing bracket inside a STRING must not end the slice early. Without
-    // literal blanking this one fails OPEN: the depth reaches zero inside the
-    // string and the key is never seen.
-    expect(caught('supabase.from("teams").update({ label: "))", sort_order: 1 })')).toBe(true)
-    expect(caught("supabase.from('teams').update({ label: '}}', sortOrder: 1 })")).toBe(true)
-
-    // The two ordinary property forms that carry no colon.
-    expect(caught("supabase.from('teams').update({ sort_order })")).toBe(true)
-    expect(caught("supabase.from('teams').update({ 'sort_order': 1 })")).toBe(true)
-    expect(caught("supabase.from('teams').update({ \"sortOrder\": 1 })")).toBe(true)
-    expect(caught("supabase.from('teams').update({ name, sortOrder })")).toBe(true)
-
-    // The computed quoted key. `['sort_order']:` is the same write; the
-    // string is followed by `]` rather than by a colon, so the key rule has
-    // to look past one bracket.
-    expect(caught("supabase.from('teams').update({ ['sort_order']: 1 })")).toBe(true)
-    expect(caught("supabase.from('teams').upsert([{ ['sortOrder']: n }])")).toBe(true)
-
-    // A REGEX whose body carries brackets must not end the slice. Without
-    // tokenizing it this one fails OPEN, exactly like the string case: the
-    // two parentheses drive the depth to zero before the key is reached.
-    expect(caught('supabase.from("teams").update({ name: /\\)\\)/.source, sort_order: 1 })')).toBe(true)
-    expect(caught("supabase.from('teams').update({ name: /[)}]/.source, sortOrder: 1 })")).toBe(true)
-    // Division is not a regex, and treating it as one would swallow the rest
-    // of the call and hide whatever followed.
-    expect(caught("supabase.from('teams').update({ ratio: a / b, sort_order: 1 })")).toBe(true)
-    expect(caught("supabase.from('teams').update({ ratio: a / b, name })")).toBe(false)
-
-    // And the column named only inside a string, or only inside a regex, is
-    // not a write of it.
-    expect(caught("supabase.from('teams').update({ name: 'sort_order' })")).toBe(false)
-    expect(caught("supabase.from('teams').update({ ok: /sort_order/.test(s) })")).toBe(false)
-    // Nor is an ordinary array of strings that happens to carry the name:
-    // the last element is followed by `]`, which must not read as a key.
-    expect(caught("supabase.from('teams').update({ tags: ['sort_order'] })")).toBe(false)
+    // The pinned reads themselves, which must not fire or the list would be
+    // unsatisfiable.
+    for (const line of pinned) expect(caught(line)).toBe(false)
+    // The names that merely contain the column's, which carry no word
+    // boundary before `sort` and are a constraint and an RPC parameter.
+    expect(caught('  p_expected_sort_orders: (number | null)[]')).toBe(false)
+    expect(caught('teams_sort_order_unique')).toBe(false)
   })
 
   it('the save is ONE rpc call to set_team_order, carrying the two aligned arrays', () => {
