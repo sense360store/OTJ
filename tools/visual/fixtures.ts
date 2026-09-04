@@ -1597,8 +1597,9 @@ export const adminStore = {
     adminChanged()
   },
   // The order as the product stores it after a successful save: 1..N in the
-  // order given. The product's two phases are its own business (driven in
-  // src/lib/teamOrder.test.ts); what the screen sees afterwards is this.
+  // order given. How it gets there is the server's business: the product
+  // sends one set_team_order call and the function writes the whole order or
+  // nothing. What the screen sees afterwards is this.
   saveTeamOrder(orderedIds: string[]) {
     const position = new Map(orderedIds.map((id, i) => [id, i + 1]))
     adminTeams = adminTeams.map((t) => (position.has(t.id) ? { ...t, sortOrder: position.get(t.id) as number } : t))

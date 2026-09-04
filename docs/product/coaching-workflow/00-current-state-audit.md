@@ -604,11 +604,12 @@ this section is not read as clearing the whole duration seam.
 
 ## 19. Teams: what exists, and what an ability order would need
 
-**Superseded by COACH-1 (#223, applied 2 September 2026, and the COACH-1B
-frontend PR).** `teams` now carries `sort_order`, the Teams screen offers Move
-up and Move down with one Save team order, and `src/lib/teamOrder.ts` reads the
-column; the grouping suggestion is still handed no order. What follows is what
-was captured.
+**Superseded by COACH-1 (#223, applied 2 September 2026; #226, applied
+4 September 2026; and the COACH-1B frontend PR).** `teams` now carries
+`sort_order`, the Teams screen offers Move up and Move down with one Save team
+order, that Save is one `set_team_order` call, and `src/lib/teamOrder.ts` holds
+the pure rules; the grouping suggestion is still handed no order. What follows
+is what was captured.
 
 `public.teams` (`0002_teams_roles.sql:23`, extended by `0032` and `0044`) carried
 exactly:

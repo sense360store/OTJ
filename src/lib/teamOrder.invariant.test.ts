@@ -83,6 +83,24 @@ function withoutComments(source: string): string {
     .replace(/(^|[^:])\/\/.*$/gm, '$1')
 }
 
+/* Slice between two anchors, and FAIL when either is absent.
+
+   This exists because the obvious version was wrong in a way that kept
+   passing: the slices below run over `withoutComments(...)`, and they used to
+   end at `'// ---- Spond RSVP context'`, a COMMENT, which stripping has
+   already removed. `indexOf` returned -1, `slice(start, -1)` ran to the end of
+   the file, and every positive assertion still matched something somewhere in
+   queries.ts. A negative assertion is what exposed it. Anchors must therefore
+   be executable syntax, and a missing one must be an error rather than a
+   wider slice. */
+function between(src: string, from: string, to: string): string {
+  const start = src.indexOf(from)
+  expect(start, `anchor not found: ${from}`).toBeGreaterThan(-1)
+  const end = src.indexOf(to, start + from.length)
+  expect(end, `anchor not found: ${to}`).toBeGreaterThan(-1)
+  return src.slice(start, end)
+}
+
 function applicationSources(): string[] {
   const out: string[] = []
   for (const root of [SRC, FUNCTIONS]) {
@@ -130,35 +148,80 @@ describe('the teams read carries the column and keeps the display order', () => 
     expect(shape![1]).toMatch(/sortOrder: number \| null/)
   })
 
-  it('writes only sort_order from the save, never a name, a bib or any other team field', () => {
-    const src = withoutComments(read('lib/queries.ts'))
-    const store = src.slice(src.indexOf('const teamOrderStore'), src.indexOf('export function useSaveTeamOrder'))
-    expect(store.length).toBeGreaterThan(0)
-    // Every update in the store sets sort_order and nothing else.
-    const updates = [...store.matchAll(/\.update\(\{([^}]*)\}\)/g)].map((m) => m[1].trim())
-    expect(updates.length).toBe(2)
-    // Exactly the two payloads: a null for the clearing phase and the
-    // position for the placing phase. A second key in either would be a
-    // second field the save writes.
-    expect(updates.sort()).toEqual(['sort_order: null', 'sort_order: position'])
-    for (const u of updates) expect(u).toMatch(/^sort_order: (null|position)$/)
-    expect(store).not.toMatch(/\bname\b|bib_colour|club_id|created_at|upsert|insert\(|delete\(/)
+  it('NO client code writes sort_order: the RPC is the only path, with no fallback', () => {
+    // The whole point of 0052. A whole order written from the browser cannot
+    // be a transaction, so two admins moving disjoint rows leave an order
+    // neither submitted. A direct write reintroduced anywhere, as a fallback
+    // or a retry or for a single row, reopens exactly that race, and it would
+    // do so silently: every individual write still succeeds.
+    //
+    // Every application source is swept, not just this file, because the
+    // realistic reintroduction is a helper somewhere else that "just fixes
+    // one position".
+    const offenders: string[] = []
+    for (const rel of applicationSources()) {
+      const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
+      // An update whose payload names sort_order, in either spelling, on any
+      // table. `.update({ sort_order: ... })` and `.update({ sortOrder })`
+      // alike.
+      for (const m of code.matchAll(/\.update\(\s*\{([^}]*)\}/g)) {
+        if (/\bsort_?[Oo]rder\b/.test(m[1])) offenders.push(`${rel}: .update({${m[1].trim()}})`)
+      }
+      // An upsert or an insert carrying the column is the same write wearing
+      // another name.
+      for (const m of code.matchAll(/\.(upsert|insert)\(\s*\{([^}]*)\}/g)) {
+        if (/\bsort_?[Oo]rder\b/.test(m[2])) offenders.push(`${rel}: .${m[1]}({${m[2].trim()}})`)
+      }
+    }
+    expect(offenders).toEqual([])
   })
 
-  it('every write is a compare and set: a clear on the position the read saw, a placement on null', () => {
-    // Two admins can both read before either writes; without these
-    // conditions the second to finish would overwrite the first, and the
-    // unique index would allow it because the result is a valid
-    // permutation.
+  it('the save is ONE rpc call to set_team_order, carrying the two aligned arrays', () => {
     const src = withoutComments(read('lib/queries.ts'))
-    const store = src.slice(src.indexOf('const teamOrderStore'), src.indexOf('export function useSaveTeamOrder'))
-    const clear = /\.update\(\{ sort_order: null \}\)\s*\.eq\('id', id\)\s*\.eq\('sort_order', from\)\s*\.select\('id, sort_order'\)/
-    const place = /\.update\(\{ sort_order: position \}\)\s*\.eq\('id', id\)\s*\.is\('sort_order', null\)\s*\.select\('id, sort_order'\)/
-    expect(store).toMatch(clear)
-    expect(store).toMatch(place)
-    // One row per write, never a set: an `.in(` would clear rows this
-    // save had not compared.
-    expect(store).not.toMatch(/\.in\(/)
+    const hook = between(src, 'export function useSaveTeamOrder', 'export function isMissingRelation')
+    expect(hook.length).toBeGreaterThan(0)
+    // Exactly one rpc call in the save, and it is this function.
+    const calls = [...hook.matchAll(/supabase\.rpc\(\s*'([^']+)'/g)].map((m) => m[1])
+    expect(calls).toEqual(['set_team_order'])
+    // The request is built by the pure helper, so the alignment of the two
+    // arrays has one implementation and one set of tests. Spelling the
+    // object out at the call site is how they drift apart.
+    expect(hook).toMatch(/supabase\.rpc\('set_team_order', teamOrderRequest\(orderedIds, expected\)\)/)
+    expect(hook).not.toMatch(/p_team_ids:/)
+    // No clear-then-place phase survives anywhere in the module.
+    expect(src).not.toMatch(/clearPosition|setPosition|readPositions|teamOrderStore/)
+  })
+
+  it('the stale refusal is matched on the DETAIL token, never on P0001 alone', () => {
+    // P0001 also covers every malformed request the function refuses, so a
+    // client keying on the code would say "another admin saved a different
+    // order" for its own defect, and would say nothing when an admin really
+    // was overtaken. Both wrong answers render a plausible sentence, which is
+    // why this is pinned in the source as well as behaviourally.
+    const src = withoutComments(read('lib/queries.ts'))
+    const fn = between(src, 'export function teamOrderError', 'export interface SaveTeamOrderVariables')
+    expect(fn.length).toBeGreaterThan(0)
+    // The token appears, and every branch that returns the concurrency error
+    // tests it.
+    expect(fn).toMatch(/details === 'stale_order'/)
+    for (const line of fn.split('\n')) {
+      if (/return new TeamOrderChanged/.test(line)) {
+        expect(line, 'a stale branch that does not test the token').toMatch(/stale_order/)
+      }
+    }
+    // 42501 stays its own answer rather than folding into either.
+    expect(fn).toMatch(/code === '42501'/)
+    expect(fn).toMatch(/TeamOrderNotPermitted/)
+  })
+
+  it('nothing retries the save on its own', () => {
+    // A retry of a stale refusal can never succeed: the snapshot it carries
+    // is the stale one. A retry of anything else would write twice.
+    const src = withoutComments(read('lib/queries.ts'))
+    const hook = between(src, 'export function useSaveTeamOrder', 'export function isMissingRelation')
+    expect(hook).not.toMatch(/\bretry\b/)
+    const screen = withoutComments(read('routes/AdminTeams.tsx'))
+    expect(screen).not.toMatch(/save\.mutate\([\s\S]{0,400}save\.mutate\(/)
   })
 
   it('the teams read itself never touches the field: the club order is a separate answer', () => {
@@ -237,7 +300,7 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
       // (`./teamOrder` beside it, `../lib/teamOrder` from a route, and the
       // deeper relative forms a component or a hook would use), plus the
       // mutation and the helper's own names.
-      return /from '(\.\.?\/)+(lib\/)?teamOrder'|useSaveTeamOrder|clubOrder\(|moveTeam\(|teamOrderWrites\(|saveTeamOrder\(/.test(code)
+      return /from '(\.\.?\/)+(lib\/)?teamOrder'|useSaveTeamOrder|clubOrder\(|moveTeam\(|teamOrderRequest\(/.test(code)
     })
     expect(offenders).toEqual([])
   })
@@ -250,7 +313,7 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     // against) goes through the hook's callbacks, and the flag that says a
     // read is awaited is armed before the write goes out.
     const src = withoutComments(read('lib/queries.ts'))
-    const hook = src.slice(src.indexOf('export function useSaveTeamOrder'), src.indexOf('// ---- Spond RSVP context'))
+    const hook = between(src, 'export function useSaveTeamOrder', 'export function isMissingRelation')
     expect(hook).toMatch(/onSuccess: \(_data, vars\) => callbacks\?\.onSuccess\?\.\(vars\)/)
     expect(hook).toMatch(/onError: \(error, vars\) => callbacks\?\.onError\?\.\(error, vars\)/)
     expect(hook).toMatch(/onSettled: \(\) => qc\.invalidateQueries\(\{ queryKey: \['teams'\] \}\)/)
@@ -263,12 +326,14 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     // move save on an incomplete club never adopts a half written order.
     expect(screen).toMatch(/else setDraft\(\{ ids: vars\.orderedIds, expected: null \}\)/)
     expect(screen).not.toMatch(/d === null \? null/)
-    // A failure on the fresh read wrote nothing, so the snapshot it carried
-    // is kept: a later read that differs is somebody else's change, not
-    // this save's, and must drop the draft rather than be adopted.
-    expect(screen).toMatch(
-      /else if \(error instanceof TeamOrderReadFailed\) setDraft\(\{ ids: vars\.orderedIds, expected: vars\.expected \}\)/,
-    )
+    // Two branches only, because the function is atomic: another admin's
+    // order (nothing written, drop the draft) and everything else (nothing
+    // written, or unknown for a transport failure, so keep the arrangement
+    // that was sent and clear the snapshot). A third branch keeping the
+    // snapshot would be a claim about what is stored that this client
+    // cannot make.
+    expect(screen).toMatch(/if \(_error instanceof TeamOrderChanged\) setDraft\(null\)/)
+    expect(screen).not.toMatch(/TeamOrderReadFailed/)
     // The mutate call carries the variables and nothing else.
     expect(screen).toMatch(/save\.mutate\(\{ orderedIds: draftIds, expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)
     expect(screen).not.toMatch(/save\.mutate\([^)]*onSuccess/)

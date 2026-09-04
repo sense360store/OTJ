@@ -45,7 +45,6 @@ import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import {
   TEAM_ORDER_CHANGED,
   TeamOrderChanged,
-  TeamOrderReadFailed,
   clubOrder,
   moveTeam,
   reconcileDraft,
@@ -381,23 +380,29 @@ export function AdminTeams() {
       setSavedAs(intended)
       setDraft({ ids: vars.orderedIds, expected: intended })
     },
-    // The club's teams or their positions changed under the draft: the
-    // draft is dropped so the refetched truth is what the list shows,
-    // and the refusal says so. A failure on the fresh read itself wrote
-    // nothing, so the snapshot the save carried is still true of what was
-    // read before and is KEPT: a later read that differs from it is
-    // somebody else's change and drops the draft, rather than being
-    // adopted as if this save had changed what is stored, which would let
-    // the retry pass the check and overwrite it. Any other failure may
-    // have written some rows: the arrangement that was SENT is kept as
-    // the draft, made into one if the club accepted the order shown
-    // without a move, so the list keeps showing what the admin accepted
-    // rather than adopting a half written order, one more press can
-    // finish it, and the next read is adopted as what it was drawn over
-    // rather than compared with a snapshot the save itself has outdated.
-    onError: (error, vars) => {
-      if (error instanceof TeamOrderChanged) setDraft(null)
-      else if (error instanceof TeamOrderReadFailed) setDraft({ ids: vars.orderedIds, expected: vars.expected })
+    /* Two branches, because the RPC leaves only two situations.
+
+       TeamOrderChanged is another admin's order landing under the draft.
+       The function refuses BEFORE writing, so nothing was stored, and the
+       draft is dropped: the refetched truth is what the list shows and the
+       refusal says so.
+
+       Everything else keeps the arrangement that was SENT as the draft
+       (made into one if the club accepted the order shown without a move,
+       so a no-move save that fails never adopts an order nobody chose) and
+       clears the snapshot, so the next read is adopted as it comes and one
+       more press finishes it. That covers a refused request and a
+       permission refusal, where nothing was written, and a transport
+       failure, where this client cannot know whether the call reached the
+       server. Keeping the snapshot in that last case would be a claim
+       about what is stored that nobody here can make, so it is not made;
+       the invalidation runs on settle either way and the refreshed list is
+       the answer.
+
+       There is no branch for a half written order, because the function
+       cannot leave one. */
+    onError: (_error, vars) => {
+      if (_error instanceof TeamOrderChanged) setDraft(null)
       else setDraft({ ids: vars.orderedIds, expected: null })
     },
   })

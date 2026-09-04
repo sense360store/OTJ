@@ -92,7 +92,7 @@ vi.mock('../context/SessionsContext', () => ({
 }))
 
 const { AdminTeams, BibColourField, DeleteTeamModal, TEAM_ORDER_COPY, TeamOrderStatus } = await import('./AdminTeams')
-const { TeamOrderChanged, TeamOrderRefused, saveFailureMessage } = await import('../lib/teamOrder')
+const { TeamOrderChanged, TeamOrderNotPermitted, TeamOrderRefused, saveFailureMessage } = await import('../lib/teamOrder')
 
 const page = (): string => renderToStaticMarkup(<AdminTeams />)
 
@@ -492,16 +492,31 @@ describe('Save team order is a checkpoint, offered when pressing it would state 
     expect(html).toMatch(/<div tabindex="-1" class="admin-note"><div[^>]*role="alert"/)
   })
 
-  it('writes one sentence per refusal, and a general one for anything else', () => {
+  it('writes one sentence per refusal, and says what is stored in each', () => {
+    // Every refusal the function raises happens BEFORE it writes, so each of
+    // these can state that nothing changed. The old wording reported how far
+    // a part written save had got; the RPC cannot leave one, so a sentence
+    // about partial progress would describe an impossible outcome.
     const changed = saveFailureMessage(new TeamOrderChanged())
     expect(changed).toBe(`Could not save the team order. ${new TeamOrderChanged().message}`)
-    const refused = saveFailureMessage(new TeamOrderRefused('A position was not stored. 1 of 2 moved teams were placed.'))
-    expect(refused).toContain('A position was not stored. 1 of 2 moved teams were placed.')
-    expect(refused).toContain('press Save team order again')
+
+    const refused = saveFailureMessage(new TeamOrderRefused('The server refused the request as it was made.'))
+    expect(refused).toContain('The server refused the request as it was made.')
+    expect(refused).toContain('Nothing was changed.')
+    expect(refused).toContain('save again')
+
+    const denied = saveFailureMessage(new TeamOrderNotPermitted())
+    expect(denied).toContain('permission')
+    expect(denied).toContain('refreshed')
+
+    // A transport failure is the one outcome this client cannot determine,
+    // and the sentence says so rather than picking one. It must not claim
+    // nothing changed, and it must not leak the raw error at a coach.
     const other = saveFailureMessage(new Error('network down'))
     expect(other).toContain('Could not save the team order.')
     expect(other).not.toContain('network down')
-    expect(other).toContain('press Save team order again')
+    expect(other).toContain('not known whether it reached the server')
+    expect(other).not.toContain('Nothing was changed.')
     expect(saveFailureMessage(undefined)).toBe(other)
   })
 })

@@ -702,10 +702,12 @@ which is the existing Players and groups rule and is not being changed.
 
 ### 6.5 The team ability order, the one thing that must be stored
 
-**Built since, by COACH-1 (#223 and the COACH-1B frontend PR).** `teams` now
-carries `sort_order` (migration `0051_team_sort_order`, applied 2 September
-2026), and the Teams admin screen sets it. The paragraph below is what was
-captured when this was written.
+**Built since, by COACH-1 (#223, #226 and the COACH-1B frontend PR).** `teams`
+now carries `sort_order` (migration `0051_team_sort_order`, applied 2 September
+2026), `public.set_team_order` writes a whole order atomically (migration
+`0052_atomic_team_order`, applied 4 September 2026), and the Teams admin screen
+sets the order through one call to it. The paragraph below is what was captured
+when this was written.
 
 Verified against the schema then (`00-current-state-audit.md` section 19):
 `teams` carried `id, club_id, name, created_at, bib_colour` and nothing else,

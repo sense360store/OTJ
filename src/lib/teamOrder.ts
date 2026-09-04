@@ -81,29 +81,6 @@ export function moveTeam<T extends Pick<Team, 'id'>>(ordered: readonly T[], id: 
   return next
 }
 
-// The positions an explicit save stores: 1..N in the order given. The
-// database does not require contiguity; a full save simply normalises to
-// the simplest representation of the order the admin can see.
-export function canonicalPositions(ordered: readonly Pick<Team, 'id'>[]): Map<string, number> {
-  return new Map(ordered.map((t, i) => [t.id, i + 1]))
-}
-
-export interface TeamOrderWrite {
-  id: string
-  position: number
-}
-
-// The rows a save has to touch: every team whose stored position differs
-// from the position the order gives it, in that order. A team already at
-// its position is left alone, so a save rewrites nothing it need not, and
-// nothing but sort_order is ever part of this.
-export function teamOrderWrites(ordered: readonly Pick<Team, 'id' | 'sortOrder'>[]): TeamOrderWrite[] {
-  const positions = canonicalPositions(ordered)
-  return ordered
-    .filter((t) => t.sortOrder !== positions.get(t.id))
-    .map((t) => ({ id: t.id, position: positions.get(t.id) as number }))
-}
-
 export function sameIdOrder(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, i) => id === b[i])
 }
@@ -137,72 +114,40 @@ export function teamsInDraftOrder(draft: readonly string[], teams: readonly Team
 
 // ---- Saving the order ---------------------------------------------------
 //
-// The write is described here, against a store the caller supplies, so the
-// algorithm is testable with a fake that enforces the unique index and the
-// real store in queries.ts is three thin calls that touch nothing but
-// sort_order.
+// The order is saved by ONE call to public.set_team_order (migration 0052,
+// applied to production on 4 September 2026 as hosted 20260904174142 /
+// atomic_team_order). This module holds the pure half: the request that call
+// takes, the failures it can answer with, and the words each failure is shown
+// in. src/lib/queries.ts owns the call itself and the translation of a
+// PostgREST error into the classes below.
 //
-// WHY TWO PHASES. teams_sort_order_unique (0051) refuses two teams of one
-// club at one position, and PostgreSQL checks a unique index per row rather
-// than per statement: swapping 1 and 2 as "1 to 2, then 2 to 1" fails on the
-// first write, and a bulk upsert would fail the same way while also having to
-// carry every NOT NULL column. So the rows whose position changes are first
-// cleared to null, which frees their positions, and then each is given its
-// final position. A team already at its position is never touched, so the
-// positions the unchanged teams hold can never collide with the ones being
-// written: the positions are a permutation of 1..N and the unchanged teams
-// keep exactly theirs.
+// WHY A FUNCTION RATHER THAN WRITES FROM HERE. teams_sort_order_unique (0051)
+// refuses two teams of one club at one position and PostgreSQL checks a
+// unique index per ROW rather than per statement, so a swap cannot be one
+// statement and a whole order cannot be one either. Written from the browser
+// it is therefore several statements, and two admins who move DISJOINT rows
+// never collide: from A=1 B=2 C=3 D=4 one swaps A and B while the other swaps
+// C and D, every per row check passes, both commit, and the club holds an
+// order NEITHER submitted, which the unique index cannot object to because a
+// merge is a permutation like any other. The missing thing was a transaction,
+// and no arrangement of client statements is one. 0052 supplies it: the
+// function validates the complete set and the caller's expected snapshot
+// under a club advisory lock and SHARE ROW EXCLUSIVE on teams, then clears
+// and places the whole order, or writes nothing at all.
 //
-// WHY IT FAILS SAFE. If the network drops between the phases, what is left is
-// an INCOMPLETE order, the untouched teams at their positions and the moved
-// ones at null, which the screen names as incomplete; the unique index has
-// not been asked to accept anything false, and nothing here retries on its
-// own. A second press is the admin's decision.
+// SO THIS CLIENT NEVER WRITES sort_order. Not as a fallback, not as a
+// retry, not for a single row. teamOrder.invariant.test.ts fails the build if
+// such a write appears, because a second path would reopen exactly the race
+// the migration closed.
 //
-// Every write is read back rather than assumed: row level security answers a
-// caller without teams.manage with no row rather than an error, and a count
-// that comes back short is a refusal.
-//
-// The changed set is computed against a FRESH read of the club's teams, never
-// against the cache the screen drew from, and the caller hands over the
-// positions its draft was drawn from: a team another admin added or removed
-// since the screen loaded, or a position another admin stored since, is
-// refused as TeamOrderChanged rather than silently arranged around or
-// overwritten. The screen then drops its draft and shows what is stored, and
-// the admin decides again.
-//
-// THE CHECK COVERS THE WRITES, not only the read before them. Two admins can
-// both read fresh before either writes, and both pass; without more, the
-// second to finish would clear and replace what the first had just stored,
-// and the unique index would allow it because the result is still a valid
-// permutation. So every write is a compare and set: a clear lands only while
-// the row still holds the position the fresh read saw, and a placement lands
-// only while the row is still null, which is what this save's own clear
-// left. A write that finds anything else returns no row and the save stops,
-// with nothing overwritten. PostgREST offers no transaction across
-// statements without a server side function, so a save that stops between
-// its phases leaves an honestly INCOMPLETE order, named as such by the
-// status the refetch brings, and never a blend presented as configured.
-// The unique index remains the last guard for the write itself.
-//
-// WHAT IT CANNOT PREVENT, and what it does instead. Two saves that change
-// DISJOINT rows (one swaps the top two, the other the bottom two) touch no
-// row in common, so every compare and set passes for both and the club
-// ends with a merge neither admin arranged. Serialising whole order saves
-// needs a club wide lock, a version column or one server side function
-// writing the order in one transaction, each a gated migration this slice
-// does not make. So the save reads the club back after its last placement
-// and refuses as TeamOrderChanged when what is stored is not what it meant
-// to store: the merge is never called saved, the admin sees the refreshed
-// order, and the other admin's readback or next read says the same.
-//
-// WHAT THE AUDIT TRAIL SHOWS. audit_teams() records every distinct change of
-// sort_order as team.updated naming the field and never the value, so a
-// reorder of a club whose teams are already placed records TWO events per
-// moved team, one for the clear and one for the placement; an unset club's
-// clear is null to null and records nothing. Accepted as a property of the
-// fail safe strategy; one event per press would need a server side function,
-// which is a gated change this slice does not make.
+// WHAT THE AUDIT TRAIL SHOWS, unchanged by the move: audit_teams() records
+// every distinct change of sort_order as team.updated naming the field and
+// never the value. The function clears then places inside its one
+// transaction, so a moved already placed team still records TWO events; a
+// team already at its position is not written and records none; a first order
+// on an unset club records one per team. That is the server's shape and is
+// stated rather than engineered away.
+
 export interface TeamPosition {
   id: string
   sortOrder: number | null
@@ -218,7 +163,7 @@ export function teamPositions(teams: readonly Pick<Team, 'id' | 'sortOrder'>[]):
 
 /* The positions a save MEANS to leave: 1..N in the order given. What the
    screen expects its own refetch to carry after a successful save, and what
-   the save compares its readback with. */
+   the success note is derived against. */
 export function intendedPositions(orderedIds: readonly string[]): TeamPosition[] {
   return orderedIds.map((id, i) => ({ id, sortOrder: i + 1 }))
 }
@@ -240,10 +185,10 @@ export function samePositions(a: readonly TeamPosition[], b: readonly TeamPositi
 /* What a draft's snapshot becomes when a FRESH READ lands under it.
 
    The snapshot is taken when the draft is created and it is the only thing
-   the save may refuse against, so it must not be rebuilt from a later read:
-   a snapshot taken at Save time from a read that already carries another
-   admin's order would agree with the fresh read and let the older draft
-   overwrite it. So the read is checked AGAINST the snapshot instead:
+   the save may be refused against, so it must not be rebuilt from a later
+   read: a snapshot taken at Save time from a read that already carries
+   another admin's order would agree with the stored order and let the older
+   draft overwrite it. So the read is checked AGAINST the snapshot instead:
 
    * a team the snapshot knows whose position differs is another admin's
      placement, and the answer is null: the draft is dropped and the screen
@@ -272,19 +217,35 @@ export function snapshotAfterRead(expected: readonly TeamPosition[], read: reado
   return next
 }
 
-export interface TeamOrderStore {
-  // Every team of the club, id and position only.
-  readPositions(): Promise<TeamPosition[]>
-  // Set sort_order to null on ONE row, and only while that row still holds
-  // `from`, the position the fresh read saw (a compare and set). Returns
-  // the row as stored afterwards, or no row when it no longer held `from`
-  // or the write was refused.
-  clearPosition(id: string, from: number): Promise<TeamPosition[]>
-  // Set sort_order to `position` on ONE row, and only while that row is
-  // still null, which is what this save's own clear left. Returns the row
-  // as stored afterwards, or no row when it was placed by somebody else in
-  // between or the write was refused.
-  setPosition(id: string, position: number): Promise<TeamPosition[]>
+/* The arguments public.set_team_order takes, named as the function names
+   them so the call site cannot quietly reorder them.
+
+   ALIGNMENT IS THE WHOLE POINT of building this here rather than at the call
+   site. The function reads the two arrays by ORDINALITY: the nth expected
+   position is the position it requires the nth team to be holding. The
+   snapshot the screen carries is keyed by id and arrives in whatever order
+   the read came in, so handing it over as-is would compare each team against
+   another team's position, pass or fail for the wrong reason, and store an
+   order nobody arranged. It is therefore projected onto the id order here,
+   once, with a test that fails when the two disagree.
+
+   `null` is a REAL expected value meaning "this team was unplaced", not a
+   missing one, and it survives the projection. A team the snapshot has never
+   seen is unplaced by definition and is sent as null. */
+export interface TeamOrderRequest {
+  p_team_ids: string[]
+  p_expected_sort_orders: (number | null)[]
+}
+
+export function teamOrderRequest(
+  orderedIds: readonly string[],
+  expected: readonly TeamPosition[],
+): TeamOrderRequest {
+  const at = new Map(expected.map((r) => [r.id, r.sortOrder]))
+  return {
+    p_team_ids: [...orderedIds],
+    p_expected_sort_orders: orderedIds.map((id) => at.get(id) ?? null),
+  }
 }
 
 /* The one sentence a dropped draft is explained with, on the screen and in
@@ -292,15 +253,40 @@ export interface TeamOrderStore {
 export const TEAM_ORDER_CHANGED =
   "The club's teams changed while the order was being arranged. The list has been refreshed; check it and save again."
 
+/* Another admin stored a different order, or the club's teams changed, since
+   the draft was drawn. The function refuses the WHOLE order BEFORE writing
+   anything, so nothing was stored and there is no partial order to repair.
+
+   Raised only for P0001 carrying the DETAIL token `stale_order`, never for
+   P0001 alone: that code also covers every malformed request the function
+   refuses, so keying on it would say "another admin saved" for a bug in this
+   client, and would say nothing when an admin really was overtaken. */
 export class TeamOrderChanged extends Error {
-  // `detail`, when given, replaces the general sentence with what THIS
-  // refusal knows: how far a save that met another admin's write got.
   constructor(detail?: string) {
     super(detail ?? TEAM_ORDER_CHANGED)
     this.name = 'TeamOrderChanged'
   }
 }
 
+/* The caller may not manage this club's teams (SQLSTATE 42501): not signed
+   in, or signed in without teams.manage. The function self gates on the same
+   capability the teams_manage policy names, so this is the same refusal a
+   direct write would have met, said in one place instead of read out of an
+   empty result. */
+export class TeamOrderNotPermitted extends Error {
+  constructor() {
+    super('You do not have permission to change the team order.')
+    this.name = 'TeamOrderNotPermitted'
+  }
+}
+
+/* The function refused the request itself: a P0001 with no `stale_order`
+   token. Every case is a defect in what this client sent rather than
+   something an admin did, and every one of them means NOTHING was written:
+   the request was refused before any lock or any write. Deliberately NOT
+   folded into TeamOrderChanged, because telling an admin that somebody else
+   saved when the truth is that we sent a malformed request would send them
+   to check an order nobody touched. */
 export class TeamOrderRefused extends Error {
   constructor(message: string) {
     super(message)
@@ -308,120 +294,23 @@ export class TeamOrderRefused extends Error {
   }
 }
 
-/* The fresh read itself failed, so NOTHING was written. Its own class
-   because the screen treats it differently from a failure after a write
-   may have landed: the draft's snapshot is still true of what was read
-   before, so it is kept and a later read is checked against it, rather
-   than adopted as if this save had changed what is stored. */
-export class TeamOrderReadFailed extends Error {
-  constructor(cause: unknown) {
-    super("The club's teams could not be read, so nothing was written.", { cause })
-    this.name = 'TeamOrderReadFailed'
-  }
-}
-
 /* What a refused save says, beside the refusals it names so the wording and
-   the failure it describes cannot drift apart. The two refusals the save
-   itself raises are written for a coach and are shown as they are; anything
-   else (a dropped connection, a server error) gets the general sentence. */
+   the failure it describes cannot drift apart.
+
+   Every branch says what is true of what is STORED, which the RPC makes
+   simple: the function is atomic, so either the whole order was written or
+   none of it was, and there is no "how far did it get" to report. A
+   transport failure is the one case where this client cannot know which
+   happened, and it says so rather than guessing; the screen refetches and
+   the refreshed list is the answer. */
 export function saveFailureMessage(error: unknown): string {
   const lead = 'Could not save the team order.'
   if (error instanceof TeamOrderChanged) return `${lead} ${error.message}`
-  if (error instanceof TeamOrderReadFailed) {
-    return `${lead} ${error.message} The list still shows the order you arranged; check the connection and press Save team order again.`
+  if (error instanceof TeamOrderNotPermitted) {
+    return `${lead} ${error.message} The list has been refreshed and shows the stored order.`
   }
   if (error instanceof TeamOrderRefused) {
-    return `${lead} ${error.message} The status above says what is stored now; check the order and press Save team order again.`
+    return `${lead} ${error.message} Nothing was changed. The list has been refreshed; check it and save again.`
   }
-  return `${lead} The status above says what is stored now; the list still shows the order you arranged, so check it and press Save team order again.`
-}
-
-// `expected` is what the screen read before the admin arranged anything: the
-// positions its draft was drawn from. A fresh position that differs from it
-// is another admin's placement landing in between, and the save refuses
-// rather than overwriting it. A caller that omits it accepts last writer
-// wins for positions, which no screen does.
-export async function saveTeamOrder(
-  store: TeamOrderStore,
-  orderedIds: readonly string[],
-  expected?: readonly TeamPosition[],
-): Promise<TeamOrderWrite[]> {
-  // The one read that precedes every write: a failure here is typed, so
-  // the caller knows nothing was written and keeps its snapshot. The
-  // readback at the end is deliberately NOT wrapped: by then the writes
-  // have landed, and a failure there is a failure after a write.
-  let fresh: TeamPosition[]
-  try {
-    fresh = await store.readPositions()
-  } catch (cause) {
-    throw new TeamOrderReadFailed(cause)
-  }
-  const known = new Set(fresh.map((r) => r.id))
-  const distinct = new Set(orderedIds)
-  if (fresh.length !== orderedIds.length || distinct.size !== orderedIds.length || orderedIds.some((id) => !known.has(id))) {
-    throw new TeamOrderChanged()
-  }
-  if (expected) {
-    const read = new Map(expected.map((r) => [r.id, r.sortOrder]))
-    if (fresh.some((r) => read.has(r.id) && read.get(r.id) !== r.sortOrder)) throw new TeamOrderChanged()
-  }
-  const byId = new Map(fresh.map((r) => [r.id, r]))
-  const writes = teamOrderWrites(orderedIds.map((id) => byId.get(id) as TeamPosition))
-  if (writes.length === 0) return []
-
-  // Phase one: free the positions of the teams that move, one row at a
-  // time, each write conditioned on the position the fresh read saw. A row
-  // that no longer holds it was changed by somebody else after the read,
-  // and the save stops there: nothing has been placed, and what was cleared
-  // is named as unplaced by the status the refetch brings.
-  const placed = writes.filter((w) => (byId.get(w.id) as TeamPosition).sortOrder !== null)
-  let cleared = 0
-  for (const w of placed) {
-    const from = (byId.get(w.id) as TeamPosition).sortOrder as number
-    const [row] = await store.clearPosition(w.id, from)
-    if (!row || row.id !== w.id) {
-      throw new TeamOrderChanged(
-        `The team order changed while it was being saved, or the write was refused. Nothing was placed; ${cleared} of ${placed.length} moved teams had been cleared. The list has been refreshed; check it and save again.`,
-      )
-    }
-    if (row.sortOrder !== null) throw new TeamOrderRefused('A position was not cleared, so no position was written.')
-    cleared += 1
-  }
-
-  // Phase two: place each moved team, each write conditioned on the row
-  // still being null, which is what this save's own clear left. A row
-  // somebody else placed in between is not overwritten.
-  const done: TeamOrderWrite[] = []
-  for (const w of writes) {
-    const [row] = await store.setPosition(w.id, w.position)
-    if (!row || row.id !== w.id) {
-      throw new TeamOrderChanged(
-        `The team order changed while it was being saved, or the write was refused. ${done.length} of ${writes.length} moved teams were placed; the rest are unplaced until the order is saved again. The list has been refreshed; check it and save again.`,
-      )
-    }
-    if (row.sortOrder !== w.position) {
-      throw new TeamOrderRefused(
-        `A position was not stored. ${done.length} of ${writes.length} moved teams were placed; the rest are unplaced until the order is saved again.`,
-      )
-    }
-    done.push(w)
-  }
-
-  // THE READBACK. Two saves that change DISJOINT rows pass every compare
-  // and set above, because neither touches a row the other wrote, and the
-  // club ends with a merge neither admin arranged. Without a version column
-  // or a server side function that cannot be prevented from here, so it is
-  // detected: the club is read again after the last placement and compared
-  // whole with the order this save meant to store, and a difference is
-  // refused as TeamOrderChanged, so "saved" is never said of a merge. The
-  // other save's own readback, or its screen's next read, tells the other
-  // admin the same way.
-  const after = await store.readPositions()
-  const want = new Map(intendedPositions(orderedIds).map((r) => [r.id, r.sortOrder]))
-  if (after.length !== want.size || after.some((r) => want.get(r.id) !== r.sortOrder)) {
-    throw new TeamOrderChanged(
-      'The order was written, but another admin saved at the same time and the stored order now differs from the one you arranged. The list has been refreshed; check it and save again.',
-    )
-  }
-  return done
+  return `${lead} It is not known whether it reached the server, so the list has been refreshed to show what is stored. Check it and save again if it is not the order you arranged.`
 }
