@@ -47,7 +47,7 @@ next**, as the first gated coaching migration.
 | ID | Workstream | Item | Proposed status | Priority | Dependencies / gates |
 |---|---|---|---|---|---|
 | COACH-00 | Coaching workflow | End-to-end coaching workflow discovery, architecture and post-discovery reconciliation | Done (docs only) | P1 | This document set. No code, no migration. |
-| COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | **In progress** (COACH-1A, migration `0051`, merged as #223 and applied 2 Sep 2026; COACH-1B open as #225 behind migration `0052_atomic_team_order`) | P1 | Migration M1, gated, registered against the hosted ledger head at its own review (`20260823065041` / `bulk_delete_players`) rather than by filename, and applied at `20260902150212` / `team_sort_order`. It took a SECOND gated migration the plan did not carry: a whole order written from the browser is several statements, so two admins moving disjoint rows can leave a valid order neither submitted, and `0052` adds the transactional writer `set_team_order` against that head. |
+| COACH-1 | Coaching workflow | The club's team order (`teams.sort_order`) and an admin reorder | **In progress** (COACH-1A, migration `0051`, merged as #223 and applied 2 Sep 2026; its database prerequisite `0052_atomic_team_order` merged as #226 and applied 4 Sep 2026; COACH-1B open as #225) | P1 | Migration M1, gated, registered against the hosted ledger head at its own review (`20260823065041` / `bulk_delete_players`) rather than by filename, and applied at `20260902150212` / `team_sort_order`. It took a SECOND gated migration the plan did not carry: a whole order written from the browser is several statements, so two admins moving disjoint rows can leave a valid order neither submitted, and `0052` adds the transactional writer `set_team_order` against that head, applied at `20260904174142` / `atomic_team_order`. |
 | COACH-2A | Coaching workflow | The activity structure model: `slot`, `skipped`, the derivation module and the active session duration in all four implementations | **Done** | P1 | **No migration.** Two keys in the existing activity jsonb. Shipped in #198; the content-sharing Edge Function deploy it left outstanding has since run. |
 | COACH-2B | Coaching workflow | The authoring affordances: mark a station or the games phase, and a Not running tonight toggle on a dated session | **Done** | P1 | No migration. Shipped in #202. Gates COACH-6, COACH-7, COACH-8. |
 | COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | **Done** | P1 | No schema. Shipped in #203 (generator) and #204 (screen). Wants COACH-1 and degrades honestly without it, saying the order is unset. |
@@ -275,14 +275,17 @@ product design was rewritten and no priority was invented.
   migration `0051_team_sort_order`, was authored and registered against that
   head (`20260823065041` / `bulk_delete_players`, re-read at that review),
   merged as #223 and applied on 2 September 2026 at `20260902150212` /
-  `team_sort_order`. COACH-1B, the reorder affordance, is open as #225 and is
-  held for a second gated migration, `0052_atomic_team_order`, registered
-  against that new head: the client's multi statement save cannot be a
-  transaction, so two admins moving disjoint rows can commit a valid order
-  neither submitted, and `set_team_order` writes the whole order under one
-  serialization point or writes nothing. That is one more gated migration than
-  this reconciliation forecast, recorded rather than absorbed. Every COACH-1
-  status line in these documents says the same thing.
+  `team_sort_order`. It took a second gated migration,
+  `0052_atomic_team_order`, registered against that new head, merged as #226
+  and applied on 4 September 2026 at `20260904174142` / `atomic_team_order`:
+  the client's multi statement save cannot be a transaction, so two admins
+  moving disjoint rows can commit a valid order neither submitted, and
+  `set_team_order` writes the whole order under one serialization point or
+  writes nothing. That is one more gated migration than this reconciliation
+  forecast, recorded rather than absorbed. COACH-1B, the reorder affordance,
+  is open as #225 and still saves from the browser; calling the function is
+  the remaining work. Every COACH-1 status line in these documents says the
+  same thing.
 - **In `docs/roadmap/master-roadmap.md`**, the shipped slices were added to the
   Done table with their pull request numbers and merge dates, the Last reviewed
   line and the coaching workflow pointer were brought up to date, and the VISUAL

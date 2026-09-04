@@ -524,37 +524,37 @@ class TestPhaseArgument(unittest.TestCase):
         self.assertIn('str(r.get("last_migration")) != EXPECTED_LAST_MIGRATION', src)
         self.assertNotIn("startswith(EXPECTED_LAST_MIGRATION", src)
         self.assertNotIn(">= EXPECTED_LAST_MIGRATION", src)
-        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260902150212")
+        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260904174142")
 
     def test_the_superseded_ledger_version_now_fails_the_gate(self):
-        """0050's version must no longer satisfy the pin.
+        """0051's version must no longer satisfy the pin.
 
         The reconciliation is only real if the value it replaced is now
-        rejected: a gate that still accepted 20260823065041 /
-        bulk_delete_players would prove the constant had been widened
-        rather than moved. Every earlier superseded value, 0049's, 0048's,
-        0047's and 0046's included, stays rejected by the same equality, and
-        each reconciliation adds the value it just retired to the front of
-        this tuple.
+        rejected: a gate that still accepted 20260902150212 /
+        team_sort_order would prove the constant had been widened
+        rather than moved. Every earlier superseded value, 0050's, 0049's,
+        0048's, 0047's and 0046's included, stays rejected by the same
+        equality, and each reconciliation adds the value it just retired to
+        the front of this tuple.
         """
-        for superseded in ("20260823065041", "20260817104226", "20260812102912",
-                           "20260812064038", "20260811210248", "20260810182333",
-                           "20260809184949", "20260809081118"):
+        for superseded in ("20260902150212", "20260823065041", "20260817104226",
+                           "20260812102912", "20260812064038", "20260811210248",
+                           "20260810182333", "20260809184949", "20260809081118"):
             doc = sample_payload(residue=dict(CLEAN_RESIDUE, last_migration=superseded))
             for phase in ("pre", "post"):
                 rc, out = self._run_phase(doc, phase)
                 self.assertEqual(rc, 1, f"{phase} phase must reject {superseded}")
                 self.assertIn("migration ledger changed", out)
                 self.assertIn(superseded, out)
-                self.assertIn("20260902150212", out)
+                self.assertIn("20260904174142", out)
 
     def test_the_reconciled_ledger_version_passes_when_all_else_is_clean(self):
-        """20260902150212 is what a clean hosted ledger now reads."""
-        doc = sample_payload(residue=dict(CLEAN_RESIDUE, last_migration="20260902150212"))
+        """20260904174142 is what a clean hosted ledger now reads."""
+        doc = sample_payload(residue=dict(CLEAN_RESIDUE, last_migration="20260904174142"))
         for phase in ("pre", "post"):
             rc, out = self._run_phase(doc, phase)
             self.assertEqual(rc, 0, f"{phase} phase must accept the reconciled version: {out}")
-            self.assertIn("20260902150212", out)
+            self.assertIn("20260904174142", out)
 
     def test_a_malformed_or_absent_ledger_version_is_refused(self):
         """Nothing unreadable is ever treated as satisfying the pin.
@@ -565,8 +565,8 @@ class TestPhaseArgument(unittest.TestCase):
         gate that accepted any of these would pass on a readback that never
         actually reported a ledger version.
         """
-        malformed = ("", "   ", None, "20260902150212 ", " 20260902150212", "null",
-                     "0051_team_sort_order")
+        malformed = ("", "   ", None, "20260904174142 ", " 20260904174142", "null",
+                     "0052_atomic_team_order")
         for wrong in malformed:
             doc = sample_payload(residue=dict(CLEAN_RESIDUE, last_migration=wrong))
             for phase in ("pre", "post"):
@@ -585,7 +585,7 @@ class TestPhaseArgument(unittest.TestCase):
         nobody later mistakes it for the loose matching the header forbids;
         note the whitespace variants above are still refused.
         """
-        doc = sample_payload(residue=dict(CLEAN_RESIDUE, last_migration=20260902150212))
+        doc = sample_payload(residue=dict(CLEAN_RESIDUE, last_migration=20260904174142))
         for phase in ("pre", "post"):
             rc, out = self._run_phase(doc, phase)
             self.assertEqual(rc, 0, f"{phase} phase must accept the same version as a number")
@@ -612,13 +612,14 @@ class TestPhaseArgument(unittest.TestCase):
         # 20260812000000, which 0047's pin of 20260812064038 overtook, so it
         # would have silently stopped covering the newer-unreviewed-migration
         # case it exists for. 0050's "later" case was 20260824000000, which
-        # 0051's pin of 20260902150212 has overtaken in exactly the same way,
-        # so "later" is rekeyed to 20260903000000, and the appended and
-        # truncated cases are derived from the new pin as always. The
-        # relationships are asserted below rather than left to whoever edits
-        # the tuple, because the failure mode is a test that still passes
-        # while testing nothing.
-        later, appended, truncated = "20260903000000", "202609021502120", "2026090215021"
+        # 0051's pin of 20260902150212 overtook in exactly the same way, and
+        # 0051's rekeyed 20260903000000 has now been overtaken by 0052's pin
+        # of 20260904174142, so "later" is rekeyed again to 20260905000000,
+        # and the appended and truncated cases are derived from the new pin
+        # as always. The relationships are asserted below rather than left to
+        # whoever edits the tuple, because the failure mode is a test that
+        # still passes while testing nothing.
+        later, appended, truncated = "20260905000000", "202609041741420", "2026090417414"
         pin = vr.EXPECTED_LAST_MIGRATION
         # Both are 14 digit stamps, so the string order is the chronological one.
         self.assertEqual(len(pin), 14)
@@ -793,7 +794,7 @@ class TestEnabledClubAllowlist(unittest.TestCase):
 
     def test_the_ledger_gate_is_untouched_by_this_change(self):
         """The club pin must not have loosened the migration pin."""
-        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260902150212")
+        self.assertEqual(vr.EXPECTED_LAST_MIGRATION, "20260904174142")
         src = pathlib.Path(vr.__file__).read_text(encoding="utf-8")
         self.assertIn('str(r.get("last_migration")) != EXPECTED_LAST_MIGRATION', src)
 

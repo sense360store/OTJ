@@ -515,23 +515,24 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260902150212` (`0051_team_sort_order`, applied
-2026-09-02 under its own production approval).
+Current value: `20260904174142` (`0052_atomic_team_order`, applied
+2026-09-04 under its own production approval).
 
-Hosted ledger newest migration: **`20260902150212` / `team_sort_order`**.
+Hosted ledger newest migration: **`20260904174142` / `atomic_team_order`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
 apply, not predicted before it, and was confirmed to be the unique newest row:
 it appears exactly once and no row is newer.
 
-0051 was applied by the gated production migration workflow, run 33645893501,
-from the reviewed commit `855b0dc9fb0adfd7fa8e47cffe930638c2bf5759` on the
-COACH-1A branch (pull request #223), at 15:02 UTC on 2 September 2026, three
-minutes before that branch merged. The migration adds one nullable integer
-column, `public.teams.sort_order`, one partial unique index,
-`teams_sort_order_unique`, and `sort_order` on the allow list of the existing
-`public.audit_teams()`; it writes no row, and every team's position was null
-before the apply and is null after it. Its ledger row carries the workflow's
-evidence, all of it confirmed independently before this constant moved:
+0052 was applied by the gated production migration workflow, run 33901817120,
+from the reviewed commit `973de7d692569c1db495d18e9ecb6001dc7160d0` on the
+COACH-1B database branch (pull request #226), at 17:41 UTC on 4 September 2026,
+nine minutes before that branch merged. The migration adds one function,
+`public.set_team_order(uuid[], integer[])`, and nothing else: no table, no
+column, no index, no policy, no grant on any table, no capability key, no
+trigger, and no value added to any vocabulary. It writes no row, and every
+team's position was null before the apply and is null after it. Its ledger row
+carries the workflow's evidence, all of it confirmed independently before this
+constant moved:
 
 Each fact names what established it, because the mechanisms do not cover the
 same ground and an auditor who assumes they do will trust more than was checked.
@@ -540,66 +541,67 @@ same ground and an auditor who assumes they do will trust more than was checked.
 back again for this reconciliation:**
 
 - the row is the unique newest one, recorded at the newest version, in a ledger
-  of 46 rows with exactly one row named `team_sort_order`;
-- the **version** of the row before it is `20260823065041`. Only the version:
+  of 47 rows with exactly one row named `atomic_team_order`;
+- the **version** of the row before it is `20260902150212`. Only the version:
   `assert_post` compares `second_version` against `expected_previous_version`
   and never compares `second_name`, which it reads but uses only in the failure
   message and the report table;
 - `statements` holds exactly one entry whose MD5 is
-  `a69fb87b31007eabd009bcab27aacecd`, the reviewed file with its trailing
-  newline stripped;
+  `8a3d8a6778e343bacd3ebacb149d5e5a`, the reviewed file with its trailing
+  newline stripped (56271 bytes). That is the strongest single fact here: what
+  production ran is the reviewed file byte for byte, not a file that merely
+  passed the same probes;
 - and, through the three registered object probes in `reviewed_migrations.py`:
-  that `public.teams.sort_order` is an integer column, nullable, with no
-  default (`information_schema.columns`); that `teams_sort_order_unique` is a
-  unique, non primary, **partial** index on `teams` with exactly two key
-  columns (`pg_index`, the table resolved through `to_regclass`); and that the
-  stored body of `public.audit_teams()` carries the comparison
-  `new.sort_order is distinct from old.sort_order` (`to_regprocedure`, then
-  `pg_get_functiondef`). The third is the first probe in the register that
-  flips on the body of a function that already existed.
+  that `public.set_team_order(uuid[], integer[])` resolves
+  (`to_regprocedure`, never a textual signature cast, for the reason 0049's
+  review found); that it is `SECURITY DEFINER` with an empty `search_path`
+  (`pg_proc.prosecdef` and `proconfig`, the expected value composed with
+  `chr(34)` because the verifier refuses a probe carrying a quote); and that
+  `authenticated` holds EXECUTE on it while `anon` does not, with `anon` tested
+  rather than inferred from `PUBLIC`.
 
 **Read back for this reconciliation only, and NOT asserted by that gate:**
 
 - `created_by` is
-  `github-actions:apply-production-migration@855b0dc9fb0adfd7fa8e47cffe930638c2bf5759`,
+  `github-actions:apply-production-migration@973de7d692569c1db495d18e9ecb6001dc7160d0`,
   naming the workflow and the commit it ran from. The gate never selects this
   column;
-- `idempotency_key` is `otj:migration:0051_team_sort_order`, and that column
+- `idempotency_key` is `otj:migration:0052_atomic_team_order`, and that column
   is UNIQUE, so the same migration cannot be applied a second time. The gate
   checks that key only **before** the apply, to prove the migration had not
-  already run;
-- the **name** of the preceding row is `bulk_delete_players`. A row that kept
-  version `20260823065041` under a different name would still satisfy the
-  gate, so this half of that row's identity rests on the readback.
+  already run. It carries more weight here than it did for 0051: `create or
+  replace function` is idempotent where `add column` is not, so the migration's
+  own self-verification would not refuse a second raw apply, and the ledger key
+  is what refuses a second apply through the workflow;
+- the **name** of the preceding row is `team_sort_order`. A row that kept
+  version `20260902150212` under a different name would still satisfy the
+  gate, so this half of that row's identity rests on the readback;
+- `PUBLIC` does not hold EXECUTE either. The probe tests `anon`, which is the
+  role a browser reaches PostgREST as when signed out; `PUBLIC` is the grant
+  that would have made that moot, and only the readback excludes it.
 
-Those probes are why the objects' existence and their shape sit in the gate
-list rather than under the readback: they are asserted on every run, not merely
-read back once. What the readback **adds**, and the only thing it adds, is what
-the probes pin by shape rather than by text: the index's full definition,
-`CREATE UNIQUE INDEX teams_sort_order_unique ON public.teams USING btree
-(club_id, sort_order) WHERE (sort_order IS NOT NULL)`, which fixes the key
-column order and the predicate that a two column, partial probe cannot; that
-`audit_teams()` is still `SECURITY DEFINER` with an empty `search_path` and
-that `teams` still carries exactly its two policies with row level security
-enabled, none of which a probe checks; and that the hosted `teams` table holds
-five rows and none carries a position, which is what "no backfill" means on
-the live rows.
+Those probes are why the function's existence and its security posture sit in
+the gate list rather than under the readback: they are asserted on every run,
+not merely read back once. What the readback **adds**, beyond `PUBLIC` above,
+is the state 0052 promised to leave UNTOUCHED, which no probe of a newly
+created function can speak to: `public.teams` still holds five rows and none
+carries a position, which is what "writes no row" means on the live rows;
+`teams` still carries exactly its two policies and exactly its one non internal
+trigger, the audit writer; and `teams_sort_order_unique` is still `CREATE
+UNIQUE INDEX teams_sort_order_unique ON public.teams USING btree (club_id,
+sort_order) WHERE (sort_order IS NOT NULL)`, the definition 0051's apply left,
+so the last guard the function's clear-then-place is written around is the same
+guard.
 
-No probe reads `pg_get_indexdef`, so an index on `(sort_order, club_id)` under
-the same predicate would satisfy the index probe. That gap is why the
-definition is recorded at all; the migration's own self-verification compared
-the whole definition string at apply time, and the readback confirms what it
-left.
+**What none of that establishes** is the other half of "0052 adds one function
+and nothing else". The probes look at that one function, and the readback at it
+and at the four things above. Neither inventories every table, column, index,
+policy or trigger. That property comes from review of the migration SQL and
+from the file's own before and after fingerprints of the team rows, their
+positions whole, the audit rows, the policies, the grants, the triggers and the
+index definition, which is what the gated production process exists to provide.
 
-**What none of that establishes** is the other half of "0051 adds one column,
-one index and one allow list entry and nothing else". The probes look at those
-three objects, and the readback at the same three and the rows. Neither
-inventories every table, column, index, policy or trigger. That property comes
-from review of the migration SQL and from the file's own before and after
-fingerprints of the `teams` policies, grants, triggers and the capability set,
-which is what the gated production process exists to provide.
-
-The previous value, `20260823065041` / `bulk_delete_players` (0050), is now a
+The previous value, `20260902150212` / `team_sort_order` (0051), is now a
 superseded value and is REJECTED by the gate. That is asserted directly,
 because a reconciliation that widened the constant rather than moving it would
 otherwise look identical to one that moved it. It remains the row immediately
@@ -612,6 +614,20 @@ rejected when what it once described is on the record, and it is separated
 because evidence that does not validate the value above would be worse than no
 evidence at all.
 
+0051 added one nullable integer column, `public.teams.sort_order`, one partial
+unique index, `teams_sort_order_unique`, and `sort_order` on the allow list of
+the existing `public.audit_teams()`; it wrote no row. Its apply evidence was
+established for its own reconciliation: one `statements` entry hashing to
+`a69fb87b31007eabd009bcab27aacecd`, `created_by` naming the workflow at commit
+`855b0dc9fb0adfd7fa8e47cffe930638c2bf5759` on the COACH-1A branch, the
+idempotency key `otj:migration:0051_team_sort_order`, and the index definition
+`CREATE UNIQUE INDEX teams_sort_order_unique ON public.teams USING btree
+(club_id, sort_order) WHERE (sort_order IS NOT NULL)` read back whole, which a
+two column partial probe could not fix. That definition is re-read above rather
+than carried from here, because 0052 is written around that index and had to
+leave it untouched. The rest evidences that apply and nothing since; its row
+remains the one immediately before the current head.
+
 0050 added four functions, `public.delete_players(uuid[], int)`,
 `public.preview_delete_players(uuid[])`, `public.player_deletion_counts(uuid,
 uuid[])` and `public.audit_bulk_delete_metadata_ok(jsonb)`, destructive by
@@ -621,8 +637,8 @@ entry hashing to `a34ad8932597a467795d47867254fe62`, `created_by` naming the
 workflow at commit `2d1de99827064f6856374bfc3c094cf50ae1cc3f` on the
 PLAYERS-01 branch, the idempotency key `otj:migration:0050_bulk_delete_players`,
 and the parameter names read back with `pg_get_function_identity_arguments`.
-All of it evidences that apply and nothing since; its row remains the one
-immediately before the current head.
+All of it evidences that apply and nothing since; its row is now two before the
+current head.
 
 0049 added one function, `public.spond_reconcile_player_team`, at the reviewed
 six argument signature `(uuid, uuid, uuid, text, text, uuid)`, `SECURITY
@@ -632,7 +648,7 @@ DEFINER` with an empty `search_path`, executable by `authenticated` and not by
 naming the workflow at commit `694e1922e69552ff8f98310ae79d0cdcd99f76fd`, the
 idempotency key `otj:migration:0049_spond_team_reconcile`, and the six
 parameter names read back with `pg_get_function_identity_arguments`. All of it
-evidences that apply and nothing since; its row is now two before the current
+evidences that apply and nothing since; its row is now three before the current
 head.
 
 0048 repaired one bad Spond link and added `sessions_spond_event_id_unique`, the
@@ -642,14 +658,16 @@ sessions carrying a `spond_event_id`, which is what the repair plus the index
 had to read. That figure was established for 0048 and has not been re-taken
 since, so it evidences that apply and nothing later.
 
-The earlier superseded values are rejected by the same equality: `20260817104226`
+The earlier superseded values are rejected by the same equality:
+`20260823065041` (`0050_bulk_delete_players`, applied 2026-08-23 as the bulk
+player deletion functions), `20260817104226`
 (`0049_spond_team_reconcile`, applied 2026-08-17 as the Spond team
 reconciliation function), `20260812102912`
 (`0048_spond_session_link_unique`, applied 2026-08-12 as the Spond link repair
 and its partial unique index), `20260812064038`
 (`0047_register_group_inclusion`, applied 2026-08-12 as the register group
 inclusion column), and before it `20260811210248`, `20260810182333`,
-`20260809184949` and `20260809081118`. A test pins every one of them, 0050's
+`20260809184949` and `20260809081118`. A test pins every one of them, 0051's
 value included.
 
 Moving this constant is a **reconciliation**, never a deployment: it records an
@@ -766,7 +784,7 @@ Absolute invariants, the same ones the pre-deploy phase asserted:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260902150212` (0051, the club team order column);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260904174142` (0052, the atomic team order writer);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
