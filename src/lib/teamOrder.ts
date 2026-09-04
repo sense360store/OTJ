@@ -332,10 +332,18 @@ export function saveFailureMessage(error: unknown): string {
    The draft is what the screen is showing and the snapshot is what the next
    save will claim was stored. They are kept together because a draft beside
    the WRONG snapshot is the dangerous shape: the arrangement on screen is
-   compared against positions nobody drew it from. */
+   compared against positions nobody drew it from.
+
+   The snapshot is NOT nullable, and that is the rule made structural. It was
+   `TeamPosition[] | null` while a failed save cleared it, and null meant "the
+   next read is adopted as it comes", which is precisely the silent overwrite
+   below. With the snapshot always kept there is no writer left that can
+   produce one, so the type says so and the branches that read it are gone
+   rather than left as unreachable code describing a behaviour the product no
+   longer has. */
 export interface OrderDraft {
   ids: string[]
-  expected: TeamPosition[] | null
+  expected: TeamPosition[]
 }
 
 /* After a save the function accepted. The refetch will carry exactly what

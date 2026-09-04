@@ -406,11 +406,12 @@ export function AdminTeams() {
      taken when the draft is created and never rebuilt from a later read:
      the save refuses against that snapshot, and a snapshot rebuilt at Save
      time from a read already carrying another admin's order would agree
-     with the fresh read and let the older draft overwrite it. After a save
-     the snapshot is what the save LEFT: on success the order it wrote, so
-     its own refetch is not mistaken for another admin's change; after any
-     other failure null, meaning the next read is adopted as it comes,
-     because some rows may have been written and the arrangement is kept. */
+     with the fresh read and let the older draft overwrite it. What either
+     outcome leaves is `draftAfterSaved` and `draftAfterFailure`, stated and
+     tested in teamOrder.ts: a save that lands leaves the order it wrote, a
+     concurrency refusal leaves no draft at all, and every other failure
+     leaves both the arrangement that was sent and the snapshot it was drawn
+     from. */
   const [draft, setDraft] = useState<OrderDraft | null>(null)
   /* The order the last successful save wrote, and the success note is
      DERIVED from it: "Team order saved." shows only while the read holds
@@ -436,8 +437,10 @@ export function AdminTeams() {
      read all the same. The draft is checked against its snapshot
      (snapshotAfterRead): a position that moved under it drops it and says
      so, a read that agrees with what is stored drops it silently, a team
-     just added joins the snapshot unplaced, and a draft left with no
-     snapshot by a failed save adopts the read as it comes. The saved note
+     just added joins the snapshot unplaced. A draft always carries the
+     snapshot it was drawn from, which the type states: there is no writer
+     left that can produce one without, so there is no "adopt the read as it
+     comes" case to handle. The saved note
      needs no adjusting here: it is derived from the read agreeing with what
      was saved, so a team added or removed after the save, or another
      admin's order, takes it away in the same render. */
@@ -447,13 +450,13 @@ export function AdminTeams() {
     setAwaitingRead(false)
     if (draft !== null) {
       const read = teamPositions(teams)
-      const next = draft.expected === null ? read : snapshotAfterRead(draft.expected, read)
+      const next = snapshotAfterRead(draft.expected, read)
       if (next === null) {
         setDraft(null)
         setRefreshed(true)
       } else if (!dirty) {
         setDraft(null)
-      } else if (draft.expected === null || !samePositions(next, draft.expected)) {
+      } else if (!samePositions(next, draft.expected)) {
         setDraft({ ids: draft.ids, expected: next })
       }
     }
@@ -520,9 +523,8 @@ export function AdminTeams() {
     setSavedAs(null)
     setRefreshed(false)
     // The snapshot is the read the FIRST move was made over; later moves
-    // keep it (a null left by a failed save included, until the next read
-    // is adopted), and a fresh read is checked against it rather than
-    // replacing it.
+    // keep it, and a fresh read is checked against it rather than replacing
+    // it.
     setDraft({ ids: next.map((t) => t.id), expected: draft ? draft.expected : teamPositions(teams) })
     setMoves((n) => n + 1)
     const to = next.findIndex((t) => t.id === id)

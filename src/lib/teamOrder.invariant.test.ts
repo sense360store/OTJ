@@ -447,7 +447,14 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(screen).toMatch(/setDraft\(draftAfterFailure\(error, vars\)\)/)
     expect(screen).not.toMatch(/instanceof TeamOrder/)
     expect(screen).not.toMatch(/expected: vars\.expected \}\)/)
-    expect(screen).not.toMatch(/expected: null \}\)/)
+    // A draft ALWAYS carries the snapshot it was drawn from. `OrderDraft`
+    // says so in its type, and the branches that once read a null one are
+    // gone: null used to mean "adopt the next read as it comes", which is
+    // the silent overwrite itself. A screen reintroducing either is a
+    // finding, whichever end it comes from.
+    expect(screen).not.toMatch(/expected: null/)
+    expect(screen).not.toMatch(/expected === null/)
+    expect(read('lib/teamOrder.ts')).toMatch(/expected: TeamPosition\[\]\n\}/)
     expect(screen).not.toMatch(/d === null \? null/)
     expect(screen).not.toMatch(/TeamOrderReadFailed/)
     // The mutate call carries the variables and nothing else.
